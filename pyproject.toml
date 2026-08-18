@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quant-core"
+version = "0.1.0"
+description = "可回放、确定性风控优先的量化交易核心"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "PyYAML>=6.0,<7",
+  "SQLAlchemy>=2.0,<3",
+  "psycopg[binary]>=3.2,<4",
+  "typer>=0.20,<1",
+  "mcp==1.16.0",
+  "alembic>=1.16,<2",
+  "temporalio>=1.31,<2",
+  "httpx>=0.28,<1",
+  "websockets>=17,<18",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "ruff>=0.14,<1",
+]
+dashboard = [
+  "starlette>=0.40,<2",
+  "uvicorn>=0.30,<1",
+  "psutil>=6,<8",
+]
+
+[project.scripts]
+quant-core = "quant_core.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quant_core"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["integration: requires an explicitly configured isolated service"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]

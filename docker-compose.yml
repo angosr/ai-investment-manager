@@ -1,0 +1,130 @@
+name: ttt-market-intel
+
+services:
+  postgres:
+    image: postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    profiles: ["quant"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_DB: quant_core_test
+      POSTGRES_USER: quant_core
+      POSTGRES_PASSWORD: local-mock-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant_core -d quant_core_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - quant-postgres-data:/var/lib/postgresql/data
+
+  temporal-postgres:
+    image: postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    profiles: ["quant"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: local-temporal-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
+    profiles: ["quant"]
+    restart: unless-stopped
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:7233:7233"
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: local-temporal-only
+      POSTGRES_SEEDS: temporal-postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    volumes:
+      - ./config/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+
+  newsnow:
+    build:
+      context: ./upstream/newsnow
+      dockerfile: Dockerfile
+    image: ttt-market-intel/newsnow:v0.0.41
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4444:4444"
+    volumes:
+      - newsnow-data:/usr/app/.data
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4444
+      NODE_ENV: production
+      INIT_TABLE: "true"
+      ENABLE_CACHE: "true"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:4444/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  trendradar:
+    build:
+      context: ./upstream/trendradar
+      dockerfile: docker/Dockerfile
+    image: ttt-market-intel/trendradar:8ee2602
+    restart: unless-stopped
+    depends_on:
+      newsnow:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/trendradar:/app/output
+    environment:
+      TZ: Asia/Shanghai
+      WEBSERVER_PORT: 8080
+      RUN_MODE: cron
+      CRON_SCHEDULE: "*/10 * * * *"
+      IMMEDIATE_RUN: "true"
+      AI_ANALYSIS_ENABLED: "false"
+
+  trendradar-mcp:
+    build:
+      context: ./upstream/trendradar
+      dockerfile: docker/Dockerfile.mcp
+    image: ttt-market-intel/trendradar-mcp:8ee2602
+    restart: unless-stopped
+    depends_on:
+      trendradar:
+        condition: service_started
+    ports:
+      - "127.0.0.1:3333:3333"
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/trendradar:/app/output
+    environment:
+      TZ: Asia/Shanghai
+      MCP_PORT: 3333
+
+volumes:
+  newsnow-data:
+  quant-postgres-data:
+  temporal-postgres-data:

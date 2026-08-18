@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import create_engine, func, select
+
+from quant_core.analyst import (
+    AttemptAudit,
+    CapacityBucket,
+    CapacitySnapshot,
+    CapacityWindow,
+    FailureClass,
+)
+from quant_core.cycle import AnalysisCycle
+from quant_core.execution import MockExchange
+from quant_core.persistence import (
+    SqlAccountLeaseStore,
+    SqlCodexAuditStore,
+    SqlFactLedger,
+    SqlRiskBudgetStore,
+    analysis_cycles,
+    codex_account_capacity,
+    codex_runs,
+    create_schema,
+    fills,
+    metric_observations,
+    orders,
+    portfolio_risk_budgets,
+    risk_reservations,
+)
+
+
+@pytest.fixture
+def sql_cycle(app_config):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    ledger = SqlFactLedger(engine)
+    cycle = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=MockExchange(app_config.execution),
+        risk_budget=SqlRiskBudgetStore(engine),
+    )
+    return engine, cycle
+
+
+def test_sql_ledger_persists_and_reconstructs_complete_cycle(sql_cycle, replay_input) -> None:
+    engine, cycle = sql_cycle
+
+    first = cycle.run(replay_input)
+    reconstructed = cycle.run(replay_input)
+
+    assert reconstructed == first
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(analysis_cycles)) == 1
+        assert connection.scalar(select(func.count()).select_from(risk_reservations)) == 1
+        assert connection.scalar(select(func.count()).select_from(orders)) == 1
+        assert connection.scalar(select(func.count()).select_from(fills)) == 1
+        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 11
+        budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
+        assert budget["reserved_amount"] == 0
+        assert budget["exposure_risk_amount"] > 0
+
+
+def test_same_cycle_id_with_different_snapshot_is_rejected(sql_cycle, replay_input) -> None:
+    _, cycle = sql_cycle
+    cycle.run(replay_input)
+    changed_account = replay_input.account.model_copy(update={"quote_balance": Decimal("9999")})
+    changed_input = replay_input.model_copy(update={"account": changed_account})
+
+    with pytest.raises(ValueError, match="冻结输入或面板哈希不同"):
+        cycle.run(changed_input)
+
+
+def test_sql_codex_lease_is_exclusive_and_reusable_after_release() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlAccountLeaseStore(engine)
+    now = datetime.now(tz=UTC)
+
+    first = store.try_acquire("codex_a", "cycle-1", "attempt-1", now + timedelta(minutes=2))
+    conflict = store.try_acquire("codex_a", "cycle-2", "attempt-2", now + timedelta(minutes=2))
+    other = store.try_acquire("codex_b", "cycle-2", "attempt-3", now + timedelta(minutes=2))
+
+    assert first is not None
+    assert conflict is None
+    assert other is not None
+    assert store.has_active("codex_a", now)
+
+    store.release(first.lease_id)
+    replacement = store.try_acquire("codex_a", "cycle-3", "attempt-4", now + timedelta(minutes=2))
+    assert replacement is not None
+
+
+def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlCodexAuditStore(engine)
+    now = datetime.now(tz=UTC)
+    snapshot = CapacitySnapshot(
+        account_id="codex_a",
+        observed_at=now,
+        buckets=(
+            CapacityBucket(
+                limit_id="codex",
+                primary=CapacityWindow(
+                    used_percent=Decimal("35"),
+                    window_duration_minutes=15,
+                    resets_at=now + timedelta(minutes=15),
+                ),
+                secondary=None,
+                reached_type=None,
+            ),
+        ),
+    )
+    attempt = AttemptAudit(
+        run_id="run-1",
+        cycle_id="cycle-before-ledger-write",
+        account_id="codex_a",
+        attempt=1,
+        observed_at=now,
+        status="FAILED",
+        failure=FailureClass.RATE_LIMIT,
+        bundle_hash="bundle-hash",
+        usage={"input_tokens": 10},
+    )
+
+    store.record_capacity(snapshot)
+    store.record_attempt(attempt)
+
+    with engine.connect() as connection:
+        capacity = connection.execute(select(codex_account_capacity)).mappings().one()
+        run = connection.execute(select(codex_runs)).mappings().one()
+    serialized = str(capacity["payload"]) + str(run["payload"])
+    assert capacity["account_id"] == "codex_a"
+    assert run["error_class"] == "RATE_LIMIT"
+    assert "codex_home" not in serialized
+    assert "auth.json" not in serialized

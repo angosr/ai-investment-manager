@@ -1,0 +1,15 @@
+.coverage
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+data/
+upstream/
+run-bundles/
+.env
+file:*
+*.sqlite
+*.sqlite3
+*.db

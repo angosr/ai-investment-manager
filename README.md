@@ -1,0 +1,224 @@
+# Market Intel（NewsNow + TrendRadar + Codex）
+
+这是 Codex 量化交易系统的工程工作区。当前持续运行的是公开行情 + Mock 撮合的 Shadow；仓库已实现 Binance Spot Testnet 的签名 REST、幂等订单、保护单和主动对账边界，但 LIVE 仍被配置层禁止。凭证只从本机环境读取，不进入信息面板、日志或版本库。
+
+完整工程方案见 [ARCHITECTURE.md](./ARCHITECTURE.md)。实现按该文档推进，设计与代码出现冲突时必须先明确并修正文档或实现，不能形成第二套隐含架构。
+
+当前设计—代码对照、机械验证结果与真实部署阻塞项见 [docs/IMPLEMENTATION_AUDIT.md](./docs/IMPLEMENTATION_AUDIT.md)。
+
+架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。信息源自身仍可按 PUSH、STREAM 或 POLL 获取；当前 Collector 每 60 秒读取 TrendRadar，而仓库 Compose 中 TrendRadar 上游默认每 10 分钟更新，因此它不属于低延迟新闻源。新事实一旦入库便通过 Outbox + PostgreSQL NOTIFY 立即唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
+
+## 当前实现状态
+
+已经实现：
+
+- NewsNow、TrendRadar 与只读 MCP 信息采集层。
+- `quant_core` Python 模块化单体基础。
+- 冻结行情/账户快照、未来数据隔离、特征计算和有容量边界的信息面板。
+- `OFF` 程序策略管线、单阈值合成、频率与预期净边际门禁。
+- 确定性风控、仓位计算、下单前原子风险预算占用和 Kill Switch。
+- 包含手续费、点差、滑点、限价未成交和部分成交语义的幂等 Mock 撮合器。
+- 成交后账户对账、部分成交撤余单、保护性退出和最长持有时间管理；持仓关闭事实与风险释放同事务提交。
+- 止损、保护失败紧急退出、净收益、费用、MFE/MAE 与持有时间归因。
+- 事务型事实仓储、统一指标、SQLite 快速测试和 PostgreSQL 契约测试。
+- 固定回放样本，可验证同一周期不会重复记账或重复下单。
+- `PROPOSE` 管线：AI 与程序策略独立产出候选，AI 结果仍必须通过确定性校验、合成、频率和风控。
+- 不可变 Codex 运行包、固定 JSON Schema、JSONL 事件校验和锁定 CLI 版本检查。
+- 三账号显式白名单 Router：官方 App Server 额度探测、最紧张额度窗口计算、数据库单并发租约和受限故障切换。
+- 账号切换只改变进程级 `CODEX_HOME`；不扫描目录、不读取 `auth.json`、不继承 API Key/Access Token。
+- 系统宪法、固定回归集、结构化变更提案、负面知识、Champion/Challenger 与人工晋级门禁。
+- Phase A 机械验收命令；未取得真实隔离证据时会明确返回 `BLOCKED`。
+- TrendRadar Streamable HTTP MCP 只读适配器、标准事件去重/时间可见性和确定性事件/心跳触发。
+- 直接资产、关键跨资产和一般跨资产三级事件路由；宏观/地缘信息可进入 BTC/ETH 面板，关键事件合并触发，一般事件不会单独消耗分析调用。
+- 标准事件、逐笔市场冲击与 Trigger Outbox 的事务化写入；PostgreSQL NOTIFY 只作低延迟提示，可靠性来自可重放 Outbox。
+- 每品种/Pipeline 唯一的 Temporal `TriggerCoordinatorWorkflow`：事件规则、去重、合并、single-flight、有界 pending、硬调用间隔、每小时预算、多未来时间点、Heartbeat、暂停和 Continue-As-New。
+- 版本化 `AnalysisTriggerPlan` 与完整 `TriggerPlanPatch`：增删改时间点和事件规则、暂停/恢复、幂等 `TRIGGER_NOW`；revision、Manifest 和硬资源上限由确定性 Gate 校验。
+- Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
+- TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和完整成本后的剩余净优势门禁。
+- 受监督的信息采集角色，按类型化策略将 TrendRadar MCP 内容持续标准化到 PostgreSQL；失败不会污染已有事实。
+- Temporal 父 `AnalysisCycleWorkflow` 与稳定 ID 子 `ExecutionWorkflow`：决策事务原子写入风险占用、不可变 `ExecutionRequest` 和 `EXECUTION_PENDING`，执行事务原子写入订单、成交、账户、风险终态和持仓；时间跳跃、崩溃重试及真实本地服务端均已验证。
+- Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
+- 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
+- `OutcomeEvaluationWorkflow`：固定窗口和结算宽限期后聚合实际运行周期与权威逐笔结果；未决持仓保持 `INCOMPLETE`，完整报告给出费用后净收益、Profit Factor、最大回撤和永不交易基线增量。
+- `GovernanceCycleWorkflow`：从有界结构化事实构建无聊天历史的 `GovernanceSnapshot`，只暴露当前 Champion 已预登记的评估计划；复用同一三账号额度/租约 Router 运行全新 Governor，并以确定性门禁原子登记一个 `ChangeProposal` 或 `NoChange`。
+- `VersionEvaluationWorkflow`：冻结提案、预登记计划、Challenger Manifest 与候选制品哈希，只按固定顺序调用受信任 StageRunner；阶段结果必须绑定原始证据哈希，失败后停止昂贵后续阶段且不能伪造缺失阶段。
+- `ReleaseWorkflow`：复核当前 Champion、候选父版本、制品哈希、复杂度及全部预登记阶段；只幂等登记 `AWAITING_HUMAN_APPROVAL` 或 `BLOCKED`，不具备修改 Champion、部署或切流能力。
+- Temporal 是唯一流程状态所有者；原自建 SQL Workflow 租约表已通过迁移退役，PostgreSQL 只保存业务事实。
+- Binance 官方公开 REST 启动补洞、组合 WebSocket 行情、断线恢复、有界持久化采样和无未来数据快照；流上逐条检测与事实库存储精度分离。
+- Binance Spot Testnet HMAC/服务器时间同步、交易规则与精度、`clientOrderId` 查询优先、未知提交恢复、成交查询、保护单和远端账户/订单对账；部分成交保护单会冻结自动退出，避免重复卖出。
+- 单领导者 Trigger Dispatcher：只投递 Outbox；批处理、定时和 single-flight 由可恢复的 TriggerCoordinator 持有。
+- 版本化 MetricDefinition、显式告警动作、同快照回放/消融/成本后净收益比较报告。
+- Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
+- Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
+
+尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；用户给出第三个获准 Codex 账号目录、完成生产分析容器的恶意读取隔离验收、真实 Governor 冒烟，以及由独立可信环境提供的真实候选制品与各阶段评估器。真实 Codex Analyst 的单次冻结面板烟测已经成功；`/home/aiuser/.codex` 与 `/home/aiuser/.codex2` 的额度探测当前均健康且真实选择了剩余更多的后者，但持续 PROPOSE 仍因第三账号与 OS 隔离门禁保持关闭。Spot Testnet 适配器已实现，本机凭证验收当前被 Binance `-2015` 拒绝，因此订单 Worker 未启动；LIVE 适配器和权限仍不存在。
+
+`config/quant-core.yaml` 中三个账号是禁用的部署占位符。部署者必须人工选定恰好三个获准目录并完成登录、额度接口与 OS/Profile 隔离检查；仓库不会因为主机上出现第四个目录而自动纳入。当前 `enabled: false` 是刻意的失败关闭状态。
+
+## 固定版本
+
+- TrendRadar: `8ee26026ba6c11dec41a95fb3895a7162876caa1`
+- NewsNow: `v0.0.41`
+
+上游源码放在本地忽略目录 `upstream/`，运行配置和数据分别位于 `config/` 与 `data/`。
+
+## 使用
+
+### 运行量化核心测试
+
+```bash
+cd market-intel
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/ruff check src tests migrations
+.venv/bin/pytest
+.venv/bin/quant-core run-mock \
+  --config config/quant-core.yaml \
+  --input fixtures/replay/btc_uptrend.json
+```
+
+默认测试不会消耗任何 Codex 账号额度。Runner、App Server 握手、账号选择、换号边界和凭据环境隔离均由 Mock/契约样本验证；真实 Codex 烟测必须单独显式执行。
+
+检查当前 Phase A 门禁：
+
+```bash
+.venv/bin/quant-core phase-a-audit \
+  --config config/quant-core.yaml \
+  --project-root .
+```
+
+当前该命令预期非零退出，因为真实账号选择和 OS/Profile 恶意读取隔离仍由部署者完成。详见 [docs/OPERATIONS.md](./docs/OPERATIONS.md)。
+
+数据库初始化和升级使用版本化迁移：
+
+```bash
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
+  .venv/bin/alembic upgrade head
+```
+
+PostgreSQL 契约测试使用独立 Mock 数据库：
+
+```bash
+docker compose --profile quant up -d postgres
+QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+  .venv/bin/pytest tests/integration/test_postgres.py
+```
+
+测试会重建名称包含 `quant_core_test` 的专用数据库 Schema，禁止把生产数据库 URL 传给该测试。
+
+### 运行 Temporal Mock 闭环
+
+本地 Compose 使用固定摘要的 Temporal `auto-setup` 和独立 PostgreSQL，仅用于开发与验收：
+
+```bash
+docker compose --profile quant up -d postgres temporal
+QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+  .venv/bin/alembic upgrade head
+QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+  .venv/bin/quant-core temporal-worker --config config/quant-core.yaml
+```
+
+另一个终端可提交固定回放输入：
+
+```bash
+.venv/bin/quant-core submit-analysis \
+  --config config/quant-core.yaml \
+  --input fixtures/replay/btc_uptrend.json
+```
+
+`submit-analysis` 是诊断入口，不替代生产触发服务。模拟 Worker 只允许 `MOCK`/`SHADOW`；`PROPOSE` 必须显式装配经过隔离验收的 Codex Analyst，其他情况失败关闭。
+
+### 运行实时 Shadow 角色
+
+不要修改或复制整份默认 Mock 配置。仓库的 `config/quant-core.shadow.yaml` 仅继承基线并覆盖 Shadow 环境字段；部署时可复制这份小型覆盖文件，并把 `temporal.namespace` 改为与该事实库一一绑定的独立 namespace。先执行安全审计：
+
+```bash
+.venv/bin/quant-core shadow-audit \
+  --config config/quant-core.shadow.yaml \
+  --project-root .
+```
+
+该审计允许公开只读行情和 Mock 撮合，不会把真实 Codex 的账号目录与 OS 隔离两项 `BLOCKED` 伪造成通过。完成迁移并创建独立 Temporal namespace 后，由进程监督器分别运行：
+
+```bash
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  information-collector --config config/quant-core.shadow.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  market-stream --config config/quant-core.shadow.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  temporal-worker --config config/quant-core.shadow.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  trigger-service --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  lifecycle-service --config config/quant-core.shadow.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  reconciliation-service --config config/quant-core.shadow.yaml
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
+  outcome-evaluation-service --config config/quant-core.shadow.yaml
+```
+
+七个角色共享版本化契约但权限可分别收窄。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
+
+### 运行 Binance Spot Testnet
+
+`config/quant-core.testnet.yaml` 是小型环境覆盖：独立数据库/Temporal namespace、AI OFF、每仓最多 25 USDT、每天最多 2 单；`config/release-manifest.testnet.yaml` 与其行为版本严格绑定。先在本机 `.env` 填写由 `testnet.binance.vision` 创建的 Testnet Key/Secret，不要把密钥发到聊天或提交到 Git。验证顺序：
+
+```bash
+set -a; . ./.env; set +a
+.venv/bin/quant-core binance-testnet-audit \
+  --config config/quant-core.testnet.yaml
+# 只有 audit ready=true 后才把本机 ORDER_SUBMISSION_ENABLED 改为 true。
+.venv/bin/quant-core binance-testnet-order-test \
+  --symbol BTCUSDT --config config/quant-core.testnet.yaml
+```
+
+`order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。它通过后，才由进程监督器用 Testnet 配置和 `release-manifest.testnet.yaml` 启动与 Shadow 相同的七个角色。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前本机 audit 返回 Binance `401/-2015`，所以提交环境门禁仍为 `false`，未启动 Testnet Worker。
+
+### 运行观测台（只读 Web）
+
+只读运行观测台把既有业务事实投影成 Web 可视化：全局健康、权益曲线、决策/世界事件双时间线（AI 摘要可展开、信息快照抽屉）、持仓、AI 账号用量与主机资源。**只读，无任何控制操作**。设计见 [docs/DASHBOARD_DESIGN.md](./docs/DASHBOARD_DESIGN.md)。
+
+先安装可选依赖并构建前端（一次即可）：
+
+```bash
+.venv/bin/pip install -e '.[dashboard]'
+cd web && npm install && npm run build && cd ..
+```
+
+再启动只读服务（**单进程同时托管前端与 API**，无需另起前端；仅绑本机）：
+
+```bash
+QUANT_CORE_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/quant-core \
+  dashboard-service --config '<私有配置>' --host 127.0.0.1 --port 8090
+```
+
+浏览器打开 http://127.0.0.1:8090 即可。命令会自动托管 `web/dist`（改前端只需重跑一次 `npm run build`）。前端热更新开发可另用 `cd web && npm run dev`（Vite 会把 `/api` 代理到 `:8090`）。观测台只用确认为纯读的取数路径，不写库、不下单、不改配置。
+
+AI 关闭的 Shadow/Testnet 诊断可通过 `trigger-now` 走同一个版本化 TriggerPlan 门禁立即触发，不得直接写分析周期或下单事实。
+
+### 运行信息采集层
+
+```bash
+./market-intel/start.sh
+```
+
+脚本会自动拉取并核验固定版本，然后构建和启动服务；已存在且版本正确时会直接复用。
+
+本机入口：
+
+- NewsNow: http://127.0.0.1:4444
+- TrendRadar 报告: http://127.0.0.1:8080
+- TrendRadar MCP: http://127.0.0.1:3333/mcp
+
+Codex 的项目级 MCP 配置位于 `../.codex/config.toml`。新开 Codex 会话后可直接要求它按 `SIGNAL_PROMPT.md` 聚合和研判。
+
+配置只向 Codex 暴露查询、分析和正文读取工具；通知发送、远程同步、版本检查和手动采集均不在允许列表。采集每 10 分钟运行一次。
+
+停止服务：
+
+```bash
+docker compose -f market-intel/docker-compose.yml down
+```
+
+`down` 不会删除 NewsNow 数据卷；不要添加 `-v`，除非明确要清空历史数据。

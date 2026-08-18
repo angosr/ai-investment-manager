@@ -1,0 +1,103 @@
+.empty {
+  padding: 20px 16px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 62px 1fr auto;
+  gap: 13px;
+  align-items: start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 3px solid transparent;
+}
+.row:last-child {
+  border-bottom: 0;
+}
+.shock {
+  border-left-color: var(--warn);
+}
+.news {
+  border-left-color: var(--line);
+}
+.time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.body {
+  min-width: 0;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kind {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.newsKind {
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.shockKind {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.src {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.inj {
+  font-size: 10px;
+  color: var(--neg);
+  border: 1px solid var(--neg);
+  border-radius: 2px;
+  padding: 0 5px;
+}
+.title {
+  font-size: 13px;
+  margin-top: 5px;
+  color: var(--text);
+}
+.fed {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.fed b {
+  color: var(--accent-line);
+  font-family: var(--font-mono);
+}
+.right {
+  text-align: right;
+  white-space: nowrap;
+}
+.impact {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.bar {
+  width: 52px;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 5px;
+  margin-left: auto;
+}
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent-line);
+}

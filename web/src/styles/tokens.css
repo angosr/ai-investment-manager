@@ -1,0 +1,98 @@
+/* 设计令牌与全局基线。三态主题：裸 :root 为浅色，dark 在深色系统与显式切换时生效。 */
+:root {
+  --font-body: "Noto Sans SC", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Space Grotesk", sans-serif;
+
+  --ink: #eef0f4;
+  --panel: #ffffff;
+  --panel-2: #f6f7f9;
+  --line: #dce0e7;
+  --line-soft: #e7eaf0;
+  --text: #1a2330;
+  --muted: #5a6675;
+  --faint: #8b95a3;
+  --accent: #9a6300;
+  --accent-line: #c98a17;
+  --accent-glow: rgba(240, 180, 41, 0.16);
+  --pos: #1f9b63;
+  --neg: #c6474b;
+  --warn: #b0770a;
+  --pos-soft: rgba(31, 155, 99, 0.12);
+  --neg-soft: rgba(198, 71, 75, 0.12);
+  --warn-soft: rgba(240, 180, 41, 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #0c0f14;
+    --panel: #141922;
+    --panel-2: #10151d;
+    --line: #232b36;
+    --line-soft: #1b222c;
+    --text: #d8dee9;
+    --muted: #7c8797;
+    --faint: #5b6572;
+    --accent: #f0b429;
+    --accent-line: #f0b429;
+    --accent-glow: rgba(240, 180, 41, 0.14);
+    --pos: #5fb894;
+    --neg: #e0777a;
+    --warn: #f0b429;
+    --pos-soft: rgba(95, 184, 148, 0.12);
+    --neg-soft: rgba(224, 119, 122, 0.12);
+    --warn-soft: rgba(240, 180, 41, 0.13);
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #0c0f14;
+  --panel: #141922;
+  --panel-2: #10151d;
+  --line: #232b36;
+  --line-soft: #1b222c;
+  --text: #d8dee9;
+  --muted: #7c8797;
+  --faint: #5b6572;
+  --accent: #f0b429;
+  --accent-line: #f0b429;
+  --accent-glow: rgba(240, 180, 41, 0.14);
+  --pos: #5fb894;
+  --neg: #e0777a;
+  --warn: #f0b429;
+  --pos-soft: rgba(95, 184, 148, 0.12);
+  --neg-soft: rgba(224, 119, 122, 0.12);
+  --warn-soft: rgba(240, 180, 41, 0.13);
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 700;
+}
+button {
+  font-family: inherit;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

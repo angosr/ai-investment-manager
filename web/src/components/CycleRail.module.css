@@ -1,0 +1,80 @@
+.wrap {
+  overflow-x: auto;
+  padding: 14px 2px 6px;
+}
+.rail {
+  display: flex;
+  align-items: flex-start;
+  min-width: 640px;
+}
+.gate {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+.node {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--panel);
+  z-index: 2;
+}
+.seg {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--line);
+  z-index: 1;
+}
+.label {
+  font-size: 10.5px;
+  margin-top: 8px;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.35;
+  max-width: 62px;
+}
+.label em {
+  display: block;
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--faint);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+.pass .node {
+  border-color: var(--pos);
+  background: var(--pos);
+}
+.pass .seg,
+.soft .seg {
+  background: var(--pos);
+}
+.pass .label,
+.soft .label {
+  color: var(--text);
+}
+.soft .node {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  background: var(--accent-glow);
+}
+.stop .node {
+  border-color: var(--neg);
+  background: var(--neg);
+}
+.stop .label {
+  color: var(--neg);
+}
+.skip .node {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+.skip .label {
+  color: var(--faint);
+}

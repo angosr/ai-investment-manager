@@ -1,0 +1,28 @@
+manifest_id: release-testnet-bootstrap-v1
+created_at: 2026-08-18T00:00:00Z
+status: CHAMPION
+code_version: working-tree-bootstrap
+constitution_version: constitution-v1
+parent_manifest_id: release-bootstrap-v1
+complexity_score: 1
+component_versions:
+  - [feature, feature-v1]
+  - [panel, panel-policy-v1]
+  - [strategy, price-trend-v2]
+  - [composition, single-threshold-v1]
+  - [frequency, testnet-frequency-v1]
+  - [risk, testnet-risk-v1]
+  - [execution, binance-spot-testnet-execution-v1]
+  - [reconciliation, binance-spot-testnet-reconciliation-v1]
+  - [outcome_evaluation, outcome-window-v1]
+  - [trigger, analysis-trigger-v2]
+  - [temporal, temporal-analysis-v1]
+  - [market_data, binance-public-testnet-v1]
+  - [shadow, shadow-simulation-v1]
+  - [information, trendradar-collector-v2]
+  - [pipeline, testnet-programmatic-v1]
+  - [proposal, codex-proposal-v2]
+  - [codex_runtime, codex-runtime-v1]
+  - [codex_accounts, local-three-account-registry-v1]
+  - [binance_testnet, binance-spot-testnet-v1]
+  - [governance, governance-cycle-v1]

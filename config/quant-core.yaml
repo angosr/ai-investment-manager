@@ -1,0 +1,226 @@
+feature:
+  version: feature-v1
+  trend_threshold: "0.003"
+  volatility_window: 8
+
+panel:
+  version: panel-policy-v1
+  schema_version: panel-v1
+  max_characters: 48000
+  max_evidence: 20
+  max_per_source: 5
+  max_market_age_seconds: 180
+
+strategy:
+  strategy_id: price-trend
+  version: price-trend-v2
+  family: price-trend
+  decision_lane: EVENT_ANALYSIS
+  score_threshold: "0.55"
+  stop_atr_multiple: "1.5"
+  horizon_minutes: 60
+  expected_gross_bps: "24"
+  calibration_ref: bootstrap-calibration-v1
+  calibration_sample_size: 100
+  minimum_calibration_samples: 30
+  expected_edge_half_life_seconds: 900
+  maximum_source_age_seconds: 180
+  maximum_decision_latency_ms: 30000
+  maximum_entry_latency_ms: 60000
+
+composition:
+  version: single-threshold-v1
+  minimum_raw_score: "0.55"
+
+frequency:
+  version: frequency-v2
+  cooldown_minutes: 30
+  maximum_orders_per_day: 8
+  minimum_net_edge_bps: "4"
+  fee_bps: "10"
+  expected_slippage_bps: "2"
+  infrastructure_bps: "0.5"
+  funding_bps: "0"
+  model_bps: "0.25"
+  latency_bps: "0.5"
+  adverse_selection_bps: "0.75"
+  uncertainty_buffer_bps: "1.5"
+
+risk:
+  version: risk-v1
+  symbol_allowlist: [BTCUSDT, ETHUSDT]
+  maximum_market_age_seconds: 180
+  maximum_account_age_seconds: 60
+  maximum_risk_fraction: "0.005"
+  maximum_total_risk_fraction: "0.02"
+  maximum_position_notional: "2000"
+  maximum_daily_loss: "200"
+  maximum_drawdown_fraction: "0.05"
+  minimum_order_notional: "10"
+  quantity_step: "0.000001"
+  reservation_ttl_seconds: 120
+  kill_switch: false
+
+execution:
+  version: mock-execution-v1
+  fee_bps: "10"
+  market_slippage_bps: "2"
+  latency_ms: 250
+  default_fill_fraction: "1"
+
+reconciliation:
+  version: reconciliation-v1
+  poll_seconds: 60
+  maximum_report_age_seconds: 180
+  balance_tolerance: "0.00000001"
+  position_quantity_tolerance: "0.00000001"
+
+outcome_evaluation:
+  version: outcome-window-v1
+  window_hours: 24
+  settlement_grace_minutes: 120
+  poll_seconds: 300
+
+governance:
+  version: governance-cycle-v1
+  snapshot_lookback_days: 90
+  maximum_metric_windows: 30
+  maximum_failed_experiments: 20
+  maximum_open_proposals: 20
+  maximum_evaluation_plans: 10
+  complexity_limit: 10
+  cycle_interval_hours: 24
+
+trigger:
+  version: analysis-trigger-v2
+  heartbeat_minutes: 15
+  debounce_seconds: 120
+  high_impact_threshold: "0.80"
+  volatility_jump_threshold: "0.02"
+  minimum_call_interval_seconds: 15
+  maximum_ai_calls_per_hour: 12
+  maximum_scheduled_wakeups: 64
+  maximum_event_rules: 32
+  maximum_batch_size: 100
+  maximum_pending_triggers: 1000
+  trigger_expiry_seconds: 900
+  outbox_fallback_poll_seconds: 1.0
+  dispatcher_advisory_lock_key: 817221901
+
+temporal:
+  version: temporal-analysis-v1
+  address: 127.0.0.1:7233
+  namespace: default
+  task_queue: quant-core-analysis-v1
+  lifecycle_task_queue: quant-core-lifecycle-v1
+  reconciliation_task_queue: quant-core-reconciliation-v1
+  outcome_evaluation_task_queue: quant-core-outcome-evaluation-v1
+  governance_task_queue: quant-core-governance-v1
+  version_evaluation_task_queue: quant-core-version-evaluation-v1
+  release_task_queue: quant-core-release-v1
+  trigger_task_queue: quant-core-trigger-v1
+  activity_start_to_close_seconds: 240
+  activity_schedule_to_close_seconds: 600
+  retry_initial_seconds: 2
+  retry_maximum_seconds: 30
+  retry_backoff_coefficient: 2.0
+  retry_maximum_attempts: 3
+  worker_threads: 4
+
+market_data:
+  version: binance-public-shadow-v2
+  symbols: [BTCUSDT, ETHUSDT]
+  interval: 5m
+  bar_window: 64
+  rest_base_url: https://api.binance.com
+  websocket_base_url: wss://stream.binance.com:9443
+  rest_timeout_seconds: 10
+  stream_silence_seconds: 60
+  planned_reconnect_seconds: 85800
+  reconnect_initial_seconds: 1
+  reconnect_maximum_seconds: 30
+  quote_persist_interval_ms: 1000
+  trade_persist_interval_ms: 1000
+
+shadow:
+  version: shadow-simulation-v1
+  initial_quote_balance: "10000"
+  analysis_deadline_seconds: 300
+  lifecycle_poll_seconds: 10
+
+information:
+  version: trendradar-collector-v2
+  trendradar_mcp_url: http://127.0.0.1:3333/mcp
+  source_timezone: Asia/Shanghai
+  platforms: []
+  read_limit: 100
+  request_timeout_seconds: 15
+  collection_interval_seconds: 60
+
+pipeline:
+  version: off-pipeline-v1
+  ai_mode: "OFF"
+
+proposal:
+  version: codex-proposal-v2
+  producer_id: codex-analyst
+  strategy_family: ai-contextual
+  minimum_confidence: "0.55"
+  maximum_horizon_minutes: 240
+  expected_gross_bps: "24"
+  calibration_ref: codex-shadow-calibration-v1
+  expected_edge_half_life_seconds: 1800
+
+# 部署时只替换这里的三个显式目录；系统不会扫描或自动纳入其他账号。
+# 真实调用保持关闭，直到隔离门禁和三个目录的登录健康检查均通过。
+codex_runtime:
+  version: codex-runtime-v1
+  enabled: false
+  isolation_verified: false
+  binary: /usr/bin/codex
+  bundle_root: /var/lib/quant-core/codex-runs
+  expected_cli_version: codex-cli 0.147.0
+  model: gpt-5.6-sol
+  reasoning_effort: high
+  timeout_seconds: 180
+  capacity_probe_timeout_seconds: 10
+  capacity_ttl_seconds: 60
+  lease_ttl_seconds: 240
+  max_account_switches: 2
+
+codex_accounts:
+  version: local-three-account-registry-v1
+  accounts:
+    - account_id: codex_a
+      codex_home: /replace/with/approved/codex-a
+      enabled: false
+      capacity_weight: "1"
+      max_concurrency: 1
+    - account_id: codex_b
+      codex_home: /replace/with/approved/codex-b
+      enabled: false
+      capacity_weight: "1"
+      max_concurrency: 1
+    - account_id: codex_c
+      codex_home: /replace/with/approved/codex-c
+      enabled: false
+      capacity_weight: "1"
+      max_concurrency: 1
+
+binance_testnet:
+  version: binance-spot-testnet-v1
+  rest_base_url: https://testnet.binance.vision/api
+  recv_window_ms: 5000
+  request_timeout_seconds: 10
+  time_sync_ttl_seconds: 30
+  quote_asset: USDT
+  credential_environment_prefix: QUANT_CORE_BINANCE
+
+deployment:
+  version: deployment-v1
+  stage: MOCK
+  shadow_market_data_enabled: false
+  testnet_order_submission_enabled: false
+  live_order_submission_enabled: false
+  credential_profile: null
+  manual_approval_ref: null

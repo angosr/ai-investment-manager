@@ -1,0 +1,21 @@
+.res {
+  padding: 12px 0 4px;
+}
+.row {
+  margin-bottom: 14px;
+}
+.row:last-child {
+  margin-bottom: 2px;
+}
+.lbl {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.k {
+  color: var(--muted);
+}
+.v {
+  font-weight: 500;
+}

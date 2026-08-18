@@ -1,0 +1,43 @@
+# Finance-focused keyword groups for TrendRadar.
+# This layer is only a deterministic relevance filter. Codex performs synthesis.
+
+[GLOBAL_FILTER]
+/彩票|博彩|中奖|娱乐八卦/
+
+[WORD_GROUPS]
+
+[央行与流动性]
+/央行|人民银行|美联储|Federal Reserve|\bFed\b|欧洲央行|\bECB\b|日本央行|\bBOJ\b|降息|加息|利率|准备金|流动性|量化宽松|缩表/
+
+[通胀与就业]
+/通胀|CPI|PPI|PCE|非农|就业|失业率|工资|PMI|GDP|零售销售|消费者信心/
+
+[财政与监管]
+/财政|国债|美债|Treasury|赤字|关税|制裁|出口管制|反垄断|监管|证监会|SEC|交易所/
+
+[中国市场]
+/A股|上证|深证|创业板|科创板|北证|港股|恒生|人民币|北向资金|南向资金|房地产|城投|地方债/
+
+[美国与全球市场]
+/标普|纳斯达克|道琼斯|S&P 500|Nasdaq|Dow Jones|VIX|美元指数|日经|欧洲股市|新兴市场/
+
+[公司与财报]
+/财报|业绩|营收|利润|指引|回购|增持|减持|分红|并购|重组|IPO|earnings|guidance|buyback|merger/
+
+[AI与半导体]
+/人工智能|\bAI\b|大模型|算力|GPU|芯片|半导体|光刻|HBM|英伟达|NVIDIA|台积电|TSMC|AMD|华为|海思|中芯国际/
+
+[能源与大宗]
+/原油|布伦特|WTI|天然气|OPEC|黄金|白银|铜|铁矿石|煤炭|锂|稀土|大宗商品|库存|产量/
+
+[汇率与利差]
+/汇率|美元|人民币|欧元|日元|英镑|外汇|利差|收益率曲线|期限结构|基点|basis point/
+
+[加密资产]
+/比特币|Bitcoin|BTC|以太坊|Ethereum|ETH|加密货币|稳定币|ETF|链上|交易所储备/
+
+[地缘政治与供应链]
+/战争|冲突|停火|航运|红海|海峡|供应链|罢工|选举|制裁|关税|出口禁令/
+
+[量化研究]
+/量化|因子|套利|波动率|期权|期货|做市|回测|风险溢价|machine learning|深度学习|强化学习/

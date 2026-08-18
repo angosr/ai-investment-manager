@@ -1,0 +1,24 @@
+version: phase-a-regression-v1
+immutable: true
+cases:
+  - id: replay_uptrend_off
+    fixture: fixtures/replay/btc_uptrend.json
+    invariants: [replay_equal, no_duplicate_order, deterministic_risk]
+  - id: future_data_rejected
+    test: tests/test_domain.py
+    invariants: [no_future_observation]
+  - id: prompt_injection_is_data
+    test: tests/test_panel.py
+    invariants: [sanitized, tool_permissions_unchanged]
+  - id: codex_schema_failure
+    test: tests/test_cycle.py
+    invariants: [propose_no_trade, no_account_failover]
+  - id: account_rate_limit_failover
+    test: tests/test_analyst.py
+    invariants: [same_bundle, bounded_failover, explicit_whitelist]
+  - id: codex_offline_position_exit
+    test: tests/test_lifecycle.py
+    invariants: [stop_without_codex, max_holding_without_codex]
+  - id: concurrent_risk_reservation
+    test: tests/test_risk_budget.py
+    invariants: [portfolio_budget_atomic]

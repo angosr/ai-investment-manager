@@ -1,0 +1,40 @@
+extends: quant-core.shadow.yaml
+
+# Testnet 使用独立事实库（由 QUANT_CORE_DATABASE_URL 指定）和 Temporal namespace。
+temporal:
+  namespace: testnet-20260818
+
+market_data:
+  version: binance-public-testnet-v1
+  rest_base_url: https://testnet.binance.vision
+  websocket_base_url: wss://stream.testnet.binance.vision
+
+frequency:
+  version: testnet-frequency-v1
+  maximum_orders_per_day: 2
+
+risk:
+  version: testnet-risk-v1
+  maximum_risk_fraction: "0.001"
+  maximum_total_risk_fraction: "0.005"
+  maximum_position_notional: "25"
+  maximum_daily_loss: "5"
+
+execution:
+  version: binance-spot-testnet-execution-v1
+
+reconciliation:
+  version: binance-spot-testnet-reconciliation-v1
+  poll_seconds: 30
+
+pipeline:
+  version: testnet-programmatic-v1
+  ai_mode: "OFF"
+
+deployment:
+  stage: TESTNET
+  shadow_market_data_enabled: true
+  testnet_order_submission_enabled: true
+  live_order_submission_enabled: false
+  credential_profile: env:QUANT_CORE_BINANCE
+  manual_approval_ref: user-approval-20260818

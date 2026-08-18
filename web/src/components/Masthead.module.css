@@ -1,0 +1,86 @@
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+.inner {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.logo {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.logo b {
+  color: var(--accent-line);
+}
+.stage {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.spacer {
+  margin-left: auto;
+}
+.clock {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  white-space: nowrap;
+}
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.pulse[data-off="true"] {
+  background: var(--neg);
+  animation: none;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.time {
+  font-size: 13px;
+}
+.z {
+  font-size: 10px;
+  color: var(--faint);
+}
+.theme {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.theme:hover {
+  color: var(--text);
+  border-color: var(--faint);
+}

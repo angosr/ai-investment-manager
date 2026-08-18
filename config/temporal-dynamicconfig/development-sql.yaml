@@ -1,0 +1,6 @@
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # 仅限本地开发；生产部署不得沿用此设置。
+    constraints: {}

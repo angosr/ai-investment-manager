@@ -1,0 +1,49 @@
+{
+  "market": {
+    "cycle_id": "cycle-replay-001",
+    "symbol": "BTCUSDT",
+    "as_of": "2026-08-18T12:00:00Z",
+    "observed_at": "2026-08-18T11:59:58Z",
+    "bid": "101.19",
+    "ask": "101.21",
+    "last": "101.20",
+    "source": "recorded-mock",
+    "bars": [
+      {"event_time": "2026-08-18T11:20:00Z", "observed_at": "2026-08-18T11:20:01Z", "open": "99.90", "high": "100.20", "low": "99.80", "close": "100.00", "volume": "10"},
+      {"event_time": "2026-08-18T11:25:00Z", "observed_at": "2026-08-18T11:25:01Z", "open": "100.00", "high": "100.35", "low": "99.95", "close": "100.25", "volume": "11"},
+      {"event_time": "2026-08-18T11:30:00Z", "observed_at": "2026-08-18T11:30:01Z", "open": "100.25", "high": "100.50", "low": "100.15", "close": "100.40", "volume": "12"},
+      {"event_time": "2026-08-18T11:35:00Z", "observed_at": "2026-08-18T11:35:01Z", "open": "100.40", "high": "100.70", "low": "100.30", "close": "100.60", "volume": "13"},
+      {"event_time": "2026-08-18T11:40:00Z", "observed_at": "2026-08-18T11:40:01Z", "open": "100.60", "high": "100.85", "low": "100.50", "close": "100.75", "volume": "14"},
+      {"event_time": "2026-08-18T11:45:00Z", "observed_at": "2026-08-18T11:45:01Z", "open": "100.75", "high": "101.00", "low": "100.65", "close": "100.90", "volume": "15"},
+      {"event_time": "2026-08-18T11:50:00Z", "observed_at": "2026-08-18T11:50:01Z", "open": "100.90", "high": "101.15", "low": "100.80", "close": "101.05", "volume": "16"},
+      {"event_time": "2026-08-18T11:55:00Z", "observed_at": "2026-08-18T11:55:01Z", "open": "101.05", "high": "101.30", "low": "100.95", "close": "101.20", "volume": "18"}
+    ]
+  },
+  "account": {
+    "cycle_id": "cycle-replay-001",
+    "as_of": "2026-08-18T12:00:00Z",
+    "observed_at": "2026-08-18T11:59:50Z",
+    "quote_balance": "10000",
+    "positions": [],
+    "open_order_count": 0,
+    "daily_pnl": "0",
+    "drawdown_fraction": "0",
+    "reconciled": true
+  },
+  "events": [
+    {
+      "evidence_id": "evt-official-001",
+      "event_time": "2026-08-18T11:40:00Z",
+      "observed_at": "2026-08-18T11:41:00Z",
+      "source": "exchange-announcement",
+      "title": "交易基础设施维护完成",
+      "body": "交易所公告称计划维护已经完成，现货服务运行正常。",
+      "symbols": ["BTCUSDT"],
+      "relevance": "0.8",
+      "impact": "0.4",
+      "source_reliability": "0.95",
+      "novelty": "0.7"
+    }
+  ],
+  "frequency_orders_today": 0
+}

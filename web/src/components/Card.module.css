@@ -1,0 +1,24 @@
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.head h2 {
+  font-size: 13.5px;
+}
+.aside {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+.bodyPadded {
+  padding: 6px 16px 14px;
+}
