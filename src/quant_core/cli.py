@@ -510,6 +510,63 @@ def freeze_event_history_command(
     )
 
 
+@app.command("replay-event-triggers")
+def replay_event_triggers_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="冻结 TriggerPlan 事实库"),
+    ],
+    event_dataset_id: Annotated[str, typer.Option()],
+    symbol: Annotated[str, typer.Option()],
+    replay_start: Annotated[str, typer.Option(help="带时区的回放起点（含）")],
+    replay_end: Annotated[str, typer.Option(help="带时区的回放终点（不含）")],
+    analysis_duration_seconds: Annotated[int, typer.Option(min=0)],
+    event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/event-datasets"
+    ),
+    include_batches: Annotated[bool, typer.Option()] = False,
+) -> None:
+    """复用生产协调规则回放单品种外部事件批次；不调用 Codex 或交易。"""
+
+    from quant_core.research.dataset import HistoricalEventDatasetCatalog
+    from quant_core.research.trigger_replay import (
+        ExternalTriggerReplaySpec,
+        run_external_trigger_replay,
+    )
+
+    loaded = load_config(config)
+    canonical_symbol = symbol.upper()
+    if canonical_symbol not in loaded.market_data.symbols:
+        raise typer.BadParameter("symbol 必须在冻结 MarketDataPolicy 中", param_hint="symbol")
+    plan = SqlTriggerRepository(
+        _runtime_engine(database_url), loaded.trigger
+    ).plan_for_scope(
+        symbol=canonical_symbol,
+        pipeline_id=loaded.pipeline.version,
+    )
+    if plan is None:
+        raise typer.BadParameter("当前 Pipeline 没有冻结 TriggerPlan")
+    result = run_external_trigger_replay(
+        event_dataset=HistoricalEventDatasetCatalog(event_catalog).load(
+            event_dataset_id
+        ),
+        spec=ExternalTriggerReplaySpec.freeze(
+            plan=plan,
+            config=loaded,
+            analysis_duration_seconds=analysis_duration_seconds,
+        ),
+        symbol=canonical_symbol,
+        replay_start=_parse_utc_option(replay_start, name="replay-start"),
+        replay_end=_parse_utc_option(replay_end, name="replay-end"),
+    )
+    payload = result.model_dump(mode="json")
+    payload["batch_count"] = len(result.batches)
+    if not include_batches:
+        payload.pop("batches", None)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @app.command("research-catalog")
 def research_catalog_command(
     evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(

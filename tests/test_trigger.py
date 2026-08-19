@@ -22,8 +22,12 @@ from quant_core.trigger import (
     UpdateWakeup,
     UpsertEventRule,
     build_initial_trigger_plan,
+    build_trigger_event,
     build_trigger_plan_patch,
     carry_forward_trigger_plan,
+    trigger_plan_accepts,
+    trigger_reconsideration,
+    trigger_rule_value,
 )
 from quant_core.trigger_runtime import (
     TemporalTriggerDispatcher,
@@ -31,6 +35,129 @@ from quant_core.trigger_runtime import (
 )
 from quant_core.trigger_sql import TriggerOutboxMessage
 from quant_core.trigger_workflows import coordinator_workflow_id
+
+
+def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(
+    app_config, replay_input
+) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=None,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="news-default",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                minimum_priority=80,
+                coalesce_seconds=120,
+                ordinary_cooldown_seconds=900,
+            ),
+            AnalysisEventRule(
+                rule_id="news-urgent",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                minimum_priority=95,
+                coalesce_seconds=15,
+                ordinary_cooldown_seconds=300,
+            ),
+        ),
+    )
+    ordinary = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=now,
+        observed_at=now,
+        priority=84,
+        dedup_key="ordinary",
+        expires_at=now + timedelta(minutes=15),
+    ).model_dump(mode="json")
+    urgent = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=now,
+        observed_at=now,
+        priority=98,
+        dedup_key="urgent",
+        expires_at=now + timedelta(minutes=15),
+    ).model_dump(mode="json")
+    raw_plan = plan.model_dump(mode="json")
+
+    assert trigger_plan_accepts(raw_plan, ordinary)
+    assert trigger_rule_value(raw_plan, ordinary, "coalesce_seconds") == 120
+    assert trigger_rule_value(raw_plan, urgent, "coalesce_seconds") == 15
+    timing = trigger_reconsideration(
+        plan=raw_plan,
+        pending=(ordinary,),
+        now=now,
+        last_analysis_at=now - timedelta(minutes=5),
+        call_times=(),
+        input_retry_not_before=None,
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+        wake_at_expiry=True,
+    )
+    assert timing.reconsider_at == now + timedelta(minutes=10)
+
+    expiring = {**ordinary, "expires_at": (now + timedelta(seconds=30)).isoformat()}
+    expiry_wakeup = trigger_reconsideration(
+        plan=raw_plan,
+        pending=(expiring,),
+        now=now,
+        last_analysis_at=now,
+        call_times=(),
+        input_retry_not_before=None,
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+        wake_at_expiry=True,
+    )
+    assert expiry_wakeup.reconsider_at == now + timedelta(seconds=30)
+
+
+def test_shared_trigger_timing_enforces_hourly_budget(app_config, replay_input) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=None,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="news",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+            ),
+        ),
+    )
+    event = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=now,
+        observed_at=now,
+        priority=100,
+        dedup_key="budgeted",
+        expires_at=now + timedelta(hours=2),
+    ).model_dump(mode="json")
+    calls = tuple(now - timedelta(minutes=50 - index * 5) for index in range(6))
+
+    timing = trigger_reconsideration(
+        plan=plan.model_dump(mode="json"),
+        pending=(event,),
+        now=now,
+        last_analysis_at=now - timedelta(minutes=5),
+        call_times=calls,
+        input_retry_not_before=None,
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+        wake_at_expiry=True,
+    )
+
+    assert timing.reconsider_at == calls[0] + timedelta(hours=1)
+    assert timing.retained_call_times == calls
 
 
 def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, replay_input) -> None:

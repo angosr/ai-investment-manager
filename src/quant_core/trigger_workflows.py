@@ -18,6 +18,9 @@ from quant_core.trigger import (
     TriggerOutboxKind,
     build_trigger_batch,
     build_trigger_event,
+    trigger_plan_accepts,
+    trigger_reconsideration,
+    trigger_rule_value,
 )
 
 BUILD_TRIGGER_REQUEST_ACTIVITY = "build-trigger-analysis-request-v1"
@@ -224,21 +227,8 @@ class TriggerCoordinatorWorkflow:
         return (raw_request, None) if isinstance(raw_request, dict) else (None, None)
 
     def _accepts(self, trigger: dict[str, Any]) -> bool:
-        trigger_type = trigger.get("trigger_type")
-        if trigger_type == AnalysisTriggerType.AGENT_WAKEUP.value:
-            return True
-        if bool(self._plan.get("ai_paused")):
-            return False
-        if trigger_type == AnalysisTriggerType.HEARTBEAT.value:
-            return True
-        for rule in self._plan.get("event_rules", []):
-            if (
-                rule.get("enabled")
-                and rule.get("trigger_type") == trigger_type
-                and int(trigger.get("priority", 0)) >= int(rule.get("minimum_priority", 0))
-            ):
-                return True
-        return False
+        assert self._plan is not None
+        return trigger_plan_accepts(self._plan, trigger)
 
     def _eligible_pending(self) -> list[dict[str, Any]]:
         if self._plan is None:
@@ -259,56 +249,28 @@ class TriggerCoordinatorWorkflow:
         )
 
     def _required_delay(self, pending: list[dict[str, Any]], now: datetime) -> timedelta:
-        earliest = now
-        if self._input_retry_not_before is not None:
-            earliest = max(earliest, self._input_retry_not_before)
-        if self._last_analysis_at is not None:
-            earliest = max(
-                earliest,
-                self._last_analysis_at
-                + timedelta(seconds=int(self._settings["minimum_call_interval_seconds"])),
-            )
-        one_hour_ago = now - timedelta(hours=1)
-        self._call_times = [item for item in self._call_times if item > one_hour_ago]
-        maximum_calls = int(self._settings["maximum_ai_calls_per_hour"])
-        if len(self._call_times) >= maximum_calls:
-            earliest = max(earliest, self._call_times[0] + timedelta(hours=1))
-        if int(pending[0].get("priority", 0)) < 100:
-            first_seen = min(_parse_time(item["observed_at"]) for item in pending)
-            coalesce = max(self._rule_value(item, "coalesce_seconds") for item in pending)
-            earliest = max(earliest, first_seen + timedelta(seconds=coalesce))
-            if self._last_analysis_at is not None:
-                cooldown = max(
-                    self._rule_value(item, "ordinary_cooldown_seconds") for item in pending
-                )
-                earliest = max(
-                    earliest,
-                    self._last_analysis_at + timedelta(seconds=cooldown),
-                )
-        if workflow.patched("pending-expiry-wakeup-v1"):
-            expiries = [
-                _parse_time(item["expires_at"])
-                for item in pending
-                if item.get("expires_at") is not None
-            ]
-            if expiries:
-                # 容量等待可能晚于事件有效期；先在最早到期点醒来清理，避免状态虚假积压。
-                earliest = min(earliest, min(expiries))
-        return max(earliest - now, timedelta(0))
+        assert self._plan is not None
+        timing = trigger_reconsideration(
+            plan=self._plan,
+            pending=pending,
+            now=now,
+            last_analysis_at=self._last_analysis_at,
+            call_times=self._call_times,
+            input_retry_not_before=self._input_retry_not_before,
+            minimum_call_interval_seconds=int(
+                self._settings["minimum_call_interval_seconds"]
+            ),
+            maximum_ai_calls_per_hour=int(self._settings["maximum_ai_calls_per_hour"]),
+            wake_at_expiry=workflow.patched("pending-expiry-wakeup-v1"),
+        )
+        self._call_times = list(timing.retained_call_times)
+        return timing.reconsider_at - now
 
     def _rule_value(self, trigger: dict[str, Any], field: str) -> int:
-        priority = int(trigger.get("priority", 0))
-        matches = [
-            rule
-            for rule in self._plan.get("event_rules", [])
-            if rule.get("trigger_type") == trigger.get("trigger_type")
-            and rule.get("enabled")
-            and priority >= int(rule.get("minimum_priority", 0))
-        ]
-        if not matches:
-            return 0
-        most_specific = max(matches, key=lambda rule: int(rule.get("minimum_priority", 0)))
-        return int(most_specific.get(field, 0))
+        assert self._plan is not None
+        if field not in {"coalesce_seconds", "ordinary_cooldown_seconds"}:
+            raise ValueError("未知 TriggerPlan 时间字段")
+        return trigger_rule_value(self._plan, trigger, field)
 
     def _enqueue_due(self, now: datetime, started_at: datetime) -> None:
         if self._plan is None or bool(self._plan.get("ai_paused")):

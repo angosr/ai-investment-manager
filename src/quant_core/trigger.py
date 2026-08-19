@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -403,6 +405,124 @@ class TriggerBatch(FrozenModel):
         if self.batch_id != expected:
             raise ValueError("TriggerBatch batch_id 与内容不一致")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class TriggerTiming:
+    """Pure scheduler result shared by Temporal and historical replay."""
+
+    reconsider_at: datetime
+    retained_call_times: tuple[datetime, ...]
+
+
+def trigger_plan_accepts(
+    plan: Mapping[str, Any], trigger: Mapping[str, Any]
+) -> bool:
+    trigger_type = trigger.get("trigger_type")
+    if trigger_type == AnalysisTriggerType.AGENT_WAKEUP.value:
+        return True
+    if bool(plan.get("ai_paused")):
+        return False
+    if trigger_type == AnalysisTriggerType.HEARTBEAT.value:
+        return True
+    return any(
+        rule.get("enabled")
+        and rule.get("trigger_type") == trigger_type
+        and int(trigger.get("priority", 0)) >= int(rule.get("minimum_priority", 0))
+        for rule in plan.get("event_rules", [])
+    )
+
+
+def trigger_rule_value(
+    plan: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    field: Literal["coalesce_seconds", "ordinary_cooldown_seconds"],
+) -> int:
+    priority = int(trigger.get("priority", 0))
+    matches = [
+        rule
+        for rule in plan.get("event_rules", [])
+        if rule.get("trigger_type") == trigger.get("trigger_type")
+        and rule.get("enabled")
+        and priority >= int(rule.get("minimum_priority", 0))
+    ]
+    if not matches:
+        return 0
+    most_specific = max(matches, key=lambda rule: int(rule.get("minimum_priority", 0)))
+    return int(most_specific.get(field, 0))
+
+
+def trigger_reconsideration(
+    *,
+    plan: Mapping[str, Any],
+    pending: Sequence[Mapping[str, Any]],
+    now: datetime,
+    last_analysis_at: datetime | None,
+    call_times: Sequence[datetime],
+    input_retry_not_before: datetime | None,
+    minimum_call_interval_seconds: int,
+    maximum_ai_calls_per_hour: int,
+    wake_at_expiry: bool,
+) -> TriggerTiming:
+    """Return the next wake time; reaching an expiry means discard, not execute."""
+
+    current = _require_utc(now)
+    if not pending:
+        raise ValueError("触发重算至少需要一个待处理事件")
+    if minimum_call_interval_seconds < 0 or maximum_ai_calls_per_hour < 1:
+        raise ValueError("触发调用间隔与小时预算非法")
+    last = _require_utc(last_analysis_at) if last_analysis_at is not None else None
+    retry_at = (
+        _require_utc(input_retry_not_before)
+        if input_retry_not_before is not None
+        else None
+    )
+    retained = tuple(
+        sorted(
+            _require_utc(item)
+            for item in call_times
+            if _require_utc(item) > current - timedelta(hours=1)
+        )
+    )
+    earliest = current
+    if retry_at is not None:
+        earliest = max(earliest, retry_at)
+    if last is not None:
+        earliest = max(
+            earliest,
+            last + timedelta(seconds=minimum_call_interval_seconds),
+        )
+    if len(retained) >= maximum_ai_calls_per_hour:
+        earliest = max(earliest, retained[0] + timedelta(hours=1))
+    if int(pending[0].get("priority", 0)) < 100:
+        first_seen = min(_trigger_payload_time(item["observed_at"]) for item in pending)
+        coalesce = max(
+            trigger_rule_value(plan, item, "coalesce_seconds") for item in pending
+        )
+        earliest = max(earliest, first_seen + timedelta(seconds=coalesce))
+        if last is not None:
+            cooldown = max(
+                trigger_rule_value(plan, item, "ordinary_cooldown_seconds")
+                for item in pending
+            )
+            earliest = max(earliest, last + timedelta(seconds=cooldown))
+    if wake_at_expiry:
+        expiries = [
+            _trigger_payload_time(item["expires_at"])
+            for item in pending
+            if item.get("expires_at") is not None
+        ]
+        if expiries:
+            earliest = min(earliest, min(expiries))
+    return TriggerTiming(
+        reconsider_at=max(earliest, current),
+        retained_call_times=retained,
+    )
+
+
+def _trigger_payload_time(value: str | datetime) -> datetime:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return _require_utc(parsed)
 
 
 def build_trigger_batch(
