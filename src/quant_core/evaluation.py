@@ -80,6 +80,49 @@ class CycleDecisionFact(FrozenModel):
     reason_code: str
 
 
+class OutcomeMetrics(FrozenModel):
+    gross_pnl: Decimal
+    total_fees: Decimal = Field(ge=0)
+    net_pnl: Decimal
+    gross_profit: Decimal = Field(ge=0)
+    gross_loss: Decimal = Field(ge=0)
+    profit_factor: Decimal | None = Field(default=None, ge=0)
+    maximum_drawdown: Decimal = Field(ge=0)
+    closed_trade_count: int = Field(ge=0)
+    winning_trade_count: int = Field(ge=0)
+    win_rate: Decimal = Field(ge=0, le=1)
+
+
+def calculate_outcome_metrics(
+    outcomes: tuple[DecisionOutcome, ...],
+) -> OutcomeMetrics:
+    ordered = tuple(sorted(outcomes, key=lambda item: (item.closed_at, item.outcome_id)))
+    gross = sum((item.gross_pnl for item in ordered), Decimal("0"))
+    fees = sum((item.total_fees for item in ordered), Decimal("0"))
+    net = sum((item.net_pnl for item in ordered), Decimal("0"))
+    gross_profit = sum((item.net_pnl for item in ordered if item.net_pnl > 0), Decimal("0"))
+    gross_loss = -sum((item.net_pnl for item in ordered if item.net_pnl < 0), Decimal("0"))
+    equity = peak = maximum_drawdown = Decimal("0")
+    for item in ordered:
+        equity += item.net_pnl
+        peak = max(peak, equity)
+        maximum_drawdown = max(maximum_drawdown, peak - equity)
+    wins = sum(item.net_pnl > 0 for item in ordered)
+    closed = len(ordered)
+    return OutcomeMetrics(
+        gross_pnl=gross,
+        total_fees=fees,
+        net_pnl=net,
+        gross_profit=gross_profit,
+        gross_loss=gross_loss,
+        profit_factor=(gross_profit / gross_loss if gross_loss > 0 else None),
+        maximum_drawdown=maximum_drawdown,
+        closed_trade_count=closed,
+        winning_trade_count=wins,
+        win_rate=Decimal(wins) / Decimal(closed) if closed else Decimal("0"),
+    )
+
+
 class OutcomeWindowReport(FrozenModel):
     report_id: str
     evaluation_version: str
@@ -158,23 +201,7 @@ class OutcomeWindowEvaluator:
         ordered_outcomes = tuple(
             sorted(outcomes, key=lambda item: (item.closed_at, item.outcome_id))
         )
-        gross = sum((item.gross_pnl for item in ordered_outcomes), Decimal("0"))
-        fees = sum((item.total_fees for item in ordered_outcomes), Decimal("0"))
-        net = sum((item.net_pnl for item in ordered_outcomes), Decimal("0"))
-        gross_profit = sum(
-            (item.net_pnl for item in ordered_outcomes if item.net_pnl > 0),
-            Decimal("0"),
-        )
-        gross_loss = -sum(
-            (item.net_pnl for item in ordered_outcomes if item.net_pnl < 0),
-            Decimal("0"),
-        )
-        equity = peak = maximum_drawdown = Decimal("0")
-        for item in ordered_outcomes:
-            equity += item.net_pnl
-            peak = max(peak, equity)
-            maximum_drawdown = max(maximum_drawdown, peak - equity)
-        wins = sum(item.net_pnl > 0 for item in ordered_outcomes)
+        metrics = calculate_outcome_metrics(ordered_outcomes)
         outcome_counts = tuple(
             (outcome.value, sum(item.outcome == outcome for item in cycles))
             for outcome in CycleOutcome
@@ -198,7 +225,6 @@ class OutcomeWindowEvaluator:
             window_end.isoformat(),
             source_hash,
         )
-        closed = len(ordered_outcomes)
         return OutcomeWindowReport(
             report_id=report_id,
             evaluation_version=self._version,
@@ -214,18 +240,18 @@ class OutcomeWindowEvaluator:
             cycle_count=len(cycles),
             outcome_counts=outcome_counts,
             reason_counts=reason_counts,
-            closed_trade_count=closed,
-            winning_trade_count=wins,
+            closed_trade_count=metrics.closed_trade_count,
+            winning_trade_count=metrics.winning_trade_count,
             unresolved_cycle_ids=normalized_unresolved,
-            gross_pnl=gross,
-            total_fees=fees,
-            net_pnl=net,
-            gross_profit=gross_profit,
-            gross_loss=gross_loss,
-            profit_factor=(gross_profit / gross_loss if gross_loss > 0 else None),
-            maximum_drawdown=maximum_drawdown,
-            win_rate=Decimal(wins) / Decimal(closed) if closed else Decimal("0"),
-            incremental_net_pnl_vs_never_trade=net,
+            gross_pnl=metrics.gross_pnl,
+            total_fees=metrics.total_fees,
+            net_pnl=metrics.net_pnl,
+            gross_profit=metrics.gross_profit,
+            gross_loss=metrics.gross_loss,
+            profit_factor=metrics.profit_factor,
+            maximum_drawdown=metrics.maximum_drawdown,
+            win_rate=metrics.win_rate,
+            incremental_net_pnl_vs_never_trade=metrics.net_pnl,
             outcome_ids=tuple(item.outcome_id for item in ordered_outcomes),
         )
 

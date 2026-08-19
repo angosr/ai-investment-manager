@@ -112,8 +112,8 @@ def test_equity_curve_is_running_sum_of_net_pnl():
         closed_trade_count=3,
     )
     window = EquityWindow(
-        facts=SimpleNamespace(outcomes=outcomes),
-        report=report,
+        outcomes=outcomes,
+        metrics=report,
         lookback_start=now,
         lookback_end=now,
     )

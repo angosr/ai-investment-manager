@@ -1,8 +1,8 @@
 """投影层：把领域对象组装成前端直接消费的 plain DTO（JSON 安全）。
 
 Decimal 一律转字符串保精度，datetime 转 ISO8601。措辞与摘要拼装委托 ``formatting``。
-权益曲线是对 ``DecisionOutcome.net_pnl`` 的按时间累加（与评估器内部同一算法），聚合指标
-则取既有 ``OutcomeWindowReport``，前端一律不重算。
+权益曲线是对同一账户全部 Pipeline 的 ``DecisionOutcome.net_pnl`` 按平仓时间累加；聚合
+指标与治理评估器复用同一纯函数，前端一律不重算。
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from quant_core.domain import (
     RiskDecision,
     TradeIntent,
 )
-from quant_core.evaluation import OutcomeWindowReport
 from quant_core.ledger import CycleFacts
 from quant_core.lifecycle import OpenLifecycleRecord
 from quant_core.reconciliation import ReconciliationReport
@@ -156,7 +155,7 @@ def world_event(event: WorldEvent) -> dict:
 
 
 def equity(window: EquityWindow) -> dict:
-    ordered = sorted(window.facts.outcomes, key=lambda item: (item.closed_at, item.outcome_id))
+    ordered = window.outcomes
     curve: list[dict] = []
     running = Decimal("0")
     for outcome in ordered:
@@ -167,7 +166,7 @@ def equity(window: EquityWindow) -> dict:
         "lookback_end": fmt.iso(window.lookback_end),
         "trade_count": len(ordered),
         "curve": curve,
-        "summary": _outcome_summary(window.report),
+        "summary": _outcome_summary(window),
     }
 
 
@@ -346,10 +345,11 @@ def _rail_stop_key(facts: CycleFacts) -> str | None:
     return "frequency"
 
 
-def _outcome_summary(report: OutcomeWindowReport) -> dict:
+def _outcome_summary(window: EquityWindow) -> dict:
+    report = window.metrics
     return {
-        "window_start": fmt.iso(report.window_start),
-        "window_end": fmt.iso(report.window_end),
+        "window_start": fmt.iso(window.lookback_start),
+        "window_end": fmt.iso(window.lookback_end),
         "net_pnl": fmt.money(report.net_pnl),
         "total_fees": fmt.money(report.total_fees),
         "win_rate": fmt.money(report.win_rate),

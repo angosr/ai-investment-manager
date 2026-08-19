@@ -16,15 +16,15 @@ from sqlalchemy.engine import Engine
 from quant_core.config import AppConfig
 from quant_core.domain import (
     AnalysisProposal,
+    DecisionOutcome,
     IntelligenceEvent,
     TradeIntent,
 )
-from quant_core.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
+from quant_core.evaluation import OutcomeMetrics, calculate_outcome_metrics
 from quant_core.governance import ReleaseManifest, validate_manifest_against_config
 from quant_core.ledger import CycleFacts
 from quant_core.lifecycle import OpenLifecycleRecord
 from quant_core.market_data_sql import market_quotes, market_trades
-from quant_core.outcome_evaluation_sql import OutcomeWindowFacts, SqlOutcomeWindowRepository
 from quant_core.panel import sanitize_external_text
 from quant_core.persistence import (
     SqlFactLedger,
@@ -38,6 +38,7 @@ from quant_core.persistence import (
     codex_account_capacity,
     codex_account_leases,
     codex_runs,
+    decision_outcomes,
     market_snapshots,
     normalized_events,
     orders,
@@ -96,9 +97,8 @@ class AccountStatus:
 
 @dataclass(frozen=True, slots=True)
 class EquityWindow:
-    facts: OutcomeWindowFacts
-    # 用生产同一 evaluator 就所选窗口算出的报告：曲线与指标口径一致，公式不重复。
-    report: OutcomeWindowReport
+    outcomes: tuple[DecisionOutcome, ...]
+    metrics: OutcomeMetrics
     lookback_start: datetime
     lookback_end: datetime
 
@@ -123,8 +123,6 @@ class DashboardReader:
         self._ledger = SqlFactLedger(engine)
         self._lifecycles = SqlOpenLifecycleRepository(engine)
         self._reconciliation = SqlReconciliationReportStore(engine)
-        self._outcomes = SqlOutcomeWindowRepository(engine)
-        self._evaluator = OutcomeWindowEvaluator(version=config.outcome_evaluation.version)
 
     # --- 决策时间线 -------------------------------------------------------
     def list_cycles(self, *, before: datetime | None, limit: int) -> list[CycleRow]:
@@ -338,21 +336,26 @@ class DashboardReader:
     # --- 权益 / 结果窗口 --------------------------------------------------
     def equity_window(self, *, now: datetime, hours: int) -> EquityWindow:
         start = now - timedelta(hours=hours)
-        pipeline_version = self._config.pipeline.version
-        facts = self._outcomes.load(
-            pipeline_version=pipeline_version,
-            window_start=start,
-            window_end=now,
+        with self._engine.connect() as connection:
+            payloads = tuple(connection.execute(select(decision_outcomes.c.payload)).scalars())
+        outcomes = tuple(
+            sorted(
+                (
+                    outcome
+                    for payload in payloads
+                    if start
+                    <= (outcome := DecisionOutcome.model_validate(payload)).closed_at
+                    < now
+                ),
+                key=lambda item: (item.closed_at, item.outcome_id),
+            )
         )
-        report = self._evaluator.evaluate(
-            pipeline_version=pipeline_version,
-            window_start=start,
-            window_end=now,
-            cycles=facts.cycles,
-            outcomes=facts.outcomes,
-            unresolved_cycle_ids=facts.unresolved_cycle_ids,
+        return EquityWindow(
+            outcomes=outcomes,
+            metrics=calculate_outcome_metrics(outcomes),
+            lookback_start=start,
+            lookback_end=now,
         )
-        return EquityWindow(facts=facts, report=report, lookback_start=start, lookback_end=now)
 
     def latest_market_observed_at(self) -> datetime | None:
         """返回所有配置品种报价与成交中最旧的最新观测时间。

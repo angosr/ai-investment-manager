@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, insert
 from quant_core.cycle import AnalysisCycle
 from quant_core.dashboard import serializers as ser
 from quant_core.dashboard.read_models import DashboardReader
-from quant_core.domain import IntelligenceEvent
+from quant_core.domain import DecisionOutcome, ExitReason, IntelligenceEvent
 from quant_core.execution import MockExchange
 from quant_core.persistence import (
     SqlEventStore,
@@ -22,6 +22,7 @@ from quant_core.persistence import (
     SqlRiskBudgetStore,
     analysis_call_admissions,
     create_schema,
+    decision_outcomes,
 )
 from quant_core.trigger import AnalysisTriggerType, build_trigger_event
 from quant_core.trigger_sql import SqlTriggerRepository
@@ -113,6 +114,61 @@ def test_equity_and_health_run_against_real_engine(app_config, replay_input) -> 
     accounts = [ser.account_status(status) for status in reader.accounts(now=now)]
     assert len(accounts) == 3
     assert all(account["state"] == "DISABLED" for account in accounts)
+
+
+def test_equity_is_account_wide_and_uses_actual_close_time(app_config, replay_input) -> None:
+    engine, _ = _seed_cycle(app_config, replay_input)
+    now = datetime(2026, 8, 19, 12, tzinfo=UTC)
+
+    def outcome(index: int, *, pipeline: str, closed_at: datetime) -> DecisionOutcome:
+        opened_at = closed_at - timedelta(hours=1)
+        return DecisionOutcome(
+            outcome_id=f"portfolio-outcome-{index}",
+            cycle_id=f"portfolio-cycle-{index}",
+            intent_id=f"portfolio-intent-{index}",
+            pipeline_version=pipeline,
+            position_id=f"portfolio-position-{index}",
+            symbol="BTCUSDT",
+            opened_at=opened_at,
+            closed_at=closed_at,
+            exit_reason=ExitReason.MAX_HOLDING_TIME,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            exit_price=Decimal("101"),
+            gross_pnl=Decimal("1"),
+            total_fees=Decimal("0.2"),
+            net_pnl=Decimal("0.8"),
+            maximum_favorable_excursion=Decimal("1"),
+            maximum_adverse_excursion=Decimal("-0.5"),
+        )
+
+    included = (
+        outcome(1, pipeline="retired-pipeline-v1", closed_at=now - timedelta(hours=2)),
+        outcome(2, pipeline=app_config.pipeline.version, closed_at=now - timedelta(hours=1)),
+    )
+    excluded = outcome(
+        3,
+        pipeline="retired-pipeline-v1",
+        closed_at=now - timedelta(hours=49),
+    )
+    with engine.begin() as connection:
+        for item in (*included, excluded):
+            connection.execute(
+                insert(decision_outcomes).values(
+                    outcome_id=item.outcome_id,
+                    cycle_id=item.cycle_id,
+                    intent_id=item.intent_id,
+                    position_id=item.position_id,
+                    net_pnl=item.net_pnl,
+                    payload=item.model_dump(mode="json"),
+                )
+            )
+
+    result = ser.equity(DashboardReader(engine, app_config).equity_window(now=now, hours=48))
+
+    assert result["trade_count"] == 2
+    assert result["summary"]["net_pnl"] == "1.6"
+    assert result["summary"]["total_fees"] == "0.4"
 
 
 def test_dashboard_call_budget_reads_global_admissions(app_config, replay_input) -> None:

@@ -28,7 +28,7 @@ export function EquityHero() {
             {signed(net)}
             <small>USDT</small>
           </div>
-          <div className={styles.hint}>只统计已平仓的交易，未平仓不计入。</div>
+          <div className={styles.hint}>同一模拟账户跨版本统计；按实际平仓时间，未平仓不计入。</div>
         </div>
         <div className={styles.windows} role="group" aria-label="时间窗口">
           {WINDOWS.map((option) => (
