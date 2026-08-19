@@ -130,3 +130,15 @@ def test_panel_deduplicates_identical_content_across_sources(app_config, replay_
 
     matching = [item for item in panel.evidence if item.title == original.title]
     assert len(matching) == 1
+
+    required_panel = PanelBuilder(app_config.panel).build(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+        events=(original, duplicate),
+        required_evidence_ids=(duplicate.evidence_id,),
+    )
+    required_matching = [
+        item for item in required_panel.evidence if item.title == original.title
+    ]
+    assert [item.evidence_id for item in required_matching] == [duplicate.evidence_id]

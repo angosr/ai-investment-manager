@@ -47,6 +47,7 @@ class PanelBuilder:
         account: AccountSnapshot,
         features: FeatureSnapshot,
         events: tuple[IntelligenceEvent, ...],
+        required_evidence_ids: tuple[str, ...] = (),
     ) -> PanelSnapshot:
         quality: list[str] = []
         if features.market_age_seconds > self._policy.max_market_age_seconds:
@@ -62,7 +63,8 @@ class PanelBuilder:
             and market.as_of - event.event_time
             <= timedelta(seconds=self._policy.maximum_evidence_age_seconds)
         ]
-        ranked: list[tuple[Decimal, IntelligenceEvent, str, bool]] = []
+        required = set(required_evidence_ids)
+        ranked: list[tuple[bool, Decimal, IntelligenceEvent, str, bool]] = []
         for event in visible_events:
             excerpt, suspicious = sanitize_external_text(event.body)
             age = max(timedelta(0), market.as_of - event.event_time)
@@ -82,23 +84,23 @@ class PanelBuilder:
             if suspicious:
                 score -= Decimal("0.25")
                 quality.append(f"PROMPT_INJECTION_SUSPECTED:{event.evidence_id}")
-            ranked.append((score, event, excerpt, suspicious))
+            ranked.append((event.evidence_id in required, score, event, excerpt, suspicious))
 
-        ranked.sort(key=lambda item: (-item[0], item[1].evidence_id))
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2].evidence_id))
         per_source: Counter[str] = Counter()
         seen_content: set[str] = set()
         selected: list[PanelEvidence] = []
         used_characters = 0
-        for score, event, excerpt, suspicious in ranked:
+        for is_required, score, event, excerpt, suspicious in ranked:
             if len(selected) >= self._policy.max_evidence:
                 break
-            if per_source[event.source] >= self._policy.max_per_source:
+            if not is_required and per_source[event.source] >= self._policy.max_per_source:
                 continue
             normalized_content = _WHITESPACE.sub(
                 " ", f"{event.title}\n{event.body}".casefold()
             ).strip()
             evidence_content_hash = content_hash(normalized_content)
-            if evidence_content_hash in seen_content:
+            if not is_required and evidence_content_hash in seen_content:
                 continue
             title, title_suspicious = sanitize_external_text(event.title, maximum_length=240)
             cost = len(title) + len(excerpt)

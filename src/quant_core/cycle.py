@@ -176,6 +176,7 @@ class AnalysisCycle:
             account=cycle_input.account,
             features=features,
             events=cycle_input.events,
+            required_evidence_ids=trigger.evidence_ids if trigger is not None else (),
         )
         existing = self.ledger.get(market.cycle_id)
         if existing is not None:

@@ -28,7 +28,7 @@ reconciliation:
   poll_seconds: 30
 
 pipeline:
-  version: testnet-programmatic-v2
+  version: testnet-programmatic-v3
   ai_mode: "OFF"
 
 deployment:

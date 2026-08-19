@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 panel:
-  version: panel-policy-v4
+  version: panel-policy-v5
   schema_version: panel-v1
   max_characters: 12000
   max_evidence: 20
@@ -156,7 +156,7 @@ information:
   collection_interval_seconds: 60
 
 pipeline:
-  version: off-pipeline-v2
+  version: off-pipeline-v3
   ai_mode: "OFF"
 
 proposal:

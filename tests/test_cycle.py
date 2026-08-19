@@ -190,6 +190,44 @@ def test_uncalibrated_ai_candidate_has_zero_edge_and_cannot_trade(
     assert analyst.triggers == [trigger]
 
 
+def test_cycle_reserves_direct_trigger_evidence_before_general_ranking(
+    app_config, replay_input
+) -> None:
+    original = replay_input.events[0]
+    trigger_copy = original.model_copy(
+        update={
+            "evidence_id": "direct-trigger-copy",
+            "source": "lower-ranked-source",
+            "relevance": Decimal("0"),
+            "impact": Decimal("0"),
+            "source_reliability": Decimal("0"),
+            "novelty": Decimal("0"),
+        }
+    )
+    one_item_panel = app_config.model_copy(
+        update={
+            "panel": app_config.panel.model_copy(update={"max_evidence": 1}),
+        }
+    )
+    cycle_input = replay_input.model_copy(
+        update={"events": (original, trigger_copy)}
+    )
+    trigger = TriggerDecision(
+        should_run=True,
+        reason=TriggerReason.EVENT_BATCH,
+        evidence_ids=(trigger_copy.evidence_id,),
+    )
+
+    result = AnalysisCycle.create(one_item_panel).prepare(
+        cycle_input,
+        trigger=trigger,
+    )
+
+    assert [item.evidence_id for item in result.panel.evidence] == [
+        trigger_copy.evidence_id
+    ]
+
+
 def test_replay_is_idempotent_and_does_not_duplicate_order(app_config, replay_input) -> None:
     cycle = AnalysisCycle.create(app_config)
 
