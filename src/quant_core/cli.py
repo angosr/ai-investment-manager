@@ -52,7 +52,12 @@ from quant_core.lifecycle_runtime import (
 from quant_core.market_data import MarketShockDetector, assemble_shadow_market_stream
 from quant_core.market_data_sql import SqlMarketDataStore
 from quant_core.outcome_evaluation_runtime import assemble_outcome_evaluation
-from quant_core.persistence import SqlEventStore, build_engine, require_current_schema
+from quant_core.persistence import (
+    SqlEventStore,
+    SqlGovernanceRepository,
+    build_engine,
+    require_current_schema,
+)
 from quant_core.portfolio_protection import SqlPortfolioProtectionStore
 from quant_core.reconciliation_runtime import assemble_reconciliation
 from quant_core.shadow import SqlShadowStateReader
@@ -1433,6 +1438,7 @@ def trigger_service(
 
     loaded, manifest = _load_runtime_release(config, release_manifest)
     engine = _runtime_engine(database_url)
+    SqlGovernanceRepository(engine).record_release(manifest)
     repository = SqlTriggerRepository(engine, loaded.trigger)
     now = datetime.now(UTC)
     previous_plans = repository.current_plans_for_symbols(loaded.market_data.symbols)
