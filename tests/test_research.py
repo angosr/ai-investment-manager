@@ -598,6 +598,56 @@ def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
     assert run.interval == "1d"
 
 
+def test_hourly_candidate_uses_native_hour_bar_type(app_config) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+    from quant_core.research.candidates import (
+        LongOnlyMovingAverageSpec,
+        LongOnlyMovingAverageStrategy,
+    )
+
+    dataset = _dataset(
+        count=200,
+        interval="4h",
+        bar_delta=timedelta(hours=4),
+    )
+    spec = LongOnlyMovingAverageSpec(
+        version="long-only-sma20-4h-test-v1",
+        interval="4h",
+        moving_average_bars=20,
+        atr_bars=10,
+        horizon_minutes=7 * 1_440,
+        cooldown_minutes=7 * 1_440,
+        signal_validity_minutes=240,
+    )
+    effective = app_config.model_copy(
+        update={
+            "market_data": app_config.market_data.model_copy(
+                update={"interval": "4h", "bar_window": spec.required_bar_window}
+            ),
+            "feature": app_config.feature.model_copy(
+                update={"volatility_window": spec.atr_bars}
+            ),
+            "frequency": app_config.frequency.model_copy(
+                update={"cooldown_minutes": spec.cooldown_minutes}
+            ),
+        }
+    )
+    run = run_bar_backtest(
+        dataset=dataset,
+        config=effective,
+        strategy=LongOnlyMovingAverageStrategy(spec),
+        signal_start=dataset.bars[20].close_time,
+        signal_end=dataset.bars[-45].close_time,
+        replay_start=dataset.bars[0].open_time,
+        replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert run.completed
+    assert run.trades
+    assert run.interval == "4h"
+
+
 def test_evaluation_catalog_round_trip_and_rejects_tampering(
     app_config, tmp_path
 ) -> None:

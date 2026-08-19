@@ -31,7 +31,7 @@ from quant_core.research.dataset import HistoricalDataset, InstrumentSpec
 from quant_core.risk import RiskEngine
 from quant_core.strategy import PriceTrendStrategy, Strategy
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v7"
+BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v8"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -319,12 +319,13 @@ def _to_nautilus_events(
     from nautilus_trader.model.data import Bar, BarType, QuoteTick
     from nautilus_trader.model.objects import Quantity
 
-    minutes = _interval_minutes(dataset.manifest.interval)
-    aggregation = (
-        f"{dataset.manifest.interval[:-1]}-DAY"
-        if dataset.manifest.interval.endswith("d")
-        else f"{minutes}-MINUTE"
-    )
+    interval = dataset.manifest.interval
+    if interval.endswith("d"):
+        aggregation = f"{interval[:-1]}-DAY"
+    elif interval.endswith("h"):
+        aggregation = f"{interval[:-1]}-HOUR"
+    else:
+        aggregation = f"{interval[:-1]}-MINUTE"
     bar_type = BarType.from_str(
         f"{instrument.id}-{aggregation}-LAST-EXTERNAL"
     )
