@@ -1,7 +1,7 @@
 manifest_id: release-testnet-panel-budget-v2
 created_at: 2026-08-19T14:31:00Z
 status: CHALLENGER
-code_version: 5f9f8777a8fb14d497ab0cb23d3396c448eb67fd
+code_version: 4d1b0d8920ba4e73d1b782ea682fcc84c10e8cd6
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-forecast-v1
 complexity_score: 2
@@ -15,14 +15,14 @@ component_versions:
   - [risk, testnet-risk-v1]
   - [execution, binance-spot-testnet-execution-v1]
   - [reconciliation, binance-spot-testnet-reconciliation-v1]
-  - [outcome_evaluation, outcome-window-v6]
+  - [outcome_evaluation, outcome-window-v7]
   - [trigger, analysis-trigger-v5]
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-testnet-v1]
   - [shadow, shadow-simulation-v1]
   - [information, trendradar-collector-v4]
   - [pipeline, testnet-programmatic-v2]
-  - [proposal, codex-proposal-v7]
+  - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
