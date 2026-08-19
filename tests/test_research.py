@@ -629,6 +629,23 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         {"maximum_completion_lag_seconds": 121},
     ):
         assert content_hash(registered_spec.model_copy(update=changed)) != registered_hash
+    changed_panel_config = app_config.model_copy(
+        update={
+            "panel": app_config.panel.model_copy(update={"version": "different-panel-v1"})
+        }
+    )
+    assert content_hash(
+        ForecastGateEvaluationSpec.freeze(
+            strategy=strategy,
+            config=changed_panel_config,
+            symbol="BTCUSDT",
+            pipeline_version=changed_panel_config.pipeline.version,
+            starting_equity=Decimal("10000"),
+            spread_bps=Decimal("1"),
+            maximum_completion_lag_seconds=120,
+            policy=policy,
+        )
+    ) != registered_hash
     assert content_hash(
         ForecastGateEvaluationSpec.freeze(
             strategy=PriceTrendStrategy(

@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
+from quant_core.analyst import ANALYST_INPUT_VERSION
 from quant_core.config import AppConfig
 from quant_core.domain import (
     AccountSnapshot,
@@ -298,9 +299,10 @@ class ForecastGatePolicy(FrozenModel):
 class ForecastGateEvaluationSpec(FrozenModel):
     """Pre-registration identity for both Q and its deterministic AI gate."""
 
-    version: str = "forecast-gate-evaluation-spec-v3"
+    version: str = "forecast-gate-evaluation-spec-v4"
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ai_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(min_length=1)
     pipeline_version: str = Field(min_length=1)
     interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
@@ -330,6 +332,18 @@ class ForecastGateEvaluationSpec(FrozenModel):
             research_artifact_hash=artifact_hash(
                 config,
                 strategy_spec=strategy.research_spec,
+            ),
+            ai_artifact_hash=content_hash(
+                {
+                    "pipeline": config.pipeline,
+                    "panel": config.panel,
+                    "proposal": config.proposal,
+                    "codex_runtime": config.codex_runtime,
+                    "information": config.information,
+                    "trigger": config.trigger,
+                    "market_data": config.market_data,
+                    "analyst_input_version": ANALYST_INPUT_VERSION,
+                }
             ),
             symbol=symbol,
             pipeline_version=pipeline_version,
