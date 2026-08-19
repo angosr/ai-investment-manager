@@ -871,6 +871,80 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     assert all(item.run.completed for item in result.folds)
 
 
+def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
+    app_config, tmp_path
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.evaluation_catalog import BlindEvaluationCatalog
+    from quant_core.research.walk_forward import (
+        WalkForwardPlan,
+        run_blind_evaluation,
+        run_walk_forward,
+    )
+    from quant_core.strategy import PriceTrendStrategy
+
+    dataset = _dataset()
+    source = run_walk_forward(
+        dataset=dataset,
+        config=app_config,
+        plan=WalkForwardPlan(
+            plan_id="walk-forward-blind-test-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+        evaluation_spec_hash="a" * 64,
+    )
+    with pytest.raises(ValueError, match="通过全部预登记门禁"):
+        run_blind_evaluation(
+            source=source,
+            query_id="blind-query-1",
+            dataset=dataset,
+            event_dataset=None,
+            config=app_config,
+            strategy=PriceTrendStrategy(app_config.strategy),
+        )
+
+    admitted_source = source.model_copy(
+        update={
+            "passed": True,
+            "reason_codes": ("ALL_PREREGISTERED_GATES_PASSED",),
+        }
+    )
+    result = run_blind_evaluation(
+        source=admitted_source,
+        query_id="blind-query-1",
+        dataset=dataset,
+        event_dataset=None,
+        config=app_config,
+        strategy=PriceTrendStrategy(app_config.strategy),
+    )
+
+    assert result.reserved_start == dataset.bars[-50].open_time
+    assert result.reserved_end == dataset.bars[-1].close_time
+    assert (
+        result.run.signal_start
+        == dataset.bars[-50 + result.embargo_bars].close_time
+    )
+    assert result.run.signal_end == dataset.bars[-result.purge_bars].close_time
+    assert result.dataset_id == source.dataset_id
+    assert result.evaluation_spec_hash == source.evaluation_spec_hash
+    assert result.result_id == stable_id(
+        "blind_evaluation",
+        result.version,
+        result.query_id,
+        result.source_evaluation_id,
+        result.evaluation_spec_hash,
+        result.dataset_id,
+        result.event_dataset_id,
+        result.artifact_hash,
+        result.run.run_id,
+    )
+    blind_catalog = BlindEvaluationCatalog(tmp_path / "blind-evaluations")
+    blind_catalog.store(result)
+    assert blind_catalog.load(result.result_id) == result
+
+
 def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> None:
     from quant_core.research.walk_forward import (
         WalkForwardEvaluationSpec,

@@ -9,7 +9,7 @@ import yaml
 from pydantic import Field, field_validator, model_validator
 
 from quant_core.config import AppConfig
-from quant_core.domain import FrozenModel, _require_utc
+from quant_core.domain import FrozenModel, _optional_utc, _require_utc
 from quant_core.ids import content_hash, stable_id
 from quant_core.trigger import AnalysisTriggerPlan
 
@@ -151,7 +151,7 @@ class EvaluationPlan(FrozenModel):
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
     candidate_spec_snapshot: dict[str, object] | None = None
-    blind_query_budget: int = Field(default=1, ge=0)
+    blind_query_budget: int = Field(default=0, ge=0)
 
     _utc_registered_at = field_validator("registered_at")(_require_utc)
 
@@ -168,13 +168,39 @@ class EvaluationPlan(FrozenModel):
 
     @model_validator(mode="after")
     def blind_stage_requires_query_budget(self):
-        if EvaluationStage.BLIND in self.required_stages and self.blind_query_budget < 1:
-            raise ValueError("BLIND 阶段必须预登记正数查询预算")
+        if EvaluationStage.BLIND in self.required_stages and self.blind_query_budget != 1:
+            raise ValueError("BLIND 阶段必须预登记恰好一次查询预算")
         if self.candidate_spec_snapshot is not None and (
             self.candidate_spec_hash is None
             or content_hash(self.candidate_spec_snapshot) != self.candidate_spec_hash
         ):
             raise ValueError("EvaluationPlan 候选规格快照与哈希不一致")
+        return self
+
+
+class BlindEvaluationClaim(FrozenModel):
+    """Single durable claim for revealing one plan's reserved blind window."""
+
+    query_id: str
+    plan_id: str
+    source_evaluation_id: str
+    claimed_at: datetime
+    completed_at: datetime | None = None
+    result_id: str | None = None
+    result_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    _utc_claimed_at = field_validator("claimed_at")(_require_utc)
+    _utc_completed_at = field_validator("completed_at")(_optional_utc)
+
+    @model_validator(mode="after")
+    def completion_fields_are_atomic(self):
+        completion = (self.completed_at, self.result_id, self.result_hash)
+        if any(item is not None for item in completion) and not all(
+            item is not None for item in completion
+        ):
+            raise ValueError("盲测认领的完成字段必须同时存在")
+        if self.completed_at is not None and self.completed_at < self.claimed_at:
+            raise ValueError("盲测完成时间不能早于认领时间")
         return self
 
 

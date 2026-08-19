@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import create_engine, func, select
 
 from quant_core.governance import (
+    BlindEvaluationClaim,
     ChangeProposal,
     ChangeType,
     EvaluationPlan,
@@ -22,6 +24,7 @@ from quant_core.governance import (
 )
 from quant_core.persistence import (
     SqlGovernanceRepository,
+    blind_evaluation_claims,
     change_proposals,
     create_schema,
     evaluation_plans,
@@ -229,3 +232,48 @@ def test_governance_repository_restores_long_term_state_without_chat_history() -
         assert connection.scalar(select(func.count()).select_from(evaluation_plans)) == 1
         assert connection.scalar(select(func.count()).select_from(change_proposals)) == 1
         assert connection.scalar(select(func.count()).select_from(failed_experiment_records)) == 1
+
+
+def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent() -> None:
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    repository = SqlGovernanceRepository(engine)
+    plan = _plan(now).model_copy(
+        update={
+            "required_stages": (*_plan(now).required_stages, EvaluationStage.BLIND),
+            "blind_query_budget": 1,
+        }
+    )
+    with pytest.raises(ValueError, match="恰好一次"):
+        EvaluationPlan.model_validate(
+            {**plan.model_dump(mode="json"), "blind_query_budget": 2}
+        )
+    repository.register_plan(plan)
+    initial = BlindEvaluationClaim(
+        query_id="blind-query-1",
+        plan_id=plan.plan_id,
+        source_evaluation_id="walk-forward-1",
+        claimed_at=now,
+    )
+
+    assert repository.claim_blind_evaluation(initial) == initial
+    retry = initial.model_copy(update={"claimed_at": now + timedelta(minutes=1)})
+    assert repository.claim_blind_evaluation(retry) == initial
+    with pytest.raises(ValueError, match="已经被消费"):
+        repository.claim_blind_evaluation(initial.model_copy(update={"query_id": "blind-query-2"}))
+
+    completed = initial.model_copy(
+        update={
+            "completed_at": now + timedelta(minutes=2),
+            "result_id": "blind-result-1",
+            "result_hash": "a" * 64,
+        }
+    )
+    assert repository.complete_blind_evaluation(completed) == completed
+    assert repository.complete_blind_evaluation(completed) == completed
+    with pytest.raises(ValueError, match="不同结果"):
+        repository.complete_blind_evaluation(completed.model_copy(update={"result_hash": "b" * 64}))
+    assert repository.get_blind_evaluation_claim(plan.plan_id) == completed
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(blind_evaluation_claims)) == 1

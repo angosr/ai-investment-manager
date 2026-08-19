@@ -10,7 +10,7 @@ from pydantic import Field
 
 from quant_core.domain import FrozenModel
 from quant_core.ids import canonical_json, content_hash, stable_id
-from quant_core.research.walk_forward import WalkForwardResult
+from quant_core.research.walk_forward import BlindEvaluationResult, WalkForwardResult
 
 
 class HistoricalEvaluationEnvelope(FrozenModel):
@@ -142,6 +142,59 @@ class HistoricalEvaluationCatalog:
             for identity, members in groups.items()
         ]
         return tuple(sorted(summaries, key=lambda item: item.experiment_id))
+
+
+class BlindEvaluationEnvelope(FrozenModel):
+    result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    result: BlindEvaluationResult
+
+
+class BlindEvaluationCatalog:
+    """Separate immutable catalog for the single reveal of reserved labels."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    def store(self, result: BlindEvaluationResult) -> Path:
+        envelope = BlindEvaluationEnvelope(
+            result_hash=content_hash(result),
+            result=result,
+        )
+        target = self._root / f"{result.result_id}.json"
+        if target.exists():
+            if self.load(result.result_id) != result:
+                raise ValueError("同一盲测结果 ID 的内容不一致")
+            return target
+        self._root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=".blind-evaluation-",
+            suffix=".json",
+            dir=self._root,
+            delete=False,
+        ) as temporary:
+            temporary.write(canonical_json(envelope))
+            temporary.flush()
+            temporary_path = Path(temporary.name)
+        try:
+            temporary_path.replace(target)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return target
+
+    def load(self, result_id: str) -> BlindEvaluationResult:
+        target = self._root / f"{result_id}.json"
+        raw = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not isinstance(raw.get("result"), dict):
+            raise ValueError("盲测结果制品结构非法")
+        if raw.get("result_hash") != content_hash(raw["result"]):
+            raise ValueError("盲测结果制品内容哈希不匹配")
+        envelope = BlindEvaluationEnvelope.model_validate(raw)
+        if envelope.result.result_id != result_id:
+            raise ValueError("盲测结果文件名与内容 ID 不一致")
+        return envelope.result
 
 
 _MODEL_VERSION = re.compile(r"^quant-core-bar-backtest-v([1-9][0-9]*)$")

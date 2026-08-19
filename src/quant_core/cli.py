@@ -503,6 +503,152 @@ def walk_forward_command(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+@app.command("blind-evaluate")
+def blind_evaluate_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    source_evaluation_id: Annotated[str, typer.Option()],
+    catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/event-datasets"
+    ),
+    evaluation_catalog: Annotated[
+        Path, typer.Option(exists=True, file_okay=False)
+    ] = Path(".runtime/evaluations"),
+    blind_evaluation_catalog: Annotated[
+        Path, typer.Option(file_okay=False)
+    ] = Path(".runtime/blind-evaluations"),
+    include_trades: Annotated[bool, typer.Option()] = False,
+) -> None:
+    """一次性揭示已通过 walk-forward 的预留尾窗；不调用 Codex。"""
+
+    from quant_core.governance import BlindEvaluationClaim
+    from quant_core.persistence import SqlGovernanceRepository
+    from quant_core.research.candidates import resolve_research_candidate
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        HistoricalEventDatasetCatalog,
+    )
+    from quant_core.research.evaluation_catalog import (
+        BlindEvaluationCatalog,
+        HistoricalEvaluationCatalog,
+    )
+    from quant_core.research.walk_forward import (
+        WalkForwardEvaluationSpec,
+        run_blind_evaluation,
+        validate_walk_forward_evaluation_plan,
+    )
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    source = HistoricalEvaluationCatalog(evaluation_catalog).load(
+        source_evaluation_id
+    )
+    if not source.completed or not source.passed:
+        raise typer.BadParameter(
+            "源 walk-forward 尚未通过全部门禁，禁止揭盲",
+            param_hint="source-evaluation-id",
+        )
+    registered = governance.get_plan(source.plan.plan_id)
+    if registered is None or registered.candidate_spec_snapshot is None:
+        raise typer.BadParameter(
+            "源 walk-forward 没有完整的预登记规格",
+            param_hint="source-evaluation-id",
+        )
+    try:
+        spec = WalkForwardEvaluationSpec.model_validate(
+            registered.candidate_spec_snapshot
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "预登记 walk-forward 规格无法恢复",
+            param_hint="source-evaluation-id",
+        ) from exc
+    if (
+        source.plan != spec.plan
+        or source.dataset_id != spec.dataset_id
+        or source.event_dataset_id != spec.event_dataset_id
+        or source.evaluation_spec_hash != content_hash(spec)
+    ):
+        raise typer.BadParameter(
+            "源 walk-forward 与预登记规格不一致",
+            param_hint="source-evaluation-id",
+        )
+    loaded_config = load_config(config)
+    try:
+        effective_config, research_strategy = resolve_research_candidate(
+            spec.candidate, loaded_config
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
+    champion = governance.get_champion()
+    try:
+        validate_walk_forward_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id=champion.manifest_id,
+            evaluated_at=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
+
+    query_id = stable_id(
+        "blind_evaluation_query",
+        registered.plan_id,
+        source.evaluation_id,
+        source.evaluation_spec_hash,
+    )
+    claim = governance.claim_blind_evaluation(
+        BlindEvaluationClaim(
+            query_id=query_id,
+            plan_id=registered.plan_id,
+            source_evaluation_id=source.evaluation_id,
+            claimed_at=datetime.now(UTC),
+        )
+    )
+    blind_catalog = BlindEvaluationCatalog(blind_evaluation_catalog)
+    if claim.completed_at is not None:
+        assert claim.result_id is not None and claim.result_hash is not None
+        result = blind_catalog.load(claim.result_id)
+        if content_hash(result) != claim.result_hash:
+            raise RuntimeError("已完成盲测的事实库哈希与结果制品不一致")
+        result_path = blind_evaluation_catalog.resolve() / f"{result.result_id}.json"
+    else:
+        dataset = HistoricalDatasetCatalog(catalog).load(spec.dataset_id)
+        event_dataset = (
+            HistoricalEventDatasetCatalog(event_catalog).load(spec.event_dataset_id)
+            if spec.event_dataset_id is not None
+            else None
+        )
+        result = run_blind_evaluation(
+            source=source,
+            query_id=query_id,
+            dataset=dataset,
+            event_dataset=event_dataset,
+            config=effective_config,
+            strategy=research_strategy,
+        )
+        result_path = blind_catalog.store(result)
+        governance.complete_blind_evaluation(
+            claim.model_copy(
+                update={
+                    "completed_at": datetime.now(UTC),
+                    "result_id": result.result_id,
+                    "result_hash": content_hash(result),
+                }
+            )
+        )
+    payload = result.model_dump(mode="json")
+    payload["result_path"] = str(result_path)
+    if not include_trades:
+        payload["run"].pop("trades", None)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @app.command("freeze-event-history")
 def freeze_event_history_command(
     database_url: Annotated[

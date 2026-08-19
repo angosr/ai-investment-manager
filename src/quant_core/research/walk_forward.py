@@ -22,6 +22,7 @@ from quant_core.research.dataset import HistoricalDataset, HistoricalEventDatase
 from quant_core.strategy import PriceTrendStrategy
 
 WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v1"
+BLIND_EVALUATION_VERSION = "blind-evaluation-v1"
 RESEARCH_REGRESSION_SUITE_VERSION = "quant-core-research-regression-v1"
 
 
@@ -135,7 +136,7 @@ def validate_walk_forward_evaluation_plan(
         raise ValueError("walk-forward 预登记计划缺少必要评价阶段")
     if spec.plan.blind_bars and (
         EvaluationStage.BLIND not in plan.required_stages
-        or plan.blind_query_budget < 1
+        or plan.blind_query_budget != 1
     ):
         raise ValueError("walk-forward 盲区没有预登记查询预算")
 
@@ -191,6 +192,56 @@ class WalkForwardResult(FrozenModel):
             for item in self.folds
         ):
             raise ValueError("walk-forward 折叠数据制品身份不一致")
+        return self
+
+
+class BlindEvaluationResult(FrozenModel):
+    """The sole replay of a preregistered result's reserved blind window."""
+
+    version: str = BLIND_EVALUATION_VERSION
+    result_id: str
+    query_id: str
+    source_evaluation_id: str
+    plan: WalkForwardPlan
+    evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    dataset_id: str
+    event_dataset_id: str | None = None
+    artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    strategy_spec_snapshot: dict[str, object]
+    reserved_start: datetime
+    reserved_end: datetime
+    embargo_bars: int = Field(gt=0)
+    purge_bars: int = Field(gt=0)
+    completed: bool
+    passed: bool
+    reason_codes: tuple[str, ...]
+    run: BacktestRun
+
+    _utc_reserved_start = field_validator("reserved_start")(_require_utc)
+    _utc_reserved_end = field_validator("reserved_end")(_require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_provenance_match(self):
+        if self.reserved_start >= self.reserved_end:
+            raise ValueError("盲测预留窗口时间范围非法")
+        if (
+            self.run.dataset_id != self.dataset_id
+            or self.run.event_dataset_id != self.event_dataset_id
+        ):
+            raise ValueError("盲测运行的数据制品身份不一致")
+        expected = stable_id(
+            "blind_evaluation",
+            self.version,
+            self.query_id,
+            self.source_evaluation_id,
+            self.evaluation_spec_hash,
+            self.dataset_id,
+            self.event_dataset_id,
+            self.artifact_hash,
+            self.run.run_id,
+        )
+        if self.result_id != expected:
+            raise ValueError("盲测结果 ID 与冻结内容不一致")
         return self
 
 
@@ -319,6 +370,132 @@ def run_walk_forward(
         reason_codes=tuple(reasons) or ("ALL_PREREGISTERED_GATES_PASSED",),
         folds=tuple(folds),
         metrics=metrics,
+    )
+
+
+def run_blind_evaluation(
+    *,
+    source: WalkForwardResult,
+    query_id: str,
+    dataset: HistoricalDataset,
+    event_dataset: HistoricalEventDataset | None,
+    config: AppConfig,
+    strategy: ResearchStrategy,
+) -> BlindEvaluationResult:
+    """Reveal and replay one reserved tail only after walk-forward has passed."""
+
+    if not source.completed or not source.passed:
+        raise ValueError("只有通过全部预登记门禁的 walk-forward 才能揭盲")
+    if source.evaluation_spec_hash is None:
+        raise ValueError("旧版未冻结完整规格的 walk-forward 不能揭盲")
+    if source.plan.blind_bars <= 0 or source.blind_bar_count != source.plan.blind_bars:
+        raise ValueError("walk-forward 没有有效的预留盲区")
+    if dataset.manifest.dataset_id != source.dataset_id:
+        raise ValueError("盲测数据集与 walk-forward 不一致")
+    observed_event_dataset_id = (
+        event_dataset.manifest.dataset_id if event_dataset is not None else None
+    )
+    if observed_event_dataset_id != source.event_dataset_id:
+        raise ValueError("盲测事件数据集与 walk-forward 不一致")
+    if dataset.manifest.interval != config.market_data.interval:
+        raise ValueError("历史数据周期必须与当前 MarketDataPolicy 一致")
+
+    strategy_spec = strategy.research_spec
+    if not isinstance(strategy_spec, BaseModel):
+        raise ValueError("历史策略 research_spec 必须是可序列化的 Pydantic 模型")
+    strategy_snapshot = strategy_spec.model_dump(mode="json")
+    if strategy_snapshot != source.strategy_spec_snapshot:
+        raise ValueError("盲测策略规格与 walk-forward 不一致")
+    frozen_artifact = artifact_hash(config, strategy_spec=strategy_spec)
+    if frozen_artifact != source.artifact_hash:
+        raise ValueError("盲测代码、配置或成本模型与 walk-forward 不一致")
+
+    bars = dataset.bars
+    blind_start_index = len(bars) - source.blind_bar_count
+    if blind_start_index <= 0:
+        raise ValueError("预留盲区不能耗尽全部历史数据")
+    reserved_start = bars[blind_start_index].open_time
+    reserved_end = bars[-1].close_time
+    if reserved_start != source.blind_start or reserved_end != source.blind_end:
+        raise ValueError("盲测窗口与 walk-forward 冻结边界不一致")
+    if source.folds[-1].test_end >= reserved_start:
+        raise ValueError("walk-forward 样本外窗口侵入了预留盲区")
+
+    interval_minutes = config.market_data.interval_seconds // 60
+    horizon_minutes = getattr(strategy_spec, "horizon_minutes", None)
+    if not isinstance(horizon_minutes, int) or horizon_minutes <= 0:
+        raise ValueError("历史策略 research_spec 必须声明正整数 horizon_minutes")
+    horizon_bars = _ceil_div(horizon_minutes, interval_minutes)
+    embargo_bars = horizon_bars + 1
+    purge_bars = horizon_bars + 2
+    if embargo_bars != source.embargo_bars or purge_bars != source.purge_bars:
+        raise ValueError("盲测隔离参数与 walk-forward 不一致")
+
+    signal_start_index = blind_start_index + embargo_bars
+    signal_end_index = len(bars) - purge_bars
+    if signal_start_index >= signal_end_index:
+        raise ValueError("预留盲区扣除 embargo/purge 后没有可评价窗口")
+    replay_start_index = max(0, signal_start_index - config.market_data.bar_window)
+    signal_start = bars[signal_start_index].close_time
+    signal_end = bars[signal_end_index].close_time
+    replay_end = bars[-1].close_time + timedelta(microseconds=1)
+    run = run_bar_backtest(
+        dataset=dataset,
+        event_dataset=event_dataset,
+        config=config,
+        signal_start=signal_start,
+        signal_end=signal_end,
+        replay_start=bars[replay_start_index].open_time,
+        replay_end=replay_end,
+        starting_equity=source.plan.starting_equity,
+        spread_bps=source.plan.spread_bps,
+        strategy=strategy,
+    )
+    gate_fold = WalkForwardFold(
+        fold_id=stable_id("blind_gate_fold", query_id, run.run_id),
+        training_start=bars[0].open_time,
+        training_end=bars[blind_start_index - 1].close_time,
+        test_start=signal_start,
+        test_end=replay_end,
+        embargo_bars=embargo_bars,
+        purge_bars=purge_bars,
+        run=run,
+    )
+    reasons = _gate_reasons(
+        folds=(gate_fold,),
+        metrics=run.metrics,
+        plan=source.plan,
+        completed=run.completed,
+    )
+    result_id = stable_id(
+        "blind_evaluation",
+        BLIND_EVALUATION_VERSION,
+        query_id,
+        source.evaluation_id,
+        source.evaluation_spec_hash,
+        source.dataset_id,
+        source.event_dataset_id,
+        frozen_artifact,
+        run.run_id,
+    )
+    return BlindEvaluationResult(
+        result_id=result_id,
+        query_id=query_id,
+        source_evaluation_id=source.evaluation_id,
+        plan=source.plan,
+        evaluation_spec_hash=source.evaluation_spec_hash,
+        dataset_id=source.dataset_id,
+        event_dataset_id=source.event_dataset_id,
+        artifact_hash=frozen_artifact,
+        strategy_spec_snapshot=strategy_snapshot,
+        reserved_start=reserved_start,
+        reserved_end=reserved_end,
+        embargo_bars=embargo_bars,
+        purge_bars=purge_bars,
+        completed=run.completed,
+        passed=not reasons,
+        reason_codes=tuple(reasons) or ("ALL_PREREGISTERED_GATES_PASSED",),
+        run=run,
     )
 
 

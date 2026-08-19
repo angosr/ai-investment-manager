@@ -53,9 +53,11 @@ from quant_core.execution_contract import (
     RiskTransition,
 )
 from quant_core.governance import (
+    BlindEvaluationClaim,
     ChangeProposal,
     EvaluationPlan,
     EvaluationResult,
+    EvaluationStage,
     EvaluationTarget,
     FailedExperiment,
     GovernanceSnapshot,
@@ -75,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "c4e91b7d2a60"
+DATABASE_SCHEMA_VERSION = "b3f6e1a8c920"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -675,6 +677,23 @@ evaluation_plans = Table(
     Column("payload", JSON, nullable=False),
 )
 
+blind_evaluation_claims = Table(
+    "blind_evaluation_claims",
+    metadata,
+    Column(
+        "plan_id",
+        ForeignKey("evaluation_plans.plan_id"),
+        primary_key=True,
+    ),
+    Column("query_id", String(128), nullable=False, unique=True),
+    Column("source_evaluation_id", String(128), nullable=False),
+    Column("claimed_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("result_id", String(128), nullable=True),
+    Column("result_hash", String(64), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+
 evaluation_results = Table(
     "evaluation_results",
     metadata,
@@ -1187,6 +1206,89 @@ class SqlGovernanceRepository:
                 )
             ).scalar_one_or_none()
         return EvaluationPlan.model_validate(payload) if payload else None
+
+    def claim_blind_evaluation(self, claim: BlindEvaluationClaim) -> BlindEvaluationClaim:
+        """Atomically consume one plan's blind query budget; exact retries resume."""
+
+        if any(
+            item is not None
+            for item in (claim.completed_at, claim.result_id, claim.result_hash)
+        ):
+            raise ValueError("首次认领盲测预算时不能携带完成结果")
+        plan = self.get_plan(claim.plan_id)
+        if (
+            plan is None
+            or EvaluationStage.BLIND not in plan.required_stages
+            or plan.blind_query_budget != 1
+        ):
+            raise ValueError("EvaluationPlan 没有可消费的一次性盲测预算")
+        values = {
+            "plan_id": claim.plan_id,
+            "query_id": claim.query_id,
+            "source_evaluation_id": claim.source_evaluation_id,
+            "claimed_at": claim.claimed_at,
+            "payload": claim.model_dump(mode="json"),
+        }
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(insert(blind_evaluation_claims).values(**values))
+            return claim
+        except IntegrityError:
+            existing = self.get_blind_evaluation_claim(claim.plan_id)
+            if existing is None or (
+                existing.query_id != claim.query_id
+                or existing.source_evaluation_id != claim.source_evaluation_id
+            ):
+                raise ValueError("EvaluationPlan 的盲测查询预算已经被消费") from None
+            return existing
+
+    def get_blind_evaluation_claim(self, plan_id: str) -> BlindEvaluationClaim | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(blind_evaluation_claims.c.payload).where(
+                    blind_evaluation_claims.c.plan_id == plan_id
+                )
+            ).scalar_one_or_none()
+        return BlindEvaluationClaim.model_validate(payload) if payload else None
+
+    def complete_blind_evaluation(self, completed: BlindEvaluationClaim) -> BlindEvaluationClaim:
+        """Complete a claimed reveal once; the identical completion is idempotent."""
+
+        if any(
+            item is None
+            for item in (completed.completed_at, completed.result_id, completed.result_hash)
+        ):
+            raise ValueError("完成盲测必须携带结果身份、哈希与完成时间")
+        with self._engine.begin() as connection:
+            payload = connection.execute(
+                select(blind_evaluation_claims.c.payload)
+                .where(blind_evaluation_claims.c.plan_id == completed.plan_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if payload is None:
+                raise ValueError("盲测预算尚未认领")
+            existing = BlindEvaluationClaim.model_validate(payload)
+            if (
+                existing.query_id != completed.query_id
+                or existing.source_evaluation_id != completed.source_evaluation_id
+                or existing.claimed_at != completed.claimed_at
+            ):
+                raise ValueError("盲测完成事实与原始认领不一致")
+            if existing.completed_at is not None:
+                if existing != completed:
+                    raise ValueError("同一次盲测已经登记了不同结果")
+                return existing
+            connection.execute(
+                update(blind_evaluation_claims)
+                .where(blind_evaluation_claims.c.plan_id == completed.plan_id)
+                .values(
+                    completed_at=completed.completed_at,
+                    result_id=completed.result_id,
+                    result_hash=completed.result_hash,
+                    payload=completed.model_dump(mode="json"),
+                )
+            )
+        return completed
 
     def register_proposal(self, proposal: ChangeProposal) -> None:
         self._record(
