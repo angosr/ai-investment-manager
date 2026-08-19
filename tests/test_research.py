@@ -1026,6 +1026,13 @@ def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
     effective, strategy = resolve_research_candidate("configured", app_config)
     assert effective is app_config
     assert strategy.research_spec == app_config.strategy
+    disabled = app_config.model_copy(
+        update={
+            "strategy": app_config.strategy.model_copy(update={"enabled": False})
+        }
+    )
+    with pytest.raises(ValueError, match=r"已禁用.*评价基线"):
+        resolve_research_candidate("configured", disabled)
     with pytest.raises(ValueError, match="未知或已退役"):
         resolve_research_candidate("long-only-tsmom-12m-v1", app_config)
 
