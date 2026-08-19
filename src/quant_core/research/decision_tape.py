@@ -323,6 +323,8 @@ class ForecastGateEvaluationSpec(FrozenModel):
         maximum_completion_lag_seconds: int,
         policy: ForecastGatePolicy,
     ) -> ForecastGateEvaluationSpec:
+        if pipeline_version != config.pipeline.version:
+            raise ValueError("AI 门控 Pipeline 必须与冻结配置完全一致")
         return cls(
             base_strategy_spec_hash=content_hash(strategy.research_spec),
             research_artifact_hash=artifact_hash(

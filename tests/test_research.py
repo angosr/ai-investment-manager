@@ -601,7 +601,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         strategy=strategy,
         config=app_config,
         symbol="BTCUSDT",
-        pipeline_version="forward-pipeline-v1",
+        pipeline_version=app_config.pipeline.version,
         starting_equity=Decimal("10000"),
         spread_bps=Decimal("1"),
         maximum_completion_lag_seconds=120,
@@ -636,7 +636,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             ),
             config=app_config,
             symbol="BTCUSDT",
-            pipeline_version="forward-pipeline-v1",
+            pipeline_version=app_config.pipeline.version,
             starting_equity=Decimal("10000"),
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
@@ -648,13 +648,24 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             strategy=strategy,
             config=app_config,
             symbol="BTCUSDT",
-            pipeline_version="forward-pipeline-v1",
+            pipeline_version=app_config.pipeline.version,
             starting_equity=Decimal("10000"),
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
             policy=policy.model_copy(update={"minimum_confidence": Decimal("0.61")}),
         )
     ) != registered_hash
+    with pytest.raises(ValueError, match="Pipeline"):
+        ForecastGateEvaluationSpec.freeze(
+            strategy=strategy,
+            config=app_config,
+            symbol="BTCUSDT",
+            pipeline_version="wrong-pipeline",
+            starting_equity=Decimal("10000"),
+            spread_bps=Decimal("1"),
+            maximum_completion_lag_seconds=120,
+            policy=policy,
+        )
 
     result = run_paired_decision_tape_backtest(
         dataset=dataset,
