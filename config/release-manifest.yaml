@@ -1,7 +1,7 @@
 manifest_id: release-framework-panel-budget-v2
 created_at: 2026-08-19T14:31:00Z
 status: CHALLENGER
-code_version: e004f6e9317aa78b0f1ca06b0c449c8c7e968bfd
+code_version: c672c02ebc1680ea4f69aade7a8c0812bc91b427
 constitution_version: constitution-v1
 parent_manifest_id: release-framework-forecast-v1
 complexity_score: 1
