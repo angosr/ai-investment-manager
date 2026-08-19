@@ -1074,15 +1074,8 @@ def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
     )
 
 
-def test_candidate_registry_rejects_retired_research_code(
-    app_config, replay_input
-) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.research.candidates import (
-        LongOnlyVolatilityDipSpec,
-        LongOnlyVolatilityDipStrategy,
-        resolve_research_candidate,
-    )
+def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
+    from quant_core.research.candidates import resolve_research_candidate
 
     effective, strategy = resolve_research_candidate("configured", app_config)
     assert effective is app_config
@@ -1102,51 +1095,11 @@ def test_candidate_registry_rejects_retired_research_code(
             app_config,
         )
 
-    effective, resolved = resolve_research_candidate(
-        "long-only-volatility-dip-sma200-3d-v1",
-        app_config,
-    )
-    assert effective.market_data.interval == "1d"
-    assert effective.market_data.bar_window == 200
-    assert effective.frequency.cooldown_minutes == 4_320
-    assert resolved.research_spec == LongOnlyVolatilityDipSpec()
-
-    prices = tuple(
-        Decimal(value)
-        for value in ("100", "100.5", "101", "102", "104", "106", "110", "106")
-    )
-    bars = tuple(
-        bar.model_copy(
-            update={
-                "open": price,
-                "high": price * Decimal("1.01"),
-                "low": price * Decimal("0.99"),
-                "close": price,
-            }
+    with pytest.raises(ValueError, match="未知或已退役"):
+        resolve_research_candidate(
+            "long-only-volatility-dip-sma200-3d-v1",
+            app_config,
         )
-        for bar, price in zip(replay_input.market.bars, prices, strict=True)
-    )
-    market = replay_input.market.model_copy(
-        update={
-            "bars": bars,
-            "bid": Decimal("105.99"),
-            "ask": Decimal("106.01"),
-            "last": Decimal("106"),
-        }
-    )
-    spec = LongOnlyVolatilityDipSpec(
-        regime_moving_average_bars=5,
-        volatility_bars=3,
-        atr_bars=3,
-    )
-    candidates = LongOnlyVolatilityDipStrategy(spec).evaluate(
-        market=market,
-        account=replay_input.account,
-        features=FeatureEngine(app_config.feature).compute(market),
-    )
-    assert len(candidates) == 1
-    assert candidates[0].producer_version == spec.version
-    assert candidates[0].signal_observed_at == market.as_of
 
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
