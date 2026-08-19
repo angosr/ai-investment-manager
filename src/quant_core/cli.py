@@ -881,6 +881,10 @@ def paired_decision_tape_command(
     symbol: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option(help="结果成熟前登记的评价计划 ID")],
     signal_end: Annotated[str, typer.Option(help="带时区的预登记评价终点（不含）")],
+    source_blind_evaluation_id: Annotated[
+        str | None,
+        typer.Option(help="已通过的一次性盲测基线结果 ID"),
+    ] = None,
     dataset_id: Annotated[
         str | None,
         typer.Option(help="运行评价时覆盖完整窗口的冻结行情数据集"),
@@ -893,6 +897,9 @@ def paired_decision_tape_command(
     catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/datasets"
     ),
+    blind_evaluation_catalog: Annotated[
+        Path, typer.Option(file_okay=False)
+    ] = Path(".runtime/blind-evaluations"),
     starting_equity: Annotated[str, typer.Option()] = "10000",
     spread_bps: Annotated[str, typer.Option()] = "1",
     include_trades: Annotated[bool, typer.Option()] = False,
@@ -912,8 +919,10 @@ def paired_decision_tape_command(
         SqlForecastDecisionTapeReader,
         build_forecast_gate_evaluation_plan,
         run_paired_decision_tape_backtest,
+        validate_forecast_gate_baseline,
         validate_forecast_gate_evaluation_plan,
     )
+    from quant_core.research.evaluation_catalog import BlindEvaluationCatalog
 
     try:
         equity = Decimal(starting_equity)
@@ -946,6 +955,42 @@ def paired_decision_tape_command(
         raise typer.BadParameter("评价计划未在治理事实库预登记", param_hint="plan-id")
     else:
         registered_at = plan.registered_at
+    source_id = source_blind_evaluation_id
+    if not register_only and plan is not None:
+        try:
+            registered_spec = ForecastGateEvaluationSpec.model_validate(
+                plan.candidate_spec_snapshot
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "预登记 AI 门控规格无法恢复", param_hint="plan-id"
+            ) from exc
+        frozen_source_id = registered_spec.source_blind_evaluation_id
+        if source_id is not None and source_id != frozen_source_id:
+            raise typer.BadParameter(
+                "调用方盲测基线与预登记规格不一致",
+                param_hint="source-blind-evaluation-id",
+            )
+        source_id = frozen_source_id
+    if source_id is None:
+        raise typer.BadParameter(
+            "AI 门控计划必须绑定已通过的一次性盲测基线",
+            param_hint="source-blind-evaluation-id",
+        )
+    try:
+        source_blind_evaluation = BlindEvaluationCatalog(
+            blind_evaluation_catalog
+        ).load(source_id)
+        validate_forecast_gate_baseline(
+            source=source_blind_evaluation,
+            config=loaded,
+            strategy=strategy,
+            symbol=canonical_symbol,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(
+            str(exc), param_hint="source-blind-evaluation-id"
+        ) from exc
     dataset = None
     if not register_only:
         if dataset_id is None:
@@ -979,6 +1024,8 @@ def paired_decision_tape_command(
         spread_bps=spread,
         maximum_completion_lag_seconds=loaded.shadow.analysis_deadline_seconds,
         policy=policy,
+        source_blind_evaluation_id=source_blind_evaluation.result_id,
+        source_blind_evaluation_hash=content_hash(source_blind_evaluation),
     )
     if register_only:
         registered = build_forecast_gate_evaluation_plan(

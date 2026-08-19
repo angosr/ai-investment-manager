@@ -688,6 +688,8 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         minimum_confidence=Decimal("0.60"),
     )
     strategy = PriceTrendStrategy(app_config.strategy)
+    source_blind_evaluation_id = "passed-blind-baseline-v1"
+    source_blind_evaluation_hash = "a" * 64
     registered_spec = ForecastGateEvaluationSpec.freeze(
         strategy=strategy,
         config=app_config,
@@ -697,7 +699,18 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         spread_bps=Decimal("1"),
         maximum_completion_lag_seconds=120,
         policy=policy,
+        source_blind_evaluation_id=source_blind_evaluation_id,
+        source_blind_evaluation_hash=source_blind_evaluation_hash,
     )
+    with pytest.raises(ValueError, match="盲测基线"):
+        ForecastGateEvaluationSpec.model_validate(
+            registered_spec.model_dump(
+                exclude={
+                    "source_blind_evaluation_id",
+                    "source_blind_evaluation_hash",
+                }
+            )
+        )
     assert registered_spec.base_strategy_spec_hash == content_hash(
         strategy.research_spec
     )
@@ -735,6 +748,8 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
             policy=policy,
+            source_blind_evaluation_id=source_blind_evaluation_id,
+            source_blind_evaluation_hash=source_blind_evaluation_hash,
         )
     ) != registered_hash
     assert content_hash(
@@ -749,6 +764,8 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
             policy=policy,
+            source_blind_evaluation_id=source_blind_evaluation_id,
+            source_blind_evaluation_hash=source_blind_evaluation_hash,
         )
     ) != registered_hash
     assert content_hash(
@@ -761,6 +778,8 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
             policy=policy.model_copy(update={"minimum_confidence": Decimal("0.61")}),
+            source_blind_evaluation_id=source_blind_evaluation_id,
+            source_blind_evaluation_hash=source_blind_evaluation_hash,
         )
     ) != registered_hash
     with pytest.raises(ValueError, match="Pipeline"):
@@ -773,6 +792,8 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             spread_bps=Decimal("1"),
             maximum_completion_lag_seconds=120,
             policy=policy,
+            source_blind_evaluation_id=source_blind_evaluation_id,
+            source_blind_evaluation_hash=source_blind_evaluation_hash,
         )
 
     result = run_paired_decision_tape_backtest(
@@ -875,6 +896,7 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     app_config, tmp_path
 ) -> None:
     pytest.importorskip("nautilus_trader")
+    from quant_core.research.decision_tape import validate_forecast_gate_baseline
     from quant_core.research.evaluation_catalog import BlindEvaluationCatalog
     from quant_core.research.walk_forward import (
         WalkForwardPlan,
@@ -943,6 +965,21 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     blind_catalog = BlindEvaluationCatalog(tmp_path / "blind-evaluations")
     blind_catalog.store(result)
     assert blind_catalog.load(result.result_id) == result
+
+    passed_result = result.model_copy(update={"passed": True})
+    validate_forecast_gate_baseline(
+        source=passed_result,
+        config=app_config,
+        strategy=PriceTrendStrategy(app_config.strategy),
+        symbol=dataset.manifest.symbol,
+    )
+    with pytest.raises(ValueError, match="品种或周期"):
+        validate_forecast_gate_baseline(
+            source=passed_result,
+            config=app_config,
+            strategy=PriceTrendStrategy(app_config.strategy),
+            symbol="ETHUSDT",
+        )
 
 
 def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> None:

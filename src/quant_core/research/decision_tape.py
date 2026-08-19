@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
@@ -40,6 +40,7 @@ from quant_core.research.backtest import (
     run_bar_backtest,
 )
 from quant_core.research.dataset import HistoricalDataset
+from quant_core.research.walk_forward import BlindEvaluationResult
 
 FORECAST_DECISION_TAPE_VERSION = "forecast-decision-tape-v1"
 PAIRED_DECISION_TAPE_EVALUATION_VERSION = "paired-decision-tape-evaluation-v4"
@@ -302,7 +303,7 @@ class ForecastGatePolicy(FrozenModel):
 class ForecastGateEvaluationSpec(FrozenModel):
     """Pre-registration identity for both Q and its deterministic AI gate."""
 
-    version: str = "forecast-gate-evaluation-spec-v5"
+    version: str = "forecast-gate-evaluation-spec-v6"
     decision_tape_version: Literal["forecast-decision-tape-v1"] = (
         FORECAST_DECISION_TAPE_VERSION
     )
@@ -312,6 +313,10 @@ class ForecastGateEvaluationSpec(FrozenModel):
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     ai_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_blind_evaluation_id: str | None = None
+    source_blind_evaluation_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     symbol: str = Field(min_length=1)
     pipeline_version: str = Field(min_length=1)
     interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
@@ -320,6 +325,15 @@ class ForecastGateEvaluationSpec(FrozenModel):
     spread_bps: Decimal = Field(ge=0)
     maximum_completion_lag_seconds: int = Field(gt=0)
     policy: ForecastGatePolicy
+
+    @model_validator(mode="after")
+    def v6_requires_passed_blind_source_identity(self):
+        if self.version == "forecast-gate-evaluation-spec-v6" and (
+            self.source_blind_evaluation_id is None
+            or self.source_blind_evaluation_hash is None
+        ):
+            raise ValueError("v6 AI 门控计划必须绑定已通过的盲测基线")
+        return self
 
     @classmethod
     def freeze(
@@ -333,6 +347,8 @@ class ForecastGateEvaluationSpec(FrozenModel):
         spread_bps: Decimal,
         maximum_completion_lag_seconds: int,
         policy: ForecastGatePolicy,
+        source_blind_evaluation_id: str,
+        source_blind_evaluation_hash: str,
     ) -> ForecastGateEvaluationSpec:
         if pipeline_version != config.pipeline.version:
             raise ValueError("AI 门控 Pipeline 必须与冻结配置完全一致")
@@ -354,6 +370,8 @@ class ForecastGateEvaluationSpec(FrozenModel):
                     "analyst_input_version": ANALYST_INPUT_VERSION,
                 }
             ),
+            source_blind_evaluation_id=source_blind_evaluation_id,
+            source_blind_evaluation_hash=source_blind_evaluation_hash,
             symbol=symbol,
             pipeline_version=pipeline_version,
             interval=config.market_data.interval,
@@ -362,6 +380,30 @@ class ForecastGateEvaluationSpec(FrozenModel):
             maximum_completion_lag_seconds=maximum_completion_lag_seconds,
             policy=policy,
         )
+
+
+def validate_forecast_gate_baseline(
+    *,
+    source: BlindEvaluationResult,
+    config: AppConfig,
+    strategy: ResearchStrategy,
+    symbol: str,
+) -> None:
+    if not source.completed or not source.passed:
+        raise ValueError("AI 门控只能使用已通过的一次性盲测基线")
+    strategy_spec = strategy.research_spec
+    if not isinstance(strategy_spec, BaseModel):
+        raise ValueError("AI 门控基线策略规格必须可序列化")
+    expected_spec = strategy_spec.model_dump(mode="json")
+    if source.strategy_spec_snapshot != expected_spec:
+        raise ValueError("AI 门控基线与盲测策略规格不一致")
+    if source.artifact_hash != artifact_hash(
+        config,
+        strategy_spec=strategy_spec,
+    ):
+        raise ValueError("AI 门控基线的代码、风控或成本语义已变更")
+    if source.run.symbol != symbol or source.run.interval != config.market_data.interval:
+        raise ValueError("AI 门控基线的品种或周期与配对评价不一致")
 
 
 def build_forecast_gate_evaluation_plan(
