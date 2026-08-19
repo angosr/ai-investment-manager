@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from quant_core.config import AppConfig
 from quant_core.domain import FrozenModel, _require_utc
-from quant_core.ids import stable_id
+from quant_core.governance import EvaluationPlan, EvaluationStage
+from quant_core.ids import content_hash, stable_id
 from quant_core.research.backtest import (
     BacktestMetrics,
     BacktestRun,
@@ -19,6 +20,9 @@ from quant_core.research.backtest import (
 )
 from quant_core.research.dataset import HistoricalDataset, HistoricalEventDataset
 from quant_core.strategy import PriceTrendStrategy
+
+WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v1"
+RESEARCH_REGRESSION_SUITE_VERSION = "quant-core-research-regression-v1"
 
 
 class WalkForwardPlan(FrozenModel):
@@ -35,6 +39,105 @@ class WalkForwardPlan(FrozenModel):
     minimum_positive_fold_fraction: Decimal = Field(
         default=Decimal("0.75"), gt=0, le=1
     )
+
+
+class WalkForwardEvaluationSpec(FrozenModel):
+    """完整冻结一次可执行的程序策略研究，供事实库预登记校验。"""
+
+    version: str = WALK_FORWARD_EVALUATION_SPEC_VERSION
+    candidate: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    event_dataset_id: str | None = None
+    research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plan: WalkForwardPlan
+
+    @classmethod
+    def freeze(
+        cls,
+        *,
+        candidate: str,
+        dataset: HistoricalDataset,
+        event_dataset: HistoricalEventDataset | None,
+        config: AppConfig,
+        strategy: ResearchStrategy,
+        plan: WalkForwardPlan,
+    ) -> WalkForwardEvaluationSpec:
+        return cls(
+            candidate=candidate,
+            dataset_id=dataset.manifest.dataset_id,
+            event_dataset_id=(
+                event_dataset.manifest.dataset_id if event_dataset is not None else None
+            ),
+            research_artifact_hash=artifact_hash(
+                config,
+                strategy_spec=strategy.research_spec,
+            ),
+            plan=plan,
+        )
+
+
+def build_walk_forward_evaluation_plan(
+    *,
+    spec: WalkForwardEvaluationSpec,
+    base_manifest_id: str,
+    registered_at: datetime,
+) -> EvaluationPlan:
+    stages = [
+        EvaluationStage.STATIC,
+        EvaluationStage.FIXED_REGRESSION,
+        EvaluationStage.WALK_FORWARD,
+    ]
+    if spec.plan.blind_bars:
+        stages.append(EvaluationStage.BLIND)
+    return EvaluationPlan(
+        plan_id=spec.plan.plan_id,
+        registered_at=_require_utc(registered_at),
+        base_manifest_id=base_manifest_id,
+        primary_metric="average_net_return_bps_lower_bound",
+        minimum_sample_size=spec.plan.minimum_trades,
+        hard_guardrails=(
+            "NET_PNL_POSITIVE",
+            "NET_RETURN_LOWER_CONFIDENCE_BOUND_POSITIVE",
+            "MAXIMUM_DRAWDOWN_WITHIN_LIMIT",
+            "POSITIVE_FOLD_FRACTION_WITHIN_LIMIT",
+        ),
+        required_stages=tuple(stages),
+        fixed_regression_suite_version=RESEARCH_REGRESSION_SUITE_VERSION,
+        candidate_spec_hash=content_hash(spec),
+        candidate_spec_snapshot=spec.model_dump(mode="json"),
+        blind_query_budget=1 if spec.plan.blind_bars else 0,
+    )
+
+
+def validate_walk_forward_evaluation_plan(
+    *,
+    spec: WalkForwardEvaluationSpec,
+    plan: EvaluationPlan,
+    champion_manifest_id: str,
+    evaluated_at: datetime,
+) -> None:
+    if plan.plan_id != spec.plan.plan_id:
+        raise ValueError("walk-forward 与预登记计划 ID 不一致")
+    if plan.registered_at > _require_utc(evaluated_at):
+        raise ValueError("walk-forward 不能早于计划预登记时间")
+    if plan.base_manifest_id != champion_manifest_id:
+        raise ValueError("walk-forward 计划不属于当前 Champion")
+    if plan.candidate_spec_hash != content_hash(spec):
+        raise ValueError("walk-forward 参数、候选或数据与预登记规格不一致")
+    if plan.minimum_sample_size != spec.plan.minimum_trades:
+        raise ValueError("walk-forward 最小交易样本数与预登记计划不一致")
+    required = {
+        EvaluationStage.STATIC,
+        EvaluationStage.FIXED_REGRESSION,
+        EvaluationStage.WALK_FORWARD,
+    }
+    if not required.issubset(plan.required_stages):
+        raise ValueError("walk-forward 预登记计划缺少必要评价阶段")
+    if spec.plan.blind_bars and (
+        EvaluationStage.BLIND not in plan.required_stages
+        or plan.blind_query_budget < 1
+    ):
+        raise ValueError("walk-forward 盲区没有预登记查询预算")
 
 
 class WalkForwardFold(FrozenModel):
@@ -62,6 +165,7 @@ class WalkForwardFold(FrozenModel):
 class WalkForwardResult(FrozenModel):
     evaluation_id: str
     plan: WalkForwardPlan
+    evaluation_spec_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     dataset_id: str
     event_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -97,6 +201,7 @@ def run_walk_forward(
     config: AppConfig,
     plan: WalkForwardPlan,
     strategy: ResearchStrategy | None = None,
+    evaluation_spec_hash: str | None = None,
 ) -> WalkForwardResult:
     """对一个冻结候选做扩展训练窗、互斥样本外窗口评价；不自动调参。"""
 
@@ -182,6 +287,7 @@ def run_walk_forward(
     evaluation_id = stable_id(
         "walk_forward_evaluation",
         plan,
+        evaluation_spec_hash,
         dataset.manifest.dataset_id,
         frozen_artifact,
         [item.run.run_id for item in folds],
@@ -196,6 +302,7 @@ def run_walk_forward(
     return WalkForwardResult(
         evaluation_id=evaluation_id,
         plan=plan,
+        evaluation_spec_hash=evaluation_spec_hash,
         dataset_id=dataset.manifest.dataset_id,
         event_dataset_id=(
             event_dataset.manifest.dataset_id if event_dataset is not None else None

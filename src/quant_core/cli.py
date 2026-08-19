@@ -345,6 +345,10 @@ def fetch_binance_history_command(
 @app.command("walk-forward")
 def walk_forward_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
     dataset_id: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option()],
     training_bars: Annotated[int, typer.Option(min=2)],
@@ -371,16 +375,27 @@ def walk_forward_command(
     maximum_drawdown_fraction: Annotated[str, typer.Option()] = "0.05",
     minimum_positive_fold_fraction: Annotated[str, typer.Option()] = "0.75",
     include_trades: Annotated[bool, typer.Option()] = False,
+    register_only: Annotated[
+        bool,
+        typer.Option(help="只预登记本次完整实验规格，不运行回测"),
+    ] = False,
 ) -> None:
-    """对冻结程序策略运行带隔离窗口的 walk-forward；不调用 Codex。"""
+    """预登记或运行冻结程序策略的 walk-forward；不调用 Codex。"""
 
+    from quant_core.persistence import SqlGovernanceRepository
     from quant_core.research.candidates import resolve_research_candidate
     from quant_core.research.dataset import (
         HistoricalDatasetCatalog,
         HistoricalEventDatasetCatalog,
     )
     from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
-    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+    from quant_core.research.walk_forward import (
+        WalkForwardEvaluationSpec,
+        WalkForwardPlan,
+        build_walk_forward_evaluation_plan,
+        run_walk_forward,
+        validate_walk_forward_evaluation_plan,
+    )
 
     try:
         parsed_equity = Decimal(starting_equity)
@@ -413,24 +428,71 @@ def walk_forward_command(
         if event_dataset_id is not None
         else None
     )
-    result = run_walk_forward(
-        dataset=HistoricalDatasetCatalog(catalog).load(dataset_id),
+    dataset = HistoricalDatasetCatalog(catalog).load(dataset_id)
+    walk_forward_plan = WalkForwardPlan(
+        plan_id=plan_id,
+        training_bars=training_bars,
+        test_bars=test_bars,
+        blind_bars=blind_bars,
+        starting_equity=parsed_equity,
+        spread_bps=parsed_spread,
+        minimum_trades=minimum_trades,
+        minimum_profit_factor=parsed_profit_factor,
+        minimum_average_net_return_bps_lower_bound=parsed_return_lower_bound,
+        maximum_drawdown_fraction=parsed_drawdown,
+        minimum_positive_fold_fraction=parsed_positive_folds,
+    )
+    evaluation_spec = WalkForwardEvaluationSpec.freeze(
+        candidate=candidate,
+        dataset=dataset,
         event_dataset=event_dataset,
         config=effective_config,
-        plan=WalkForwardPlan(
-            plan_id=plan_id,
-            training_bars=training_bars,
-            test_bars=test_bars,
-            blind_bars=blind_bars,
-            starting_equity=parsed_equity,
-            spread_bps=parsed_spread,
-            minimum_trades=minimum_trades,
-            minimum_profit_factor=parsed_profit_factor,
-            minimum_average_net_return_bps_lower_bound=parsed_return_lower_bound,
-            maximum_drawdown_fraction=parsed_drawdown,
-            minimum_positive_fold_fraction=parsed_positive_folds,
-        ),
         strategy=research_strategy,
+        plan=walk_forward_plan,
+    )
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    champion = governance.get_champion()
+    if register_only:
+        registered = build_walk_forward_evaluation_plan(
+            spec=evaluation_spec,
+            base_manifest_id=champion.manifest_id,
+            registered_at=datetime.now(UTC),
+        )
+        governance.register_plan(registered)
+        typer.echo(
+            json.dumps(
+                {
+                    "evaluation_plan": registered.model_dump(mode="json"),
+                    "walk_forward_spec": evaluation_spec.model_dump(mode="json"),
+                    "walk_forward_spec_hash": content_hash(evaluation_spec),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    registered = governance.get_plan(plan_id)
+    if registered is None:
+        raise typer.BadParameter(
+            "EvaluationPlan 尚未预登记；先用相同参数执行 --register-only",
+            param_hint="plan-id",
+        )
+    try:
+        validate_walk_forward_evaluation_plan(
+            spec=evaluation_spec,
+            plan=registered,
+            champion_manifest_id=champion.manifest_id,
+            evaluated_at=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    result = run_walk_forward(
+        dataset=dataset,
+        event_dataset=event_dataset,
+        config=effective_config,
+        plan=walk_forward_plan,
+        strategy=research_strategy,
+        evaluation_spec_hash=content_hash(evaluation_spec),
     )
     result_path = HistoricalEvaluationCatalog(evaluation_catalog).store(result)
     payload = result.model_dump(mode="json")

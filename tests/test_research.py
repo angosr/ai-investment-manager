@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from quant_core.domain import IntelligenceEvent
-from quant_core.ids import stable_id
+from quant_core.ids import content_hash, stable_id
 from quant_core.market_data import ClosedMarketBar
 from quant_core.research.dataset import (
     HistoricalDataset,
@@ -703,6 +703,70 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     assert result.folds[-1].test_end < result.blind_start
     assert result.folds[0].test_end < result.folds[1].test_start
     assert all(item.run.completed for item in result.folds)
+
+
+def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> None:
+    from quant_core.research.walk_forward import (
+        WalkForwardEvaluationSpec,
+        WalkForwardPlan,
+        build_walk_forward_evaluation_plan,
+        validate_walk_forward_evaluation_plan,
+    )
+    from quant_core.strategy import PriceTrendStrategy
+
+    registered_at = _dataset().manifest.first_open_time
+    strategy = PriceTrendStrategy(app_config.strategy)
+    spec = WalkForwardEvaluationSpec.freeze(
+        candidate="configured",
+        dataset=_dataset(),
+        event_dataset=None,
+        config=app_config,
+        strategy=strategy,
+        plan=WalkForwardPlan(
+            plan_id="walk-forward-preregistered-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+    )
+    plan = build_walk_forward_evaluation_plan(
+        spec=spec,
+        base_manifest_id="champion-v1",
+        registered_at=registered_at,
+    )
+
+    validate_walk_forward_evaluation_plan(
+        spec=spec,
+        plan=plan,
+        champion_manifest_id="champion-v1",
+        evaluated_at=registered_at + timedelta(seconds=1),
+    )
+    assert plan.candidate_spec_hash == content_hash(spec)
+    assert plan.candidate_spec_snapshot == spec.model_dump(mode="json")
+    assert plan.blind_query_budget == 1
+
+    changed = spec.model_copy(
+        update={
+            "plan": spec.plan.model_copy(
+                update={"minimum_profit_factor": Decimal("1.10")}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="预登记规格不一致"):
+        validate_walk_forward_evaluation_plan(
+            spec=changed,
+            plan=plan,
+            champion_manifest_id="champion-v1",
+            evaluated_at=registered_at + timedelta(seconds=1),
+        )
+
+    with pytest.raises(ValueError, match="当前 Champion"):
+        validate_walk_forward_evaluation_plan(
+            spec=spec,
+            plan=plan,
+            champion_manifest_id="champion-v2",
+            evaluated_at=registered_at + timedelta(seconds=1),
+        )
 
 
 def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:

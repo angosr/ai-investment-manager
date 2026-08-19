@@ -150,6 +150,7 @@ class EvaluationPlan(FrozenModel):
     candidate_spec_hash: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
+    candidate_spec_snapshot: dict[str, object] | None = None
     blind_query_budget: int = Field(default=1, ge=0)
 
     _utc_registered_at = field_validator("registered_at")(_require_utc)
@@ -169,6 +170,11 @@ class EvaluationPlan(FrozenModel):
     def blind_stage_requires_query_budget(self):
         if EvaluationStage.BLIND in self.required_stages and self.blind_query_budget < 1:
             raise ValueError("BLIND 阶段必须预登记正数查询预算")
+        if self.candidate_spec_snapshot is not None and (
+            self.candidate_spec_hash is None
+            or content_hash(self.candidate_spec_snapshot) != self.candidate_spec_hash
+        ):
+            raise ValueError("EvaluationPlan 候选规格快照与哈希不一致")
         return self
 
 
