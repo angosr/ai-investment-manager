@@ -1,9 +1,9 @@
-manifest_id: release-framework-event-continuity-v1
-created_at: 2026-08-19T20:20:00Z
+manifest_id: release-framework-forecast-baseline-v1
+created_at: 2026-08-19T20:37:00Z
 status: CHALLENGER
-code_version: 83e3ab6df200c4c5d7ec26386f8c018f1c3fe46d
+code_version: cd0fb5c95c0e95c032bb05df63836813a4719d79
 constitution_version: constitution-v1
-parent_manifest_id: release-framework-event-quality-v1
+parent_manifest_id: release-framework-event-continuity-v1
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
@@ -21,7 +21,7 @@ component_versions:
   - [market_data, binance-public-shadow-v2]
   - [shadow, shadow-simulation-v1]
   - [information, trendradar-collector-v6]
-  - [pipeline, off-pipeline-v5]
+  - [pipeline, off-pipeline-v6]
   - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]
   - [codex_accounts, local-directory-account-registry-v2]
