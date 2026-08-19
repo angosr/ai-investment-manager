@@ -31,7 +31,7 @@ from quant_core.research.dataset import HistoricalDataset, InstrumentSpec
 from quant_core.risk import RiskEngine
 from quant_core.strategy import PriceTrendStrategy, Strategy
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v8"
+BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v9"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -70,15 +70,33 @@ class BacktestTrade(FrozenModel):
 class BacktestMetrics(FrozenModel):
     starting_equity: Decimal = Field(gt=0)
     ending_equity: Decimal = Field(gt=0)
+    # Optional only so immutable v1-v8 artifacts remain readable. New runs always
+    # populate both fields and validate the cost decomposition below.
+    gross_pnl: Decimal | None = None
+    modeled_cost: Decimal | None = Field(default=None, ge=0)
     net_pnl: Decimal
     return_fraction: Decimal
     trade_count: int = Field(ge=0)
     win_rate: Decimal | None = Field(default=None, ge=0, le=1)
     profit_factor: Decimal | None = Field(default=None, ge=0)
     maximum_drawdown_fraction: Decimal = Field(ge=0)
+    average_gross_return_bps: Decimal | None = None
+    average_modeled_cost_bps: Decimal | None = Field(default=None, ge=0)
     average_net_return_bps: Decimal | None = None
     average_net_return_bps_lower_bound: Decimal | None = None
     benchmark_buy_hold_bps: Decimal
+
+    @model_validator(mode="after")
+    def pnl_decomposition_matches(self):
+        if (self.gross_pnl is None) != (self.modeled_cost is None):
+            raise ValueError("回测毛收益与模型化成本必须同时存在或同时缺失")
+        if (
+            self.gross_pnl is not None
+            and self.modeled_cost is not None
+            and self.gross_pnl - self.modeled_cost != self.net_pnl
+        ):
+            raise ValueError("回测净收益必须等于毛收益减模型化成本")
+        return self
 
 
 class BacktestRun(FrozenModel):
@@ -376,6 +394,20 @@ def _metrics(
     maximum_drawdown: Decimal,
     benchmark_buy_hold_bps: Decimal,
 ) -> BacktestMetrics:
+    gross = sum((item.gross_pnl for item in trades), Decimal("0"))
+    modeled_cost = sum((item.modeled_cost for item in trades), Decimal("0"))
+    average_gross_bps = (
+        sum((item.gross_return_bps for item in trades), Decimal("0"))
+        / Decimal(len(trades))
+        if trades
+        else None
+    )
+    average_net_bps = (
+        sum((item.net_return_bps for item in trades), Decimal("0"))
+        / Decimal(len(trades))
+        if trades
+        else None
+    )
     net = ending_equity - starting_equity
     wins = [item.net_pnl for item in trades if item.net_pnl > 0]
     losses = [-item.net_pnl for item in trades if item.net_pnl < 0]
@@ -385,6 +417,8 @@ def _metrics(
     return BacktestMetrics(
         starting_equity=starting_equity,
         ending_equity=ending_equity,
+        gross_pnl=gross,
+        modeled_cost=modeled_cost,
         net_pnl=net,
         return_fraction=net / starting_equity,
         trade_count=len(trades),
@@ -395,12 +429,13 @@ def _metrics(
         ),
         profit_factor=profit_factor,
         maximum_drawdown_fraction=maximum_drawdown,
-        average_net_return_bps=(
-            sum((item.net_return_bps for item in trades), Decimal("0"))
-            / Decimal(len(trades))
-            if trades
+        average_gross_return_bps=average_gross_bps,
+        average_modeled_cost_bps=(
+            average_gross_bps - average_net_bps
+            if average_gross_bps is not None and average_net_bps is not None
             else None
         ),
+        average_net_return_bps=average_net_bps,
         average_net_return_bps_lower_bound=_mean_lower_bound(
             tuple(item.net_return_bps for item in trades)
         ),

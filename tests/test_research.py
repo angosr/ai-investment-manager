@@ -236,8 +236,47 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
     assert run.trades[0].opened_at - run.trades[0].signal_at == timedelta(milliseconds=1)
     assert all(item.modeled_cost > 0 for item in run.trades)
     assert all(item.net_pnl < item.gross_pnl for item in run.trades)
+    assert run.metrics.gross_pnl == sum(
+        (item.gross_pnl for item in run.trades), Decimal("0")
+    )
+    assert run.metrics.modeled_cost == sum(
+        (item.modeled_cost for item in run.trades), Decimal("0")
+    )
+    assert run.metrics.gross_pnl - run.metrics.modeled_cost == run.metrics.net_pnl
+    assert run.metrics.average_gross_return_bps == sum(
+        (item.gross_return_bps for item in run.trades), Decimal("0")
+    ) / len(run.trades)
+    assert (
+        run.metrics.average_modeled_cost_bps
+        == run.metrics.average_gross_return_bps - run.metrics.average_net_return_bps
+    )
     # 每 5 分钟上涨 2 bps，60 分钟毛收益仍不足以覆盖当前完整往返成本。
     assert run.metrics.net_pnl < 0
+
+
+def test_backtest_metrics_keep_legacy_artifacts_readable_and_validate_costs() -> None:
+    from quant_core.research.backtest import BacktestMetrics
+
+    legacy = BacktestMetrics(
+        starting_equity=Decimal("10000"),
+        ending_equity=Decimal("9990"),
+        net_pnl=Decimal("-10"),
+        return_fraction=Decimal("-0.001"),
+        trade_count=1,
+        maximum_drawdown_fraction=Decimal("0.001"),
+        benchmark_buy_hold_bps=Decimal("0"),
+    )
+    assert legacy.gross_pnl is None
+    assert legacy.modeled_cost is None
+
+    with pytest.raises(ValueError, match="净收益必须等于"):
+        BacktestMetrics.model_validate(
+            {
+                **legacy.model_dump(),
+                "gross_pnl": Decimal("5"),
+                "modeled_cost": Decimal("5"),
+            }
+        )
 
 
 def test_nautilus_backtest_protects_final_quantity_after_partial_entry_fill(
@@ -429,6 +468,25 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     assert result.blind_end == _dataset().bars[-1].close_time
     assert result.strategy_spec_snapshot is not None
     assert result.strategy_spec_snapshot["version"] == app_config.strategy.version
+    assert result.metrics.gross_pnl == sum(
+        (trade.gross_pnl for fold in result.folds for trade in fold.run.trades),
+        Decimal("0"),
+    )
+    assert result.metrics.modeled_cost == sum(
+        (trade.modeled_cost for fold in result.folds for trade in fold.run.trades),
+        Decimal("0"),
+    )
+    assert (
+        result.metrics.gross_pnl - result.metrics.modeled_cost
+        == result.metrics.net_pnl
+    )
+    assert result.metrics.average_gross_return_bps is not None
+    assert result.metrics.average_modeled_cost_bps is not None
+    assert abs(
+        result.metrics.average_gross_return_bps
+        - result.metrics.average_modeled_cost_bps
+        - result.metrics.average_net_return_bps
+    ) < Decimal("1e-24")
     assert result.folds[-1].test_end < result.blind_start
     assert result.folds[0].test_end < result.folds[1].test_start
     assert all(item.run.completed for item in result.folds)

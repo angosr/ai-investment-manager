@@ -208,6 +208,18 @@ def _aggregate_metrics(
     wins = [item.net_pnl for item in trades if item.net_pnl > 0]
     losses = [-item.net_pnl for item in trades if item.net_pnl < 0]
     total_start = starting_equity * len(folds)
+    gross = sum((item.gross_pnl for item in trades), Decimal("0"))
+    modeled_cost = sum((item.modeled_cost for item in trades), Decimal("0"))
+    average_gross_bps = (
+        sum((item.gross_return_bps for item in trades), Decimal("0")) / len(trades)
+        if trades
+        else None
+    )
+    average_net_bps = (
+        sum((item.net_return_bps for item in trades), Decimal("0")) / len(trades)
+        if trades
+        else None
+    )
     net = sum((item.run.metrics.net_pnl for item in folds), Decimal("0"))
     profit_factor = (
         sum(wins, Decimal("0")) / sum(losses, Decimal("0")) if losses else None
@@ -215,6 +227,8 @@ def _aggregate_metrics(
     return BacktestMetrics(
         starting_equity=total_start,
         ending_equity=total_start + net,
+        gross_pnl=gross,
+        modeled_cost=modeled_cost,
         net_pnl=net,
         return_fraction=net / total_start,
         trade_count=len(trades),
@@ -223,11 +237,13 @@ def _aggregate_metrics(
         maximum_drawdown_fraction=max(
             item.run.metrics.maximum_drawdown_fraction for item in folds
         ),
-        average_net_return_bps=(
-            sum((item.net_return_bps for item in trades), Decimal("0")) / len(trades)
-            if trades
+        average_gross_return_bps=average_gross_bps,
+        average_modeled_cost_bps=(
+            average_gross_bps - average_net_bps
+            if average_gross_bps is not None and average_net_bps is not None
             else None
         ),
+        average_net_return_bps=average_net_bps,
         average_net_return_bps_lower_bound=_mean_lower_bound(
             tuple(item.net_return_bps for item in trades)
         ),
