@@ -484,6 +484,68 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
     assert direct.relevance == Decimal("1")
 
 
+def test_v6_keeps_broad_macro_context_without_spending_high_impact_budget() -> None:
+    observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    legacy = EventNormalizer(
+        version="trendradar-collector-v5",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+    refined = EventNormalizer(
+        version="trendradar-collector-v6",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+
+    for index, title in enumerate(
+        (
+            "Trump comments on sanctions against Iran",
+            "The Federal Reserve accepted funds in a routine reverse repo operation",
+            "特朗普谈对伊制裁",
+            "美联储完成例行固定利率逆回购操作",
+        )
+    ):
+        item = RawIntelligenceItem(
+            source_item_id=f"broad-macro-{index}",
+            source="wire",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title=title,
+            rank=1,
+        )
+        old_event = legacy.normalize(item)
+        new_event = refined.normalize(item)
+        assert old_event is not None and old_event.relevance == Decimal("0.85")
+        assert new_event is not None and new_event.relevance == Decimal("0.50")
+
+
+def test_v6_high_impact_requires_crypto_context_or_specific_macro_shock() -> None:
+    observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    normalizer = EventNormalizer(
+        version="trendradar-collector-v6",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+    cases = (
+        ("A major crypto exchange halts withdrawals", Decimal("0.85")),
+        ("Federal Reserve rate decision raises rates", Decimal("0.85")),
+        ("非农就业数据大幅低于预期", Decimal("0.85")),
+        ("霍尔木兹海峡航运中断", Decimal("0.85")),
+    )
+    for index, (title, expected_relevance) in enumerate(cases):
+        event = normalizer.normalize(
+            RawIntelligenceItem(
+                source_item_id=f"specific-shock-{index}",
+                source="wire",
+                event_time=observed_at,
+                observed_at=observed_at,
+                title=title,
+                rank=1,
+            )
+        )
+        assert event is not None
+        assert event.symbols == ("BTCUSDT", "ETHUSDT")
+        assert event.relevance == expected_relevance
+        assert event.impact == Decimal("0.8415")
+
+
 def test_normalizer_routes_configured_symbol_without_hardcoded_alias() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     event = EventNormalizer(universe=("SOLUSDT",)).normalize(

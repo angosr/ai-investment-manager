@@ -144,7 +144,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: trendradar-collector-v4
+  version: trendradar-collector-v6
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
@@ -156,7 +156,7 @@ information:
   collection_interval_seconds: 60
 
 pipeline:
-  version: off-pipeline-v3
+  version: off-pipeline-v4
   ai_mode: "OFF"
 
 proposal:

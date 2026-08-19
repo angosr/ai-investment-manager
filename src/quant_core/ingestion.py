@@ -290,7 +290,7 @@ class EventNormalizer:
         "加密货币",
         "数字资产",
     )
-    _critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
+    _legacy_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
         "federal reserve",
         "cpi",
         "rate decision",
@@ -301,6 +301,24 @@ class EventNormalizer:
         "降息",
         "加息",
         "制裁",
+        "霍尔木兹",
+    )
+    # v6 只让可辨识的宏观冲击跨越高影响触发门槛。“美联储”或“制裁”
+    # 单独出现仍作为低优先级背景保留，避免例行操作和非加密地缘快讯消耗 AI 预算。
+    _refined_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
+        "cpi",
+        "consumer price index",
+        "rate decision",
+        "rate cut",
+        "rate hike",
+        "nonfarm payroll",
+        "nfp",
+        "hormuz",
+        "利率决议",
+        "降息",
+        "加息",
+        "非农",
+        "居民消费价格",
         "霍尔木兹",
     )
 
@@ -335,14 +353,18 @@ class EventNormalizer:
         )
         relevance = Decimal("1")
         if not symbols:
-            if not self._has_cross_asset_relevance(text):
-                return None
-            symbols = self._universe
-            relevance = (
-                Decimal("0.85")
-                if any(keyword in text for keyword in self._critical_cross_asset_keywords)
-                else Decimal("0.50")
-            )
+            if self._version.endswith("v6") and self._has_crypto_context(text):
+                symbols = self._universe
+                relevance = Decimal("0.85")
+            else:
+                if not self._has_cross_asset_relevance(text):
+                    return None
+                symbols = self._universe
+                relevance = (
+                    Decimal("0.85")
+                    if self._has_critical_cross_asset_relevance(text)
+                    else Decimal("0.50")
+                )
         rank_component = (
             Decimal("0.5")
             if item.rank is None
@@ -387,6 +409,21 @@ class EventNormalizer:
         return "etf" in text and any(
             self._contains_symbol_keyword(text, keyword)
             for keyword in self._crypto_context_keywords
+        )
+
+    def _has_crypto_context(self, text: str) -> bool:
+        return any(
+            self._contains_symbol_keyword(text, keyword)
+            for keyword in self._crypto_context_keywords
+        )
+
+    def _has_critical_cross_asset_relevance(self, text: str) -> bool:
+        if not self._version.endswith("v6"):
+            # 历史 v4/v5 使用子串匹配；回放时必须保持原语义。
+            return any(keyword in text for keyword in self._legacy_critical_cross_asset_keywords)
+        return any(
+            self._contains_symbol_keyword(text, keyword)
+            for keyword in self._refined_critical_cross_asset_keywords
         )
 
     @staticmethod

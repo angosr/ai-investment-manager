@@ -1,9 +1,9 @@
-manifest_id: release-testnet-trigger-evidence-v1
-created_at: 2026-08-19T19:53:00Z
+manifest_id: release-testnet-event-quality-v1
+created_at: 2026-08-19T20:10:00Z
 status: CHALLENGER
 code_version: d08002ccb31f24e778f21cae10b054a09076af7d
 constitution_version: constitution-v1
-parent_manifest_id: release-testnet-panel-budget-v2
+parent_manifest_id: release-testnet-trigger-evidence-v1
 complexity_score: 2
 component_versions:
   - [feature, feature-v1]
@@ -20,8 +20,8 @@ component_versions:
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-testnet-v1]
   - [shadow, shadow-simulation-v1]
-  - [information, trendradar-collector-v4]
-  - [pipeline, testnet-programmatic-v3]
+  - [information, trendradar-collector-v6]
+  - [pipeline, testnet-programmatic-v4]
   - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]
   - [codex_accounts, local-directory-account-registry-v2]
