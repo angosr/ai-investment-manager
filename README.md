@@ -83,7 +83,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[research]'
 .venv/bin/quant-core fetch-binance-history \
   --config config/quant-core.yaml --symbol BTCUSDT \
-  --candidate long-only-tsmom-12m-v1 \
+  --candidate configured \
   --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/quant-core freeze-event-history \
@@ -96,7 +96,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/quant-core walk-forward \
   --config config/quant-core.yaml --dataset-id '<上一步输出>' \
-  --candidate long-only-tsmom-12m-v1 \
+  --candidate configured \
   --plan-id '<已预登记计划>' --training-bars 1095 --test-bars 365 \
   --blind-bars 365
 .venv/bin/quant-core research-catalog \

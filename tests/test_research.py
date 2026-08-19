@@ -8,7 +8,20 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from quant_core.domain import IntelligenceEvent
+from quant_core.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
+from quant_core.domain import (
+    AccountSnapshot,
+    Action,
+    FeatureSnapshot,
+    FrozenModel,
+    IntelligenceEvent,
+    MarketSnapshot,
+    OrderType,
+    PriceCondition,
+    ProgramExitCondition,
+    Side,
+    SignalCandidate,
+)
 from quant_core.ids import content_hash, stable_id
 from quant_core.market_data import ClosedMarketBar
 from quant_core.research.dataset import (
@@ -21,6 +34,84 @@ from quant_core.research.dataset import (
     fetch_binance_history,
     freeze_historical_events,
 )
+
+
+class _TestResearchSpec(FrozenModel):
+    strategy_id: str = "test-long"
+    version: str = "test-long-v1"
+    family: str = "test-only"
+    horizon_minutes: int = 1_440
+    signal_validity_minutes: int = 1_440
+    program_exit_bar_interval_minutes: int | None = None
+    program_exit_moving_average_bars: int | None = None
+
+
+class _TestLongStrategy:
+    """Small test fixture for replay mechanics; it is not a research candidate."""
+
+    def __init__(self, spec: _TestResearchSpec | None = None) -> None:
+        self._spec = spec or _TestResearchSpec()
+
+    @property
+    def research_spec(self) -> _TestResearchSpec:
+        return self._spec
+
+    def evaluate(
+        self,
+        *,
+        market: MarketSnapshot,
+        account: AccountSnapshot,
+        features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
+    ) -> tuple[SignalCandidate, ...]:
+        if any(
+            position.symbol == market.symbol and position.quantity > 0
+            for position in account.positions
+        ):
+            return ()
+        spec = self._spec
+        program_exit = None
+        if (
+            spec.program_exit_bar_interval_minutes is not None
+            and spec.program_exit_moving_average_bars is not None
+        ):
+            program_exit = ProgramExitCondition(
+                version=f"{spec.version}-exit-v1",
+                bar_interval_minutes=spec.program_exit_bar_interval_minutes,
+                moving_average_bars=spec.program_exit_moving_average_bars,
+            )
+        return (
+            SignalCandidate(
+                candidate_id=stable_id(
+                    "sig",
+                    market.cycle_id,
+                    spec.strategy_id,
+                    spec.version,
+                    market.symbol,
+                ),
+                cycle_id=market.cycle_id,
+                producer_id=spec.strategy_id,
+                producer_version=spec.version,
+                strategy_family=spec.family,
+                symbol=market.symbol,
+                action=Action.OPEN,
+                side=Side.BUY,
+                horizon_minutes=spec.horizon_minutes,
+                feature_refs=(features.feature_set_version,),
+                entry=PriceCondition(order_type=OrderType.MARKET),
+                stop_price=market.ask * Decimal("0.9"),
+                valid_until=market.as_of
+                + timedelta(minutes=spec.signal_validity_minutes),
+                signal_observed_at=market.as_of,
+                reference_price=market.ask,
+                expected_edge_half_life_seconds=900,
+                raw_score=Decimal("1"),
+                expected_gross_bps=Decimal("0"),
+                calibration_ref=uncalibrated_ref(spec.version),
+                program_exit=program_exit,
+                unknowns=(EDGE_CALIBRATION_MISSING,),
+            ),
+        )
 
 
 def _instrument() -> InstrumentSpec:
@@ -846,97 +937,28 @@ def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> N
 
 def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
     from quant_core.research.backtest import artifact_hash
-    from quant_core.research.candidates import LongOnlyTimeSeriesMomentumSpec
 
-    first = LongOnlyTimeSeriesMomentumSpec(version="long-only-tsmom-test-v1")
-    second = first.model_copy(update={"version": "long-only-tsmom-test-v2"})
+    first = _TestResearchSpec(version="test-long-v1")
+    second = first.model_copy(update={"version": "test-long-v2"})
 
     assert artifact_hash(app_config, strategy_spec=first) != artifact_hash(
         app_config, strategy_spec=second
     )
 
 
-def test_long_only_time_series_momentum_is_point_in_time_and_long_cash(
-    app_config, replay_input
-) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.research.candidates import (
-        LongOnlyTimeSeriesMomentumSpec,
-        LongOnlyTimeSeriesMomentumStrategy,
-    )
+def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
+    from quant_core.research.candidates import resolve_research_candidate
 
-    strategy = LongOnlyTimeSeriesMomentumStrategy(
-        LongOnlyTimeSeriesMomentumSpec(
-            version="long-only-tsmom-test-v1",
-            lookback_bars=5,
-            atr_bars=3,
-            horizon_minutes=1440,
-        )
-    )
-    features = FeatureEngine(app_config.feature).compute(replay_input.market)
-    candidates = strategy.evaluate(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=features,
-    )
-
-    assert len(candidates) == 1
-    assert candidates[0].producer_version == "long-only-tsmom-test-v1"
-    assert candidates[0].signal_observed_at == replay_input.market.as_of
-    assert candidates[0].side.value == "BUY"
-    assert candidates[0].stop_price < replay_input.market.ask
-
-
-def test_long_only_moving_average_is_point_in_time_and_long_cash(
-    app_config, replay_input
-) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.research.candidates import (
-        LongOnlyMovingAverageSpec,
-        LongOnlyMovingAverageStrategy,
-        resolve_research_candidate,
-    )
-
-    strategy = LongOnlyMovingAverageStrategy(
-        LongOnlyMovingAverageSpec(
-            version="long-only-sma-test-v1",
-            moving_average_bars=5,
-            atr_bars=3,
-            horizon_minutes=1440,
-        )
-    )
-    features = FeatureEngine(app_config.feature).compute(replay_input.market)
-    candidates = strategy.evaluate(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=features,
-    )
-    effective, resolved = resolve_research_candidate(
-        "long-only-sma100-2w-v1", app_config
-    )
-    monthly_effective, monthly = resolve_research_candidate(
-        "long-only-sma200-1m-v1", app_config
-    )
-
-    assert len(candidates) == 1
-    assert candidates[0].producer_version == "long-only-sma-test-v1"
-    assert candidates[0].signal_observed_at == replay_input.market.as_of
-    assert candidates[0].side.value == "BUY"
-    assert effective.market_data.interval == "1d"
-    assert effective.market_data.bar_window == 100
-    assert resolved.research_spec.version == "long-only-sma100-2w-v1"
-    assert monthly_effective.market_data.bar_window == 200
-    assert monthly.research_spec.version == "long-only-sma200-1m-v1"
-    assert monthly.research_spec.horizon_minutes == 43_200
+    effective, strategy = resolve_research_candidate("configured", app_config)
+    assert effective is app_config
+    assert strategy.research_spec == app_config.strategy
+    with pytest.raises(ValueError, match="未知或已退役"):
+        resolve_research_candidate("long-only-tsmom-12m-v1", app_config)
 
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
     pytest.importorskip("nautilus_trader")
     from quant_core.research.backtest import run_bar_backtest
-    from quant_core.research.candidates import (
-        LongOnlyMovingAverageSpec,
-        LongOnlyMovingAverageStrategy,
-    )
 
     dataset = _dataset(
         count=40,
@@ -944,32 +966,26 @@ def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
         interval="1d",
         bar_delta=timedelta(days=1),
     )
-    spec = LongOnlyMovingAverageSpec(
-        version="long-only-sma5-riskoff-test-v1",
-        moving_average_bars=5,
-        atr_bars=3,
-        stop_atr_multiple=Decimal("10"),
+    spec = _TestResearchSpec(
+        version="test-long-program-exit-v1",
         horizon_minutes=90 * 1_440,
-        cooldown_minutes=7 * 1_440,
+        program_exit_bar_interval_minutes=1_440,
         program_exit_moving_average_bars=5,
     )
     effective = app_config.model_copy(
         update={
             "market_data": app_config.market_data.model_copy(
-                update={"interval": "1d", "bar_window": spec.required_bar_window}
-            ),
-            "feature": app_config.feature.model_copy(
-                update={"volatility_window": spec.atr_bars}
+                update={"interval": "1d", "bar_window": 6}
             ),
             "frequency": app_config.frequency.model_copy(
-                update={"cooldown_minutes": spec.cooldown_minutes}
+                update={"cooldown_minutes": 7 * 1_440}
             ),
         }
     )
     run = run_bar_backtest(
         dataset=dataset,
         config=effective,
-        strategy=LongOnlyMovingAverageStrategy(spec),
+        strategy=_TestLongStrategy(spec),
         signal_start=dataset.bars[5].close_time,
         signal_end=dataset.bars[-5].close_time,
         replay_start=dataset.bars[0].open_time,
@@ -987,17 +1003,20 @@ def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
 def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
     pytest.importorskip("nautilus_trader")
     from quant_core.research.backtest import run_bar_backtest
-    from quant_core.research.candidates import resolve_research_candidate
 
     dataset = _dataset(count=450, interval="1d", bar_delta=timedelta(days=1))
-    effective, strategy = resolve_research_candidate(
-        "long-only-tsmom-12m-v1", app_config
+    effective = app_config.model_copy(
+        update={
+            "market_data": app_config.market_data.model_copy(
+                update={"interval": "1d", "bar_window": 30}
+            )
+        }
     )
     run = run_bar_backtest(
         dataset=dataset,
         config=effective,
-        strategy=strategy,
-        signal_start=dataset.bars[365].close_time,
+        strategy=_TestLongStrategy(),
+        signal_start=dataset.bars[30].close_time,
         signal_end=dataset.bars[-34].close_time,
         replay_start=dataset.bars[0].open_time,
         replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
@@ -1011,42 +1030,31 @@ def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
 def test_hourly_candidate_uses_native_hour_bar_type(app_config) -> None:
     pytest.importorskip("nautilus_trader")
     from quant_core.research.backtest import run_bar_backtest
-    from quant_core.research.candidates import (
-        LongOnlyMovingAverageSpec,
-        LongOnlyMovingAverageStrategy,
-    )
 
     dataset = _dataset(
         count=200,
         interval="4h",
         bar_delta=timedelta(hours=4),
     )
-    spec = LongOnlyMovingAverageSpec(
-        version="long-only-sma20-4h-test-v1",
-        interval="4h",
-        moving_average_bars=20,
-        atr_bars=10,
+    spec = _TestResearchSpec(
+        version="test-long-4h-v1",
         horizon_minutes=7 * 1_440,
-        cooldown_minutes=7 * 1_440,
         signal_validity_minutes=240,
     )
     effective = app_config.model_copy(
         update={
             "market_data": app_config.market_data.model_copy(
-                update={"interval": "4h", "bar_window": spec.required_bar_window}
-            ),
-            "feature": app_config.feature.model_copy(
-                update={"volatility_window": spec.atr_bars}
+                update={"interval": "4h", "bar_window": 20}
             ),
             "frequency": app_config.frequency.model_copy(
-                update={"cooldown_minutes": spec.cooldown_minutes}
+                update={"cooldown_minutes": 7 * 1_440}
             ),
         }
     )
     run = run_bar_backtest(
         dataset=dataset,
         config=effective,
-        strategy=LongOnlyMovingAverageStrategy(spec),
+        strategy=_TestLongStrategy(spec),
         signal_start=dataset.bars[20].close_time,
         signal_end=dataset.bars[-45].close_time,
         replay_start=dataset.bars[0].open_time,
