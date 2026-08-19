@@ -112,18 +112,25 @@ Panel  Propose Cand  Compose Freq  Risk  Exec  Pos   Outcome
 
 ### 5.1 顶栏 · 单一健康状态（异常驱动）
 
-顶栏只显示**一个**健康 pill：全部正常时显示「运行正常」（绿）；任一检查异常时 pill 变琥珀/红并点名最严重项。点开 pill 才展开 4 项检查明细，正常时不占版面。运行阶段（`MOCK`）与 UTC 时钟常驻。
+顶栏只显示**一个**健康 pill：全部正常时显示「运行正常」（绿）；任一检查异常时 pill 变琥珀/红并点名最严重项。点开 pill 才展开检查明细，正常时不占版面。运行阶段与 UTC 时钟常驻。预算恰好耗尽、存在协调器等待等可恢复容量状态为琥珀色 `warn`，不得伪装成全绿，也不得误报为红色故障。
 
 | 检查项（pill 内） | 值/状态来源 |
 |---|---|
-| 数据新鲜度 | 指标 `market_data_age_seconds` / `account_data_age_seconds`（`metric_observations` 最新观测） |
+| 数据新鲜度 | 每个配置品种的最新实时 Quote/Trade 与最新对账账户时间；不得用旧分析周期代替实时流 |
 | 风险预算（是否冻结） | `reconciliation_reports.latest().freeze_new_risk` |
 | 对账 | `reconciliation_reports.latest().status`（MATCHED / MISMATCH / UNKNOWN）——**原独立对账卡片并入此处** |
 | 熔断 Kill Switch | `RiskPolicy.kill_switch`；不得从对账冻结或周期结果猜测 |
+| AI 分析 | 当前 Pipeline 最近成功完成时间，以及近一小时 `codex_runs` 成功数/尝试数 |
+| 预测结算 | 超过最大预测周期、分析截止和两次轮询后，`forecast_count` 仍未被 Outcome 覆盖的 Proposal |
+| 触发投递 | 当前 Pipeline 已到期但仍未投递的 Outbox 数量与最老年龄 |
+| 触发协调器 | 只读查询当前 Temporal Coordinator 的 pending/active 状态；查询失败按故障展示 |
+| 版本一致性 | 当前 TriggerPlan 引用的 ReleaseManifest 必须与全部类型化运行配置一致 |
+| AI 调用预算 | 近一小时原子准入事实 / `maximum_ai_calls_per_hour` |
+| 主机磁盘 | 根文件系统占用；90% 告警、95% 故障 |
 
 对账报告超过 `ReconciliationPolicy.maximum_report_age_seconds` 后按异常展示；数据新鲜度会把最新周期中记录的行情/账户年龄继续按墙钟累加，不能让一条旧周期指标永久显示为新鲜。
 
-Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健康视线。
+Champion/manifest 的具体身份仍放在次要位置；但运行配置与发布事实是否一致属于健康门禁。
 
 ### 5.2 HERO 权益曲线
 
