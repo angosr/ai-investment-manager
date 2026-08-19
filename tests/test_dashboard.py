@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
+from quant_core.cli import _default_web_dist
 from quant_core.dashboard import formatting as fmt
 from quant_core.dashboard import serializers as ser
 from quant_core.dashboard.health import assemble_health
@@ -110,23 +113,116 @@ def test_world_event_serializes_injection_flag():
 
 
 def test_health_is_unknown_without_data_and_bad_on_mismatch():
+    now = datetime.now(UTC)
     empty_reader = SimpleNamespace(
         latest_reconciliation=lambda *, now: None,
-        latest_cycle_metrics=lambda: None,
+        latest_market_observed_at=lambda: None,
+        portfolio_protection_active=lambda: False,
     )
-    config = SimpleNamespace(panel=SimpleNamespace(max_market_age_seconds=60))
-    result = assemble_health(empty_reader, config, now=datetime.now(UTC))
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=30,
+            kill_switch=False,
+        ),
+    )
+    result = assemble_health(empty_reader, config, now=now)
     assert result["overall"] == "unknown"
 
-    mismatch = SimpleNamespace(status="MISMATCH", freeze_new_risk=True)
+    mismatch = SimpleNamespace(status="MISMATCH", freeze_new_risk=True, as_of=now)
     bad_reader = SimpleNamespace(
         latest_reconciliation=lambda *, now: mismatch,
-        latest_cycle_metrics=lambda: None,
+        latest_market_observed_at=lambda: None,
+        portfolio_protection_active=lambda: False,
     )
-    bad = assemble_health(bad_reader, config, now=datetime.now(UTC))
+    bad = assemble_health(bad_reader, config, now=now)
     assert bad["overall"] == "bad"
     reconciliation = next(c for c in bad["checks"] if c["key"] == "reconciliation")
     assert reconciliation["state"] == "bad"
+
+
+def test_health_ages_persisted_freshness_and_uses_real_kill_switch():
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    now = observed_at.replace(minute=2)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: observed_at,
+        portfolio_protection_active=lambda: False,
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=True,
+        ),
+    )
+
+    result = assemble_health(reader, config, now=now)
+
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["data_freshness"]["state"] == "bad"
+    assert checks["kill_switch"]["state"] == "bad"
+    assert result["overall"] == "bad"
+
+
+def test_health_reads_persisted_portfolio_kill_switch() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: True,
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+    )
+
+    result = assemble_health(reader, config, now=now)
+
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["kill_switch"]["state"] == "bad"
+    assert result["overall"] == "bad"
+
+
+@pytest.mark.parametrize(
+    ("percent", "expected"),
+    ((89.9, "ok"), (90.0, "warn"), (95.0, "bad")),
+)
+def test_health_surfaces_host_disk_pressure(percent, expected) -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        host_resources={"disk": {"percent": percent}},
+    )
+
+    disk = next(item for item in result["checks"] if item["key"] == "host_disk")
+    assert disk["state"] == expected
+    assert result["overall"] == expected
 
 
 def test_sample_host_resources_shape():
@@ -135,3 +231,21 @@ def test_sample_host_resources_shape():
     assert set(sample["memory"]) == {"used_bytes", "total_bytes", "percent"}
     assert set(sample["disk"]) == {"used_bytes", "total_bytes", "percent"}
     assert set(sample["load_average"]) == {"1m", "5m", "15m"}
+
+
+def test_default_web_dist_does_not_depend_on_process_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    repository = tmp_path / "repository"
+    dist = repository / "web" / "dist"
+    dist.mkdir(parents=True)
+    runtime_directory = tmp_path / "systemd-runtime"
+    runtime_directory.mkdir()
+    monkeypatch.chdir(runtime_directory)
+    monkeypatch.setattr(
+        "quant_core.cli.__file__",
+        str(repository / "src" / "quant_core" / "cli.py"),
+    )
+
+    assert _default_web_dist() == dist.resolve()

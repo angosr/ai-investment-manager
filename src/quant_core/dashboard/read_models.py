@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -17,16 +17,18 @@ from quant_core.config import AppConfig
 from quant_core.domain import (
     AnalysisProposal,
     IntelligenceEvent,
-    MetricObservation,
     TradeIntent,
 )
 from quant_core.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
 from quant_core.ledger import CycleFacts
 from quant_core.lifecycle import OpenLifecycleRecord
+from quant_core.market_data_sql import market_quotes, market_trades
 from quant_core.outcome_evaluation_sql import OutcomeWindowFacts, SqlOutcomeWindowRepository
+from quant_core.panel import sanitize_external_text
 from quant_core.persistence import (
     SqlFactLedger,
     SqlOpenLifecycleRepository,
+    analysis_call_admissions,
     analysis_cycles,
     analysis_proposals,
     analysis_trigger_events,
@@ -34,14 +36,17 @@ from quant_core.persistence import (
     codex_account_leases,
     codex_runs,
     market_snapshots,
-    metric_observations,
     normalized_events,
     orders,
     panel_snapshots,
+    portfolio_protection_states,
     trade_intents,
 )
 from quant_core.reconciliation import ReconciliationReport
 from quant_core.reconciliation_sql import SqlReconciliationReportStore
+
+# 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
+_EVIDENCE_PANEL_SCAN_LIMIT = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,11 +180,13 @@ class DashboardReader:
             query = query.where(normalized_events.c.event_time < before)
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
-        fed = self._evidence_to_cycle(limit=limit)
+        parsed = tuple(IntelligenceEvent.model_validate(payload) for payload in payloads)
+        fed = self._evidence_to_cycle(parsed)
         events: list[WorldEvent] = []
-        for payload in payloads:
-            event = IntelligenceEvent.model_validate(payload)
+        for event in parsed:
             link = fed.get(event.evidence_id)
+            _, title_suspicious = sanitize_external_text(event.title, maximum_length=240)
+            _, body_suspicious = sanitize_external_text(event.body)
             events.append(
                 WorldEvent(
                     kind="NEWS",
@@ -188,20 +195,30 @@ class DashboardReader:
                     title=event.title,
                     symbols=event.symbols,
                     impact=float(event.impact),
-                    injection_suspected=False,
+                    injection_suspected=title_suspicious or body_suspicious,
                     fed_cycle_id=link[0] if link else None,
                     fed_cycle_at=link[1] if link else None,
                 )
             )
         return events
 
-    def _evidence_to_cycle(self, *, limit: int) -> dict[str, tuple[str, datetime]]:
+    def _evidence_to_cycle(
+        self, events: tuple[IntelligenceEvent, ...]
+    ) -> dict[str, tuple[str, datetime]]:
         """证据 evidence_id → 选入它的周期。一条新闻若进入某周期面板，即喂给了那次分析。"""
 
+        if not events:
+            return {}
+        wanted = {event.evidence_id for event in events}
+        first_visible_at = min(event.observed_at for event in events)
+        # 一条新闻通常被它出现后的最早那个面板选中，因此从 first_visible_at 起「由近及远」正序
+        # 扫描最先命中，配合 wanted 集满即停。加 LIMIT 兜底：多数新闻从不入选任何面板，若无上界
+        # 集合永远集不满，会一路扫到最新——本应轻量的 /api/events 会退化成近全表扫描。
         query = (
             select(panel_snapshots.c.cycle_id, panel_snapshots.c.as_of, panel_snapshots.c.payload)
-            .order_by(panel_snapshots.c.as_of.desc())
-            .limit(limit * 2)
+            .where(panel_snapshots.c.as_of >= first_visible_at)
+            .order_by(panel_snapshots.c.as_of.asc())
+            .limit(_EVIDENCE_PANEL_SCAN_LIMIT)
         )
         with self._engine.connect() as connection:
             rows = connection.execute(query).all()
@@ -211,8 +228,10 @@ class DashboardReader:
                 continue
             for item in payload.get("evidence", ()):
                 evidence_id = item.get("evidence_id") if isinstance(item, dict) else None
-                if evidence_id and evidence_id not in mapping:
+                if evidence_id in wanted and evidence_id not in mapping:
                     mapping[evidence_id] = (cycle_id, as_of)
+            if len(mapping) == len(wanted):
+                break
         return mapping
 
     def _recent_triggers(self, *, before: datetime | None, limit: int) -> list[WorldEvent]:
@@ -231,12 +250,21 @@ class DashboardReader:
             query = query.where(analysis_trigger_events.c.occurred_at < before)
         with self._engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
-        labels = {"MARKET_SHOCK": "市场冲击", "POSITION_RECHECK": "持仓复检"}
+        labels = {
+            "MARKET_SHOCK": "市场冲击",
+            "POSITION_RECHECK": "持仓复检",
+            "AGENT_WAKEUP": "Agent 立即复核",
+        }
+        sources = {
+            "MARKET_SHOCK": "Binance 行情",
+            "POSITION_RECHECK": "生命周期",
+            "AGENT_WAKEUP": "主 Agent",
+        }
         return [
             WorldEvent(
                 kind=row["trigger_type"],
                 at=row["occurred_at"],
-                source="Binance 行情" if row["trigger_type"] == "MARKET_SHOCK" else "生命周期",
+                source=sources.get(row["trigger_type"], "系统调度"),
                 title=f"{labels.get(row['trigger_type'], row['trigger_type'])}（{row['symbol']}）",
                 symbols=(row["symbol"],),
                 impact=min(1.0, row["priority"] / 100.0),
@@ -269,7 +297,8 @@ class DashboardReader:
     def latest_prices(self) -> dict[str, Decimal]:
         """每个品种最近一次记录的最新价，用于持仓浮盈的盯市估算（非结算口径）。
 
-        按配置品种逐个取最新一行（有索引、行数有界），不整表扫描。
+        品种数由配置限制在 20 以内。逐品种命中 ``(symbol, as_of)`` 索引的点查，
+        比窗口函数对全部历史行情分组排序更适合长期运行。
         """
 
         prices: dict[str, Decimal] = {}
@@ -281,7 +310,7 @@ class DashboardReader:
                     .order_by(market_snapshots.c.as_of.desc())
                     .limit(1)
                 ).scalar_one_or_none()
-                if isinstance(payload, dict) and payload.get("last"):
+                if isinstance(payload, dict) and payload.get("last") is not None:
                     prices[symbol] = Decimal(str(payload["last"]))
         return prices
 
@@ -307,37 +336,64 @@ class DashboardReader:
         )
         return EquityWindow(facts=facts, report=report, lookback_start=start, lookback_end=now)
 
-    def latest_cycle_metrics(self) -> tuple[MetricObservation, ...] | None:
-        """最近一个周期的指标观测（供健康新鲜度判断，避免装配整张周期图）。"""
+    def latest_market_observed_at(self) -> datetime | None:
+        """返回所有配置品种报价与成交中最旧的最新观测时间。
 
+        健康度必须读取实时行情事实，不能把最近一次分析周期的冻结指标当作数据流状态。
+        品种上限为 20，点查可稳定命中现有索引，成本不随历史表长度线性增长。
+        """
+
+        observed: list[datetime] = []
         with self._engine.connect() as connection:
-            cycle_id = connection.execute(
-                select(analysis_cycles.c.cycle_id).order_by(analysis_cycles.c.as_of.desc()).limit(1)
-            ).scalar_one_or_none()
-            if cycle_id is None:
-                return None
-            payloads = connection.execute(
-                select(metric_observations.c.payload).where(
-                    metric_observations.c.cycle_id == cycle_id
+            for symbol in self._config.market_data.symbols:
+                quote_at = connection.execute(
+                    select(market_quotes.c.observed_at)
+                    .where(market_quotes.c.symbol == symbol)
+                    .order_by(market_quotes.c.observed_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                trade_at = connection.execute(
+                    select(market_trades.c.observed_at)
+                    .where(market_trades.c.symbol == symbol)
+                    .order_by(market_trades.c.aggregate_trade_id.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if quote_at is None or trade_at is None:
+                    return None
+                observed.extend((_database_utc(quote_at), _database_utc(trade_at)))
+        return min(observed) if observed else None
+
+    def portfolio_protection_active(self) -> bool | None:
+        with self._engine.connect() as connection:
+            value = connection.execute(
+                select(portfolio_protection_states.c.kill_switch_active).where(
+                    portfolio_protection_states.c.portfolio_id == "primary"
                 )
-            ).scalars()
-            return tuple(MetricObservation.model_validate(payload) for payload in payloads)
+            ).scalar_one_or_none()
+        return bool(value) if value is not None else None
 
     # --- AI 账号 ----------------------------------------------------------
     def accounts(self, *, now: datetime) -> list[AccountStatus]:
         capacity = self._latest_capacity()
-        leased = self._active_leases()
+        leased = self._active_leases(now=now)
         failures = self._recent_failures(now=now)
         statuses: list[AccountStatus] = []
         for account in self._config.codex_accounts.accounts:
             cap = capacity.get(account.account_id)
+            observed_at = _database_utc(cap[2]) if cap is not None else None
+            capacity_fresh = (
+                observed_at is not None
+                and 0
+                <= (now - observed_at).total_seconds()
+                <= self._config.codex_runtime.capacity_ttl_seconds
+            )
             statuses.append(
                 AccountStatus(
                     account_id=account.account_id,
                     enabled=account.enabled,
                     headroom_percent=float(cap[0]) if cap is not None else None,
-                    healthy=bool(cap[1]) if cap is not None else None,
-                    observed_at=cap[2] if cap is not None else None,
+                    healthy=bool(cap[1]) if cap is not None and capacity_fresh else None,
+                    observed_at=observed_at,
                     leased=account.account_id in leased,
                     recent_failures=failures.get(account.account_id, 0),
                 )
@@ -345,24 +401,22 @@ class DashboardReader:
         return statuses
 
     def ai_calls_last_hour(self, *, now: datetime) -> int:
-        # codex_runs 无独立时间列，运行时间取 cycle.as_of；在 SQL 侧按窗口联接计数。
+        # 预算按跨品种原子准入事实消耗；不能用事后 Codex 完成记录近似，否则失败关闭
+        # 或并发中的批次会让 UI 显示的“剩余额度”与实际门禁分裂。
         query = (
             select(func.count())
-            .select_from(
-                codex_runs.join(
-                    analysis_cycles, analysis_cycles.c.cycle_id == codex_runs.c.cycle_id
-                )
-            )
+            .select_from(analysis_call_admissions)
             .where(
-                codex_runs.c.attempt == 1,
-                analysis_cycles.c.as_of >= now - timedelta(hours=1),
-                analysis_cycles.c.as_of <= now,
+                analysis_call_admissions.c.admitted_at > now - timedelta(hours=1),
+                analysis_call_admissions.c.admitted_at <= now,
             )
         )
         with self._engine.connect() as connection:
             return int(connection.execute(query).scalar_one())
 
     def _latest_capacity(self) -> dict[str, tuple]:
+        # 白名单账号数量很小且有 (account_id, observed_at) 主键；点查避免每次刷新
+        # 对全部容量历史做窗口排序。
         latest: dict[str, tuple] = {}
         with self._engine.connect() as connection:
             for account in self._config.codex_accounts.accounts:
@@ -380,12 +434,13 @@ class DashboardReader:
                     latest[account.account_id] = tuple(row)
         return latest
 
-    def _active_leases(self) -> set[str]:
+    def _active_leases(self, *, now: datetime) -> set[str]:
         with self._engine.connect() as connection:
             return set(
                 connection.execute(
                     select(codex_account_leases.c.account_id).where(
-                        codex_account_leases.c.status == "ACTIVE"
+                        codex_account_leases.c.status == "ACTIVE",
+                        codex_account_leases.c.expires_at > now,
                     )
                 ).scalars()
             )
@@ -408,3 +463,7 @@ class DashboardReader:
         )
         with self._engine.connect() as connection:
             return {account_id: count for account_id, count in connection.execute(query).all()}
+
+
+def _database_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

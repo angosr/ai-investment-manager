@@ -113,42 +113,88 @@ class TriggerSink(Protocol):
     def record_trigger(self, trigger) -> bool: ...
 
 
+@dataclass(slots=True)
+class _MarketShockWindow:
+    bucket: int
+    low_price: Decimal
+    high_price: Decimal
+    last_price: Decimal
+    triggered: bool = False
+
+
 class MarketShockDetector:
-    """常驻、确定性过滤逐笔行情；仅越过阈值的冲击进入 Trigger Outbox。"""
+    """以配置 K 线边界实时检测窗口内冲击；每品种每窗口最多触发一次。"""
 
     def __init__(
         self,
         *,
         pipeline_id: str,
         relative_move_threshold: Decimal,
+        window_seconds: int,
         trigger_expiry_seconds: int,
         sink: TriggerSink,
     ) -> None:
         if relative_move_threshold <= 0:
             raise ValueError("市场冲击阈值必须为正数")
+        if window_seconds < 1:
+            raise ValueError("市场冲击窗口必须为正数")
         self._pipeline_id = pipeline_id
         self._threshold = relative_move_threshold
+        self._window_seconds = window_seconds
         self._trigger_expiry_seconds = trigger_expiry_seconds
         self._sink = sink
-        self._last_trade: dict[str, MarketTrade] = {}
+        self._windows: dict[str, _MarketShockWindow] = {}
 
     def observe(self, event: MarketEvent) -> bool:
         if isinstance(event, MarketQuote):
             return False
         if isinstance(event, ClosedMarketBar):
-            relative_move = abs(event.close / event.open - 1)
+            relative_move = max(
+                abs(event.high / event.open - 1),
+                abs(event.low / event.open - 1),
+            )
             dedup_key = f"bar:{event.interval}:{event.open_time.isoformat()}"
             occurred_at = min(event.close_time, event.observed_at)
             observed_at = event.observed_at
-        else:
-            previous = self._last_trade.get(event.symbol)
-            self._last_trade[event.symbol] = event
-            if previous is None:
+            bucket = self._bucket(event.open_time)
+            state = self._windows.get(event.symbol)
+            if state is not None and state.bucket == bucket and state.triggered:
                 return False
-            relative_move = abs(event.price / previous.price - 1)
-            dedup_key = f"trade:{previous.aggregate_trade_id}:{event.aggregate_trade_id}"
+        else:
             occurred_at = min(event.event_time, event.observed_at)
             observed_at = event.observed_at
+            bucket = self._bucket(occurred_at)
+            state = self._windows.get(event.symbol)
+            if state is None:
+                self._windows[event.symbol] = _MarketShockWindow(
+                    bucket=bucket,
+                    low_price=event.price,
+                    high_price=event.price,
+                    last_price=event.price,
+                )
+                return False
+            if bucket > state.bucket:
+                relative_move = abs(event.price / state.last_price - 1)
+                state = _MarketShockWindow(
+                    bucket=bucket,
+                    low_price=event.price,
+                    high_price=event.price,
+                    last_price=event.price,
+                )
+                self._windows[event.symbol] = state
+            elif bucket < state.bucket:
+                return False
+            else:
+                relative_move = max(
+                    abs(event.price / state.low_price - 1),
+                    abs(event.price / state.high_price - 1),
+                )
+                state.low_price = min(state.low_price, event.price)
+                state.high_price = max(state.high_price, event.price)
+                state.last_price = event.price
+            if state.triggered:
+                return False
+            dedup_key = f"trade-window-v1:{self._window_seconds}:{bucket}"
         if relative_move < self._threshold:
             return False
         priority = min(100, max(1, int(relative_move / self._threshold * 80)))
@@ -162,7 +208,22 @@ class MarketShockDetector:
             dedup_key=dedup_key,
             expires_at=observed_at + timedelta(seconds=self._trigger_expiry_seconds),
         )
-        return self._sink.record_trigger(trigger)
+        inserted = self._sink.record_trigger(trigger)
+        state = self._windows.get(event.symbol)
+        if state is None or bucket > state.bucket:
+            self._windows[event.symbol] = _MarketShockWindow(
+                bucket=bucket,
+                low_price=event.low if isinstance(event, ClosedMarketBar) else event.price,
+                high_price=event.high if isinstance(event, ClosedMarketBar) else event.price,
+                last_price=event.close if isinstance(event, ClosedMarketBar) else event.price,
+                triggered=True,
+            )
+        elif state.bucket == bucket:
+            state.triggered = True
+        return inserted
+
+    def _bucket(self, at: datetime) -> int:
+        return int(_require_utc(at).timestamp()) // self._window_seconds
 
 
 class MarketDataStore(Protocol):
@@ -171,6 +232,8 @@ class MarketDataStore(Protocol):
     def put_trade(self, trade: MarketTrade) -> bool: ...
 
     def put_bar(self, bar: ClosedMarketBar) -> bool: ...
+
+    def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade: ...
 
     def snapshot(
         self,
@@ -234,6 +297,21 @@ class InMemoryMarketDataStore:
                 return False
             self._bars[key] = bar
             return True
+
+    def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
+        as_of = _require_utc(as_of)
+        with self._lock:
+            visible = [
+                item
+                for item in self._trades.values()
+                if item.symbol == symbol and item.observed_at <= as_of and item.event_time <= as_of
+            ]
+        if not visible:
+            raise ValueError(f"{symbol} 缺少可见成交，无法计算组合权益")
+        return max(
+            visible,
+            key=lambda item: (item.event_time, item.observed_at, item.aggregate_trade_id),
+        )
 
     def snapshot(
         self,

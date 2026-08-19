@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 RUN_EVALUATION_STAGE_ACTIVITY = "run-version-evaluation-stage-v1"
 FINALIZE_EVALUATION_ACTIVITY = "finalize-version-evaluation-v1"
 
@@ -58,6 +60,7 @@ class VersionEvaluationWorkflow:
                     start_to_close_timeout=start_to_close,
                     schedule_to_close_timeout=schedule_to_close,
                     retry_policy=retry_policy,
+                    versioning_intent=default_activity_versioning_intent(),
                     summary=f"运行预登记评估阶段 {stage}",
                 )
                 stage_result = raw_result.get("stage_result")
@@ -77,6 +80,7 @@ class VersionEvaluationWorkflow:
                 start_to_close_timeout=start_to_close,
                 schedule_to_close_timeout=schedule_to_close,
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="冻结并登记版本评估结果",
             )
         except ActivityError:

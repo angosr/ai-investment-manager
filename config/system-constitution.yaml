@@ -9,7 +9,7 @@ immutable_rules:
 human_reserved_powers:
   - 修改 RiskPolicy、执行权限、Kill Switch 恢复条件和系统宪法。
   - 批准生产晋级、真实交易凭据接入和实盘风险额度。
-  - 选择与重新启用三个 Codex 账号目录。
+  - 选择、登记与重新启用 Codex 账号目录白名单。
 agent_forbidden_changes:
   - 修改固定回归集、盲测内容、已预注册验收条件或评估结果。
   - 直接发布、扩大权限、接触交易密钥或绕过人工批准。

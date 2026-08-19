@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from quant_core.domain import IntelligenceEvent
 from quant_core.features import FeatureEngine
-from quant_core.panel import PanelBuilder, render_panel_markdown
+from quant_core.panel import PanelBuilder
 
 
 def test_panel_is_deterministic_and_marks_prompt_injection(app_config, replay_input) -> None:
@@ -42,7 +44,7 @@ def test_panel_is_deterministic_and_marks_prompt_injection(app_config, replay_in
     assert suspect.prompt_injection_suspected is True
     assert "<script>" not in suspect.excerpt
     assert "PROMPT_INJECTION_SUSPECTED:evt-malicious" in first.data_quality
-    assert len(render_panel_markdown(first)) <= app_config.panel.max_characters
+    assert any("OPEN 的 side 只能为 BUY" in rule for rule in first.rules_digest)
 
 
 def test_panel_excludes_events_observed_after_snapshot(app_config, replay_input) -> None:
@@ -62,3 +64,69 @@ def test_panel_excludes_events_observed_after_snapshot(app_config, replay_input)
     )
 
     assert "evt-future" not in {item.evidence_id for item in panel.evidence}
+
+
+def test_normalizer_version_does_not_change_frozen_analyst_panel(app_config, replay_input) -> None:
+    event = replay_input.events[0]
+    current = event.model_copy(update={"normalizer_version": "normalizer-v4"})
+    features = FeatureEngine(app_config.feature).compute(replay_input.market)
+    builder = PanelBuilder(app_config.panel)
+
+    legacy_panel = builder.build(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+        events=(event,),
+    )
+    current_panel = builder.build(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+        events=(current,),
+    )
+
+    assert legacy_panel == current_panel
+
+
+def test_panel_excludes_evidence_older_than_policy_window(app_config, replay_input) -> None:
+    stale_at = replay_input.market.as_of - timedelta(
+        seconds=app_config.panel.maximum_evidence_age_seconds + 1
+    )
+    stale_event = replay_input.events[0].model_copy(
+        update={
+            "evidence_id": "evt-stale",
+            "event_time": stale_at,
+            "observed_at": stale_at,
+        }
+    )
+    features = FeatureEngine(app_config.feature).compute(replay_input.market)
+
+    panel = PanelBuilder(app_config.panel).build(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+        events=(*replay_input.events, stale_event),
+    )
+
+    assert "evt-stale" not in {item.evidence_id for item in panel.evidence}
+
+
+def test_panel_deduplicates_identical_content_across_sources(app_config, replay_input) -> None:
+    original = replay_input.events[0]
+    duplicate = original.model_copy(
+        update={
+            "evidence_id": "evt-cross-source-duplicate",
+            "source": "second-wire",
+        }
+    )
+    features = FeatureEngine(app_config.feature).compute(replay_input.market)
+
+    panel = PanelBuilder(app_config.panel).build(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+        events=(original, duplicate),
+    )
+
+    matching = [item for item in panel.evidence if item.title == original.title]
+    assert len(matching) == 1

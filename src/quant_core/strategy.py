@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+from typing import Protocol
 
+from quant_core.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
 from quant_core.config import StrategyPolicy
 from quant_core.domain import (
     AccountSnapshot,
@@ -17,9 +19,27 @@ from quant_core.domain import (
 from quant_core.ids import stable_id
 
 
+class Strategy(Protocol):
+    """Programmatic candidate producer; it cannot query, size risk, or execute orders."""
+
+    def evaluate(
+        self,
+        *,
+        market: MarketSnapshot,
+        account: AccountSnapshot,
+        features: FeatureSnapshot,
+    ) -> tuple[SignalCandidate, ...]: ...
+
+
 class PriceTrendStrategy:
     def __init__(self, policy: StrategyPolicy) -> None:
         self._policy = policy
+
+    @property
+    def research_spec(self) -> StrategyPolicy:
+        """Frozen identity used only by deterministic historical evaluation."""
+
+        return self._policy
 
     def evaluate(
         self,
@@ -28,7 +48,7 @@ class PriceTrendStrategy:
         account: AccountSnapshot,
         features: FeatureSnapshot,
     ) -> tuple[SignalCandidate, ...]:
-        if self._policy.calibration_sample_size < self._policy.minimum_calibration_samples:
+        if not self._policy.enabled:
             return ()
         if features.regime != "TRENDING_UP":
             return ()
@@ -71,7 +91,8 @@ class PriceTrendStrategy:
                 reference_price=market.ask,
                 expected_edge_half_life_seconds=(self._policy.expected_edge_half_life_seconds),
                 raw_score=raw_score,
-                expected_gross_bps=self._policy.expected_gross_bps,
-                calibration_ref=self._policy.calibration_ref,
+                expected_gross_bps=Decimal("0"),
+                calibration_ref=uncalibrated_ref(self._policy.version),
+                unknowns=(EDGE_CALIBRATION_MISSING,),
             ),
         )

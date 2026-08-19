@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import field_validator
 from sqlalchemy import func, insert, select, update
@@ -11,6 +11,7 @@ from quant_core.config import TriggerPolicy
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.ids import stable_id
 from quant_core.persistence import (
+    analysis_call_admissions,
     analysis_scheduled_wakeups,
     analysis_trigger_batches,
     analysis_trigger_events,
@@ -20,6 +21,7 @@ from quant_core.persistence import (
     trigger_outbox,
 )
 from quant_core.trigger import (
+    AnalysisCallAdmission,
     AnalysisTriggerEvent,
     AnalysisTriggerPlan,
     TriggerBatch,
@@ -48,6 +50,7 @@ class SqlTriggerRepository:
 
     def __init__(self, engine: Engine, policy: TriggerPolicy) -> None:
         self._engine = engine
+        self._policy = policy
         self._gate = TriggerPlanGate(policy)
 
     def create_plan(self, plan: AnalysisTriggerPlan) -> AnalysisTriggerPlan:
@@ -107,6 +110,73 @@ class SqlTriggerRepository:
             return False
         return True
 
+    def admit_analysis_call(
+        self,
+        batch: TriggerBatch,
+        *,
+        requested_at: datetime,
+    ) -> AnalysisCallAdmission:
+        """跨品种原子占用滚动调用预算；同一批次重试不重复计数。"""
+
+        requested_at = _require_utc(requested_at)
+        with self._engine.begin() as connection:
+            if self._engine.dialect.name == "postgresql":
+                # 与 Dispatcher 的会话级领导锁使用不同 key；xact 锁只保护短事务。
+                connection.execute(
+                    select(
+                        func.pg_advisory_xact_lock(self._policy.dispatcher_advisory_lock_key + 1)
+                    )
+                ).scalar_one()
+            existing = connection.execute(
+                select(analysis_call_admissions.c.admitted_at).where(
+                    analysis_call_admissions.c.batch_id == batch.batch_id
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return AnalysisCallAdmission(
+                    admitted=True,
+                    admitted_at=_database_utc(existing),
+                )
+
+            one_hour_ago = requested_at - timedelta(hours=1)
+            admitted_times = tuple(
+                _database_utc(item)
+                for item in connection.execute(
+                    select(analysis_call_admissions.c.admitted_at)
+                    .where(analysis_call_admissions.c.admitted_at > one_hour_ago)
+                    .order_by(analysis_call_admissions.c.admitted_at)
+                ).scalars()
+            )
+            retry_at = requested_at
+            if len(admitted_times) >= self._policy.maximum_ai_calls_per_hour:
+                retry_at = max(retry_at, admitted_times[0] + timedelta(hours=1))
+            if admitted_times:
+                retry_at = max(
+                    retry_at,
+                    admitted_times[-1]
+                    + timedelta(seconds=self._policy.minimum_call_interval_seconds),
+                )
+            if retry_at > requested_at:
+                return AnalysisCallAdmission(admitted=False, retry_at=retry_at)
+
+            payload = {
+                "batch_id": batch.batch_id,
+                "pipeline_id": batch.pipeline_id,
+                "symbol": batch.symbol,
+                "admitted_at": requested_at.isoformat(),
+                "trigger_policy_version": self._policy.version,
+            }
+            connection.execute(
+                insert(analysis_call_admissions).values(
+                    batch_id=batch.batch_id,
+                    pipeline_id=batch.pipeline_id,
+                    symbol=batch.symbol,
+                    admitted_at=requested_at,
+                    payload=payload,
+                )
+            )
+        return AnalysisCallAdmission(admitted=True, admitted_at=requested_at)
+
     def current_plan(self, plan_id: str) -> AnalysisTriggerPlan:
         with self._engine.connect() as connection:
             payload = connection.execute(
@@ -131,6 +201,28 @@ class SqlTriggerRepository:
         if payload is None:
             raise KeyError(f"{symbol}:{pipeline_id}")
         return AnalysisTriggerPlan.model_validate(payload)
+
+    def current_plans_for_symbols(
+        self,
+        symbols: tuple[str, ...],
+    ) -> tuple[AnalysisTriggerPlan, ...]:
+        """返回指定交易范围内各 pipeline 的当前 revision。"""
+
+        if not symbols:
+            return ()
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(analysis_trigger_plans.c.payload)
+                .where(
+                    analysis_trigger_plans.c.symbol.in_(symbols),
+                    analysis_trigger_plans.c.is_current.is_(True),
+                )
+                .order_by(
+                    analysis_trigger_plans.c.symbol,
+                    analysis_trigger_plans.c.pipeline_id,
+                )
+            ).scalars()
+            return tuple(AnalysisTriggerPlan.model_validate(payload) for payload in payloads)
 
     def apply_patch(
         self,
@@ -350,6 +442,7 @@ class PostgresOutboxListener:
             raise ValueError("Outbox LISTEN 只支持 PostgreSQL")
         self._raw = engine.raw_connection()
         self._connection = self._raw.driver_connection
+        self._previous_autocommit = self._connection.autocommit
         self._connection.autocommit = True
         self._connection.execute("LISTEN quant_trigger_outbox")
 
@@ -357,7 +450,14 @@ class PostgresOutboxListener:
         return bool(list(self._connection.notifies(timeout=timeout_seconds, stop_after=1)))
 
     def close(self) -> None:
-        self._raw.close()
+        try:
+            self._connection.execute("UNLISTEN quant_trigger_outbox")
+            self._connection.autocommit = self._previous_autocommit
+        except Exception:
+            # 连接状态无法恢复时必须逐出连接池，不能让后续事务继承 autocommit。
+            self._raw.invalidate()
+        finally:
+            self._raw.close()
 
     def __enter__(self) -> PostgresOutboxListener:
         return self

@@ -14,7 +14,7 @@ import styles from "./App.module.css";
 export function App() {
   const [, toggleTheme] = useTheme();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const health = useLive(() => api.health());
+  const health = useLive(() => api.health(), "health");
 
   return (
     <>

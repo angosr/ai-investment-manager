@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import create_engine, func, select
+import pytest
+from sqlalchemy import create_engine, func, insert, select
 
-from quant_core.analyst import AnalystResult
+from quant_core.analyst import AnalystResult, canonical_json
+from quant_core.candidate_evaluation import SqlCandidateOutcomeStore
+from quant_core.cycle import AnalysisCycle
+from quant_core.domain import CandidateOutcome, CandidateOutcomeStatus, IntelligenceEvent
+from quant_core.execution import MockExchange
 from quant_core.governance import (
     ChangeProposal,
     ChangeType,
@@ -13,6 +19,7 @@ from quant_core.governance import (
     EvaluationStage,
     FailedExperiment,
     NoChange,
+    ReleaseManifest,
 )
 from quant_core.governance_agent import (
     CodexGovernor,
@@ -20,15 +27,26 @@ from quant_core.governance_agent import (
     SqlGovernorDecisionStore,
 )
 from quant_core.governance_context import GovernanceSnapshotAssembler
+from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
+    SqlFactLedger,
     SqlGovernanceRepository,
+    SqlRiskBudgetStore,
+    analysis_cycles,
+    analysis_trigger_batches,
     change_proposals,
+    codex_runs,
     create_schema,
     governance_decisions,
+    normalized_events,
+    signal_candidates,
 )
 from quant_core.trigger import (
+    AnalysisTriggerType,
     TriggerNow,
     build_initial_trigger_plan,
+    build_trigger_batch,
+    build_trigger_event,
     build_trigger_plan_patch,
 )
 from quant_core.trigger_sql import SqlTriggerRepository
@@ -63,7 +81,7 @@ def _plan(now: datetime) -> EvaluationPlan:
         plan_id="governance-plan-1",
         registered_at=now - timedelta(hours=1),
         base_manifest_id="release-bootstrap-v1",
-        primary_metric="net_pnl_after_all_costs",
+        primary_metric="net_pnl_after_trade_costs",
         minimum_sample_size=100,
         hard_guardrails=("rule_violation_eq_0", "max_drawdown_not_worse"),
         required_stages=(
@@ -76,8 +94,24 @@ def _plan(now: datetime) -> EvaluationPlan:
     )
 
 
+def _seed_historical_champion(repository: SqlGovernanceRepository) -> None:
+    """Model an upgraded installation whose original Champion already exists."""
+
+    repository.record_release(
+        ReleaseManifest(
+            manifest_id="release-bootstrap-v1",
+            created_at=datetime(2026, 8, 17, tzinfo=UTC),
+            status="CHAMPION",
+            code_version="historical-bootstrap-v1",
+            component_versions=(("pipeline", "off-pipeline-v1"),),
+            constitution_version="constitution-v1",
+        )
+    )
+
+
 def _snapshot(engine, app_config, now, *, with_plan=True):
     repository = SqlGovernanceRepository(engine)
+    _seed_historical_champion(repository)
     failed = FailedExperiment(
         experiment_id="failed-evidence-1",
         hypothesis_fingerprint="old-hypothesis",
@@ -133,6 +167,482 @@ def test_snapshot_assembler_exposes_only_preregistered_current_champion_plans(
     assert snapshot.champion.manifest_id == "release-bootstrap-v1"
     assert [item.plan_id for item in snapshot.available_evaluation_plans] == ["governance-plan-1"]
     assert snapshot.failed_experiments[0].experiment_id == "failed-evidence-1"
+
+
+def test_governor_bundle_embeds_snapshot_without_file_tools(app_config, tmp_path) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    snapshot = _snapshot(engine, app_config, datetime(2026, 8, 18, 8, tzinfo=UTC))
+
+    bundle = GovernorBundleBuilder(
+        app_config.codex_runtime,
+        prompt_path=Path("config/governor_prompt.md"),
+    ).build(snapshot, tmp_path / "bundle")
+
+    snapshot_json = canonical_json(snapshot)
+    assert f"<governance_snapshot_json>\n{snapshot_json}\n" in bundle.prompt
+    assert "禁止调用任何工具" in bundle.prompt
+    assert "读取 governance_snapshot.json" not in bundle.prompt
+    assert (bundle.path / "governance_snapshot.json").read_text(encoding="utf-8") == (
+        snapshot_json + "\n"
+    )
+    assert not (bundle.path / "governance_snapshot.md").exists()
+
+
+def test_governor_bundle_rejects_prompt_above_explicit_limit(app_config, tmp_path) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    snapshot = _snapshot(engine, app_config, datetime(2026, 8, 18, 8, tzinfo=UTC))
+    oversized = snapshot.model_copy(
+        update={
+            "metric_summaries": tuple((f"oversized:{index}", "x" * 200) for index in range(100))
+        }
+    )
+    runtime = app_config.codex_runtime.model_copy(update={"maximum_prompt_characters": 8_000})
+
+    with pytest.raises(ValueError, match="Governor 内嵌治理快照超过"):
+        GovernorBundleBuilder(
+            runtime,
+            prompt_path=Path("config/governor_prompt.md"),
+        ).build(oversized, tmp_path / "oversized")
+
+
+def test_governance_snapshot_exposes_valid_trigger_latency_and_rejects_old_timestamps(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    now = datetime(2026, 8, 18, 8, tzinfo=UTC)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="release-bootstrap-v1",
+        updated_at=now - timedelta(minutes=1),
+        heartbeat_seconds=900,
+    )
+    records = (
+        ("valid", 5, 4, 2, 1, 0),
+        ("old-invalid", 10, 9, 7, 6, 7),
+        ("future-pending", 15, 14, 12, 11, -1),
+    )
+    with engine.begin() as connection:
+        for name, occurred_ago, observed_ago, batched_ago, submitted_ago, decided_ago in records:
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol="BTCUSDT",
+                pipeline_id=app_config.pipeline.version,
+                occurred_at=now - timedelta(seconds=occurred_ago),
+                observed_at=now - timedelta(seconds=observed_ago),
+                priority=80,
+                dedup_key=f"latency-{name}",
+                expires_at=now + timedelta(minutes=1),
+            )
+            batch = build_trigger_batch(
+                plan=plan,
+                triggers=(event,),
+                created_at=now - timedelta(seconds=batched_ago),
+                deadline=now + timedelta(minutes=1),
+            )
+            submitted_at = now - timedelta(seconds=submitted_ago)
+            connection.execute(
+                insert(analysis_cycles).values(
+                    cycle_id=stable_id("triggered_cycle", batch.batch_id),
+                    as_of=batch.created_at,
+                    pipeline_version=app_config.pipeline.version,
+                    outcome="NO_ACTION",
+                    reason_code="NO_VALID_CANDIDATE",
+                    created_at=now - timedelta(seconds=decided_ago),
+                )
+            )
+            connection.execute(
+                insert(analysis_trigger_batches).values(
+                    batch_id=batch.batch_id,
+                    symbol=batch.symbol,
+                    pipeline_id=batch.pipeline_id,
+                    plan_revision=batch.plan_revision,
+                    first_occurred_at=event.occurred_at,
+                    first_observed_at=event.observed_at,
+                    batched_at=batch.created_at,
+                    analysis_submitted_at=submitted_at,
+                    payload=batch.model_dump(mode="json"),
+                )
+            )
+
+    metrics = dict(_snapshot(engine, app_config, now).metric_summaries)
+    prefix = ":".join(
+        (
+            "trigger_latency",
+            app_config.pipeline.version,
+            "BTCUSDT",
+            AnalysisTriggerType.INTELLIGENCE_INSERTED.value,
+        )
+    )
+
+    assert metrics[f"{prefix}:sample_count"] == "3"
+    assert metrics[f"{prefix}:valid_decision_sample_count"] == "1"
+    assert metrics[f"{prefix}:invalid_decision_sample_count"] == "1"
+    assert metrics[f"{prefix}:pending_decision_sample_count"] == "1"
+    assert metrics[f"{prefix}:source_to_observed:p99_seconds"] == "1.000000"
+    assert metrics[f"{prefix}:observed_to_batch:p95_seconds"] == "2.000000"
+    assert metrics[f"{prefix}:batch_to_submit:p50_seconds"] == "1.000000"
+    assert metrics[f"{prefix}:submit_to_decision:p99_seconds"] == "1.000000"
+    assert metrics[f"{prefix}:source_to_decision:p50_seconds"] == "5.000000"
+
+
+def test_governance_snapshot_uses_attempt_latency_and_hides_future_codex_runs(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    now = datetime(2026, 8, 18, 8, tzinfo=UTC)
+    records = (
+        ("success", "SUCCEEDED", None, -10, -9, 1000),
+        ("timeout", "FAILED", "TIMEOUT", -8, -5, 3000),
+        ("future", "SUCCEEDED", None, 1, 2, 1000),
+    )
+    with engine.begin() as connection:
+        for name, status, failure, observed_offset, completed_offset, duration_ms in records:
+            cycle_id = f"cycle-{name}"
+            connection.execute(
+                insert(analysis_cycles).values(
+                    cycle_id=cycle_id,
+                    as_of=now - timedelta(minutes=1),
+                    pipeline_version=app_config.pipeline.version,
+                    outcome="NO_ACTION",
+                    reason_code="TEST",
+                    created_at=now - timedelta(seconds=1),
+                )
+            )
+            connection.execute(
+                insert(codex_runs).values(
+                    run_id=f"run-{name}",
+                    cycle_id=cycle_id,
+                    account_id="codex_b",
+                    attempt=1,
+                    status=status,
+                    error_class=failure,
+                    payload={
+                        "observed_at": (now + timedelta(seconds=observed_offset)).isoformat(),
+                        "completed_at": (now + timedelta(seconds=completed_offset)).isoformat(),
+                        "duration_ms": duration_ms,
+                        "runtime_policy_version": "runtime-v4",
+                        "bundle_hash": f"bundle-{name}",
+                        "usage": {},
+                    },
+                )
+            )
+
+    metrics = dict(_snapshot(engine, app_config, now).metric_summaries)
+    prefix = f"codex_runtime:{app_config.pipeline.version}:runtime-v4"
+
+    assert metrics["codex_run:SUCCEEDED"] == "1"
+    assert metrics["codex_run:FAILED"] == "1"
+    assert metrics[f"{prefix}:total"] == "2"
+    assert metrics[f"{prefix}:failure:TIMEOUT"] == "1"
+    assert metrics[f"{prefix}:duration_sample_count"] == "2"
+    assert metrics[f"{prefix}:duration:p50_seconds"] == "2.000000"
+    assert metrics[f"{prefix}:duration:p95_seconds"] == "2.900000"
+
+
+def test_governance_snapshot_separates_intelligence_normalizer_versions(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    now = datetime(2026, 8, 18, 8, tzinfo=UTC)
+    events = (
+        IntelligenceEvent(
+            evidence_id="legacy-event",
+            event_time=now - timedelta(seconds=2),
+            observed_at=now - timedelta(seconds=2),
+            source="wire",
+            title="legacy",
+            body="",
+            symbols=("BTCUSDT",),
+            relevance=Decimal("1"),
+            impact=Decimal("0.9"),
+            source_reliability=Decimal("0.6"),
+            novelty=Decimal("1"),
+        ),
+        IntelligenceEvent(
+            evidence_id="current-event",
+            normalizer_version="normalizer-v4",
+            acquisition_route="newsnow-fast-v1",
+            event_time=now - timedelta(seconds=4),
+            observed_at=now - timedelta(seconds=1),
+            source="wire",
+            title="current",
+            body="",
+            symbols=("BTCUSDT",),
+            relevance=Decimal("0.5"),
+            impact=Decimal("0.495"),
+            source_reliability=Decimal("0.6"),
+            novelty=Decimal("1"),
+        ),
+        IntelligenceEvent(
+            evidence_id="future-event",
+            normalizer_version="normalizer-v4",
+            event_time=now + timedelta(seconds=1),
+            observed_at=now + timedelta(seconds=1),
+            source="wire",
+            title="future",
+            body="",
+            symbols=("BTCUSDT",),
+            relevance=Decimal("1"),
+            impact=Decimal("0.99"),
+            source_reliability=Decimal("0.6"),
+            novelty=Decimal("1"),
+        ),
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            insert(normalized_events),
+            [
+                {
+                    "evidence_id": event.evidence_id,
+                    "event_time": event.event_time,
+                    "observed_at": event.observed_at,
+                    "source": event.source,
+                    "content_hash": content_hash({"title": event.title, "body": event.body}),
+                    "payload": event.model_dump(mode="json"),
+                }
+                for event in events
+            ],
+        )
+
+    metrics = dict(_snapshot(engine, app_config, now).metric_summaries)
+    legacy = "intelligence_event:legacy-unknown:wire"
+    current = "intelligence_event:normalizer-v4:wire"
+
+    assert metrics[f"{legacy}:count"] == "1"
+    assert metrics[f"{legacy}:high_impact_count"] == "1"
+    assert metrics[f"{legacy}:high_impact_rate"] == "1.000000"
+    assert metrics[f"{current}:count"] == "1"
+    assert metrics[f"{current}:high_impact_count"] == "0"
+    assert metrics[f"{current}:average_impact"] == "0.495000"
+    discovery = "intelligence_discovery:normalizer-v4:newsnow-fast-v1:wire"
+    assert metrics[f"{discovery}:p50_seconds"] == "3.000000"
+    assert metrics[f"{discovery}:p95_seconds"] == "3.000000"
+    assert metrics[f"{discovery}:p99_seconds"] == "3.000000"
+
+
+def test_governance_snapshot_exposes_unsettled_candidate_sample_progress(
+    app_config, replay_input
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    ledger = SqlFactLedger(engine)
+    result = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=MockExchange(app_config.execution),
+        risk_budget=SqlRiskBudgetStore(engine),
+    ).run(replay_input)
+    facts = ledger.get(result.cycle_id)
+    assert facts is not None and len(facts.candidates) == 1
+    candidate = facts.candidates[0]
+    evaluation_at = candidate.signal_observed_at + timedelta(minutes=candidate.horizon_minutes)
+    assert SqlCandidateOutcomeStore(engine).record(
+        CandidateOutcome(
+            outcome_id="future-visible-outcome",
+            candidate_id=candidate.candidate_id,
+            cycle_id=candidate.cycle_id,
+            producer_id=candidate.producer_id,
+            producer_version=candidate.producer_version,
+            calibration_ref=candidate.calibration_ref,
+            evaluation_version="test-evaluation-v1",
+            execution_policy_version=app_config.execution.version,
+            frequency_policy_version=app_config.frequency.version,
+            symbol=candidate.symbol,
+            side=candidate.side,
+            status=CandidateOutcomeStatus.SETTLED,
+            signal_observed_at=candidate.signal_observed_at,
+            evaluation_at=evaluation_at,
+            settled_at=evaluation_at + timedelta(minutes=1),
+            reference_price=candidate.reference_price,
+            exit_price=candidate.reference_price,
+            exit_event_time=evaluation_at,
+            gross_return_bps=Decimal("0"),
+            estimated_cost_bps=Decimal("1"),
+            net_return_bps=Decimal("-1"),
+            reason_code="TEST_SETTLED_AFTER_SNAPSHOT",
+        )
+    )
+
+    snapshot = _snapshot(
+        engine,
+        app_config,
+        replay_input.market.as_of + timedelta(minutes=1),
+    )
+    metrics = dict(snapshot.metric_summaries)
+    prefix = (
+        f"candidate_sample:{app_config.strategy.strategy_id}:{app_config.strategy.version}:BTCUSDT"
+    )
+
+    assert metrics[f"{prefix}:total"] == "1"
+    assert metrics[f"{prefix}:settled"] == "0"
+    assert metrics[f"{prefix}:unscorable"] == "0"
+    assert metrics[f"{prefix}:pending"] == "1"
+
+
+def test_governance_snapshot_never_merges_distinct_producers_with_same_version(
+    app_config, replay_input
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    ledger = SqlFactLedger(engine)
+    result = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=MockExchange(app_config.execution),
+        risk_budget=SqlRiskBudgetStore(engine),
+    ).run(replay_input)
+    facts = ledger.get(result.cycle_id)
+    assert facts is not None and len(facts.candidates) == 1
+    original = facts.candidates[0]
+    second = original.model_copy(
+        update={
+            "candidate_id": "same-version-distinct-producer",
+            "producer_id": "independent-producer",
+        }
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            insert(signal_candidates),
+            {
+                "candidate_id": second.candidate_id,
+                "cycle_id": second.cycle_id,
+                "sequence": 1,
+                "producer_id": second.producer_id,
+                "producer_version": second.producer_version,
+                "symbol": second.symbol,
+                "valid_until": second.valid_until,
+                "payload": second.model_dump(mode="json"),
+            },
+        )
+
+    metrics = dict(
+        _snapshot(
+            engine, app_config, replay_input.market.as_of + timedelta(minutes=1)
+        ).metric_summaries
+    )
+    original_prefix = (
+        f"candidate_sample:{original.producer_id}:{original.producer_version}:{original.symbol}"
+    )
+    second_prefix = (
+        f"candidate_sample:{second.producer_id}:{second.producer_version}:{second.symbol}"
+    )
+
+    assert metrics[f"{original_prefix}:total"] == "1"
+    assert metrics[f"{second_prefix}:total"] == "1"
+
+
+def test_governance_snapshot_counts_only_non_overlapping_settled_candidates(
+    app_config, replay_input
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    ledger = SqlFactLedger(engine)
+    result = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=MockExchange(app_config.execution),
+        risk_budget=SqlRiskBudgetStore(engine),
+    ).run(replay_input)
+    facts = ledger.get(result.cycle_id)
+    assert facts is not None and len(facts.candidates) == 1
+    original = facts.candidates[0]
+    offsets = (0, 15, 60, 75)
+    candidates = tuple(
+        original.model_copy(
+            update={
+                "candidate_id": f"candidate-overlap-{offset}",
+                "signal_observed_at": original.signal_observed_at + timedelta(minutes=offset),
+                "valid_until": original.valid_until + timedelta(minutes=offset),
+            }
+        )
+        for offset in offsets
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            signal_candidates.delete().where(signal_candidates.c.cycle_id == original.cycle_id)
+        )
+        connection.execute(
+            insert(signal_candidates),
+            [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "cycle_id": candidate.cycle_id,
+                    "sequence": sequence,
+                    "producer_id": candidate.producer_id,
+                    "producer_version": candidate.producer_version,
+                    "symbol": candidate.symbol,
+                    "valid_until": candidate.valid_until,
+                    "payload": candidate.model_dump(mode="json"),
+                }
+                for sequence, candidate in enumerate(candidates)
+            ],
+        )
+    outcome_store = SqlCandidateOutcomeStore(engine)
+    for candidate, offset in zip(candidates, offsets, strict=True):
+        evaluation_at = candidate.signal_observed_at + timedelta(minutes=candidate.horizon_minutes)
+        assert outcome_store.record(
+            CandidateOutcome(
+                outcome_id=f"outcome-{candidate.candidate_id}",
+                candidate_id=candidate.candidate_id,
+                cycle_id=candidate.cycle_id,
+                producer_id=candidate.producer_id,
+                producer_version=candidate.producer_version,
+                calibration_ref=candidate.calibration_ref,
+                evaluation_version=("test-evaluation-v1" if offset < 60 else "test-evaluation-v2"),
+                execution_policy_version=app_config.execution.version,
+                frequency_policy_version=app_config.frequency.version,
+                symbol=candidate.symbol,
+                side=candidate.side,
+                status=CandidateOutcomeStatus.SETTLED,
+                signal_observed_at=candidate.signal_observed_at,
+                evaluation_at=evaluation_at,
+                settled_at=evaluation_at,
+                reference_price=candidate.reference_price,
+                exit_price=candidate.reference_price,
+                exit_event_time=evaluation_at,
+                gross_return_bps=Decimal("0"),
+                estimated_cost_bps=Decimal("1"),
+                net_return_bps=Decimal("-1"),
+                reason_code="TEST_SETTLED",
+            )
+        )
+
+    snapshot = _snapshot(
+        engine,
+        app_config,
+        original.signal_observed_at + timedelta(hours=3),
+    )
+    metrics = dict(snapshot.metric_summaries)
+    prefix = (
+        f"candidate_sample:{app_config.strategy.strategy_id}:{app_config.strategy.version}:BTCUSDT"
+    )
+
+    assert metrics[f"{prefix}:total"] == "4"
+    assert metrics[f"{prefix}:settled"] == "4"
+    assert metrics[f"{prefix}:unscorable"] == "0"
+    assert metrics[f"{prefix}:pending"] == "0"
+    for evaluation_version in ("test-evaluation-v1", "test-evaluation-v2"):
+        evidence_prefix = ":".join(
+            (
+                "candidate_evidence",
+                original.producer_id,
+                original.producer_version,
+                original.symbol,
+                original.side.value,
+                str(original.horizon_minutes),
+                original.calibration_ref,
+                evaluation_version,
+                app_config.execution.version,
+                app_config.frequency.version,
+            )
+        )
+        assert metrics[f"{evidence_prefix}:SETTLED:count"] == "2"
+        assert metrics[f"{evidence_prefix}:non_overlapping_settled"] == "1"
+        assert metrics[f"{evidence_prefix}:average_net_bps"] == "-1"
 
 
 def test_codex_governor_normalizes_validates_and_atomically_records_one_decision(

@@ -15,8 +15,8 @@ const HINTS: Record<Tab, string> = {
 
 export function Timeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
   const [tab, setTab] = useState<Tab>("actions");
-  const cycles = useLive(() => api.cycles());
-  const events = useLive(() => api.events());
+  const cycles = useLive(() => api.cycles(), "cycles");
+  const events = useLive(() => api.events(), "events");
 
   return (
     <section className={styles.card}>

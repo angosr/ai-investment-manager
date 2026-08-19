@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
@@ -17,6 +17,7 @@ from quant_core.outcome_evaluation_runtime import (
     OutcomeEvaluationTemporalCoordinator,
     OutcomeEvaluationTemporalWorker,
     OutcomeEvaluationWorkflowStatus,
+    _seconds_until_next_poll,
     build_outcome_evaluation_workflow_request,
 )
 from quant_core.outcome_evaluation_sql import SqlOutcomeWindowRepository
@@ -169,3 +170,11 @@ def test_outcome_evaluation_workflow_replays_complete_no_trade_window(
             assert replayed == first
 
     asyncio.run(scenario())
+
+
+def test_outcome_evaluation_poll_uses_absolute_utc_buckets() -> None:
+    almost_boundary = datetime(2026, 8, 18, 12, 4, 59, 750000, tzinfo=UTC)
+    after_slow_run = datetime(2026, 8, 18, 12, 5, 7, tzinfo=UTC)
+
+    assert _seconds_until_next_poll(almost_boundary, poll_seconds=300) == 0.25
+    assert _seconds_until_next_poll(after_slow_run, poll_seconds=300) == 293

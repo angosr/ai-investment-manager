@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 OUTCOME_EVALUATION_ACTIVITY_NAME = "evaluate-outcome-window-v1"
 
 
@@ -56,6 +58,7 @@ class OutcomeEvaluationWorkflow:
                     start_to_close_timeout=start_to_close,
                     schedule_to_close_timeout=schedule_to_close,
                     retry_policy=retry_policy,
+                    versioning_intent=default_activity_versioning_intent(),
                     summary="聚合固定窗口的已结算逐笔结果",
                 )
             except ActivityError:

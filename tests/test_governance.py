@@ -46,7 +46,7 @@ def _plan(now: datetime) -> EvaluationPlan:
         plan_id="eval-plan-1",
         registered_at=now - timedelta(hours=1),
         base_manifest_id="release-champion-v1",
-        primary_metric="net_pnl_after_all_costs",
+        primary_metric="net_pnl_after_trade_costs",
         minimum_sample_size=30,
         hard_guardrails=("rule_violation_eq_0", "max_drawdown_not_worse"),
         required_stages=(

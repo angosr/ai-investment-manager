@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 PREPARE_ACTIVITY_NAME = "prepare-analysis-decision-v1"
 EXECUTION_ACTIVITY_NAME = "execute-trade-request-v1"
 
@@ -48,25 +50,65 @@ class ExecutionWorkflow:
         self._input_hash = raw_hash
         deadline, start_to_close, configured_schedule, retry_policy = _activity_options(request)
         remaining = deadline - workflow.now()
-        if remaining <= timedelta(0):
-            raise TimeoutError("EXECUTION_DEADLINE_EXPIRED")
-        activity_result = await workflow.execute_activity(
-            EXECUTION_ACTIVITY_NAME,
-            execution_request,
-            result_type=dict,
-            start_to_close_timeout=start_to_close,
-            schedule_to_close_timeout=min(
-                timedelta(seconds=configured_schedule),
-                remaining,
-            ),
-            retry_policy=retry_policy,
-            summary="幂等执行冻结交易请求",
-        )
+        activity_result: dict[str, Any]
+        if remaining > timedelta(0):
+            try:
+                activity_result = await workflow.execute_activity(
+                    EXECUTION_ACTIVITY_NAME,
+                    execution_request,
+                    result_type=dict,
+                    start_to_close_timeout=start_to_close,
+                    schedule_to_close_timeout=min(
+                        timedelta(seconds=configured_schedule),
+                        remaining,
+                    ),
+                    retry_policy=retry_policy,
+                    versioning_intent=default_activity_versioning_intent(),
+                    summary="幂等执行冻结交易请求",
+                )
+            except ActivityError:
+                activity_result = await self._recover_terminal_state(
+                    execution_request,
+                    start_to_close=start_to_close,
+                    retry_policy=retry_policy,
+                )
+        else:
+            activity_result = await self._recover_terminal_state(
+                execution_request,
+                start_to_close=start_to_close,
+                retry_policy=retry_policy,
+            )
         cycle_result = activity_result.get("cycle_result")
         attempt = activity_result.get("attempt")
         if not isinstance(cycle_result, dict) or not isinstance(attempt, int) or attempt < 1:
             raise ValueError("Execution Activity 返回无效")
         return {"attempt": attempt, "cycle_result": cycle_result}
+
+    @staticmethod
+    async def _recover_terminal_state(
+        execution_request: dict[str, Any],
+        *,
+        start_to_close: timedelta,
+        retry_policy: RetryPolicy,
+    ) -> dict[str, Any]:
+        """只在执行所有权仍属于本 Workflow 时恢复；无法确认就持续重试。"""
+
+        recovery_retry = RetryPolicy(
+            initial_interval=retry_policy.initial_interval,
+            maximum_interval=retry_policy.maximum_interval,
+            backoff_coefficient=retry_policy.backoff_coefficient,
+            maximum_attempts=0,
+            non_retryable_error_types=retry_policy.non_retryable_error_types,
+        )
+        return await workflow.execute_activity(
+            EXECUTION_ACTIVITY_NAME,
+            execution_request,
+            result_type=dict,
+            start_to_close_timeout=start_to_close,
+            retry_policy=recovery_retry,
+            versioning_intent=default_activity_versioning_intent(),
+            summary="确认订单终态并回收风险预留",
+        )
 
 
 @workflow.defn(name="AnalysisCycleWorkflow")
@@ -106,6 +148,7 @@ class AnalysisCycleWorkflow:
                     remaining,
                 ),
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="冻结分析决策与执行请求",
             )
         except ActivityError:

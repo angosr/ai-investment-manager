@@ -18,7 +18,7 @@ export function Masthead({ health, onToggleTheme }: MastheadProps) {
         <span className={styles.logo}>
           QUANT <b>观测台</b>
         </span>
-        <span className={styles.stage}>{health ? `${health.stage} 模拟` : "…"}</span>
+        <span className={styles.stage}>{health ? stageLabel(health.stage) : "…"}</span>
         <HealthPill health={health} />
         <div className={styles.spacer} />
         <div className={styles.clock}>
@@ -36,5 +36,16 @@ export function Masthead({ health, onToggleTheme }: MastheadProps) {
         </div>
       </div>
     </header>
+  );
+}
+
+function stageLabel(stage: string): string {
+  return (
+    {
+      MOCK: "MOCK 回放",
+      SHADOW: "SHADOW 模拟",
+      TESTNET: "TESTNET 模拟",
+      LIVE: "LIVE",
+    }[stage] ?? stage
   );
 }

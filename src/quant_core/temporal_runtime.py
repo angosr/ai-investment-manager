@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -37,6 +39,7 @@ from quant_core.workflow import WorkflowExecution, WorkflowRequest
 @dataclass(slots=True)
 class AnalysisCycleActivities:
     cycle: AnalysisCycle
+    execution_clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     @activity.defn(name=PREPARE_ACTIVITY_NAME)
     def prepare_analysis_decision(self, raw_request: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +52,7 @@ class AnalysisCycleActivities:
                 non_retryable=True,
             ) from exc
         try:
-            result = self.cycle.prepare(request.cycle_input)
+            result = self.cycle.prepare(request.cycle_input, trigger=request.trigger)
         except ValueError as exc:
             raise ApplicationError(
                 "周期输入与既有业务事实冲突",
@@ -72,7 +75,7 @@ class AnalysisCycleActivities:
                 non_retryable=True,
             ) from exc
         try:
-            result = self.cycle.execute(request)
+            result = self.cycle.execute(request, observed_at=self.execution_clock())
         except ValueError as exc:
             raise ApplicationError(
                 "ExecutionRequest 与冻结事实冲突",
@@ -117,12 +120,19 @@ class TemporalAnalysisCoordinator:
 class AnalysisTemporalWorker:
     """一个受监督的 Worker 角色；线程池只承载同步、可幂等 Activity。"""
 
-    def __init__(self, client: Client, policy: TemporalPolicy, cycle: AnalysisCycle) -> None:
+    def __init__(
+        self,
+        client: Client,
+        policy: TemporalPolicy,
+        cycle: AnalysisCycle,
+        *,
+        execution_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._executor = ThreadPoolExecutor(
             max_workers=policy.worker_threads,
             thread_name_prefix="analysis-activity",
         )
-        activities = AnalysisCycleActivities(cycle)
+        activities = AnalysisCycleActivities(cycle, execution_clock)
         self._worker = Worker(
             client,
             task_queue=policy.task_queue,

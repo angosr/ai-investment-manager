@@ -4,44 +4,39 @@ feature:
   volatility_window: 8
 
 panel:
-  version: panel-policy-v1
+  version: panel-policy-v4
   schema_version: panel-v1
-  max_characters: 48000
+  max_characters: 12000
   max_evidence: 20
   max_per_source: 5
   max_market_age_seconds: 180
+  maximum_evidence_age_seconds: 86400
 
 strategy:
   strategy_id: price-trend
-  version: price-trend-v2
+  version: price-trend-v4
   family: price-trend
-  decision_lane: EVENT_ANALYSIS
   score_threshold: "0.55"
   stop_atr_multiple: "1.5"
   horizon_minutes: 60
-  expected_gross_bps: "24"
-  calibration_ref: bootstrap-calibration-v1
-  calibration_sample_size: 100
-  minimum_calibration_samples: 30
   expected_edge_half_life_seconds: 900
-  maximum_source_age_seconds: 180
-  maximum_decision_latency_ms: 30000
-  maximum_entry_latency_ms: 60000
+
+calibration:
+  version: edge-calibration-v1
+  minimum_non_overlapping_samples: 30
+  method_version: mean-lower-bound-v1
+  lower_confidence_z: "1.96"
+  artifacts: []
 
 composition:
-  version: single-threshold-v1
-  minimum_raw_score: "0.55"
+  version: calibrated-net-edge-v1
 
 frequency:
-  version: frequency-v2
+  version: frequency-v4
   cooldown_minutes: 30
   maximum_orders_per_day: 8
   minimum_net_edge_bps: "4"
-  fee_bps: "10"
-  expected_slippage_bps: "2"
-  infrastructure_bps: "0.5"
   funding_bps: "0"
-  model_bps: "0.25"
   latency_bps: "0.5"
   adverse_selection_bps: "0.75"
   uncertainty_buffer_bps: "1.5"
@@ -65,7 +60,6 @@ execution:
   version: mock-execution-v1
   fee_bps: "10"
   market_slippage_bps: "2"
-  latency_ms: 250
   default_fill_fraction: "1"
 
 reconciliation:
@@ -76,7 +70,8 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v1
+  version: outcome-window-v6
+  forecast_version: analysis-forecast-v2
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
@@ -92,7 +87,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v2
+  version: analysis-trigger-v5
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
@@ -149,8 +144,11 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: trendradar-collector-v2
+  version: trendradar-collector-v4
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
+  newsnow_base_url: http://127.0.0.1:4444
+  # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
+  newsnow_sources: [mktnews-flash, fastbull-express]
   source_timezone: Asia/Shanghai
   platforms: []
   read_limit: 100
@@ -158,23 +156,22 @@ information:
   collection_interval_seconds: 60
 
 pipeline:
-  version: off-pipeline-v1
+  version: off-pipeline-v2
   ai_mode: "OFF"
 
 proposal:
-  version: codex-proposal-v2
+  version: codex-proposal-v7
   producer_id: codex-analyst
   strategy_family: ai-contextual
   minimum_confidence: "0.55"
   maximum_horizon_minutes: 240
-  expected_gross_bps: "24"
-  calibration_ref: codex-shadow-calibration-v1
+  forecast_horizons_minutes: [60, 240]
   expected_edge_half_life_seconds: 1800
 
-# 部署时只替换这里的三个显式目录；系统不会扫描或自动纳入其他账号。
-# 真实调用保持关闭，直到隔离门禁和三个目录的登录健康检查均通过。
+# 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
+# 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v1
+  version: codex-runtime-v6
   enabled: false
   isolation_verified: false
   binary: /usr/bin/codex
@@ -182,30 +179,29 @@ codex_runtime:
   expected_cli_version: codex-cli 0.147.0
   model: gpt-5.6-sol
   reasoning_effort: high
+  maximum_prompt_characters: 16000
   timeout_seconds: 180
   capacity_probe_timeout_seconds: 10
   capacity_ttl_seconds: 60
+  transient_failure_cooldown_seconds: 300
   lease_ttl_seconds: 240
   max_account_switches: 2
 
 codex_accounts:
-  version: local-three-account-registry-v1
+  version: local-directory-account-registry-v2
   accounts:
-    - account_id: codex_a
+    - account_id: codex-a
       codex_home: /replace/with/approved/codex-a
       enabled: false
       capacity_weight: "1"
-      max_concurrency: 1
-    - account_id: codex_b
+    - account_id: codex-b
       codex_home: /replace/with/approved/codex-b
       enabled: false
       capacity_weight: "1"
-      max_concurrency: 1
-    - account_id: codex_c
+    - account_id: codex-c
       codex_home: /replace/with/approved/codex-c
       enabled: false
       capacity_weight: "1"
-      max_concurrency: 1
 
 binance_testnet:
   version: binance-spot-testnet-v1

@@ -266,6 +266,74 @@ def test_partial_protection_never_submits_duplicate_exit(app_config, replay_inpu
     assert len(client.new_order_calls) == 1
 
 
+def test_fill_during_protection_cancel_never_submits_duplicate_exit(
+    app_config, replay_input
+) -> None:
+    prepared = AnalysisCycle.create(app_config).prepare(replay_input)
+    assert prepared.intent is not None and prepared.risk_decision is not None
+    client = FakeClient()
+    exchange = BinanceTestnetExchange(client)
+    entry = exchange.submit(
+        intent=prepared.intent,
+        risk=prepared.risk_decision,
+        market=replay_input.market,
+    )
+    fill = entry.fills[0]
+    lifecycle = PositionLifecycle(
+        position_id="position-cancel-race",
+        cycle_id=prepared.intent.cycle_id,
+        intent_id=prepared.intent.intent_id,
+        entry_order_id=entry.order_id,
+        reservation_id=prepared.risk_decision.reservation.reservation_id,
+        symbol="BTCUSDT",
+        quantity=fill.quantity,
+        entry_price=fill.price,
+        entry_fee=fill.fee,
+        stop_price=Decimal("100.50"),
+        opened_at=replay_input.market.as_of,
+        max_exit_at=replay_input.market.as_of + timedelta(hours=2),
+        highest_price=fill.price,
+        lowest_price=fill.price,
+        status=PositionLifecycleStatus.PROTECTED,
+        protection_id="protect-cancel-race",
+    )
+    client.orders["protect-cancel-race"] = {
+        "symbol": "BTCUSDT",
+        "orderId": 43,
+        "clientOrderId": "protect-cancel-race",
+        "status": "NEW",
+        "executedQty": "0",
+        "updateTime": 1_787_055_700_000,
+    }
+
+    def cancel_with_fill(*, symbol, client_order_id):
+        assert symbol == "BTCUSDT" and client_order_id == "protect-cancel-race"
+        return {
+            **client.orders[client_order_id],
+            "status": "CANCELED",
+            "executedQty": "0.00001",
+            "fills": [
+                {
+                    "price": "100.50",
+                    "qty": "0.00001",
+                    "commission": "0",
+                    "commissionAsset": "USDT",
+                    "tradeId": 8,
+                }
+            ],
+        }
+
+    client.cancel_order = cancel_with_fill
+
+    with pytest.raises(BinanceManualIntervention, match="撤销期间发生成交"):
+        exchange.submit_position_exit(
+            lifecycle=lifecycle,
+            market=replay_input.market,
+            reason=ExitReason.STOP_LOSS,
+        )
+    assert len(client.new_order_calls) == 1
+
+
 class FakeLocalState:
     def __init__(self, positions=()):
         self._positions = positions

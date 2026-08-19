@@ -94,6 +94,39 @@ def test_terminal_rejection_releases_reserved_risk(app_config, replay_input) -> 
     assert ledger.risk_budget.status(reservation.reservation_id) == "RELEASED"
 
 
+def test_expired_execution_never_submits_and_releases_reserved_risk(
+    app_config, replay_input
+) -> None:
+    ledger = InMemoryFactLedger()
+    exchange = MockExchange(app_config.execution)
+    cycle = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=exchange,
+        risk_budget=ledger.risk_budget,
+    )
+    prepared = cycle.prepare(replay_input)
+    request = prepared.execution_request
+    assert request is not None and request.risk_decision.reservation is not None
+
+    completed = cycle.execute(
+        request,
+        observed_at=request.risk_decision.reservation.expires_at,
+    )
+
+    assert completed.outcome == CycleOutcome.NO_TRADE
+    assert completed.reason_code == "EXECUTION_SIGNAL_EXPIRED"
+    assert completed.order is not None and completed.order.status == OrderStatus.EXPIRED
+    assert exchange.orders == ()
+    assert ledger.risk_budget.status(request.risk_decision.reservation.reservation_id) == "RELEASED"
+    handoff = next(
+        item
+        for item in completed.metrics
+        if dict(item.dimensions).get("metric") == "execution_handoff_age_seconds"
+    )
+    assert handoff.value > 0
+
+
 def test_sql_pending_request_recovers_after_process_restart(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)

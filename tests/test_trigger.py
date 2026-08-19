@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
+from temporalio.client import WorkflowExecutionStatus
 
 from quant_core.trigger import (
     AddWakeup,
@@ -14,12 +17,20 @@ from quant_core.trigger import (
     SetAiPaused,
     SetHeartbeat,
     TriggerNow,
+    TriggerOutboxKind,
     TriggerPlanGate,
     UpdateWakeup,
     UpsertEventRule,
     build_initial_trigger_plan,
     build_trigger_plan_patch,
+    carry_forward_trigger_plan,
 )
+from quant_core.trigger_runtime import (
+    TemporalTriggerDispatcher,
+    terminate_superseded_trigger_coordinators,
+)
+from quant_core.trigger_sql import TriggerOutboxMessage
+from quant_core.trigger_workflows import coordinator_workflow_id
 
 
 def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, replay_input) -> None:
@@ -79,6 +90,59 @@ def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, re
         )
 
 
+def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_input) -> None:
+    now = replay_input.market.as_of
+    live = ScheduledWakeup(
+        wakeup_id="live",
+        wake_at=now + timedelta(minutes=5),
+        expires_at=now + timedelta(minutes=10),
+        reason="继续复核",
+    )
+    expired = ScheduledWakeup(
+        wakeup_id="expired",
+        wake_at=now - timedelta(minutes=10),
+        expires_at=now - timedelta(minutes=5),
+        reason="已经过期",
+    )
+    previous = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now - timedelta(hours=1),
+        heartbeat_seconds=1800,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="news",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                minimum_priority=80,
+                coalesce_seconds=15,
+                ordinary_cooldown_seconds=120,
+            ),
+        ),
+    ).model_copy(
+        update={
+            "ai_paused": True,
+            "scheduled_wakeups": (expired, live),
+        }
+    )
+
+    carried = carry_forward_trigger_plan(
+        previous,
+        pipeline_id="pipeline-v2",
+        manifest_id="manifest-v2",
+        updated_at=now,
+    )
+
+    assert carried.revision == 1
+    assert carried.pipeline_id == "pipeline-v2"
+    assert carried.manifest_id == "manifest-v2"
+    assert carried.ai_paused
+    assert carried.heartbeat_seconds == 1800
+    assert carried.event_rules == previous.event_rules
+    assert carried.scheduled_wakeups == (live,)
+    assert carried.applied_patch_id is None
+
+
 def test_trigger_plan_gate_rejects_past_wakeup(app_config, replay_input) -> None:
     now = replay_input.market.as_of
     plan = build_initial_trigger_plan(
@@ -106,6 +170,31 @@ def test_trigger_plan_gate_rejects_past_wakeup(app_config, replay_input) -> None
             patch,
             now=now,
             current_manifest_id="manifest-v1",
+        )
+
+
+def test_trigger_plan_rejects_ambiguous_enabled_rule_tiers(replay_input) -> None:
+    now = replay_input.market.as_of
+
+    with pytest.raises(ValueError, match="minimum_priority 不得重复"):
+        build_initial_trigger_plan(
+            symbol="BTCUSDT",
+            pipeline_id="pipeline-v1",
+            manifest_id="manifest-v1",
+            updated_at=now,
+            heartbeat_seconds=900,
+            event_rules=(
+                AnalysisEventRule(
+                    rule_id="news-default",
+                    trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    minimum_priority=80,
+                ),
+                AnalysisEventRule(
+                    rule_id="news-duplicate",
+                    trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    minimum_priority=80,
+                ),
+            ),
         )
 
 
@@ -166,3 +255,73 @@ def test_trigger_plan_can_update_delete_and_pause_without_hidden_defaults(
     assert result.plan.heartbeat_seconds is None
     assert result.plan.scheduled_wakeups == ()
     assert result.plan.event_rules == (temporary_rule,)
+
+
+def test_release_cutover_terminates_only_superseded_pipeline(app_config, replay_input) -> None:
+    active = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-active",
+        updated_at=replay_input.market.as_of,
+        heartbeat_seconds=None,
+    )
+    superseded = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-old",
+        manifest_id="manifest-old",
+        updated_at=replay_input.market.as_of,
+        heartbeat_seconds=None,
+    )
+
+    class FakeHandle:
+        def __init__(self) -> None:
+            self.reason = None
+
+        async def describe(self):
+            return SimpleNamespace(status=WorkflowExecutionStatus.RUNNING)
+
+        async def terminate(self, reason):
+            self.reason = reason
+
+    old_handle = FakeHandle()
+
+    class FakeClient:
+        def get_workflow_handle(self, workflow_id):
+            assert workflow_id == coordinator_workflow_id(superseded.symbol, superseded.pipeline_id)
+            return old_handle
+
+    terminated = asyncio.run(
+        terminate_superseded_trigger_coordinators(
+            client=FakeClient(),
+            plans=(active, superseded),
+            active_pipeline_id=active.pipeline_id,
+        )
+    )
+
+    assert terminated == (coordinator_workflow_id("BTCUSDT", "pipeline-old"),)
+    assert old_handle.reason == f"superseded by pipeline {active.pipeline_id}"
+
+
+def test_dispatcher_acknowledges_superseded_outbox_without_reviving_it(
+    app_config, replay_input
+) -> None:
+    class FailIfUsed:
+        def __getattr__(self, name):
+            raise AssertionError(f"不应访问旧 pipeline 依赖：{name}")
+
+    message = TriggerOutboxMessage(
+        outbox_id="outbox-old",
+        aggregate_key="BTCUSDT:pipeline-old",
+        message_kind=TriggerOutboxKind.PLAN_REVISED,
+        created_at=replay_input.market.as_of,
+        available_at=replay_input.market.as_of,
+        attempt_count=0,
+        payload={"kind": TriggerOutboxKind.PLAN_REVISED.value},
+    )
+    dispatcher = TemporalTriggerDispatcher(
+        client=FailIfUsed(),
+        config=app_config,
+        plans=FailIfUsed(),
+    )
+
+    asyncio.run(dispatcher.deliver(message))

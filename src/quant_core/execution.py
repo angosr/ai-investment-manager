@@ -33,6 +33,14 @@ class ExecutionExchange(Protocol):
 
     def query_order(self, client_order_id: str) -> Order | None: ...
 
+    def query_entry_order(
+        self,
+        *,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        market: MarketSnapshot,
+    ) -> Order | None: ...
+
     def submit(
         self,
         *,
@@ -138,6 +146,16 @@ class MockExchange:
         )
         self._orders[client_order_id] = order
         return order
+
+    def query_entry_order(
+        self,
+        *,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        market: MarketSnapshot,
+    ) -> Order | None:
+        del market
+        return self.query_order(entry_client_order_id(intent, risk))
 
     def query_order(self, client_order_id: str) -> Order | None:
         return self._orders.get(client_order_id)

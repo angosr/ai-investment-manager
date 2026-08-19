@@ -64,6 +64,13 @@
   border-color: var(--accent-line);
   background: var(--accent-glow);
 }
+.pending .node {
+  border-color: var(--accent-line);
+  background: var(--accent-glow);
+}
+.pending .label {
+  color: var(--accent);
+}
 .stop .node {
   border-color: var(--neg);
   background: var(--neg);

@@ -149,6 +149,7 @@ def build_execution_request(
     market: MarketSnapshot,
     account: AccountSnapshot,
     execution_policy_version: str,
+    created_at: datetime | None = None,
 ) -> ExecutionRequest:
     execution_id = stable_id(
         "execution",
@@ -164,7 +165,7 @@ def build_execution_request(
         "market": market,
         "account": account,
         "execution_policy_version": execution_policy_version,
-        "created_at": market.as_of,
+        "created_at": created_at or market.as_of,
     }
     provisional = ExecutionRequest.model_construct(**values, request_hash="")
     return ExecutionRequest(**values, request_hash=content_hash(_request_payload(provisional)))

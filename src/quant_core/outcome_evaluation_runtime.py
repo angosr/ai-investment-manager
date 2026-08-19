@@ -17,9 +17,14 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
+from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
 from quant_core.config import AppConfig, OutcomeEvaluationPolicy, TemporalPolicy
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
+from quant_core.forecast_evaluation import (
+    AnalysisForecastOutcomeSettler,
+    SqlAnalysisForecastOutcomeStore,
+)
 from quant_core.ids import content_hash, stable_id
 from quant_core.outcome_evaluation_sql import SqlOutcomeWindowRepository
 from quant_core.outcome_evaluation_workflows import (
@@ -222,14 +227,23 @@ class OutcomeEvaluationTemporalWorker:
 @dataclass(slots=True)
 class OutcomeEvaluationSupervisorHealth:
     ensure_calls: int = 0
+    candidate_settled: int = 0
+    candidate_unscorable: int = 0
+    forecast_settled: int = 0
+    forecast_abstained: int = 0
+    forecast_unscorable: int = 0
     last_workflow_id: str | None = None
     last_error_class: str | None = None
+    last_candidate_error_class: str | None = None
+    last_forecast_error_class: str | None = None
 
 
 @dataclass(slots=True)
 class OutcomeEvaluationSupervisor:
     coordinator: OutcomeEvaluationTemporalCoordinator
     config: AppConfig
+    candidate_settler: CandidateOutcomeSettler
+    forecast_settler: AnalysisForecastOutcomeSettler
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -240,6 +254,31 @@ class OutcomeEvaluationSupervisor:
         window = timedelta(hours=policy.window_hours)
         while not stop.is_set():
             now = _require_utc(self.clock())
+            try:
+                result = await asyncio.to_thread(self.candidate_settler.settle, as_of=now)
+                self.health.candidate_settled += result.settled
+                self.health.candidate_unscorable += result.unscorable
+                self.health.last_candidate_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_candidate_error_class != type(exc).__name__:
+                    logger.exception("candidate outcome settlement failed")
+                self.health.last_candidate_error_class = type(exc).__name__
+            try:
+                forecast_result = await asyncio.to_thread(
+                    self.forecast_settler.settle, as_of=now
+                )
+                self.health.forecast_settled += forecast_result.settled
+                self.health.forecast_abstained += forecast_result.abstained
+                self.health.forecast_unscorable += forecast_result.unscorable
+                self.health.last_forecast_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_forecast_error_class != type(exc).__name__:
+                    logger.exception("analysis forecast settlement failed")
+                self.health.last_forecast_error_class = type(exc).__name__
             eligible = now - timedelta(minutes=policy.settlement_grace_minutes)
             window_seconds = int(window.total_seconds())
             window_end = datetime.fromtimestamp(
@@ -264,8 +303,20 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_error_class != type(exc).__name__:
                     logger.exception("outcome evaluation supervisor failed")
                 self.health.last_error_class = type(exc).__name__
+            delay = _seconds_until_next_poll(
+                _require_utc(self.clock()),
+                poll_seconds=policy.poll_seconds,
+            )
             with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=policy.poll_seconds)
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+
+
+def _seconds_until_next_poll(now: datetime, *, poll_seconds: int) -> float:
+    """按绝对 UTC 时间桶调度，避免候选结算耗时累积为评价漂移。"""
+
+    elapsed = now.timestamp()
+    next_boundary = (int(elapsed) // poll_seconds + 1) * poll_seconds
+    return max(0.001, next_boundary - elapsed)
 
 
 def assemble_outcome_evaluation(
@@ -273,7 +324,8 @@ def assemble_outcome_evaluation(
     database_url: str,
     client: Client,
 ) -> tuple[OutcomeEvaluationTemporalWorker, OutcomeEvaluationSupervisor]:
-    repository = SqlOutcomeWindowRepository(build_engine(database_url))
+    engine = build_engine(database_url)
+    repository = SqlOutcomeWindowRepository(engine)
     coordinator = OutcomeEvaluationTemporalCoordinator(client, config.temporal)
     return (
         OutcomeEvaluationTemporalWorker(
@@ -281,5 +333,21 @@ def assemble_outcome_evaluation(
             config.temporal,
             OutcomeEvaluationActivities(repository),
         ),
-        OutcomeEvaluationSupervisor(coordinator=coordinator, config=config),
+        OutcomeEvaluationSupervisor(
+            coordinator=coordinator,
+            config=config,
+            candidate_settler=CandidateOutcomeSettler(
+                store=SqlCandidateOutcomeStore(engine),
+                evaluation_version=config.outcome_evaluation.version,
+                maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
+                settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
+            ),
+            forecast_settler=AnalysisForecastOutcomeSettler(
+                engine=engine,
+                store=SqlAnalysisForecastOutcomeStore(engine),
+                evaluation_version=config.outcome_evaluation.forecast_version,
+                maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
+                settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
+            ),
+        ),
     )

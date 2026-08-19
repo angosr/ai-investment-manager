@@ -11,13 +11,14 @@ export function WorldFeed({ events }: { events: WorldEvent[] }) {
     <div>
       {events.map((event, index) => {
         const shock = event.kind === "MARKET_SHOCK";
+        const kindLabel = EVENT_LABEL[event.kind] ?? event.kind;
         return (
           <div key={`${event.at}-${index}`} className={`${styles.row} ${shock ? styles.shock : styles.news}`}>
             <span className={styles.time}>{hhmm(event.at)}</span>
             <div className={styles.body}>
               <div className={styles.head}>
                 <span className={`${styles.kind} ${shock ? styles.shockKind : styles.newsKind}`}>
-                  {shock ? "市场冲击" : "新闻"}
+                  {kindLabel}
                 </span>
                 <span className={styles.src}>{event.source}</span>
                 {event.injection_suspected ? <span className={styles.inj}>注入嫌疑</span> : null}
@@ -43,3 +44,11 @@ export function WorldFeed({ events }: { events: WorldEvent[] }) {
     </div>
   );
 }
+
+const EVENT_LABEL: Record<string, string> = {
+  NEWS: "新闻",
+  MARKET_SHOCK: "市场冲击",
+  POSITION_RECHECK: "持仓复检",
+  INTELLIGENCE_INSERTED: "情报入库",
+  AGENT_WAKEUP: "Agent 唤醒",
+};

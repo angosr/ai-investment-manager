@@ -13,7 +13,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.environ.get("QUANT_CORE_DATABASE_URL")
+# 程序化调用必须能显式钉死隔离目标；否则测试进程继承的运行库环境变量会覆盖
+# ``Config.set_main_option``，把迁移打到错误数据库。CLI 仍通过受控环境变量注入。
+database_url = config.attributes.get("database_url") or os.environ.get("QUANT_CORE_DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 

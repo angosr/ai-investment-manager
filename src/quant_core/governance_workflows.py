@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 BUILD_GOVERNANCE_SNAPSHOT_ACTIVITY = "build-governance-snapshot-v1"
 RUN_GOVERNOR_ACTIVITY = "run-governor-v1"
 
@@ -52,6 +54,7 @@ class GovernanceCycleWorkflow:
                 start_to_close_timeout=start_to_close,
                 schedule_to_close_timeout=schedule_to_close,
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="冻结最小治理信息面板",
             )
             snapshot = snapshot_result.get("snapshot")
@@ -64,6 +67,7 @@ class GovernanceCycleWorkflow:
                 start_to_close_timeout=start_to_close,
                 schedule_to_close_timeout=schedule_to_close,
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="运行无历史上下文的受限 Governor",
             )
         except ActivityError:

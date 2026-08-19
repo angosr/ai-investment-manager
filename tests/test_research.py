@@ -1,0 +1,463 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+import httpx
+import pytest
+
+from quant_core.ids import stable_id
+from quant_core.market_data import ClosedMarketBar
+from quant_core.research.dataset import (
+    HistoricalDataset,
+    HistoricalDatasetCatalog,
+    HistoricalDatasetManifest,
+    InstrumentSpec,
+    _bars_hash,
+    fetch_binance_history,
+)
+
+
+def _instrument() -> InstrumentSpec:
+    return InstrumentSpec(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        price_increment=Decimal("0.01"),
+        quantity_increment=Decimal("0.000001"),
+        minimum_quantity=Decimal("0.000001"),
+        maximum_quantity=Decimal("9000"),
+        minimum_notional=Decimal("10"),
+        minimum_price=Decimal("0.01"),
+        maximum_price=Decimal("1000000"),
+    )
+
+
+def _dataset(
+    *,
+    count: int = 500,
+    price_step: Decimal = Decimal("1.0002"),
+    price_steps: tuple[Decimal, ...] | None = None,
+    interval: str = "5m",
+    bar_delta: timedelta = timedelta(minutes=5),
+) -> HistoricalDataset:
+    if price_steps is not None and len(price_steps) != count:
+        raise ValueError("price_steps 必须与 count 一致")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + bar_delta * count
+    bars: list[ClosedMarketBar] = []
+    price = Decimal("10000")
+    for index in range(count):
+        open_price = price
+        close_price = open_price * (
+            price_steps[index] if price_steps is not None else price_step
+        )
+        price = close_price
+        open_time = start + bar_delta * index
+        close_time = open_time + bar_delta - timedelta(milliseconds=1)
+        bars.append(
+            ClosedMarketBar(
+                symbol="BTCUSDT",
+                interval=interval,
+                open_time=open_time,
+                close_time=close_time,
+                observed_at=close_time,
+                open=open_price,
+                high=max(open_price, close_price) * Decimal("1.0001"),
+                low=min(open_price, close_price) * Decimal("0.9999"),
+                close=close_price,
+                volume=Decimal("10"),
+                source="test-history",
+            )
+        )
+    bars_hash = _bars_hash(bars)
+    spec = _instrument()
+    dataset_id = stable_id(
+        "historical_dataset",
+        "historical-bars-v1",
+        "test-history",
+        "BTCUSDT",
+        interval,
+        start,
+        end,
+        bars_hash,
+        spec,
+    )
+    manifest = HistoricalDatasetManifest(
+        dataset_id=dataset_id,
+        symbol="BTCUSDT",
+        interval=interval,
+        source="test-history",
+        collected_at=end,
+        requested_start=start,
+        requested_end=end,
+        first_open_time=bars[0].open_time,
+        last_close_time=bars[-1].close_time,
+        bar_count=len(bars),
+        bars_hash=bars_hash,
+        instrument=spec,
+    )
+    return HistoricalDataset(manifest=manifest, bars=tuple(bars))
+
+
+def test_historical_catalog_round_trip_and_rejects_tampering(tmp_path) -> None:
+    dataset = _dataset(count=10)
+    catalog = HistoricalDatasetCatalog(tmp_path)
+    target = catalog.store(dataset)
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
+
+    rows = json.loads((target / "bars.json").read_text())
+    rows[0][4] = "9999"
+    (target / "bars.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="内容哈希"):
+        catalog.load(dataset.manifest.dataset_id)
+
+
+def test_historical_dataset_rejects_bar_gap() -> None:
+    dataset = _dataset(count=10)
+    bars = list(dataset.bars)
+    bars.pop(4)
+    bars_hash = _bars_hash(bars)
+    manifest = HistoricalDatasetManifest(
+        dataset_id=stable_id(
+            "historical_dataset",
+            dataset.manifest.schema_version,
+            dataset.manifest.source,
+            dataset.manifest.symbol,
+            dataset.manifest.interval,
+            dataset.manifest.requested_start,
+            dataset.manifest.requested_end,
+            bars_hash,
+            dataset.manifest.instrument,
+        ),
+        **dataset.manifest.model_dump(
+            exclude={"dataset_id", "bar_count", "bars_hash"}
+        ),
+        bar_count=len(bars),
+        bars_hash=bars_hash,
+    )
+    with pytest.raises(ValueError, match="存在缺口"):
+        HistoricalDataset(manifest=manifest, bars=tuple(bars))
+
+
+def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    first_ms = int(start.timestamp() * 1000)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        if request.url.path == "/api/v3/exchangeInfo":
+            return httpx.Response(
+                200,
+                json={
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "baseAsset": "BTC",
+                            "quoteAsset": "USDT",
+                            "filters": [
+                                {
+                                    "filterType": "PRICE_FILTER",
+                                    "tickSize": "0.01",
+                                    "minPrice": "0.01",
+                                    "maxPrice": "1000000",
+                                },
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.000001",
+                                    "minQty": "0.000001",
+                                    "maxQty": "9000",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "minNotional": "10"},
+                            ],
+                        }
+                    ]
+                },
+            )
+        calls += 1
+        if calls > 1:
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[
+                [first_ms, "100", "102", "99", "101", "5", first_ms + 299_999],
+                [
+                    first_ms + 300_000,
+                    "101",
+                    "103",
+                    "100",
+                    "102",
+                    "6",
+                    first_ms + 599_999,
+                ],
+            ],
+        )
+
+    dataset = asyncio.run(
+        fetch_binance_history(
+            base_url="https://api.binance.com",
+            symbol="BTCUSDT",
+            interval="5m",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: end + timedelta(days=1),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+    assert dataset.manifest.bar_count == 2
+    assert dataset.manifest.instrument.quantity_increment == Decimal("0.000001")
+    assert dataset.bars[0].observed_at == dataset.bars[0].close_time
+    assert calls == 1
+
+
+def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
+    app_config,
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+
+    dataset = _dataset(count=120)
+    run = run_bar_backtest(
+        dataset=dataset,
+        config=app_config,
+        signal_start=dataset.bars[63].close_time,
+        signal_end=dataset.bars[-1].open_time - timedelta(minutes=65),
+    )
+    assert run.completed
+    assert run.trades
+    assert all(item.opened_at > item.signal_at for item in run.trades)
+    assert run.trades[0].opened_at - run.trades[0].signal_at == timedelta(milliseconds=1)
+    assert all(item.modeled_cost > 0 for item in run.trades)
+    assert all(item.net_pnl < item.gross_pnl for item in run.trades)
+    # 每 5 分钟上涨 2 bps，60 分钟毛收益仍不足以覆盖当前完整往返成本。
+    assert run.metrics.net_pnl < 0
+
+
+def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separation(
+    app_config,
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+
+    result = run_walk_forward(
+        dataset=_dataset(),
+        config=app_config,
+        plan=WalkForwardPlan(
+            plan_id="walk-forward-test-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+    )
+    assert result.completed
+    assert not result.passed
+    assert "NET_PNL_NOT_POSITIVE" in result.reason_codes
+    assert "NET_RETURN_LOWER_CONFIDENCE_BOUND_NOT_POSITIVE" in result.reason_codes
+    assert len(result.folds) == 2
+    assert result.embargo_bars == 13
+    assert result.purge_bars == 14
+    assert result.blind_bar_count == 50
+    assert result.blind_start == _dataset().bars[-50].open_time
+    assert result.blind_end == _dataset().bars[-1].close_time
+    assert result.strategy_spec_snapshot is not None
+    assert result.strategy_spec_snapshot["version"] == app_config.strategy.version
+    assert result.folds[-1].test_end < result.blind_start
+    assert result.folds[0].test_end < result.folds[1].test_start
+    assert all(item.run.completed for item in result.folds)
+
+
+def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
+    from quant_core.research.backtest import artifact_hash
+    from quant_core.research.candidates import LongOnlyTimeSeriesMomentumSpec
+
+    first = LongOnlyTimeSeriesMomentumSpec(version="long-only-tsmom-test-v1")
+    second = first.model_copy(update={"version": "long-only-tsmom-test-v2"})
+
+    assert artifact_hash(app_config, strategy_spec=first) != artifact_hash(
+        app_config, strategy_spec=second
+    )
+
+
+def test_long_only_time_series_momentum_is_point_in_time_and_long_cash(
+    app_config, replay_input
+) -> None:
+    from quant_core.features import FeatureEngine
+    from quant_core.research.candidates import (
+        LongOnlyTimeSeriesMomentumSpec,
+        LongOnlyTimeSeriesMomentumStrategy,
+    )
+
+    strategy = LongOnlyTimeSeriesMomentumStrategy(
+        LongOnlyTimeSeriesMomentumSpec(
+            version="long-only-tsmom-test-v1",
+            lookback_bars=5,
+            atr_bars=3,
+            horizon_minutes=1440,
+        )
+    )
+    features = FeatureEngine(app_config.feature).compute(replay_input.market)
+    candidates = strategy.evaluate(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].producer_version == "long-only-tsmom-test-v1"
+    assert candidates[0].signal_observed_at == replay_input.market.as_of
+    assert candidates[0].side.value == "BUY"
+    assert candidates[0].stop_price < replay_input.market.ask
+
+
+def test_long_only_moving_average_is_point_in_time_and_long_cash(
+    app_config, replay_input
+) -> None:
+    from quant_core.features import FeatureEngine
+    from quant_core.research.candidates import (
+        LongOnlyMovingAverageSpec,
+        LongOnlyMovingAverageStrategy,
+        resolve_research_candidate,
+    )
+
+    strategy = LongOnlyMovingAverageStrategy(
+        LongOnlyMovingAverageSpec(
+            version="long-only-sma-test-v1",
+            moving_average_bars=5,
+            atr_bars=3,
+            horizon_minutes=1440,
+        )
+    )
+    features = FeatureEngine(app_config.feature).compute(replay_input.market)
+    candidates = strategy.evaluate(
+        market=replay_input.market,
+        account=replay_input.account,
+        features=features,
+    )
+    effective, resolved = resolve_research_candidate(
+        "long-only-sma100-2w-v1", app_config
+    )
+    monthly_effective, monthly = resolve_research_candidate(
+        "long-only-sma200-1m-v1", app_config
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].producer_version == "long-only-sma-test-v1"
+    assert candidates[0].signal_observed_at == replay_input.market.as_of
+    assert candidates[0].side.value == "BUY"
+    assert effective.market_data.interval == "1d"
+    assert effective.market_data.bar_window == 100
+    assert resolved.research_spec.version == "long-only-sma100-2w-v1"
+    assert monthly_effective.market_data.bar_window == 200
+    assert monthly.research_spec.version == "long-only-sma200-1m-v1"
+    assert monthly.research_spec.horizon_minutes == 43_200
+
+
+def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+    from quant_core.research.candidates import (
+        LongOnlyMovingAverageSpec,
+        LongOnlyMovingAverageStrategy,
+    )
+
+    dataset = _dataset(
+        count=40,
+        price_steps=(Decimal("1.002"),) * 20 + (Decimal("0.998"),) * 20,
+        interval="1d",
+        bar_delta=timedelta(days=1),
+    )
+    spec = LongOnlyMovingAverageSpec(
+        version="long-only-sma5-riskoff-test-v1",
+        moving_average_bars=5,
+        atr_bars=3,
+        stop_atr_multiple=Decimal("10"),
+        horizon_minutes=90 * 1_440,
+        cooldown_minutes=7 * 1_440,
+        program_exit_moving_average_bars=5,
+    )
+    effective = app_config.model_copy(
+        update={
+            "market_data": app_config.market_data.model_copy(
+                update={"interval": "1d", "bar_window": spec.required_bar_window}
+            ),
+            "feature": app_config.feature.model_copy(
+                update={"volatility_window": spec.atr_bars}
+            ),
+            "frequency": app_config.frequency.model_copy(
+                update={"cooldown_minutes": spec.cooldown_minutes}
+            ),
+        }
+    )
+    run = run_bar_backtest(
+        dataset=dataset,
+        config=effective,
+        strategy=LongOnlyMovingAverageStrategy(spec),
+        signal_start=dataset.bars[5].close_time,
+        signal_end=dataset.bars[-5].close_time,
+        replay_start=dataset.bars[0].open_time,
+        replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert run.completed
+    assert run.trades
+    assert run.trades[0].opened_at > run.trades[0].signal_at
+    assert run.trades[0].exit_reason == "PROGRAM_SIGNAL"
+    assert "PROGRAM_EXIT_EVALUATED_FROM_MATCHED_CLOSED_BARS" in run.assumptions
+    assert "DRAWDOWN_MARKED_TO_EACH_BAR_CLOSE" in run.assumptions
+
+
+def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+    from quant_core.research.candidates import resolve_research_candidate
+
+    dataset = _dataset(count=450, interval="1d", bar_delta=timedelta(days=1))
+    effective, strategy = resolve_research_candidate(
+        "long-only-tsmom-12m-v1", app_config
+    )
+    run = run_bar_backtest(
+        dataset=dataset,
+        config=effective,
+        strategy=strategy,
+        signal_start=dataset.bars[365].close_time,
+        signal_end=dataset.bars[-34].close_time,
+        replay_start=dataset.bars[0].open_time,
+        replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert run.completed
+    assert run.trades
+    assert run.interval == "1d"
+
+
+def test_evaluation_catalog_round_trip_and_rejects_tampering(
+    app_config, tmp_path
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+
+    result = run_walk_forward(
+        dataset=_dataset(),
+        config=app_config,
+        plan=WalkForwardPlan(
+            plan_id="catalog-test-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+    )
+    catalog = HistoricalEvaluationCatalog(tmp_path)
+    target = catalog.store(result)
+    assert catalog.load(result.evaluation_id) == result
+
+    envelope = json.loads(target.read_text(encoding="utf-8"))
+    envelope["result"]["metrics"]["net_pnl"] = "999"
+    target.write_text(json.dumps(envelope), encoding="utf-8")
+    with pytest.raises(ValueError, match="内容哈希"):
+        catalog.load(result.evaluation_id)

@@ -36,7 +36,6 @@ class DifferenceKind(StrEnum):
     SNAPSHOT_STALE = "SNAPSHOT_STALE"
     BALANCE = "BALANCE"
     DAILY_PNL = "DAILY_PNL"
-    DRAWDOWN = "DRAWDOWN"
     POSITION_MISSING_LOCAL = "POSITION_MISSING_LOCAL"
     POSITION_MISSING_REMOTE = "POSITION_MISSING_REMOTE"
     POSITION_QUANTITY = "POSITION_QUANTITY"
@@ -240,15 +239,6 @@ class ReconciliationEngine:
                     remote_value=str(remote.daily_pnl),
                 )
             )
-        if local.drawdown_fraction != remote.drawdown_fraction:
-            differences.append(
-                ReconciliationDifference(
-                    kind=DifferenceKind.DRAWDOWN,
-                    key="drawdown_fraction",
-                    local_value=str(local.drawdown_fraction),
-                    remote_value=str(remote.drawdown_fraction),
-                )
-            )
         local_positions = {item.symbol: item for item in local.positions}
         remote_positions = {item.symbol: item for item in remote.positions}
         for symbol in sorted(local_positions.keys() | remote_positions.keys()):
@@ -387,5 +377,8 @@ class MockReconciler:
             open_order_count=account.open_order_count + (1 if remaining_order else 0),
             daily_pnl=daily_pnl,
             drawdown_fraction=account.drawdown_fraction,
+            equity=None,
+            equity_high_water=account.equity_high_water,
+            kill_switch_active=account.kill_switch_active,
             reconciled=True,
         )

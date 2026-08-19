@@ -11,9 +11,10 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 from temporalio import activity
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import Worker
 
 from quant_core.config import AppConfig, DeploymentStage, TemporalPolicy
@@ -23,8 +24,10 @@ from quant_core.features import FeatureEngine
 from quant_core.ids import stable_id
 from quant_core.ingestion import EventStore
 from quant_core.market_data import MarketDataStore
+from quant_core.portfolio_protection import PortfolioProtectionStore
 from quant_core.shadow import ShadowStateReader
 from quant_core.trigger import (
+    AnalysisCallAdmission,
     AnalysisTriggerPlan,
     AnalysisTriggerType,
     TriggerBatch,
@@ -46,6 +49,19 @@ logger = logging.getLogger(__name__)
 class TriggerBatchRecorder(Protocol):
     def record_batch(self, batch: TriggerBatch, *, analysis_submitted_at: datetime) -> bool: ...
 
+    def admit_analysis_call(
+        self,
+        batch: TriggerBatch,
+        *,
+        requested_at: datetime,
+    ) -> AnalysisCallAdmission: ...
+
+
+class AnalysisCallDeferred(Exception):
+    def __init__(self, retry_at: datetime) -> None:
+        self.retry_at = _require_utc(retry_at)
+        super().__init__(f"analysis call deferred until {self.retry_at.isoformat()}")
+
 
 class OutboxWakeup(Protocol):
     def wait(self, timeout_seconds: float) -> bool: ...
@@ -61,6 +77,7 @@ class TriggerAnalysisRequestBuilder:
         market_store: MarketDataStore,
         event_store: EventStore,
         state: ShadowStateReader,
+        protection: PortfolioProtectionStore,
         batch_recorder: TriggerBatchRecorder | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -70,6 +87,7 @@ class TriggerAnalysisRequestBuilder:
         self._market_store = market_store
         self._event_store = event_store
         self._state = state
+        self._protection = protection
         self._batch_recorder = batch_recorder
         self._clock = clock
         self._features = FeatureEngine(config.feature)
@@ -91,6 +109,16 @@ class TriggerAnalysisRequestBuilder:
             as_of=as_of,
             initial_quote_balance=self._config.shadow.initial_quote_balance,
         )
+        marks = {market.symbol: market.last}
+        for position in account.positions:
+            if position.symbol in marks:
+                continue
+            trade = self._market_store.latest_trade(symbol=position.symbol, as_of=as_of)
+            age_seconds = (as_of - trade.observed_at).total_seconds()
+            if age_seconds > self._config.risk.maximum_market_age_seconds:
+                raise ValueError(f"{position.symbol} 持仓盯市成交已过期")
+            marks[position.symbol] = trade.price
+        account = self._protection.observe(account, marks=marks, as_of=as_of)
         events = self._event_store.visible(symbol=batch.symbol, as_of=as_of)
         trigger_types = {item.trigger_type for item in batch.triggers}
         if AnalysisTriggerType.AGENT_WAKEUP in trigger_types:
@@ -109,6 +137,9 @@ class TriggerAnalysisRequestBuilder:
             account=account,
             events=events,
             frequency_orders_today=self._state.entry_orders_today(as_of=as_of),
+            frequency_last_entry_order_at=self._state.last_entry_order_at(
+                symbol=batch.symbol, as_of=as_of
+            ),
         )
         request = build_workflow_request(
             cycle_input=cycle_input,
@@ -123,6 +154,14 @@ class TriggerAnalysisRequestBuilder:
         )
         if self._batch_recorder is not None:
             submitted_at = max(_require_utc(self._clock()), as_of)
+            admission = self._batch_recorder.admit_analysis_call(
+                batch,
+                requested_at=submitted_at,
+            )
+            if not admission.admitted:
+                if admission.retry_at is None:
+                    raise RuntimeError("调用准入缺少 retry_at")
+                raise AnalysisCallDeferred(admission.retry_at)
             self._batch_recorder.record_batch(batch, analysis_submitted_at=submitted_at)
         return request
 
@@ -142,6 +181,8 @@ class TriggerCoordinatorActivities:
                 type="InvalidTriggerBatch",
                 non_retryable=True,
             ) from exc
+        except AnalysisCallDeferred as exc:
+            return {"deferred_until": exc.retry_at.isoformat()}
         except ValueError as exc:
             raise ApplicationError(
                 "TriggerBatch 的行情或账户输入暂不可用",
@@ -183,6 +224,9 @@ class TemporalTriggerDispatcher:
 
     async def deliver(self, message: TriggerOutboxMessage) -> None:
         symbol, pipeline_id = message.aggregate_key.split(":", 1)
+        if pipeline_id != self.config.pipeline.version:
+            # Release cutover 后的历史 outbox 只作事实保留，不得复活旧 coordinator。
+            return
         plan = self.plans.plan_for_scope(symbol=symbol, pipeline_id=pipeline_id)
         workflow_id = coordinator_workflow_id(symbol, pipeline_id)
         with suppress(WorkflowAlreadyStartedError):
@@ -195,6 +239,36 @@ class TemporalTriggerDispatcher:
             )
         handle = self.client.get_workflow_handle(workflow_id)
         await handle.signal(TRIGGER_SIGNAL, message.payload)
+
+
+async def terminate_superseded_trigger_coordinators(
+    *,
+    client: Client,
+    plans: tuple[AnalysisTriggerPlan, ...],
+    active_pipeline_id: str,
+) -> tuple[str, ...]:
+    """在 release 切换时终止同一交易范围内的旧 pipeline coordinator。"""
+
+    terminated: list[str] = []
+    for plan in plans:
+        if plan.pipeline_id == active_pipeline_id:
+            continue
+        workflow_id = coordinator_workflow_id(plan.symbol, plan.pipeline_id)
+        handle = client.get_workflow_handle(workflow_id)
+        try:
+            description = await handle.describe()
+            if description.status != WorkflowExecutionStatus.RUNNING:
+                continue
+            await handle.terminate(f"superseded by pipeline {active_pipeline_id}")
+        except RPCError as exc:
+            if exc.status not in {
+                RPCStatusCode.NOT_FOUND,
+                RPCStatusCode.FAILED_PRECONDITION,
+            }:
+                raise
+            continue
+        terminated.append(workflow_id)
+    return tuple(terminated)
 
 
 class TriggerTemporalWorker:

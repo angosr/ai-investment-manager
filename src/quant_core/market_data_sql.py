@@ -157,6 +157,26 @@ class SqlMarketDataStore:
                 raise ValueError("已收盘 K 线唯一键冲突且事实不一致") from None
             return False
 
+    def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
+        as_of = _require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(market_trades.c.payload)
+                .where(
+                    market_trades.c.symbol == symbol,
+                    market_trades.c.observed_at <= as_of,
+                    market_trades.c.event_time <= as_of,
+                )
+                .order_by(
+                    market_trades.c.event_time.desc(),
+                    market_trades.c.aggregate_trade_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        if payload is None:
+            raise ValueError(f"{symbol} 缺少可见成交，无法计算组合权益")
+        return MarketTrade.model_validate(payload)
+
     def snapshot(
         self,
         *,

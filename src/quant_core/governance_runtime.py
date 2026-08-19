@@ -21,7 +21,7 @@ from temporalio.worker import Worker
 from quant_core.analyst import assemble_codex_router
 from quant_core.config import AppConfig, TemporalPolicy
 from quant_core.domain import FrozenModel, _require_utc
-from quant_core.governance import GovernanceSnapshot, load_release_manifest
+from quant_core.governance import GovernanceSnapshot
 from quant_core.governance_agent import (
     GOVERNOR_OUTPUT_ADAPTER,
     CodexGovernor,
@@ -40,6 +40,7 @@ from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
+    SqlGovernanceRepository,
     build_engine,
 )
 from quant_core.trigger import AnalysisTriggerPlan, TriggerPlanPatch
@@ -102,15 +103,14 @@ def build_governance_workflow_request(
     *,
     as_of: datetime,
     config: AppConfig,
-    project_root: Path,
+    expected_champion_manifest_id: str,
 ) -> GovernanceWorkflowRequest:
     as_of = _require_utc(as_of)
-    champion = load_release_manifest(project_root / "config" / "release-manifest.yaml")
     orchestration = OrchestrationPolicySnapshot.from_config(config.temporal)
     payload = {
         "as_of": as_of.isoformat(),
         "governance_policy_version": config.governance.version,
-        "expected_champion_manifest_id": champion.manifest_id,
+        "expected_champion_manifest_id": expected_champion_manifest_id,
         "orchestration": orchestration.model_dump(mode="json"),
     }
     return GovernanceWorkflowRequest(
@@ -118,11 +118,11 @@ def build_governance_workflow_request(
             "governance_workflow",
             as_of.isoformat(),
             config.governance.version,
-            champion.manifest_id,
+            expected_champion_manifest_id,
         ),
         as_of=as_of,
         governance_policy_version=config.governance.version,
-        expected_champion_manifest_id=champion.manifest_id,
+        expected_champion_manifest_id=expected_champion_manifest_id,
         orchestration=orchestration,
         input_hash=content_hash(payload),
     )
@@ -243,7 +243,7 @@ class GovernanceTemporalWorker:
 class GovernanceSupervisor:
     coordinator: GovernanceTemporalCoordinator
     config: AppConfig
-    project_root: Path
+    repository: SqlGovernanceRepository
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     last_workflow_id: str | None = None
     last_error_class: str | None = None
@@ -260,7 +260,7 @@ class GovernanceSupervisor:
                 request = build_governance_workflow_request(
                     as_of=bucket,
                     config=self.config,
-                    project_root=self.project_root,
+                    expected_champion_manifest_id=(self.repository.get_champion().manifest_id),
                 )
                 self.last_workflow_id = await self.coordinator.ensure(request)
                 self.last_error_class = None
@@ -313,6 +313,6 @@ def assemble_governance(
         GovernanceSupervisor(
             coordinator=coordinator,
             config=config,
-            project_root=project_root,
+            repository=SqlGovernanceRepository(engine),
         ),
     )

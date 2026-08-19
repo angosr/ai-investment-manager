@@ -10,17 +10,21 @@ const STATE_LABEL: Record<string, string> = {
   COOLDOWN: "冷却中",
   DISABLED: "未启用",
   UNKNOWN: "未知",
-  AUTH_FAILED: "认证失败",
+  LEASED: "分析中",
 };
 
 export function Accounts() {
-  const data = useLive(() => api.accounts());
+  const data = useLive(() => api.accounts(), "accounts");
   const accounts = data?.accounts ?? [];
   const budget = data?.hourly_budget;
   const allDisabled = accounts.length > 0 && accounts.every((account) => !account.enabled);
 
   return (
-    <Card title="AI 账号" aside="×3 白名单" bodyPadded>
+    <Card
+      title="AI 账号"
+      aside={accounts.length ? `×${accounts.length} 白名单` : "白名单"}
+      bodyPadded
+    >
       {accounts.map((account) => (
         <AccountLine key={account.account_id} account={account} />
       ))}
@@ -34,7 +38,7 @@ export function Accounts() {
       ) : null}
       {allDisabled ? (
         <div className={styles.note}>
-          三个账号均 <b>未启用</b>；部署者完成隔离验收前保持关闭。
+          {accounts.length} 个账号均 <b>未启用</b>；部署者完成隔离验收前保持关闭。
         </div>
       ) : null}
     </Card>
@@ -68,7 +72,7 @@ function AccountLine({ account }: { account: AccountStatus }) {
 
 function stateTone(state: string): string {
   if (state === "HEALTHY") return "ok";
+  if (state === "LEASED") return "ok";
   if (state === "COOLDOWN") return "warn";
-  if (state === "AUTH_FAILED") return "bad";
   return "off";
 }

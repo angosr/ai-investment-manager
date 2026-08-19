@@ -3,29 +3,40 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from quant_core.acceptance import PhaseAAuditor
+from quant_core.analyst import audit_codex_isolation
 from quant_core.binance_testnet import (
     BinanceApiError,
     BinanceCredentials,
     BinanceTestnetClient,
     SymbolRules,
 )
-from quant_core.config import AiMode, DeploymentStage, load_config
+from quant_core.calibration import (
+    CalibrationBuildSpec,
+    EdgeCalibrationBuilder,
+    uncalibrated_ref,
+)
+from quant_core.candidate_evaluation import SqlCandidateOutcomeStore
+from quant_core.config import DeploymentStage, load_config
 from quant_core.cycle import AnalysisCycle, CycleInput
+from quant_core.domain import Side
 from quant_core.governance import load_release_manifest, validate_manifest_against_config
 from quant_core.governance_runtime import assemble_governance
 from quant_core.ids import stable_id
 from quant_core.ingestion import (
     EventNormalizer,
+    HttpxNewsNowTransport,
     InformationCollector,
     InformationCollectorService,
+    NewsNowSource,
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
@@ -37,7 +48,8 @@ from quant_core.lifecycle_runtime import (
 from quant_core.market_data import MarketShockDetector, assemble_shadow_market_stream
 from quant_core.market_data_sql import SqlMarketDataStore
 from quant_core.outcome_evaluation_runtime import assemble_outcome_evaluation
-from quant_core.persistence import SqlEventStore, build_engine
+from quant_core.persistence import SqlEventStore, build_engine, require_current_schema
+from quant_core.portfolio_protection import SqlPortfolioProtectionStore
 from quant_core.reconciliation_runtime import assemble_reconciliation
 from quant_core.shadow import SqlShadowStateReader
 from quant_core.temporal_runtime import (
@@ -53,6 +65,7 @@ from quant_core.trigger import (
     TriggerReason,
     build_initial_trigger_plan,
     build_trigger_plan_patch,
+    carry_forward_trigger_plan,
 )
 from quant_core.trigger_runtime import (
     TemporalTriggerDispatcher,
@@ -60,6 +73,7 @@ from quant_core.trigger_runtime import (
     TriggerCoordinatorActivities,
     TriggerOutboxDispatcherService,
     TriggerTemporalWorker,
+    terminate_superseded_trigger_coordinators,
 )
 from quant_core.trigger_sql import (
     PostgresOutboxListener,
@@ -68,7 +82,149 @@ from quant_core.trigger_sql import (
 )
 from quant_core.workflow import build_workflow_request
 
-app = typer.Typer(no_args_is_help=True, help="Quant Core Mock 与回放命令")
+app = typer.Typer(no_args_is_help=True, help="Quant Core 事件驱动交易与回放命令")
+
+
+def _runtime_engine(database_url: str):
+    engine = build_engine(database_url)
+    require_current_schema(engine)
+    return engine
+
+
+def _require_runtime_database(database_url: str) -> None:
+    engine = _runtime_engine(database_url)
+    engine.dispose()
+
+
+def _parse_utc_option(value: str, *, name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise typer.BadParameter(f"{name} 必须是 ISO-8601 时间") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise typer.BadParameter(f"{name} 必须包含时区")
+    return parsed.astimezone(UTC)
+
+
+@app.command("build-edge-calibration")
+def build_edge_calibration(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    producer_id: Annotated[str, typer.Option()],
+    producer_version: Annotated[str, typer.Option()],
+    symbol: Annotated[str, typer.Option()],
+    side: Annotated[Side, typer.Option()],
+    horizon_minutes: Annotated[int, typer.Option(min=1)],
+    training_start: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间")],
+    training_end: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间")],
+    published_at: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间")],
+    valid_from: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间")],
+    valid_until: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间")],
+    evaluation_version: Annotated[str | None, typer.Option()] = None,
+    source_calibration_ref: Annotated[str | None, typer.Option()] = None,
+    source_execution_policy_version: Annotated[str | None, typer.Option()] = None,
+    source_frequency_policy_version: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """从点时可见的成熟 Shadow 标签生成制品；只输出，不发布或改库。"""
+
+    loaded = load_config(config)
+    training_start_at = _parse_utc_option(training_start, name="training_start")
+    training_end_at = _parse_utc_option(training_end, name="training_end")
+    publication_time = _parse_utc_option(published_at, name="published_at")
+    validity_start = _parse_utc_option(valid_from, name="valid_from")
+    validity_end = _parse_utc_option(valid_until, name="valid_until")
+    engine = _runtime_engine(database_url)
+    outcomes = SqlCandidateOutcomeStore(engine).settled_visible_for_calibration(
+        training_start=training_start_at,
+        training_end=training_end_at,
+        published_at=publication_time,
+    )
+    artifact = EdgeCalibrationBuilder(loaded.calibration).build(
+        outcomes,
+        CalibrationBuildSpec(
+            producer_id=producer_id,
+            producer_version=producer_version,
+            symbol=symbol,
+            side=side,
+            horizon_minutes=horizon_minutes,
+            evaluation_version=(evaluation_version or loaded.outcome_evaluation.version),
+            source_calibration_ref=(source_calibration_ref or uncalibrated_ref(producer_version)),
+            source_execution_policy_version=(
+                source_execution_policy_version or loaded.execution.version
+            ),
+            source_frequency_policy_version=(
+                source_frequency_policy_version or loaded.frequency.version
+            ),
+            training_start=training_start_at,
+            training_end=training_end_at,
+            published_at=publication_time,
+            valid_from=validity_start,
+            valid_until=validity_end,
+        ),
+    )
+    typer.echo(
+        json.dumps(
+            artifact.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
+@app.command("evaluate-ai-forecasts")
+def evaluate_ai_forecasts(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    window_start: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间（含）")],
+    window_end: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间（不含）")],
+    published_at: Annotated[str, typer.Option(help="评价事实发布时间")],
+    pipeline_version: Annotated[str | None, typer.Option()] = None,
+    minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
+) -> None:
+    """评价结果发生前冻结的 AI 方向预测；不把方向收益冒充可交易 PnL。"""
+
+    from quant_core.forecast_evaluation import (
+        AnalysisForecastEvaluator,
+        SqlAnalysisForecastOutcomeStore,
+    )
+
+    loaded = load_config(config)
+    start = _parse_utc_option(window_start, name="window_start")
+    end = _parse_utc_option(window_end, name="window_end")
+    publication = _parse_utc_option(published_at, name="published_at")
+    pipeline = pipeline_version or loaded.pipeline.version
+    store = SqlAnalysisForecastOutcomeStore(_runtime_engine(database_url))
+    outcomes = store.visible_outcomes(
+        pipeline_version=pipeline,
+        window_start=start,
+        window_end=end,
+        published_at=publication,
+    )
+    report = AnalysisForecastEvaluator(
+        minimum_non_overlapping_samples=minimum_non_overlapping_samples
+    ).evaluate(
+        outcomes=outcomes,
+        outcome_evaluation_version=loaded.outcome_evaluation.forecast_version,
+        pipeline_version=pipeline,
+        window_start=start,
+        window_end=end,
+        published_at=publication,
+    )
+    typer.echo(
+        json.dumps(
+            report.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+    )
 
 
 @app.command("validate-config")
@@ -77,6 +233,48 @@ def validate_config(
 ) -> None:
     loaded = load_config(config)
     typer.echo(f"OK: pipeline={loaded.pipeline.version}, risk={loaded.risk.version}")
+
+
+@app.command("reset-portfolio-protection")
+def reset_portfolio_protection(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    reason: Annotated[str, typer.Option("--reason")],
+    acknowledge_risk: Annotated[
+        bool,
+        typer.Option(
+            "--acknowledge-risk",
+            help="确认已人工复核风险，并以当前权益重置高水位",
+        ),
+    ] = False,
+) -> None:
+    """人工解除持久熔断；不会覆盖配置中的静态 kill switch。"""
+
+    if not acknowledge_risk:
+        typer.echo("拒绝恢复：必须显式提供 --acknowledge-risk")
+        raise typer.Exit(code=2)
+    loaded = load_config(config)
+    store = SqlPortfolioProtectionStore(
+        _runtime_engine(database_url),
+        policy=loaded.risk,
+        initial_equity=loaded.shadow.initial_quote_balance,
+    )
+    state = store.reset(reset_at=datetime.now(UTC), reason=reason)
+    typer.echo(
+        json.dumps(
+            {
+                "portfolio_id": state.portfolio_id,
+                "kill_switch_active": state.kill_switch_active,
+                "equity_baseline": str(state.high_water_equity),
+                "reset_at": state.last_reset_at.isoformat() if state.last_reset_at else None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @app.command("run-mock")
@@ -89,6 +287,145 @@ def run_mock(
     cycle_input = CycleInput.model_validate(raw)
     result = AnalysisCycle.create(loaded).run(cycle_input)
     typer.echo(result.model_dump_json(indent=2))
+
+
+@app.command("fetch-binance-history")
+def fetch_binance_history_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    symbol: Annotated[str, typer.Option()],
+    start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
+    end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    candidate: Annotated[str, typer.Option()] = "configured",
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(".runtime/datasets"),
+) -> None:
+    """抓取并内容寻址保存 Binance 官方已收盘 K 线；不生成 Markdown 报告。"""
+
+    from quant_core.research.candidates import resolve_research_candidate
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        fetch_binance_history,
+    )
+
+    try:
+        loaded, _ = resolve_research_candidate(candidate, load_config(config))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    canonical_symbol = symbol.upper()
+    if canonical_symbol not in loaded.market_data.symbols:
+        raise typer.BadParameter("symbol 必须在当前 MarketDataPolicy 中显式登记")
+    dataset = asyncio.run(
+        fetch_binance_history(
+            base_url=loaded.market_data.rest_base_url,
+            symbol=canonical_symbol,
+            interval=loaded.market_data.interval,
+            start=_parse_utc_option(start, name="start"),
+            end=_parse_utc_option(end, name="end"),
+            timeout_seconds=loaded.market_data.rest_timeout_seconds,
+        )
+    )
+    target = HistoricalDatasetCatalog(catalog).store(dataset)
+    typer.echo(
+        json.dumps(
+            {
+                "dataset_id": dataset.manifest.dataset_id,
+                "symbol": dataset.manifest.symbol,
+                "interval": dataset.manifest.interval,
+                "bar_count": dataset.manifest.bar_count,
+                "first_open_time": dataset.manifest.first_open_time.isoformat(),
+                "last_close_time": dataset.manifest.last_close_time.isoformat(),
+                "bars_hash": dataset.manifest.bars_hash,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("walk-forward")
+def walk_forward_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    dataset_id: Annotated[str, typer.Option()],
+    plan_id: Annotated[str, typer.Option()],
+    training_bars: Annotated[int, typer.Option(min=2)],
+    test_bars: Annotated[int, typer.Option(min=2)],
+    blind_bars: Annotated[int, typer.Option(min=0)] = 0,
+    candidate: Annotated[str, typer.Option()] = "configured",
+    catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/evaluations"
+    ),
+    starting_equity: Annotated[str, typer.Option()] = "10000",
+    spread_bps: Annotated[str, typer.Option()] = "1",
+    minimum_trades: Annotated[int, typer.Option(min=1)] = 30,
+    minimum_profit_factor: Annotated[str, typer.Option()] = "1.05",
+    minimum_average_net_return_bps_lower_bound: Annotated[
+        str, typer.Option()
+    ] = "0",
+    maximum_drawdown_fraction: Annotated[str, typer.Option()] = "0.05",
+    minimum_positive_fold_fraction: Annotated[str, typer.Option()] = "0.75",
+    include_trades: Annotated[bool, typer.Option()] = False,
+) -> None:
+    """对冻结程序策略运行带隔离窗口的 walk-forward；不调用 Codex。"""
+
+    from quant_core.research.candidates import resolve_research_candidate
+    from quant_core.research.dataset import HistoricalDatasetCatalog
+    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+
+    try:
+        parsed_equity = Decimal(starting_equity)
+        parsed_spread = Decimal(spread_bps)
+        parsed_profit_factor = Decimal(minimum_profit_factor)
+        parsed_return_lower_bound = Decimal(
+            minimum_average_net_return_bps_lower_bound
+        )
+        parsed_drawdown = Decimal(maximum_drawdown_fraction)
+        parsed_positive_folds = Decimal(minimum_positive_fold_fraction)
+    except InvalidOperation as exc:
+        raise typer.BadParameter("starting-equity 与 spread-bps 必须是十进制数") from exc
+    if parsed_equity <= 0 or parsed_spread < 0:
+        raise typer.BadParameter("starting-equity 必须为正，spread-bps 不能为负")
+    if (
+        parsed_profit_factor <= 0
+        or not Decimal("0") < parsed_drawdown <= Decimal("1")
+        or not Decimal("0") < parsed_positive_folds <= Decimal("1")
+    ):
+        raise typer.BadParameter("盈利因子必须为正，回撤与正收益窗口比例必须在 (0,1] 内")
+    loaded_config = load_config(config)
+    try:
+        effective_config, research_strategy = resolve_research_candidate(
+            candidate, loaded_config
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    result = run_walk_forward(
+        dataset=HistoricalDatasetCatalog(catalog).load(dataset_id),
+        config=effective_config,
+        plan=WalkForwardPlan(
+            plan_id=plan_id,
+            training_bars=training_bars,
+            test_bars=test_bars,
+            blind_bars=blind_bars,
+            starting_equity=parsed_equity,
+            spread_bps=parsed_spread,
+            minimum_trades=minimum_trades,
+            minimum_profit_factor=parsed_profit_factor,
+            minimum_average_net_return_bps_lower_bound=parsed_return_lower_bound,
+            maximum_drawdown_fraction=parsed_drawdown,
+            minimum_positive_fold_fraction=parsed_positive_folds,
+        ),
+        strategy=research_strategy,
+    )
+    result_path = HistoricalEvaluationCatalog(evaluation_catalog).store(result)
+    payload = result.model_dump(mode="json")
+    payload["result_path"] = str(result_path)
+    if not include_trades:
+        for fold in payload["folds"]:
+            fold["run"].pop("trades", None)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 @app.command("phase-a-audit")
@@ -116,6 +453,60 @@ def shadow_audit(
     payload["codex_ready"] = report.ready
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     if loaded.deployment.stage != DeploymentStage.SHADOW or not report.shadow_ready:
+        raise typer.Exit(code=1)
+
+
+@app.command("codex-isolation-audit")
+def codex_isolation_audit(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+) -> None:
+    """脱敏验证所有已启用白名单账号的额度契约和无工具读取边界。"""
+
+    loaded = load_config(config)
+    accounts = tuple(item for item in loaded.codex_accounts.accounts if item.enabled)
+    if not accounts:
+        typer.echo(
+            json.dumps(
+                {
+                    "ready": False,
+                    "runtime_policy_version": loaded.codex_runtime.version,
+                    "reason_code": "NO_ENABLED_ACCOUNTS",
+                    "checks": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        raise typer.Exit(code=1)
+    runtime = loaded.codex_runtime.model_copy(update={"enabled": True, "isolation_verified": True})
+    audit_parent = loaded.codex_runtime.bundle_root.parent / ".isolation-audits"
+    audit_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="quant-core-codex-isolation-", dir=audit_parent
+    ) as directory:
+        root = Path(directory)
+        checks = tuple(
+            audit_codex_isolation(
+                account=account,
+                policy=runtime,
+                target=root / account.account_id,
+            )
+            for account in accounts
+        )
+    ready = all(check.ready for check in checks)
+    typer.echo(
+        json.dumps(
+            {
+                "ready": ready,
+                "runtime_policy_version": runtime.version,
+                "reason_code": "OK" if ready else "ISOLATION_AUDIT_FAILED",
+                "checks": [check.model_dump(mode="json") for check in checks],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    if not ready:
         raise typer.Exit(code=1)
 
 
@@ -283,9 +674,10 @@ def temporal_worker(
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
 ) -> None:
-    """运行持久化 Mock 分析 Worker；进程由 Compose/systemd 等监督器管理。"""
+    """运行持久化分析 Worker；PROPOSE 模式调用隔离的真实 Codex。"""
 
     loaded = load_config(config)
+    _require_runtime_database(database_url)
     cycle = assemble_analysis_cycle(loaded, database_url)
     run_worker_process(loaded.temporal, cycle)
 
@@ -328,12 +720,13 @@ def market_stream(
     """运行 Binance 公开只读行情服务；仅显式 SHADOW 配置可以启动。"""
 
     loaded = load_config(config)
-    engine = build_engine(database_url)
+    engine = _runtime_engine(database_url)
     store = SqlMarketDataStore(engine)
     triggers = SqlTriggerRepository(engine, loaded.trigger)
     detector = MarketShockDetector(
         pipeline_id=loaded.pipeline.version,
         relative_move_threshold=loaded.trigger.volatility_jump_threshold,
+        window_seconds=loaded.market_data.interval_seconds,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         sink=triggers,
     )
@@ -360,17 +753,32 @@ def trigger_service(
     """运行唯一 TriggerCoordinator Worker 与可靠 Outbox Dispatcher。"""
 
     loaded = load_config(config)
-    engine = build_engine(database_url)
+    engine = _runtime_engine(database_url)
     repository = SqlTriggerRepository(engine, loaded.trigger)
     manifest = load_release_manifest(release_manifest)
     validate_manifest_against_config(manifest, loaded)
     now = datetime.now(UTC)
+    previous_plans = repository.current_plans_for_symbols(loaded.market_data.symbols)
     for symbol in loaded.market_data.symbols:
         try:
-            repository.plan_for_scope(symbol=symbol, pipeline_id=loaded.pipeline.version)
+            current = repository.plan_for_scope(
+                symbol=symbol,
+                pipeline_id=loaded.pipeline.version,
+            )
         except KeyError:
-            repository.create_plan(
-                build_initial_trigger_plan(
+            predecessors = tuple(item for item in previous_plans if item.symbol == symbol)
+            if predecessors:
+                plan = carry_forward_trigger_plan(
+                    max(
+                        predecessors,
+                        key=lambda item: (item.updated_at, item.revision, item.pipeline_id),
+                    ),
+                    pipeline_id=loaded.pipeline.version,
+                    manifest_id=manifest.manifest_id,
+                    updated_at=now,
+                )
+            else:
+                plan = build_initial_trigger_plan(
                     symbol=symbol,
                     pipeline_id=loaded.pipeline.version,
                     manifest_id=manifest.manifest_id,
@@ -396,10 +804,24 @@ def trigger_service(
                         ),
                     ),
                 )
-            )
+            repository.create_plan(plan)
+        else:
+            if current.manifest_id != manifest.manifest_id:
+                raise ValueError(
+                    f"{symbol} 当前 TriggerPlan 的 manifest 与 release 不一致；"
+                    "必须升级 pipeline version 完成切换"
+                )
 
     async def run(wakeup: PostgresOutboxListener) -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
+        current_plans = repository.current_plans_for_symbols(loaded.market_data.symbols)
+        terminated = await terminate_superseded_trigger_coordinators(
+            client=temporal.client,
+            plans=current_plans,
+            active_pipeline_id=loaded.pipeline.version,
+        )
+        if terminated:
+            typer.echo(f"已终止 {len(terminated)} 个旧 pipeline TriggerCoordinator")
         activities = TriggerCoordinatorActivities(
             TriggerAnalysisRequestBuilder(
                 config=loaded,
@@ -408,12 +830,18 @@ def trigger_service(
                     engine,
                     pipeline_id=loaded.pipeline.version,
                     trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
+                    max_visible_events=loaded.information.read_limit,
                 ),
                 state=SqlShadowStateReader(
                     engine,
                     maximum_reconciliation_age_seconds=(
                         loaded.reconciliation.maximum_report_age_seconds
                     ),
+                ),
+                protection=SqlPortfolioProtectionStore(
+                    engine,
+                    policy=loaded.risk,
+                    initial_equity=loaded.shadow.initial_quote_balance,
                 ),
                 batch_recorder=repository,
             )
@@ -453,17 +881,13 @@ def trigger_now(
     """在非实盘环境中，经版本化 TriggerPlan 门禁立即触发分析周期。"""
 
     loaded = load_config(config)
-    if (
-        loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}
-        or loaded.pipeline.ai_mode != AiMode.OFF
-        or loaded.codex_runtime.enabled
-    ):
-        raise ValueError("trigger-now 只允许 AI/Codex 均关闭的 SHADOW 或 TESTNET")
+    if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
+        raise ValueError("trigger-now 只允许 SHADOW 或 TESTNET")
     if symbol not in loaded.market_data.symbols:
         raise ValueError("symbol 不在当前行情白名单")
     manifest = load_release_manifest(release_manifest)
     validate_manifest_against_config(manifest, loaded)
-    repository = SqlTriggerRepository(build_engine(database_url), loaded.trigger)
+    repository = SqlTriggerRepository(_runtime_engine(database_url), loaded.trigger)
     plan = repository.plan_for_scope(symbol=symbol, pipeline_id=loaded.pipeline.version)
     now = datetime.now(UTC)
     result = repository.apply_patch(
@@ -504,6 +928,7 @@ def lifecycle_service(
     """发现未关闭持仓并运行可恢复的 Temporal 生命周期监控。"""
 
     loaded = load_config(config)
+    _require_runtime_database(database_url)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -534,6 +959,7 @@ def reconciliation_service(
     """持续主动对账独立 Mock 交易所与业务事实；差异时冻结新增风险。"""
 
     loaded = load_config(config)
+    _require_runtime_database(database_url)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -559,6 +985,7 @@ def outcome_evaluation_service(
     """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
 
     loaded = load_config(config)
+    _require_runtime_database(database_url)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -582,10 +1009,11 @@ def governance_service(
     ],
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
 ) -> None:
-    """运行隔离的 Governor 周期；真实 Codex 与三账号隔离门禁未通过时拒绝启动。"""
+    """运行隔离的 Governor 周期；真实 Codex 与账号隔离门禁未通过时拒绝启动。"""
 
     loaded = load_config(config)
     root = project_root.resolve()
+    _require_runtime_database(database_url)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -623,13 +1051,30 @@ def information_collector(
         limit=policy.read_limit,
         source_timezone=policy.source_timezone,
     )
+    sources = [source]
+    if policy.newsnow_sources:
+        sources.append(
+            NewsNowSource(
+                HttpxNewsNowTransport(
+                    policy.newsnow_base_url,
+                    timeout_seconds=policy.request_timeout_seconds,
+                ),
+                sources=policy.newsnow_sources,
+                maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
+            )
+        )
     collector = InformationCollector(
-        (source,),
-        EventNormalizer(version=policy.version, universe=loaded.market_data.symbols),
+        tuple(sources),
+        EventNormalizer(
+            version=policy.version,
+            universe=loaded.market_data.symbols,
+            quote_asset=loaded.binance_testnet.quote_asset,
+        ),
         SqlEventStore(
-            build_engine(database_url),
+            _runtime_engine(database_url),
             pipeline_id=loaded.pipeline.version,
             trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
+            max_visible_events=policy.read_limit,
         ),
     )
     service = InformationCollectorService(
@@ -664,16 +1109,30 @@ def dashboard_service(
         typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
         typer.echo("先运行：cd web && npm install && npm run build")
     loaded = load_config(config)
+    _require_runtime_database(database_url)
     application = create_app(loaded, database_url, web_dist=resolved_dist)
     typer.echo(f"运行观测台就绪：http://{host}:{port}")
-    uvicorn.run(application, host=host, port=port, log_level="info")
+    # EventSource 是无限响应；有界等待后取消连接，避免服务重启被浏览器永久阻塞。
+    uvicorn.run(
+        application,
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=5,
+    )
 
 
 def _default_web_dist() -> Path | None:
-    """约定优先：默认托管 ./web/dist，让单条命令即可同时提供前端与 API。"""
+    """定位开发仓库的前端产物，不依赖服务进程的当前工作目录。"""
 
-    candidate = Path("web/dist")
-    return candidate if candidate.is_dir() else None
+    candidates = (
+        Path.cwd() / "web" / "dist",
+        Path(__file__).resolve().parents[2] / "web" / "dist",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    return None
 
 
 if __name__ == "__main__":

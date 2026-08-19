@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 RECONCILIATION_ACTIVITY_NAME = "reconcile-trading-state-v1"
 
 
@@ -51,6 +53,7 @@ class ReconciliationWorkflow:
                 start_to_close_timeout=start_to_close,
                 schedule_to_close_timeout=schedule_to_close,
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="主动对账订单、成交、余额和仓位",
             )
         except ActivityError:

@@ -46,6 +46,16 @@ class SqlMockExchange:
             ).scalar_one_or_none()
         return Order.model_validate(payload) if payload is not None else None
 
+    def query_entry_order(
+        self,
+        *,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        market: MarketSnapshot,
+    ) -> Order | None:
+        del market
+        return self.query_order(entry_client_order_id(intent, risk))
+
     def submit(
         self,
         *,

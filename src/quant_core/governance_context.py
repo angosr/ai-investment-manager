@@ -1,39 +1,58 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from quant_core.config import AppConfig
-from quant_core.domain import _require_utc
+from quant_core.domain import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+    IntelligenceEvent,
+    _require_utc,
+)
 from quant_core.evaluation import OutcomeWindowReport
 from quant_core.governance import (
     EvaluationPlan,
     FailedExperiment,
     GovernanceSnapshot,
-    ReleaseManifest,
     build_governance_snapshot,
     load_constitution,
     load_release_manifest,
     validate_manifest_against_config,
 )
+from quant_core.ids import stable_id
 from quant_core.persistence import (
     SqlGovernanceRepository,
     analysis_cycles,
+    analysis_trigger_batches,
     analysis_trigger_plans,
     architecture_decisions,
+    candidate_outcomes,
     change_proposals,
     codex_runs,
     evaluation_plans,
     failed_experiment_records,
+    normalized_events,
     outcome_window_reports,
     reconciliation_reports,
     release_manifests,
+    signal_candidates,
     trigger_outbox,
 )
-from quant_core.trigger import AnalysisTriggerPlan
+from quant_core.trigger import AnalysisTriggerPlan, TriggerBatch
+
+
+@dataclass(slots=True)
+class _CodexRuntimeStats:
+    statuses: Counter[str] = field(default_factory=Counter)
+    failures: Counter[str] = field(default_factory=Counter)
+    durations: list[Decimal] = field(default_factory=list)
 
 
 class GovernanceSnapshotAssembler:
@@ -63,16 +82,7 @@ class GovernanceSnapshotAssembler:
 
         cutoff = as_of - timedelta(days=self._config.governance.snapshot_lookback_days)
         with self._engine.connect() as connection:
-            champion_payloads = tuple(
-                connection.execute(
-                    select(release_manifests.c.payload).where(
-                        release_manifests.c.status == "CHAMPION"
-                    )
-                ).scalars()
-            )
-            if len(champion_payloads) != 1:
-                raise ValueError("治理周期要求数据库中恰好一个 CHAMPION")
-            champion = ReleaseManifest.model_validate(champion_payloads[0])
+            champion = self._repository.get_champion()
             previous_stable = tuple(
                 connection.execute(
                     select(release_manifests.c.manifest_id)
@@ -150,20 +160,26 @@ class GovernanceSnapshotAssembler:
                     .order_by(reconciliation_reports.c.status)
                 ).all()
             )
-            codex_counts = tuple(
+            codex_rows = tuple(
                 connection.execute(
-                    select(codex_runs.c.status, func.count())
-                    .where(
-                        codex_runs.c.cycle_id.in_(
-                            select(analysis_cycles.c.cycle_id).where(
-                                analysis_cycles.c.as_of >= cutoff,
-                                analysis_cycles.c.as_of <= as_of,
-                            )
+                    select(
+                        analysis_cycles.c.pipeline_version,
+                        codex_runs.c.status,
+                        codex_runs.c.error_class,
+                        codex_runs.c.payload,
+                    )
+                    .select_from(
+                        codex_runs.join(
+                            analysis_cycles,
+                            analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
                         )
                     )
-                    .group_by(codex_runs.c.status)
-                    .order_by(codex_runs.c.status)
-                ).all()
+                    .where(
+                        analysis_cycles.c.as_of >= cutoff,
+                        analysis_cycles.c.as_of <= as_of,
+                    )
+                    .order_by(analysis_cycles.c.pipeline_version, codex_runs.c.run_id)
+                ).mappings()
             )
             trigger_plan_payloads = tuple(
                 connection.execute(
@@ -186,6 +202,150 @@ class GovernanceSnapshotAssembler:
                     .order_by(trigger_outbox.c.status)
                 ).all()
             )
+            trigger_batch_rows = tuple(
+                connection.execute(
+                    select(
+                        analysis_trigger_batches.c.batch_id,
+                        analysis_trigger_batches.c.analysis_submitted_at,
+                        analysis_trigger_batches.c.payload,
+                    )
+                    .where(
+                        analysis_trigger_batches.c.pipeline_id == self._config.pipeline.version,
+                        analysis_trigger_batches.c.symbol.in_(self._config.market_data.symbols),
+                        analysis_trigger_batches.c.analysis_submitted_at >= cutoff,
+                        analysis_trigger_batches.c.analysis_submitted_at <= as_of,
+                    )
+                    .order_by(analysis_trigger_batches.c.analysis_submitted_at)
+                ).mappings()
+            )
+            cycle_created_at_by_id = dict(
+                connection.execute(
+                    select(analysis_cycles.c.cycle_id, analysis_cycles.c.created_at).where(
+                        analysis_cycles.c.pipeline_version == self._config.pipeline.version,
+                        analysis_cycles.c.as_of >= cutoff,
+                        analysis_cycles.c.as_of <= as_of,
+                        analysis_cycles.c.created_at <= as_of,
+                    )
+                ).all()
+            )
+            intelligence_payloads = tuple(
+                connection.execute(
+                    select(normalized_events.c.payload)
+                    .where(
+                        normalized_events.c.observed_at >= cutoff,
+                        normalized_events.c.observed_at <= as_of,
+                    )
+                    .order_by(
+                        normalized_events.c.observed_at,
+                        normalized_events.c.evidence_id,
+                    )
+                ).scalars()
+            )
+            candidate_sample_counts = tuple(
+                connection.execute(
+                    select(
+                        signal_candidates.c.producer_id,
+                        signal_candidates.c.producer_version,
+                        signal_candidates.c.symbol,
+                        func.count(signal_candidates.c.candidate_id),
+                        func.count(candidate_outcomes.c.outcome_id).filter(
+                            candidate_outcomes.c.status == CandidateOutcomeStatus.SETTLED.value
+                        ),
+                        func.count(candidate_outcomes.c.outcome_id).filter(
+                            candidate_outcomes.c.status == CandidateOutcomeStatus.UNSCORABLE.value
+                        ),
+                    )
+                    .select_from(
+                        signal_candidates.join(
+                            analysis_cycles,
+                            analysis_cycles.c.cycle_id == signal_candidates.c.cycle_id,
+                        ).outerjoin(
+                            candidate_outcomes,
+                            and_(
+                                candidate_outcomes.c.candidate_id
+                                == signal_candidates.c.candidate_id,
+                                candidate_outcomes.c.settled_at <= as_of,
+                            ),
+                        )
+                    )
+                    .where(
+                        analysis_cycles.c.as_of >= cutoff,
+                        analysis_cycles.c.as_of <= as_of,
+                    )
+                    .group_by(
+                        signal_candidates.c.producer_id,
+                        signal_candidates.c.producer_version,
+                        signal_candidates.c.symbol,
+                    )
+                    .order_by(
+                        signal_candidates.c.producer_id,
+                        signal_candidates.c.producer_version,
+                        signal_candidates.c.symbol,
+                    )
+                ).all()
+            )
+            candidate_evidence_stats: dict[
+                tuple[str, str, str, str, int, str, str, str, str, str],
+                tuple[int, Decimal | None, Decimal | None, Decimal | None],
+            ] = {}
+            non_overlapping_settled_counts: dict[
+                tuple[str, str, str, str, int, str, str, str, str], int
+            ] = {}
+            last_evaluation_by_sample: dict[
+                tuple[str, str, str, str, int, str, str, str, str], datetime
+            ] = {}
+            outcome_payloads = connection.execute(
+                select(candidate_outcomes.c.payload)
+                .where(
+                    candidate_outcomes.c.evaluation_at >= cutoff,
+                    candidate_outcomes.c.evaluation_at <= as_of,
+                    candidate_outcomes.c.settled_at <= as_of,
+                )
+                .order_by(
+                    candidate_outcomes.c.evaluation_at,
+                    candidate_outcomes.c.outcome_id,
+                )
+            ).scalars()
+            for payload in outcome_payloads:
+                outcome = CandidateOutcome.model_validate(payload)
+                horizon_minutes = int(
+                    (outcome.evaluation_at - outcome.signal_observed_at).total_seconds() // 60
+                )
+                basis_key = (
+                    outcome.producer_id,
+                    outcome.producer_version,
+                    outcome.symbol,
+                    outcome.side.value,
+                    horizon_minutes,
+                    outcome.calibration_ref,
+                    outcome.evaluation_version,
+                    outcome.execution_policy_version,
+                    outcome.frequency_policy_version,
+                )
+                status_key = (*basis_key, outcome.status.value)
+                count, total, minimum, maximum = candidate_evidence_stats.get(
+                    status_key, (0, None, None, None)
+                )
+                net = outcome.net_return_bps
+                if net is not None:
+                    total = net if total is None else total + net
+                    minimum = net if minimum is None else min(minimum, net)
+                    maximum = net if maximum is None else max(maximum, net)
+                candidate_evidence_stats[status_key] = (
+                    count + 1,
+                    total,
+                    minimum,
+                    maximum,
+                )
+                if outcome.status != CandidateOutcomeStatus.SETTLED:
+                    continue
+                last_evaluation = last_evaluation_by_sample.get(basis_key)
+                if last_evaluation is not None and outcome.signal_observed_at < last_evaluation:
+                    continue
+                non_overlapping_settled_counts[basis_key] = (
+                    non_overlapping_settled_counts.get(basis_key, 0) + 1
+                )
+                last_evaluation_by_sample[basis_key] = outcome.evaluation_at
 
         metric_summaries: list[tuple[str, str]] = []
         for payload in reversed(window_payloads):
@@ -210,12 +370,58 @@ class GovernanceSnapshotAssembler:
         metric_summaries.extend(
             (f"reconciliation:{status}", str(count)) for status, count in reconciliation_counts
         )
-        metric_summaries.extend(
-            (f"codex_run:{status}", str(count)) for status, count in codex_counts
-        )
+        metric_summaries.extend(_codex_run_summaries(codex_rows, as_of=as_of))
         metric_summaries.extend(
             (f"trigger_outbox:{status}", str(count)) for status, count in trigger_outbox_counts
         )
+        metric_summaries.extend(
+            _trigger_latency_summaries(trigger_batch_rows, cycle_created_at_by_id)
+        )
+        metric_summaries.extend(
+            _intelligence_event_summaries(
+                intelligence_payloads,
+                high_impact_threshold=self._config.trigger.high_impact_threshold,
+            )
+        )
+        for status_key, (count, total, minimum, maximum) in sorted(
+            candidate_evidence_stats.items()
+        ):
+            *basis_key, status = status_key
+            prefix = "candidate_evidence:" + ":".join(str(item) for item in basis_key)
+            average = total / count if total is not None else None
+            metric_summaries.append((f"{prefix}:{status}:count", str(count)))
+            if status == CandidateOutcomeStatus.SETTLED.value:
+                metric_summaries.append(
+                    (
+                        f"{prefix}:non_overlapping_settled",
+                        str(non_overlapping_settled_counts.get(tuple(basis_key), 0)),
+                    )
+                )
+            if average is not None:
+                metric_summaries.extend(
+                    (
+                        (f"{prefix}:average_net_bps", str(average)),
+                        (f"{prefix}:minimum_net_bps", str(minimum)),
+                        (f"{prefix}:maximum_net_bps", str(maximum)),
+                    )
+                )
+        for (
+            producer_id,
+            producer_version,
+            symbol,
+            total,
+            settled,
+            unscorable,
+        ) in candidate_sample_counts:
+            prefix = f"candidate_sample:{producer_id}:{producer_version}:{symbol}"
+            metric_summaries.extend(
+                (
+                    (f"{prefix}:total", str(total)),
+                    (f"{prefix}:settled", str(settled)),
+                    (f"{prefix}:unscorable", str(unscorable)),
+                    (f"{prefix}:pending", str(total - settled - unscorable)),
+                )
+            )
         snapshot = build_governance_snapshot(
             as_of=as_of,
             constitution=constitution,
@@ -234,3 +440,218 @@ class GovernanceSnapshotAssembler:
         )
         self._repository.record_snapshot(snapshot)
         return snapshot
+
+
+def _trigger_latency_summaries(
+    batch_rows,
+    cycle_created_at_by_id: dict[str, datetime],
+) -> tuple[tuple[str, str], ...]:
+    segments: dict[tuple[str, str, str], dict[str, list[Decimal]]] = {}
+    validity: dict[tuple[str, str, str], list[int]] = {}
+    for row in batch_rows:
+        batch = TriggerBatch.model_validate(row["payload"])
+        submitted_at = _database_utc(row["analysis_submitted_at"])
+        raw_cycle_created_at = cycle_created_at_by_id.get(
+            stable_id("triggered_cycle", batch.batch_id)
+        )
+        cycle_created_at = (
+            _database_utc(raw_cycle_created_at) if raw_cycle_created_at is not None else None
+        )
+        for trigger_type in sorted({item.trigger_type for item in batch.triggers}):
+            matching = tuple(item for item in batch.triggers if item.trigger_type == trigger_type)
+            occurred_at = min(item.occurred_at for item in matching)
+            observed_at = min(item.observed_at for item in matching)
+            key = (batch.pipeline_id, batch.symbol, trigger_type.value)
+            values = segments.setdefault(
+                key,
+                {
+                    "source_to_observed": [],
+                    "observed_to_batch": [],
+                    "batch_to_submit": [],
+                    "submit_to_decision": [],
+                    "source_to_decision": [],
+                },
+            )
+            values["source_to_observed"].append(_duration_seconds(observed_at, occurred_at))
+            values["observed_to_batch"].append(_duration_seconds(batch.created_at, observed_at))
+            values["batch_to_submit"].append(_duration_seconds(submitted_at, batch.created_at))
+            valid, invalid, pending = validity.setdefault(key, [0, 0, 0])
+            if cycle_created_at is None:
+                validity[key] = [valid, invalid, pending + 1]
+                continue
+            if cycle_created_at < submitted_at:
+                validity[key] = [valid, invalid + 1, pending]
+                continue
+            validity[key] = [valid + 1, invalid, pending]
+            values["submit_to_decision"].append(_duration_seconds(cycle_created_at, submitted_at))
+            values["source_to_decision"].append(_duration_seconds(cycle_created_at, occurred_at))
+
+    summaries: list[tuple[str, str]] = []
+    for key, values in sorted(segments.items()):
+        prefix = "trigger_latency:" + ":".join(key)
+        valid, invalid, pending = validity[key]
+        summaries.extend(
+            (
+                (f"{prefix}:sample_count", str(len(values["source_to_observed"]))),
+                (f"{prefix}:valid_decision_sample_count", str(valid)),
+                (f"{prefix}:invalid_decision_sample_count", str(invalid)),
+                (f"{prefix}:pending_decision_sample_count", str(pending)),
+            )
+        )
+        for segment, observations in values.items():
+            if not observations:
+                continue
+            for label, percentile in (
+                ("p50_seconds", Decimal("0.50")),
+                ("p95_seconds", Decimal("0.95")),
+                ("p99_seconds", Decimal("0.99")),
+            ):
+                summaries.append(
+                    (
+                        f"{prefix}:{segment}:{label}",
+                        _format_decimal(_percentile(observations, percentile)),
+                    )
+                )
+    return tuple(summaries)
+
+
+def _codex_run_summaries(rows, *, as_of: datetime) -> tuple[tuple[str, str], ...]:
+    """按实际尝试耗时汇总 Codex 运行；旧事实缺耗时时只参与计数。"""
+
+    as_of = _require_utc(as_of)
+    global_counts: Counter[str] = Counter()
+    groups: dict[tuple[str, str], _CodexRuntimeStats] = {}
+    for row in rows:
+        payload = row["payload"] if isinstance(row["payload"], dict) else {}
+        raw_observed_at = payload.get("observed_at")
+        if not isinstance(raw_observed_at, str):
+            continue
+        observed_at = _require_utc(datetime.fromisoformat(raw_observed_at))
+        raw_completed_at = payload.get("completed_at")
+        completed_at = (
+            _require_utc(datetime.fromisoformat(raw_completed_at))
+            if isinstance(raw_completed_at, str)
+            else observed_at
+        )
+        if observed_at > as_of or completed_at > as_of:
+            continue
+
+        status = str(row["status"])
+        error_class = str(row["error_class"] or "NONE")
+        runtime_version = str(payload.get("runtime_policy_version") or "legacy-unknown")
+        key = (str(row["pipeline_version"]), runtime_version)
+        group = groups.setdefault(key, _CodexRuntimeStats())
+        global_counts[status] += 1
+        group.statuses[status] += 1
+        if error_class != "NONE":
+            group.failures[error_class] += 1
+        duration_ms = payload.get("duration_ms")
+        if isinstance(duration_ms, int) and not isinstance(duration_ms, bool) and duration_ms >= 0:
+            group.durations.append(Decimal(duration_ms) / Decimal(1000))
+
+    summaries: list[tuple[str, str]] = [
+        (f"codex_run:{status}", str(count)) for status, count in sorted(global_counts.items())
+    ]
+    for (pipeline_version, runtime_version), group in sorted(groups.items()):
+        prefix = f"codex_runtime:{pipeline_version}:{runtime_version}"
+        statuses = group.statuses
+        failures = group.failures
+        durations = group.durations
+        summaries.extend(
+            (
+                (f"{prefix}:total", str(sum(statuses.values()))),
+                (f"{prefix}:succeeded", str(statuses["SUCCEEDED"])),
+                (f"{prefix}:failed", str(statuses["FAILED"])),
+                (f"{prefix}:duration_sample_count", str(len(durations))),
+            )
+        )
+        for failure, count in sorted(failures.items()):
+            summaries.append((f"{prefix}:failure:{failure}", str(count)))
+        for label, percentile in (
+            ("p50_seconds", Decimal("0.50")),
+            ("p95_seconds", Decimal("0.95")),
+            ("p99_seconds", Decimal("0.99")),
+        ):
+            if durations:
+                summaries.append(
+                    (
+                        f"{prefix}:duration:{label}",
+                        _format_decimal(_percentile(durations, percentile)),
+                    )
+                )
+    return tuple(summaries)
+
+
+def _intelligence_event_summaries(
+    payloads,
+    *,
+    high_impact_threshold: Decimal,
+) -> tuple[tuple[str, str], ...]:
+    stats: dict[tuple[str, str], tuple[int, int, Decimal]] = {}
+    route_latencies: dict[tuple[str, str, str], list[Decimal]] = {}
+    for payload in payloads:
+        event = IntelligenceEvent.model_validate(payload)
+        key = (event.normalizer_version, event.source)
+        count, high_impact_count, total_impact = stats.get(key, (0, 0, Decimal("0")))
+        stats[key] = (
+            count + 1,
+            high_impact_count + int(event.impact >= high_impact_threshold),
+            total_impact + event.impact,
+        )
+        route_key = (event.normalizer_version, event.acquisition_route, event.source)
+        route_latencies.setdefault(route_key, []).append(
+            _duration_seconds(event.observed_at, event.event_time)
+        )
+
+    summaries: list[tuple[str, str]] = []
+    for key, (count, high_impact_count, total_impact) in sorted(stats.items()):
+        prefix = "intelligence_event:" + ":".join(key)
+        summaries.extend(
+            (
+                (f"{prefix}:count", str(count)),
+                (f"{prefix}:high_impact_count", str(high_impact_count)),
+                (
+                    f"{prefix}:high_impact_rate",
+                    _format_decimal(Decimal(high_impact_count) / Decimal(count)),
+                ),
+                (
+                    f"{prefix}:average_impact",
+                    _format_decimal(total_impact / Decimal(count)),
+                ),
+            )
+        )
+    for key, discovery_latencies in sorted(route_latencies.items()):
+        prefix = "intelligence_discovery:" + ":".join(key)
+        for label, percentile in (
+            ("p50_seconds", Decimal("0.50")),
+            ("p95_seconds", Decimal("0.95")),
+            ("p99_seconds", Decimal("0.99")),
+        ):
+            summaries.append(
+                (
+                    f"{prefix}:{label}",
+                    _format_decimal(_percentile(discovery_latencies, percentile)),
+                )
+            )
+    return tuple(summaries)
+
+
+def _duration_seconds(later: datetime, earlier: datetime) -> Decimal:
+    return Decimal(str((_require_utc(later) - _require_utc(earlier)).total_seconds()))
+
+
+def _database_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _percentile(values: list[Decimal], percentile: Decimal) -> Decimal:
+    ordered = sorted(values)
+    position = Decimal(len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (Decimal("1") - weight) + ordered[upper] * weight
+
+
+def _format_decimal(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.000001")), "f")

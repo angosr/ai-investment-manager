@@ -10,7 +10,7 @@ market_data:
   websocket_base_url: wss://stream.testnet.binance.vision
 
 frequency:
-  version: testnet-frequency-v1
+  version: testnet-frequency-v3
   maximum_orders_per_day: 2
 
 risk:
@@ -28,7 +28,7 @@ reconciliation:
   poll_seconds: 30
 
 pipeline:
-  version: testnet-programmatic-v1
+  version: testnet-programmatic-v2
   ai_mode: "OFF"
 
 deployment:

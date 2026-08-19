@@ -18,14 +18,15 @@ export function CycleRow({ row, onOpenSnapshot }: CycleRowProps) {
   const toggle = useCallback(async () => {
     const next = !open;
     setOpen(next);
-    if (next && detail === null) {
+    // 终态周期的详情不再变化，缓存即可；仍在执行中的（pending）每次展开都重取，避免停在旧态。
+    if (next && (detail === null || row.category === "pending")) {
       try {
         setDetail(await api.cycle(row.cycle_id));
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     }
-  }, [open, detail, row.cycle_id]);
+  }, [open, detail, row.cycle_id, row.category]);
 
   return (
     <div className={`${styles.cyc} ${styles[row.category]} ${open ? styles.open : ""}`}>

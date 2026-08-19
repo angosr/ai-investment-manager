@@ -9,6 +9,7 @@ from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, ChildWorkflowError
 
 from quant_core.ids import stable_id
+from quant_core.temporal_compat import default_activity_versioning_intent
 from quant_core.temporal_workflows import AnalysisCycleWorkflow
 from quant_core.trigger import (
     AnalysisTriggerEvent,
@@ -41,6 +42,7 @@ class TriggerCoordinatorWorkflow:
         self._failed_batches = 0
         self._stopping = False
         self._last_batch_id: str | None = None
+        self._active_batch_id: str | None = None
         self._input_retry_not_before: datetime | None = None
 
     @workflow.query
@@ -51,6 +53,7 @@ class TriggerCoordinatorWorkflow:
             "completed_batches": self._completed_batches,
             "failed_batches": self._failed_batches,
             "last_batch_id": self._last_batch_id,
+            "active_batch_id": self._active_batch_id,
             "last_analysis_at": (
                 self._last_analysis_at.isoformat() if self._last_analysis_at else None
             ),
@@ -141,28 +144,35 @@ class TriggerCoordinatorWorkflow:
                     deadline=now
                     + timedelta(seconds=int(self._settings["analysis_deadline_seconds"])),
                 )
-                request_payload = await self._build_request(batch.model_dump(mode="json"))
+                request_payload, deferred_until = await self._build_request(
+                    batch.model_dump(mode="json")
+                )
                 if request_payload is None:
-                    self._input_retry_not_before = workflow.now() + timedelta(
-                        seconds=int(self._settings["retry_maximum_seconds"])
+                    self._input_retry_not_before = deferred_until or (
+                        workflow.now()
+                        + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
                     )
                     continue
                 self._input_retry_not_before = None
                 for item in selected:
                     self._pending.pop(str(item["trigger_id"]), None)
                 self._last_batch_id = batch.batch_id
+                self._active_batch_id = batch.batch_id
                 try:
-                    await workflow.execute_child_workflow(
-                        AnalysisCycleWorkflow.run,
-                        request_payload,
-                        id=str(request_payload["workflow_id"]),
-                        task_queue=str(self._settings["analysis_task_queue"]),
-                        result_type=dict,
-                        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                        static_summary="执行事件驱动分析批次",
-                    )
-                except ChildWorkflowError:
-                    self._failed_batches += 1
+                    try:
+                        await workflow.execute_child_workflow(
+                            AnalysisCycleWorkflow.run,
+                            request_payload,
+                            id=str(request_payload["workflow_id"]),
+                            task_queue=str(self._settings["analysis_task_queue"]),
+                            result_type=dict,
+                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                            static_summary="执行事件驱动分析批次",
+                        )
+                    except ChildWorkflowError:
+                        self._failed_batches += 1
+                finally:
+                    self._active_batch_id = None
                 completed_at = workflow.now()
                 self._last_analysis_at = completed_at
                 self._call_times.append(completed_at)
@@ -179,7 +189,10 @@ class TriggerCoordinatorWorkflow:
             "last_batch_id": self._last_batch_id,
         }
 
-    async def _build_request(self, batch: dict[str, Any]) -> dict[str, Any] | None:
+    async def _build_request(
+        self,
+        batch: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, datetime | None]:
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=int(self._settings["retry_initial_seconds"])),
             maximum_interval=timedelta(seconds=int(self._settings["retry_maximum_seconds"])),
@@ -199,12 +212,16 @@ class TriggerCoordinatorWorkflow:
                     seconds=int(self._settings["activity_schedule_to_close_seconds"])
                 ),
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="冻结触发批次分析输入",
             )
         except ActivityError:
-            return None
+            return None, None
+        deferred_until = result.get("deferred_until")
+        if isinstance(deferred_until, str):
+            return None, _parse_time(deferred_until)
         raw_request = result.get("workflow_request")
-        return raw_request if isinstance(raw_request, dict) else None
+        return (raw_request, None) if isinstance(raw_request, dict) else (None, None)
 
     def _accepts(self, trigger: dict[str, Any]) -> bool:
         trigger_type = trigger.get("trigger_type")
@@ -271,10 +288,18 @@ class TriggerCoordinatorWorkflow:
         return max(earliest - now, timedelta(0))
 
     def _rule_value(self, trigger: dict[str, Any], field: str) -> int:
-        for rule in self._plan.get("event_rules", []):
-            if rule.get("trigger_type") == trigger.get("trigger_type") and rule.get("enabled"):
-                return int(rule.get(field, 0))
-        return 0
+        priority = int(trigger.get("priority", 0))
+        matches = [
+            rule
+            for rule in self._plan.get("event_rules", [])
+            if rule.get("trigger_type") == trigger.get("trigger_type")
+            and rule.get("enabled")
+            and priority >= int(rule.get("minimum_priority", 0))
+        ]
+        if not matches:
+            return 0
+        most_specific = max(matches, key=lambda rule: int(rule.get("minimum_priority", 0)))
+        return int(most_specific.get(field, 0))
 
     def _enqueue_due(self, now: datetime, started_at: datetime) -> None:
         if self._plan is None or bool(self._plan.get("ai_paused")):
@@ -304,6 +329,7 @@ class TriggerCoordinatorWorkflow:
         anchor = self._last_analysis_at or started_at
         if heartbeat is not None and now >= anchor + timedelta(seconds=int(heartbeat)):
             dedup_key = f"{int(anchor.timestamp())}:{int(heartbeat)}"
+            durable_heartbeat = workflow.patched("durable-heartbeat-v1")
             trigger = build_trigger_event(
                 trigger_type=AnalysisTriggerType.HEARTBEAT,
                 symbol=str(self._plan["symbol"]),
@@ -312,11 +338,19 @@ class TriggerCoordinatorWorkflow:
                 observed_at=now,
                 priority=10,
                 dedup_key=dedup_key,
-                expires_at=now + timedelta(seconds=int(self._settings["trigger_expiry_seconds"])),
+                expires_at=(
+                    None
+                    if durable_heartbeat
+                    else now + timedelta(seconds=int(self._settings["trigger_expiry_seconds"]))
+                ),
                 plan_revision=int(self._plan["revision"]),
             )
-            if trigger.trigger_id not in self._seen:
+            unseen = trigger.trigger_id not in self._seen
+            if unseen:
                 self._remember(trigger.trigger_id)
+            if trigger.trigger_id not in self._pending and (
+                durable_heartbeat or unseen
+            ):
                 self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
 
     def _discard_expired(self, now: datetime) -> None:

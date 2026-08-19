@@ -369,6 +369,16 @@ class BinanceTestnetExchange:
     def query_known_order(self, order: Order) -> Order | None:
         return self._find(order.client_order_id, self._context_from_order(order))
 
+    def query_entry_order(
+        self,
+        *,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        market: MarketSnapshot,
+    ) -> Order | None:
+        context = self._entry_context(intent=intent, risk=risk, market=market)
+        return self._find(entry_client_order_id(intent, risk), context)
+
     def order_from_remote(self, raw: Mapping[str, Any]) -> Order:
         symbol = str(raw["symbol"])
         rules = self.rules(symbol)
@@ -406,28 +416,9 @@ class BinanceTestnetExchange:
             raise ValueError("RiskReservation 已过期")
         if intent.side != Side.BUY:
             raise ValueError("Spot Testnet MVP 不允许无持仓开空")
-        rules = self.rules(intent.symbol)
-        quantity = rules.quantity(
-            risk.quantity,
-            market=intent.entry.order_type == OrderType.MARKET,
-            reference_price=market.ask,
-        )
-        limit_price = (
-            rules.price(intent.entry.price)
-            if intent.entry.order_type == OrderType.LIMIT and intent.entry.price is not None
-            else None
-        )
-        context = _OrderContext(
-            cycle_id=intent.cycle_id,
-            intent_id=intent.intent_id,
-            symbol=intent.symbol,
-            side=intent.side,
-            order_type=intent.entry.order_type,
-            requested_quantity=quantity,
-            limit_price=limit_price,
-            base_asset=rules.base_asset,
-            quote_asset=rules.quote_asset,
-        )
+        context = self._entry_context(intent=intent, risk=risk, market=market)
+        quantity = context.requested_quantity
+        limit_price = context.limit_price
         client_order_id = entry_client_order_id(intent, risk)
         existing = self._find(client_order_id, context)
         if existing is not None:
@@ -443,6 +434,38 @@ class BinanceTestnetExchange:
         if limit_price is not None:
             parameters.update(timeInForce="GTC", price=_decimal_text(limit_price))
         return self._submit_with_recovery(parameters, client_order_id, context)
+
+    def _entry_context(
+        self,
+        *,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        market: MarketSnapshot,
+    ) -> _OrderContext:
+        if risk.quantity is None:
+            raise ValueError("建仓查询缺少已冻结订单数量")
+        rules = self.rules(intent.symbol)
+        quantity = rules.quantity(
+            risk.quantity,
+            market=intent.entry.order_type == OrderType.MARKET,
+            reference_price=market.ask,
+        )
+        limit_price = (
+            rules.price(intent.entry.price)
+            if intent.entry.order_type == OrderType.LIMIT and intent.entry.price is not None
+            else None
+        )
+        return _OrderContext(
+            cycle_id=intent.cycle_id,
+            intent_id=intent.intent_id,
+            symbol=intent.symbol,
+            side=intent.side,
+            order_type=intent.entry.order_type,
+            requested_quantity=quantity,
+            limit_price=limit_price,
+            base_asset=rules.base_asset,
+            quote_asset=rules.quote_asset,
+        )
 
     def cancel_remaining(self, order: Order) -> Order:
         if order.status not in {OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED}:
@@ -526,6 +549,10 @@ class BinanceTestnetExchange:
                 canceled = self.cancel_remaining(protection)
                 if canceled.status != OrderStatus.CANCELED:
                     raise BinanceUnknownExecution("保护单撤销状态不确定")
+                if canceled.fills:
+                    raise BinanceManualIntervention(
+                        "保护单撤销期间发生成交，冻结自动退出以避免重复卖出"
+                    )
         quantity = rules.quantity(
             lifecycle.quantity,
             market=True,
@@ -765,6 +792,9 @@ class BinanceTradingStateSource:
             ),
             daily_pnl=local.account.daily_pnl,
             drawdown_fraction=local.account.drawdown_fraction,
+            equity=local.account.equity,
+            equity_high_water=local.account.equity_high_water,
+            kill_switch_active=local.account.kill_switch_active,
             reconciled=True,
         )
         orders = tuple(sorted(known_orders.values(), key=lambda item: item.client_order_id))

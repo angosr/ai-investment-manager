@@ -14,7 +14,7 @@ def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
     assert not report.ready
     assert report.shadow_ready
     assert checks["REAL_CODEX_AND_TRADING_DISABLED"].status == CheckStatus.PASS
-    assert checks["EXPLICIT_THREE_ACCOUNT_REGISTRY"].status == CheckStatus.PASS
+    assert checks["EXPLICIT_ACCOUNT_WHITELIST"].status == CheckStatus.PASS
     assert checks["LOCKED_CODEX_CLI_VERSION"].status == CheckStatus.PASS
     assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.PASS
     assert checks["FIXED_REGRESSION_TARGETS"].status == CheckStatus.PASS
@@ -22,4 +22,4 @@ def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
     assert checks["TEMPORAL_SINGLE_WORKFLOW_OWNER"].status == CheckStatus.PASS
     assert checks["DEPLOYMENT_FAIL_CLOSED"].status == CheckStatus.PASS
     assert checks["MALICIOUS_READ_ISOLATION_GATE"].status == CheckStatus.BLOCKED
-    assert checks["THREE_APPROVED_ACCOUNT_DIRECTORIES"].status == CheckStatus.BLOCKED
+    assert checks["ENABLED_ACCOUNT_DIRECTORIES_READY"].status == CheckStatus.BLOCKED

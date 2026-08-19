@@ -25,6 +25,27 @@ class TriggerDecision(FrozenModel):
     evidence_ids: tuple[str, ...] = ()
 
 
+class AnalysisCallAdmission(FrozenModel):
+    admitted: bool
+    admitted_at: datetime | None = None
+    retry_at: datetime | None = None
+
+    _utc_admitted_at = field_validator("admitted_at")(
+        lambda value: _require_utc(value) if value is not None else None
+    )
+    _utc_retry_at = field_validator("retry_at")(
+        lambda value: _require_utc(value) if value is not None else None
+    )
+
+    @model_validator(mode="after")
+    def result_has_exactly_one_time(self):
+        if self.admitted != (self.admitted_at is not None and self.retry_at is None):
+            raise ValueError("调用准入结果必须且只能包含对应时间")
+        if not self.admitted and self.retry_at is None:
+            raise ValueError("调用被延迟时必须给出 retry_at")
+        return self
+
+
 class AnalysisTriggerType(StrEnum):
     INTELLIGENCE_INSERTED = "INTELLIGENCE_INSERTED"
     MARKET_SHOCK = "MARKET_SHOCK"
@@ -173,9 +194,14 @@ class AnalysisTriggerPlan(FrozenModel):
         if self.plan_id != expected:
             raise ValueError("AnalysisTriggerPlan plan_id 与作用域不一致")
         rule_ids = [item.rule_id for item in self.event_rules]
+        enabled_rule_levels = [
+            (item.trigger_type, item.minimum_priority) for item in self.event_rules if item.enabled
+        ]
         wakeup_ids = [item.wakeup_id for item in self.scheduled_wakeups]
         if len(rule_ids) != len(set(rule_ids)):
             raise ValueError("AnalysisTriggerPlan rule_id 不得重复")
+        if len(enabled_rule_levels) != len(set(enabled_rule_levels)):
+            raise ValueError("同类启用事件规则的 minimum_priority 不得重复")
         if len(wakeup_ids) != len(set(wakeup_ids)):
             raise ValueError("AnalysisTriggerPlan wakeup_id 不得重复")
         return self
@@ -198,6 +224,32 @@ def build_initial_trigger_plan(
         manifest_id=manifest_id,
         heartbeat_seconds=heartbeat_seconds,
         event_rules=event_rules,
+        updated_at=updated_at,
+    )
+
+
+def carry_forward_trigger_plan(
+    previous: AnalysisTriggerPlan,
+    *,
+    pipeline_id: str,
+    manifest_id: str,
+    updated_at: datetime,
+) -> AnalysisTriggerPlan:
+    """发布新代际时保留主 Agent 动态计划，并重新绑定新身份。"""
+
+    updated_at = _require_utc(updated_at)
+    return AnalysisTriggerPlan(
+        plan_id=stable_id("analysis_trigger_plan", previous.symbol, pipeline_id),
+        revision=1,
+        symbol=previous.symbol,
+        pipeline_id=pipeline_id,
+        manifest_id=manifest_id,
+        ai_paused=previous.ai_paused,
+        heartbeat_seconds=previous.heartbeat_seconds,
+        event_rules=previous.event_rules,
+        scheduled_wakeups=tuple(
+            item for item in previous.scheduled_wakeups if item.expires_at > updated_at
+        ),
         updated_at=updated_at,
     )
 

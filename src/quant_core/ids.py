@@ -5,12 +5,18 @@ import json
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
 
 def canonical_json(value: BaseModel | dict[str, Any] | list[Any] | tuple[Any, ...]) -> str:
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        to_jsonable_python(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def content_hash(value: BaseModel | dict[str, Any] | list[Any] | tuple[Any, ...]) -> str:

@@ -1,7 +1,7 @@
-"""SSE：向前端推送「该刷新了」的轻量信号，前端据此重取受影响端点。
+"""SSE：按主题推送轻量刷新信号，前端只重取受影响端点。
 
-v1 用固定间隔 tick（端点都很轻，重取成本低）。可靠性不依赖推送——断线时前端按上次
-数据显示「实时中断」，重连后自然恢复。低延迟 NOTIFY 唤醒是后续增强，不改变契约。
+高时效状态走快速 tick，历史时间线与权益走低频 tick，避免每个浏览器按同一频率重读
+全部事实。可靠性不依赖推送；EventSource 重连后会重新收到完整首帧。
 """
 
 from __future__ import annotations
@@ -10,11 +10,23 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
+FAST_TOPICS = ("health", "positions", "accounts", "resources")
+SLOW_TOPICS = ("cycles", "events", "equity")
 
-async def refresh_events(*, interval_seconds: float) -> AsyncIterator[bytes]:
+
+async def refresh_events(
+    *, interval_seconds: float, slow_refresh_every_ticks: int = 5
+) -> AsyncIterator[bytes]:
+    if interval_seconds <= 0:
+        raise ValueError("SSE 刷新间隔必须为正数")
+    if slow_refresh_every_ticks < 1:
+        raise ValueError("SSE 慢速刷新倍数必须至少为 1")
     sequence = 0
     while True:
         sequence += 1
-        payload = json.dumps({"seq": sequence})
+        topics = list(FAST_TOPICS)
+        if sequence == 1 or sequence % slow_refresh_every_ticks == 0:
+            topics.extend(SLOW_TOPICS)
+        payload = json.dumps({"seq": sequence, "topics": topics}, separators=(",", ":"))
         yield f"event: refresh\ndata: {payload}\n\n".encode()
         await asyncio.sleep(interval_seconds)

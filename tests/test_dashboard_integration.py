@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, insert
 
 from quant_core.cycle import AnalysisCycle
 from quant_core.dashboard import serializers as ser
@@ -20,8 +20,11 @@ from quant_core.persistence import (
     SqlEventStore,
     SqlFactLedger,
     SqlRiskBudgetStore,
+    analysis_call_admissions,
     create_schema,
 )
+from quant_core.trigger import AnalysisTriggerType, build_trigger_event
+from quant_core.trigger_sql import SqlTriggerRepository
 
 
 def _seed_cycle(app_config, replay_input):
@@ -59,8 +62,15 @@ def test_cycle_detail_and_snapshot_project_real_payloads(app_config, replay_inpu
     assert facts is not None
     detail = ser.cycle_detail(facts)
 
-    # 周期轨：至少到达「面板就绪」；reached 落在合法范围
-    assert 1 <= detail["rail"]["reached"] <= 9
+    # 周期轨语义由后端一次性给出，前端不再重复推断。
+    gates = detail["rail"]["gates"]
+    assert len(gates) == 9
+    assert gates[0] == {
+        "key": "panel",
+        "label": "面板就绪",
+        "state": "pass",
+        "note": "",
+    }
 
     # 信息快照：必读层三块都要有真实字段
     snapshot = detail["snapshot"]
@@ -77,6 +87,21 @@ def test_cycle_detail_and_snapshot_project_real_payloads(app_config, replay_inpu
     assert len(snapshot["rules"]) >= 1  # 固定规则一定被注入
 
 
+def test_cycle_rail_stops_at_uncalibrated_candidate_gate(base_app_config, replay_input) -> None:
+    engine, result = _seed_cycle(base_app_config, replay_input)
+    facts = DashboardReader(engine, base_app_config).get_cycle(result.cycle_id)
+    assert facts is not None
+
+    gates = ser.cycle_detail(facts)["rail"]["gates"]
+    states = {gate["key"]: gate["state"] for gate in gates}
+
+    assert states["candidate"] == "pass"
+    assert states["intent"] == "stop"
+    assert states["frequency"] == "skip"
+    assert states["risk"] == "skip"
+    assert states["execution"] == "skip"
+
+
 def test_equity_and_health_run_against_real_engine(app_config, replay_input) -> None:
     engine, _ = _seed_cycle(app_config, replay_input)
     reader = DashboardReader(engine, app_config)
@@ -88,6 +113,27 @@ def test_equity_and_health_run_against_real_engine(app_config, replay_input) -> 
     accounts = [ser.account_status(status) for status in reader.accounts(now=now)]
     assert len(accounts) == 3
     assert all(account["state"] == "DISABLED" for account in accounts)
+
+
+def test_dashboard_call_budget_reads_global_admissions(app_config, replay_input) -> None:
+    engine, _ = _seed_cycle(app_config, replay_input)
+    now = replay_input.market.as_of
+    with engine.begin() as connection:
+        for index, admitted_at in enumerate(
+            (now - timedelta(minutes=59), now, now + timedelta(seconds=1)),
+            start=1,
+        ):
+            connection.execute(
+                insert(analysis_call_admissions).values(
+                    batch_id=f"batch-{index}",
+                    pipeline_id="pipeline-v1",
+                    symbol="BTCUSDT",
+                    admitted_at=admitted_at,
+                    payload={"batch_id": f"batch-{index}"},
+                )
+            )
+
+    assert DashboardReader(engine, app_config).ai_calls_last_hour(now=now) == 2
 
 
 def test_open_position_is_read_and_serialized(app_config, replay_input) -> None:
@@ -117,7 +163,7 @@ def test_news_fed_into_a_cycle_links_back_to_it(app_config, replay_input) -> Non
     evidence_id = facts.panel.evidence[0].evidence_id
 
     # 补一条与该证据同 id 的采集事件，模拟这条新闻确实被喂进了那次分析
-    now = datetime.now(UTC)
+    now = facts.panel.as_of
     SqlEventStore(engine, pipeline_id=app_config.pipeline.version).put(
         IntelligenceEvent(
             evidence_id=evidence_id,
@@ -139,3 +185,28 @@ def test_news_fed_into_a_cycle_links_back_to_it(app_config, replay_input) -> Non
     fed = next(event for event in events if event["kind"] == "NEWS")
     assert fed["fed_cycle_id"] == result.cycle_id
     assert fed["fed_cycle_at"] is not None
+
+
+def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> None:
+    engine, _ = _seed_cycle(app_config, replay_input)
+    now = replay_input.market.as_of
+    SqlTriggerRepository(engine, app_config.trigger).record_trigger(
+        build_trigger_event(
+            trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+            symbol="BTCUSDT",
+            pipeline_id=app_config.pipeline.version,
+            occurred_at=now,
+            observed_at=now,
+            priority=100,
+            dedup_key="dashboard-agent-wakeup",
+        )
+    )
+
+    event = next(
+        item
+        for item in DashboardReader(engine, app_config).list_events(before=None, limit=20)
+        if item.kind == "AGENT_WAKEUP"
+    )
+
+    assert event.source == "主 Agent"
+    assert event.title == "Agent 立即复核（BTCUSDT）"

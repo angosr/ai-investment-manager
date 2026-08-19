@@ -58,10 +58,32 @@ def test_sql_ledger_persists_and_reconstructs_complete_cycle(sql_cycle, replay_i
         assert connection.scalar(select(func.count()).select_from(risk_reservations)) == 1
         assert connection.scalar(select(func.count()).select_from(orders)) == 1
         assert connection.scalar(select(func.count()).select_from(fills)) == 1
-        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 11
+        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 12
         budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
         assert budget["reserved_amount"] == 0
         assert budget["exposure_risk_amount"] > 0
+
+
+def test_sql_ledger_records_actual_cycle_commit_time(app_config, replay_input) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    committed_at = replay_input.market.as_of + timedelta(seconds=7)
+    ledger = SqlFactLedger(engine, clock=lambda: committed_at)
+    cycle = AnalysisCycle.with_adapters(
+        app_config,
+        ledger=ledger,
+        exchange=MockExchange(app_config.execution),
+        risk_budget=SqlRiskBudgetStore(engine),
+    )
+
+    cycle.run(replay_input)
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            select(analysis_cycles.c.as_of, analysis_cycles.c.created_at)
+        ).one()
+    assert row.as_of == replay_input.market.as_of.replace(tzinfo=None)
+    assert row.created_at == committed_at.replace(tzinfo=None)
 
 
 def test_same_cycle_id_with_different_snapshot_is_rejected(sql_cycle, replay_input) -> None:
@@ -121,10 +143,14 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
         account_id="codex_a",
         attempt=1,
         observed_at=now,
+        completed_at=now + timedelta(milliseconds=125),
+        duration_ms=125,
+        runtime_policy_version="codex-runtime-test",
         status="FAILED",
         failure=FailureClass.RATE_LIMIT,
         bundle_hash="bundle-hash",
         usage={"input_tokens": 10},
+        diagnostics={"event_count": 4, "last_event": "turn/started"},
     )
 
     store.record_capacity(snapshot)
@@ -136,5 +162,11 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
     serialized = str(capacity["payload"]) + str(run["payload"])
     assert capacity["account_id"] == "codex_a"
     assert run["error_class"] == "RATE_LIMIT"
+    assert run["payload"]["duration_ms"] == 125
+    assert run["payload"]["runtime_policy_version"] == "codex-runtime-test"
+    assert run["payload"]["diagnostics"] == {
+        "event_count": 4,
+        "last_event": "turn/started",
+    }
     assert "codex_home" not in serialized
     assert "auth.json" not in serialized

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import create_engine
 
@@ -15,6 +16,7 @@ from quant_core.market_data import (
     MarketTrade,
 )
 from quant_core.persistence import SqlFactLedger, SqlRiskBudgetStore, create_schema
+from quant_core.portfolio_protection import InMemoryPortfolioProtectionStore
 from quant_core.shadow import SqlShadowStateReader
 from quant_core.trigger import (
     AnalysisTriggerType,
@@ -105,6 +107,9 @@ class EmptyShadowState:
     def last_cycle_at(self, *, symbol, as_of):
         return None
 
+    def last_entry_order_at(self, *, symbol, as_of):
+        return None
+
     def entry_orders_today(self, *, as_of):
         return 0
 
@@ -138,10 +143,15 @@ def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_c
         market_store=_market_store(),
         event_store=InMemoryEventStore(),
         state=EmptyShadowState(),
+        protection=InMemoryPortfolioProtectionStore(
+            policy=config.risk,
+            initial_equity=config.shadow.initial_quote_balance,
+        ),
     ).build(batch)
 
     assert request.cycle_input.market.cycle_id == request.cycle_input.account.cycle_id
     assert request.cycle_input.account.quote_balance == app_config.shadow.initial_quote_balance
+    assert request.cycle_input.account.equity == app_config.shadow.initial_quote_balance
     assert request.trigger.reason.value == "EVENT_BATCH"
 
 
@@ -169,3 +179,11 @@ def test_sql_shadow_account_is_projected_from_latest_business_fact(
     assert account.quote_balance == result.account_after.quote_balance
     assert reader.entry_orders_today(as_of=next_as_of) == 1
     assert reader.last_cycle_at(symbol="BTCUSDT", as_of=next_as_of) == replay_input.market.as_of
+
+    next_day = reader.account_for_cycle(
+        cycle_id="next-day-cycle",
+        as_of=replay_input.market.as_of + timedelta(days=1),
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+    )
+    assert next_day.daily_pnl == Decimal("0")
+    assert isinstance(next_day.daily_pnl, Decimal)

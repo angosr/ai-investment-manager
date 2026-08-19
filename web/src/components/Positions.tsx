@@ -5,7 +5,7 @@ import { Card } from "./Card";
 import styles from "./Positions.module.css";
 
 export function Positions() {
-  const data = useLive(() => api.positions());
+  const data = useLive(() => api.positions(), "positions");
   const positions = data?.positions ?? [];
 
   return (
@@ -35,7 +35,7 @@ export function Positions() {
               </div>
               <div className={styles.line}>
                 <span>
-                  {position.quantity ?? "—"} 张 · 入场 <b>{position.entry_price ?? "—"}</b>
+                  数量 {position.quantity ?? "—"} · 入场 <b>{position.entry_price ?? "—"}</b>
                 </span>
                 <span>
                   现价 <b>{position.mark_price ?? "—"}</b>
@@ -51,7 +51,7 @@ export function Positions() {
               </div>
               <div className={styles.foot}>
                 <span className={styles.dot} style={{ background: protectedNow ? "var(--pos)" : "var(--warn)" }} />
-                {protectedNow ? "止损已在交易所挂上" : "止损挂单确认中"}
+                {protectedNow ? "保护单已确认" : "保护单确认中"}
               </div>
             </div>
           );

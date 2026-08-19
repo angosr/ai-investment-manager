@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from quant_core.config import CompositionPolicy, FrequencyPolicy
-from quant_core.domain import Side, SignalCandidate, TradeIntent
+from quant_core.config import CompositionPolicy, ExecutionPolicy, FrequencyPolicy
+from quant_core.domain import MarketSnapshot, OrderType, Side, SignalCandidate, TradeIntent
 from quant_core.ids import stable_id
 
 
@@ -15,7 +15,7 @@ class CompositionResult:
     reason_code: str
 
 
-class SingleThresholdComposer:
+class HighestNetEdgeComposer:
     def __init__(self, policy: CompositionPolicy, pipeline_version: str) -> None:
         self._policy = policy
         self._pipeline_version = pipeline_version
@@ -28,11 +28,11 @@ class SingleThresholdComposer:
             for candidate in candidates
             if candidate.valid_until > as_of
             and not candidate.unknowns
-            and candidate.raw_score >= self._policy.minimum_raw_score
+            and candidate.has_frozen_cost_basis
         ]
         if not valid:
             return CompositionResult(intent=None, reason_code="NO_VALID_CANDIDATE")
-        valid.sort(key=lambda item: (-item.raw_score, item.candidate_id))
+        valid.sort(key=self._economic_rank)
         selected = valid[0]
         intent_id = stable_id(
             "intent", selected.cycle_id, self._pipeline_version, selected.candidate_id
@@ -55,9 +55,17 @@ class SingleThresholdComposer:
                 reference_price=selected.reference_price,
                 expected_edge_half_life_seconds=selected.expected_edge_half_life_seconds,
                 expected_gross_bps=selected.expected_gross_bps,
+                program_exit=selected.program_exit,
             ),
             reason_code="COMPOSED",
         )
+
+    @staticmethod
+    def _economic_rank(candidate: SignalCandidate) -> tuple[Decimal, str]:
+        if candidate.estimated_cost_bps is None:
+            raise ValueError("合成前必须冻结候选成本")
+        conservative_net_edge = candidate.expected_gross_bps - candidate.estimated_cost_bps
+        return -conservative_net_edge, candidate.candidate_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +85,9 @@ class FrequencyDecision:
 
 
 class FrequencyController:
-    def __init__(self, policy: FrequencyPolicy) -> None:
+    def __init__(self, policy: FrequencyPolicy, execution: ExecutionPolicy) -> None:
         self._policy = policy
+        self._execution = execution
 
     def evaluate(
         self,
@@ -89,16 +98,11 @@ class FrequencyController:
         current_price: Decimal,
         state: FrequencyState,
     ) -> FrequencyDecision:
-        costs = (
-            self._policy.fee_bps
-            + spread_bps
-            + self._policy.expected_slippage_bps
-            + self._policy.infrastructure_bps
-            + self._policy.funding_bps
-            + self._policy.model_bps
-            + self._policy.latency_bps
-            + self._policy.adverse_selection_bps
-            + self._policy.uncertainty_buffer_bps
+        costs = estimate_round_trip_cost_bps(
+            entry_order_type=intent.entry.order_type,
+            spread_bps=spread_bps,
+            frequency=self._policy,
+            execution=self._execution,
         )
         age_seconds = Decimal(str(max(0, (as_of - intent.signal_observed_at).total_seconds())))
         decay = max(
@@ -137,3 +141,88 @@ class FrequencyController:
         if edge < self._policy.minimum_net_edge_bps:
             return FrequencyDecision(False, "INSUFFICIENT_NET_EDGE", **result)
         return FrequencyDecision(True, "FREQUENCY_ALLOWED", **result)
+
+
+def estimate_round_trip_cost_bps(
+    *,
+    entry_order_type: OrderType,
+    spread_bps: Decimal,
+    frequency: FrequencyPolicy,
+    execution: ExecutionPolicy,
+) -> Decimal:
+    """冻结一次完整建仓和平仓的可归因交易成本，供门禁和反事实评价共用。"""
+
+    fee_cost = Decimal("2") * execution.fee_bps
+    market_slippage_legs = Decimal("2" if entry_order_type == OrderType.MARKET else "1")
+    return (
+        fee_cost
+        + market_slippage_legs * execution.market_slippage_bps
+        + spread_bps
+        + frequency.funding_bps
+        + frequency.latency_bps
+        + frequency.adverse_selection_bps
+        + frequency.uncertainty_buffer_bps
+    )
+
+
+def estimate_round_trip_cost_amount(
+    *,
+    entry_price: Decimal,
+    exit_price: Decimal,
+    quantity: Decimal,
+    entry_order_type: OrderType,
+    spread_bps: Decimal,
+    frequency: FrequencyPolicy,
+    execution: ExecutionPolicy,
+) -> Decimal:
+    """Model realized round-trip costs on each leg's own notional."""
+
+    if entry_price <= 0 or exit_price <= 0 or quantity <= 0 or spread_bps < 0:
+        raise ValueError("往返成本的价格、数量必须为正，价差不能为负")
+    entry_notional = entry_price * quantity
+    exit_notional = exit_price * quantity
+    fee = (entry_notional + exit_notional) * execution.fee_bps
+    entry_slippage = (
+        entry_notional * execution.market_slippage_bps
+        if entry_order_type == OrderType.MARKET
+        else Decimal("0")
+    )
+    exit_slippage = exit_notional * execution.market_slippage_bps
+    # A symmetric quote contributes half the full spread on each crossing.
+    spread = (entry_notional + exit_notional) * spread_bps / Decimal("2")
+    other_bps = (
+        frequency.funding_bps
+        + frequency.latency_bps
+        + frequency.adverse_selection_bps
+        + frequency.uncertainty_buffer_bps
+    )
+    other = entry_notional * other_bps
+    return (fee + entry_slippage + exit_slippage + spread + other) / Decimal(
+        "10000"
+    )
+
+
+def freeze_candidate_cost_basis(
+    candidate: SignalCandidate,
+    *,
+    market: MarketSnapshot,
+    frequency: FrequencyPolicy,
+    execution: ExecutionPolicy,
+) -> SignalCandidate:
+    """在候选产生周期冻结完整成本口径，避免结算时配置漂移污染标签。"""
+
+    if candidate.has_frozen_cost_basis:
+        raise ValueError("候选生产者不得预填系统成本依据")
+    spread_bps = (market.ask - market.bid) / market.last * Decimal("10000")
+    return candidate.model_copy(
+        update={
+            "execution_policy_version": execution.version,
+            "frequency_policy_version": frequency.version,
+            "estimated_cost_bps": estimate_round_trip_cost_bps(
+                entry_order_type=candidate.entry.order_type,
+                spread_bps=spread_bps,
+                frequency=frequency,
+                execution=execution,
+            ),
+        }
+    )

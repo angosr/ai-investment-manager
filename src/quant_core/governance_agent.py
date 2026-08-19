@@ -79,16 +79,23 @@ class GovernorBundleBuilder:
 
     def build(self, snapshot: GovernanceSnapshot, target: Path) -> RunBundle:
         base_prompt = self._prompt_path.read_text(encoding="utf-8").strip()
+        snapshot_json = canonical_json(snapshot)
         prompt = (
-            base_prompt + "\n\n只允许引用 governance_snapshot.json 中的 evidence ID 和"
+            base_prompt + "\n\n所需治理快照已完整内嵌在本提示中；禁止调用任何工具，"
+            "禁止访问文件系统或网络。只允许引用内嵌 governance_snapshot_json 中的"
+            " evidence ID 和"
             " available_evaluation_plans。created_at 必须等于快照 as_of。"
             "若没有可用评估计划、已有未结提案或证据不足，decision 输出 NO_CHANGE。"
             "trigger_plan_patch 是可选项，只能引用快照中的当前 AnalysisTriggerPlan；"
             "它可以单独调整 AI 分析触发，但不能修改生产策略或风控。"
+            "\n\n<governance_snapshot_json>\n"
+            f"{snapshot_json}\n"
+            "</governance_snapshot_json>"
         )
+        if len(prompt) > self._runtime.maximum_prompt_characters:
+            raise ValueError("Governor 内嵌治理快照超过 Codex 提示容量上限")
         files = {
-            "governance_snapshot.json": canonical_json(snapshot) + "\n",
-            "governance_snapshot.md": self._render(snapshot),
+            "governance_snapshot.json": snapshot_json + "\n",
             "governor_prompt.md": prompt + "\n",
             "output.schema.json": json.dumps(
                 GOVERNOR_OUTPUT_ADAPTER.json_schema(),
@@ -113,36 +120,6 @@ class GovernorBundleBuilder:
                 "code_version": self._code_version,
             },
         )
-
-    @staticmethod
-    def _render(snapshot: GovernanceSnapshot) -> str:
-        lines = [
-            f"# GovernanceSnapshot {snapshot.snapshot_id}",
-            f"- as_of: {snapshot.as_of.isoformat()}",
-            f"- champion: {snapshot.champion.manifest_id}",
-            f"- complexity: {snapshot.complexity_used}/{snapshot.complexity_limit}",
-            f"- open_proposals: {', '.join(snapshot.open_proposal_ids) or 'none'}",
-            "",
-            "## Metric summaries",
-        ]
-        lines.extend(f"- {key}: {value}" for key, value in snapshot.metric_summaries)
-        lines.extend(("", "## Available evaluation plans"))
-        lines.extend(
-            f"- {item.plan_id}: metric={item.primary_metric}, min_sample={item.minimum_sample_size}"
-            for item in snapshot.available_evaluation_plans
-        )
-        lines.extend(("", "## Failed experiments"))
-        lines.extend(
-            f"- {item.experiment_id}: {','.join(item.reason_codes)}"
-            for item in snapshot.failed_experiments
-        )
-        lines.extend(("", "## Analysis trigger plans"))
-        lines.extend(
-            f"- {item.plan_id}: revision={item.revision}, symbol={item.symbol}, "
-            f"paused={item.ai_paused}, wakeups={len(item.scheduled_wakeups)}"
-            for item in snapshot.analysis_trigger_plans
-        )
-        return "\n".join(lines) + "\n"
 
 
 class SqlGovernorDecisionStore:

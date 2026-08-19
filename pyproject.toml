@@ -32,6 +32,9 @@ dashboard = [
   "uvicorn>=0.30,<1",
   "psutil>=6,<8",
 ]
+research = [
+  "nautilus_trader==1.231.0",
+]
 
 [project.scripts]
 quant-core = "quant_core.cli:app"

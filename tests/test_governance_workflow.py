@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.governance import NoChange
+from quant_core.governance import NoChange, ReleaseManifest
 from quant_core.governance_agent import (
     CodexGovernor,
     GovernorBundleBuilder,
@@ -22,7 +22,7 @@ from quant_core.governance_runtime import (
     GovernanceWorkflowStatus,
     build_governance_workflow_request,
 )
-from quant_core.persistence import create_schema, governance_decisions
+from quant_core.persistence import SqlGovernanceRepository, create_schema, governance_decisions
 
 
 class UnusedRouter:
@@ -38,6 +38,16 @@ def test_governance_workflow_freezes_snapshot_and_records_no_change(app_config, 
             poolclass=StaticPool,
         )
         create_schema(engine)
+        SqlGovernanceRepository(engine).record_release(
+            ReleaseManifest(
+                manifest_id="release-bootstrap-v1",
+                created_at=datetime(2026, 8, 17, tzinfo=UTC),
+                status="CHAMPION",
+                code_version="historical-bootstrap-v1",
+                component_versions=(("pipeline", "off-pipeline-v1"),),
+                constitution_version="constitution-v1",
+            )
+        )
         governor = CodexGovernor(
             bundle_root=tmp_path,
             bundle_builder=GovernorBundleBuilder(
@@ -63,7 +73,7 @@ def test_governance_workflow_freezes_snapshot_and_records_no_change(app_config, 
             request = build_governance_workflow_request(
                 as_of=datetime(2026, 8, 18, tzinfo=UTC),
                 config=config,
-                project_root=Path("."),
+                expected_champion_manifest_id="release-bootstrap-v1",
             )
             coordinator = GovernanceTemporalCoordinator(env.client, policy)
             async with GovernanceTemporalWorker(env.client, policy, activities):

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import Field, field_validator
 
 from quant_core.analyst import Analyst, ProposalNormalizer
+from quant_core.calibration import EdgeCalibrationBook
 from quant_core.config import AiMode, AppConfig
-from quant_core.decision import FrequencyController, FrequencyState, SingleThresholdComposer
+from quant_core.decision import (
+    FrequencyController,
+    FrequencyState,
+    HighestNetEdgeComposer,
+    freeze_candidate_cost_basis,
+)
 from quant_core.domain import (
     AccountSnapshot,
     AnalysisProposal,
@@ -18,14 +25,16 @@ from quant_core.domain import (
     MarketSnapshot,
     MetricObservation,
     Order,
+    OrderStatus,
     PanelSnapshot,
     PositionLifecycle,
     RiskDecision,
     RiskOutcome,
     SignalCandidate,
     TradeIntent,
+    _require_utc,
 )
-from quant_core.execution import ExecutionExchange, MockExchange
+from quant_core.execution import ExecutionExchange, MockExchange, entry_client_order_id
 from quant_core.execution_contract import (
     ExecutionRequest,
     RiskTransition,
@@ -46,7 +55,8 @@ from quant_core.panel import PanelBuilder
 from quant_core.reconciliation import MockReconciler
 from quant_core.risk import RiskEngine
 from quant_core.risk_budget import InMemoryRiskBudgetStore, RiskBudgetStore
-from quant_core.strategy import PriceTrendStrategy
+from quant_core.strategy import PriceTrendStrategy, Strategy
+from quant_core.trigger import TriggerDecision
 
 
 class CycleInput(FrozenModel):
@@ -54,6 +64,12 @@ class CycleInput(FrozenModel):
     account: AccountSnapshot
     events: tuple[IntelligenceEvent, ...] = ()
     frequency_orders_today: int = Field(default=0, ge=0)
+    frequency_last_entry_order_at: datetime | None = None
+
+    @field_validator("frequency_last_entry_order_at")
+    @classmethod
+    def last_entry_order_must_be_utc(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _require_utc(value)
 
     @field_validator("account")
     @classmethod
@@ -89,16 +105,26 @@ class AnalysisCycle:
     ledger: FactLedger
     exchange: ExecutionExchange
     risk_budget: RiskBudgetStore
+    strategy: Strategy
+    calibrations: EdgeCalibrationBook
     analyst: Analyst | None = None
 
     @classmethod
-    def create(cls, config: AppConfig, *, analyst: Analyst | None = None) -> AnalysisCycle:
+    def create(
+        cls,
+        config: AppConfig,
+        *,
+        strategy: Strategy | None = None,
+        analyst: Analyst | None = None,
+    ) -> AnalysisCycle:
         ledger = InMemoryFactLedger()
         return cls(
             config=config,
             ledger=ledger,
             exchange=MockExchange(config.execution),
             risk_budget=ledger.risk_budget,
+            strategy=(strategy if strategy is not None else PriceTrendStrategy(config.strategy)),
+            calibrations=EdgeCalibrationBook(config.calibration),
             analyst=analyst,
         )
 
@@ -110,6 +136,7 @@ class AnalysisCycle:
         ledger: FactLedger,
         exchange: ExecutionExchange,
         risk_budget: RiskBudgetStore | None = None,
+        strategy: Strategy | None = None,
         analyst: Analyst | None = None,
     ) -> AnalysisCycle:
         effective_risk_budget = risk_budget or (
@@ -124,6 +151,8 @@ class AnalysisCycle:
             ledger=ledger,
             exchange=exchange,
             risk_budget=effective_risk_budget,
+            strategy=(strategy if strategy is not None else PriceTrendStrategy(config.strategy)),
+            calibrations=EdgeCalibrationBook(config.calibration),
             analyst=analyst,
         )
 
@@ -134,7 +163,12 @@ class AnalysisCycle:
         assert prepared.execution_request is not None
         return self.execute(prepared.execution_request)
 
-    def prepare(self, cycle_input: CycleInput) -> CycleResult:
+    def prepare(
+        self,
+        cycle_input: CycleInput,
+        *,
+        trigger: TriggerDecision | None = None,
+    ) -> CycleResult:
         market = cycle_input.market
         features = FeatureEngine(self.config.feature).compute(market)
         panel = PanelBuilder(self.config.panel).build(
@@ -149,13 +183,20 @@ class AnalysisCycle:
                 raise ValueError(f"cycle_id {market.cycle_id} 已存在，但冻结输入或面板哈希不同")
             return self._from_facts(existing)
 
-        program_candidates = PriceTrendStrategy(self.config.strategy).evaluate(
-            market=market,
-            account=cycle_input.account,
-            features=features,
+        program_candidates = tuple(
+            freeze_candidate_cost_basis(
+                self.calibrations.apply(candidate),
+                market=market,
+                frequency=self.config.frequency,
+                execution=self.config.execution,
+            )
+            for candidate in self.strategy.evaluate(
+                market=market, account=cycle_input.account, features=features
+            )
         )
         proposal: AnalysisProposal | None = None
         candidates = program_candidates
+        decision_at = market.as_of
         account_age_seconds = max(
             0, int((market.as_of - cycle_input.account.observed_at).total_seconds())
         )
@@ -181,74 +222,89 @@ class AnalysisCycle:
         ]
         if self.config.pipeline.ai_mode == AiMode.PROPOSE:
             if self.analyst is None:
-                return self._finish(
-                    panel=panel,
-                    proposal=None,
-                    candidates=program_candidates,
-                    intent=None,
-                    risk=None,
-                    order=None,
-                    metrics=metrics,
-                    outcome=CycleOutcome.NO_TRADE,
-                    reason_code="CODEX_ANALYST_UNAVAILABLE",
-                )
-            analyst_result = self.analyst.analyze(panel)
-            metrics.append(
-                observation(
-                    "codex_analysis_success",
-                    1 if analyst_result.success else 0,
-                    cycle_id=market.cycle_id,
-                    observed_at=market.as_of,
-                    dimensions={"reason": analyst_result.reason_code},
-                )
-            )
-            if not analyst_result.success or analyst_result.proposal is None:
-                return self._finish(
-                    panel=panel,
-                    proposal=None,
-                    candidates=program_candidates,
-                    intent=None,
-                    risk=None,
-                    order=None,
-                    metrics=metrics,
-                    outcome=CycleOutcome.NO_TRADE,
-                    reason_code=analyst_result.reason_code,
-                )
-            raw_proposal = analyst_result.proposal
-            proposal = raw_proposal.model_copy(
-                update={
-                    "proposal_id": stable_id(
-                        "proposal", market.cycle_id, content_hash(raw_proposal)
+                metrics.append(
+                    observation(
+                        "codex_analysis_success",
+                        0,
+                        cycle_id=market.cycle_id,
+                        observed_at=market.as_of,
+                        dimensions={"reason": "CODEX_ANALYST_UNAVAILABLE"},
                     )
-                }
-            )
-            try:
-                ai_candidates = ProposalNormalizer(self.config.proposal).normalize(proposal, panel)
-            except ValueError:
-                return self._finish(
-                    panel=panel,
-                    proposal=proposal,
-                    candidates=program_candidates,
-                    intent=None,
-                    risk=None,
-                    order=None,
-                    metrics=metrics,
-                    outcome=CycleOutcome.NO_TRADE,
-                    reason_code="CODEX_DETERMINISTIC_VALIDATION",
                 )
-            candidates = program_candidates + ai_candidates
+            else:
+                analyst_result = (
+                    self.analyst.analyze(panel, trigger=trigger)
+                    if trigger is not None
+                    else self.analyst.analyze(panel)
+                )
+                if analyst_result.completed_at is not None:
+                    decision_at = _require_utc(analyst_result.completed_at)
+                    if decision_at < market.as_of:
+                        raise ValueError("Codex 完成时间不能早于冻结行情")
+                metrics.append(
+                    observation(
+                        "codex_analysis_success",
+                        1 if analyst_result.success else 0,
+                        cycle_id=market.cycle_id,
+                        observed_at=decision_at,
+                        dimensions={"reason": analyst_result.reason_code},
+                    )
+                )
+                if analyst_result.success and analyst_result.proposal is not None:
+                    raw_proposal = analyst_result.proposal
+                    proposal = raw_proposal.model_copy(
+                        update={
+                            "proposal_id": stable_id(
+                                "proposal", market.cycle_id, content_hash(raw_proposal)
+                            )
+                        }
+                    )
+                    try:
+                        ai_candidates = tuple(
+                            freeze_candidate_cost_basis(
+                                self.calibrations.apply(candidate),
+                                market=market,
+                                frequency=self.config.frequency,
+                                execution=self.config.execution,
+                            )
+                            for candidate in ProposalNormalizer(self.config.proposal).normalize(
+                                proposal,
+                                panel,
+                                signal_observed_at=decision_at,
+                            )
+                        )
+                    except ValueError:
+                        metrics.append(
+                            observation(
+                                "codex_proposal_normalization_success",
+                                0,
+                                cycle_id=market.cycle_id,
+                                observed_at=decision_at,
+                                dimensions={"reason": "CODEX_DETERMINISTIC_VALIDATION"},
+                            )
+                        )
+                    else:
+                        metrics.append(
+                            observation(
+                                "codex_proposal_normalization_success",
+                                1,
+                                cycle_id=market.cycle_id,
+                                observed_at=decision_at,
+                            )
+                        )
+                        candidates = program_candidates + ai_candidates
         metrics.append(
             observation(
-                "signal_count",
-                len(candidates),
-                cycle_id=market.cycle_id,
-                observed_at=market.as_of,
+            "signal_count",
+            len(candidates),
+            cycle_id=market.cycle_id,
+            observed_at=decision_at,
                 dimensions={"pipeline": self.config.pipeline.version},
             )
         )
-        composed = SingleThresholdComposer(
+        composed = HighestNetEdgeComposer(
             self.config.composition, self.config.pipeline.version
-        ).compose(candidates, as_of=market.as_of)
+        ).compose(candidates, as_of=decision_at)
         if composed.intent is None:
             return self._finish(
                 panel=panel,
@@ -263,19 +319,22 @@ class AnalysisCycle:
             )
 
         intent = composed.intent
-        frequency = FrequencyController(self.config.frequency).evaluate(
+        frequency = FrequencyController(self.config.frequency, self.config.execution).evaluate(
             intent,
-            as_of=market.as_of,
+            as_of=decision_at,
             spread_bps=features.spread_bps,
             current_price=market.ask if intent.side.value == "BUY" else market.bid,
-            state=FrequencyState(orders_today=cycle_input.frequency_orders_today),
+            state=FrequencyState(
+                orders_today=cycle_input.frequency_orders_today,
+                last_order_at=cycle_input.frequency_last_entry_order_at,
+            ),
         )
         metrics.append(
             observation(
                 "expected_net_edge_bps",
                 frequency.expected_net_edge_bps,
                 cycle_id=market.cycle_id,
-                observed_at=market.as_of,
+                observed_at=decision_at,
             )
         )
         metrics.extend(
@@ -284,19 +343,19 @@ class AnalysisCycle:
                     "remaining_gross_edge_bps",
                     frequency.remaining_gross_edge_bps,
                     cycle_id=market.cycle_id,
-                    observed_at=market.as_of,
+                    observed_at=decision_at,
                 ),
                 observation(
                     "price_move_consumed_bps",
                     frequency.price_move_consumed_bps,
                     cycle_id=market.cycle_id,
-                    observed_at=market.as_of,
+                    observed_at=decision_at,
                 ),
                 observation(
                     "signal_age_seconds",
                     frequency.signal_age_seconds,
                     cycle_id=market.cycle_id,
-                    observed_at=market.as_of,
+                    observed_at=decision_at,
                 ),
             )
         )
@@ -317,13 +376,14 @@ class AnalysisCycle:
             intent=intent,
             market=market,
             account=cycle_input.account,
+            as_of=decision_at,
         )
         metrics.append(
             observation(
                 "risk_approved",
                 1 if risk.outcome == RiskOutcome.APPROVED else 0,
                 cycle_id=market.cycle_id,
-                observed_at=market.as_of,
+                observed_at=decision_at,
             )
         )
         if risk.outcome != RiskOutcome.APPROVED:
@@ -349,6 +409,7 @@ class AnalysisCycle:
             market=market,
             account=cycle_input.account,
             execution_policy_version=self.config.execution.version,
+            created_at=decision_at,
         )
         try:
             return self._finish(
@@ -379,7 +440,12 @@ class AnalysisCycle:
                 reason_code=exc.reason_code,
             )
 
-    def execute(self, request: ExecutionRequest) -> CycleResult:
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        observed_at: datetime | None = None,
+    ) -> CycleResult:
         existing = self.ledger.get(request.cycle_id)
         if existing is None:
             raise ValueError("ExecutionRequest 对应的分析事实不存在")
@@ -391,7 +457,36 @@ class AnalysisCycle:
         intent = request.intent
         risk = request.risk_decision
         market = request.market
-        order = self.exchange.submit(intent=intent, risk=risk, market=market)
+        execution_at = _require_utc(observed_at or market.as_of)
+        existing_order = self.exchange.query_entry_order(
+            intent=intent,
+            risk=risk,
+            market=market,
+        )
+        reservation = risk.reservation
+        assert reservation is not None and risk.quantity is not None
+        request_expired = execution_at >= min(intent.valid_until, reservation.expires_at)
+        skipped_submission = existing_order is None and request_expired
+        if skipped_submission:
+            client_order_id = entry_client_order_id(intent, risk)
+            order = Order(
+                order_id=stable_id("expired_order", client_order_id),
+                client_order_id=client_order_id,
+                cycle_id=request.cycle_id,
+                intent_id=intent.intent_id,
+                symbol=intent.symbol,
+                side=intent.side,
+                order_type=intent.entry.order_type,
+                requested_quantity=risk.quantity,
+                limit_price=intent.entry.price,
+                status=OrderStatus.EXPIRED,
+            )
+        else:
+            order = existing_order or self.exchange.submit(
+                intent=intent,
+                risk=risk,
+                market=market,
+            )
         if order.status.value in {"NEW", "PARTIALLY_FILLED"}:
             order = self.exchange.cancel_remaining(order)
 
@@ -422,11 +517,20 @@ class AnalysisCycle:
         execution_metrics: list[MetricObservation] = [
             observation(
                 "executed_order_count",
-                1,
+                0 if skipped_submission else 1,
                 cycle_id=market.cycle_id,
-                observed_at=market.as_of,
+                observed_at=execution_at,
                 dimensions={"status": order.status.value},
-            )
+            ),
+            observation(
+                "execution_handoff_age_seconds",
+                max(
+                    Decimal("0"),
+                    Decimal(str((execution_at - request.created_at).total_seconds())),
+                ),
+                cycle_id=market.cycle_id,
+                observed_at=execution_at,
+            ),
         ]
         if lifecycle is not None:
             execution_metrics.append(
@@ -438,12 +542,15 @@ class AnalysisCycle:
                     dimensions={"status": lifecycle.status.value},
                 )
             )
-        cycle_reason = (
-            "PROTECTION_FAILURE_EMERGENCY_EXIT"
-            if decision_outcome is not None
+        if skipped_submission:
+            cycle_reason = "EXECUTION_SIGNAL_EXPIRED"
+        elif (
+            decision_outcome is not None
             and decision_outcome.exit_reason.value == "PROTECTION_FAILURE"
-            else order.status.value
-        )
+        ):
+            cycle_reason = "PROTECTION_FAILURE_EMERGENCY_EXIT"
+        else:
+            cycle_reason = order.status.value
         transition = (
             RiskTransition.CONSUMED
             if lifecycle is not None and lifecycle.status.value != "CLOSED"

@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 LIFECYCLE_ACTIVITY_NAME = "evaluate-position-lifecycle-v1"
 
 
@@ -66,6 +68,7 @@ class PositionLifecycleWorkflow:
                     start_to_close_timeout=start_to_close,
                     schedule_to_close_timeout=schedule_to_close,
                     retry_policy=retry_policy,
+                    versioning_intent=default_activity_versioning_intent(),
                     summary="评估持仓保护与退出条件",
                 )
             except ActivityError:

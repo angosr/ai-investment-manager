@@ -1,22 +1,20 @@
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from enum import StrEnum
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from quant_core.domain import SUPPORTED_OPEN_SIDES, EdgeCalibration
+
 
 class StrictConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class DecisionLane(StrEnum):
-    REALTIME_DETERMINISTIC = "REALTIME_DETERMINISTIC"
-    EVENT_ANALYSIS = "EVENT_ANALYSIS"
-    SCHEDULED_ANALYSIS = "SCHEDULED_ANALYSIS"
 
 
 class FeaturePolicy(StrictConfig):
@@ -28,48 +26,65 @@ class FeaturePolicy(StrictConfig):
 class PanelPolicy(StrictConfig):
     version: str
     schema_version: str = "panel-v1"
-    max_characters: int = Field(default=48_000, ge=4_000)
+    max_characters: int = Field(default=12_000, ge=4_000, le=12_000)
     max_evidence: int = Field(default=20, ge=0, le=100)
     max_per_source: int = Field(default=5, ge=1)
     max_market_age_seconds: int = Field(default=180, ge=1)
+    maximum_evidence_age_seconds: int = Field(default=86_400, ge=60, le=604_800)
 
 
 class StrategyPolicy(StrictConfig):
     strategy_id: str = "price-trend"
     version: str
     family: str = "price-trend"
-    decision_lane: DecisionLane = DecisionLane.EVENT_ANALYSIS
+    enabled: bool = True
     score_threshold: Decimal = Decimal("0.55")
     stop_atr_multiple: Decimal = Decimal("1.5")
     horizon_minutes: int = Field(default=60, gt=0)
-    expected_gross_bps: Decimal = Decimal("24")
-    calibration_ref: str
-    calibration_sample_size: int = Field(ge=0)
-    minimum_calibration_samples: int = Field(default=30, gt=0)
     expected_edge_half_life_seconds: int = Field(default=900, ge=1, le=86400)
-    maximum_source_age_seconds: int = Field(default=180, ge=1, le=86400)
-    maximum_decision_latency_ms: int = Field(default=30_000, ge=1, le=3_600_000)
-    maximum_entry_latency_ms: int = Field(default=60_000, ge=1, le=3_600_000)
+
+
+class CalibrationPolicy(StrictConfig):
+    version: str
+    minimum_non_overlapping_samples: int = Field(default=30, ge=2)
+    method_version: str = "mean-lower-bound-v1"
+    lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
+    artifacts: tuple[EdgeCalibration, ...] = ()
+
+    @model_validator(mode="after")
+    def artifacts_must_be_unique_sufficient_and_non_overlapping(self):
+        ids = [item.calibration_id for item in self.artifacts]
+        if len(ids) != len(set(ids)):
+            raise ValueError("EdgeCalibration calibration_id 必须唯一")
+        by_scope: dict[tuple[object, ...], list[EdgeCalibration]] = {}
+        for artifact in self.artifacts:
+            if artifact.non_overlapping_sample_size < self.minimum_non_overlapping_samples:
+                raise ValueError("发布校准制品的非重叠样本量不足")
+            if artifact.method_version != self.method_version:
+                raise ValueError("EdgeCalibration 构建方法版本与策略不一致")
+            by_scope.setdefault(artifact.scope, []).append(artifact)
+        for scoped in by_scope.values():
+            ordered = sorted(scoped, key=lambda item: item.valid_from)
+            if any(
+                current.valid_from < previous.valid_until for previous, current in pairwise(ordered)
+            ):
+                raise ValueError("同一校准作用域的有效期不得重叠")
+        return self
 
 
 class CompositionPolicy(StrictConfig):
     version: str
-    minimum_raw_score: Decimal = Decimal("0.55")
 
 
 class FrequencyPolicy(StrictConfig):
     version: str
     cooldown_minutes: int = Field(default=30, ge=0)
     maximum_orders_per_day: int = Field(default=8, gt=0)
-    minimum_net_edge_bps: Decimal = Decimal("4")
-    fee_bps: Decimal = Decimal("10")
-    expected_slippage_bps: Decimal = Decimal("2")
-    infrastructure_bps: Decimal = Decimal("0.5")
+    minimum_net_edge_bps: Decimal = Field(default=Decimal("4"), ge=0)
     funding_bps: Decimal = Decimal("0")
-    model_bps: Decimal = Decimal("0.25")
-    latency_bps: Decimal = Decimal("0.5")
-    adverse_selection_bps: Decimal = Decimal("0.75")
-    uncertainty_buffer_bps: Decimal = Decimal("1.5")
+    latency_bps: Decimal = Field(default=Decimal("0.5"), ge=0)
+    adverse_selection_bps: Decimal = Field(default=Decimal("0.75"), ge=0)
+    uncertainty_buffer_bps: Decimal = Field(default=Decimal("1.5"), ge=0)
 
 
 class RiskPolicy(StrictConfig):
@@ -90,9 +105,8 @@ class RiskPolicy(StrictConfig):
 
 class ExecutionPolicy(StrictConfig):
     version: str
-    fee_bps: Decimal = Decimal("10")
-    market_slippage_bps: Decimal = Decimal("2")
-    latency_ms: int = Field(default=250, ge=0)
+    fee_bps: Decimal = Field(default=Decimal("10"), ge=0)
+    market_slippage_bps: Decimal = Field(default=Decimal("2"), ge=0)
     default_fill_fraction: Decimal = Field(default=Decimal("1"), gt=0, le=1)
 
 
@@ -106,6 +120,7 @@ class ReconciliationPolicy(StrictConfig):
 
 class OutcomeEvaluationPolicy(StrictConfig):
     version: str
+    forecast_version: str = "analysis-forecast-v2"
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
@@ -189,7 +204,9 @@ class TemporalPolicy(StrictConfig):
 class MarketDataPolicy(StrictConfig):
     version: str
     symbols: tuple[str, ...] = Field(default=("BTCUSDT", "ETHUSDT"), min_length=1, max_length=20)
-    interval: str = Field(default="5m", pattern=r"^(1m|3m|5m|15m|30m|1h|2h)$")
+    interval: str = Field(
+        default="5m", pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$"
+    )
     bar_window: int = Field(default=64, ge=8, le=1000)
     rest_base_url: str = "https://api.binance.com"
     websocket_base_url: str = "wss://stream.binance.com:9443"
@@ -200,6 +217,11 @@ class MarketDataPolicy(StrictConfig):
     reconnect_maximum_seconds: int = Field(default=30, ge=1, le=300)
     quote_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
     trade_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
+
+    @property
+    def interval_seconds(self) -> int:
+        unit_seconds = {"m": 60, "h": 3600, "d": 86_400}
+        return int(self.interval[:-1]) * unit_seconds[self.interval[-1]]
 
     @field_validator("symbols")
     @classmethod
@@ -239,6 +261,8 @@ class ShadowSimulationPolicy(StrictConfig):
 class InformationPolicy(StrictConfig):
     version: str
     trendradar_mcp_url: str = "http://127.0.0.1:3333/mcp"
+    newsnow_base_url: str = "http://127.0.0.1:4444"
+    newsnow_sources: tuple[str, ...] = ()
     source_timezone: str = "Asia/Shanghai"
     platforms: tuple[str, ...] = ()
     read_limit: int = Field(default=100, ge=1, le=1000)
@@ -251,6 +275,22 @@ class InformationPolicy(StrictConfig):
         if not value.startswith(("http://127.0.0.1:", "http://localhost:")):
             raise ValueError("信息 MCP 必须是显式回环地址")
         return value
+
+    @field_validator("newsnow_base_url")
+    @classmethod
+    def newsnow_must_be_loopback(cls, value: str) -> str:
+        if not value.startswith(("http://127.0.0.1:", "http://localhost:")):
+            raise ValueError("NewsNow 必须是显式回环地址")
+        return value.rstrip("/")
+
+    @field_validator("newsnow_sources")
+    @classmethod
+    def newsnow_sources_must_be_unique_and_safe(cls, sources: tuple[str, ...]) -> tuple[str, ...]:
+        if len(sources) != len(set(sources)):
+            raise ValueError("NewsNow source id 不得重复")
+        if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item) is None for item in sources):
+            raise ValueError("NewsNow source id 非法")
+        return sources
 
 
 class AiMode(StrEnum):
@@ -276,17 +316,26 @@ class ProposalPolicy(StrictConfig):
     strategy_family: str = "ai-contextual"
     minimum_confidence: Decimal = Decimal("0.55")
     maximum_horizon_minutes: int = Field(default=240, gt=0)
-    expected_gross_bps: Decimal = Decimal("24")
-    calibration_ref: str
+    forecast_horizons_minutes: tuple[int, ...] = Field(
+        default=(60, 240), min_length=1, max_length=4
+    )
     expected_edge_half_life_seconds: int = Field(default=1800, ge=1, le=86400)
+
+    @model_validator(mode="after")
+    def forecast_horizons_are_unique_ordered_and_bounded(self):
+        horizons = self.forecast_horizons_minutes
+        if tuple(sorted(set(horizons))) != horizons:
+            raise ValueError("方向预测周期必须正数、唯一且升序")
+        if horizons[0] <= 0 or horizons[-1] > self.maximum_horizon_minutes:
+            raise ValueError("方向预测周期必须在 Proposal 最大周期内")
+        return self
 
 
 class CodexAccount(StrictConfig):
-    account_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,31}$")
+    account_id: str = Field(pattern=r"^\.?[a-z][a-z0-9._-]{1,63}$")
     codex_home: Path
     enabled: bool = False
     capacity_weight: Decimal = Field(default=Decimal("1"), gt=0)
-    max_concurrency: int = Field(default=1, ge=1, le=1)
 
     @field_validator("codex_home")
     @classmethod
@@ -295,10 +344,16 @@ class CodexAccount(StrictConfig):
             raise ValueError("codex_home 必须是绝对路径")
         return value
 
+    @model_validator(mode="after")
+    def account_id_must_match_directory_name(self):
+        if self.account_id != self.codex_home.name:
+            raise ValueError("Codex account_id 必须与 codex_home 目录名一致")
+        return self
+
 
 class CodexAccountRegistry(StrictConfig):
     version: str
-    accounts: tuple[CodexAccount, ...] = Field(min_length=3, max_length=3)
+    accounts: tuple[CodexAccount, ...] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="after")
     def aliases_and_paths_must_be_unique(self):
@@ -320,9 +375,11 @@ class CodexRuntimePolicy(StrictConfig):
     expected_cli_version: str
     model: str
     reasoning_effort: str = Field(pattern=r"^(low|medium|high|xhigh|max|ultra)$")
+    maximum_prompt_characters: int = Field(default=16_000, ge=8_000, le=16_000)
     timeout_seconds: int = Field(default=180, ge=10, le=900)
     capacity_probe_timeout_seconds: int = Field(default=10, ge=1, le=60)
     capacity_ttl_seconds: int = Field(default=60, ge=1, le=60)
+    transient_failure_cooldown_seconds: int = Field(default=300, ge=30, le=3600)
     lease_ttl_seconds: int = Field(default=240, ge=30, le=1200)
     max_account_switches: int = Field(default=2, ge=0, le=2)
 
@@ -408,6 +465,7 @@ class AppConfig(StrictConfig):
     feature: FeaturePolicy
     panel: PanelPolicy
     strategy: StrategyPolicy
+    calibration: CalibrationPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
     risk: RiskPolicy
@@ -431,11 +489,41 @@ class AppConfig(StrictConfig):
     def market_symbols_must_be_risk_allowed(self):
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
+        if any(
+            not symbol.endswith(self.binance_testnet.quote_asset)
+            for symbol in self.market_data.symbols
+        ):
+            raise ValueError("行情 symbols 必须使用配置的统一 quote_asset")
         testnet_market_data = self.market_data.rest_base_url == "https://testnet.binance.vision"
         if self.deployment.stage == DeploymentStage.TESTNET and not testnet_market_data:
             raise ValueError("TESTNET 必须使用 Binance Spot Testnet 行情")
         if self.deployment.stage != DeploymentStage.TESTNET and testnet_market_data:
             raise ValueError("非 TESTNET 阶段不得混用 Binance Spot Testnet 行情")
+        if self.pipeline.ai_mode == AiMode.PROPOSE:
+            enabled_accounts = sum(item.enabled for item in self.codex_accounts.accounts)
+            if self.temporal.worker_threads > enabled_accounts:
+                raise ValueError("PROPOSE 分析并发不得超过已启用 Codex 账号数")
+        active_producers = {
+            (self.strategy.strategy_id, self.strategy.version): self.strategy.horizon_minutes,
+        }
+        if self.pipeline.ai_mode == AiMode.PROPOSE:
+            active_producers[(self.proposal.producer_id, self.proposal.version)] = None
+        for artifact in self.calibration.artifacts:
+            producer = (artifact.producer_id, artifact.producer_version)
+            if producer not in active_producers:
+                raise ValueError("校准制品必须绑定当前管线实际装配的 Producer 版本")
+            expected_horizon = active_producers[producer]
+            if expected_horizon is not None and artifact.horizon_minutes != expected_horizon:
+                raise ValueError("程序策略校准周期必须与当前策略周期一致")
+            if (
+                expected_horizon is None
+                and artifact.horizon_minutes > self.proposal.maximum_horizon_minutes
+            ):
+                raise ValueError("AI 校准周期超过 ProposalPolicy 上限")
+            if artifact.symbol not in self.market_data.symbols:
+                raise ValueError("校准制品品种必须属于当前行情 universe")
+            if artifact.side not in SUPPORTED_OPEN_SIDES:
+                raise ValueError("校准制品方向必须属于当前允许建仓方向")
         return self
 
 

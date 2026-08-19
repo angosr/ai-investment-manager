@@ -15,7 +15,7 @@ const WINDOWS: { key: string; label: string }[] = [
 export function EquityHero() {
   const [window, setWindow] = useState("24h");
   const fetcher = useCallback(() => api.equity(window), [window]);
-  const data = useLive(fetcher, [window]);
+  const data = useLive(fetcher, "equity", [window]);
   const summary = data?.summary ?? null;
   const net = summary?.net_pnl ?? null;
 

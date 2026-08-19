@@ -39,7 +39,7 @@ def _target(now: datetime) -> EvaluationTarget:
         plan_id="version-plan-1",
         registered_at=now - timedelta(hours=1),
         base_manifest_id="release-bootstrap-v1",
-        primary_metric="net_pnl_after_all_costs",
+        primary_metric="net_pnl_after_trade_costs",
         minimum_sample_size=30,
         hard_guardrails=("rule_violation_eq_0",),
         required_stages=(

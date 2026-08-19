@@ -244,8 +244,20 @@ class ReconciliationSupervisor:
                 if self.health.last_error_class != type(exc).__name__:
                     logger.exception("reconciliation supervisor failed")
                 self.health.last_error_class = type(exc).__name__
+            delay = _seconds_until_next_bucket(
+                _require_utc(self.clock()),
+                bucket_seconds=bucket_seconds,
+            )
             with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=bucket_seconds)
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+
+
+def _seconds_until_next_bucket(now: datetime, *, bucket_seconds: int) -> float:
+    """按绝对 UTC 桶调度，避免每轮执行耗时累积为对账漂移。"""
+
+    elapsed = now.timestamp()
+    next_boundary = (int(elapsed) // bucket_seconds + 1) * bucket_seconds
+    return max(0.001, next_boundary - elapsed)
 
 
 def assemble_reconciliation(

@@ -50,7 +50,12 @@ def test_temporal_replay_and_deadline(app_config, replay_input) -> None:
             coordinator = TemporalAnalysisCoordinator(env.client, policy)
             request = _request(app_config, replay_input)
 
-            async with AnalysisTemporalWorker(env.client, policy, cycle):
+            async with AnalysisTemporalWorker(
+                env.client,
+                policy,
+                cycle,
+                execution_clock=lambda: replay_input.market.as_of,
+            ):
                 first = await coordinator.execute(request)
                 replayed = await coordinator.execute(request)
                 conflicting = _request(
@@ -82,7 +87,12 @@ def test_temporal_replay_and_deadline(app_config, replay_input) -> None:
                 ),
                 deadline_delta=timedelta(seconds=0),
             )
-            async with AnalysisTemporalWorker(env.client, policy, cycle):
+            async with AnalysisTemporalWorker(
+                env.client,
+                policy,
+                cycle,
+                execution_clock=lambda: replay_input.market.as_of,
+            ):
                 no_trade = await coordinator.execute(expired)
             assert no_trade.status == WorkflowExecutionStatus.NO_TRADE
             assert no_trade.reason_code == "ANALYSIS_DEADLINE_EXPIRED"
@@ -96,14 +106,14 @@ def test_temporal_activity_retries_transient_failure(app_config, replay_input) -
         delegate: AnalysisCycle
         calls: int = 0
 
-        def prepare(self, cycle_input):
+        def prepare(self, cycle_input, *, trigger=None):
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("transient")
-            return self.delegate.prepare(cycle_input)
+            return self.delegate.prepare(cycle_input, trigger=trigger)
 
-        def execute(self, request):
-            return self.delegate.execute(request)
+        def execute(self, request, *, observed_at=None):
+            return self.delegate.execute(request, observed_at=observed_at)
 
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -119,7 +129,12 @@ def test_temporal_activity_retries_transient_failure(app_config, replay_input) -
             request = _request(app_config, retry_input, deadline_delta=timedelta(days=1))
             flaky = FailOnceCycle(AnalysisCycle.create(app_config))
             coordinator = TemporalAnalysisCoordinator(env.client, policy)
-            async with AnalysisTemporalWorker(env.client, policy, flaky):  # type: ignore[arg-type]
+            async with AnalysisTemporalWorker(
+                env.client,
+                policy,
+                flaky,  # type: ignore[arg-type]
+                execution_clock=lambda: replay_input.market.as_of,
+            ):
                 retried = await coordinator.execute(request)
             assert retried.status == WorkflowExecutionStatus.COMPLETED, retried
             assert retried.attempt == 2
@@ -136,10 +151,10 @@ def test_execution_activity_recovers_after_submit_before_commit_crash(
         delegate: AnalysisCycle
         execution_calls: int = 0
 
-        def prepare(self, cycle_input):
-            return self.delegate.prepare(cycle_input)
+        def prepare(self, cycle_input, *, trigger=None):
+            return self.delegate.prepare(cycle_input, trigger=trigger)
 
-        def execute(self, request):
+        def execute(self, request, *, observed_at=None):
             self.execution_calls += 1
             if self.execution_calls == 1:
                 self.delegate.exchange.submit(
@@ -148,7 +163,7 @@ def test_execution_activity_recovers_after_submit_before_commit_crash(
                     market=request.market,
                 )
                 raise RuntimeError("simulated crash after exchange response")
-            return self.delegate.execute(request)
+            return self.delegate.execute(request, observed_at=observed_at)
 
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -170,7 +185,12 @@ def test_execution_activity_recovers_after_submit_before_commit_crash(
             crashing = CrashAfterSubmitCycle(delegate)
             coordinator = TemporalAnalysisCoordinator(env.client, policy)
 
-            async with AnalysisTemporalWorker(env.client, policy, crashing):  # type: ignore[arg-type]
+            async with AnalysisTemporalWorker(
+                env.client,
+                policy,
+                crashing,  # type: ignore[arg-type]
+                execution_clock=lambda: replay_input.market.as_of,
+            ):
                 result = await coordinator.execute(request)
 
             assert result.status == WorkflowExecutionStatus.COMPLETED
@@ -182,5 +202,54 @@ def test_execution_activity_recovers_after_submit_before_commit_crash(
             reservation = result.cycle_result.execution_request.risk_decision.reservation
             assert reservation is not None
             assert delegate.risk_budget.status(reservation.reservation_id) == "CONSUMED"
+
+    asyncio.run(scenario())
+
+
+def test_execution_recovery_outlives_primary_retry_budget(app_config, replay_input) -> None:
+    @dataclass
+    class FailPrimaryAttempts:
+        delegate: AnalysisCycle
+        execution_calls: int = 0
+
+        def prepare(self, cycle_input, *, trigger=None):
+            return self.delegate.prepare(cycle_input, trigger=trigger)
+
+        def execute(self, request, *, observed_at=None):
+            self.execution_calls += 1
+            if self.execution_calls <= app_config.temporal.retry_maximum_attempts:
+                raise RuntimeError("transient execution outage")
+            return self.delegate.execute(request, observed_at=observed_at)
+
+    async def scenario() -> None:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            policy = app_config.temporal.model_copy(
+                update={"task_queue": "quant-core-execution-recovery-test"}
+            )
+            cycle_input = replay_input.model_copy(
+                update={
+                    "market": replay_input.market.model_copy(
+                        update={"cycle_id": "execution-recovery-cycle"}
+                    ),
+                    "account": replay_input.account.model_copy(
+                        update={"cycle_id": "execution-recovery-cycle"}
+                    ),
+                }
+            )
+            request = _request(app_config, cycle_input, deadline_delta=timedelta(days=1))
+            recovering = FailPrimaryAttempts(AnalysisCycle.create(app_config))
+            coordinator = TemporalAnalysisCoordinator(env.client, policy)
+
+            async with AnalysisTemporalWorker(
+                env.client,
+                policy,
+                recovering,  # type: ignore[arg-type]
+                execution_clock=lambda: replay_input.market.as_of,
+            ):
+                result = await coordinator.execute(request)
+
+            assert result.status == WorkflowExecutionStatus.COMPLETED
+            assert recovering.execution_calls == policy.retry_maximum_attempts + 1
+            assert len(recovering.delegate.exchange.orders) == 1
 
     asyncio.run(scenario())

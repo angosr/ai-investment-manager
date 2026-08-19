@@ -1,12 +1,10 @@
 # Market Intel（NewsNow + TrendRadar + Codex）
 
-这是 Codex 量化交易系统的工程工作区。当前持续运行的是公开行情 + Mock 撮合的 Shadow；仓库已实现 Binance Spot Testnet 的签名 REST、幂等订单、保护单和主动对账边界，但 LIVE 仍被配置层禁止。凭证只从本机环境读取，不进入信息面板、日志或版本库。
+这是 Codex 量化交易系统的工程工作区。公开行情 + Mock 撮合的私有 Challenger Shadow 正在运行；仓库已实现 Binance Spot Testnet 的签名 REST、幂等订单、保护单和主动对账边界，但 LIVE 仍被配置层禁止。凭证只从本机环境读取，不进入信息面板、日志或版本库。
 
 完整工程方案见 [ARCHITECTURE.md](./ARCHITECTURE.md)。实现按该文档推进，设计与代码出现冲突时必须先明确并修正文档或实现，不能形成第二套隐含架构。
 
-当前设计—代码对照、机械验证结果与真实部署阻塞项见 [docs/IMPLEMENTATION_AUDIT.md](./docs/IMPLEMENTATION_AUDIT.md)。
-
-架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。信息源自身仍可按 PUSH、STREAM 或 POLL 获取；当前 Collector 每 60 秒读取 TrendRadar，而仓库 Compose 中 TrendRadar 上游默认每 10 分钟更新，因此它不属于低延迟新闻源。新事实一旦入库便通过 Outbox + PostgreSQL NOTIFY 立即唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
+架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；两条路径复用同一平台事实身份和数据库唯一约束，避免重复证据。它仍是轮询而非 PUSH/STREAM。新事实一旦入库便通过 Outbox + PostgreSQL NOTIFY 立即唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
 
 ## 当前实现状态
 
@@ -15,32 +13,32 @@
 - NewsNow、TrendRadar 与只读 MCP 信息采集层。
 - `quant_core` Python 模块化单体基础。
 - 冻结行情/账户快照、未来数据隔离、特征计算和有容量边界的信息面板。
-- `OFF` 程序策略管线、单阈值合成、频率与预期净边际门禁。
+- `OFF` 程序策略管线、按已校准保守净优势选优的单一合成器，以及唯一的频率/经济性门禁。
 - 确定性风控、仓位计算、下单前原子风险预算占用和 Kill Switch。
 - 包含手续费、点差、滑点、限价未成交和部分成交语义的幂等 Mock 撮合器。
 - 成交后账户对账、部分成交撤余单、保护性退出和最长持有时间管理；持仓关闭事实与风险释放同事务提交。
 - 止损、保护失败紧急退出、净收益、费用、MFE/MAE 与持有时间归因。
 - 事务型事实仓储、统一指标、SQLite 快速测试和 PostgreSQL 契约测试。
 - 固定回放样本，可验证同一周期不会重复记账或重复下单。
-- `PROPOSE` 管线：AI 与程序策略独立产出候选，AI 结果仍必须通过确定性校验、合成、频率和风控。
-- 不可变 Codex 运行包、固定 JSON Schema、JSONL 事件校验和锁定 CLI 版本检查。
-- 三账号显式白名单 Router：官方 App Server 额度探测、最紧张额度窗口计算、数据库单并发租约和受限故障切换。
-- 账号切换只改变进程级 `CODEX_HOME`；不扫描目录、不读取 `auth.json`、不继承 API Key/Access Token。
+- `PROPOSE` 管线：AI 与程序策略独立产出候选；AI 失败只移除本轮 AI 候选，不阻塞独立程序候选；未校准候选的毛优势固定为零，只积累 CandidateOutcome，任何 AI 结果仍必须通过确定性校验、校准、合成、频率和风控。
+- 不可变 Codex 运行包、固定 JSON Schema、严格 App Server 事件校验和锁定 CLI 版本检查。
+- 可扩展的目录同名显式白名单 Router：官方 App Server 额度探测、最紧张额度窗口计算、数据库单并发租约、跨批次瞬时故障冷却和受限故障切换；冷却到期必须复探成功，不能猜测恢复。
+- 账号切换只改变一次性认证目录；不扫描目录、不由 Python 读取 `auth.json`、不继承账号配置或 API Key/Access Token。
 - 系统宪法、固定回归集、结构化变更提案、负面知识、Champion/Challenger 与人工晋级门禁。
 - Phase A 机械验收命令；未取得真实隔离证据时会明确返回 `BLOCKED`。
-- TrendRadar Streamable HTTP MCP 只读适配器、标准事件去重/时间可见性和确定性事件/心跳触发。
+- TrendRadar MCP 广覆盖源 + NewsNow 本机快速源、标准事件去重/时间可见性和确定性事件/心跳触发。
 - 直接资产、关键跨资产和一般跨资产三级事件路由；宏观/地缘信息可进入 BTC/ETH 面板，关键事件合并触发，一般事件不会单独消耗分析调用。
 - 标准事件、逐笔市场冲击与 Trigger Outbox 的事务化写入；PostgreSQL NOTIFY 只作低延迟提示，可靠性来自可重放 Outbox。
-- 每品种/Pipeline 唯一的 Temporal `TriggerCoordinatorWorkflow`：事件规则、去重、合并、single-flight、有界 pending、硬调用间隔、每小时预算、多未来时间点、Heartbeat、暂停和 Continue-As-New。
+- 每品种/Pipeline 唯一的 Temporal `TriggerCoordinatorWorkflow`：事件规则、去重、合并、single-flight、有界 pending、多未来时间点、Heartbeat、暂停和 Continue-As-New；跨品种的硬调用间隔与滚动每小时预算由 PostgreSQL 原子准入统一执行。
 - 版本化 `AnalysisTriggerPlan` 与完整 `TriggerPlanPatch`：增删改时间点和事件规则、暂停/恢复、幂等 `TRIGGER_NOW`；revision、Manifest 和硬资源上限由确定性 Gate 校验。
 - Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
-- TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和完整成本后的剩余净优势门禁。
-- 受监督的信息采集角色，按类型化策略将 TrendRadar MCP 内容持续标准化到 PostgreSQL；失败不会污染已有事实。
+- TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
+- 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP 与本机 NewsNow，并持续标准化到 PostgreSQL；失败不会污染已有事实。
 - Temporal 父 `AnalysisCycleWorkflow` 与稳定 ID 子 `ExecutionWorkflow`：决策事务原子写入风险占用、不可变 `ExecutionRequest` 和 `EXECUTION_PENDING`，执行事务原子写入订单、成交、账户、风险终态和持仓；时间跳跃、崩溃重试及真实本地服务端均已验证。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
 - `OutcomeEvaluationWorkflow`：固定窗口和结算宽限期后聚合实际运行周期与权威逐笔结果；未决持仓保持 `INCOMPLETE`，完整报告给出费用后净收益、Profit Factor、最大回撤和永不交易基线增量。
-- `GovernanceCycleWorkflow`：从有界结构化事实构建无聊天历史的 `GovernanceSnapshot`，只暴露当前 Champion 已预登记的评估计划；复用同一三账号额度/租约 Router 运行全新 Governor，并以确定性门禁原子登记一个 `ChangeProposal` 或 `NoChange`。
+- `GovernanceCycleWorkflow`：从有界结构化事实构建无聊天历史的 `GovernanceSnapshot`，只暴露当前 Champion 已预登记的评估计划；复用同一账号白名单额度/租约 Router 运行全新 Governor，并以确定性门禁原子登记一个 `ChangeProposal` 或 `NoChange`。
 - `VersionEvaluationWorkflow`：冻结提案、预登记计划、Challenger Manifest 与候选制品哈希，只按固定顺序调用受信任 StageRunner；阶段结果必须绑定原始证据哈希，失败后停止昂贵后续阶段且不能伪造缺失阶段。
 - `ReleaseWorkflow`：复核当前 Champion、候选父版本、制品哈希、复杂度及全部预登记阶段；只幂等登记 `AWAITING_HUMAN_APPROVAL` 或 `BLOCKED`，不具备修改 Champion、部署或切流能力。
 - Temporal 是唯一流程状态所有者；原自建 SQL Workflow 租约表已通过迁移退役，PostgreSQL 只保存业务事实。
@@ -51,9 +49,9 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；用户给出第三个获准 Codex 账号目录、完成生产分析容器的恶意读取隔离验收、真实 Governor 冒烟，以及由独立可信环境提供的真实候选制品与各阶段评估器。真实 Codex Analyst 的单次冻结面板烟测已经成功；`/home/aiuser/.codex` 与 `/home/aiuser/.codex2` 的额度探测当前均健康且真实选择了剩余更多的后者，但持续 PROPOSE 仍因第三账号与 OS 隔离门禁保持关闭。Spot Testnet 适配器已实现，本机凭证验收当前被 Binance `-2015` 拒绝，因此订单 Worker 未启动；LIVE 适配器和权限仍不存在。
+尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成真实 Governor 冒烟，以及由独立可信环境提供的校准制品与各阶段评估器。私有 Challenger 正在运行真实 Codex Analyst、双账号独占租约和严格失败关闭；每个成功 Proposal 即使 `NO_ACTION` 也冻结不可交易的方向预测，预测起点和参考价以 Codex 完成时已经可见的成交为准，在所选的 60 或 240 分钟周期后结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选，盲测尾段没有因失败候选而查询。当前 TriggerPlan 将无事件兜底调整为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全局调用预算不会因立即触发而绕过。数据库 Champion 仍保持旧版本，Challenger 只能经独立评估和人工发布；Spot Testnet 订单 Worker 与 LIVE 权限均未启用。
 
-`config/quant-core.yaml` 中三个账号是禁用的部署占位符。部署者必须人工选定恰好三个获准目录并完成登录、额度接口与 OS/Profile 隔离检查；仓库不会因为主机上出现第四个目录而自动纳入。当前 `enabled: false` 是刻意的失败关闭状态。
+`config/quant-core.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
 ## 固定版本
 
@@ -78,6 +76,37 @@ python3 -m venv .venv
 ```
 
 默认测试不会消耗任何 Codex 账号额度。Runner、App Server 握手、账号选择、换号边界和凭据环境隔离均由 Mock/契约样本验证；真实 Codex 烟测必须单独显式执行。
+
+历史研究使用可选、锁版本的事件回放依赖，不进入生产服务依赖面：
+
+```bash
+.venv/bin/pip install -e '.[research]'
+.venv/bin/quant-core fetch-binance-history \
+  --config config/quant-core.yaml --symbol BTCUSDT \
+  --candidate long-only-tsmom-12m-v1 \
+  --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
+.venv/bin/quant-core walk-forward \
+  --config config/quant-core.yaml --dataset-id '<上一步输出>' \
+  --candidate long-only-tsmom-12m-v1 \
+  --plan-id '<已预登记计划>' --training-bars 1095 --test-bars 365 \
+  --blind-bars 365
+```
+
+`walk-forward` 复用生产特征、程序策略、成本与风控口径，以 K 线收盘生成信号、下一根开盘撮合，并自动使用覆盖成交、持有期与标签跨度的 embargo/purge；特征预热只能读取信号前已知事实。费用、滑点和价差按开仓与平仓各自名义金额计算，回撤按每根已收盘 K 线盯市；程序退出由生产与回测共用的纯规则评价器执行。`--blind-bars` 显式保留从未参与 walk-forward 的尾部盲测区间。默认只输出高密度结构化摘要；`--include-trades` 才展开逐笔事实，不创建长期 Markdown 报告。Codex 的盈利证据只接受在结果发生前冻结的前瞻决策带；即使旧事件具有真实 `observed_at`，今天的模型也可能已经知道历史后果，事后调用只能做行为回归，不能冒充 AI Alpha。
+
+完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带应在模型不重跑的前提下，离线配对回放价格基线与多个预登记的确定性 `Q+AI` 变体。所有变体都从真实 Codex 完成后的首个可成交时点开始，并复用生产成本、频率、风控、撮合和退出语义。历史行情能验证程序 Alpha；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，详见 `ARCHITECTURE.md` §9.5.1。当前代码已实现程序 walk-forward 和单周期前瞻方向结算，尚未实现多周期预测头及决策带的多变体配对回放，因此现有模拟盘结果不能代替完整 AI 回测。
+
+前瞻方向标签到期后可按冻结 Pipeline、品种和周期生成去重叠评价：
+
+```bash
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+  .venv/bin/quant-core evaluate-ai-forecasts \
+  --config '<运行配置>' --pipeline-version '<冻结 Pipeline>' \
+  --window-start '<含时区起点>' --window-end '<含时区终点>' \
+  --published-at '<含时区发布时间>'
+```
+
+输出包含方向命中率、平均方向收益及其保守下界，但始终标记为不可交易方向评价，不计作账户 PnL。结算服务跨发布版本处理所有未到期 Proposal，发布新 Pipeline 不会遗留旧预测。
 
 检查当前 Phase A 门禁：
 

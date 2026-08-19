@@ -6,7 +6,7 @@ import { Meter } from "./Meter";
 import styles from "./Resources.module.css";
 
 export function Resources() {
-  const data = useLive(() => api.resources());
+  const data = useLive(() => api.resources(), "resources");
   const load = data?.load_average["1m"];
 
   return (

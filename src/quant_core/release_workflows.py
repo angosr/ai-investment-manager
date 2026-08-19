@@ -7,6 +7,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from quant_core.temporal_compat import default_activity_versioning_intent
+
 EVALUATE_RELEASE_ACTIVITY = "evaluate-release-approval-v1"
 
 
@@ -53,6 +55,7 @@ class ReleaseWorkflow:
                 start_to_close_timeout=start_to_close,
                 schedule_to_close_timeout=schedule_to_close,
                 retry_policy=retry_policy,
+                versioning_intent=default_activity_versioning_intent(),
                 summary="核验候选版本并生成不可执行的人工审批请求",
             )
         except ActivityError:

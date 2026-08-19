@@ -1,8 +1,6 @@
 # 运行观测台设计文档（Operator Control Desk）
 
-状态：**待评审**。本文档描述一个只读的实时 Web 观测台，用于让运行者一眼看清系统的运行过程与现状。实施前请先评审本文档与配套视觉稿。
-
-配套视觉稿（静态占位数据，可交互）：见文末「视觉稿」一节的 Artifact 链接。
+状态：**已实施并完成契约审查**。本文档描述只读实时 Web 观测台的现行设计与边界。
 
 ---
 
@@ -16,14 +14,14 @@
 - 时间线：按周期（cycle）倒序展开的运行过程，每条含 AI 分析摘要（可展开）与最终动作。
 - 盈利曲线：扣费后净收益的权益曲线与窗口指标。
 - 持仓：当前未平仓生命周期、保护状态、最长持有倒计时。
-- 三个 Codex 账号的用量/余量、状态、冷却与每小时调用预算。
+- 显式白名单中 Codex 账号的用量/余量、状态、冷却与每小时调用预算。
 - 主机 CPU / 内存 / 磁盘使用情况。
 
 ### 1.2 非目标（明确排除）
 
 - **不是控制台**。页面只读，不提供任何下单、暂停、改配置、切 Champion、触发分析等写操作。Kill Switch 等控制权仍只在执行模块内，观测台只显示其状态，绝不提供按钮。
 - **不自算指标**。第 7.9 节的 `MetricDefinition` 与 `OutcomeWindowReport` 是监控唯一口径；观测台只投影既有事实，绝不在前端重算 PnL / 回撤 / 胜率，避免仪表盘与风控口径分裂。
-- **不引入新基础设施**。复用现有 PostgreSQL + `LISTEN quant_trigger_outbox` + 同一 `quant-core` 镜像；不引入 Kafka / Redis / Celery（遵守架构 §12.3）。
+- **不引入新基础设施**。复用现有 PostgreSQL 与同一 `quant-core` 镜像；不引入 Kafka / Redis / Celery（遵守架构 §12.3）。
 
 ---
 
@@ -34,7 +32,7 @@
 | 只读投影，不成为第二控制平面（§2 核心决策、§12.3） | 全部为 `GET`；无任何写路径、无控制按钮 |
 | `MetricDefinition` 是监控唯一口径（§11） | 只读取既有 `metric_observations` / `outcome_window_reports`，不重算 |
 | 仓库脚本只做启动/迁移/诊断，不承载业务状态（§12.3） | 观测台是诊断性只读服务，无业务状态所有权 |
-| 不为「事件驱动」新增中间件（§12.3） | 实时靠既有 `NOTIFY` + 轮询兜底 + SSE 单向推送 |
+| 不为「事件驱动」新增中间件（§12.3） | 交易链路继续使用既有 Outbox/`NOTIFY`；观测台只用分主题 SSE tick，不参与交易调度 |
 | Temporal 持有流程状态，PostgreSQL 只存业务事实 | 观测台只读 PostgreSQL 业务事实；不查询 Temporal 内部状态作为真相源 |
 | 失败关闭（§2 原则 2） | 数据缺失/过期时显示「未知/过期」的确定状态，不猜测、不填补 |
 
@@ -121,7 +119,9 @@ Panel  Propose Cand  Compose Freq  Risk  Exec  Pos   Outcome
 | 数据新鲜度 | 指标 `market_data_age_seconds` / `account_data_age_seconds`（`metric_observations` 最新观测） |
 | 风险预算（是否冻结） | `reconciliation_reports.latest().freeze_new_risk` |
 | 对账 | `reconciliation_reports.latest().status`（MATCHED / MISMATCH / UNKNOWN）——**原独立对账卡片并入此处** |
-| 熔断 Kill Switch | 由风控/执行状态派生（`portfolio_risk_budgets` + 最新周期 `outcome`）；无独立表则标注「由风控口径派生」 |
+| 熔断 Kill Switch | `RiskPolicy.kill_switch`；不得从对账冻结或周期结果猜测 |
+
+对账报告超过 `ReconciliationPolicy.maximum_report_age_seconds` 后按异常展示；数据新鲜度会把最新周期中记录的行情/账户年龄继续按墙钟累加，不能让一条旧周期指标永久显示为新鲜。
 
 Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健康视线。
 
@@ -155,16 +155,16 @@ Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健�
 ### 5.5 账号（Codex ×3）
 
 - 状态/余量：`codex_account_capacity`（每账号最新 `effective_headroom%`、`healthy`、`observed_at`；`payload` 内窗口 `resets_at` → 最早重置倒计时）。
-- 租约：`SELECT codex_account_leases where status='ACTIVE'`（避免副作用方法）。
+- 租约：`SELECT codex_account_leases where status='ACTIVE' and expires_at > now`（避免副作用方法，也不把未清理的过期行误报为占用）。
 - 近期失败：`codex_runs` 近窗口按 `status/error_class` 计数（`FailureClass`）。
-- 账号身份与开关：配置 `CodexAccountRegistry`（`account_id`、`enabled`）。**当前三账号 `enabled:false`**，如实显示 `DISABLED`。
-- 每小时调用预算：配置 `TriggerPolicy.maximum_ai_calls_per_hour`（默认 12）与 `minimum_call_interval_seconds`（默认 15）；已用次数由近 1 小时 `codex_runs` 计数。
+- 账号身份与开关：配置 `CodexAccountRegistry`（目录同名 `account_id`、`enabled`）；默认白名单全部禁用并如实显示 `DISABLED`。
+- 每小时调用预算：配置 `TriggerPolicy.maximum_ai_calls_per_hour`（默认 12）与 `minimum_call_interval_seconds`（默认 15）；已用次数由近 1 小时跨品种原子 `analysis_call_admissions` 计数，与实际门禁保持同口径。`codex_runs` 单独表达真实 Codex 尝试及结果。
 - 说明：余量是**百分比余量（headroom%）**，非绝对 token 数——如实以百分比与重置时间呈现。
 
 ### 5.6 主机资源（净新增，极简）
 
 - 取数：**新增 `psutil` 采样**——只取**整体** CPU 使用率、内存 used/total、磁盘 used/total，外加 `loadavg` 作副标题。**不做分核**（按反馈简化）。
-- 前端每 ~2 秒实时刷新（走 SSE tick）。
+- 前端默认每 3 秒刷新（走 SSE 快速主题 tick）。
 - 采样点为观测台进程所在主机；多进程部署下代表观测台宿主机，按服务归因的资源为后续扩展项，**不夸大为按角色隔离**。
 
 ### 5.7 对账（并入健康状态）
@@ -178,7 +178,7 @@ Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健�
 - 取数：
   - 新闻/情报：`normalized_events`（`IntelligenceEvent`：`evidence_id, event_time, observed_at, source, title, body, symbols, relevance, impact, source_reliability, novelty`）。读 helper `SqlEventStore.visible(symbol, as_of)`，或自写按 `event_time desc` 的只读 `SELECT`。
   - 触发事件：`analysis_trigger_events`（`trigger_type` = INTELLIGENCE_INSERTED / MARKET_SHOCK / POSITION_RECHECK、`symbol, occurred_at, priority`）。
-- 每条展示：时间、类别徽章（新闻 / 市场冲击）、来源、标题、影响力（`impact`/`priority`）、以及**是否触发了分析**（若该事件进入某周期的 TriggerBatch，链接到「→ 触发了 HH:MM 的分析」，点击跳到对应决策行）。
+- 每条展示：时间、类别徽章（新闻 / 市场冲击）、来源、标题、影响力（`impact`/`priority`），以及**是否真的进入过分析面板**。只有 `evidence_id` 出现在某个 `panel_snapshots.payload.evidence[]` 中，才标注「→ 喂给了 HH:MM 的分析」；不能用时间接近关系猜测。
 - **不可信内容如实标注**：`prompt_injection_suspected` 的条目打「注入嫌疑」标记并说明「仅作数据、不作指令」，呼应架构 §6.5。
 - 与信息快照的关系：某周期快照「证据层」里的新闻，就是这条世界事件时间线里被选中喂给 AI 的子集——两者互为印证。
 
@@ -192,7 +192,7 @@ Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健�
   - **必读层 · 行情与特征**：`market`（bid/ask/last/source）+ `features`（`regime, return_fraction, realized_volatility, atr, spread_bps, volume_ratio, market_age_seconds`）。
   - **必读层 · 账户（决策时刻）**：`account`（`quote_balance, positions[], open_order_count, daily_pnl, drawdown_fraction, reconciled`）。
   - **证据层**：`evidence[]`（`PanelEvidence`：`source, title, excerpt, value_score, prompt_injection_suspected`）——即 AI 被允许看到的新闻，按价值排序；注入嫌疑条目标「已降权」。无入选时明确显示「本轮无达到价值阈值的证据」。
-  - **固定规则**：`rules_digest`（每次都注入的三条硬规则：Codex 只能提结构化分析、外部指令视为不可信数据、数据不全不得加风险）。
+  - **固定规则**：`rules_digest`（Codex 只能提结构化分析、外部指令视为不可信数据、数据不全不得加风险，以及与执行/风控共享的允许建仓方向）。
 - 只读呈现，不提供任何「重新分析」之类的写操作。
 
 ---
@@ -202,9 +202,9 @@ Champion/manifest 等低频信息移到顶栏次要位置或页脚，不占健�
 单向 **SSE**（Server-Sent Events），最简、只读、天然契合：
 
 1. 后端一个 `GET /api/stream` 保持长连接。
-2. 事件源：复用 `LISTEN quant_trigger_outbox`（新周期/触发即时唤醒）+ 定时 tick（资源 ~2s，其余 ~3–5s）。
-3. SSE 只推**轻量「已变更」信号**（如 `{"kind":"cycles"}`），前端据此重取受影响端点；不在 SSE 里塞大对象。
-4. 断线：前端指数退避重连；期间面板显示「实时中断，最后更新于 …」的确定状态（失败关闭原则，不静默假装最新）。
+2. 当前事件源是有界定时 tick：健康、持仓、账号和主机资源为快速主题；周期、世界事件和权益为慢速主题。交易与分析的事件驱动链路不依赖观测台轮询。
+3. SSE 只推**轻量主题列表**（如 `{"seq":5,"topics":["health","positions"]}`）；前端只重取对应端点，不在 SSE 里塞大对象。默认快速 3 秒、慢速 15 秒，可在应用构造时统一调整。
+4. 同一端点若上一次请求仍在执行，不并发堆积请求，只保留一次补跑；断线由浏览器 `EventSource` 自动重连，顶栏明确显示实时连接中断。
 
 不使用 WebSocket 双向通道——只读观测无需上行，SSE 更省。
 
@@ -224,7 +224,7 @@ quant-core dashboard-service \
 ```
 
 - 仅绑 `127.0.0.1`（与其余服务一致，不对外暴露）。
-- 复用既有 `build_engine` 与只读取数类；不新建 ORM、不改 schema、不加迁移。
+- 复用既有 `build_engine` 与只读取数类；不新建 ORM。数据库只补读取热路径索引，不增加业务表或写路径。
 
 ### 7.2 依赖
 
@@ -232,9 +232,7 @@ quant-core dashboard-service \
 
 - `starlette` + `uvicorn`（最小 ASGI；SSE 用原生 async 生成器，无需额外库）。
 - `psutil`（主机资源）。
-- 前端**零外部 CDN**、自托管：原生 HTML/CSS/JS + 手绘 SVG 画权益曲线（不引图表库），字体可离线内嵌或走 Google Fonts（部署可二选一）。
-
-> 备选：若倾向类型化端点可用 FastAPI（更重）。推荐 Starlette 以贴合「最小、只读、诊断」定位——此点列入待确认决策。
+- 前端**零外部 CDN**、自托管：React + TypeScript + CSS Modules，手绘 SVG 权益曲线（不引图表库），仅使用系统字体栈。
 
 ### 7.3 端点（全部只读 `GET`）
 
@@ -246,7 +244,7 @@ quant-core dashboard-service \
 | `/api/events?before=&limit=` | 世界事件时间线（§5.8，新闻 + 触发事件合并） |
 | `/api/equity?window=` | 权益曲线序列 + 窗口指标（§5.2） |
 | `/api/positions` | 未平仓 + 盯市估算（§5.4） |
-| `/api/accounts` | 三账号余量/状态/预算（§5.5） |
+| `/api/accounts` | 白名单账号余量/状态/预算（§5.5） |
 | `/api/resources` | 主机 CPU/内存/磁盘（§5.6） |
 | `/api/reconciliation` | 最新对账（§5.7） |
 | `/api/stream` | SSE 变更信号（§6） |
@@ -255,9 +253,9 @@ quant-core dashboard-service \
 
 ## 8. 净新增 vs 复用
 
-- **复用（无需改动）**：全部业务事实表与只读取数类、`cycle_id` 脊柱、`NOTIFY` 通道、`OutcomeWindowReport` 指标口径、配置加载。
-- **净新增**：① 只读 Web 服务层（Starlette/uvicorn + 一个 CLI 命令 + 端点）；② `psutil` 主机资源采样（代码库此前无任何资源监控）；③ 前端单页。
-- **不新增**：数据库表、迁移、写路径、控制动作、消息中间件。
+- **复用**：全部业务事实表与只读取数类、`cycle_id` 脊柱、`OutcomeWindowReport` 指标口径、配置加载。
+- **净新增**：① 只读 Web 服务层；② `psutil` 主机资源采样；③ 前端单页；④ 仅面向读取热路径的数据库索引。
+- **不新增**：业务表、写路径、控制动作、消息中间件。
 
 因引入了一个新的进程角色与外部依赖，按 §12.3 建议补一条 **ADR**（记录：为何需要独立只读观测服务、最简替代方案、撤销条件）。
 
@@ -308,19 +306,17 @@ quant-core dashboard-service \
 1. **M1 后端只读 API**：`dashboard-service` + 全部 `GET` 端点（接既有取数类）+ `psutil` 采样。契约测试用录制样本。
 2. **M2 前端骨架**：顶栏 + 时间线 + 周期轨（招牌元素）+ 展开详情，接 M1。
 3. **M3 HERO 与仪表**：权益曲线 + 持仓 + 账号 + 资源 + 对账。
-4. **M4 实时**：SSE + `NOTIFY` 唤醒 + 断线降级。
+4. **M4 实时**：按主题分频的 SSE 刷新 + 断线降级。
 5. **M5 打磨**：两主题、响应式、可访问性（键盘焦点、reduced-motion）、ADR。
 
 ---
 
-## 11. 待你确认的决策点
+## 11. 已冻结的实施决策
 
-1. **后端框架**：推荐 Starlette + uvicorn（最小）；是否接受，或倾向 FastAPI？
-2. **字体来源**：Google Fonts 在线 vs 完全离线内嵌（离线更贴合内网/隔离部署）？
-3. **主题**：默认深色仪表台；是否需要浅色主题切换按钮，还是只跟随系统？
-4. **资源监控范围**：先做观测台宿主机整体 CPU/内存/磁盘；是否也要磁盘按挂载点、网络 IO？
-5. **盯市浮盈**：确认接受「持仓浮盈为盯市估算、非结算口径」的标注方式？
-6. **端口**：默认 `127.0.0.1:8090`，是否有偏好？
+- 后端使用 Starlette + uvicorn；页面和 API 由一个只读进程托管。
+- 字体只使用系统字体栈，不依赖 Google Fonts 等外部网络资源。
+- 主题跟随系统并允许手动切换；资源仅显示宿主机整体 CPU、内存和磁盘。
+- 持仓浮盈明确标为盯市估算、非结算口径；默认监听 `127.0.0.1:8090`。
 
 ---
 
@@ -328,18 +324,16 @@ quant-core dashboard-service \
 
 后端（`src/quant_core/dashboard/`，只读）：`resources`(psutil 采样)、`read_models`(纯读取数)、`formatting`+`serializers`(措辞与 DTO)、`health`(单一健康)、`stream`(SSE)、`app`(Starlette 路由)。CLI 新增 `quant-core dashboard-service`（**单进程同时托管前端与 API**，默认自动挂载 `web/dist`）；可选依赖组 `[dashboard]`（starlette/uvicorn/psutil）。
 
-测试：`tests/test_dashboard.py` 覆盖措辞/摘要/权益累加/健康合成/资源采样；`tests/test_dashboard_integration.py` **跑真实回放周期落库，再经读取层+投影层还原 DTO**，用真实 payload 验证字段一致性、周期轨推断、信息快照投影、开仓读取与「新闻→喂给的周期」反向关联。Ruff 通过，全量测试 100% 通过（1 项 Postgres 集成测试按约跳过）。已用真实 SQLite 端到端跑通：回放 EXECUTED 周期 + 未平仓持仓（含盯市估算）+ 被喂给该周期的新闻均正确渲染。
+SSE 是无限响应，但不能让发布重启无限等待浏览器。Dashboard 进程使用 5 秒优雅关闭上限；独立端口实测在真实 EventSource 仍连接时于 5 秒取消该只读任务并退出，交易服务和事实库不依赖这条连接。
+
+测试：`tests/test_dashboard.py` 覆盖措辞、摘要、权益累加、墙钟新鲜度、真实 Kill Switch 与资源采样；`tests/test_dashboard_integration.py` **跑真实回放周期落库，再经读取层+投影层还原 DTO**，用真实 payload 验证字段一致性、后端门禁状态、信息快照投影、开仓读取与「新闻→喂给的周期」反向关联；`tests/test_dashboard_stream.py` 验证快慢主题分频。
 
 前端（`web/`，React + TS + Vite，CSS Modules 分组件）：`api/`(类型+客户端)、`hooks`(实时/时钟/主题/连接)、`lib/`(SSE+格式化)、`components/`(Masthead、HealthPill、EquityHero+EquityChart、Timeline+CycleRow+CycleRail、WorldFeed、SnapshotDrawer、Positions、Accounts、Resources、Card、Meter)。`npm run build` 通过（tsc 类型检查 + 打包）。单文件均小而聚焦，无大文件堆积。
 
-已采纳的决策（§11）：后端 **Starlette + uvicorn**；主题 **跟随系统 + 手动切换**；资源 **仅整体 CPU/内存/磁盘**；持仓浮盈 **明确标「估算」**；端口默认 **127.0.0.1:8090**；字体首版走 **Google Fonts 在线**（离线内嵌为隔离部署的后续开关）。
+已采纳的决策见 §11。前端不再请求外部字体资源，隔离环境与断网环境下不影响首屏渲染。
 
 世界事件 → 周期关联**已实现且精确**：一条新闻当且仅当被选入某周期的信息面板（`panel_snapshots.payload.evidence[].evidence_id` 与 `normalized_events.evidence_id` 相等）时，才标注「喂给了 HH:MM 的分析」——不是时间近似，是真实的证据入选关系，集成测试已覆盖。
 
 权益曲线与指标口径已统一：观测台就所选窗口调用**生产同一个** `OutcomeWindowEvaluator` 得到报告，曲线（原始事实累加）与 stat（该 evaluator 的聚合）同期同源、公式不重复、口径不分裂。
 
-诚实的后续项（不夸大为已完成）：SSE 首版为固定间隔 tick，低延迟 `NOTIFY` 唤醒为增强，不改变契约。
-
-## 视觉稿
-
-见配套 Artifact（静态占位数据，含顶栏灯、权益曲线、周期时间线与可展开的周期轨、右栏仪表）。占位数据仅用于确认观感与信息层级，非真实运行数据。
+诚实的边界：SSE 是观测刷新机制，不参与交易时效链路；低延迟交易触发仍由 Trigger/Outbox/Temporal 链路负责。若将来接入数据库通知，只能作为减少观测延迟的可替换优化，不能改变只读 API 契约。

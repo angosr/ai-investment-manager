@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -10,19 +11,25 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
+from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
 from quant_core.cycle import AnalysisCycle
 from quant_core.domain import MarketSnapshot
 from quant_core.execution import MockExchange
+from quant_core.governance import ReleaseManifest
+from quant_core.governance_context import GovernanceSnapshotAssembler
 from quant_core.lifecycle import PositionLifecycleManager
-from quant_core.market_data_sql import market_metadata
+from quant_core.market_data import MarketTrade
+from quant_core.market_data_sql import SqlMarketDataStore, market_metadata
 from quant_core.persistence import (
     SqlEventStore,
     SqlFactLedger,
+    SqlGovernanceRepository,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
     SqlRiskBudgetStore,
     account_snapshots,
     build_engine,
+    candidate_outcomes,
     decision_outcomes,
     metadata,
     metric_observations,
@@ -30,7 +37,14 @@ from quant_core.persistence import (
     portfolio_risk_budgets,
 )
 from quant_core.reconciliation import MockReconciler
-from quant_core.trigger import TriggerNow, build_initial_trigger_plan, build_trigger_plan_patch
+from quant_core.trigger import (
+    AnalysisTriggerType,
+    TriggerNow,
+    build_initial_trigger_plan,
+    build_trigger_batch,
+    build_trigger_event,
+    build_trigger_plan_patch,
+)
 from quant_core.trigger_sql import (
     PostgresOutboxListener,
     PostgresTriggerLeadership,
@@ -58,7 +72,18 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
     migration_config = Config(str(ROOT / "alembic.ini"))
     migration_config.set_main_option("script_location", str(ROOT / "migrations"))
     migration_config.set_main_option("sqlalchemy.url", database_url)
+    migration_config.attributes["database_url"] = database_url
     command.upgrade(migration_config, "head")
+    SqlGovernanceRepository(engine).record_release(
+        ReleaseManifest(
+            manifest_id="release-bootstrap-v1",
+            created_at=datetime(2026, 8, 17, tzinfo=UTC),
+            status="CHAMPION",
+            code_version="historical-bootstrap-v1",
+            component_versions=(("pipeline", "off-pipeline-v1"),),
+            constitution_version="constitution-v1",
+        )
+    )
     first_leader = PostgresTriggerLeadership(
         engine, app_config.trigger.dispatcher_advisory_lock_key
     )
@@ -98,6 +123,54 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         )
         assert revised.plan.revision == 2
         assert listener.wait(1)
+    raw_connection = engine.raw_connection()
+    try:
+        assert raw_connection.driver_connection.autocommit is False
+    finally:
+        raw_connection.close()
+    budget_repository = SqlTriggerRepository(
+        engine,
+        app_config.trigger.model_copy(
+            update={"maximum_ai_calls_per_hour": 1, "minimum_call_interval_seconds": 15}
+        ),
+    )
+
+    def admission_batch(symbol: str):
+        plan = build_initial_trigger_plan(
+            symbol=symbol,
+            pipeline_id=app_config.pipeline.version,
+            manifest_id="release-bootstrap-v1",
+            updated_at=replay_input.market.as_of,
+            heartbeat_seconds=None,
+        )
+        trigger = build_trigger_event(
+            trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+            symbol=symbol,
+            pipeline_id=app_config.pipeline.version,
+            occurred_at=replay_input.market.as_of,
+            observed_at=replay_input.market.as_of,
+            priority=100,
+            dedup_key=f"postgres-admission-{symbol}",
+        )
+        return build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=replay_input.market.as_of,
+            deadline=replay_input.market.as_of + timedelta(minutes=5),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admissions = tuple(
+            pool.map(
+                lambda batch: budget_repository.admit_analysis_call(
+                    batch,
+                    requested_at=replay_input.market.as_of,
+                ),
+                (admission_batch("BTCUSDT"), admission_batch("ETHUSDT")),
+            )
+        )
+    assert sum(item.admitted for item in admissions) == 1
+    assert sum(item.retry_at is not None for item in admissions) == 1
     cycle = AnalysisCycle.with_adapters(
         app_config,
         ledger=SqlFactLedger(engine),
@@ -114,6 +187,51 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
 
     assert first.position_lifecycle is not None
     assert first.account_after is not None
+    candidate = first.candidates[0]
+    candidate_evaluation_at = candidate.signal_observed_at + timedelta(
+        minutes=candidate.horizon_minutes
+    )
+    SqlMarketDataStore(engine).put_trade(
+        MarketTrade(
+            trade_id="postgres-candidate-exit",
+            symbol=candidate.symbol,
+            aggregate_trade_id=9_000_000_002,
+            event_time=candidate_evaluation_at,
+            observed_at=candidate_evaluation_at,
+            price=candidate.reference_price * Decimal("1.01"),
+            quantity=Decimal("1"),
+            buyer_is_maker=False,
+            source="postgres-contract",
+        )
+    )
+    candidate_settlement = CandidateOutcomeSettler(
+        store=SqlCandidateOutcomeStore(engine),
+        evaluation_version=app_config.outcome_evaluation.version,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        settlement_grace_minutes=app_config.outcome_evaluation.settlement_grace_minutes,
+    ).settle(as_of=candidate_evaluation_at)
+    assert candidate_settlement.settled == 1
+    governance_metrics = dict(
+        GovernanceSnapshotAssembler(engine, app_config, project_root=ROOT)
+        .build(as_of=candidate_evaluation_at)
+        .metric_summaries
+    )
+    evidence_prefix = ":".join(
+        (
+            "candidate_evidence",
+            candidate.producer_id,
+            candidate.producer_version,
+            candidate.symbol,
+            candidate.side.value,
+            str(candidate.horizon_minutes),
+            candidate.calibration_ref,
+            app_config.outcome_evaluation.version,
+            app_config.execution.version,
+            app_config.frequency.version,
+        )
+    )
+    assert governance_metrics[f"{evidence_prefix}:SETTLED:count"] == "1"
+    assert governance_metrics[f"{evidence_prefix}:non_overlapping_settled"] == "1"
     open_repository = SqlOpenLifecycleRepository(engine)
     assert [item.lifecycle.position_id for item in open_repository.list_open()] == [
         first.position_lifecycle.position_id
@@ -158,7 +276,8 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         assert connection.scalar(select(func.count()).select_from(orders)) == 2
         assert connection.scalar(select(func.count()).select_from(account_snapshots)) == 3
         assert connection.scalar(select(func.count()).select_from(decision_outcomes)) == 1
-        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 16
+        assert connection.scalar(select(func.count()).select_from(candidate_outcomes)) == 1
+        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 17
         budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
         assert budget["reserved_amount"] == 0
         assert budget["exposure_risk_amount"] == 0

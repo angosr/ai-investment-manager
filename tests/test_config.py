@@ -1,8 +1,17 @@
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from quant_core.config import DeploymentStage, load_config
+from quant_core.config import (
+    CodexRuntimePolicy,
+    DeploymentStage,
+    ExecutionPolicy,
+    FrequencyPolicy,
+    PanelPolicy,
+    load_config,
+)
 
 
 def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> None:
@@ -16,6 +25,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert not config.deployment.live_order_submission_enabled
     assert config.deployment.credential_profile is None
     assert not config.codex_runtime.enabled
+    assert config.panel.max_characters == 12_000
+    assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
 
 
@@ -37,3 +48,36 @@ def test_config_inheritance_rejects_cycles(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="存在循环"):
         load_config(first)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("minimum_net_edge_bps", Decimal("-1")),
+        ("latency_bps", Decimal("-1")),
+        ("adverse_selection_bps", Decimal("-1")),
+        ("uncertainty_buffer_bps", Decimal("-1")),
+    ),
+)
+def test_frequency_policy_rejects_negative_gate_or_risk_buffers(field, value) -> None:
+    with pytest.raises(ValidationError):
+        FrequencyPolicy(version="invalid-frequency", **{field: value})
+
+
+@pytest.mark.parametrize("field", ("fee_bps", "market_slippage_bps"))
+def test_execution_policy_rejects_negative_trade_costs(field) -> None:
+    with pytest.raises(ValidationError):
+        ExecutionPolicy(version="invalid-execution", **{field: Decimal("-1")})
+
+
+def test_ai_input_budgets_cannot_regress_to_unbounded_raw_context() -> None:
+    with pytest.raises(ValidationError):
+        PanelPolicy(version="oversized-panel", max_characters=12_001)
+    with pytest.raises(ValidationError):
+        CodexRuntimePolicy(
+            version="oversized-prompt",
+            expected_cli_version="codex-cli test",
+            model="test-model",
+            reasoning_effort="low",
+            maximum_prompt_characters=16_001,
+        )

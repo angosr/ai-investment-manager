@@ -32,9 +32,15 @@ export interface CycleRow {
   confidence: number | null;
 }
 
+export interface CycleRailGate {
+  key: string;
+  label: string;
+  state: "pass" | "soft" | "pending" | "stop" | "skip";
+  note: string;
+}
+
 export interface CycleRail {
-  reached: number;
-  stop_at: number | null;
+  gates: CycleRailGate[];
 }
 
 export interface CycleAi {

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_DOWN
 
 from quant_core.config import RiskPolicy
 from quant_core.domain import (
+    SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
     GuardState,
     MarketSnapshot,
@@ -14,6 +15,7 @@ from quant_core.domain import (
     RuleResult,
     Side,
     TradeIntent,
+    _require_utc,
 )
 from quant_core.ids import content_hash, stable_id
 
@@ -28,11 +30,13 @@ class RiskEngine:
         intent: TradeIntent,
         market: MarketSnapshot,
         account: AccountSnapshot,
+        as_of: datetime | None = None,
     ) -> RiskDecision:
+        decision_at = market.as_of if as_of is None else _require_utc(as_of)
         rules = [
             self._boolean_rule(
                 "kill-switch",
-                not self._policy.kill_switch,
+                not (self._policy.kill_switch or account.kill_switch_active),
                 "KILL_SWITCH_CLEAR",
                 "KILL_SWITCH_ACTIVE",
             ),
@@ -44,15 +48,25 @@ class RiskEngine:
                 observed=intent.symbol,
                 limit=",".join(self._policy.symbol_allowlist),
             ),
+            # 现货 MVP 只做多：无持仓开空既不可执行（binance_testnet 与所有退出路径
+            # 都假设做多），必须在占用组合风险预算之前拒绝，否则预算会被永久泄漏。
+            self._boolean_rule(
+                "long-only",
+                intent.side in SUPPORTED_OPEN_SIDES,
+                "LONG_ENTRY",
+                "SHORT_ENTRY_NOT_SUPPORTED",
+                observed=intent.side.value,
+                limit=",".join(side.value for side in SUPPORTED_OPEN_SIDES),
+            ),
             self._age_rule(
                 "market-freshness",
-                market.as_of,
+                decision_at,
                 market.observed_at,
                 self._policy.maximum_market_age_seconds,
             ),
             self._age_rule(
                 "account-freshness",
-                market.as_of,
+                decision_at,
                 account.observed_at,
                 self._policy.maximum_account_age_seconds,
             ),
@@ -96,7 +110,7 @@ class RiskEngine:
                 limit=str(entry_price),
             )
         )
-        if intent.valid_until <= market.as_of:
+        if intent.valid_until <= decision_at:
             rules.append(
                 RuleResult(
                     rule_id="intent-validity",
@@ -116,7 +130,13 @@ class RiskEngine:
             )
 
         intent_digest = content_hash(intent)
-        decision_id = stable_id("risk", intent.cycle_id, intent.intent_id, self._policy.version)
+        decision_id = stable_id(
+            "risk",
+            intent.cycle_id,
+            intent.intent_id,
+            self._policy.version,
+            decision_at,
+        )
         common = {
             "decision_id": decision_id,
             "cycle_id": intent.cycle_id,
@@ -192,7 +212,7 @@ class RiskEngine:
             symbol=intent.symbol,
             risk_amount=actual_risk,
             quantity=quantity,
-            expires_at=market.as_of + timedelta(seconds=self._policy.reservation_ttl_seconds),
+            expires_at=decision_at + timedelta(seconds=self._policy.reservation_ttl_seconds),
         )
         return RiskDecision(
             **common,

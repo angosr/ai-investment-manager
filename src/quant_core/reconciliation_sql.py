@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import case, insert, select
+from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from quant_core.domain import AccountSnapshot, Order, _require_utc
 from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
-    account_snapshots,
     analysis_cycles,
+    latest_account_snapshot_payload,
     mock_exchange_orders,
     orders,
     reconciliation_reports,
@@ -37,18 +38,8 @@ class SqlLocalTradingStateSource:
 
     def snapshot(self, *, as_of: datetime) -> TradingStateSnapshot:
         as_of = _require_utc(as_of)
-        phase_priority = case(
-            (account_snapshots.c.phase == "POST_EXIT", 3),
-            (account_snapshots.c.phase == "POST_EXECUTION", 2),
-            else_=1,
-        )
         with self._engine.connect() as connection:
-            account_payload = connection.execute(
-                select(account_snapshots.c.payload)
-                .where(account_snapshots.c.as_of <= as_of)
-                .order_by(account_snapshots.c.as_of.desc(), phase_priority.desc())
-                .limit(1)
-            ).scalar_one_or_none()
+            account_payload = latest_account_snapshot_payload(connection, as_of=as_of)
             order_payloads = tuple(
                 connection.execute(
                     select(orders.c.payload)
@@ -128,9 +119,9 @@ class SqlMockExchangeTruthSource:
         for order in authoritative_orders:
             event_time = max(fill.event_time for fill in order.fills) if order.fills else as_of
             if account.as_of.date() != event_time.date():
-                account = account.model_copy(update={"daily_pnl": 0})
+                account = account.model_copy(update={"daily_pnl": Decimal("0")})
             account = reconciler.apply(account, order)
-        daily_pnl = account.daily_pnl if account.as_of.date() == as_of.date() else 0
+        daily_pnl = account.daily_pnl if account.as_of.date() == as_of.date() else Decimal("0")
         account = account.model_copy(
             update={
                 "cycle_id": stable_id("mock_exchange_account", as_of.isoformat()),

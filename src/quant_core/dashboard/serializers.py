@@ -255,29 +255,95 @@ def _action(intent: TradeIntent | None, order: Order | None) -> dict | None:
 
 
 def _rail(facts: CycleFacts) -> dict:
-    """周期轨：算出到达的关卡下标与失败关闭的关卡（若有）。"""
+    """后端给出完整门禁状态，前端只渲染，避免两端重复推断业务语义。"""
 
-    reached = 1  # 面板就绪
-    if facts.analysis_proposal is not None:
-        reached = 2  # AI 建议
-    if facts.candidates:
-        reached = 3  # 生成候选
-    if facts.intent is not None:
-        reached = 4  # 合成意图
-    stop_at: int | None = None
-    if facts.outcome == "NO_TRADE":
-        stop_at = 4  # 频率与成本处止步
-        reached = 5
-    elif facts.outcome == "RISK_REJECTED":
-        reached = 6
-        stop_at = 5  # 风控处止步
-    elif facts.risk_decision is not None and facts.risk_decision.outcome == "APPROVED":
-        reached = 7  # 下单执行
-        if facts.position_lifecycle is not None:
-            reached = 8  # 建立持仓
-        if facts.decision_outcome is not None:
-            reached = 9  # 结算
-    return {"reached": reached, "stop_at": stop_at}
+    risk_approved = facts.risk_decision is not None and facts.risk_decision.outcome == "APPROVED"
+    stop_key = _rail_stop_key(facts)
+    codex_attempted = any(
+        dict(item.dimensions).get("metric") == "codex_analysis_success" for item in facts.metrics
+    )
+    gates = [
+        ("panel", "面板就绪", "pass", ""),
+        (
+            "proposal",
+            "AI 建议",
+            "soft" if facts.analysis_proposal is not None else "skip",
+            "软 · 建议"
+            if facts.analysis_proposal is not None
+            else "分析失败"
+            if codex_attempted
+            else "未启用",
+        ),
+        ("candidate", "生成候选", "pass" if facts.candidates else "skip", ""),
+        ("intent", "合成意图", "pass" if facts.intent is not None else "skip", ""),
+        (
+            "frequency",
+            "频率与成本",
+            "pass" if facts.risk_decision is not None else "skip",
+            "",
+        ),
+        (
+            "risk",
+            "风控",
+            "pass" if risk_approved else "skip",
+            "",
+        ),
+        (
+            "execution",
+            "下单执行",
+            "pass"
+            if facts.order is not None and facts.order.fills
+            else "pending"
+            if facts.outcome == "EXECUTION_PENDING"
+            else "skip",
+            "等待执行" if facts.outcome == "EXECUTION_PENDING" else "",
+        ),
+        ("position", "建立持仓", "pass" if facts.position_lifecycle is not None else "skip", ""),
+        ("outcome", "结算", "pass" if facts.decision_outcome is not None else "skip", ""),
+    ]
+    stop_notes = {
+        "proposal": "分析或校验失败",
+        "candidate": "没有形成候选",
+        "intent": "无法合成意图",
+        "frequency": "优势或频率不足",
+        "risk": "风控或风险预算拒绝",
+        "execution": "订单未成交",
+    }
+    if stop_key is not None:
+        stop_index = next(index for index, gate in enumerate(gates) if gate[0] == stop_key)
+        gates = [
+            (
+                key,
+                label,
+                "stop" if index == stop_index else "skip" if index > stop_index else state,
+                stop_notes[stop_key] if index == stop_index else "" if index > stop_index else note,
+            )
+            for index, (key, label, state, note) in enumerate(gates)
+        ]
+    return {
+        "gates": [
+            {"key": key, "label": label, "state": state, "note": note}
+            for key, label, state, note in gates
+        ]
+    }
+
+
+def _rail_stop_key(facts: CycleFacts) -> str | None:
+    if facts.reason_code.startswith("CODEX_"):
+        return "proposal"
+    if facts.outcome == "NO_ACTION":
+        return "candidate" if not facts.candidates else "intent"
+    if facts.outcome == "RISK_REJECTED":
+        return "risk"
+    if facts.outcome != "NO_TRADE":
+        return None
+    if facts.intent is not None and facts.risk_decision is None:
+        return "frequency"
+    if facts.risk_decision is not None and facts.execution_request is None:
+        return "risk"
+    if facts.order is not None and not facts.order.fills:
+        return "execution"
+    return "frequency"
 
 
 def _outcome_summary(report: OutcomeWindowReport) -> dict:
@@ -322,6 +388,8 @@ def _account_state(status: AccountStatus) -> str:
         return "DISABLED"
     if status.healthy is False:
         return "COOLDOWN"
+    if status.leased:
+        return "LEASED"
     if status.healthy is True:
         return "HEALTHY"
     return "UNKNOWN"

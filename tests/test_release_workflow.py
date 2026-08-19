@@ -51,7 +51,7 @@ def _case(now: datetime):
         plan_id="release-plan-1",
         registered_at=now - timedelta(days=2),
         base_manifest_id=champion.manifest_id,
-        primary_metric="net_pnl_after_all_costs",
+        primary_metric="net_pnl_after_trade_costs",
         minimum_sample_size=30,
         hard_guardrails=("rule_violation_eq_0",),
         required_stages=(

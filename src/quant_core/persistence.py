@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -20,15 +20,16 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    case,
     create_engine,
-    delete,
     func,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from quant_core.analyst import AttemptAudit, CapacitySnapshot, CodexLease
 from quant_core.domain import (
@@ -43,6 +44,7 @@ from quant_core.domain import (
     RiskDecision,
     SignalCandidate,
     TradeIntent,
+    _require_utc,
 )
 from quant_core.evaluation import ReplayEvaluationReport
 from quant_core.execution_contract import (
@@ -73,6 +75,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
+DATABASE_SCHEMA_VERSION = "f6c1a8d2e4b7"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -137,6 +140,7 @@ analysis_cycles = Table(
     Column("reason_code", String(128), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
+Index("ix_analysis_cycles_as_of", analysis_cycles.c.as_of)
 
 market_snapshots = Table(
     "market_snapshots",
@@ -147,6 +151,7 @@ market_snapshots = Table(
     Column("content_hash", String(64), nullable=False),
     Column("payload", JSON, nullable=False),
 )
+Index("ix_market_snapshots_symbol_as_of", market_snapshots.c.symbol, market_snapshots.c.as_of)
 
 account_snapshots = Table(
     "account_snapshots",
@@ -160,6 +165,7 @@ account_snapshots = Table(
     Column("payload", JSON, nullable=False),
     UniqueConstraint("cycle_id", "phase", name="uq_account_snapshot_cycle_phase"),
 )
+Index("ix_account_snapshots_as_of", account_snapshots.c.as_of)
 
 panel_snapshots = Table(
     "panel_snapshots",
@@ -171,6 +177,7 @@ panel_snapshots = Table(
     Column("content_hash", String(64), nullable=False, unique=True),
     Column("payload", JSON, nullable=False),
 )
+Index("ix_panel_snapshots_as_of", panel_snapshots.c.as_of)
 
 analysis_proposals = Table(
     "analysis_proposals",
@@ -240,6 +247,21 @@ portfolio_risk_budgets = Table(
     Column("exposure_risk_amount", Numeric(38, 18), nullable=False),
 )
 
+portfolio_protection_states = Table(
+    "portfolio_protection_states",
+    metadata,
+    Column("portfolio_id", String(64), primary_key=True),
+    Column("kill_switch_active", Boolean, nullable=False),
+    Column("high_water_equity", Numeric(38, 18), nullable=True),
+    Column("last_equity", Numeric(38, 18), nullable=True),
+    Column("drawdown_fraction", Numeric(38, 18), nullable=False),
+    Column("trip_reason", String(128), nullable=True),
+    Column("tripped_at", DateTime(timezone=True), nullable=True),
+    Column("last_reset_at", DateTime(timezone=True), nullable=True),
+    Column("last_reset_reason", String(512), nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=True),
+)
+
 execution_requests = Table(
     "execution_requests",
     metadata,
@@ -299,6 +321,7 @@ orders = Table(
     Column("payload", JSON, nullable=False),
     UniqueConstraint("cycle_id", "role", name="uq_order_cycle_role"),
 )
+Index("ix_orders_role_cycle", orders.c.role, orders.c.cycle_id)
 
 fills = Table(
     "fills",
@@ -331,6 +354,49 @@ decision_outcomes = Table(
     Column("payload", JSON, nullable=False),
 )
 
+candidate_outcomes = Table(
+    "candidate_outcomes",
+    metadata,
+    Column("outcome_id", String(128), primary_key=True),
+    Column(
+        "candidate_id",
+        ForeignKey("signal_candidates.candidate_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=False),
+    Column("net_return_bps", Numeric(38, 18), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+Index("ix_candidate_outcomes_evaluation_at", candidate_outcomes.c.evaluation_at)
+
+analysis_forecast_outcomes = Table(
+    "analysis_forecast_outcomes",
+    metadata,
+    Column("outcome_id", String(128), primary_key=True),
+    Column(
+        "proposal_id",
+        ForeignKey("analysis_proposals.proposal_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
+    Column("pipeline_version", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=False),
+    Column("directional_return_bps", Numeric(38, 18), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_analysis_forecast_outcomes_pipeline_evaluation",
+    analysis_forecast_outcomes.c.pipeline_version,
+    analysis_forecast_outcomes.c.evaluation_at,
+)
+
 metric_observations = Table(
     "metric_observations",
     metadata,
@@ -356,6 +422,8 @@ normalized_events = Table(
     Column("payload", JSON, nullable=False),
     UniqueConstraint("source", "content_hash", name="uq_normalized_event_source_hash"),
 )
+# Dashboard 世界事件按 event_time 倒序分页；交易热路径通过 trigger scope 关联后有界读取。
+Index("ix_normalized_events_event_time", normalized_events.c.event_time)
 
 analysis_trigger_events = Table(
     "analysis_trigger_events",
@@ -404,6 +472,17 @@ Index(
     analysis_trigger_batches.c.analysis_submitted_at,
 )
 
+analysis_call_admissions = Table(
+    "analysis_call_admissions",
+    metadata,
+    Column("batch_id", String(128), primary_key=True),
+    Column("pipeline_id", String(128), nullable=False),
+    Column("symbol", String(32), nullable=False),
+    Column("admitted_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index("ix_analysis_call_admissions_admitted_at", analysis_call_admissions.c.admitted_at)
+
 trigger_outbox = Table(
     "trigger_outbox",
     metadata,
@@ -441,6 +520,16 @@ analysis_trigger_plans = Table(
 Index(
     "uq_analysis_trigger_plan_current",
     analysis_trigger_plans.c.plan_id,
+    unique=True,
+    postgresql_where=analysis_trigger_plans.c.is_current.is_(True),
+    sqlite_where=analysis_trigger_plans.c.is_current.is_(True),
+)
+# plan_for_scope 每次投递都按 (symbol, pipeline_id, is_current) 取当前计划，是热路径；
+# 部分索引只覆盖当前行，避免随修订历史增长而退化为顺序扫描。
+Index(
+    "uq_analysis_trigger_plan_scope_current",
+    analysis_trigger_plans.c.symbol,
+    analysis_trigger_plans.c.pipeline_id,
     unique=True,
     postgresql_where=analysis_trigger_plans.c.is_current.is_(True),
     sqlite_where=analysis_trigger_plans.c.is_current.is_(True),
@@ -644,8 +733,50 @@ architecture_decisions = Table(
 )
 
 
+def latest_account_snapshot_payload(connection: Connection, *, as_of: datetime):
+    """给定 ``as_of``，返回"当前账户"快照 payload（无则 None）。
+
+    规则：按 ``as_of`` 倒序，同一 ``as_of`` 内按 phase 优先 POST_EXIT > POST_EXECUTION >
+    其它。影子账户投影（``shadow.py``）与对账本地态（``reconciliation_sql.py``）必须共用
+    这一条可见性规则，否则"两处看到的当前账户"会静默分裂。
+    """
+
+    phase_priority = case(
+        (account_snapshots.c.phase == "POST_EXIT", 3),
+        (account_snapshots.c.phase == "POST_EXECUTION", 2),
+        else_=1,
+    )
+    return connection.execute(
+        select(account_snapshots.c.payload)
+        .where(account_snapshots.c.as_of <= as_of)
+        .order_by(
+            account_snapshots.c.as_of.desc(),
+            phase_priority.desc(),
+            account_snapshots.c.snapshot_id.desc(),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def build_engine(database_url: str, *, echo: bool = False) -> Engine:
     return create_engine(database_url, echo=echo, future=True)
+
+
+def require_current_schema(engine: Engine) -> None:
+    """Fail closed before a runtime service touches an absent or stale schema."""
+
+    try:
+        with engine.connect() as connection:
+            versions = tuple(
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
+            )
+    except SQLAlchemyError as exc:
+        raise RuntimeError("数据库 Schema 版本不可读；拒绝启动运行服务") from exc
+    if versions != (DATABASE_SCHEMA_VERSION,):
+        observed = versions[0] if len(versions) == 1 else "MISSING_OR_MULTIPLE_HEADS"
+        raise RuntimeError(
+            f"数据库 Schema 版本不匹配：expected={DATABASE_SCHEMA_VERSION}, observed={observed}"
+        )
 
 
 def create_schema(engine: Engine) -> None:
@@ -662,6 +793,26 @@ def create_schema(engine: Engine) -> None:
                     portfolio_id="primary",
                     reserved_amount=0,
                     exposure_risk_amount=0,
+                )
+            )
+        protection_exists = connection.execute(
+            select(portfolio_protection_states.c.portfolio_id).where(
+                portfolio_protection_states.c.portfolio_id == "primary"
+            )
+        ).scalar_one_or_none()
+        if protection_exists is None:
+            connection.execute(
+                insert(portfolio_protection_states).values(
+                    portfolio_id="primary",
+                    kill_switch_active=False,
+                    high_water_equity=None,
+                    last_equity=None,
+                    drawdown_fraction=0,
+                    trip_reason=None,
+                    tripped_at=None,
+                    last_reset_at=None,
+                    last_reset_reason=None,
+                    updated_at=None,
                 )
             )
 
@@ -900,8 +1051,12 @@ class SqlCodexAuditStore:
     def record_attempt(self, attempt: AttemptAudit) -> None:
         payload = {
             "observed_at": attempt.observed_at.isoformat(),
+            "completed_at": attempt.completed_at.isoformat(),
+            "duration_ms": attempt.duration_ms,
+            "runtime_policy_version": attempt.runtime_policy_version,
             "bundle_hash": attempt.bundle_hash,
             "usage": attempt.usage,
+            "diagnostics": attempt.diagnostics,
         }
         try:
             with self._engine.begin() as connection:
@@ -959,6 +1114,21 @@ class SqlGovernanceRepository:
                 "payload": release.model_dump(mode="json"),
             },
         )
+
+    def get_champion(self) -> ReleaseManifest:
+        """Return the single release authorized as Champion, or fail closed."""
+
+        with self._engine.connect() as connection:
+            payloads = tuple(
+                connection.execute(
+                    select(release_manifests.c.payload).where(
+                        release_manifests.c.status == "CHAMPION"
+                    )
+                ).scalars()
+            )
+        if len(payloads) != 1:
+            raise ValueError("治理事实库中必须恰好存在一个 CHAMPION")
+        return ReleaseManifest.model_validate(payloads[0])
 
     def record_snapshot(self, snapshot: GovernanceSnapshot) -> None:
         self._record(
@@ -1172,12 +1342,16 @@ class SqlEventStore:
         *,
         pipeline_id: str = "default",
         trigger_expiry_seconds: int = 900,
+        max_visible_events: int = 100,
     ) -> None:
         if trigger_expiry_seconds < 1:
             raise ValueError("事件触发有效期必须为正数")
+        if not 1 <= max_visible_events <= 1000:
+            raise ValueError("可见事件读取上限必须在 1..1000")
         self._engine = engine
         self._pipeline_id = pipeline_id
         self._trigger_expiry_seconds = trigger_expiry_seconds
+        self._max_visible_events = max_visible_events
 
     def put(self, event: IntelligenceEvent) -> bool:
         payload = event.model_dump(mode="json")
@@ -1201,7 +1375,7 @@ class SqlEventStore:
                         pipeline_id=self._pipeline_id,
                         occurred_at=event.event_time,
                         observed_at=event.observed_at,
-                        priority=int(event.impact * event.relevance * 100),
+                        priority=int(event.impact * 100),
                         dedup_key=event.evidence_id,
                         evidence_ids=(event.evidence_id,),
                         expires_at=event.observed_at
@@ -1230,15 +1404,32 @@ class SqlEventStore:
             return False
         return True
 
-    def visible(self, *, symbol: str, as_of) -> tuple[IntelligenceEvent, ...]:
+    def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]:
+        as_of = _require_utc(as_of)
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(normalized_events.c.payload)
-                .where(normalized_events.c.observed_at <= as_of)
-                .order_by(normalized_events.c.event_time, normalized_events.c.evidence_id)
+                .select_from(
+                    normalized_events.join(
+                        analysis_trigger_events,
+                        analysis_trigger_events.c.dedup_key == normalized_events.c.evidence_id,
+                    )
+                )
+                .where(
+                    analysis_trigger_events.c.trigger_type == "INTELLIGENCE_INSERTED",
+                    analysis_trigger_events.c.symbol == symbol,
+                    analysis_trigger_events.c.pipeline_id == self._pipeline_id,
+                    analysis_trigger_events.c.observed_at <= as_of,
+                    normalized_events.c.observed_at <= as_of,
+                )
+                .order_by(
+                    normalized_events.c.event_time.desc(),
+                    normalized_events.c.evidence_id.desc(),
+                )
+                .limit(self._max_visible_events)
             ).scalars()
             events = tuple(IntelligenceEvent.model_validate(item) for item in rows)
-        return tuple(item for item in events if symbol in item.symbols)
+        return tuple(sorted(events, key=lambda item: (item.event_time, item.evidence_id)))
 
 
 class SqlEvaluationRepository:
@@ -1443,8 +1634,14 @@ class SqlOpenLifecycleRepository:
 class SqlFactLedger:
     """将一个周期的所有事实原子写入；重复 cycle_id 必须内容一致。"""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._engine = engine
+        self._clock = clock
 
     def record(
         self,
@@ -1757,15 +1954,15 @@ class SqlFactLedger:
             ),
         )
 
-    @staticmethod
     def _insert_facts(
+        self,
         connection: Connection,
         facts: CycleFacts,
         *,
         maximum_total_risk: Decimal | None,
     ) -> None:
         panel = facts.panel
-        now = panel.as_of
+        created_at = _require_utc(self._clock())
         connection.execute(
             insert(analysis_cycles).values(
                 cycle_id=facts.cycle_id,
@@ -1773,7 +1970,7 @@ class SqlFactLedger:
                 pipeline_version=facts.pipeline_version,
                 outcome=facts.outcome,
                 reason_code=facts.reason_code,
-                created_at=now,
+                created_at=created_at,
             )
         )
         connection.execute(
@@ -2036,10 +2233,3 @@ def _payload_hash(value) -> str:
     from quant_core.ids import content_hash
 
     return content_hash(value)
-
-
-def truncate_cycle_facts(engine: Engine) -> None:
-    """仅供隔离测试数据库清理；调用方必须提供专用数据库。"""
-    with engine.begin() as connection:
-        for table in reversed(metadata.sorted_tables):
-            connection.execute(delete(table))

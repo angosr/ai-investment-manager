@@ -13,12 +13,14 @@ from quant_core.domain import (
     MarketSnapshot,
     MetricObservation,
     Order,
+    OrderStatus,
     PositionLifecycle,
     PositionLifecycleStatus,
     RiskDecision,
     TradeIntent,
 )
 from quant_core.execution import ExecutionExchange
+from quant_core.exit_policy import program_exit_triggered
 from quant_core.ids import stable_id
 from quant_core.ledger import LifecycleFacts, LifecycleLedger
 from quant_core.metrics import observation
@@ -90,6 +92,7 @@ class PositionLifecycleManager:
             highest_price=entry_price,
             lowest_price=entry_price,
             status=PositionLifecycleStatus.PROTECTION_PENDING,
+            program_exit=intent.program_exit,
         )
         protection_id = self._exchange.register_protection(lifecycle)
         if protection_id is None:
@@ -131,6 +134,8 @@ class PositionLifecycleManager:
         )
         if market.last <= lifecycle.stop_price:
             reason = ExitReason.STOP_LOSS
+        elif program_exit_triggered(lifecycle.program_exit, market):
+            reason = ExitReason.PROGRAM_SIGNAL
         elif market.as_of >= lifecycle.max_exit_at:
             reason = ExitReason.MAX_HOLDING_TIME
         else:
@@ -157,10 +162,20 @@ class PositionLifecycleManager:
             market=market,
             reason=reason,
         )
+        if exit_order.status != OrderStatus.FILLED or not exit_order.fills:
+            raise ValueError("平仓订单未完全成交，禁止关闭生命周期或释放风险预算")
+        exit_quantity = sum((fill.quantity for fill in exit_order.fills), Decimal("0"))
+        if exit_quantity != lifecycle.quantity:
+            raise ValueError("平仓成交数量与持仓生命周期不一致，必须对账后人工处置")
+
         account_after_exit = self._reconciler.apply(account, exit_order)
-        exit_fill = exit_order.fills[0]
-        gross_pnl = (exit_fill.price - lifecycle.entry_price) * lifecycle.quantity
-        total_fees = lifecycle.entry_fee + exit_fill.fee
+        exit_value = sum((fill.price * fill.quantity for fill in exit_order.fills), Decimal("0"))
+        exit_fees = sum((fill.fee for fill in exit_order.fills), Decimal("0"))
+        gross_pnl = sum(
+            ((fill.price - lifecycle.entry_price) * fill.quantity for fill in exit_order.fills),
+            Decimal("0"),
+        )
+        total_fees = lifecycle.entry_fee + exit_fees
         outcome = DecisionOutcome(
             outcome_id=stable_id("outcome", lifecycle.position_id, exit_order.order_id),
             cycle_id=lifecycle.cycle_id,
@@ -173,7 +188,7 @@ class PositionLifecycleManager:
             exit_reason=reason,
             quantity=lifecycle.quantity,
             entry_price=lifecycle.entry_price,
-            exit_price=exit_fill.price,
+            exit_price=exit_value / exit_quantity,
             gross_pnl=gross_pnl,
             total_fees=total_fees,
             net_pnl=gross_pnl - total_fees,

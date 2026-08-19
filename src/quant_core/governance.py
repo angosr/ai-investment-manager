@@ -537,6 +537,7 @@ def validate_manifest_against_config(
         "feature",
         "panel",
         "strategy",
+        "calibration",
         "composition",
         "frequency",
         "risk",

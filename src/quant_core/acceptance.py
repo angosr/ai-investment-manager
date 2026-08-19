@@ -12,13 +12,7 @@ from quant_core.governance import (
     load_release_manifest,
     validate_manifest_against_config,
 )
-from quant_core.governance_workflows import GovernanceCycleWorkflow
-from quant_core.outcome_evaluation_workflows import OutcomeEvaluationWorkflow
 from quant_core.persistence import metadata
-from quant_core.reconciliation_workflows import ReconciliationWorkflow
-from quant_core.release_workflows import ReleaseWorkflow
-from quant_core.temporal_workflows import AnalysisCycleWorkflow, ExecutionWorkflow
-from quant_core.version_evaluation_workflows import VersionEvaluationWorkflow
 
 
 class CheckStatus(StrEnum):
@@ -47,7 +41,7 @@ class PhaseAAuditReport(FrozenModel):
 
         codex_only = {
             "MALICIOUS_READ_ISOLATION_GATE",
-            "THREE_APPROVED_ACCOUNT_DIRECTORIES",
+            "ENABLED_ACCOUNT_DIRECTORIES_READY",
         }
         return all(
             item.status == CheckStatus.PASS
@@ -66,7 +60,7 @@ class PhaseAAuditor:
     def run(self) -> PhaseAAuditReport:
         checks = [
             self._real_execution_disabled(),
-            self._account_registry_is_explicit_three(),
+            self._account_registry_is_explicit_whitelist(),
             self._locked_cli_matches(),
             self._governance_assets_exist(),
             self._regression_targets_exist(),
@@ -86,16 +80,15 @@ class PhaseAAuditor:
             detail="当前仓库默认不调用真实 Codex，且没有真实交易适配器。",
         )
 
-    def _account_registry_is_explicit_three(self) -> AuditCheck:
+    def _account_registry_is_explicit_whitelist(self) -> AuditCheck:
         accounts = self._config.codex_accounts.accounts
-        unique = (
-            len({item.account_id for item in accounts}) == 3
-            and len({item.codex_home for item in accounts}) == 3
-        )
+        unique = len({item.account_id for item in accounts}) == len(accounts) and len(
+            {item.codex_home for item in accounts}
+        ) == len(accounts)
         return AuditCheck(
-            check_id="EXPLICIT_THREE_ACCOUNT_REGISTRY",
-            status=CheckStatus.PASS if len(accounts) == 3 and unique else CheckStatus.FAIL,
-            detail="账号来自类型化白名单，不执行主目录扫描。",
+            check_id="EXPLICIT_ACCOUNT_WHITELIST",
+            status=CheckStatus.PASS if accounts and unique else CheckStatus.FAIL,
+            detail="账号逐项来自类型化白名单且身份等于目录名，不执行主目录扫描。",
         )
 
     def _locked_cli_matches(self) -> AuditCheck:
@@ -190,14 +183,7 @@ class PhaseAAuditor:
 
     def _temporal_is_single_workflow_owner(self) -> AuditCheck:
         safe = (
-            AnalysisCycleWorkflow.__name__ == "AnalysisCycleWorkflow"
-            and ExecutionWorkflow.__name__ == "ExecutionWorkflow"
-            and ReconciliationWorkflow.__name__ == "ReconciliationWorkflow"
-            and OutcomeEvaluationWorkflow.__name__ == "OutcomeEvaluationWorkflow"
-            and GovernanceCycleWorkflow.__name__ == "GovernanceCycleWorkflow"
-            and VersionEvaluationWorkflow.__name__ == "VersionEvaluationWorkflow"
-            and ReleaseWorkflow.__name__ == "ReleaseWorkflow"
-            and "analysis_workflow_runs" not in metadata.tables
+            "analysis_workflow_runs" not in metadata.tables
             and "execution_requests" in metadata.tables
             and "reconciliation_reports" in metadata.tables
             and "outcome_window_reports" in metadata.tables
@@ -208,14 +194,20 @@ class PhaseAAuditor:
         return AuditCheck(
             check_id="TEMPORAL_SINGLE_WORKFLOW_OWNER",
             status=CheckStatus.PASS if safe else CheckStatus.FAIL,
-            detail="Temporal 持有父子流程历史；业务库只保存执行交接事实，不复制 Workflow 状态机。",
+            detail=(
+                "业务库不复制 Analysis Workflow 状态机，只保存执行交接、对账、"
+                "结果评价与治理发布事实；未接线域不以类名存在冒充运行就绪。"
+            ),
         )
 
     def _account_deployment_ready(self) -> AuditCheck:
         accounts = self._config.codex_accounts.accounts
-        ready = all(item.enabled and item.codex_home.is_dir() for item in accounts)
+        enabled = tuple(item for item in accounts if item.enabled)
+        ready = bool(enabled) and all(item.codex_home.is_dir() for item in enabled)
         return AuditCheck(
-            check_id="THREE_APPROVED_ACCOUNT_DIRECTORIES",
+            check_id="ENABLED_ACCOUNT_DIRECTORIES_READY",
             status=CheckStatus.PASS if ready else CheckStatus.BLOCKED,
-            detail="必须由用户人工选择三个获准且已登录目录；不会自动选择主机上的第四个目录。",
+            detail=(
+                "显式白名单中至少一个账号须经人工启用且目录存在；未登记目录不会被自动发现或调用。"
+            ),
         )
