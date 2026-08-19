@@ -156,7 +156,7 @@ information:
   collection_interval_seconds: 60
 
 pipeline:
-  version: off-pipeline-v4
+  version: off-pipeline-v5
   ai_mode: "OFF"
 
 proposal:
