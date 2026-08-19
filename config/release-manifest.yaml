@@ -1,7 +1,7 @@
 manifest_id: release-framework-panel-budget-v2
 created_at: 2026-08-19T14:31:00Z
 status: CHALLENGER
-code_version: 4d1b0d8920ba4e73d1b782ea682fcc84c10e8cd6
+code_version: ee25005928934cccae2ea0632a8bc389da554872
 constitution_version: constitution-v1
 parent_manifest_id: release-framework-forecast-v1
 complexity_score: 1
@@ -26,4 +26,4 @@ component_versions:
   - [codex_runtime, codex-runtime-v6]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
-  - [governance, governance-cycle-v1]
+  - [governance, governance-cycle-v2]
