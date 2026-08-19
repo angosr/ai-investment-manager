@@ -24,6 +24,7 @@ from quant_core.domain import (
     _require_utc,
 )
 from quant_core.forecast_evaluation import unique_successful_codex_completion
+from quant_core.governance import EvaluationPlan, EvaluationStage
 from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
     analysis_cycles,
@@ -34,6 +35,7 @@ from quant_core.persistence import (
 from quant_core.research.backtest import (
     BacktestRun,
     ResearchStrategy,
+    artifact_hash,
     run_bar_backtest,
 )
 from quant_core.research.dataset import HistoricalDataset
@@ -271,16 +273,23 @@ class SqlForecastDecisionTapeReader:
 
 class ForecastGatePolicy(FrozenModel):
     plan_id: str
-    version: str = "directional-alignment-gate-v1"
+    version: str = "directional-alignment-context-gate-v2"
+    forecast_role: Literal["INDEPENDENT_CONTEXT"] = "INDEPENDENT_CONTEXT"
+    program_evaluation_clock: Literal["BAR_CLOSE"] = "BAR_CLOSE"
     registered_at: datetime
+    evaluation_end: datetime
     horizon_minutes: int = Field(gt=0)
     maximum_age_minutes: int = Field(gt=0)
     minimum_confidence: Decimal = Field(ge=0, le=1)
+    minimum_non_overlapping_forecasts: int = Field(default=30, ge=2)
 
     _utc_registered_at = field_validator("registered_at")(_require_utc)
+    _utc_evaluation_end = field_validator("evaluation_end")(_require_utc)
 
     @model_validator(mode="after")
     def age_does_not_outlive_forecast(self):
+        if self.evaluation_end <= self.registered_at:
+            raise ValueError("AI 门控评价终点必须晚于预登记时间")
         if self.maximum_age_minutes > self.horizon_minutes:
             raise ValueError("AI 门控使用年龄不能超过预测周期")
         return self
@@ -289,8 +298,13 @@ class ForecastGatePolicy(FrozenModel):
 class ForecastGateEvaluationSpec(FrozenModel):
     """Pre-registration identity for both Q and its deterministic AI gate."""
 
-    version: str = "forecast-gate-evaluation-spec-v1"
+    version: str = "forecast-gate-evaluation-spec-v2"
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    symbol: str = Field(min_length=1)
+    pipeline_version: str = Field(min_length=1)
+    interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
+    data_source: Literal["binance-rest-historical"] = "binance-rest-historical"
     policy: ForecastGatePolicy
 
     @classmethod
@@ -298,16 +312,79 @@ class ForecastGateEvaluationSpec(FrozenModel):
         cls,
         *,
         strategy: ResearchStrategy,
+        config: AppConfig,
+        symbol: str,
+        pipeline_version: str,
         policy: ForecastGatePolicy,
     ) -> ForecastGateEvaluationSpec:
         return cls(
             base_strategy_spec_hash=content_hash(strategy.research_spec),
+            research_artifact_hash=artifact_hash(
+                config,
+                strategy_spec=strategy.research_spec,
+            ),
+            symbol=symbol,
+            pipeline_version=pipeline_version,
+            interval=config.market_data.interval,
             policy=policy,
         )
 
 
+def build_forecast_gate_evaluation_plan(
+    *,
+    spec: ForecastGateEvaluationSpec,
+    base_manifest_id: str,
+) -> EvaluationPlan:
+    return EvaluationPlan(
+        plan_id=spec.policy.plan_id,
+        registered_at=spec.policy.registered_at,
+        base_manifest_id=base_manifest_id,
+        primary_metric="incremental_net_pnl",
+        minimum_sample_size=spec.policy.minimum_non_overlapping_forecasts,
+        hard_guardrails=(
+            "INCREMENTAL_NET_PNL_POSITIVE",
+            "MAXIMUM_DRAWDOWN_NOT_WORSE",
+            "NON_OVERLAPPING_FORECAST_SAMPLE_MINIMUM",
+        ),
+        required_stages=(
+            EvaluationStage.STATIC,
+            EvaluationStage.FIXED_REGRESSION,
+            EvaluationStage.WALK_FORWARD,
+            EvaluationStage.SHADOW,
+        ),
+        fixed_regression_suite_version="quant-core-paired-context-regression-v1",
+        candidate_spec_hash=content_hash(spec),
+        candidate_spec_snapshot=spec.model_dump(mode="json"),
+        blind_query_budget=0,
+    )
+
+
+def validate_forecast_gate_evaluation_plan(
+    *,
+    spec: ForecastGateEvaluationSpec,
+    plan: EvaluationPlan,
+    champion_manifest_id: str,
+) -> None:
+    if plan.plan_id != spec.policy.plan_id or plan.registered_at != spec.policy.registered_at:
+        raise ValueError("AI 门控规格与预登记计划身份不一致")
+    if plan.base_manifest_id != champion_manifest_id:
+        raise ValueError("AI 门控计划不属于当前 Champion")
+    if plan.candidate_spec_hash != content_hash(spec):
+        raise ValueError("AI 门控参数、程序基线或数据边界与预登记规格不一致")
+    if plan.minimum_sample_size != spec.policy.minimum_non_overlapping_forecasts:
+        raise ValueError("AI 门控非重叠样本下限与预登记计划不一致")
+    required = {
+        EvaluationStage.STATIC,
+        EvaluationStage.FIXED_REGRESSION,
+        EvaluationStage.WALK_FORWARD,
+        EvaluationStage.SHADOW,
+    }
+    if not required.issubset(plan.required_stages):
+        raise ValueError("AI 门控预登记计划缺少必要评价阶段")
+
+
 class ForecastGatedStrategySpec(FrozenModel):
-    version: str = "forecast-gated-research-strategy-v1"
+    version: str = "forecast-gated-research-strategy-v2"
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy: ForecastGatePolicy
     tape_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -379,12 +456,15 @@ class ForecastGatedStrategy:
 
 class PairedDecisionTapeResult(FrozenModel):
     evaluation_id: str
-    version: str = "paired-decision-tape-evaluation-v1"
+    version: str = "paired-decision-tape-evaluation-v2"
     policy: ForecastGatePolicy
     policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     tape_id: str
     tape_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     tape_entry_ids: tuple[str, ...] = Field(min_length=1)
+    non_overlapping_forecast_count: int = Field(ge=0)
+    minimum_non_overlapping_forecasts: int = Field(ge=2)
+    evidence_sufficient: bool
     baseline: BacktestRun
     gated: BacktestRun
     incremental_net_pnl: Decimal
@@ -402,6 +482,16 @@ class PairedDecisionTapeResult(FrozenModel):
             raise ValueError("配对回放门控策略哈希不一致")
         if len(self.tape_entry_ids) != len(set(self.tape_entry_ids)):
             raise ValueError("配对回放决策带条目不得重复")
+        if self.evidence_sufficient != (
+            self.non_overlapping_forecast_count
+            >= self.minimum_non_overlapping_forecasts
+        ):
+            raise ValueError("配对回放证据充分性与非重叠样本数不一致")
+        if (
+            self.minimum_non_overlapping_forecasts
+            != self.policy.minimum_non_overlapping_forecasts
+        ):
+            raise ValueError("配对回放最小样本数与预登记策略不一致")
         if (
             self.baseline.dataset_id != self.gated.dataset_id
             or self.baseline.event_dataset_id != self.gated.event_dataset_id
@@ -434,8 +524,17 @@ def run_paired_decision_tape_backtest(
     end = _require_utc(signal_end)
     if start < policy.registered_at:
         raise ValueError("配对评价窗口不能早于门控策略预登记时间")
+    if start != policy.registered_at or end != policy.evaluation_end:
+        raise ValueError("配对评价窗口必须与预登记起止时间完全一致")
     if tape.symbol != dataset.manifest.symbol:
         raise ValueError("决策带与历史数据品种不一致")
+    if (
+        dataset.manifest.first_open_time > start
+        or dataset.manifest.last_close_time < end
+    ):
+        raise ValueError("历史行情数据集未覆盖完整配对评价窗口")
+    if tape.window_start > start or tape.window_end < end:
+        raise ValueError("Codex 决策带未覆盖完整配对评价窗口")
     eligible = tuple(
         item
         for item in tape.entries
@@ -444,6 +543,10 @@ def run_paired_decision_tape_backtest(
     )
     if not eligible:
         raise ValueError("评价窗口没有预登记后首次生成的同周期预测")
+    non_overlapping = _non_overlapping_forecast_count(
+        eligible,
+        horizon_minutes=policy.horizon_minutes,
+    )
 
     common = {
         "dataset": dataset,
@@ -464,12 +567,19 @@ def run_paired_decision_tape_backtest(
     gated_ids = {item.candidate_id for item in gated.trades}
     policy_hash = content_hash(policy)
     payload = {
-        "version": "paired-decision-tape-evaluation-v1",
+        "version": "paired-decision-tape-evaluation-v2",
         "policy": policy,
         "policy_hash": policy_hash,
         "tape_id": tape.tape_id,
         "tape_hash": tape.content_hash,
         "tape_entry_ids": tuple(item.entry_id for item in eligible),
+        "non_overlapping_forecast_count": non_overlapping,
+        "minimum_non_overlapping_forecasts": (
+            policy.minimum_non_overlapping_forecasts
+        ),
+        "evidence_sufficient": (
+            non_overlapping >= policy.minimum_non_overlapping_forecasts
+        ),
         "baseline": baseline,
         "gated": gated,
         "incremental_net_pnl": gated.metrics.net_pnl - baseline.metrics.net_pnl,
@@ -486,6 +596,9 @@ def run_paired_decision_tape_backtest(
         "gated_only_candidate_count": len(gated_ids - baseline_ids),
         "limitations": (
             "FORWARD_FROZEN_CODEX_OUTPUTS_ONLY",
+            "INDEPENDENT_CONTEXT_FORECAST_ONLY",
+            "PROGRAM_SIGNAL_CLOCK_IS_BAR_CLOSE",
+            "PRODUCTION_TRIGGER_CLOCK_NOT_REPLAYED",
             "PAIRED_PATHS_MAY_DIVERGE_AFTER_GATE_DECISIONS",
             "NO_AI_OUTPUT_REGENERATION",
         ),
@@ -494,6 +607,22 @@ def run_paired_decision_tape_backtest(
         evaluation_id=stable_id("paired_decision_tape", content_hash(payload)),
         **payload,
     )
+
+
+def _non_overlapping_forecast_count(
+    entries: tuple[ForecastTapeEntry, ...],
+    *,
+    horizon_minutes: int,
+) -> int:
+    count = 0
+    next_available_at: datetime | None = None
+    horizon = timedelta(minutes=horizon_minutes)
+    for entry in entries:
+        if next_available_at is not None and entry.available_at < next_available_at:
+            continue
+        count += 1
+        next_available_at = entry.available_at + horizon
+    return count
 
 
 def _database_utc(value: datetime) -> datetime:

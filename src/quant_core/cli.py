@@ -735,11 +735,11 @@ def paired_decision_tape_command(
     pipeline_version: Annotated[str, typer.Option()],
     symbol: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option(help="结果成熟前登记的评价计划 ID")],
-    signal_start: Annotated[str, typer.Option(help="带时区的评价起点（含）")],
-    signal_end: Annotated[str, typer.Option(help="带时区的评价终点（不含）")],
+    signal_end: Annotated[str, typer.Option(help="带时区的预登记评价终点（不含）")],
     horizon_minutes: Annotated[int, typer.Option(min=1)] = 60,
     maximum_age_minutes: Annotated[int, typer.Option(min=1)] = 60,
     minimum_confidence: Annotated[str, typer.Option()] = "0.60",
+    minimum_non_overlapping_forecasts: Annotated[int, typer.Option(min=2)] = 30,
     candidate: Annotated[str, typer.Option()] = "configured",
     catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/datasets"
@@ -747,8 +747,12 @@ def paired_decision_tape_command(
     starting_equity: Annotated[str, typer.Option()] = "10000",
     spread_bps: Annotated[str, typer.Option()] = "1",
     include_trades: Annotated[bool, typer.Option()] = False,
+    register_only: Annotated[
+        bool,
+        typer.Option(help="只登记从当前时刻开始的完整前瞻配对实验"),
+    ] = False,
 ) -> None:
-    """用一次冻结 Codex 决策带配对回放 Q 与 Q+AI；不会重新调用模型。"""
+    """预登记或运行 Codex 前瞻 CONTEXT 带的 Q/Q+AI 配对回放。"""
 
     from quant_core.persistence import SqlGovernanceRepository
     from quant_core.research.candidates import resolve_research_candidate
@@ -757,7 +761,9 @@ def paired_decision_tape_command(
         ForecastGateEvaluationSpec,
         ForecastGatePolicy,
         SqlForecastDecisionTapeReader,
+        build_forecast_gate_evaluation_plan,
         run_paired_decision_tape_backtest,
+        validate_forecast_gate_evaluation_plan,
     )
 
     try:
@@ -768,7 +774,6 @@ def paired_decision_tape_command(
         raise typer.BadParameter("权益、点差和置信度必须是十进制数") from exc
     if equity <= 0 or spread < 0 or not Decimal("0") <= confidence <= Decimal("1"):
         raise typer.BadParameter("权益必须为正、点差非负、置信度位于 [0,1]")
-    start = _parse_utc_option(signal_start, name="signal-start")
     end = _parse_utc_option(signal_end, name="signal-end")
     try:
         loaded, strategy = resolve_research_candidate(candidate, load_config(config))
@@ -778,30 +783,77 @@ def paired_decision_tape_command(
     canonical_symbol = symbol.upper()
     if dataset.manifest.symbol != canonical_symbol:
         raise typer.BadParameter("symbol 与历史数据集不一致", param_hint="symbol")
+    if dataset.manifest.source != "binance-rest-historical":
+        raise typer.BadParameter(
+            "配对评价只接受 Binance REST 历史数据集",
+            param_hint="dataset-id",
+        )
     engine = _runtime_engine(database_url)
-    plan = SqlGovernanceRepository(engine).get_plan(plan_id)
-    if plan is None:
+    governance = SqlGovernanceRepository(engine)
+    champion = governance.get_champion()
+    plan = governance.get_plan(plan_id)
+    if register_only and plan is not None:
+        raise typer.BadParameter("EvaluationPlan 已存在且不可覆盖", param_hint="plan-id")
+    if register_only:
+        registered_at = datetime.now(UTC)
+        if end <= registered_at:
+            raise typer.BadParameter(
+                "register-only 的 signal-end 必须位于未来",
+                param_hint="signal-end",
+            )
+    elif plan is None:
         raise typer.BadParameter("评价计划未在治理事实库预登记", param_hint="plan-id")
+    else:
+        registered_at = plan.registered_at
     policy = ForecastGatePolicy(
-        plan_id=plan.plan_id,
-        registered_at=plan.registered_at,
+        plan_id=plan_id,
+        registered_at=registered_at,
+        evaluation_end=end,
         horizon_minutes=horizon_minutes,
         maximum_age_minutes=maximum_age_minutes,
         minimum_confidence=confidence,
+        minimum_non_overlapping_forecasts=minimum_non_overlapping_forecasts,
     )
     evaluation_spec = ForecastGateEvaluationSpec.freeze(
         strategy=strategy,
+        config=loaded,
+        symbol=canonical_symbol,
+        pipeline_version=pipeline_version,
         policy=policy,
     )
-    if plan.candidate_spec_hash != content_hash(evaluation_spec):
-        raise typer.BadParameter(
-            "基础策略或门控参数与预登记 candidate_spec_hash 不一致",
-            param_hint="plan-id",
+    if register_only:
+        registered = build_forecast_gate_evaluation_plan(
+            spec=evaluation_spec,
+            base_manifest_id=champion.manifest_id,
         )
+        governance.register_plan(registered)
+        typer.echo(
+            json.dumps(
+                {
+                    "evaluation_plan": registered.model_dump(mode="json"),
+                    "forecast_gate_spec": evaluation_spec.model_dump(mode="json"),
+                    "forecast_gate_spec_hash": content_hash(evaluation_spec),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    assert plan is not None
+    if datetime.now(UTC) < policy.evaluation_end:
+        raise typer.BadParameter("前瞻配对评价窗口尚未结束", param_hint="signal-end")
+    try:
+        validate_forecast_gate_evaluation_plan(
+            spec=evaluation_spec,
+            plan=plan,
+            champion_manifest_id=champion.manifest_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
     tape = SqlForecastDecisionTapeReader(engine).read(
         pipeline_version=pipeline_version,
         symbol=canonical_symbol,
-        window_start=plan.registered_at,
+        window_start=policy.registered_at,
         window_end=end,
         maximum_completion_lag_seconds=loaded.shadow.analysis_deadline_seconds,
     )
@@ -811,7 +863,7 @@ def paired_decision_tape_command(
         tape=tape,
         policy=policy,
         strategy=strategy,
-        signal_start=start,
+        signal_start=policy.registered_at,
         signal_end=end,
         starting_equity=equity,
         spread_bps=spread,

@@ -528,7 +528,9 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         ForecastGateEvaluationSpec,
         ForecastGatePolicy,
         ForecastTapeEntry,
+        build_forecast_gate_evaluation_plan,
         run_paired_decision_tape_backtest,
+        validate_forecast_gate_evaluation_plan,
     )
     from quant_core.strategy import PriceTrendStrategy
 
@@ -589,6 +591,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     policy = ForecastGatePolicy(
         plan_id="pre-registered-forward-gate-v1",
         registered_at=signal_start,
+        evaluation_end=signal_end,
         horizon_minutes=60,
         maximum_age_minutes=60,
         minimum_confidence=Decimal("0.60"),
@@ -596,23 +599,44 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     strategy = PriceTrendStrategy(app_config.strategy)
     registered_spec = ForecastGateEvaluationSpec.freeze(
         strategy=strategy,
+        config=app_config,
+        symbol="BTCUSDT",
+        pipeline_version="forward-pipeline-v1",
         policy=policy,
     )
     assert registered_spec.base_strategy_spec_hash == content_hash(
         strategy.research_spec
     )
     registered_hash = content_hash(registered_spec)
+    registered_plan = build_forecast_gate_evaluation_plan(
+        spec=registered_spec,
+        base_manifest_id="champion-v1",
+    )
+    validate_forecast_gate_evaluation_plan(
+        spec=registered_spec,
+        plan=registered_plan,
+        champion_manifest_id="champion-v1",
+    )
+    assert registered_plan.candidate_spec_snapshot == registered_spec.model_dump(
+        mode="json"
+    )
     assert content_hash(
         ForecastGateEvaluationSpec.freeze(
             strategy=PriceTrendStrategy(
                 app_config.strategy.model_copy(update={"version": "different-q-v1"})
             ),
+            config=app_config,
+            symbol="BTCUSDT",
+            pipeline_version="forward-pipeline-v1",
             policy=policy,
         )
     ) != registered_hash
     assert content_hash(
         ForecastGateEvaluationSpec.freeze(
             strategy=strategy,
+            config=app_config,
+            symbol="BTCUSDT",
+            pipeline_version="forward-pipeline-v1",
             policy=policy.model_copy(update={"minimum_confidence": Decimal("0.61")}),
         )
     ) != registered_hash
@@ -636,7 +660,12 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     assert result.incremental_net_pnl == (
         result.gated.metrics.net_pnl - result.baseline.metrics.net_pnl
     )
+    assert policy.forecast_role == "INDEPENDENT_CONTEXT"
+    assert policy.program_evaluation_clock == "BAR_CLOSE"
+    assert "PRODUCTION_TRIGGER_CLOCK_NOT_REPLAYED" in result.limitations
     assert "NO_AI_OUTPUT_REGENERATION" in result.limitations
+    assert result.non_overlapping_forecast_count < len(forecast_times)
+    assert not result.evidence_sufficient
 
     late_policy = policy.model_copy(
         update={"registered_at": signal_start + timedelta(minutes=1)}
