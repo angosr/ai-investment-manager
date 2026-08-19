@@ -341,6 +341,6 @@ SSE 是无限响应，但不能让发布重启无限等待浏览器。Dashboard 
 
 世界事件 → 周期关联**已实现且精确**：一条新闻当且仅当被选入某周期的信息面板（`panel_snapshots.payload.evidence[].evidence_id` 与 `normalized_events.evidence_id` 相等）时，才标注「喂给了 HH:MM 的分析」——不是时间近似，是真实的证据入选关系，集成测试已覆盖。
 
-权益曲线与指标口径已统一：观测台就所选窗口调用**生产同一个** `OutcomeWindowEvaluator` 得到报告，曲线（原始事实累加）与 stat（该 evaluator 的聚合）同期同源、公式不重复、口径不分裂。
+权益曲线与指标口径已统一：观测台按实际平仓时间读取同一模拟账户跨 Pipeline 的不可变 `DecisionOutcome`，曲线和指标复用生产评价器的纯收益计算函数。治理用 `OutcomeWindowReport` 仍按冻结 Pipeline 与决策窗口隔离，不能为了 UI 连续性混合版本；账户收益和版本归因是两个明确口径，均不重算成交事实。
 
 诚实的边界：SSE 是观测刷新机制，不参与交易时效链路；低延迟交易触发仍由 Trigger/Outbox/Temporal 链路负责。若将来接入数据库通知，只能作为减少观测延迟的可替换优化，不能改变只读 API 契约。
