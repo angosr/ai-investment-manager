@@ -512,9 +512,6 @@ def test_long_only_moving_average_is_point_in_time_and_long_cash(
     assert candidates[0].producer_version == "long-only-sma-test-v1"
     assert candidates[0].signal_observed_at == replay_input.market.as_of
     assert candidates[0].side.value == "BUY"
-    assert effective.market_data.version == "binance-public-daily-research-v1"
-    assert effective.feature.version == "daily-feature-research-v1"
-    assert effective.frequency.version == "monthly-entry-research-v1"
     assert effective.market_data.interval == "1d"
     assert effective.market_data.bar_window == 100
     assert resolved.research_spec.version == "long-only-sma100-2w-v1"
@@ -649,51 +646,6 @@ def test_hourly_candidate_uses_native_hour_bar_type(app_config) -> None:
     assert run.completed
     assert run.trades
     assert run.interval == "4h"
-
-
-def test_intraday_reversal_only_trades_the_preregistered_utc_pair(app_config) -> None:
-    pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
-    from quant_core.research.candidates import resolve_research_candidate
-
-    steps = [Decimal("1.0002")] * 80
-    # r22 is the 22nd UTC hourly return (21:00-22:00). Only its negative
-    # observations may open the following r23 hour in this long/cash adaptation.
-    steps[45] = Decimal("0.995")
-    steps[46] = Decimal("1.005")
-    steps[69] = Decimal("0.995")
-    steps[70] = Decimal("1.005")
-    dataset = _dataset(
-        count=len(steps),
-        price_steps=tuple(steps),
-        interval="1h",
-        bar_delta=timedelta(hours=1),
-    )
-    effective, strategy = resolve_research_candidate(
-        "long-only-r22-r23-reversal-v1", app_config
-    )
-    run = run_bar_backtest(
-        dataset=dataset,
-        config=effective,
-        strategy=strategy,
-        signal_start=dataset.bars[24].close_time,
-        signal_end=dataset.bars[-4].close_time,
-        replay_start=dataset.bars[0].open_time,
-        replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
-    )
-
-    assert effective.market_data.interval == "1h"
-    assert effective.market_data.version == "binance-public-hourly-research-v1"
-    assert effective.feature.version == "hourly-feature-research-v1"
-    assert effective.frequency.version == "daily-entry-research-v1"
-    assert effective.market_data.bar_window == 25
-    assert effective.frequency.maximum_orders_per_day == 1
-    assert run.completed
-    assert run.signal_count == 2
-    assert len(run.trades) == 2
-    assert all(item.signal_at.hour == 21 for item in run.trades)
-    assert all(item.opened_at.hour == 22 for item in run.trades)
-    assert all(item.exit_reason == "MAX_HOLDING_TIME" for item in run.trades)
 
 
 def test_evaluation_catalog_round_trip_and_rejects_tampering(

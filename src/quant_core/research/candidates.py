@@ -220,97 +220,6 @@ class LongOnlyMovingAverageStrategy:
         )
 
 
-class LongOnlyIntradayReversalSpec(FrozenModel):
-    """Paper-derived long/cash test of the UTC r22 -> r23 reversal."""
-
-    strategy_id: str = "long-only-intraday-reversal"
-    version: str = "long-only-r22-r23-reversal-v1"
-    family: str = "intraday-return-reversal"
-    interval: str = "1h"
-    predictor_close_hour_utc: int = Field(default=21, ge=0, le=23)
-    atr_bars: int = Field(default=24, ge=2)
-    stop_atr_multiple: Decimal = Field(default=Decimal("3"), gt=0)
-    horizon_minutes: int = Field(default=60, gt=0)
-    cooldown_minutes: int = Field(default=1_380, ge=0)
-    signal_validity_minutes: int = Field(default=60, gt=0)
-    expected_edge_half_life_seconds: int = Field(default=3_600, gt=0, le=86_400)
-
-    @computed_field
-    @property
-    def required_bar_window(self) -> int:
-        return self.atr_bars + 1
-
-
-class LongOnlyIntradayReversalStrategy:
-    """Buy the next UTC hour only after a negative r22 hourly return."""
-
-    def __init__(self, spec: LongOnlyIntradayReversalSpec | None = None) -> None:
-        self._spec = spec or LongOnlyIntradayReversalSpec()
-
-    @property
-    def research_spec(self) -> LongOnlyIntradayReversalSpec:
-        return self._spec
-
-    def evaluate(
-        self,
-        *,
-        market: MarketSnapshot,
-        account: AccountSnapshot,
-        features: FeatureSnapshot,
-    ) -> tuple[SignalCandidate, ...]:
-        spec = self._spec
-        if len(market.bars) < spec.required_bar_window:
-            return ()
-        if market.as_of.hour != spec.predictor_close_hour_utc:
-            return ()
-        if any(
-            position.symbol == market.symbol and position.quantity > 0
-            for position in account.positions
-        ):
-            return ()
-
-        predictor = market.bars[-1].close / market.bars[-1].open - Decimal("1")
-        if predictor >= 0:
-            return ()
-
-        atr = _average_true_range(market.bars, spec.atr_bars)
-        stop_price = market.ask - atr * spec.stop_atr_multiple
-        if stop_price <= 0 or stop_price >= market.ask:
-            return ()
-
-        return (
-            SignalCandidate(
-                candidate_id=stable_id(
-                    "sig",
-                    market.cycle_id,
-                    spec.strategy_id,
-                    spec.version,
-                    market.symbol,
-                ),
-                cycle_id=market.cycle_id,
-                producer_id=spec.strategy_id,
-                producer_version=spec.version,
-                strategy_family=spec.family,
-                symbol=market.symbol,
-                action=Action.OPEN,
-                side=Side.BUY,
-                horizon_minutes=spec.horizon_minutes,
-                feature_refs=(features.feature_set_version,),
-                entry=PriceCondition(order_type=OrderType.MARKET),
-                stop_price=stop_price,
-                valid_until=market.as_of
-                + timedelta(minutes=spec.signal_validity_minutes),
-                signal_observed_at=market.as_of,
-                reference_price=market.ask,
-                expected_edge_half_life_seconds=spec.expected_edge_half_life_seconds,
-                raw_score=min(Decimal("1"), abs(predictor)),
-                expected_gross_bps=Decimal("0"),
-                calibration_ref=uncalibrated_ref(spec.version),
-                unknowns=(EDGE_CALIBRATION_MISSING,),
-            ),
-        )
-
-
 def resolve_research_candidate(
     candidate: str, config: AppConfig
 ) -> tuple[AppConfig, ResearchStrategy]:
@@ -334,42 +243,26 @@ def resolve_research_candidate(
             cooldown_minutes=43_200,
         )
         strategy = LongOnlyMovingAverageStrategy(spec)
-    elif candidate == "long-only-r22-r23-reversal-v1":
-        spec = LongOnlyIntradayReversalSpec()
-        strategy = LongOnlyIntradayReversalStrategy(spec)
     else:
         raise ValueError(f"未知历史候选: {candidate}")
-    is_intraday_reversal = isinstance(spec, LongOnlyIntradayReversalSpec)
     effective = config.model_copy(
         update={
             "market_data": config.market_data.model_copy(
                 update={
-                    "version": (
-                        "binance-public-hourly-research-v1"
-                        if is_intraday_reversal
-                        else "binance-public-daily-research-v1"
-                    ),
+                    "version": "binance-public-daily-research-v1",
                     "interval": spec.interval,
                     "bar_window": spec.required_bar_window,
                 }
             ),
             "feature": config.feature.model_copy(
                 update={
-                    "version": (
-                        "hourly-feature-research-v1"
-                        if is_intraday_reversal
-                        else "daily-feature-research-v1"
-                    ),
+                    "version": "daily-feature-research-v1",
                     "volatility_window": spec.atr_bars,
                 }
             ),
             "frequency": config.frequency.model_copy(
                 update={
-                    "version": (
-                        "daily-entry-research-v1"
-                        if is_intraday_reversal
-                        else "monthly-entry-research-v1"
-                    ),
+                    "version": "monthly-entry-research-v1",
                     "cooldown_minutes": spec.cooldown_minutes,
                     "maximum_orders_per_day": 1,
                 }
