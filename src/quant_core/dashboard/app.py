@@ -24,6 +24,8 @@ from quant_core.dashboard.read_models import DashboardReader
 from quant_core.dashboard.resources import prime_cpu_sampler, sample_host_resources
 from quant_core.dashboard.stream import refresh_events
 from quant_core.persistence import build_engine
+from quant_core.temporal_runtime import TemporalAnalysisCoordinator
+from quant_core.trigger_workflows import coordinator_workflow_id
 
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100
@@ -45,9 +47,44 @@ def create_app(
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
     prime_cpu_sampler()
+    temporal_client = None
+    temporal_lock = asyncio.Lock()
+
+    async def coordinator_statuses() -> tuple[dict, ...]:
+        nonlocal temporal_client
+
+        async def read() -> tuple[dict, ...]:
+            nonlocal temporal_client
+            if temporal_client is None:
+                async with temporal_lock:
+                    if temporal_client is None:
+                        temporal = await TemporalAnalysisCoordinator.connect(config.temporal)
+                        temporal_client = temporal.client
+
+            async def query(symbol: str) -> dict:
+                workflow_id = coordinator_workflow_id(symbol, config.pipeline.version)
+                try:
+                    status = await temporal_client.get_workflow_handle(workflow_id).query(
+                        "status"
+                    )
+                except Exception as exc:
+                    return {"symbol": symbol, "error": type(exc).__name__}
+                return {"symbol": symbol, **status}
+
+            return tuple(
+                await asyncio.gather(*(query(symbol) for symbol in config.market_data.symbols))
+            )
+
+        try:
+            return await asyncio.wait_for(read(), timeout=2.0)
+        except Exception as exc:
+            temporal_client = None
+            return ({"error": type(exc).__name__},)
 
     async def health(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
+
+        coordinator_facts = await coordinator_statuses()
 
         def read_health() -> dict:
             return assemble_health(
@@ -55,6 +92,7 @@ def create_app(
                 config,
                 now=now,
                 host_resources=sample_host_resources(),
+                coordinator_statuses=coordinator_facts,
             )
 
         data = await run_in_threadpool(read_health)

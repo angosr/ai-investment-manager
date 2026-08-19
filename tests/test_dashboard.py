@@ -265,6 +265,41 @@ def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> Non
     assert result["overall"] == "bad"
 
 
+def test_health_reads_temporal_coordinator_pending_state() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        coordinator_statuses=(
+            {"symbol": "BTCUSDT", "pending_count": 0, "active_batch_id": None},
+            {"symbol": "ETHUSDT", "pending_count": 4, "active_batch_id": None},
+        ),
+    )
+
+    check = next(item for item in result["checks"] if item["key"] == "trigger_coordinator")
+    assert check["state"] == "warn"
+    assert "等待 4 条" in check["detail"]
+    assert result["overall"] == "warn"
+
+
 @pytest.mark.parametrize(
     ("percent", "expected"),
     ((89.9, "ok"), (90.0, "warn"), (95.0, "bad")),

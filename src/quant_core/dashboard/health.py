@@ -22,6 +22,7 @@ def assemble_health(
     *,
     now: datetime,
     host_resources: dict | None = None,
+    coordinator_statuses: tuple[dict, ...] | None = None,
 ) -> dict:
     report = reader.latest_reconciliation(now=now)  # 一次查询，供三项检查复用
     analysis = reader.analysis_runtime_status(now=now)
@@ -36,6 +37,8 @@ def assemble_health(
         _release_alignment_check(analysis),
         _call_budget_check(analysis, config),
     ]
+    if coordinator_statuses is not None:
+        checks.append(_trigger_coordinator_check(coordinator_statuses))
     if host_resources is not None:
         checks.append(_disk_check(host_resources))
     worst = max(checks, key=lambda check: _SEVERITY[check["state"]])
@@ -207,6 +210,31 @@ def _release_alignment_check(status: AnalysisRuntimeStatus) -> dict:
         "版本一致性",
         "ok" if status.release_aligned else "bad",
         "一致" if status.release_aligned else "运行配置与发布事实不一致",
+    )
+
+
+def _trigger_coordinator_check(statuses: tuple[dict, ...]) -> dict:
+    if not statuses or any("error" in item for item in statuses):
+        return _check(
+            "trigger_coordinator",
+            "触发协调器",
+            "bad",
+            "Temporal 状态不可用",
+        )
+    pending = sum(int(item.get("pending_count", 0)) for item in statuses)
+    active = sum(item.get("active_batch_id") is not None for item in statuses)
+    if pending:
+        return _check(
+            "trigger_coordinator",
+            "触发协调器",
+            "warn",
+            f"等待 {pending} 条 · 执行中 {active} 批",
+        )
+    return _check(
+        "trigger_coordinator",
+        "触发协调器",
+        "ok",
+        f"无积压 · 执行中 {active} 批",
     )
 
 
