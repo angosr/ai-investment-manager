@@ -77,7 +77,7 @@ outcome_evaluation:
   poll_seconds: 300
 
 governance:
-  version: governance-cycle-v1
+  version: governance-cycle-v2
   snapshot_lookback_days: 90
   maximum_metric_windows: 30
   maximum_failed_experiments: 20

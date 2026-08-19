@@ -238,6 +238,123 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
     assert run.metrics.net_pnl < 0
 
 
+def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
+    app_config,
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.domain import (
+        Action,
+        AnalysisProposal,
+        DirectionalForecast,
+        DirectionalView,
+    )
+    from quant_core.ids import content_hash
+    from quant_core.research.decision_tape import (
+        ForecastDecisionTape,
+        ForecastGatePolicy,
+        ForecastTapeEntry,
+        run_paired_decision_tape_backtest,
+    )
+    from quant_core.strategy import PriceTrendStrategy
+
+    dataset = _dataset(count=140)
+    signal_start = dataset.bars[63].close_time
+    signal_end = dataset.bars[-1].open_time - timedelta(minutes=65)
+    forecast_times = tuple(
+        dataset.bars[index].close_time
+        for index in range(63, 125, 10)
+        if dataset.bars[index].close_time < signal_end
+    )
+    midpoint = forecast_times[len(forecast_times) // 2]
+    entries = []
+    for index, available_at in enumerate(forecast_times):
+        view = (
+            DirectionalView.UP
+            if available_at < midpoint
+            else DirectionalView.DOWN
+        )
+        forecast = DirectionalForecast(
+            horizon_minutes=60,
+            directional_view=view,
+            confidence=Decimal("0.70"),
+        )
+        proposal = AnalysisProposal(
+            proposal_id=f"forward-proposal-{index}",
+            suggested_action=Action.NO_ACTION,
+            symbol="BTCUSDT",
+            thesis="结果发生前冻结的研究预测",
+            confidence=Decimal("0.70"),
+            forecasts=(forecast,),
+        )
+        entries.append(
+            ForecastTapeEntry.freeze(
+                proposal=proposal,
+                forecast=forecast,
+                cycle_id=f"forward-cycle-{index}",
+                pipeline_version="forward-pipeline-v1",
+                source_run_id=f"forward-run-{index}",
+                available_at=available_at,
+            )
+        )
+    tape_payload = {
+        "version": "forecast-decision-tape-v1",
+        "pipeline_version": "forward-pipeline-v1",
+        "symbol": "BTCUSDT",
+        "window_start": signal_start,
+        "window_end": signal_end,
+        "entries": tuple(entries),
+        "exclusions": (),
+    }
+    tape_hash = content_hash(tape_payload)
+    tape = ForecastDecisionTape(
+        tape_id=stable_id("forecast_decision_tape", tape_hash),
+        content_hash=tape_hash,
+        **tape_payload,
+    )
+    policy = ForecastGatePolicy(
+        plan_id="pre-registered-forward-gate-v1",
+        registered_at=signal_start,
+        horizon_minutes=60,
+        maximum_age_minutes=60,
+        minimum_confidence=Decimal("0.60"),
+    )
+
+    result = run_paired_decision_tape_backtest(
+        dataset=dataset,
+        config=app_config,
+        tape=tape,
+        policy=policy,
+        strategy=PriceTrendStrategy(app_config.strategy),
+        signal_start=signal_start,
+        signal_end=signal_end,
+    )
+
+    assert result.baseline.engine == result.gated.engine == "nautilus-trader"
+    assert result.baseline.dataset_id == result.gated.dataset_id
+    assert result.gated.metrics.trade_count < result.baseline.metrics.trade_count
+    assert result.trade_count_change == (
+        result.gated.metrics.trade_count - result.baseline.metrics.trade_count
+    )
+    assert result.incremental_net_pnl == (
+        result.gated.metrics.net_pnl - result.baseline.metrics.net_pnl
+    )
+    assert "NO_AI_OUTPUT_REGENERATION" in result.limitations
+
+    late_policy = policy.model_copy(
+        update={"registered_at": signal_start + timedelta(minutes=1)}
+    )
+    with pytest.raises(ValueError, match="预登记时间"):
+        run_paired_decision_tape_backtest(
+            dataset=dataset,
+            config=app_config,
+            tape=tape,
+            policy=late_policy,
+            strategy=PriceTrendStrategy(app_config.strategy),
+            signal_start=signal_start,
+            signal_end=signal_end,
+        )
+
+
 def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separation(
     app_config,
 ) -> None:

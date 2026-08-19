@@ -33,6 +33,7 @@ from quant_core.persistence import (
     codex_runs,
     create_schema,
 )
+from quant_core.research.decision_tape import SqlForecastDecisionTapeReader
 
 
 class StaticAnalyst:
@@ -158,6 +159,29 @@ def test_legacy_single_forecast_payload_is_read_without_retaining_aliases(
     assert "forecasts" in payload
     assert "directional_view" not in payload
     assert "view_horizon_minutes" not in payload
+
+
+def test_decision_tape_reader_projects_outputs_before_any_label_exists(
+    app_config, replay_input
+) -> None:
+    engine, _proposal, _settler, completed_at = _seed(
+        app_config, replay_input, DirectionalView.UP
+    )
+
+    tape = SqlForecastDecisionTapeReader(engine).read(
+        pipeline_version="forecast-shadow-test-v1",
+        symbol=replay_input.market.symbol,
+        window_start=completed_at - timedelta(seconds=1),
+        window_end=completed_at + timedelta(seconds=1),
+        maximum_completion_lag_seconds=30,
+    )
+
+    assert [item.horizon_minutes for item in tape.entries] == [60, 240]
+    assert not tape.exclusions
+    with engine.connect() as connection:
+        assert connection.execute(
+            select(analysis_forecast_outcomes.c.outcome_id)
+        ).all() == []
 
 
 @pytest.mark.parametrize(
@@ -303,6 +327,17 @@ def test_ambiguous_successful_codex_runs_fail_closed(
     assert result.unscorable == 1
     assert outcome.status == ForecastOutcomeStatus.UNSCORABLE
     assert outcome.reason_code == "CODEX_COMPLETION_TIME_MISSING_OR_AMBIGUOUS"
+    tape = SqlForecastDecisionTapeReader(engine).read(
+        pipeline_version="forecast-shadow-test-v1",
+        symbol=replay_input.market.symbol,
+        window_start=completed_at - timedelta(seconds=1),
+        window_end=completed_at + timedelta(seconds=2),
+        maximum_completion_lag_seconds=30,
+    )
+    assert not tape.entries
+    assert [item.reason_code for item in tape.exclusions] == [
+        "CODEX_COMPLETION_MISSING_OR_AMBIGUOUS"
+    ]
 
 
 def test_forecast_settlement_survives_pipeline_redeployment(

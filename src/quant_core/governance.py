@@ -147,6 +147,9 @@ class EvaluationPlan(FrozenModel):
     hard_guardrails: tuple[str, ...] = Field(min_length=1)
     required_stages: tuple[EvaluationStage, ...] = Field(min_length=1)
     fixed_regression_suite_version: str
+    candidate_spec_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     blind_query_budget: int = Field(default=1, ge=0)
 
     _utc_registered_at = field_validator("registered_at")(_require_utc)

@@ -1173,6 +1173,15 @@ class SqlGovernanceRepository:
             },
         )
 
+    def get_plan(self, plan_id: str) -> EvaluationPlan | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(evaluation_plans.c.payload).where(
+                    evaluation_plans.c.plan_id == plan_id
+                )
+            ).scalar_one_or_none()
+        return EvaluationPlan.model_validate(payload) if payload else None
+
     def register_proposal(self, proposal: ChangeProposal) -> None:
         self._record(
             change_proposals,

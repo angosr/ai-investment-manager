@@ -158,6 +158,8 @@ def run_bar_backtest(
         raise ValueError("回测初始权益必须为正")
     if dataset.manifest.symbol not in config.risk.symbol_allowlist:
         raise ValueError("回测品种不在当前 RiskPolicy allowlist")
+    if dataset.manifest.interval != config.market_data.interval:
+        raise ValueError("历史数据周期与冻结 MarketDataPolicy 不一致")
 
     if replay_start is not None and replay_end is not None and replay_start >= replay_end:
         raise ValueError("回放窗口起点必须早于终点")

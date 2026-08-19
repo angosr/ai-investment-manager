@@ -223,6 +223,7 @@ def test_governance_repository_restores_long_term_state_without_chat_history() -
 
     restored = SqlGovernanceRepository(engine).get_snapshot(snapshot.snapshot_id)
     assert restored == snapshot
+    assert SqlGovernanceRepository(engine).get_plan(plan.plan_id) == plan
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(governance_snapshots)) == 1
         assert connection.scalar(select(func.count()).select_from(evaluation_plans)) == 1

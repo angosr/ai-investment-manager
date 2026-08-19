@@ -202,7 +202,7 @@ class SqlAnalysisForecastOutcomeStore:
                     raise ValueError("方向预测冻结参考价格必须为正")
                 cycle_id = str(row["cycle_id"])
                 analysis_as_of = _database_utc(row["as_of"])
-                available_at, source_run_id = _unique_successful_completion(
+                available_at, source_run_id = unique_successful_codex_completion(
                     runs_by_cycle.get(cycle_id, []),
                     analysis_as_of=analysis_as_of,
                 )
@@ -564,7 +564,7 @@ def _database_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def _unique_successful_completion(
+def unique_successful_codex_completion(
     rows: list[dict],
     *,
     analysis_as_of: datetime,

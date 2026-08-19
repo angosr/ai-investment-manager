@@ -30,7 +30,7 @@ from quant_core.cycle import AnalysisCycle, CycleInput
 from quant_core.domain import Side
 from quant_core.governance import load_release_manifest, validate_manifest_against_config
 from quant_core.governance_runtime import assemble_governance
-from quant_core.ids import stable_id
+from quant_core.ids import content_hash, stable_id
 from quant_core.ingestion import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -425,6 +425,100 @@ def walk_forward_command(
     if not include_trades:
         for fold in payload["folds"]:
             fold["run"].pop("trades", None)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("paired-decision-tape")
+def paired_decision_tape_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="前瞻决策带事实库"),
+    ],
+    dataset_id: Annotated[str, typer.Option()],
+    pipeline_version: Annotated[str, typer.Option()],
+    symbol: Annotated[str, typer.Option()],
+    plan_id: Annotated[str, typer.Option(help="结果成熟前登记的评价计划 ID")],
+    signal_start: Annotated[str, typer.Option(help="带时区的评价起点（含）")],
+    signal_end: Annotated[str, typer.Option(help="带时区的评价终点（不含）")],
+    horizon_minutes: Annotated[int, typer.Option(min=1)] = 60,
+    maximum_age_minutes: Annotated[int, typer.Option(min=1)] = 60,
+    minimum_confidence: Annotated[str, typer.Option()] = "0.60",
+    candidate: Annotated[str, typer.Option()] = "configured",
+    catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    starting_equity: Annotated[str, typer.Option()] = "10000",
+    spread_bps: Annotated[str, typer.Option()] = "1",
+    include_trades: Annotated[bool, typer.Option()] = False,
+) -> None:
+    """用一次冻结 Codex 决策带配对回放 Q 与 Q+AI；不会重新调用模型。"""
+
+    from quant_core.persistence import SqlGovernanceRepository
+    from quant_core.research.candidates import resolve_research_candidate
+    from quant_core.research.dataset import HistoricalDatasetCatalog
+    from quant_core.research.decision_tape import (
+        ForecastGatePolicy,
+        SqlForecastDecisionTapeReader,
+        run_paired_decision_tape_backtest,
+    )
+
+    try:
+        equity = Decimal(starting_equity)
+        spread = Decimal(spread_bps)
+        confidence = Decimal(minimum_confidence)
+    except InvalidOperation as exc:
+        raise typer.BadParameter("权益、点差和置信度必须是十进制数") from exc
+    if equity <= 0 or spread < 0 or not Decimal("0") <= confidence <= Decimal("1"):
+        raise typer.BadParameter("权益必须为正、点差非负、置信度位于 [0,1]")
+    start = _parse_utc_option(signal_start, name="signal-start")
+    end = _parse_utc_option(signal_end, name="signal-end")
+    try:
+        loaded, strategy = resolve_research_candidate(candidate, load_config(config))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    dataset = HistoricalDatasetCatalog(catalog).load(dataset_id)
+    canonical_symbol = symbol.upper()
+    if dataset.manifest.symbol != canonical_symbol:
+        raise typer.BadParameter("symbol 与历史数据集不一致", param_hint="symbol")
+    engine = _runtime_engine(database_url)
+    plan = SqlGovernanceRepository(engine).get_plan(plan_id)
+    if plan is None:
+        raise typer.BadParameter("评价计划未在治理事实库预登记", param_hint="plan-id")
+    policy = ForecastGatePolicy(
+        plan_id=plan.plan_id,
+        registered_at=plan.registered_at,
+        horizon_minutes=horizon_minutes,
+        maximum_age_minutes=maximum_age_minutes,
+        minimum_confidence=confidence,
+    )
+    if plan.candidate_spec_hash != content_hash(policy):
+        raise typer.BadParameter(
+            "门控参数与预登记 candidate_spec_hash 不一致",
+            param_hint="plan-id",
+        )
+    tape = SqlForecastDecisionTapeReader(engine).read(
+        pipeline_version=pipeline_version,
+        symbol=canonical_symbol,
+        window_start=plan.registered_at,
+        window_end=end,
+        maximum_completion_lag_seconds=loaded.shadow.analysis_deadline_seconds,
+    )
+    result = run_paired_decision_tape_backtest(
+        dataset=dataset,
+        config=loaded,
+        tape=tape,
+        policy=policy,
+        strategy=strategy,
+        signal_start=start,
+        signal_end=end,
+        starting_equity=equity,
+        spread_bps=spread,
+    )
+    payload = result.model_dump(mode="json")
+    if not include_trades:
+        payload["baseline"].pop("trades", None)
+        payload["gated"].pop("trades", None)
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 

@@ -108,6 +108,20 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 输出包含方向命中率、平均方向收益及其保守下界，但始终标记为不可交易方向评价，不计作账户 PnL。结算服务跨发布版本处理所有未到期 Proposal，发布新 Pipeline 不会遗留旧预测。
 
+当结果发生前登记的门控计划和覆盖同一未来区间的历史行情都已具备后，可用同一份前瞻决策带配对回放程序基线与 `Q+AI`；命令只读取 Proposal 与唯一成功 Codex Attempt 的完成事实，不读取方向结果表，也不会重新调用模型：
+
+```bash
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+  .venv/bin/quant-core paired-decision-tape \
+  --config '<冻结配置>' --dataset-id '<覆盖评价窗口的数据集>' \
+  --pipeline-version '<冻结 Pipeline>' --symbol BTCUSDT \
+  --candidate configured --plan-id '<预登记计划>' \
+  --signal-start '<评价起点>' --signal-end '<评价终点>' \
+  --horizon-minutes 60 --maximum-age-minutes 60
+```
+
+基线与门控版本都由同一个 Nautilus 适配器执行，并使用相同数据、下一可成交事件、费用、价差、频率、风控和退出规则。命令从治理事实库读取 `EvaluationPlan.registered_at`，并要求计划中的 `candidate_spec_hash` 与门控周期、最大年龄和置信阈值的规范哈希完全一致；调用方不能通过伪造时间或临时改阈值冒充预登记。输出明确给出增量净收益、回撤变化、交易数变化及路径分叉限制；没有预登记后的同周期预测时拒绝运行。当前刚开始积累多周期带，尚无足够跨环境样本可据此晋级。
+
 检查当前 Phase A 门禁：
 
 ```bash
