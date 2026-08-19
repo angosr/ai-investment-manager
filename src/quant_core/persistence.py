@@ -77,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "b3f6e1a8c920"
+DATABASE_SCHEMA_VERSION = "6a7d9f2c1b84"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -686,12 +686,22 @@ blind_evaluation_claims = Table(
         primary_key=True,
     ),
     Column("query_id", String(128), nullable=False, unique=True),
+    Column("blind_scope_id", String(128), nullable=False, unique=True),
+    Column("blind_symbol", String(32), nullable=False),
+    Column("blind_start", DateTime(timezone=True), nullable=False),
+    Column("blind_end", DateTime(timezone=True), nullable=False),
     Column("source_evaluation_id", String(128), nullable=False),
     Column("claimed_at", DateTime(timezone=True), nullable=False),
     Column("completed_at", DateTime(timezone=True), nullable=True),
     Column("result_id", String(128), nullable=True),
     Column("result_hash", String(64), nullable=True),
     Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_blind_evaluation_claim_symbol_window",
+    blind_evaluation_claims.c.blind_symbol,
+    blind_evaluation_claims.c.blind_start,
+    blind_evaluation_claims.c.blind_end,
 )
 
 evaluation_results = Table(
@@ -1225,21 +1235,56 @@ class SqlGovernanceRepository:
         values = {
             "plan_id": claim.plan_id,
             "query_id": claim.query_id,
+            "blind_scope_id": claim.blind_scope_id,
+            "blind_symbol": claim.blind_symbol,
+            "blind_start": claim.blind_start,
+            "blind_end": claim.blind_end,
             "source_evaluation_id": claim.source_evaluation_id,
             "claimed_at": claim.claimed_at,
             "payload": claim.model_dump(mode="json"),
         }
         try:
             with self._engine.begin() as connection:
+                existing_payload = connection.execute(
+                    select(blind_evaluation_claims.c.payload).where(
+                        blind_evaluation_claims.c.plan_id == claim.plan_id
+                    )
+                ).scalar_one_or_none()
+                if existing_payload is not None:
+                    existing = BlindEvaluationClaim.model_validate(existing_payload)
+                    if (
+                        existing.query_id != claim.query_id
+                        or existing.blind_scope_id != claim.blind_scope_id
+                        or existing.source_evaluation_id != claim.source_evaluation_id
+                    ):
+                        raise ValueError(
+                            "EvaluationPlan 的盲测查询预算已经被消费"
+                        )
+                    return existing
+                if connection.dialect.name == "postgresql":
+                    connection.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+                        {"lock_key": f"blind-evaluation:{claim.blind_symbol}"},
+                    )
+                overlap = connection.execute(
+                    select(blind_evaluation_claims.c.plan_id).where(
+                        blind_evaluation_claims.c.blind_symbol == claim.blind_symbol,
+                        blind_evaluation_claims.c.blind_start < claim.blind_end,
+                        blind_evaluation_claims.c.blind_end > claim.blind_start,
+                    )
+                ).scalar_one_or_none()
+                if overlap is not None:
+                    raise ValueError("该品种的盲测时间窗已被揭示或与其重叠")
                 connection.execute(insert(blind_evaluation_claims).values(**values))
             return claim
         except IntegrityError:
             existing = self.get_blind_evaluation_claim(claim.plan_id)
             if existing is None or (
                 existing.query_id != claim.query_id
+                or existing.blind_scope_id != claim.blind_scope_id
                 or existing.source_evaluation_id != claim.source_evaluation_id
             ):
-                raise ValueError("EvaluationPlan 的盲测查询预算已经被消费") from None
+                raise ValueError("EvaluationPlan 或盲测时间窗已经被消费") from None
             return existing
 
     def get_blind_evaluation_claim(self, plan_id: str) -> BlindEvaluationClaim | None:

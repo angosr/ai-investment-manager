@@ -188,6 +188,10 @@ class BlindEvaluationClaim(FrozenModel):
     """Single durable claim for revealing one plan's reserved blind window."""
 
     query_id: str
+    blind_scope_id: str
+    blind_symbol: str = Field(pattern=r"^[A-Z0-9]{2,32}$")
+    blind_start: datetime
+    blind_end: datetime
     plan_id: str
     source_evaluation_id: str
     claimed_at: datetime
@@ -197,9 +201,21 @@ class BlindEvaluationClaim(FrozenModel):
 
     _utc_claimed_at = field_validator("claimed_at")(_require_utc)
     _utc_completed_at = field_validator("completed_at")(_optional_utc)
+    _utc_blind_start = field_validator("blind_start")(_require_utc)
+    _utc_blind_end = field_validator("blind_end")(_require_utc)
 
     @model_validator(mode="after")
     def completion_fields_are_atomic(self):
+        if self.blind_start >= self.blind_end:
+            raise ValueError("盲测时间窗起点必须早于终点")
+        expected_scope_id = stable_id(
+            "blind_evaluation_scope",
+            self.blind_symbol,
+            self.blind_start,
+            self.blind_end,
+        )
+        if self.blind_scope_id != expected_scope_id:
+            raise ValueError("盲测时间窗身份与边界不一致")
         completion = (self.completed_at, self.result_id, self.result_hash)
         if any(item is not None for item in completion) and not all(
             item is not None for item in completion

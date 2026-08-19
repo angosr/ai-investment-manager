@@ -26,6 +26,7 @@ from quant_core.governance import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
+from quant_core.ids import stable_id
 from quant_core.persistence import (
     SqlGovernanceRepository,
     blind_evaluation_claims,
@@ -335,8 +336,19 @@ def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent()
             {**plan.model_dump(mode="json"), "blind_query_budget": 2}
         )
     repository.register_plan(plan)
+    blind_start = now - timedelta(days=365)
+    blind_end = now - timedelta(days=1)
     initial = BlindEvaluationClaim(
         query_id="blind-query-1",
+        blind_scope_id=stable_id(
+            "blind_evaluation_scope",
+            "BTCUSDT",
+            blind_start,
+            blind_end,
+        ),
+        blind_symbol="BTCUSDT",
+        blind_start=blind_start,
+        blind_end=blind_end,
         plan_id=plan.plan_id,
         source_evaluation_id="walk-forward-1",
         claimed_at=now,
@@ -347,6 +359,40 @@ def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent()
     assert repository.claim_blind_evaluation(retry) == initial
     with pytest.raises(ValueError, match="已经被消费"):
         repository.claim_blind_evaluation(initial.model_copy(update={"query_id": "blind-query-2"}))
+
+    second_plan = plan.model_copy(update={"plan_id": "eval-plan-2"})
+    repository.register_plan(second_plan)
+    with pytest.raises(ValueError, match="重叠"):
+        repository.claim_blind_evaluation(
+            initial.model_copy(
+                update={
+                    "query_id": "blind-query-other-plan",
+                    "plan_id": second_plan.plan_id,
+                    "source_evaluation_id": "walk-forward-2",
+                }
+            )
+        )
+
+    third_plan = plan.model_copy(update={"plan_id": "eval-plan-3"})
+    repository.register_plan(third_plan)
+    future_start = blind_end + timedelta(microseconds=1)
+    future_end = blind_end + timedelta(days=30)
+    future_claim = initial.model_copy(
+        update={
+            "query_id": "blind-query-future-window",
+            "blind_scope_id": stable_id(
+                "blind_evaluation_scope",
+                "BTCUSDT",
+                future_start,
+                future_end,
+            ),
+            "blind_start": future_start,
+            "blind_end": future_end,
+            "plan_id": third_plan.plan_id,
+            "source_evaluation_id": "walk-forward-3",
+        }
+    )
+    assert repository.claim_blind_evaluation(future_claim) == future_claim
 
     completed = initial.model_copy(
         update={
@@ -361,4 +407,4 @@ def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent()
         repository.complete_blind_evaluation(completed.model_copy(update={"result_hash": "b" * 64}))
     assert repository.get_blind_evaluation_claim(plan.plan_id) == completed
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(blind_evaluation_claims)) == 1
+        assert connection.scalar(select(func.count()).select_from(blind_evaluation_claims)) == 2

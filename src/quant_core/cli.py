@@ -561,6 +561,7 @@ def blind_evaluate_command(
     )
     from quant_core.research.walk_forward import (
         WalkForwardEvaluationSpec,
+        blind_evaluation_scope,
         run_blind_evaluation,
         validate_walk_forward_evaluation_plan,
     )
@@ -623,9 +624,14 @@ def blind_evaluate_command(
         source.evaluation_id,
         source.evaluation_spec_hash,
     )
+    blind_scope = blind_evaluation_scope(source)
     claim = governance.claim_blind_evaluation(
         BlindEvaluationClaim(
             query_id=query_id,
+            blind_scope_id=blind_scope.scope_id,
+            blind_symbol=blind_scope.symbol,
+            blind_start=blind_scope.start,
+            blind_end=blind_scope.end,
             plan_id=registered.plan_id,
             source_evaluation_id=source.evaluation_id,
             claimed_at=datetime.now(UTC),

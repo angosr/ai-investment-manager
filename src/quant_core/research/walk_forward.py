@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -243,6 +244,32 @@ class BlindEvaluationResult(FrozenModel):
         if self.result_id != expected:
             raise ValueError("盲测结果 ID 与冻结内容不一致")
         return self
+
+
+@dataclass(frozen=True)
+class BlindEvaluationScope:
+    symbol: str
+    start: datetime
+    end: datetime
+
+    @property
+    def scope_id(self) -> str:
+        return stable_id("blind_evaluation_scope", self.symbol, self.start, self.end)
+
+
+def blind_evaluation_scope(source: WalkForwardResult) -> BlindEvaluationScope:
+    """Identify one market outcome window independently of candidate or dataset copy."""
+
+    if source.blind_start is None or source.blind_end is None:
+        raise ValueError("walk-forward 没有有效的预留盲区")
+    symbols = {fold.run.symbol for fold in source.folds}
+    if len(symbols) != 1:
+        raise ValueError("walk-forward 盲测范围必须只包含一个品种")
+    return BlindEvaluationScope(
+        symbol=next(iter(symbols)),
+        start=source.blind_start,
+        end=source.blind_end,
+    )
 
 
 def run_walk_forward(

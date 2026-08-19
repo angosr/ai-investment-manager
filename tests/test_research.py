@@ -900,6 +900,7 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     from quant_core.research.evaluation_catalog import BlindEvaluationCatalog
     from quant_core.research.walk_forward import (
         WalkForwardPlan,
+        blind_evaluation_scope,
         run_blind_evaluation,
         run_walk_forward,
     )
@@ -932,6 +933,22 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
             "passed": True,
             "reason_codes": ("ALL_PREREGISTERED_GATES_PASSED",),
         }
+    )
+    scope = blind_evaluation_scope(admitted_source)
+    assert scope == blind_evaluation_scope(
+        admitted_source.model_copy(
+            update={
+                "plan": admitted_source.plan.model_copy(
+                    update={"plan_id": "different-candidate-plan"}
+                )
+            }
+        )
+    )
+    assert scope.scope_id == stable_id(
+        "blind_evaluation_scope",
+        dataset.manifest.symbol,
+        admitted_source.blind_start,
+        admitted_source.blind_end,
     )
     result = run_blind_evaluation(
         source=admitted_source,
