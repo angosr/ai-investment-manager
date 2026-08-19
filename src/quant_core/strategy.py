@@ -10,6 +10,7 @@ from quant_core.domain import (
     AccountSnapshot,
     Action,
     FeatureSnapshot,
+    IntelligenceEvent,
     MarketSnapshot,
     OrderType,
     PriceCondition,
@@ -28,6 +29,7 @@ class Strategy(Protocol):
         market: MarketSnapshot,
         account: AccountSnapshot,
         features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
     ) -> tuple[SignalCandidate, ...]: ...
 
 
@@ -47,6 +49,7 @@ class PriceTrendStrategy:
         market: MarketSnapshot,
         account: AccountSnapshot,
         features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
     ) -> tuple[SignalCandidate, ...]:
         if not self._policy.enabled:
             return ()

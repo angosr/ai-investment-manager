@@ -191,7 +191,10 @@ class AnalysisCycle:
                 execution=self.config.execution,
             )
             for candidate in self.strategy.evaluate(
-                market=market, account=cycle_input.account, features=features
+                market=market,
+                account=cycle_input.account,
+                features=features,
+                events=cycle_input.events,
             )
         )
         proposal: AnalysisProposal | None = None

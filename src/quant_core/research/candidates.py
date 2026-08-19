@@ -12,6 +12,7 @@ from quant_core.domain import (
     Action,
     FeatureSnapshot,
     FrozenModel,
+    IntelligenceEvent,
     MarketBar,
     MarketSnapshot,
     OrderType,
@@ -60,6 +61,7 @@ class LongOnlyTimeSeriesMomentumStrategy:
         market: MarketSnapshot,
         account: AccountSnapshot,
         features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
     ) -> tuple[SignalCandidate, ...]:
         spec = self._spec
         if len(market.bars) < spec.required_bar_window:
@@ -154,6 +156,7 @@ class LongOnlyMovingAverageStrategy:
         market: MarketSnapshot,
         account: AccountSnapshot,
         features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
     ) -> tuple[SignalCandidate, ...]:
         spec = self._spec
         if len(market.bars) < spec.required_bar_window:

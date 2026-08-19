@@ -14,6 +14,7 @@ from quant_core.domain import (
     AccountSnapshot,
     Action,
     FrozenModel,
+    IntelligenceEvent,
     MarketBar,
     MarketSnapshot,
     OrderType,
@@ -27,11 +28,15 @@ from quant_core.domain import (
 from quant_core.exit_policy import program_exit_triggered
 from quant_core.features import FeatureEngine
 from quant_core.ids import content_hash, stable_id
-from quant_core.research.dataset import HistoricalDataset, InstrumentSpec
+from quant_core.research.dataset import (
+    HistoricalDataset,
+    HistoricalEventDataset,
+    InstrumentSpec,
+)
 from quant_core.risk import RiskEngine
 from quant_core.strategy import PriceTrendStrategy, Strategy
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v9"
+BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v10"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -102,6 +107,7 @@ class BacktestMetrics(FrozenModel):
 class BacktestRun(FrozenModel):
     run_id: str
     dataset_id: str
+    event_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     engine: str
     engine_version: str
@@ -142,6 +148,7 @@ def artifact_hash(config: AppConfig, *, strategy_spec: object | None = None) -> 
 def run_bar_backtest(
     *,
     dataset: HistoricalDataset,
+    event_dataset: HistoricalEventDataset | None = None,
     config: AppConfig,
     signal_start: datetime,
     signal_end: datetime,
@@ -185,6 +192,15 @@ def run_bar_backtest(
         raise ValueError("回放必须覆盖信号窗口之前的预热数据")
     if replay_end is not None and replay_end < signal_end:
         raise ValueError("回放必须覆盖完整信号窗口")
+    effective_replay_start = replay_start or dataset.manifest.first_open_time
+    effective_replay_end = replay_end or (
+        dataset.manifest.last_close_time + timedelta(microseconds=1)
+    )
+    if event_dataset is not None and (
+        event_dataset.manifest.requested_start > effective_replay_start
+        or event_dataset.manifest.requested_end < effective_replay_end
+    ):
+        raise ValueError("历史事件数据集必须覆盖完整回放窗口")
 
     instrument = _build_instrument(dataset.manifest.instrument)
     bar_type, events = _to_nautilus_events(
@@ -204,6 +220,7 @@ def run_bar_backtest(
         ),
         app_config=config,
         core_strategy=core_strategy,
+        events=event_dataset.events if event_dataset is not None else (),
         starting_equity=starting_equity,
         spread_bps=spread_bps,
     )
@@ -249,6 +266,9 @@ def run_bar_backtest(
     frozen_artifact = artifact_hash(config, strategy_spec=strategy_spec)
     run_identity = {
         "dataset_id": dataset.manifest.dataset_id,
+        "event_dataset_id": (
+            event_dataset.manifest.dataset_id if event_dataset is not None else None
+        ),
         "artifact_hash": frozen_artifact,
         "engine": "nautilus-trader",
         "engine_version": nautilus_trader.__version__,
@@ -262,6 +282,9 @@ def run_bar_backtest(
     return BacktestRun(
         run_id=stable_id("historical_backtest", run_identity),
         dataset_id=dataset.manifest.dataset_id,
+        event_dataset_id=(
+            event_dataset.manifest.dataset_id if event_dataset is not None else None
+        ),
         artifact_hash=frozen_artifact,
         engine="nautilus-trader",
         engine_version=nautilus_trader.__version__,
@@ -287,6 +310,16 @@ def run_bar_backtest(
             "DAILY_AND_COOLDOWN_FREQUENCY_LIMITS_APPLIED",
             "CALIBRATION_EDGE_GATE_EXCLUDED_FOR_RAW_SIGNAL_EVALUATION",
             "NO_CODEX_REPLAY",
+        )
+        + (
+            (
+                "EVENTS_VISIBLE_ONLY_AFTER_OBSERVED_AT",
+                "EVENT_STRATEGY_EVALUATED_AT_BAR_CLOSE",
+                "EVENT_VISIBILITY_MATCHES_PRODUCTION_100_ITEM_BOUND",
+                "TRIGGER_PLAN_NOT_REPLAYED_BAR_CLOCK_ONLY",
+            )
+            if event_dataset is not None
+            else ()
         ),
         trades=adapter.trades,
         metrics=metrics,
@@ -531,12 +564,17 @@ class _QuantCoreBarStrategy(NautilusStrategy):
         *,
         app_config: AppConfig,
         core_strategy: Strategy,
+        events: tuple[IntelligenceEvent, ...],
         starting_equity: Decimal,
         spread_bps: Decimal,
     ) -> None:
         super().__init__(config)
         self._app = app_config
         self._core_strategy = core_strategy
+        self._events = events
+        self._event_cursor = 0
+        self._observed_events: list[IntelligenceEvent] = []
+        self._strategy_events: tuple[IntelligenceEvent, ...] = ()
         self._spread_bps = spread_bps
         self._bars: deque[MarketBar] = deque(maxlen=app_config.market_data.bar_window)
         self._pending: SignalCandidate | None = None
@@ -594,6 +632,7 @@ class _QuantCoreBarStrategy(NautilusStrategy):
 
     def on_bar(self, bar: Bar) -> None:
         at = _from_nanoseconds(bar.ts_event)
+        self._advance_events(at)
         current = MarketBar(
             event_time=at - timedelta(minutes=_interval_minutes(self._app.market_data.interval)),
             observed_at=at,
@@ -635,6 +674,7 @@ class _QuantCoreBarStrategy(NautilusStrategy):
             market=market,
             account=account,
             features=features,
+            events=self._strategy_events,
         )
         if not candidates:
             return
@@ -643,6 +683,34 @@ class _QuantCoreBarStrategy(NautilusStrategy):
             self._reject("MULTIPLE_PROGRAM_CANDIDATES")
             return
         self._pending = candidates[0]
+
+    def _advance_events(self, at: datetime) -> None:
+        changed = False
+        while (
+            self._event_cursor < len(self._events)
+            and self._events[self._event_cursor].observed_at <= at
+        ):
+            event = self._events[self._event_cursor]
+            self._event_cursor += 1
+            if self._app.market_data.symbols and self.config.instrument_id.symbol.value not in (
+                event.symbols
+            ):
+                continue
+            self._observed_events.append(event)
+            changed = True
+        if not changed:
+            return
+        self._observed_events = sorted(
+            self._observed_events,
+            key=lambda item: (item.event_time, item.evidence_id),
+            reverse=True,
+        )[:100]
+        self._strategy_events = tuple(
+            sorted(
+                self._observed_events,
+                key=lambda item: (item.event_time, item.evidence_id),
+            )
+        )
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
         candidate = self._pending

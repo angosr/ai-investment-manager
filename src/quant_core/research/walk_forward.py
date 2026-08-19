@@ -17,7 +17,7 @@ from quant_core.research.backtest import (
     artifact_hash,
     run_bar_backtest,
 )
-from quant_core.research.dataset import HistoricalDataset
+from quant_core.research.dataset import HistoricalDataset, HistoricalEventDataset
 from quant_core.strategy import PriceTrendStrategy
 
 
@@ -63,6 +63,7 @@ class WalkForwardResult(FrozenModel):
     evaluation_id: str
     plan: WalkForwardPlan
     dataset_id: str
+    event_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     # Old catalog entries predate this field. New evaluations freeze the exact
     # candidate parameters so a failed named candidate can be removed from code.
@@ -78,10 +79,21 @@ class WalkForwardResult(FrozenModel):
     folds: tuple[WalkForwardFold, ...] = Field(min_length=1)
     metrics: BacktestMetrics
 
+    @model_validator(mode="after")
+    def fold_data_provenance_matches(self):
+        if any(
+            item.run.dataset_id != self.dataset_id
+            or item.run.event_dataset_id != self.event_dataset_id
+            for item in self.folds
+        ):
+            raise ValueError("walk-forward 折叠数据制品身份不一致")
+        return self
+
 
 def run_walk_forward(
     *,
     dataset: HistoricalDataset,
+    event_dataset: HistoricalEventDataset | None = None,
     config: AppConfig,
     plan: WalkForwardPlan,
     strategy: ResearchStrategy | None = None,
@@ -128,6 +140,7 @@ def run_walk_forward(
         signal_end = bars[signal_end_index].close_time
         run = run_bar_backtest(
             dataset=dataset,
+            event_dataset=event_dataset,
             config=config,
             signal_start=signal_start,
             signal_end=signal_end,
@@ -184,6 +197,9 @@ def run_walk_forward(
         evaluation_id=evaluation_id,
         plan=plan,
         dataset_id=dataset.manifest.dataset_id,
+        event_dataset_id=(
+            event_dataset.manifest.dataset_id if event_dataset is not None else None
+        ),
         artifact_hash=frozen_artifact,
         strategy_spec_snapshot=strategy_spec_snapshot,
         embargo_bars=embargo_bars,

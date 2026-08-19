@@ -8,15 +8,18 @@ from decimal import Decimal
 import httpx
 import pytest
 
+from quant_core.domain import IntelligenceEvent
 from quant_core.ids import stable_id
 from quant_core.market_data import ClosedMarketBar
 from quant_core.research.dataset import (
     HistoricalDataset,
     HistoricalDatasetCatalog,
     HistoricalDatasetManifest,
+    HistoricalEventDatasetCatalog,
     InstrumentSpec,
     _bars_hash,
     fetch_binance_history,
+    freeze_historical_events,
 )
 
 
@@ -144,6 +147,81 @@ def test_historical_dataset_rejects_bar_gap() -> None:
         HistoricalDataset(manifest=manifest, bars=tuple(bars))
 
 
+def _event(*, observed_at: datetime, evidence_id: str = "event-1") -> IntelligenceEvent:
+    return IntelligenceEvent(
+        evidence_id=evidence_id,
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="test-archive-v1",
+        event_time=observed_at - timedelta(seconds=30),
+        observed_at=observed_at,
+        source="test-source",
+        title=f"point-in-time {evidence_id}",
+        body="historical event body",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("1"),
+        impact=Decimal("0.8"),
+        source_reliability=Decimal("0.7"),
+        novelty=Decimal("1"),
+    )
+
+
+def test_historical_event_catalog_round_trip_and_rejects_tampering(tmp_path) -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    dataset = freeze_historical_events(
+        events=(
+            _event(observed_at=start + timedelta(hours=2), evidence_id="event-2"),
+            _event(observed_at=start + timedelta(hours=1), evidence_id="event-1"),
+        ),
+        source="test-archive",
+        requested_start=start,
+        requested_end=end,
+        collected_at=end,
+    )
+    catalog = HistoricalEventDatasetCatalog(tmp_path)
+    target = catalog.store(dataset)
+
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
+    assert tuple(item.evidence_id for item in dataset.events) == ("event-1", "event-2")
+    repeated = freeze_historical_events(
+        events=dataset.events,
+        source="test-archive",
+        requested_start=start,
+        requested_end=end,
+        collected_at=end + timedelta(hours=1),
+    )
+    assert catalog.store(repeated) == target
+
+    rows = json.loads((target / "events.json").read_text())
+    rows[0]["body"] = "tampered"
+    (target / "events.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="内容哈希"):
+        catalog.load(dataset.manifest.dataset_id)
+
+
+def test_historical_event_freeze_accepts_empty_window_as_observed_fact() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    dataset = freeze_historical_events(
+        events=(),
+        source="test-archive",
+        requested_start=start,
+        requested_end=start + timedelta(hours=1),
+        collected_at=start + timedelta(hours=1),
+    )
+
+    assert dataset.manifest.event_count == 0
+    assert dataset.manifest.first_observed_at is None
+
+    with pytest.raises(ValueError, match="终点不能晚于"):
+        freeze_historical_events(
+            events=(),
+            source="test-archive",
+            requested_start=start,
+            requested_end=start + timedelta(hours=2),
+            collected_at=start + timedelta(hours=1),
+        )
+
+
 def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = start + timedelta(minutes=10)
@@ -252,6 +330,117 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
     )
     # 每 5 分钟上涨 2 bps，60 分钟毛收益仍不足以覆盖当前完整往返成本。
     assert run.metrics.net_pnl < 0
+
+
+def test_backtest_exposes_events_only_after_frozen_observed_at(app_config) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+
+    dataset = _dataset(count=100)
+    early_at = dataset.bars[66].close_time
+    late_at = dataset.bars[70].close_time
+    event_dataset = freeze_historical_events(
+        events=(
+            _event(observed_at=early_at, evidence_id="early"),
+            _event(observed_at=late_at, evidence_id="late"),
+        ),
+        source="test-archive",
+        requested_start=dataset.bars[0].open_time,
+        requested_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+        collected_at=dataset.bars[-1].close_time + timedelta(seconds=1),
+    )
+
+    class RecordingStrategy:
+        research_spec = app_config.strategy
+
+        def __init__(self) -> None:
+            self.views: list[tuple[datetime, tuple[str, ...]]] = []
+
+        def evaluate(self, *, market, account, features, events=()):
+            self.views.append(
+                (market.as_of, tuple(item.evidence_id for item in events))
+            )
+            return ()
+
+    strategy = RecordingStrategy()
+    run = run_bar_backtest(
+        dataset=dataset,
+        event_dataset=event_dataset,
+        config=app_config,
+        strategy=strategy,
+        signal_start=dataset.bars[63].close_time,
+        signal_end=dataset.bars[75].close_time,
+    )
+
+    views = dict(strategy.views)
+    assert views[dataset.bars[65].close_time] == ()
+    assert views[early_at] == ("early",)
+    assert views[dataset.bars[69].close_time] == ("early",)
+    assert views[late_at] == ("early", "late")
+    assert run.event_dataset_id == event_dataset.manifest.dataset_id
+    assert "EVENTS_VISIBLE_ONLY_AFTER_OBSERVED_AT" in run.assumptions
+    assert "EVENT_STRATEGY_EVALUATED_AT_BAR_CLOSE" in run.assumptions
+
+    partial_events = freeze_historical_events(
+        events=(),
+        source="test-archive",
+        requested_start=dataset.bars[10].open_time,
+        requested_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+        collected_at=dataset.bars[-1].close_time + timedelta(seconds=1),
+    )
+    with pytest.raises(ValueError, match="覆盖完整回放窗口"):
+        run_bar_backtest(
+            dataset=dataset,
+            event_dataset=partial_events,
+            config=app_config,
+            strategy=RecordingStrategy(),
+            signal_start=dataset.bars[63].close_time,
+            signal_end=dataset.bars[75].close_time,
+        )
+
+
+def test_backtest_event_visibility_matches_production_latest_100_bound(app_config) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+
+    dataset = _dataset(count=80)
+    observed_at = dataset.bars[63].close_time
+    event_dataset = freeze_historical_events(
+        events=tuple(
+            _event(observed_at=observed_at, evidence_id=f"event-{index:03d}")
+            for index in range(105)
+        ),
+        source="test-archive",
+        requested_start=dataset.bars[0].open_time,
+        requested_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+        collected_at=dataset.bars[-1].close_time + timedelta(seconds=1),
+    )
+
+    class RecordingStrategy:
+        research_spec = app_config.strategy
+
+        def __init__(self) -> None:
+            self.first_view: tuple[str, ...] | None = None
+
+        def evaluate(self, *, market, account, features, events=()):
+            if self.first_view is None:
+                self.first_view = tuple(item.evidence_id for item in events)
+            return ()
+
+    strategy = RecordingStrategy()
+    run_bar_backtest(
+        dataset=dataset,
+        event_dataset=event_dataset,
+        config=app_config,
+        strategy=strategy,
+        signal_start=observed_at,
+        signal_end=dataset.bars[66].close_time,
+    )
+
+    assert strategy.first_view is not None
+    assert len(strategy.first_view) == 100
+    assert strategy.first_view[0] == "event-005"
+    assert strategy.first_view[-1] == "event-104"
 
 
 def test_backtest_metrics_keep_legacy_artifacts_readable_and_validate_costs() -> None:

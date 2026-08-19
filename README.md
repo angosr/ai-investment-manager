@@ -85,6 +85,9 @@ python3 -m venv .venv
   --config config/quant-core.yaml --symbol BTCUSDT \
   --candidate long-only-tsmom-12m-v1 \
   --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+  .venv/bin/quant-core freeze-event-history \
+  --start 2026-08-01T00:00:00Z --end 2026-08-19T00:00:00Z
 .venv/bin/quant-core walk-forward \
   --config config/quant-core.yaml --dataset-id '<上一步输出>' \
   --candidate long-only-tsmom-12m-v1 \
@@ -94,7 +97,7 @@ python3 -m venv .venv
   --evaluation-catalog .runtime/evaluations
 ```
 
-`walk-forward` 复用生产特征、程序策略、成本与风控口径，以 K 线收盘生成信号、下一根开盘撮合，并自动使用覆盖成交、持有期与标签跨度的 embargo/purge；特征预热只能读取信号前已知事实。费用、滑点和价差按开仓与平仓各自名义金额计算，回撤按每根已收盘 K 线盯市；程序退出由生产与回测共用的纯规则评价器执行。`--blind-bars` 显式保留从未参与 walk-forward 的尾部盲测区间。默认高密度摘要直接分解毛收益、模型化交易成本、净收益及对应平均 bps；`--include-trades` 才展开逐笔事实，不创建长期 Markdown 报告。`research-catalog` 从不可变结果派生实验累计次数、家族累计次数、被替代版本和唯一最高回测语义；若同一最高语义存在多个结果或策略身份冲突，则不提供 canonical，避免挑选旧结果。Codex 的盈利证据只接受在结果发生前冻结的前瞻决策带；即使旧事件具有真实 `observed_at`，今天的模型也可能已经知道历史后果，事后调用只能做行为回归，不能冒充 AI Alpha。
+`walk-forward` 复用生产特征、程序策略、成本与风控口径，以 K 线收盘生成信号、下一根开盘撮合，并自动使用覆盖成交、持有期与标签跨度的 embargo/purge；特征预热只能读取信号前已知事实。`freeze-event-history` 只冻结事实库里真实记录的 `observed_at`，不会给事后抓取的新闻猜测到达时间；通过 `walk-forward --event-dataset-id ...` 可将独立事件制品与行情制品组合，策略只看见当时已到达且与生产读取上限一致的事件。当前事件在下一根已收盘 K 线评价，属于明确的保守延迟假设；这一入口尚未回放 TriggerPlan，也尚未有通过预登记历史门禁的事件因子。费用、滑点和价差按开仓与平仓各自名义金额计算，回撤按每根已收盘 K 线盯市；程序退出由生产与回测共用的纯规则评价器执行。`--blind-bars` 显式保留从未参与 walk-forward 的尾部盲测区间。默认高密度摘要直接分解毛收益、模型化交易成本、净收益及对应平均 bps；`--include-trades` 才展开逐笔事实，不创建长期 Markdown 报告。`research-catalog` 从不可变结果派生实验累计次数、家族累计次数、被替代版本和唯一最高回测语义；若同一最高语义存在多个结果或策略身份冲突，则不提供 canonical，避免挑选旧结果。Codex 的盈利证据只接受在结果发生前冻结的前瞻决策带；即使旧事件具有真实 `observed_at`，今天的模型也可能已经知道历史后果，事后调用只能做行为回归，不能冒充 AI Alpha。
 
 完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。两边都从真实 Codex 完成后的首个可成交时点开始，并复用生产成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，详见 `ARCHITECTURE.md` §9.5.1。当前代码已实现程序 walk-forward、多周期前瞻预测带和基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 

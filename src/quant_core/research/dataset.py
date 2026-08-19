@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from pydantic import Field, field_validator, model_validator
 
-from quant_core.domain import FrozenModel, _require_utc
+from quant_core.domain import FrozenModel, IntelligenceEvent, _require_utc
 from quant_core.ids import stable_id
 from quant_core.market_data import ClosedMarketBar
 
@@ -146,6 +146,159 @@ class HistoricalDatasetCatalog:
             raise ValueError("历史 bars.json 根节点必须是数组")
         bars = tuple(_bar_from_compact(row, manifest) for row in rows)
         return HistoricalDataset(manifest=manifest, bars=bars)
+
+
+class HistoricalEventDatasetManifest(FrozenModel):
+    """Point-in-time event facts, addressed independently from market bars."""
+
+    schema_version: str = "historical-events-v1"
+    dataset_id: str
+    source: str
+    collected_at: datetime
+    requested_start: datetime
+    requested_end: datetime
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
+    event_count: int = Field(ge=0)
+    events_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    _utc_collected_at = field_validator("collected_at")(_require_utc)
+    _utc_requested_start = field_validator("requested_start")(_require_utc)
+    _utc_requested_end = field_validator("requested_end")(_require_utc)
+
+    @field_validator("first_observed_at", "last_observed_at")
+    @classmethod
+    def optional_times_must_be_utc(cls, value: datetime | None) -> datetime | None:
+        return _require_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def identity_and_bounds_match(self):
+        if self.requested_start >= self.requested_end:
+            raise ValueError("历史事件请求起点必须早于终点")
+        if self.requested_end > self.collected_at:
+            raise ValueError("历史事件窗口终点不能晚于制品冻结时间")
+        bounds = (self.first_observed_at, self.last_observed_at)
+        if self.event_count == 0 and bounds != (None, None):
+            raise ValueError("空事件数据集不能声明观测边界")
+        if self.event_count > 0 and (
+            self.first_observed_at is None or self.last_observed_at is None
+        ):
+            raise ValueError("非空事件数据集必须声明观测边界")
+        if self.first_observed_at is not None and (
+            self.first_observed_at < self.requested_start
+            or self.last_observed_at is None
+            or self.last_observed_at < self.first_observed_at
+            or self.last_observed_at >= self.requested_end
+        ):
+            raise ValueError("历史事件观测边界与请求窗口不一致")
+        expected = stable_id(
+            "historical_event_dataset",
+            self.schema_version,
+            self.source,
+            self.requested_start,
+            self.requested_end,
+            self.events_hash,
+        )
+        if self.dataset_id != expected:
+            raise ValueError("历史事件数据集 ID 与冻结内容不一致")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalEventDataset:
+    manifest: HistoricalEventDatasetManifest
+    events: tuple[IntelligenceEvent, ...]
+
+    def __post_init__(self) -> None:
+        _validate_events(self.events, self.manifest)
+
+
+class HistoricalEventDatasetCatalog:
+    """Immutable event catalog; an empty requested window remains a valid fact."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    def store(self, dataset: HistoricalEventDataset) -> Path:
+        target = self._root / dataset.manifest.dataset_id
+        if target.exists():
+            existing = self.load(dataset.manifest.dataset_id)
+            same_manifest_identity = existing.manifest.model_copy(
+                update={"collected_at": dataset.manifest.collected_at}
+            ) == dataset.manifest
+            if not same_manifest_identity or existing.events != dataset.events:
+                raise ValueError("同一历史事件数据集 ID 的内容不一致")
+            return target
+
+        self._root.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=".event-dataset-", dir=self._root))
+        try:
+            _write_json(
+                temporary / "events.json",
+                [item.model_dump(mode="json") for item in dataset.events],
+            )
+            _write_json(
+                temporary / "manifest.json",
+                dataset.manifest.model_dump(mode="json"),
+            )
+            temporary.replace(target)
+        except BaseException:
+            for item in temporary.iterdir() if temporary.exists() else ():
+                item.unlink()
+            if temporary.exists():
+                temporary.rmdir()
+            raise
+        return target
+
+    def load(self, dataset_id: str) -> HistoricalEventDataset:
+        target = self._root / dataset_id
+        manifest = HistoricalEventDatasetManifest.model_validate(
+            json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        )
+        rows = json.loads((target / "events.json").read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            raise ValueError("历史 events.json 根节点必须是数组")
+        return HistoricalEventDataset(
+            manifest=manifest,
+            events=tuple(IntelligenceEvent.model_validate(item) for item in rows),
+        )
+
+
+def freeze_historical_events(
+    *,
+    events: Iterable[IntelligenceEvent],
+    source: str,
+    requested_start: datetime,
+    requested_end: datetime,
+    collected_at: datetime,
+) -> HistoricalEventDataset:
+    """Freeze facts with real arrival times; never infer historical observed_at."""
+
+    start = _require_utc(requested_start)
+    end = _require_utc(requested_end)
+    collected = _require_utc(collected_at)
+    if start >= end:
+        raise ValueError("历史事件请求起点必须早于终点")
+    if end > collected:
+        raise ValueError("历史事件窗口终点不能晚于制品冻结时间")
+    ordered = tuple(sorted(events, key=lambda item: (item.observed_at, item.evidence_id)))
+    digest = _events_hash(ordered)
+    payload = {
+        "schema_version": "historical-events-v1",
+        "source": source,
+        "requested_start": start,
+        "requested_end": end,
+        "events_hash": digest,
+    }
+    manifest = HistoricalEventDatasetManifest(
+        dataset_id=stable_id("historical_event_dataset", *payload.values()),
+        collected_at=collected,
+        first_observed_at=ordered[0].observed_at if ordered else None,
+        last_observed_at=ordered[-1].observed_at if ordered else None,
+        event_count=len(ordered),
+        **payload,
+    )
+    return HistoricalEventDataset(manifest=manifest, events=ordered)
 
 
 async def fetch_binance_history(
@@ -332,6 +485,48 @@ def _bars_hash(bars: Iterable[ClosedMarketBar]) -> str:
         )
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def _events_hash(events: Iterable[IntelligenceEvent]) -> str:
+    digest = hashlib.sha256()
+    for event in events:
+        digest.update(
+            json.dumps(
+                event.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _validate_events(
+    events: tuple[IntelligenceEvent, ...],
+    manifest: HistoricalEventDatasetManifest,
+) -> None:
+    if len(events) != manifest.event_count:
+        raise ValueError("历史事件数量与 Manifest 不一致")
+    order = tuple((item.observed_at, item.evidence_id) for item in events)
+    if order != tuple(sorted(order)) or len({item.evidence_id for item in events}) != len(
+        events
+    ):
+        raise ValueError("历史事件必须按 observed_at 排序且 evidence_id 唯一")
+    if any(item.event_time > item.observed_at for item in events):
+        raise ValueError("历史事件不能在发生前被观测")
+    if any(
+        item.observed_at < manifest.requested_start
+        or item.observed_at >= manifest.requested_end
+        for item in events
+    ):
+        raise ValueError("历史事件包含请求窗口外的观测事实")
+    first = events[0].observed_at if events else None
+    last = events[-1].observed_at if events else None
+    if (first, last) != (manifest.first_observed_at, manifest.last_observed_at):
+        raise ValueError("历史事件观测边界与 Manifest 不一致")
+    if _events_hash(events) != manifest.events_hash:
+        raise ValueError("历史事件内容哈希与 Manifest 不一致")
 
 
 def _compact_bar(bar: ClosedMarketBar) -> list[Any]:

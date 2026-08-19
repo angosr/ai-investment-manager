@@ -17,6 +17,7 @@ from quant_core.domain import (
     DirectionalView,
     FeatureSnapshot,
     FrozenModel,
+    IntelligenceEvent,
     MarketSnapshot,
     Side,
     SignalCandidate,
@@ -347,11 +348,13 @@ class ForecastGatedStrategy:
         market: MarketSnapshot,
         account: AccountSnapshot,
         features: FeatureSnapshot,
+        events: tuple[IntelligenceEvent, ...] = (),
     ) -> tuple[SignalCandidate, ...]:
         candidates = self._base.evaluate(
             market=market,
             account=account,
             features=features,
+            events=events,
         )
         if not candidates:
             return ()
@@ -401,6 +404,7 @@ class PairedDecisionTapeResult(FrozenModel):
             raise ValueError("配对回放决策带条目不得重复")
         if (
             self.baseline.dataset_id != self.gated.dataset_id
+            or self.baseline.event_dataset_id != self.gated.event_dataset_id
             or self.baseline.symbol != self.gated.symbol
             or self.baseline.signal_start != self.gated.signal_start
             or self.baseline.signal_end != self.gated.signal_end

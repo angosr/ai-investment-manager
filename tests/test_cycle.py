@@ -44,7 +44,7 @@ class NoCandidateStrategy:
     def __init__(self) -> None:
         self.calls = 0
 
-    def evaluate(self, *, market, account, features):
+    def evaluate(self, *, market, account, features, events=()):
         self.calls += 1
         return ()
 

@@ -351,8 +351,12 @@ def walk_forward_command(
     test_bars: Annotated[int, typer.Option(min=2)],
     blind_bars: Annotated[int, typer.Option(min=0)] = 0,
     candidate: Annotated[str, typer.Option()] = "configured",
+    event_dataset_id: Annotated[str | None, typer.Option()] = None,
     catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/datasets"
+    ),
+    event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/event-datasets"
     ),
     evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/evaluations"
@@ -371,7 +375,10 @@ def walk_forward_command(
     """对冻结程序策略运行带隔离窗口的 walk-forward；不调用 Codex。"""
 
     from quant_core.research.candidates import resolve_research_candidate
-    from quant_core.research.dataset import HistoricalDatasetCatalog
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        HistoricalEventDatasetCatalog,
+    )
     from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
     from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
 
@@ -401,8 +408,14 @@ def walk_forward_command(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    event_dataset = (
+        HistoricalEventDatasetCatalog(event_catalog).load(event_dataset_id)
+        if event_dataset_id is not None
+        else None
+    )
     result = run_walk_forward(
         dataset=HistoricalDatasetCatalog(catalog).load(dataset_id),
+        event_dataset=event_dataset,
         config=effective_config,
         plan=WalkForwardPlan(
             plan_id=plan_id,
@@ -426,6 +439,75 @@ def walk_forward_command(
         for fold in payload["folds"]:
             fold["run"].pop("trades", None)
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("freeze-event-history")
+def freeze_event_history_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="点时事件事实库"),
+    ],
+    start: Annotated[str, typer.Option(help="按 observed_at 过滤的含时区起点（含）")],
+    end: Annotated[str, typer.Option(help="按 observed_at 过滤的含时区终点（不含）")],
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/event-datasets"
+    ),
+) -> None:
+    """冻结真实到达时间的标准事件；不为事后新闻猜测 observed_at。"""
+
+    from sqlalchemy import select
+
+    from quant_core.domain import IntelligenceEvent
+    from quant_core.persistence import normalized_events
+    from quant_core.research.dataset import (
+        HistoricalEventDatasetCatalog,
+        freeze_historical_events,
+    )
+
+    window_start = _parse_utc_option(start, name="start")
+    window_end = _parse_utc_option(end, name="end")
+    if window_start >= window_end:
+        raise typer.BadParameter("start 必须早于 end")
+    frozen_at = datetime.now(UTC)
+    if window_end > frozen_at:
+        raise typer.BadParameter("end 不能晚于当前冻结时间", param_hint="end")
+    engine = _runtime_engine(database_url)
+    with engine.connect() as connection:
+        rows = tuple(
+            connection.execute(
+                select(normalized_events.c.payload)
+                .where(
+                    normalized_events.c.observed_at >= window_start,
+                    normalized_events.c.observed_at < window_end,
+                )
+                .order_by(
+                    normalized_events.c.observed_at,
+                    normalized_events.c.evidence_id,
+                )
+            ).scalars()
+        )
+    dataset = freeze_historical_events(
+        events=(IntelligenceEvent.model_validate(item) for item in rows),
+        source="quant-core-normalized-events",
+        requested_start=window_start,
+        requested_end=window_end,
+        collected_at=frozen_at,
+    )
+    target = HistoricalEventDatasetCatalog(catalog).store(dataset)
+    typer.echo(
+        json.dumps(
+            {
+                "event_dataset_id": dataset.manifest.dataset_id,
+                "event_count": dataset.manifest.event_count,
+                "requested_start": dataset.manifest.requested_start.isoformat(),
+                "requested_end": dataset.manifest.requested_end.isoformat(),
+                "events_hash": dataset.manifest.events_hash,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @app.command("research-catalog")
