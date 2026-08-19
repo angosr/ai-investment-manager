@@ -1,7 +1,7 @@
 manifest_id: release-framework-event-quality-v1
 created_at: 2026-08-19T20:10:00Z
 status: CHALLENGER
-code_version: d08002ccb31f24e778f21cae10b054a09076af7d
+code_version: 5881e8caecc7fcf1c4a30b03a755d018d4eb4ce7
 constitution_version: constitution-v1
 parent_manifest_id: release-framework-trigger-evidence-v1
 complexity_score: 1
