@@ -18,7 +18,6 @@ from quant_core.domain import (
     FeatureSnapshot,
     FrozenModel,
     IntelligenceEvent,
-    MarketBar,
     MarketSnapshot,
     OrderType,
     PriceCondition,
@@ -29,18 +28,13 @@ from quant_core.domain import (
 from quant_core.ids import content_hash, stable_id
 from quant_core.market_data import ClosedMarketBar
 from quant_core.research.dataset import (
-    FundingRateObservation,
-    FundingSourceArtifact,
     HistoricalDataset,
     HistoricalDatasetCatalog,
     HistoricalDatasetManifest,
     HistoricalEventDatasetCatalog,
-    HistoricalFundingDataset,
     HistoricalFundingDatasetCatalog,
-    HistoricalFundingDatasetManifest,
     InstrumentSpec,
     _bars_hash,
-    _funding_observations_hash,
     fetch_binance_funding_history,
     fetch_binance_history,
     freeze_historical_events,
@@ -408,59 +402,9 @@ def _funding_archive(filename: str, rows: tuple[tuple[str, str, str], ...]) -> b
     return stream.getvalue()
 
 
-def _funding_dataset(rates: tuple[Decimal, ...]) -> HistoricalFundingDataset:
-    start = datetime(2026, 1, 1, tzinfo=UTC)
-    end = start + timedelta(hours=8 * len(rates))
-    observations = tuple(
-        FundingRateObservation(
-            symbol="BTCUSDT",
-            funding_time=start + timedelta(hours=8 * index),
-            available_at=start + timedelta(hours=8 * index, minutes=1),
-            funding_interval_hours=8,
-            funding_rate=rate,
-        )
-        for index, rate in enumerate(rates)
-    )
-    observations_hash = _funding_observations_hash(observations)
-    artifacts = (
-        FundingSourceArtifact(
-            archive_key=(
-                "data/futures/um/monthly/fundingRate/BTCUSDT/"
-                "BTCUSDT-fundingRate-2026-01.zip"
-            ),
-            sha256="a" * 64,
-        ),
-    )
-    identity = (
-        "historical-funding-rates-v1",
-        "binance-public-data-usdm-funding-rate",
-        "BTCUSDT",
-        "BINANCE_USDM",
-        60,
-        start,
-        end,
-        observations_hash,
-        artifacts,
-    )
-    return HistoricalFundingDataset(
-        manifest=HistoricalFundingDatasetManifest(
-            dataset_id=stable_id("historical_funding_dataset", *identity),
-            symbol="BTCUSDT",
-            collected_at=end + timedelta(days=1),
-            requested_start=start,
-            requested_end=end,
-            first_available_at=observations[0].available_at,
-            last_available_at=observations[-1].available_at,
-            observation_count=len(observations),
-            observations_hash=observations_hash,
-            source_artifacts=artifacts,
-        ),
-        observations=observations,
-    )
-
-
 def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility(
     tmp_path,
+    app_config,
 ) -> None:
     start = datetime(2026, 7, 1, tzinfo=UTC)
     end = start + timedelta(hours=16)
@@ -499,6 +443,14 @@ def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility
     catalog = HistoricalFundingDatasetCatalog(tmp_path)
     target = catalog.store(dataset)
     assert catalog.load(dataset.manifest.dataset_id) == dataset
+    from quant_core.research.candidates import resolve_research_candidate
+
+    with pytest.raises(ValueError, match="不接受未使用"):
+        resolve_research_candidate(
+            "configured",
+            app_config,
+            funding_dataset=dataset,
+        )
 
     rows = json.loads((target / "observations.json").read_text())
     rows[0][3] = "9"
@@ -1262,105 +1214,11 @@ def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
             "long-only-volatility-dip-sma200-3d-v1",
             app_config,
         )
-
-
-def test_funding_candidate_binds_point_in_time_dataset_and_vetoes_crowding(
-    app_config,
-) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.research.candidates import (
-        FUNDING_FILTERED_DUAL_TREND_CANDIDATE,
-        LongOnlyFundingFilteredDualTrendSpec,
-        LongOnlyFundingFilteredDualTrendStrategy,
-        resolve_research_candidate,
-    )
-
-    quiet_dataset = _funding_dataset((Decimal("0"),) * 40)
-    effective, resolved = resolve_research_candidate(
-        FUNDING_FILTERED_DUAL_TREND_CANDIDATE,
-        app_config,
-        funding_dataset=quiet_dataset,
-    )
-    assert effective.market_data.interval == "1d"
-    assert effective.market_data.symbols == ("BTCUSDT",)
-    assert resolved.research_spec.funding_dataset_id == quiet_dataset.manifest.dataset_id
-    with pytest.raises(ValueError, match="必须绑定"):
-        resolve_research_candidate(FUNDING_FILTERED_DUAL_TREND_CANDIDATE, app_config)
-    with pytest.raises(ValueError, match="不接受未使用"):
+    with pytest.raises(ValueError, match="未知或已退役"):
         resolve_research_candidate(
-            "configured",
+            "long-only-dual-trend-28d-sma200-funding-p90-5d-v1",
             app_config,
-            funding_dataset=quiet_dataset,
         )
-
-    bars_dataset = _dataset(
-        count=20,
-        price_step=Decimal("1.01"),
-        interval="1d",
-        bar_delta=timedelta(days=1),
-    )
-    bars = tuple(
-        MarketBar(
-            event_time=item.close_time,
-            observed_at=item.observed_at,
-            open=item.open,
-            high=item.high,
-            low=item.low,
-            close=item.close,
-            volume=item.volume,
-        )
-        for item in bars_dataset.bars
-    )
-    as_of = bars[-1].observed_at
-    market = MarketSnapshot(
-        cycle_id="funding-filter-cycle",
-        symbol="BTCUSDT",
-        as_of=as_of,
-        observed_at=as_of,
-        bid=bars[-1].close * Decimal("0.9999"),
-        ask=bars[-1].close * Decimal("1.0001"),
-        last=bars[-1].close,
-        bars=bars,
-        source="test",
-    )
-    features = FeatureEngine(
-        app_config.feature.model_copy(update={"volatility_window": 2})
-    ).compute(market)
-    account = AccountSnapshot(
-        cycle_id=market.cycle_id,
-        as_of=as_of,
-        observed_at=as_of,
-        quote_balance=Decimal("10000"),
-    )
-
-    def strategy_for(dataset: HistoricalFundingDataset):
-        return LongOnlyFundingFilteredDualTrendStrategy(
-            LongOnlyFundingFilteredDualTrendSpec(
-                momentum_lookback_bars=2,
-                regime_moving_average_bars=2,
-                atr_bars=2,
-                funding_smoothing_observations=2,
-                funding_reference_observations=30,
-                funding_dataset_id=dataset.manifest.dataset_id,
-                funding_observations_hash=dataset.manifest.observations_hash,
-                symbol="BTCUSDT",
-            ),
-            dataset,
-        )
-
-    assert strategy_for(quiet_dataset).evaluate(
-        market=market,
-        account=account,
-        features=features,
-    )
-    crowded_dataset = _funding_dataset(
-        (Decimal("0"),) * 38 + (Decimal("0.01"),) * 2
-    )
-    assert not strategy_for(crowded_dataset).evaluate(
-        market=market,
-        account=account,
-        features=features,
-    )
 
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
