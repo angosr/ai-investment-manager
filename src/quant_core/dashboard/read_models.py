@@ -20,6 +20,7 @@ from quant_core.domain import (
     TradeIntent,
 )
 from quant_core.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
+from quant_core.governance import ReleaseManifest, validate_manifest_against_config
 from quant_core.ledger import CycleFacts
 from quant_core.lifecycle import OpenLifecycleRecord
 from quant_core.market_data_sql import market_quotes, market_trades
@@ -32,6 +33,7 @@ from quant_core.persistence import (
     analysis_cycles,
     analysis_proposals,
     analysis_trigger_events,
+    analysis_trigger_plans,
     codex_account_capacity,
     codex_account_leases,
     codex_runs,
@@ -40,7 +42,9 @@ from quant_core.persistence import (
     orders,
     panel_snapshots,
     portfolio_protection_states,
+    release_manifests,
     trade_intents,
+    trigger_outbox,
 )
 from quant_core.reconciliation import ReconciliationReport
 from quant_core.reconciliation_sql import SqlReconciliationReportStore
@@ -96,6 +100,17 @@ class EquityWindow:
     report: OutcomeWindowReport
     lookback_start: datetime
     lookback_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisRuntimeStatus:
+    latest_success_at: datetime | None
+    recent_attempts: int
+    recent_successes: int
+    pending_outbox_count: int
+    oldest_pending_outbox_at: datetime | None
+    release_aligned: bool | None
+    calls_last_hour: int
 
 
 class DashboardReader:
@@ -413,6 +428,100 @@ class DashboardReader:
         )
         with self._engine.connect() as connection:
             return int(connection.execute(query).scalar_one())
+
+    def analysis_runtime_status(self, *, now: datetime) -> AnalysisRuntimeStatus:
+        """读取当前 Pipeline 的最小控制面健康事实，不扫描历史正文。"""
+
+        pipeline = self._config.pipeline.version
+        recent_start = now - timedelta(hours=1)
+        scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.market_data.symbols)
+        with self._engine.connect() as connection:
+            recent_rows = connection.execute(
+                select(codex_runs.c.status, codex_runs.c.payload)
+                .join(
+                    analysis_cycles,
+                    analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
+                )
+                .where(
+                    analysis_cycles.c.pipeline_version == pipeline,
+                    analysis_cycles.c.as_of >= recent_start,
+                    analysis_cycles.c.as_of <= now,
+                )
+            ).all()
+            latest_payload = connection.execute(
+                select(codex_runs.c.payload)
+                .join(
+                    analysis_cycles,
+                    analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
+                )
+                .where(
+                    analysis_cycles.c.pipeline_version == pipeline,
+                    codex_runs.c.status == "SUCCEEDED",
+                    analysis_cycles.c.as_of <= now,
+                )
+                .order_by(analysis_cycles.c.as_of.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            pending_count, oldest_pending = connection.execute(
+                select(func.count(), func.min(trigger_outbox.c.available_at)).where(
+                    trigger_outbox.c.status == "PENDING",
+                    trigger_outbox.c.aggregate_key.in_(scopes),
+                    trigger_outbox.c.available_at <= now,
+                )
+            ).one()
+            plan_rows = connection.execute(
+                select(
+                    analysis_trigger_plans.c.symbol,
+                    analysis_trigger_plans.c.manifest_id,
+                ).where(
+                    analysis_trigger_plans.c.pipeline_id == pipeline,
+                    analysis_trigger_plans.c.is_current.is_(True),
+                )
+            ).all()
+            manifest_ids = {manifest_id for _, manifest_id in plan_rows}
+            manifest_payload = (
+                connection.execute(
+                    select(release_manifests.c.payload).where(
+                        release_manifests.c.manifest_id == next(iter(manifest_ids))
+                    )
+                ).scalar_one_or_none()
+                if len(manifest_ids) == 1
+                else None
+            )
+
+        latest_success_at = None
+        if isinstance(latest_payload, dict):
+            completed_at = latest_payload.get("completed_at")
+            if isinstance(completed_at, str):
+                latest_success_at = _database_utc(datetime.fromisoformat(completed_at))
+        expected_symbols = set(self._config.market_data.symbols)
+        actual_symbols = {symbol for symbol, _ in plan_rows}
+        if not plan_rows or manifest_payload is None:
+            release_aligned = None
+        else:
+            release_aligned = (
+                actual_symbols == expected_symbols
+                and len(plan_rows) == len(expected_symbols)
+            )
+            if release_aligned:
+                try:
+                    validate_manifest_against_config(
+                        ReleaseManifest.model_validate(manifest_payload),
+                        self._config,
+                    )
+                except (TypeError, ValueError):
+                    release_aligned = False
+        return AnalysisRuntimeStatus(
+            latest_success_at=latest_success_at,
+            recent_attempts=len(recent_rows),
+            recent_successes=sum(status == "SUCCEEDED" for status, _ in recent_rows),
+            pending_outbox_count=int(pending_count),
+            oldest_pending_outbox_at=(
+                _database_utc(oldest_pending) if oldest_pending is not None else None
+            ),
+            release_aligned=release_aligned,
+            calls_last_hour=self.ai_calls_last_hour(now=now),
+        )
 
     def _latest_capacity(self) -> dict[str, tuple]:
         # 白名单账号数量很小且有 (account_id, observed_at) 主键；点查避免每次刷新

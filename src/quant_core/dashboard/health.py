@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from quant_core.dashboard.read_models import DashboardReader
+from quant_core.dashboard.read_models import AnalysisRuntimeStatus, DashboardReader
 from quant_core.reconciliation import ReconciliationReport
 
 _SEVERITY = {"ok": 0, "unknown": 1, "warn": 2, "bad": 3}
@@ -24,11 +24,16 @@ def assemble_health(
     host_resources: dict | None = None,
 ) -> dict:
     report = reader.latest_reconciliation(now=now)  # 一次查询，供三项检查复用
+    analysis = reader.analysis_runtime_status(now=now)
     checks = [
         _reconciliation_check(report, config, now),
         _freeze_check(report, config, now),
         _freshness_check(reader, report, config, now),
         _kill_switch_check(reader, config),
+        _analysis_check(analysis, config, now),
+        _trigger_delivery_check(analysis, config, now),
+        _release_alignment_check(analysis),
+        _call_budget_check(analysis, config),
     ]
     if host_resources is not None:
         checks.append(_disk_check(host_resources))
@@ -38,6 +43,8 @@ def assemble_health(
         headline = "运行正常"
     elif overall == "unknown":
         headline = "等待数据"
+    elif overall == "warn":
+        headline = f"{worst['name']}需关注"
     else:
         headline = f"{worst['name']}异常"
     return {"overall": overall, "headline": headline, "checks": checks}
@@ -113,6 +120,88 @@ def _kill_switch_check(reader: DashboardReader, config) -> dict:
         "熔断 Kill Switch",
         state,
         detail,
+    )
+
+
+def _analysis_check(
+    status: AnalysisRuntimeStatus,
+    config,
+    now: datetime,
+) -> dict:
+    latest = status.latest_success_at
+    if latest is None:
+        return _check("ai_analysis", "AI 分析", "unknown", "当前版本尚无成功分析")
+    age = (now - latest).total_seconds()
+    if age < 0:
+        return _check("ai_analysis", "AI 分析", "bad", "完成时间晚于当前时间")
+    expected_seconds = (
+        config.trigger.heartbeat_minutes * 60 + config.shadow.analysis_deadline_seconds
+    )
+    if age > expected_seconds * 2:
+        state = "bad"
+    elif age > expected_seconds or (
+        status.recent_attempts >= 3
+        and status.recent_successes < status.recent_attempts
+    ):
+        state = "warn"
+    else:
+        state = "ok"
+    return _check(
+        "ai_analysis",
+        "AI 分析",
+        state,
+        f"最近成功 {int(age)} 秒 · 近 1h {status.recent_successes}/{status.recent_attempts} 成功",
+    )
+
+
+def _trigger_delivery_check(
+    status: AnalysisRuntimeStatus,
+    config,
+    now: datetime,
+) -> dict:
+    if status.pending_outbox_count == 0:
+        return _check("trigger_delivery", "触发投递", "ok", "无到期待投递")
+    oldest = status.oldest_pending_outbox_at
+    if oldest is None:
+        return _check("trigger_delivery", "触发投递", "unknown", "积压时间不可用")
+    age = (now - oldest).total_seconds()
+    if age < 0:
+        return _check("trigger_delivery", "触发投递", "bad", "投递时间晚于当前时间")
+    tolerance = max(5.0, config.trigger.outbox_fallback_poll_seconds * 5)
+    state = "bad" if age > tolerance else "warn"
+    return _check(
+        "trigger_delivery",
+        "触发投递",
+        state,
+        f"{status.pending_outbox_count} 条 · 最久 {int(age)} 秒",
+    )
+
+
+def _release_alignment_check(status: AnalysisRuntimeStatus) -> dict:
+    if status.release_aligned is None:
+        return _check("release_alignment", "版本一致性", "unknown", "发布或计划事实缺失")
+    return _check(
+        "release_alignment",
+        "版本一致性",
+        "ok" if status.release_aligned else "bad",
+        "一致" if status.release_aligned else "运行配置与发布事实不一致",
+    )
+
+
+def _call_budget_check(status: AnalysisRuntimeStatus, config) -> dict:
+    used = status.calls_last_hour
+    cap = config.trigger.maximum_ai_calls_per_hour
+    if used > cap:
+        state = "bad"
+    elif used == cap:
+        state = "warn"
+    else:
+        state = "ok"
+    return _check(
+        "ai_call_budget",
+        "AI 调用预算",
+        state,
+        f"{used}/{cap}" + ("，等待滚动释放" if used == cap else ""),
     )
 
 

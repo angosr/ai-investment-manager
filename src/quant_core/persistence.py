@@ -75,7 +75,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "a9e2b7c4d6f1"
+DATABASE_SCHEMA_VERSION = "c4e91b7d2a60"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -141,6 +141,11 @@ analysis_cycles = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 Index("ix_analysis_cycles_as_of", analysis_cycles.c.as_of)
+Index(
+    "ix_analysis_cycles_pipeline_as_of",
+    analysis_cycles.c.pipeline_version,
+    analysis_cycles.c.as_of,
+)
 
 market_snapshots = Table(
     "market_snapshots",
@@ -573,6 +578,7 @@ codex_runs = Table(
     Column("error_class", String(64), nullable=True),
     Column("payload", JSON, nullable=False),
 )
+Index("ix_codex_runs_cycle_status", codex_runs.c.cycle_id, codex_runs.c.status)
 
 codex_account_capacity = Table(
     "codex_account_capacity",

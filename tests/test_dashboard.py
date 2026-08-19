@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -16,7 +16,7 @@ from quant_core.cli import _default_web_dist
 from quant_core.dashboard import formatting as fmt
 from quant_core.dashboard import serializers as ser
 from quant_core.dashboard.health import assemble_health
-from quant_core.dashboard.read_models import EquityWindow, WorldEvent
+from quant_core.dashboard.read_models import AnalysisRuntimeStatus, EquityWindow, WorldEvent
 from quant_core.dashboard.resources import sample_host_resources
 from quant_core.domain import Side
 
@@ -27,6 +27,31 @@ def _intent(side: Side) -> SimpleNamespace:
         entry=SimpleNamespace(price=Decimal("63140")),
         stop_price=Decimal("61980"),
     )
+
+
+def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
+    values = {
+        "latest_success_at": now,
+        "recent_attempts": 1,
+        "recent_successes": 1,
+        "pending_outbox_count": 0,
+        "oldest_pending_outbox_at": None,
+        "release_aligned": True,
+        "calls_last_hour": 1,
+    }
+    values.update(updates)
+    return AnalysisRuntimeStatus(**values)
+
+
+def _health_policy_extras() -> dict:
+    return {
+        "trigger": SimpleNamespace(
+            heartbeat_minutes=15,
+            outbox_fallback_poll_seconds=1,
+            maximum_ai_calls_per_hour=6,
+        ),
+        "shadow": SimpleNamespace(analysis_deadline_seconds=300),
+    }
 
 
 def test_direction_label_maps_side():
@@ -118,6 +143,9 @@ def test_health_is_unknown_without_data_and_bad_on_mismatch():
         latest_reconciliation=lambda *, now: None,
         latest_market_observed_at=lambda: None,
         portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(
+            now, latest_success_at=None, release_aligned=None
+        ),
     )
     config = SimpleNamespace(
         reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
@@ -126,6 +154,7 @@ def test_health_is_unknown_without_data_and_bad_on_mismatch():
             maximum_account_age_seconds=30,
             kill_switch=False,
         ),
+        **_health_policy_extras(),
     )
     result = assemble_health(empty_reader, config, now=now)
     assert result["overall"] == "unknown"
@@ -135,6 +164,7 @@ def test_health_is_unknown_without_data_and_bad_on_mismatch():
         latest_reconciliation=lambda *, now: mismatch,
         latest_market_observed_at=lambda: None,
         portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
     )
     bad = assemble_health(bad_reader, config, now=now)
     assert bad["overall"] == "bad"
@@ -150,6 +180,7 @@ def test_health_ages_persisted_freshness_and_uses_real_kill_switch():
         latest_reconciliation=lambda *, now: report,
         latest_market_observed_at=lambda: observed_at,
         portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
     )
     config = SimpleNamespace(
         reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
@@ -158,6 +189,7 @@ def test_health_ages_persisted_freshness_and_uses_real_kill_switch():
             maximum_account_age_seconds=60,
             kill_switch=True,
         ),
+        **_health_policy_extras(),
     )
 
     result = assemble_health(reader, config, now=now)
@@ -175,6 +207,7 @@ def test_health_reads_persisted_portfolio_kill_switch() -> None:
         latest_reconciliation=lambda *, now: report,
         latest_market_observed_at=lambda: now,
         portfolio_protection_active=lambda: True,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
     )
     config = SimpleNamespace(
         reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
@@ -183,12 +216,47 @@ def test_health_reads_persisted_portfolio_kill_switch() -> None:
             maximum_account_age_seconds=60,
             kill_switch=False,
         ),
+        **_health_policy_extras(),
     )
 
     result = assemble_health(reader, config, now=now)
 
     checks = {item["key"]: item for item in result["checks"]}
     assert checks["kill_switch"]["state"] == "bad"
+    assert result["overall"] == "bad"
+
+
+def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(
+            now,
+            pending_outbox_count=3,
+            oldest_pending_outbox_at=now - timedelta(seconds=10),
+            release_aligned=False,
+            calls_last_hour=6,
+        ),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+
+    result = assemble_health(reader, config, now=now)
+
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["trigger_delivery"]["state"] == "bad"
+    assert checks["release_alignment"]["state"] == "bad"
+    assert checks["ai_call_budget"]["state"] == "warn"
     assert result["overall"] == "bad"
 
 
@@ -203,6 +271,7 @@ def test_health_surfaces_host_disk_pressure(percent, expected) -> None:
         latest_reconciliation=lambda *, now: report,
         latest_market_observed_at=lambda: now,
         portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
     )
     config = SimpleNamespace(
         reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
@@ -211,6 +280,7 @@ def test_health_surfaces_host_disk_pressure(percent, expected) -> None:
             maximum_account_age_seconds=60,
             kill_switch=False,
         ),
+        **_health_policy_extras(),
     )
 
     result = assemble_health(
