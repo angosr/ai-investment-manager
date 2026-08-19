@@ -428,6 +428,26 @@ def walk_forward_command(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+@app.command("research-catalog")
+def research_catalog_command(
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/evaluations"
+    ),
+) -> None:
+    """派生历史实验的唯一有效版本、累计尝试与歧义；不改写制品。"""
+
+    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
+
+    summaries = HistoricalEvaluationCatalog(evaluation_catalog).summaries()
+    typer.echo(
+        json.dumps(
+            {"experiments": [item.model_dump(mode="json") for item in summaries]},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("paired-decision-tape")
 def paired_decision_tape_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],

@@ -674,3 +674,60 @@ def test_evaluation_catalog_round_trip_and_rejects_tampering(
     target.write_text(json.dumps(envelope), encoding="utf-8")
     with pytest.raises(ValueError, match="内容哈希"):
         catalog.load(result.evaluation_id)
+
+
+def test_evaluation_catalog_derives_canonical_semantics_and_rejects_ambiguity(
+    app_config, tmp_path
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+
+    result = run_walk_forward(
+        dataset=_dataset(),
+        config=app_config,
+        plan=WalkForwardPlan(
+            plan_id="catalog-lineage-test-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+    )
+    catalog = HistoricalEvaluationCatalog(tmp_path)
+    catalog.store(result)
+
+    def revised(version: str, suffix: str):
+        folds = tuple(
+            fold.model_copy(
+                update={
+                    "run": fold.run.model_copy(
+                        update={
+                            "run_id": stable_id("catalog-run", suffix, fold.fold_id),
+                            "backtest_model_version": version,
+                        }
+                    )
+                }
+            )
+            for fold in result.folds
+        )
+        return result.model_copy(
+            update={
+                "evaluation_id": stable_id("catalog-evaluation", suffix),
+                "folds": folds,
+            }
+        )
+
+    newer = revised("quant-core-bar-backtest-v99", "newer")
+    catalog.store(newer)
+    summary = catalog.summaries()[0]
+    assert summary.attempt_count == 2
+    assert summary.canonical_evaluation_id == newer.evaluation_id
+    assert summary.superseded_evaluation_ids == (result.evaluation_id,)
+    assert not summary.ambiguity_reasons
+
+    duplicate = revised("quant-core-bar-backtest-v99", "duplicate")
+    catalog.store(duplicate)
+    ambiguous = catalog.summaries()[0]
+    assert ambiguous.attempt_count == 3
+    assert ambiguous.canonical_evaluation_id is None
+    assert ambiguous.ambiguity_reasons == ("DUPLICATE_TOP_SEMANTICS",)
