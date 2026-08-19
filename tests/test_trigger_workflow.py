@@ -342,6 +342,86 @@ def test_trigger_coordinator_keeps_event_until_global_call_budget_is_available(
     asyncio.run(scenario())
 
 
+def test_trigger_coordinator_discards_event_at_expiry_before_budget_retry(
+    app_config,
+) -> None:
+    async def scenario() -> None:
+        attempts = 0
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            test_now = await env.get_current_time()
+
+            @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+            async def defer_beyond_expiry(raw_batch):
+                nonlocal attempts
+                attempts += 1
+                return {
+                    "deferred_until": (test_now + timedelta(seconds=31)).isoformat()
+                }
+
+            trigger_queue = "trigger-expiry-before-budget-test"
+            temporal = app_config.temporal.model_copy(
+                update={"trigger_task_queue": trigger_queue}
+            )
+            config = app_config.model_copy(update={"temporal": temporal})
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=test_now,
+                heartbeat_seconds=None,
+                event_rules=(
+                    AnalysisEventRule(
+                        rule_id="news",
+                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    ),
+                ),
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                occurred_at=test_now,
+                observed_at=test_now,
+                priority=100,
+                dedup_key="expires-before-budget",
+                expires_at=test_now + timedelta(seconds=10),
+            )
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[defer_beyond_expiry],
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    build_trigger_coordinator_input(plan, config),
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await handle.signal(
+                    TRIGGER_SIGNAL,
+                    {
+                        "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                        "trigger": event.model_dump(mode="json"),
+                    },
+                )
+                for _ in range(100):
+                    if attempts == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                assert attempts == 1
+                await env.sleep(timedelta(seconds=20))
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert attempts == 1
+                assert status["pending_count"] == 0
+                assert status["completed_batches"] == 0
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
 def test_heartbeat_remains_pending_past_generic_trigger_expiry(app_config) -> None:
     async def scenario() -> None:
         attempts = 0

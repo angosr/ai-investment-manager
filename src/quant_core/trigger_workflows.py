@@ -285,6 +285,15 @@ class TriggerCoordinatorWorkflow:
                     earliest,
                     self._last_analysis_at + timedelta(seconds=cooldown),
                 )
+        if workflow.patched("pending-expiry-wakeup-v1"):
+            expiries = [
+                _parse_time(item["expires_at"])
+                for item in pending
+                if item.get("expires_at") is not None
+            ]
+            if expiries:
+                # 容量等待可能晚于事件有效期；先在最早到期点醒来清理，避免状态虚假积压。
+                earliest = min(earliest, min(expiries))
         return max(earliest - now, timedelta(0))
 
     def _rule_value(self, trigger: dict[str, Any], field: str) -> int:
