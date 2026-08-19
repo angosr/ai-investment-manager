@@ -957,7 +957,11 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+    from quant_core.research.walk_forward import (
+        WalkForwardPlan,
+        failed_walk_forward_experiment,
+        run_walk_forward,
+    )
 
     result = run_walk_forward(
         dataset=_dataset(),
@@ -1003,6 +1007,18 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     assert result.folds[-1].test_end < result.blind_start
     assert result.folds[0].test_end < result.folds[1].test_start
     assert all(item.run.completed for item in result.folds)
+    failure = failed_walk_forward_experiment(
+        result,
+        rejected_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+    assert failure.evidence_ids[-1] == result.evaluation_id
+    assert failure.evidence_ids[0].startswith("hypothesis:")
+    hypothesis = failure.evidence_ids[0].removeprefix("hypothesis:")
+    assert app_config.strategy.version in hypothesis
+    assert failure.hypothesis_fingerprint == content_hash(
+        {"hypothesis": hypothesis.strip().lower()}
+    )
+    assert failure.reason_codes[0] == "WALK_FORWARD_FAILED"
 
 
 def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
@@ -1014,6 +1030,7 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     from quant_core.research.walk_forward import (
         WalkForwardPlan,
         blind_evaluation_scope,
+        failed_blind_experiment,
         run_blind_evaluation,
         run_walk_forward,
     )
@@ -1096,6 +1113,12 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     blind_catalog = BlindEvaluationCatalog(tmp_path / "blind-evaluations")
     blind_catalog.store(result)
     assert blind_catalog.load(result.result_id) == result
+    failure = failed_blind_experiment(
+        result,
+        rejected_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+    assert failure.evidence_ids[1:] == (source.evaluation_id, result.result_id)
+    assert failure.reason_codes[0] == "BLIND_FAILED"
 
     passed_result = result.model_copy(update={"passed": True})
     validate_forecast_gate_baseline(

@@ -491,6 +491,7 @@ def walk_forward_command(
         WalkForwardEvaluationSpec,
         WalkForwardPlan,
         build_walk_forward_evaluation_plan,
+        failed_walk_forward_experiment,
         run_walk_forward,
         validate_walk_forward_evaluation_plan,
     )
@@ -602,6 +603,13 @@ def walk_forward_command(
         evaluation_spec_hash=content_hash(evaluation_spec),
     )
     result_path = HistoricalEvaluationCatalog(evaluation_catalog).store(result)
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_walk_forward_experiment(
+                result,
+                rejected_at=datetime.now(UTC),
+            )
+        )
     payload = result.model_dump(mode="json")
     payload["result_path"] = str(result_path)
     if not include_trades:
@@ -652,6 +660,7 @@ def blind_evaluate_command(
     from quant_core.research.walk_forward import (
         WalkForwardEvaluationSpec,
         blind_evaluation_scope,
+        failed_blind_experiment,
         run_blind_evaluation,
         validate_walk_forward_evaluation_plan,
     )
@@ -768,6 +777,13 @@ def blind_evaluate_command(
                     "result_id": result.result_id,
                     "result_hash": content_hash(result),
                 }
+            )
+        )
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_blind_experiment(
+                result,
+                rejected_at=datetime.now(UTC),
             )
         )
     payload = result.model_dump(mode="json")

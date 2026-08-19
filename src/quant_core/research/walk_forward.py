@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from quant_core.config import AppConfig
 from quant_core.domain import FrozenModel, _require_utc
-from quant_core.governance import EvaluationPlan, EvaluationStage
+from quant_core.governance import EvaluationPlan, EvaluationStage, FailedExperiment
 from quant_core.ids import content_hash, stable_id
 from quant_core.research.backtest import (
     BacktestMetrics,
@@ -260,6 +260,71 @@ class BlindEvaluationResult(FrozenModel):
         if self.result_id != expected:
             raise ValueError("盲测结果 ID 与冻结内容不一致")
         return self
+
+
+def failed_walk_forward_experiment(
+    result: WalkForwardResult,
+    *,
+    rejected_at: datetime,
+) -> FailedExperiment:
+    if result.passed:
+        raise ValueError("通过的 walk-forward 不能登记为失败实验")
+    hypothesis = _historical_hypothesis(
+        result.strategy_spec_snapshot,
+        symbol=result.folds[0].run.symbol,
+        interval=result.folds[0].run.interval,
+    )
+    return FailedExperiment(
+        experiment_id=stable_id("failed_walk_forward", result.evaluation_id),
+        hypothesis_fingerprint=content_hash(
+            {"hypothesis": hypothesis.strip().lower()}
+        ),
+        evidence_ids=(f"hypothesis:{hypothesis}", result.evaluation_id),
+        rejected_at=_require_utc(rejected_at),
+        reason_codes=("WALK_FORWARD_FAILED", *result.reason_codes),
+    )
+
+
+def failed_blind_experiment(
+    result: BlindEvaluationResult,
+    *,
+    rejected_at: datetime,
+) -> FailedExperiment:
+    if result.passed:
+        raise ValueError("通过的盲测不能登记为失败实验")
+    hypothesis = _historical_hypothesis(
+        result.strategy_spec_snapshot,
+        symbol=result.run.symbol,
+        interval=result.run.interval,
+    )
+    return FailedExperiment(
+        experiment_id=stable_id("failed_blind", result.result_id),
+        hypothesis_fingerprint=content_hash(
+            {"hypothesis": hypothesis.strip().lower()}
+        ),
+        evidence_ids=(
+            f"hypothesis:{hypothesis}",
+            result.source_evaluation_id,
+            result.result_id,
+        ),
+        rejected_at=_require_utc(rejected_at),
+        reason_codes=("BLIND_FAILED", *result.reason_codes),
+    )
+
+
+def _historical_hypothesis(
+    strategy_spec: dict[str, object] | None,
+    *,
+    symbol: str,
+    interval: str,
+) -> str:
+    snapshot = strategy_spec or {}
+    family = str(snapshot.get("family") or snapshot.get("strategy_id") or "unknown")
+    version = str(snapshot.get("version") or "unknown")
+    return (
+        f"历史程序策略 {family}/{version} 在 {symbol} {interval} "
+        "满足预登记的费用后收益、稳定性和风险门槛"
+    )
 
 
 @dataclass(frozen=True)

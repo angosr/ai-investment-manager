@@ -307,6 +307,9 @@ def test_governance_repository_restores_long_term_state_without_chat_history() -
     repository.register_plan(plan)
     repository.register_proposal(proposal)
     repository.record_failed_experiment(failed)
+    repository.record_failed_experiment(
+        failed.model_copy(update={"rejected_at": now + timedelta(minutes=1)})
+    )
     repository.record_snapshot(snapshot)
     repository.record_snapshot(snapshot)
 

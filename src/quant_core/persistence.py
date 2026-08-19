@@ -1483,17 +1483,30 @@ class SqlGovernanceRepository:
                 raise ValueError("同一 EvaluationResult 已存在不同的 Release 决策") from None
 
     def record_failed_experiment(self, failed: FailedExperiment) -> None:
-        self._record(
-            failed_experiment_records,
-            failed_experiment_records.c.experiment_id,
-            failed.experiment_id,
-            {
-                "experiment_id": failed.experiment_id,
-                "hypothesis_fingerprint": failed.hypothesis_fingerprint,
-                "rejected_at": failed.rejected_at,
-                "payload": failed.model_dump(mode="json"),
-            },
-        )
+        values = {
+            "experiment_id": failed.experiment_id,
+            "hypothesis_fingerprint": failed.hypothesis_fingerprint,
+            "rejected_at": failed.rejected_at,
+            "payload": failed.model_dump(mode="json"),
+        }
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(insert(failed_experiment_records).values(**values))
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                payload = connection.execute(
+                    select(failed_experiment_records.c.payload).where(
+                        failed_experiment_records.c.experiment_id
+                        == failed.experiment_id
+                    )
+                ).scalar_one()
+            existing = FailedExperiment.model_validate(payload)
+            # Retries may observe a later clock. The first durable rejection time is
+            # authoritative; all semantic fields must still match exactly.
+            if existing.model_copy(update={"rejected_at": failed.rejected_at}) != failed:
+                raise ValueError(
+                    f"治理事实 {failed.experiment_id} 已存在且内容不同"
+                ) from None
 
     def _record(self, table, key_column, key: str, values: dict) -> None:
         payload = values["payload"]
