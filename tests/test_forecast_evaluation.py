@@ -375,9 +375,20 @@ def test_forecast_settlement_survives_pipeline_redeployment(
     assert outcome.pipeline_version == retired_pipeline
 
 
-def _scored_outcome(index: int, *, signal_at, return_bps: str):
+def _scored_outcome(
+    index: int,
+    *,
+    signal_at,
+    return_bps: str,
+    directional_view: DirectionalView = DirectionalView.UP,
+):
     evaluation_at = signal_at + timedelta(minutes=60)
     directional_return = Decimal(return_bps)
+    market_return = (
+        directional_return
+        if directional_view == DirectionalView.UP
+        else -directional_return
+    )
     return AnalysisForecastOutcome(
         outcome_id=f"forecast-evaluation-outcome-{index}",
         proposal_id=f"forecast-evaluation-proposal-{index}",
@@ -385,7 +396,7 @@ def _scored_outcome(index: int, *, signal_at, return_bps: str):
         pipeline_version="forecast-evaluation-pipeline-v1",
         evaluation_version="analysis-forecast-v2",
         symbol="BTCUSDT",
-        directional_view=DirectionalView.UP,
+        directional_view=directional_view,
         confidence=Decimal("0.60"),
         view_horizon_minutes=60,
         status=ForecastOutcomeStatus.SETTLED,
@@ -394,10 +405,10 @@ def _scored_outcome(index: int, *, signal_at, return_bps: str):
         settled_at=evaluation_at + timedelta(seconds=1),
         reference_price=Decimal("100"),
         exit_price=Decimal("100") * (
-            Decimal("1") + directional_return / Decimal("10000")
+            Decimal("1") + market_return / Decimal("10000")
         ),
         exit_event_time=evaluation_at,
-        market_return_bps=directional_return,
+        market_return_bps=market_return,
         directional_return_bps=directional_return,
         direction_correct=directional_return > 0,
         reason_code="DIRECTIONAL_RETURN_AVAILABLE",
@@ -440,9 +451,55 @@ def test_forecast_report_uses_non_overlapping_samples_and_scope_gate(
     assert scope.correct_count == 2
     assert scope.directional_accuracy == Decimal("2") / Decimal("3")
     assert scope.average_directional_return_bps == Decimal("25") / Decimal("3")
+    assert scope.baseline_id == "always-up-on-ai-scored-timestamps-v1"
+    assert scope.always_up_correct_count == 2
+    assert scope.always_up_directional_accuracy == Decimal("2") / Decimal("3")
+    assert scope.always_up_average_return_bps == Decimal("25") / Decimal("3")
+    assert scope.directional_accuracy_delta_vs_always_up == 0
+    assert scope.average_directional_return_bps_delta_vs_always_up == 0
+    assert scope.average_directional_return_bps_delta_lower_bound_vs_always_up == 0
     assert scope.sample_sufficient
     assert report.statistically_conclusive
     assert report.limitations == ("NON_TRADABLE_DIRECTIONAL_FORECAST_ONLY",)
+
+
+def test_forecast_report_exposes_incremental_value_against_same_timestamp_baseline(
+    replay_input,
+) -> None:
+    start = replay_input.market.as_of
+    outcomes = (
+        _scored_outcome(11, signal_at=start, return_bps="10"),
+        _scored_outcome(
+            12,
+            signal_at=start + timedelta(minutes=60),
+            return_bps="20",
+            directional_view=DirectionalView.DOWN,
+        ),
+        _scored_outcome(
+            13,
+            signal_at=start + timedelta(minutes=120),
+            return_bps="-5",
+            directional_view=DirectionalView.DOWN,
+        ),
+    )
+    published_at = start + timedelta(hours=4)
+
+    scope = AnalysisForecastEvaluator(minimum_non_overlapping_samples=3).evaluate(
+        outcomes=outcomes,
+        outcome_evaluation_version="analysis-forecast-v2",
+        pipeline_version="forecast-evaluation-pipeline-v1",
+        window_start=start,
+        window_end=published_at,
+        published_at=published_at,
+    ).scopes[0]
+
+    assert scope.directional_accuracy == Decimal("2") / Decimal("3")
+    assert scope.always_up_directional_accuracy == Decimal("2") / Decimal("3")
+    assert scope.directional_accuracy_delta_vs_always_up == 0
+    assert scope.average_directional_return_bps == Decimal("25") / Decimal("3")
+    assert scope.always_up_average_return_bps == Decimal("-5") / Decimal("3")
+    assert scope.average_directional_return_bps_delta_vs_always_up == Decimal("10")
+    assert scope.average_directional_return_bps_delta_lower_bound_vs_always_up is not None
 
 
 def test_forecast_report_rejects_results_not_visible_at_publication(

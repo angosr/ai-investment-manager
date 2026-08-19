@@ -61,6 +61,13 @@ class ForecastScopeMetrics(FrozenModel):
     directional_accuracy: Decimal | None = Field(default=None, ge=0, le=1)
     average_directional_return_bps: Decimal | None = None
     average_directional_return_bps_lower_bound: Decimal | None = None
+    baseline_id: str | None = None
+    always_up_correct_count: int | None = Field(default=None, ge=0)
+    always_up_directional_accuracy: Decimal | None = Field(default=None, ge=0, le=1)
+    always_up_average_return_bps: Decimal | None = None
+    directional_accuracy_delta_vs_always_up: Decimal | None = None
+    average_directional_return_bps_delta_vs_always_up: Decimal | None = None
+    average_directional_return_bps_delta_lower_bound_vs_always_up: Decimal | None = None
     sample_sufficient: bool
 
 
@@ -292,7 +299,7 @@ class SqlAnalysisForecastOutcomeStore:
 
 @dataclass(frozen=True, slots=True)
 class AnalysisForecastEvaluator:
-    report_version: str = "analysis-forecast-report-v1"
+    report_version: str = "analysis-forecast-report-v2"
     minimum_non_overlapping_samples: int = 30
     lower_confidence_z: Decimal = Decimal("1.96")
 
@@ -356,7 +363,39 @@ class AnalysisForecastEvaluator:
                 for item in independent
                 if item.directional_return_bps is not None
             )
+            market_returns = tuple(
+                item.market_return_bps
+                for item in independent
+                if item.market_return_bps is not None
+            )
+            if len(returns) != len(independent) or len(market_returns) != len(
+                independent
+            ):
+                raise ValueError("SETTLED 方向预测缺少可比收益事实")
             correct = sum(item.direction_correct is True for item in independent)
+            always_up_correct = sum(item > 0 for item in market_returns)
+            directional_accuracy = (
+                Decimal(correct) / Decimal(len(independent)) if independent else None
+            )
+            always_up_accuracy = (
+                Decimal(always_up_correct) / Decimal(len(independent))
+                if independent
+                else None
+            )
+            average_return = (
+                sum(returns, Decimal("0")) / Decimal(len(returns))
+                if returns
+                else None
+            )
+            always_up_average = (
+                sum(market_returns, Decimal("0")) / Decimal(len(market_returns))
+                if market_returns
+                else None
+            )
+            paired_return_deltas = tuple(
+                directional - baseline
+                for directional, baseline in zip(returns, market_returns, strict=True)
+            )
             sample_sufficient = (
                 len(independent) >= self.minimum_non_overlapping_samples
             )
@@ -376,19 +415,32 @@ class AnalysisForecastEvaluator:
                     ),
                     non_overlapping_scored_count=len(independent),
                     correct_count=correct,
-                    directional_accuracy=(
-                        Decimal(correct) / Decimal(len(independent))
-                        if independent
-                        else None
-                    ),
-                    average_directional_return_bps=(
-                        sum(returns, Decimal("0")) / Decimal(len(returns))
-                        if returns
-                        else None
-                    ),
+                    directional_accuracy=directional_accuracy,
+                    average_directional_return_bps=average_return,
                     average_directional_return_bps_lower_bound=_mean_lower_bound(
                         returns,
                         z=self.lower_confidence_z,
+                    ),
+                    baseline_id="always-up-on-ai-scored-timestamps-v1",
+                    always_up_correct_count=always_up_correct,
+                    always_up_directional_accuracy=always_up_accuracy,
+                    always_up_average_return_bps=always_up_average,
+                    directional_accuracy_delta_vs_always_up=(
+                        directional_accuracy - always_up_accuracy
+                        if directional_accuracy is not None
+                        and always_up_accuracy is not None
+                        else None
+                    ),
+                    average_directional_return_bps_delta_vs_always_up=(
+                        average_return - always_up_average
+                        if average_return is not None and always_up_average is not None
+                        else None
+                    ),
+                    average_directional_return_bps_delta_lower_bound_vs_always_up=(
+                        _mean_lower_bound(
+                            paired_return_deltas,
+                            z=self.lower_confidence_z,
+                        )
                     ),
                     sample_sufficient=sample_sufficient,
                 )
