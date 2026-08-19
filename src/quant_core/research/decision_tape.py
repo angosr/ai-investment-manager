@@ -41,6 +41,9 @@ from quant_core.research.backtest import (
 )
 from quant_core.research.dataset import HistoricalDataset
 
+FORECAST_DECISION_TAPE_VERSION = "forecast-decision-tape-v1"
+PAIRED_DECISION_TAPE_EVALUATION_VERSION = "paired-decision-tape-evaluation-v4"
+
 
 class ForecastTapeEntry(FrozenModel):
     entry_id: str
@@ -106,7 +109,7 @@ class ForecastTapeExclusion(FrozenModel):
 
 class ForecastDecisionTape(FrozenModel):
     tape_id: str
-    version: str = "forecast-decision-tape-v1"
+    version: str = FORECAST_DECISION_TAPE_VERSION
     pipeline_version: str
     symbol: str
     window_start: datetime
@@ -256,7 +259,7 @@ class SqlForecastDecisionTapeReader:
             )
         )
         payload = {
-            "version": "forecast-decision-tape-v1",
+            "version": FORECAST_DECISION_TAPE_VERSION,
             "pipeline_version": pipeline_version,
             "symbol": symbol,
             "window_start": start,
@@ -299,7 +302,13 @@ class ForecastGatePolicy(FrozenModel):
 class ForecastGateEvaluationSpec(FrozenModel):
     """Pre-registration identity for both Q and its deterministic AI gate."""
 
-    version: str = "forecast-gate-evaluation-spec-v4"
+    version: str = "forecast-gate-evaluation-spec-v5"
+    decision_tape_version: Literal["forecast-decision-tape-v1"] = (
+        FORECAST_DECISION_TAPE_VERSION
+    )
+    paired_evaluation_version: Literal["paired-decision-tape-evaluation-v4"] = (
+        PAIRED_DECISION_TAPE_EVALUATION_VERSION
+    )
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     ai_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -481,7 +490,7 @@ class ForecastGatedStrategy:
 
 class PairedDecisionTapeResult(FrozenModel):
     evaluation_id: str
-    version: str = "paired-decision-tape-evaluation-v3"
+    version: str = PAIRED_DECISION_TAPE_EVALUATION_VERSION
     evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy: ForecastGatePolicy
     policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -594,7 +603,7 @@ def run_paired_decision_tape_backtest(
     gated_ids = {item.candidate_id for item in gated.trades}
     policy_hash = content_hash(policy)
     payload = {
-        "version": "paired-decision-tape-evaluation-v3",
+        "version": PAIRED_DECISION_TAPE_EVALUATION_VERSION,
         "evaluation_spec_hash": evaluation_spec_hash,
         "policy": policy,
         "policy_hash": policy_hash,
@@ -627,6 +636,7 @@ def run_paired_decision_tape_backtest(
             "INDEPENDENT_CONTEXT_FORECAST_ONLY",
             "PROGRAM_SIGNAL_CLOCK_IS_BAR_CLOSE",
             "PRODUCTION_TRIGGER_CLOCK_NOT_REPLAYED",
+            "HOSTED_MODEL_SNAPSHOT_NOT_AUDITABLE",
             "PAIRED_PATHS_MAY_DIVERGE_AFTER_GATE_DECISIONS",
             "NO_AI_OUTPUT_REGENERATION",
         ),

@@ -707,6 +707,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     assert policy.forecast_role == "INDEPENDENT_CONTEXT"
     assert policy.program_evaluation_clock == "BAR_CLOSE"
     assert "PRODUCTION_TRIGGER_CLOCK_NOT_REPLAYED" in result.limitations
+    assert "HOSTED_MODEL_SNAPSHOT_NOT_AUDITABLE" in result.limitations
     assert "NO_AI_OUTPUT_REGENERATION" in result.limitations
     assert result.non_overlapping_forecast_count < len(forecast_times)
     assert not result.evidence_sufficient
