@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -13,6 +13,7 @@ from quant_core.candidate_evaluation import trade_at_or_before
 from quant_core.domain import (
     AnalysisForecastOutcome,
     AnalysisProposal,
+    DirectionalForecast,
     DirectionalView,
     ForecastOutcomeStatus,
     FrozenModel,
@@ -31,6 +32,7 @@ from quant_core.persistence import (
 @dataclass(frozen=True, slots=True)
 class PendingAnalysisForecast:
     proposal: AnalysisProposal
+    forecast: DirectionalForecast
     cycle_id: str
     pipeline_version: str
     analysis_as_of: datetime
@@ -111,9 +113,20 @@ class SqlAnalysisForecastOutcomeStore:
         if not 1 <= limit <= 1000:
             raise ValueError("方向预测结算批次必须在 1..1000")
         with self._engine.connect() as connection:
+            outcome_counts = (
+                select(
+                    analysis_forecast_outcomes.c.proposal_id,
+                    func.count(analysis_forecast_outcomes.c.outcome_id).label(
+                        "outcome_count"
+                    ),
+                )
+                .group_by(analysis_forecast_outcomes.c.proposal_id)
+                .subquery()
+            )
             rows = connection.execute(
                 select(
                     analysis_proposals.c.payload.label("proposal"),
+                    analysis_proposals.c.forecast_count,
                     analysis_cycles.c.cycle_id,
                     analysis_cycles.c.pipeline_version,
                     analysis_cycles.c.as_of,
@@ -129,18 +142,32 @@ class SqlAnalysisForecastOutcomeStore:
                     market_snapshots.c.cycle_id == analysis_proposals.c.cycle_id,
                 )
                 .outerjoin(
-                    analysis_forecast_outcomes,
-                    analysis_forecast_outcomes.c.proposal_id
-                    == analysis_proposals.c.proposal_id,
+                    outcome_counts,
+                    outcome_counts.c.proposal_id == analysis_proposals.c.proposal_id,
                 )
                 .where(
-                    analysis_forecast_outcomes.c.proposal_id.is_(None),
+                    func.coalesce(outcome_counts.c.outcome_count, 0)
+                    < analysis_proposals.c.forecast_count,
                 )
                 .order_by(analysis_cycles.c.as_of, analysis_proposals.c.proposal_id)
                 .limit(limit)
             ).mappings()
 
             proposal_rows = tuple(rows)
+            proposal_ids = tuple(
+                AnalysisProposal.model_validate(row["proposal"]).proposal_id
+                for row in proposal_rows
+            )
+            existing_keys = set(
+                connection.execute(
+                    select(
+                        analysis_forecast_outcomes.c.proposal_id,
+                        analysis_forecast_outcomes.c.view_horizon_minutes,
+                    ).where(
+                        analysis_forecast_outcomes.c.proposal_id.in_(proposal_ids)
+                    )
+                ).tuples()
+            ) if proposal_ids else set()
             cycle_ids = tuple(str(row["cycle_id"]) for row in proposal_rows)
             run_rows = (
                 tuple(
@@ -163,6 +190,8 @@ class SqlAnalysisForecastOutcomeStore:
             pending: list[PendingAnalysisForecast] = []
             for row in proposal_rows:
                 proposal = AnalysisProposal.model_validate(row["proposal"])
+                if int(row["forecast_count"]) != len(proposal.forecasts):
+                    raise ValueError("Proposal 预测数量投影与冻结 Payload 不一致")
                 if proposal.symbol != row["symbol"]:
                     raise ValueError("方向预测 Proposal 与 MarketSnapshot 品种不一致")
                 market_payload = row["market"]
@@ -177,17 +206,23 @@ class SqlAnalysisForecastOutcomeStore:
                     runs_by_cycle.get(cycle_id, []),
                     analysis_as_of=analysis_as_of,
                 )
-                pending.append(
-                    PendingAnalysisForecast(
-                        proposal=proposal,
-                        cycle_id=cycle_id,
-                        pipeline_version=str(row["pipeline_version"]),
-                        analysis_as_of=analysis_as_of,
-                        available_at=available_at,
-                        source_run_id=source_run_id,
-                        frozen_reference_price=reference_price,
+                for forecast in proposal.forecasts:
+                    if (proposal.proposal_id, forecast.horizon_minutes) in existing_keys:
+                        continue
+                    pending.append(
+                        PendingAnalysisForecast(
+                            proposal=proposal,
+                            forecast=forecast,
+                            cycle_id=cycle_id,
+                            pipeline_version=str(row["pipeline_version"]),
+                            analysis_as_of=analysis_as_of,
+                            available_at=available_at,
+                            source_run_id=source_run_id,
+                            frozen_reference_price=reference_price,
+                        )
                     )
-                )
+                    if len(pending) >= limit:
+                        return tuple(pending)
         return tuple(pending)
 
     def record(self, outcome: AnalysisForecastOutcome) -> bool:
@@ -200,6 +235,7 @@ class SqlAnalysisForecastOutcomeStore:
                         proposal_id=outcome.proposal_id,
                         cycle_id=outcome.cycle_id,
                         pipeline_version=outcome.pipeline_version,
+                        view_horizon_minutes=outcome.view_horizon_minutes,
                         status=outcome.status.value,
                         evaluation_at=outcome.evaluation_at,
                         settled_at=outcome.settled_at,
@@ -212,7 +248,9 @@ class SqlAnalysisForecastOutcomeStore:
             with self._engine.connect() as connection:
                 existing = connection.execute(
                     select(analysis_forecast_outcomes.c.payload).where(
-                        analysis_forecast_outcomes.c.proposal_id == outcome.proposal_id
+                        analysis_forecast_outcomes.c.proposal_id == outcome.proposal_id,
+                        analysis_forecast_outcomes.c.view_horizon_minutes
+                        == outcome.view_horizon_minutes,
                     )
                 ).scalar_one_or_none()
             if existing is None or AnalysisForecastOutcome.model_validate(existing) != outcome:
@@ -280,9 +318,13 @@ class AnalysisForecastEvaluator:
         if self.lower_confidence_z <= 0:
             raise ValueError("预测评价置信下界 z 必须为正")
         ids = [item.outcome_id for item in outcomes]
-        proposal_ids = [item.proposal_id for item in outcomes]
-        if len(ids) != len(set(ids)) or len(proposal_ids) != len(set(proposal_ids)):
-            raise ValueError("预测评价结果或 Proposal 不得重复")
+        proposal_horizons = [
+            (item.proposal_id, item.view_horizon_minutes) for item in outcomes
+        ]
+        if len(ids) != len(set(ids)) or len(proposal_horizons) != len(
+            set(proposal_horizons)
+        ):
+            raise ValueError("预测评价结果或 Proposal 周期不得重复")
         if any(
             item.pipeline_version != pipeline_version
             or item.evaluation_version != outcome_evaluation_version
@@ -400,9 +442,10 @@ class AnalysisForecastOutcomeSettler:
         )
         for forecast in forecasts:
             proposal = forecast.proposal
+            directional = forecast.forecast
             signal_at = forecast.available_at or forecast.analysis_as_of
             evaluation_at = signal_at + timedelta(
-                minutes=proposal.view_horizon_minutes
+                minutes=directional.horizon_minutes
             )
             if evaluation_at > now:
                 pending += 1
@@ -411,6 +454,7 @@ class AnalysisForecastOutcomeSettler:
                 "outcome_id": stable_id(
                     "analysis_forecast_outcome",
                     proposal.proposal_id,
+                    directional.horizon_minutes,
                     self.evaluation_version,
                 ),
                 "proposal_id": proposal.proposal_id,
@@ -418,9 +462,9 @@ class AnalysisForecastOutcomeSettler:
                 "pipeline_version": forecast.pipeline_version,
                 "evaluation_version": self.evaluation_version,
                 "symbol": proposal.symbol,
-                "directional_view": proposal.directional_view,
-                "confidence": proposal.confidence,
-                "view_horizon_minutes": proposal.view_horizon_minutes,
+                "directional_view": directional.directional_view,
+                "confidence": directional.confidence,
+                "view_horizon_minutes": directional.horizon_minutes,
                 "signal_observed_at": signal_at,
                 "evaluation_at": evaluation_at,
                 "settled_at": now,
@@ -471,7 +515,7 @@ class AnalysisForecastOutcomeSettler:
                 market_return = (
                     trade.price / reference_trade.price - Decimal("1")
                 ) * Decimal("10000")
-                if proposal.directional_view == DirectionalView.UNCERTAIN:
+                if directional.directional_view == DirectionalView.UNCERTAIN:
                     outcome = AnalysisForecastOutcome(
                         **common,
                         status=ForecastOutcomeStatus.ABSTAINED,
@@ -484,7 +528,7 @@ class AnalysisForecastOutcomeSettler:
                     continue
                 directional_return = (
                     market_return
-                    if proposal.directional_view == DirectionalView.UP
+                    if directional.directional_view == DirectionalView.UP
                     else -market_return
                 )
                 outcome = AnalysisForecastOutcome(

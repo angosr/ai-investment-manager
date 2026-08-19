@@ -70,8 +70,8 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v6
-  forecast_version: analysis-forecast-v2
+  version: outcome-window-v7
+  forecast_version: analysis-forecast-v3
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
@@ -160,7 +160,7 @@ pipeline:
   ai_mode: "OFF"
 
 proposal:
-  version: codex-proposal-v7
+  version: codex-proposal-v8
   producer_id: codex-analyst
   strategy_family: ai-contextual
   minimum_confidence: "0.55"

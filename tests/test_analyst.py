@@ -40,6 +40,7 @@ from quant_core.config import AppConfig, CodexAccount, CodexAccountRegistry
 from quant_core.domain import (
     Action,
     AnalysisProposal,
+    DirectionalForecast,
     DirectionalView,
     OrderType,
     PriceCondition,
@@ -72,6 +73,22 @@ def _runtime(app_config):
 
 
 def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal:
+    forecasts = (
+        DirectionalForecast(
+            horizon_minutes=60,
+            directional_view=(
+                DirectionalView.UNCERTAIN
+                if action == Action.NO_ACTION
+                else DirectionalView.UP
+            ),
+            confidence=Decimal("0.60"),
+        ),
+        DirectionalForecast(
+            horizon_minutes=240,
+            directional_view=DirectionalView.UNCERTAIN,
+            confidence=Decimal("0.55"),
+        ),
+    )
     if action == Action.NO_ACTION:
         return AnalysisProposal(
             proposal_id="proposal_no_action",
@@ -79,8 +96,7 @@ def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal
             symbol=replay_input.market.symbol,
             thesis="当前没有足够优势",
             confidence=Decimal("0.60"),
-            directional_view=DirectionalView.UNCERTAIN,
-            view_horizon_minutes=60,
+            forecasts=forecasts,
         )
     return AnalysisProposal(
         proposal_id="proposal_open",
@@ -94,8 +110,7 @@ def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal
         invalidation_price=Decimal("99"),
         valid_until=replay_input.market.as_of + timedelta(minutes=10),
         confidence=Decimal("0.63"),
-        directional_view=DirectionalView.UP,
-        view_horizon_minutes=60,
+        forecasts=forecasts,
     )
 
 
@@ -287,8 +302,9 @@ def test_codex_output_schema_requires_every_property_and_uses_null_for_optional(
     assert "side" in open_proposal["properties"]
     assert "side" not in no_action_proposal["properties"]
     for proposal_schema in (open_proposal, no_action_proposal):
-        assert "directional_view" in proposal_schema["properties"]
-        assert "view_horizon_minutes" in proposal_schema["properties"]
+        assert "forecasts" in proposal_schema["properties"]
+        assert "directional_view" not in proposal_schema["properties"]
+        assert "view_horizon_minutes" not in proposal_schema["properties"]
     assert price_condition["required"] == list(price_condition["properties"])
     assert "pattern" not in price_condition["properties"]["price"]["anyOf"][1]
 
@@ -1292,12 +1308,31 @@ def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
         normalizer.normalize(bad, panel)
 
     mismatched = _proposal(replay_input).model_copy(
-        update={"directional_view": DirectionalView.DOWN}
+        update={
+            "forecasts": (
+                DirectionalForecast(
+                    horizon_minutes=60,
+                    directional_view=DirectionalView.DOWN,
+                    confidence=Decimal("0.60"),
+                ),
+                *_proposal(replay_input).forecasts[1:],
+            )
+        }
     )
     with pytest.raises(ValueError, match="方向预测不一致"):
         normalizer.normalize(mismatched, panel)
 
-    unsupported_horizon = _proposal(replay_input).model_copy(update={"view_horizon_minutes": 90})
+    unsupported_horizon = _proposal(replay_input).model_copy(
+        update={
+            "forecasts": (
+                DirectionalForecast(
+                    horizon_minutes=90,
+                    directional_view=DirectionalView.UP,
+                    confidence=Decimal("0.60"),
+                ),
+            )
+        }
+    )
     with pytest.raises(ValueError, match="冻结允许集合"):
         normalizer.normalize(unsupported_horizon, panel)
 

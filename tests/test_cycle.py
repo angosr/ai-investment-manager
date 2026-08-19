@@ -17,6 +17,7 @@ from quant_core.domain import (
     Action,
     AnalysisProposal,
     CycleOutcome,
+    DirectionalForecast,
     DirectionalView,
     OrderStatus,
     OrderType,
@@ -144,8 +145,18 @@ def test_uncalibrated_ai_candidate_has_zero_edge_and_cannot_trade(
         invalidation_price=replay_input.market.last * Decimal("0.99"),
         valid_until=replay_input.market.as_of + timedelta(minutes=10),
         confidence=Decimal("0.90"),
-        directional_view=DirectionalView.UP,
-        view_horizon_minutes=60,
+        forecasts=(
+            DirectionalForecast(
+                horizon_minutes=60,
+                directional_view=DirectionalView.UP,
+                confidence=Decimal("0.90"),
+            ),
+            DirectionalForecast(
+                horizon_minutes=240,
+                directional_view=DirectionalView.UNCERTAIN,
+                confidence=Decimal("0.55"),
+            ),
+        ),
     )
     analyst = StaticAnalyst(
         AnalystResult(
@@ -414,8 +425,18 @@ def test_successful_ai_no_action_keeps_independent_program_baseline(
         symbol=replay_input.market.symbol,
         thesis="信息证据不足，不独立提出交易候选",
         confidence=Decimal("0.60"),
-        directional_view=DirectionalView.UNCERTAIN,
-        view_horizon_minutes=60,
+        forecasts=(
+            DirectionalForecast(
+                horizon_minutes=60,
+                directional_view=DirectionalView.UNCERTAIN,
+                confidence=Decimal("0.60"),
+            ),
+            DirectionalForecast(
+                horizon_minutes=240,
+                directional_view=DirectionalView.UNCERTAIN,
+                confidence=Decimal("0.55"),
+            ),
+        ),
     )
     analyst = StaticAnalyst(AnalystResult(True, proposal, "CODEX_ANALYSIS_SUCCEEDED", "codex_b", 1))
 

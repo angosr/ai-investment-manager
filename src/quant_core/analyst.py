@@ -30,6 +30,7 @@ from quant_core.config import (
 from quant_core.domain import (
     Action,
     AnalysisProposal,
+    DirectionalForecast,
     DirectionalView,
     FrozenModel,
     OrderType,
@@ -306,8 +307,7 @@ class _ProposalOutputBase(FrozenModel):
     evidence_ids: tuple[str, ...] = ()
     confidence: Decimal
     unknowns: tuple[str, ...] = ()
-    directional_view: DirectionalView
-    view_horizon_minutes: int
+    forecasts: tuple[DirectionalForecast, ...]
 
 
 class _OpenProposalOutput(_ProposalOutputBase):
@@ -419,8 +419,9 @@ class RunBundleBuilder:
             "输出 NO_ACTION。必须遵守 panel_view_json.rules_digest 声明的交易范围；无法提出合规"
             "方向时输出 NO_ACTION。最终对象只含 proposal 字段；evidence_ids 只能引用内嵌 "
             "panel_view_json 中存在的证据。"
-            "无论是否交易，都必须给出独立的 directional_view（UP、DOWN 或 UNCERTAIN）"
-            "及 view_horizon_minutes；这只是可结算研究预测，绝不授权下单。"
+            "无论是否交易，都必须在 forecasts 中为每个允许周期各给出一次独立的 "
+            "directional_view（UP、DOWN 或 UNCERTAIN）及置信度；这些只是可结算研究预测，"
+            "绝不授权下单。forecasts 必须按周期升序且不得遗漏或增加周期。"
             "panel_view_json.trigger 标记本轮触发原因及直接触发证据；若其中存在"
             "missing_evidence_ids，必须将其视为数据不完整，不得猜测其内容。"
             f"最小置信度为 {self._proposal.minimum_confidence}，最大周期为 "
@@ -1667,13 +1668,18 @@ class ProposalNormalizer:
         known_evidence = {item.evidence_id for item in panel.evidence}
         if not set(proposal.evidence_ids).issubset(known_evidence):
             raise ValueError("Proposal 引用了不存在的 evidence_id")
-        if proposal.view_horizon_minutes not in self._policy.forecast_horizons_minutes:
-            raise ValueError("Proposal 方向预测周期不在冻结允许集合")
+        forecast_horizons = tuple(
+            item.horizon_minutes for item in proposal.forecasts
+        )
+        if forecast_horizons != self._policy.forecast_horizons_minutes:
+            raise ValueError("Proposal 方向预测周期与冻结允许集合不一致")
         if proposal.suggested_action == Action.OPEN:
             expected_view = (
                 DirectionalView.UP if proposal.side == Side.BUY else DirectionalView.DOWN
             )
-            if proposal.directional_view != expected_view:
+            assert proposal.horizon_minutes is not None
+            action_forecast = proposal.forecast_for_horizon(proposal.horizon_minutes)
+            if action_forecast is None or action_forecast.directional_view != expected_view:
                 raise ValueError("OPEN Proposal 与方向预测不一致")
         if proposal.suggested_action == Action.NO_ACTION:
             return ()

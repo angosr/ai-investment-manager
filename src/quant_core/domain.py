@@ -402,6 +402,14 @@ class SignalCandidate(FrozenModel):
         return self.estimated_cost_bps is not None
 
 
+class DirectionalForecast(FrozenModel):
+    """与交易动作分离、可独立到期结算的一个方向预测。"""
+
+    horizon_minutes: int = Field(gt=0)
+    directional_view: DirectionalView
+    confidence: UnitInterval
+
+
 class AnalysisProposal(FrozenModel):
     """Codex 的受限 ACTION 输出；它不包含仓位、杠杆、风险金额或订单标识。"""
 
@@ -418,11 +426,30 @@ class AnalysisProposal(FrozenModel):
     valid_until: datetime | None = None
     confidence: UnitInterval
     unknowns: tuple[str, ...] = ()
-    # Defaults preserve replay of proposals stored before forecast-v1.
-    directional_view: DirectionalView = DirectionalView.UNCERTAIN
-    view_horizon_minutes: int = Field(default=60, gt=0)
+    forecasts: tuple[DirectionalForecast, ...] = Field(min_length=1, max_length=4)
 
     _utc_valid_until = field_validator("valid_until")(_optional_utc)
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_legacy_single_forecast(cls, value):
+        """只在读取旧事实时收敛旧字段；新序列化结果不保留双重真相。"""
+
+        if not isinstance(value, dict) or "forecasts" in value:
+            return value
+        if "directional_view" not in value and "view_horizon_minutes" not in value:
+            return value
+        upgraded = dict(value)
+        directional_view = upgraded.pop("directional_view", DirectionalView.UNCERTAIN)
+        horizon = upgraded.pop("view_horizon_minutes", 60)
+        upgraded["forecasts"] = (
+            {
+                "horizon_minutes": horizon,
+                "directional_view": directional_view,
+                "confidence": upgraded.get("confidence", Decimal("0")),
+            },
+        )
+        return upgraded
 
     @model_validator(mode="after")
     def open_requires_typed_trade_fields(self):
@@ -439,7 +466,20 @@ class AnalysisProposal(FrozenModel):
             raise ValueError("NO_ACTION proposal 不得夹带交易参数")
         if self.suggested_action not in {Action.OPEN, Action.NO_ACTION}:
             raise ValueError("MVP PROPOSE 仅接受 OPEN 或 NO_ACTION")
+        horizons = tuple(item.horizon_minutes for item in self.forecasts)
+        if horizons != tuple(sorted(set(horizons))):
+            raise ValueError("方向预测周期必须唯一且升序")
         return self
+
+    def forecast_for_horizon(self, horizon_minutes: int) -> DirectionalForecast | None:
+        return next(
+            (
+                forecast
+                for forecast in self.forecasts
+                if forecast.horizon_minutes == horizon_minutes
+            ),
+            None,
+        )
 
 
 class TradeIntent(FrozenModel):

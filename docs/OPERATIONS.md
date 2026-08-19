@@ -91,7 +91,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `temporal-worker`：执行程序策略、信息面板、频率、风控和模拟撮合；不持有 Binance Secret。
 - `lifecycle-service`：发现未关闭持仓，运行生命周期 Workflow 和模拟退出 Activity。
 - `reconciliation-service`：按稳定时间桶运行主动对账；从独立 Mock 交易所账本和业务事实分别重建状态，报告非 `MATCHED` 或过期时冻结新增风险。
-- `outcome-evaluation-service`：在固定 UTC 窗口结束并经过结算宽限期后运行；聚合权威 `DecisionOutcome`，并分别结算不可交易的候选反事实和 Codex 方向预测。方向预测以唯一成功 Codex Attempt 的完成时间和当时可见成交为起点，跨发布版本扫描未结算 Proposal；`UNCERTAIN` 记为弃权而非命中，完成时间歧义或缺少时点行情记为不可评分。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
+- `outcome-evaluation-service`：在固定 UTC 窗口结束并经过结算宽限期后运行；聚合权威 `DecisionOutcome`，并分别结算不可交易的候选反事实和 Codex 方向预测。一次 Proposal 可冻结多个唯一、升序周期，每项预测以唯一成功 Codex Attempt 的完成时间和当时可见成交为共同起点并独立到期；结算器跨发布版本扫描尚未完整结算的 Proposal，唯一事实键为 `(proposal_id, view_horizon_minutes)`。`UNCERTAIN` 记为弃权而非命中，完成时间歧义或缺少时点行情记为不可评分。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 
 部署私有配置必须满足：
 

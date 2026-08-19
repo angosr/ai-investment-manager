@@ -75,7 +75,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "f6c1a8d2e4b7"
+DATABASE_SCHEMA_VERSION = "a9e2b7c4d6f1"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -186,6 +186,7 @@ analysis_proposals = Table(
     Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False, unique=True),
     Column("proposal_type", String(32), nullable=False),
     Column("suggested_action", String(32), nullable=False),
+    Column("forecast_count", Integer, nullable=False),
     Column("payload", JSON, nullable=False),
 )
 
@@ -381,15 +382,20 @@ analysis_forecast_outcomes = Table(
         "proposal_id",
         ForeignKey("analysis_proposals.proposal_id"),
         nullable=False,
-        unique=True,
     ),
     Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
     Column("pipeline_version", String(128), nullable=False),
+    Column("view_horizon_minutes", Integer, nullable=False),
     Column("status", String(32), nullable=False),
     Column("evaluation_at", DateTime(timezone=True), nullable=False),
     Column("settled_at", DateTime(timezone=True), nullable=False),
     Column("directional_return_bps", Numeric(38, 18), nullable=True),
     Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "proposal_id",
+        "view_horizon_minutes",
+        name="uq_analysis_forecast_outcomes_proposal_horizon",
+    ),
 )
 Index(
     "ix_analysis_forecast_outcomes_pipeline_evaluation",
@@ -2024,6 +2030,7 @@ class SqlFactLedger:
                     cycle_id=facts.cycle_id,
                     proposal_type=proposal.proposal_type,
                     suggested_action=proposal.suggested_action.value,
+                    forecast_count=len(proposal.forecasts),
                     payload=proposal.model_dump(mode="json"),
                 )
             )

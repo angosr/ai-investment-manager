@@ -13,6 +13,7 @@ from quant_core.domain import (
     Action,
     AnalysisForecastOutcome,
     AnalysisProposal,
+    DirectionalForecast,
     DirectionalView,
     ForecastOutcomeStatus,
 )
@@ -67,8 +68,18 @@ def _seed(app_config, replay_input, view: DirectionalView):
         symbol=replay_input.market.symbol,
         thesis="记录独立方向倾向，不产生交易候选",
         confidence=Decimal("0.70"),
-        directional_view=view,
-        view_horizon_minutes=60,
+        forecasts=(
+            DirectionalForecast(
+                horizon_minutes=60,
+                directional_view=view,
+                confidence=Decimal("0.70"),
+            ),
+            DirectionalForecast(
+                horizon_minutes=240,
+                directional_view=view,
+                confidence=Decimal("0.65"),
+            ),
+        ),
     )
     completed_at = replay_input.market.as_of + timedelta(seconds=10)
     AnalysisCycle.with_adapters(
@@ -116,12 +127,37 @@ def _seed(app_config, replay_input, view: DirectionalView):
     return engine, proposal, settler, completed_at
 
 
-def _stored(engine) -> AnalysisForecastOutcome:
+def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
     with engine.connect() as connection:
         payload = connection.execute(
-            select(analysis_forecast_outcomes.c.payload)
+            select(analysis_forecast_outcomes.c.payload).where(
+                analysis_forecast_outcomes.c.view_horizon_minutes == horizon_minutes
+            )
         ).scalar_one()
     return AnalysisForecastOutcome.model_validate(payload)
+
+
+def test_legacy_single_forecast_payload_is_read_without_retaining_aliases(
+    replay_input,
+) -> None:
+    proposal = AnalysisProposal.model_validate(
+        {
+            "proposal_id": "legacy-proposal",
+            "suggested_action": "NO_ACTION",
+            "symbol": replay_input.market.symbol,
+            "thesis": "旧事实只在读边界升级",
+            "confidence": "0.61",
+            "directional_view": "DOWN",
+            "view_horizon_minutes": 60,
+        }
+    )
+
+    assert len(proposal.forecasts) == 1
+    assert proposal.forecasts[0].directional_view == DirectionalView.DOWN
+    payload = proposal.model_dump(mode="json")
+    assert "forecasts" in payload
+    assert "directional_view" not in payload
+    assert "view_horizon_minutes" not in payload
 
 
 @pytest.mark.parametrize(
@@ -159,6 +195,53 @@ def test_directional_view_settles_without_creating_a_trade(
     assert outcome.direction_correct is (view == DirectionalView.UP)
     assert outcome.cycle_id == replay_input.market.cycle_id
     assert outcome.signal_observed_at == completed_at
+
+
+def test_one_codex_proposal_settles_each_frozen_horizon_independently(
+    app_config, replay_input
+) -> None:
+    engine, proposal, settler, completed_at = _seed(
+        app_config, replay_input, DirectionalView.UP
+    )
+    market = SqlMarketDataStore(engine)
+    for aggregate_id, horizon, multiplier in (
+        (9_100_000_020, 60, Decimal("1.01")),
+        (9_100_000_021, 240, Decimal("0.98")),
+    ):
+        evaluation_at = completed_at + timedelta(minutes=horizon)
+        market.put_trade(
+            MarketTrade(
+                trade_id=f"forecast-exit-{horizon}",
+                symbol=proposal.symbol,
+                aggregate_trade_id=aggregate_id,
+                event_time=evaluation_at,
+                observed_at=evaluation_at,
+                price=replay_input.market.last * multiplier,
+                quantity=Decimal("1"),
+                buyer_is_maker=False,
+                source="test",
+            )
+        )
+
+    first = settler.settle(as_of=completed_at + timedelta(minutes=60, seconds=1))
+    second = settler.settle(as_of=completed_at + timedelta(minutes=240, seconds=1))
+    replay = settler.settle(as_of=completed_at + timedelta(minutes=240, seconds=2))
+
+    assert first.settled == 1
+    assert first.pending == 1
+    assert second.settled == 1
+    assert replay.settled == 0
+    assert _stored(engine, horizon_minutes=60).directional_return_bps == Decimal("100")
+    assert _stored(engine, horizon_minutes=240).directional_return_bps == Decimal("-200")
+    with engine.connect() as connection:
+        keys = connection.execute(
+            select(
+                analysis_forecast_outcomes.c.proposal_id,
+                analysis_forecast_outcomes.c.view_horizon_minutes,
+            ).order_by(analysis_forecast_outcomes.c.view_horizon_minutes)
+        ).all()
+    assert [item[1] for item in keys] == [60, 240]
+    assert len({item[0] for item in keys}) == 1
 
 
 def test_uncertain_view_records_abstention_and_realized_move(
