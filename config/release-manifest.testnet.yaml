@@ -1,7 +1,7 @@
 manifest_id: release-testnet-trigger-evidence-v1
 created_at: 2026-08-19T19:53:00Z
 status: CHALLENGER
-code_version: 587d216319e3b899f3ff796873be300b1dc1a3c0
+code_version: d08002ccb31f24e778f21cae10b054a09076af7d
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-panel-budget-v2
 complexity_score: 2
