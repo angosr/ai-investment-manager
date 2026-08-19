@@ -336,6 +336,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     from quant_core.ids import content_hash
     from quant_core.research.decision_tape import (
         ForecastDecisionTape,
+        ForecastGateEvaluationSpec,
         ForecastGatePolicy,
         ForecastTapeEntry,
         run_paired_decision_tape_backtest,
@@ -403,13 +404,36 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         maximum_age_minutes=60,
         minimum_confidence=Decimal("0.60"),
     )
+    strategy = PriceTrendStrategy(app_config.strategy)
+    registered_spec = ForecastGateEvaluationSpec.freeze(
+        strategy=strategy,
+        policy=policy,
+    )
+    assert registered_spec.base_strategy_spec_hash == content_hash(
+        strategy.research_spec
+    )
+    registered_hash = content_hash(registered_spec)
+    assert content_hash(
+        ForecastGateEvaluationSpec.freeze(
+            strategy=PriceTrendStrategy(
+                app_config.strategy.model_copy(update={"version": "different-q-v1"})
+            ),
+            policy=policy,
+        )
+    ) != registered_hash
+    assert content_hash(
+        ForecastGateEvaluationSpec.freeze(
+            strategy=strategy,
+            policy=policy.model_copy(update={"minimum_confidence": Decimal("0.61")}),
+        )
+    ) != registered_hash
 
     result = run_paired_decision_tape_backtest(
         dataset=dataset,
         config=app_config,
         tape=tape,
         policy=policy,
-        strategy=PriceTrendStrategy(app_config.strategy),
+        strategy=strategy,
         signal_start=signal_start,
         signal_end=signal_end,
     )

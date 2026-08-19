@@ -478,6 +478,7 @@ def paired_decision_tape_command(
     from quant_core.research.candidates import resolve_research_candidate
     from quant_core.research.dataset import HistoricalDatasetCatalog
     from quant_core.research.decision_tape import (
+        ForecastGateEvaluationSpec,
         ForecastGatePolicy,
         SqlForecastDecisionTapeReader,
         run_paired_decision_tape_backtest,
@@ -512,9 +513,13 @@ def paired_decision_tape_command(
         maximum_age_minutes=maximum_age_minutes,
         minimum_confidence=confidence,
     )
-    if plan.candidate_spec_hash != content_hash(policy):
+    evaluation_spec = ForecastGateEvaluationSpec.freeze(
+        strategy=strategy,
+        policy=policy,
+    )
+    if plan.candidate_spec_hash != content_hash(evaluation_spec):
         raise typer.BadParameter(
-            "门控参数与预登记 candidate_spec_hash 不一致",
+            "基础策略或门控参数与预登记 candidate_spec_hash 不一致",
             param_hint="plan-id",
         )
     tape = SqlForecastDecisionTapeReader(engine).read(

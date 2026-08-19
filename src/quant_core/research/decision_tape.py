@@ -285,6 +285,26 @@ class ForecastGatePolicy(FrozenModel):
         return self
 
 
+class ForecastGateEvaluationSpec(FrozenModel):
+    """Pre-registration identity for both Q and its deterministic AI gate."""
+
+    version: str = "forecast-gate-evaluation-spec-v1"
+    base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    policy: ForecastGatePolicy
+
+    @classmethod
+    def freeze(
+        cls,
+        *,
+        strategy: ResearchStrategy,
+        policy: ForecastGatePolicy,
+    ) -> ForecastGateEvaluationSpec:
+        return cls(
+            base_strategy_spec_hash=content_hash(strategy.research_spec),
+            policy=policy,
+        )
+
+
 class ForecastGatedStrategySpec(FrozenModel):
     version: str = "forecast-gated-research-strategy-v1"
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
