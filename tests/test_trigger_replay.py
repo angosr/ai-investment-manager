@@ -21,6 +21,7 @@ def _event(
     observed_at: datetime,
     evidence_id: str,
     impact: Decimal,
+    symbols: tuple[str, ...] = ("BTCUSDT",),
 ) -> IntelligenceEvent:
     return IntelligenceEvent(
         evidence_id=evidence_id,
@@ -31,7 +32,7 @@ def _event(
         source="test-source",
         title=evidence_id,
         body=evidence_id,
-        symbols=("BTCUSDT",),
+        symbols=symbols,
         relevance=Decimal("1"),
         impact=impact,
         source_reliability=Decimal("0.8"),
@@ -39,9 +40,15 @@ def _event(
     )
 
 
-def _plan(app_config, start: datetime, *, ordinary_cooldown_seconds: int = 900):
+def _plan(
+    app_config,
+    start: datetime,
+    *,
+    symbol: str = "BTCUSDT",
+    ordinary_cooldown_seconds: int = 900,
+):
     return build_initial_trigger_plan(
-        symbol="BTCUSDT",
+        symbol=symbol,
         pipeline_id=app_config.pipeline.version,
         manifest_id="manifest-v1",
         updated_at=start,
@@ -100,7 +107,7 @@ def test_external_trigger_replay_matches_coalesce_specific_cooldown_and_latency(
         collected_at=end,
     )
     spec = ExternalTriggerReplaySpec.freeze(
-        plan=_plan(app_config, start),
+        plans=(_plan(app_config, start),),
         config=app_config,
         analysis_duration_seconds=10,
     )
@@ -108,14 +115,14 @@ def test_external_trigger_replay_matches_coalesce_specific_cooldown_and_latency(
     replay = run_external_trigger_replay(
         event_dataset=dataset,
         spec=spec,
-        symbol="BTCUSDT",
         replay_start=start,
         replay_end=end,
     )
 
-    assert replay.source_event_count == 4
-    assert replay.accepted_trigger_count == 3
-    assert replay.rejected_trigger_count == 1
+    scope = replay.scopes[0]
+    assert scope.source_event_count == 4
+    assert scope.accepted_trigger_count == 3
+    assert scope.rejected_trigger_count == 1
     assert len(replay.batches) == 2
     first, second = replay.batches
     assert first.batch.created_at == start + timedelta(minutes=3)
@@ -126,7 +133,7 @@ def test_external_trigger_replay_matches_coalesce_specific_cooldown_and_latency(
     }
     assert second.batch.created_at == start + timedelta(minutes=8, seconds=10)
     assert tuple(item.dedup_key for item in second.batch.triggers) == ("urgent-1",)
-    assert "GLOBAL_CROSS_SYMBOL_ADMISSION_NOT_REPLAYED" in replay.limitations
+    assert "SIMULTANEOUS_ADMISSION_ORDER_ASSUMPTION" not in replay.limitations
 
 
 def test_external_trigger_replay_discards_event_that_expires_during_cooldown(
@@ -154,7 +161,7 @@ def test_external_trigger_replay_discards_event_that_expires_during_cooldown(
         collected_at=end,
     )
     spec = ExternalTriggerReplaySpec.freeze(
-        plan=_plan(app_config, start, ordinary_cooldown_seconds=1_200),
+        plans=(_plan(app_config, start, ordinary_cooldown_seconds=1_200),),
         config=app_config,
         analysis_duration_seconds=10,
     )
@@ -162,11 +169,101 @@ def test_external_trigger_replay_discards_event_that_expires_during_cooldown(
     replay = run_external_trigger_replay(
         event_dataset=dataset,
         spec=spec,
-        symbol="BTCUSDT",
         replay_start=start,
         replay_end=end,
     )
 
     assert len(replay.batches) == 1
-    assert replay.expired_trigger_count == 1
-    assert replay.unprocessed_trigger_count == 0
+    assert replay.scopes[0].expired_trigger_count == 1
+    assert replay.scopes[0].unprocessed_trigger_count == 0
+
+
+def test_external_trigger_replay_enforces_global_cross_symbol_admission(
+    app_config,
+) -> None:
+    start = datetime(2026, 8, 19, 12, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    events = (
+        _event(
+            observed_at=start,
+            evidence_id="shared",
+            impact=Decimal("1"),
+            symbols=("BTCUSDT", "ETHUSDT"),
+        ),
+    )
+    dataset = freeze_historical_events(
+        events=events,
+        source="test-archive",
+        requested_start=start,
+        requested_end=end,
+        collected_at=end,
+    )
+    spec = ExternalTriggerReplaySpec.freeze(
+        plans=(
+            _plan(app_config, start, symbol="BTCUSDT"),
+            _plan(app_config, start, symbol="ETHUSDT"),
+        ),
+        config=app_config,
+        analysis_duration_seconds=10,
+    )
+
+    replay = run_external_trigger_replay(
+        event_dataset=dataset,
+        spec=spec,
+        replay_start=start,
+        replay_end=end,
+    )
+
+    assert [item.batch.symbol for item in replay.batches] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    assert replay.batches[0].batch.created_at == start
+    assert replay.batches[1].batch.created_at == start + timedelta(
+        seconds=app_config.trigger.minimum_call_interval_seconds
+    )
+    assert "SIMULTANEOUS_ADMISSION_ORDER_ASSUMPTION" in replay.limitations
+
+
+def test_external_trigger_replay_carries_budget_used_before_window(app_config) -> None:
+    start = datetime(2026, 8, 19, 12, tzinfo=UTC)
+    end = start + timedelta(minutes=20)
+    dataset = freeze_historical_events(
+        events=(
+            _event(
+                observed_at=start,
+                evidence_id="shared",
+                impact=Decimal("1"),
+                symbols=("BTCUSDT", "ETHUSDT"),
+            ),
+        ),
+        source="test-archive",
+        requested_start=start,
+        requested_end=end,
+        collected_at=end,
+    )
+    prior_calls = tuple(
+        start - timedelta(minutes=55) + index * timedelta(minutes=4)
+        for index in range(app_config.trigger.maximum_ai_calls_per_hour)
+    )
+    spec = ExternalTriggerReplaySpec.freeze(
+        plans=(
+            _plan(app_config, start, symbol="BTCUSDT"),
+            _plan(app_config, start, symbol="ETHUSDT"),
+        ),
+        config=app_config,
+        analysis_duration_seconds=10,
+        initial_global_admitted_times=prior_calls,
+        initial_state_source="EXACT",
+    )
+
+    replay = run_external_trigger_replay(
+        event_dataset=dataset,
+        spec=spec,
+        replay_start=start,
+        replay_end=end,
+    )
+
+    assert len(replay.batches) == 2
+    assert replay.batches[0].batch.created_at == prior_calls[0] + timedelta(hours=1)
+    assert replay.batches[1].batch.created_at == prior_calls[1] + timedelta(hours=1)

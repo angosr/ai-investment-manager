@@ -25,6 +25,7 @@ from quant_core.trigger import (
     build_trigger_event,
     build_trigger_plan_patch,
     carry_forward_trigger_plan,
+    decide_analysis_call_admission,
     trigger_plan_accepts,
     trigger_reconsideration,
     trigger_rule_value,
@@ -115,6 +116,47 @@ def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(
         wake_at_expiry=True,
     )
     assert expiry_wakeup.reconsider_at == now + timedelta(seconds=30)
+
+
+def test_shared_global_admission_uses_rolling_budget_and_minimum_interval(
+    replay_input,
+) -> None:
+    now = replay_input.market.as_of
+    calls = tuple(now - timedelta(minutes=50 - index * 5) for index in range(6))
+
+    hourly = decide_analysis_call_admission(
+        requested_at=now,
+        admitted_times=calls,
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+    )
+    assert not hourly.admitted
+    assert hourly.retry_at == calls[0] + timedelta(hours=1)
+
+    interval = decide_analysis_call_admission(
+        requested_at=now,
+        admitted_times=(now - timedelta(seconds=5),),
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+    )
+    assert not interval.admitted
+    assert interval.retry_at == now + timedelta(seconds=10)
+
+    admitted = decide_analysis_call_admission(
+        requested_at=now,
+        admitted_times=(now - timedelta(hours=1),),
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+    )
+    assert admitted.admitted_at == now
+
+    contracted = decide_analysis_call_admission(
+        requested_at=now,
+        admitted_times=tuple(now - timedelta(minutes=55 - index * 5) for index in range(10)),
+        minimum_call_interval_seconds=15,
+        maximum_ai_calls_per_hour=6,
+    )
+    assert contracted.retry_at == now + timedelta(minutes=25)
 
 
 def test_shared_trigger_timing_enforces_hourly_budget(app_config, replay_input) -> None:

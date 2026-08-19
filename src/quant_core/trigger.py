@@ -48,6 +48,39 @@ class AnalysisCallAdmission(FrozenModel):
         return self
 
 
+def decide_analysis_call_admission(
+    *,
+    requested_at: datetime,
+    admitted_times: Sequence[datetime],
+    minimum_call_interval_seconds: int,
+    maximum_ai_calls_per_hour: int,
+) -> AnalysisCallAdmission:
+    """Pure rolling-budget decision shared by production and historical replay."""
+
+    requested_at = _require_utc(requested_at)
+    if minimum_call_interval_seconds < 0:
+        raise ValueError("minimum_call_interval_seconds 不能为负数")
+    if maximum_ai_calls_per_hour < 1:
+        raise ValueError("maximum_ai_calls_per_hour 必须大于零")
+
+    one_hour_ago = requested_at - timedelta(hours=1)
+    normalized = tuple(_require_utc(item) for item in admitted_times)
+    recent = tuple(
+        sorted(item for item in normalized if one_hour_ago < item <= requested_at)
+    )
+    retry_at = requested_at
+    if len(recent) >= maximum_ai_calls_per_hour:
+        retry_at = max(retry_at, recent[-maximum_ai_calls_per_hour] + timedelta(hours=1))
+    if recent:
+        retry_at = max(
+            retry_at,
+            recent[-1] + timedelta(seconds=minimum_call_interval_seconds),
+        )
+    if retry_at > requested_at:
+        return AnalysisCallAdmission(admitted=False, retry_at=retry_at)
+    return AnalysisCallAdmission(admitted=True, admitted_at=requested_at)
+
+
 class AnalysisTriggerType(StrEnum):
     INTELLIGENCE_INSERTED = "INTELLIGENCE_INSERTED"
     MARKET_SHOCK = "MARKET_SHOCK"

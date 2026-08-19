@@ -518,47 +518,122 @@ def replay_event_triggers_command(
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="冻结 TriggerPlan 事实库"),
     ],
     event_dataset_id: Annotated[str, typer.Option()],
-    symbol: Annotated[str, typer.Option()],
     replay_start: Annotated[str, typer.Option(help="带时区的回放起点（含）")],
     replay_end: Annotated[str, typer.Option(help="带时区的回放终点（不含）")],
     analysis_duration_seconds: Annotated[int, typer.Option(min=0)],
+    admission_order: Annotated[
+        str | None,
+        typer.Option(help="同刻争用全局预算的品种顺序，逗号分隔；默认配置顺序"),
+    ] = None,
     event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/event-datasets"
     ),
     include_batches: Annotated[bool, typer.Option()] = False,
 ) -> None:
-    """复用生产协调规则回放单品种外部事件批次；不调用 Codex 或交易。"""
+    """复用生产协调规则回放全品种外部事件批次；不调用 Codex 或交易。"""
 
+    from sqlalchemy import select
+
+    from quant_core.persistence import (
+        analysis_call_admissions,
+        analysis_cycles,
+        market_snapshots,
+    )
     from quant_core.research.dataset import HistoricalEventDatasetCatalog
     from quant_core.research.trigger_replay import (
         ExternalTriggerReplaySpec,
+        TriggerReplayInitialScopeState,
         run_external_trigger_replay,
     )
 
     loaded = load_config(config)
-    canonical_symbol = symbol.upper()
-    if canonical_symbol not in loaded.market_data.symbols:
-        raise typer.BadParameter("symbol 必须在冻结 MarketDataPolicy 中", param_hint="symbol")
-    plan = SqlTriggerRepository(
-        _runtime_engine(database_url), loaded.trigger
-    ).plan_for_scope(
-        symbol=canonical_symbol,
-        pipeline_id=loaded.pipeline.version,
+    window_start = _parse_utc_option(replay_start, name="replay-start")
+    window_end = _parse_utc_option(replay_end, name="replay-end")
+    engine = _runtime_engine(database_url)
+    repository = SqlTriggerRepository(engine, loaded.trigger)
+    parsed_admission_order = (
+        tuple(
+            item.strip().upper()
+            for item in admission_order.split(",")
+            if item.strip()
+        )
+        if admission_order is not None
+        else None
     )
-    if plan is None:
-        raise typer.BadParameter("当前 Pipeline 没有冻结 TriggerPlan")
+    if parsed_admission_order is not None and (
+        len(parsed_admission_order) != len(set(parsed_admission_order))
+        or set(parsed_admission_order) != set(loaded.market_data.symbols)
+    ):
+        raise typer.BadParameter(
+            "admission-order 必须无重复且完整覆盖 MarketDataPolicy 品种",
+            param_hint="admission-order",
+        )
+    try:
+        plans = tuple(
+            repository.plan_for_scope(
+                symbol=symbol,
+                pipeline_id=loaded.pipeline.version,
+            )
+            for symbol in loaded.market_data.symbols
+        )
+    except KeyError as error:
+        raise typer.BadParameter(
+            f"当前 Pipeline 缺少冻结 TriggerPlan: {error.args[0]}"
+        ) from None
+    with engine.connect() as connection:
+        initial_global_admitted_times = tuple(
+            connection.execute(
+                select(analysis_call_admissions.c.admitted_at)
+                .where(
+                    analysis_call_admissions.c.admitted_at
+                    > window_start - timedelta(hours=1),
+                    analysis_call_admissions.c.admitted_at < window_start,
+                )
+                .order_by(analysis_call_admissions.c.admitted_at)
+            ).scalars()
+        )
+        initial_scope_items = []
+        for symbol in loaded.market_data.symbols:
+            completed = tuple(
+                connection.execute(
+                    select(analysis_cycles.c.created_at)
+                    .join(
+                        market_snapshots,
+                        market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
+                    )
+                    .where(
+                        analysis_cycles.c.pipeline_version == loaded.pipeline.version,
+                        market_snapshots.c.symbol == symbol,
+                        analysis_cycles.c.created_at > window_start - timedelta(hours=1),
+                        analysis_cycles.c.created_at < window_start,
+                    )
+                    .order_by(analysis_cycles.c.created_at)
+                ).scalars()
+            )
+            if completed:
+                initial_scope_items.append(
+                    TriggerReplayInitialScopeState(
+                        symbol=symbol,
+                        last_analysis_at=completed[-1],
+                        call_times=completed,
+                    )
+                )
+        initial_scopes = tuple(initial_scope_items)
     result = run_external_trigger_replay(
         event_dataset=HistoricalEventDatasetCatalog(event_catalog).load(
             event_dataset_id
         ),
         spec=ExternalTriggerReplaySpec.freeze(
-            plan=plan,
+            plans=plans,
             config=loaded,
             analysis_duration_seconds=analysis_duration_seconds,
+            initial_global_admitted_times=initial_global_admitted_times,
+            initial_scopes=initial_scopes,
+            initial_state_source="CYCLE_PERSISTENCE_PROXY",
+            admission_order=parsed_admission_order,
         ),
-        symbol=canonical_symbol,
-        replay_start=_parse_utc_option(replay_start, name="replay-start"),
-        replay_end=_parse_utc_option(replay_end, name="replay-end"),
+        replay_start=window_start,
+        replay_end=window_end,
     )
     payload = result.model_dump(mode="json")
     payload["batch_count"] = len(result.batches)

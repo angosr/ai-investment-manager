@@ -29,6 +29,7 @@ from quant_core.trigger import (
     TriggerPlanApplyResult,
     TriggerPlanGate,
     TriggerPlanPatch,
+    decide_analysis_call_admission,
 )
 
 
@@ -143,21 +144,21 @@ class SqlTriggerRepository:
                 _database_utc(item)
                 for item in connection.execute(
                     select(analysis_call_admissions.c.admitted_at)
-                    .where(analysis_call_admissions.c.admitted_at > one_hour_ago)
+                    .where(
+                        analysis_call_admissions.c.admitted_at > one_hour_ago,
+                        analysis_call_admissions.c.admitted_at <= requested_at,
+                    )
                     .order_by(analysis_call_admissions.c.admitted_at)
                 ).scalars()
             )
-            retry_at = requested_at
-            if len(admitted_times) >= self._policy.maximum_ai_calls_per_hour:
-                retry_at = max(retry_at, admitted_times[0] + timedelta(hours=1))
-            if admitted_times:
-                retry_at = max(
-                    retry_at,
-                    admitted_times[-1]
-                    + timedelta(seconds=self._policy.minimum_call_interval_seconds),
-                )
-            if retry_at > requested_at:
-                return AnalysisCallAdmission(admitted=False, retry_at=retry_at)
+            admission = decide_analysis_call_admission(
+                requested_at=requested_at,
+                admitted_times=admitted_times,
+                minimum_call_interval_seconds=self._policy.minimum_call_interval_seconds,
+                maximum_ai_calls_per_hour=self._policy.maximum_ai_calls_per_hour,
+            )
+            if not admission.admitted:
+                return admission
 
             payload = {
                 "batch_id": batch.batch_id,
