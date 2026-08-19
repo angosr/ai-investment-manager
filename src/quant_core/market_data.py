@@ -251,6 +251,23 @@ def _bar_market_facts(bar: ClosedMarketBar) -> dict[str, Any]:
     return bar.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _bar_revision_only_changes_volume(
+    existing: ClosedMarketBar,
+    incoming: ClosedMarketBar,
+) -> bool:
+    """Recognize a provider's late volume finalization without rewriting history."""
+
+    old = existing.model_dump(
+        exclude={"observed_at", "source", "volume"},
+        mode="json",
+    )
+    new = incoming.model_dump(
+        exclude={"observed_at", "source", "volume"},
+        mode="json",
+    )
+    return old == new and existing.volume != incoming.volume
+
+
 def _quote_market_facts(quote: MarketQuote) -> dict[str, Any]:
     return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
 
@@ -293,6 +310,16 @@ class InMemoryMarketDataStore:
             existing = self._bars.get(key)
             if existing is not None:
                 if _bar_market_facts(existing) != _bar_market_facts(bar):
+                    if _bar_revision_only_changes_volume(existing, bar):
+                        logger.warning(
+                            "late closed-bar volume revision ignored; preserving first-seen fact",
+                            extra={
+                                "symbol": bar.symbol,
+                                "interval": bar.interval,
+                                "open_time": bar.open_time.isoformat(),
+                            },
+                        )
+                        return False
                     raise ValueError("已收盘 K 线唯一键冲突且事实不一致")
                 return False
             self._bars[key] = bar

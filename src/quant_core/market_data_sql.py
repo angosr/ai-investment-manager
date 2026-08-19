@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from sqlalchemy import (
@@ -23,9 +24,12 @@ from quant_core.market_data import (
     MarketQuote,
     MarketTrade,
     _bar_market_facts,
+    _bar_revision_only_changes_volume,
     _quote_market_facts,
     _trade_market_facts,
 )
+
+logger = logging.getLogger(__name__)
 
 market_metadata = MetaData()
 
@@ -152,8 +156,19 @@ class SqlMarketDataStore:
                         market_bars.c.open_time == bar.open_time,
                     )
                 ).scalar_one()
-            existing_facts = _bar_market_facts(ClosedMarketBar.model_validate(existing))
+            existing_bar = ClosedMarketBar.model_validate(existing)
+            existing_facts = _bar_market_facts(existing_bar)
             if existing_facts != _bar_market_facts(bar):
+                if _bar_revision_only_changes_volume(existing_bar, bar):
+                    logger.warning(
+                        "late closed-bar volume revision ignored; preserving first-seen fact",
+                        extra={
+                            "symbol": bar.symbol,
+                            "interval": bar.interval,
+                            "open_time": bar.open_time.isoformat(),
+                        },
+                    )
+                    return False
                 raise ValueError("已收盘 K 线唯一键冲突且事实不一致") from None
             return False
 

@@ -370,6 +370,10 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
         observed_at=NOW + timedelta(seconds=1),
     ).model_copy(update={"source": "recovered-rest"})
     assert not store.put_bar(duplicate)
+    late_volume_revision = duplicate.model_copy(update={"volume": Decimal("10.1")})
+    assert not store.put_bar(late_volume_revision)
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_bar(duplicate.model_copy(update={"high": Decimal("102")}))
     store.put_quote(_quote(NOW + timedelta(minutes=1), update_id=2))
     store.put_trade(_trade(NOW + timedelta(minutes=1), trade_id=2))
 
@@ -384,6 +388,7 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
     assert snapshot.bid == Decimal("100")
     assert snapshot.last == Decimal("100.05")
     assert snapshot.observed_at == NOW
+    assert snapshot.bars[-1].volume == Decimal("10")
 
 
 def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(
