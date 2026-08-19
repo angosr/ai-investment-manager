@@ -1529,20 +1529,29 @@ class SqlEventStore:
 
     def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]:
         as_of = _require_utc(as_of)
+        # Trigger 激活必须按 pipeline 隔离，但已观测到的世界事实不应在每次
+        # 发布时清空。这里只复用历史 Trigger 中的品种路由事实，不会让旧
+        # pipeline 的触发器、待处理批次或调用准入进入新 pipeline。
+        routed_evidence = (
+            select(analysis_trigger_events.c.dedup_key.label("evidence_id"))
+            .where(
+                analysis_trigger_events.c.trigger_type == "INTELLIGENCE_INSERTED",
+                analysis_trigger_events.c.symbol == symbol,
+                analysis_trigger_events.c.observed_at <= as_of,
+            )
+            .distinct()
+            .subquery()
+        )
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(normalized_events.c.payload)
                 .select_from(
                     normalized_events.join(
-                        analysis_trigger_events,
-                        analysis_trigger_events.c.dedup_key == normalized_events.c.evidence_id,
+                        routed_evidence,
+                        routed_evidence.c.evidence_id == normalized_events.c.evidence_id,
                     )
                 )
                 .where(
-                    analysis_trigger_events.c.trigger_type == "INTELLIGENCE_INSERTED",
-                    analysis_trigger_events.c.symbol == symbol,
-                    analysis_trigger_events.c.pipeline_id == self._pipeline_id,
-                    analysis_trigger_events.c.observed_at <= as_of,
                     normalized_events.c.observed_at <= as_of,
                 )
                 .order_by(

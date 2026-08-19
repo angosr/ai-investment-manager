@@ -224,6 +224,35 @@ def test_sql_event_store_deduplicates_and_respects_observed_at_visibility() -> N
         assert connection.scalar(select(func.count()).select_from(normalized_events)) == 1
 
 
+def test_sql_event_store_keeps_world_facts_visible_across_pipeline_releases() -> None:
+    observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    event = EventNormalizer().normalize(
+        RawIntelligenceItem(
+            source_item_id="release-boundary-event",
+            source="wire",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title="Bitcoin ETF inflow accelerates",
+            rank=1,
+        )
+    )
+    assert event is not None
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    old_release = SqlEventStore(engine, pipeline_id="pipeline-v1")
+    new_release = SqlEventStore(engine, pipeline_id="pipeline-v2")
+
+    assert old_release.put(event)
+    assert new_release.visible(symbol="BTCUSDT", as_of=observed_at) == (event,)
+    assert not new_release.visible(symbol="ETHUSDT", as_of=observed_at)
+
+    with engine.connect() as connection:
+        pipelines = tuple(
+            connection.scalars(select(analysis_trigger_events.c.pipeline_id))
+        )
+    assert pipelines == ("pipeline-v1",)
+
+
 def test_sql_event_store_preserves_first_acquisition_route_across_connectors() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:")
