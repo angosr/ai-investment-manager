@@ -172,7 +172,12 @@ def run_worker_process(policy: TemporalPolicy, cycle: AnalysisCycle) -> None:
     asyncio.run(run_worker_forever(policy, cycle))
 
 
-def assemble_simulated_analysis_cycle(config: AppConfig, database_url: str) -> AnalysisCycle:
+def assemble_simulated_analysis_cycle(
+    config: AppConfig,
+    database_url: str,
+    *,
+    code_version: str,
+) -> AnalysisCycle:
     """装配持久化模拟执行；MOCK/SHADOW 永不接触真实订单接口。"""
 
     if config.deployment.stage not in {DeploymentStage.MOCK, DeploymentStage.SHADOW}:
@@ -183,6 +188,7 @@ def assemble_simulated_analysis_cycle(config: AppConfig, database_url: str) -> A
         analyst = assemble_codex_analyst(
             config,
             bundle_root=config.codex_runtime.bundle_root,
+            code_version=code_version,
             leases=SqlAccountLeaseStore(engine),
             audit=SqlCodexAuditStore(engine),
         )
@@ -196,11 +202,20 @@ def assemble_simulated_analysis_cycle(config: AppConfig, database_url: str) -> A
     )
 
 
-def assemble_analysis_cycle(config: AppConfig, database_url: str) -> AnalysisCycle:
+def assemble_analysis_cycle(
+    config: AppConfig,
+    database_url: str,
+    *,
+    code_version: str,
+) -> AnalysisCycle:
     """按部署阶段装配唯一执行边界；LIVE 始终被配置层拒绝。"""
 
     if config.deployment.stage in {DeploymentStage.MOCK, DeploymentStage.SHADOW}:
-        return assemble_simulated_analysis_cycle(config, database_url)
+        return assemble_simulated_analysis_cycle(
+            config,
+            database_url,
+            code_version=code_version,
+        )
     if config.deployment.stage != DeploymentStage.TESTNET:
         raise ValueError("不支持的执行阶段")
     engine = build_engine(database_url)
@@ -209,6 +224,7 @@ def assemble_analysis_cycle(config: AppConfig, database_url: str) -> AnalysisCyc
         analyst = assemble_codex_analyst(
             config,
             bundle_root=config.codex_runtime.bundle_root,
+            code_version=code_version,
             leases=SqlAccountLeaseStore(engine),
             audit=SqlCodexAuditStore(engine),
         )

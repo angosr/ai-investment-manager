@@ -204,23 +204,29 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 ```bash
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  information-collector --config config/quant-core.shadow.yaml
+  information-collector --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  market-stream --config config/quant-core.shadow.yaml
+  market-stream --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  temporal-worker --config config/quant-core.shadow.yaml
+  temporal-worker --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
   trigger-service --config config/quant-core.shadow.yaml \
   --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  lifecycle-service --config config/quant-core.shadow.yaml
+  lifecycle-service --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  reconciliation-service --config config/quant-core.shadow.yaml
+  reconciliation-service --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  outcome-evaluation-service --config config/quant-core.shadow.yaml
+  outcome-evaluation-service --config config/quant-core.shadow.yaml \
+  --release-manifest config/release-manifest.yaml
 ```
 
-七个角色共享版本化契约但权限可分别收窄。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
+七个角色共享同一份 ReleaseManifest 但权限可分别收窄。每个长期进程启动时都核对类型化配置、实际 Git 提交和运行源码洁净度；不匹配时失败关闭。Codex 运行包记录该 Manifest 的精确 `code_version`，不接受 `working-tree` 冒充发布身份。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
 
 ### 运行 Binance Spot Testnet
 
@@ -252,7 +258,9 @@ cd web && npm install && npm run build && cd ..
 
 ```bash
 QUANT_CORE_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/quant-core \
-  dashboard-service --config '<私有配置>' --host 127.0.0.1 --port 8090
+  dashboard-service --config '<私有配置>' \
+  --release-manifest '<同一运行 ReleaseManifest>' \
+  --host 127.0.0.1 --port 8090
 ```
 
 浏览器打开 http://127.0.0.1:8090 即可。命令会自动托管 `web/dist`（改前端只需重跑一次 `npm run build`）。前端热更新开发可另用 `cd web && npm run dev`（Vite 会把 `/api` 代理到 `:8090`）。观测台只用确认为纯读的取数路径，不写库、不下单、不改配置。

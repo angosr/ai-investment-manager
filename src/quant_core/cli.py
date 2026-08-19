@@ -28,7 +28,11 @@ from quant_core.candidate_evaluation import SqlCandidateOutcomeStore
 from quant_core.config import DeploymentStage, load_config
 from quant_core.cycle import AnalysisCycle, CycleInput
 from quant_core.domain import Side
-from quant_core.governance import load_release_manifest, validate_manifest_against_config
+from quant_core.governance import (
+    load_release_manifest,
+    validate_manifest_against_config,
+    validate_manifest_code_version,
+)
 from quant_core.governance_runtime import assemble_governance
 from quant_core.ids import content_hash, stable_id
 from quant_core.ingestion import (
@@ -104,6 +108,14 @@ def _parse_utc_option(value: str, *, name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise typer.BadParameter(f"{name} 必须包含时区")
     return parsed.astimezone(UTC)
+
+
+def _load_runtime_release(config: Path, release_manifest: Path):
+    loaded = load_config(config)
+    manifest = load_release_manifest(release_manifest)
+    validate_manifest_against_config(manifest, loaded)
+    validate_manifest_code_version(manifest)
+    return loaded, manifest
 
 
 @app.command("build-edge-calibration")
@@ -1328,12 +1340,20 @@ def temporal_worker(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """运行持久化分析 Worker；PROPOSE 模式调用隔离的真实 Codex。"""
 
-    loaded = load_config(config)
+    loaded, manifest = _load_runtime_release(config, release_manifest)
     _require_runtime_database(database_url)
-    cycle = assemble_analysis_cycle(loaded, database_url)
+    cycle = assemble_analysis_cycle(
+        loaded,
+        database_url,
+        code_version=manifest.code_version,
+    )
     run_worker_process(loaded.temporal, cycle)
 
 
@@ -1371,10 +1391,14 @@ def market_stream(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """运行 Binance 公开只读行情服务；仅显式 SHADOW 配置可以启动。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     engine = _runtime_engine(database_url)
     store = SqlMarketDataStore(engine)
     triggers = SqlTriggerRepository(engine, loaded.trigger)
@@ -1407,11 +1431,9 @@ def trigger_service(
 ) -> None:
     """运行唯一 TriggerCoordinator Worker 与可靠 Outbox Dispatcher。"""
 
-    loaded = load_config(config)
+    loaded, manifest = _load_runtime_release(config, release_manifest)
     engine = _runtime_engine(database_url)
     repository = SqlTriggerRepository(engine, loaded.trigger)
-    manifest = load_release_manifest(release_manifest)
-    validate_manifest_against_config(manifest, loaded)
     now = datetime.now(UTC)
     previous_plans = repository.current_plans_for_symbols(loaded.market_data.symbols)
     for symbol in loaded.market_data.symbols:
@@ -1535,13 +1557,11 @@ def trigger_now(
 ) -> None:
     """在非实盘环境中，经版本化 TriggerPlan 门禁立即触发分析周期。"""
 
-    loaded = load_config(config)
+    loaded, manifest = _load_runtime_release(config, release_manifest)
     if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
         raise ValueError("trigger-now 只允许 SHADOW 或 TESTNET")
     if symbol not in loaded.market_data.symbols:
         raise ValueError("symbol 不在当前行情白名单")
-    manifest = load_release_manifest(release_manifest)
-    validate_manifest_against_config(manifest, loaded)
     repository = SqlTriggerRepository(_runtime_engine(database_url), loaded.trigger)
     plan = repository.plan_for_scope(symbol=symbol, pipeline_id=loaded.pipeline.version)
     now = datetime.now(UTC)
@@ -1579,10 +1599,14 @@ def lifecycle_service(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """发现未关闭持仓并运行可恢复的 Temporal 生命周期监控。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     _require_runtime_database(database_url)
 
     async def run() -> None:
@@ -1610,10 +1634,14 @@ def reconciliation_service(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """持续主动对账独立 Mock 交易所与业务事实；差异时冻结新增风险。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     _require_runtime_database(database_url)
 
     async def run() -> None:
@@ -1636,10 +1664,14 @@ def outcome_evaluation_service(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     _require_runtime_database(database_url)
 
     async def run() -> None:
@@ -1662,11 +1694,15 @@ def governance_service(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
 ) -> None:
     """运行隔离的 Governor 周期；真实 Codex 与账号隔离门禁未通过时拒绝启动。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     root = project_root.resolve()
     _require_runtime_database(database_url)
 
@@ -1691,10 +1727,14 @@ def information_collector(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
 ) -> None:
     """持续将 TrendRadar 只读 MCP 事件标准化后写入事实库。"""
 
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     policy = loaded.information
     transport = StreamableHttpMcpTransport(
         policy.trendradar_mcp_url,
@@ -1746,6 +1786,10 @@ def dashboard_service(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
     host: Annotated[str, typer.Option(help="仅绑本机；与其余服务一致")] = "127.0.0.1",
     port: Annotated[int, typer.Option(min=1, max=65535)] = 8090,
     web_dist: Annotated[
@@ -1763,7 +1807,7 @@ def dashboard_service(
     if resolved_dist is None:
         typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
         typer.echo("先运行：cd web && npm install && npm run build")
-    loaded = load_config(config)
+    loaded, _ = _load_runtime_release(config, release_manifest)
     _require_runtime_database(database_url)
     application = create_app(loaded, database_url, web_dist=resolved_dist)
     typer.echo(f"运行观测台就绪：http://{host}:{port}")

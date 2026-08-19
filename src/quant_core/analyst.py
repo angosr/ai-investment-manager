@@ -1605,6 +1605,7 @@ def assemble_codex_analyst(
     config: AppConfig,
     *,
     bundle_root: Path,
+    code_version: str,
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
 ) -> CodexAnalyst:
@@ -1613,7 +1614,11 @@ def assemble_codex_analyst(
     router = assemble_codex_router(config, leases=leases, audit=audit)
     return CodexAnalyst(
         bundle_root,
-        RunBundleBuilder(config.codex_runtime, config.proposal),
+        RunBundleBuilder(
+            config.codex_runtime,
+            config.proposal,
+            code_version=code_version,
+        ),
         router,
     )
 

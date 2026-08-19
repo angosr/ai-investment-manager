@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -594,3 +595,59 @@ def validate_manifest_against_config(
     current = {name: getattr(config, name).version for name in component_names}
     if declared != current:
         raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
+
+
+def validate_manifest_code_version(
+    manifest: ReleaseManifest,
+    *,
+    repository_root: Path | None = None,
+) -> Path:
+    """Fail closed unless runtime imports come from the exact clean release commit."""
+
+    root = (repository_root or _source_repository_root()).resolve()
+    head = _git_output(root, "rev-parse", "HEAD")
+    if head != manifest.code_version:
+        raise ValueError(
+            "ReleaseManifest 代码版本与实际运行源码不一致："
+            f"expected={manifest.code_version}, observed={head}"
+        )
+    dirty = _git_output(
+        root,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        "src",
+        "migrations",
+        "pyproject.toml",
+        "web/src",
+        "web/package.json",
+        "web/package-lock.json",
+    )
+    if dirty:
+        raise ValueError("ReleaseManifest 对应的运行源码存在未提交变更")
+    return root
+
+
+def _source_repository_root() -> Path:
+    source = Path(__file__).resolve()
+    for candidate in source.parents:
+        if (candidate / ".git").exists():
+            return candidate
+    raise ValueError("无法定位运行源码的 Git 仓库；拒绝接受未验证代码版本")
+
+
+def _git_output(root: Path, *arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(root), *arguments),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("无法验证 ReleaseManifest 代码版本") from exc
+    if completed.returncode != 0:
+        raise ValueError("无法验证 ReleaseManifest 代码版本")
+    return completed.stdout.strip()

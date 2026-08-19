@@ -222,11 +222,11 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
         reason=TriggerReason.EVENT_BATCH,
         evidence_ids=(panel.evidence[0].evidence_id, "evidence-not-selected"),
     )
-    bundle = RunBundleBuilder(_runtime(app_config), app_config.proposal).build(
-        panel,
-        target,
-        trigger=trigger,
-    )
+    bundle = RunBundleBuilder(
+        _runtime(app_config),
+        app_config.proposal,
+        code_version="release-commit-v1",
+    ).build(panel, target, trigger=trigger)
 
     assert verify_bundle(bundle)
     assert {item.name for item in target.iterdir()} == {
@@ -236,6 +236,9 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
         "manifest.json",
     }
     assert target.stat().st_mode & 0o222 == 0
+    assert json.loads((target / "manifest.json").read_text())["code_version"] == (
+        "release-commit-v1"
+    )
     assert '"cycle_id":"cycle-replay-001"' in bundle.prompt
     assert "禁止调用任何工具" in bundle.prompt
     assert "必须遵守 panel_view_json.rules_digest" in bundle.prompt

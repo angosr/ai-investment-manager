@@ -21,6 +21,7 @@ from quant_core.governance import (
     build_governance_snapshot,
     load_constitution,
     load_regression_suite,
+    validate_manifest_code_version,
 )
 from quant_core.persistence import (
     SqlGovernanceRepository,
@@ -94,6 +95,36 @@ def test_constitution_and_fixed_regression_suite_are_typed_and_frozen() -> None:
         "codex_schema_failure",
         "concurrent_risk_reservation",
     }
+
+
+def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path) -> None:
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    manifest = _manifest(now)
+    observations = iter((manifest.code_version, ""))
+    monkeypatch.setattr(
+        "quant_core.governance._git_output",
+        lambda _root, *_arguments: next(observations),
+    )
+
+    assert validate_manifest_code_version(
+        manifest,
+        repository_root=tmp_path,
+    ) == tmp_path.resolve()
+
+    monkeypatch.setattr(
+        "quant_core.governance._git_output",
+        lambda _root, *_arguments: "different-commit",
+    )
+    with pytest.raises(ValueError, match="实际运行源码不一致"):
+        validate_manifest_code_version(manifest, repository_root=tmp_path)
+
+    observations = iter((manifest.code_version, " M src/quant_core/risk.py"))
+    monkeypatch.setattr(
+        "quant_core.governance._git_output",
+        lambda _root, *_arguments: next(observations),
+    )
+    with pytest.raises(ValueError, match="未提交变更"):
+        validate_manifest_code_version(manifest, repository_root=tmp_path)
 
 
 def test_governance_gate_accepts_single_layer_preregistered_challenger() -> None:
