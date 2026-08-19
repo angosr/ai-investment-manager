@@ -298,13 +298,16 @@ class ForecastGatePolicy(FrozenModel):
 class ForecastGateEvaluationSpec(FrozenModel):
     """Pre-registration identity for both Q and its deterministic AI gate."""
 
-    version: str = "forecast-gate-evaluation-spec-v2"
+    version: str = "forecast-gate-evaluation-spec-v3"
     base_strategy_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(min_length=1)
     pipeline_version: str = Field(min_length=1)
     interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
     data_source: Literal["binance-rest-historical"] = "binance-rest-historical"
+    starting_equity: Decimal = Field(gt=0)
+    spread_bps: Decimal = Field(ge=0)
+    maximum_completion_lag_seconds: int = Field(gt=0)
     policy: ForecastGatePolicy
 
     @classmethod
@@ -315,6 +318,9 @@ class ForecastGateEvaluationSpec(FrozenModel):
         config: AppConfig,
         symbol: str,
         pipeline_version: str,
+        starting_equity: Decimal,
+        spread_bps: Decimal,
+        maximum_completion_lag_seconds: int,
         policy: ForecastGatePolicy,
     ) -> ForecastGateEvaluationSpec:
         return cls(
@@ -326,6 +332,9 @@ class ForecastGateEvaluationSpec(FrozenModel):
             symbol=symbol,
             pipeline_version=pipeline_version,
             interval=config.market_data.interval,
+            starting_equity=starting_equity,
+            spread_bps=spread_bps,
+            maximum_completion_lag_seconds=maximum_completion_lag_seconds,
             policy=policy,
         )
 
@@ -456,7 +465,8 @@ class ForecastGatedStrategy:
 
 class PairedDecisionTapeResult(FrozenModel):
     evaluation_id: str
-    version: str = "paired-decision-tape-evaluation-v2"
+    version: str = "paired-decision-tape-evaluation-v3"
+    evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy: ForecastGatePolicy
     policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     tape_id: str
@@ -519,6 +529,7 @@ def run_paired_decision_tape_backtest(
     replay_end: datetime | None = None,
     starting_equity: Decimal = Decimal("10000"),
     spread_bps: Decimal = Decimal("1"),
+    evaluation_spec_hash: str,
 ) -> PairedDecisionTapeResult:
     start = _require_utc(signal_start)
     end = _require_utc(signal_end)
@@ -567,7 +578,8 @@ def run_paired_decision_tape_backtest(
     gated_ids = {item.candidate_id for item in gated.trades}
     policy_hash = content_hash(policy)
     payload = {
-        "version": "paired-decision-tape-evaluation-v2",
+        "version": "paired-decision-tape-evaluation-v3",
+        "evaluation_spec_hash": evaluation_spec_hash,
         "policy": policy,
         "policy_hash": policy_hash,
         "tape_id": tape.tape_id,

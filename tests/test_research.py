@@ -602,6 +602,9 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         config=app_config,
         symbol="BTCUSDT",
         pipeline_version="forward-pipeline-v1",
+        starting_equity=Decimal("10000"),
+        spread_bps=Decimal("1"),
+        maximum_completion_lag_seconds=120,
         policy=policy,
     )
     assert registered_spec.base_strategy_spec_hash == content_hash(
@@ -620,6 +623,12 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     assert registered_plan.candidate_spec_snapshot == registered_spec.model_dump(
         mode="json"
     )
+    for changed in (
+        {"starting_equity": Decimal("10001")},
+        {"spread_bps": Decimal("2")},
+        {"maximum_completion_lag_seconds": 121},
+    ):
+        assert content_hash(registered_spec.model_copy(update=changed)) != registered_hash
     assert content_hash(
         ForecastGateEvaluationSpec.freeze(
             strategy=PriceTrendStrategy(
@@ -628,6 +637,9 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             config=app_config,
             symbol="BTCUSDT",
             pipeline_version="forward-pipeline-v1",
+            starting_equity=Decimal("10000"),
+            spread_bps=Decimal("1"),
+            maximum_completion_lag_seconds=120,
             policy=policy,
         )
     ) != registered_hash
@@ -637,6 +649,9 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             config=app_config,
             symbol="BTCUSDT",
             pipeline_version="forward-pipeline-v1",
+            starting_equity=Decimal("10000"),
+            spread_bps=Decimal("1"),
+            maximum_completion_lag_seconds=120,
             policy=policy.model_copy(update={"minimum_confidence": Decimal("0.61")}),
         )
     ) != registered_hash
@@ -649,6 +664,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         strategy=strategy,
         signal_start=signal_start,
         signal_end=signal_end,
+        evaluation_spec_hash=registered_hash,
     )
 
     assert result.baseline.engine == result.gated.engine == "nautilus-trader"
@@ -679,6 +695,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
             strategy=PriceTrendStrategy(app_config.strategy),
             signal_start=signal_start,
             signal_end=signal_end,
+            evaluation_spec_hash=registered_hash,
         )
 
 

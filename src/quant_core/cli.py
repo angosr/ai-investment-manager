@@ -731,11 +731,14 @@ def paired_decision_tape_command(
         str,
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="前瞻决策带事实库"),
     ],
-    dataset_id: Annotated[str, typer.Option()],
     pipeline_version: Annotated[str, typer.Option()],
     symbol: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option(help="结果成熟前登记的评价计划 ID")],
     signal_end: Annotated[str, typer.Option(help="带时区的预登记评价终点（不含）")],
+    dataset_id: Annotated[
+        str | None,
+        typer.Option(help="运行评价时覆盖完整窗口的冻结行情数据集"),
+    ] = None,
     horizon_minutes: Annotated[int, typer.Option(min=1)] = 60,
     maximum_age_minutes: Annotated[int, typer.Option(min=1)] = 60,
     minimum_confidence: Annotated[str, typer.Option()] = "0.60",
@@ -779,15 +782,7 @@ def paired_decision_tape_command(
         loaded, strategy = resolve_research_candidate(candidate, load_config(config))
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
-    dataset = HistoricalDatasetCatalog(catalog).load(dataset_id)
     canonical_symbol = symbol.upper()
-    if dataset.manifest.symbol != canonical_symbol:
-        raise typer.BadParameter("symbol 与历史数据集不一致", param_hint="symbol")
-    if dataset.manifest.source != "binance-rest-historical":
-        raise typer.BadParameter(
-            "配对评价只接受 Binance REST 历史数据集",
-            param_hint="dataset-id",
-        )
     engine = _runtime_engine(database_url)
     governance = SqlGovernanceRepository(engine)
     champion = governance.get_champion()
@@ -805,6 +800,21 @@ def paired_decision_tape_command(
         raise typer.BadParameter("评价计划未在治理事实库预登记", param_hint="plan-id")
     else:
         registered_at = plan.registered_at
+    dataset = None
+    if not register_only:
+        if dataset_id is None:
+            raise typer.BadParameter(
+                "运行配对评价必须提供冻结行情数据集",
+                param_hint="dataset-id",
+            )
+        dataset = HistoricalDatasetCatalog(catalog).load(dataset_id)
+        if dataset.manifest.symbol != canonical_symbol:
+            raise typer.BadParameter("symbol 与历史数据集不一致", param_hint="symbol")
+        if dataset.manifest.source != "binance-rest-historical":
+            raise typer.BadParameter(
+                "配对评价只接受 Binance REST 历史数据集",
+                param_hint="dataset-id",
+            )
     policy = ForecastGatePolicy(
         plan_id=plan_id,
         registered_at=registered_at,
@@ -819,6 +829,9 @@ def paired_decision_tape_command(
         config=loaded,
         symbol=canonical_symbol,
         pipeline_version=pipeline_version,
+        starting_equity=equity,
+        spread_bps=spread,
+        maximum_completion_lag_seconds=loaded.shadow.analysis_deadline_seconds,
         policy=policy,
     )
     if register_only:
@@ -840,6 +853,7 @@ def paired_decision_tape_command(
         )
         return
     assert plan is not None
+    assert dataset is not None
     if datetime.now(UTC) < policy.evaluation_end:
         raise typer.BadParameter("前瞻配对评价窗口尚未结束", param_hint="signal-end")
     try:
@@ -867,6 +881,7 @@ def paired_decision_tape_command(
         signal_end=end,
         starting_equity=equity,
         spread_bps=spread,
+        evaluation_spec_hash=content_hash(evaluation_spec),
     )
     payload = result.model_dump(mode="json")
     if not include_trades:
