@@ -1,7 +1,7 @@
 manifest_id: release-testnet-panel-budget-v2
 created_at: 2026-08-19T14:31:00Z
 status: CHALLENGER
-code_version: ecfa7ffd741f11fb3f10e779aed204450e6bb0db
+code_version: e004f6e9317aa78b0f1ca06b0c449c8c7e968bfd
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-forecast-v1
 complexity_score: 2
