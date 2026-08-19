@@ -83,6 +83,11 @@ class ReleaseManifest(FrozenModel):
     created_at: datetime
     status: str
     code_version: str
+    configuration_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
     component_versions: tuple[tuple[str, str], ...]
     constitution_version: str
     parent_manifest_id: str | None = None
@@ -567,6 +572,8 @@ def load_release_manifest(path: str | Path) -> ReleaseManifest:
 def validate_manifest_against_config(
     manifest: ReleaseManifest,
     config: AppConfig,
+    *,
+    require_configuration_hash: bool = False,
 ) -> None:
     declared = dict(manifest.component_versions)
     component_names = (
@@ -595,6 +602,12 @@ def validate_manifest_against_config(
     current = {name: getattr(config, name).version for name in component_names}
     if declared != current:
         raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
+    if manifest.configuration_hash is None:
+        if require_configuration_hash:
+            raise ValueError("运行 ReleaseManifest 缺少完整配置哈希")
+        return
+    if manifest.configuration_hash != content_hash(config):
+        raise ValueError("ReleaseManifest 与当前完整配置内容不一致")
 
 
 def validate_manifest_code_version(
@@ -618,6 +631,7 @@ def validate_manifest_code_version(
         "--untracked-files=all",
         "--",
         "src",
+        "config",
         "migrations",
         "pyproject.toml",
         "web/src",

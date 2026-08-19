@@ -118,7 +118,11 @@ def _parse_utc_option(value: str, *, name: str) -> datetime:
 def _load_runtime_release(config: Path, release_manifest: Path):
     loaded = load_config(config)
     manifest = load_release_manifest(release_manifest)
-    validate_manifest_against_config(manifest, loaded)
+    validate_manifest_against_config(
+        manifest,
+        loaded,
+        require_configuration_hash=True,
+    )
     validate_manifest_code_version(manifest)
     return loaded, manifest
 

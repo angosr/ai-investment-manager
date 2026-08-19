@@ -378,11 +378,13 @@ class RunBundleBuilder:
         proposal: ProposalPolicy,
         *,
         code_version: str = "working-tree",
+        configuration_hash: str = "unbound",
         mcp_config_version: str = "none",
     ) -> None:
         self._runtime = runtime
         self._proposal = proposal
         self._code_version = code_version
+        self._configuration_hash = configuration_hash
         self._mcp_config_version = mcp_config_version
 
     def build(
@@ -454,6 +456,7 @@ class RunBundleBuilder:
             "analyst_input_version": ANALYST_INPUT_VERSION,
             "mcp_config_version": self._mcp_config_version,
             "code_version": self._code_version,
+            "configuration_hash": self._configuration_hash,
         }
         return write_run_bundle(
             cycle_id=panel.cycle_id,
@@ -1618,6 +1621,7 @@ def assemble_codex_analyst(
             config.codex_runtime,
             config.proposal,
             code_version=code_version,
+            configuration_hash=content_hash(config),
         ),
         router,
     )

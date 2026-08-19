@@ -226,6 +226,7 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
         _runtime(app_config),
         app_config.proposal,
         code_version="release-commit-v1",
+        configuration_hash="a" * 64,
     ).build(panel, target, trigger=trigger)
 
     assert verify_bundle(bundle)
@@ -239,6 +240,9 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     assert json.loads((target / "manifest.json").read_text())["code_version"] == (
         "release-commit-v1"
     )
+    assert json.loads((target / "manifest.json").read_text())[
+        "configuration_hash"
+    ] == "a" * 64
     assert '"cycle_id":"cycle-replay-001"' in bundle.prompt
     assert "禁止调用任何工具" in bundle.prompt
     assert "必须遵守 panel_view_json.rules_digest" in bundle.prompt

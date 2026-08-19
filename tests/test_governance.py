@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
+from quant_core.config import load_config
 from quant_core.governance import (
     BlindEvaluationClaim,
     ChangeProposal,
@@ -21,6 +22,8 @@ from quant_core.governance import (
     build_governance_snapshot,
     load_constitution,
     load_regression_suite,
+    load_release_manifest,
+    validate_manifest_against_config,
     validate_manifest_code_version,
 )
 from quant_core.persistence import (
@@ -31,6 +34,7 @@ from quant_core.persistence import (
     evaluation_plans,
     failed_experiment_records,
     governance_snapshots,
+    release_manifests,
 )
 
 
@@ -125,6 +129,56 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     )
     with pytest.raises(ValueError, match="未提交变更"):
         validate_manifest_code_version(manifest, repository_root=tmp_path)
+
+
+def test_runtime_release_binds_complete_configuration_content() -> None:
+    config = load_config("config/quant-core.testnet.yaml")
+    manifest = load_release_manifest("config/release-manifest.testnet.yaml")
+
+    validate_manifest_against_config(
+        manifest,
+        config,
+        require_configuration_hash=True,
+    )
+    changed = config.model_copy(
+        update={
+            "frequency": config.frequency.model_copy(
+                update={
+                    "minimum_net_edge_bps": config.frequency.minimum_net_edge_bps
+                    + 1
+                }
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="完整配置内容不一致"):
+        validate_manifest_against_config(
+            manifest,
+            changed,
+            require_configuration_hash=True,
+        )
+
+    unbound = manifest.model_copy(update={"configuration_hash": None})
+    with pytest.raises(ValueError, match="缺少完整配置哈希"):
+        validate_manifest_against_config(
+            unbound,
+            config,
+            require_configuration_hash=True,
+        )
+
+
+def test_legacy_release_manifest_keeps_immutable_payload_shape() -> None:
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    repository = SqlGovernanceRepository(engine)
+    manifest = _manifest(now)
+
+    assert "configuration_hash" not in manifest.model_dump(mode="json")
+    repository.record_release(manifest)
+    repository.record_release(manifest)
+
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(release_manifests)) == 1
 
 
 def test_governance_gate_accepts_single_layer_preregistered_challenger() -> None:
