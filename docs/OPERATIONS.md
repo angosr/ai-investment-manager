@@ -93,6 +93,12 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `reconciliation-service`：按稳定时间桶运行主动对账；从独立 Mock 交易所账本和业务事实分别重建状态，报告非 `MATCHED` 或过期时冻结新增风险。
 - `outcome-evaluation-service`：在固定 UTC 窗口结束并经过结算宽限期后运行；聚合权威 `DecisionOutcome`，并分别结算不可交易的候选反事实和 Codex 方向预测。一次 Proposal 可冻结多个唯一、升序周期，每项预测以唯一成功 Codex Attempt 的完成时间和当时可见成交为共同起点并独立到期；结算器跨发布版本扫描尚未完整结算的 Proposal，唯一事实键为 `(proposal_id, view_horizon_minutes)`。`UNCERTAIN` 记为弃权而非命中，完成时间歧义或缺少时点行情记为不可评分。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 
+### 前瞻证据稳定窗口
+
+- 已预登记的 `ForecastGateEvaluationSpec.pipeline_version` 是证据带不可变身份。在其 `evaluation_end` 前，不得因报告格式、离线研究或无关运维代码变更分析 Pipeline；这些变更可合并但延后部署。
+- 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
+- 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
+
 部署私有配置必须满足：
 
 ```yaml
