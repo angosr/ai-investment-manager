@@ -42,13 +42,16 @@ def _dataset(
     price_steps: tuple[Decimal, ...] | None = None,
     interval: str = "5m",
     bar_delta: timedelta = timedelta(minutes=5),
+    initial_price: Decimal = Decimal("10000"),
+    instrument: InstrumentSpec | None = None,
 ) -> HistoricalDataset:
     if price_steps is not None and len(price_steps) != count:
         raise ValueError("price_steps 必须与 count 一致")
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = start + bar_delta * count
     bars: list[ClosedMarketBar] = []
-    price = Decimal("10000")
+    spec = instrument or _instrument()
+    price = initial_price
     for index in range(count):
         open_price = price
         close_price = open_price * (
@@ -59,7 +62,7 @@ def _dataset(
         close_time = open_time + bar_delta - timedelta(milliseconds=1)
         bars.append(
             ClosedMarketBar(
-                symbol="BTCUSDT",
+                symbol=spec.symbol,
                 interval=interval,
                 open_time=open_time,
                 close_time=close_time,
@@ -73,12 +76,11 @@ def _dataset(
             )
         )
     bars_hash = _bars_hash(bars)
-    spec = _instrument()
     dataset_id = stable_id(
         "historical_dataset",
         "historical-bars-v1",
         "test-history",
-        "BTCUSDT",
+        spec.symbol,
         interval,
         start,
         end,
@@ -87,7 +89,7 @@ def _dataset(
     )
     manifest = HistoricalDatasetManifest(
         dataset_id=dataset_id,
-        symbol="BTCUSDT",
+        symbol=spec.symbol,
         interval=interval,
         source="test-history",
         collected_at=end,
@@ -236,6 +238,50 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
     assert all(item.net_pnl < item.gross_pnl for item in run.trades)
     # 每 5 分钟上涨 2 bps，60 分钟毛收益仍不足以覆盖当前完整往返成本。
     assert run.metrics.net_pnl < 0
+
+
+def test_nautilus_backtest_protects_final_quantity_after_partial_entry_fill(
+    app_config,
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from quant_core.research.backtest import run_bar_backtest
+
+    instrument = InstrumentSpec(
+        symbol="ETHUSDT",
+        base_asset="ETH",
+        quote_asset="USDT",
+        price_increment=Decimal("0.01"),
+        quantity_increment=Decimal("0.0001"),
+        minimum_quantity=Decimal("0.0001"),
+        maximum_quantity=Decimal("9000"),
+        minimum_notional=Decimal("5"),
+        minimum_price=Decimal("0.01"),
+        maximum_price=Decimal("1000000"),
+    )
+    steps = (Decimal("1.0002"),) * 64 + (Decimal("0.99"),) + (
+        Decimal("1"),
+    ) * 25
+    dataset = _dataset(
+        count=90,
+        price_steps=steps,
+        initial_price=Decimal("1973"),
+        instrument=instrument,
+    )
+    run = run_bar_backtest(
+        dataset=dataset,
+        config=app_config,
+        signal_start=dataset.bars[63].close_time,
+        signal_end=dataset.bars[64].close_time,
+        replay_end=dataset.bars[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert run.completed
+    assert len(run.trades) == 1
+    # 合成 QuoteTick 深度为 1 ETH，最终成交量略大于 1，强制覆盖部分成交路径。
+    assert run.trades[0].quantity > Decimal("1")
+    assert run.trades[0].exit_reason == "STOP_LOSS"
+    assert not run.order_failure_reasons
+    assert not run.terminal_candidate_ids
 
 
 def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(

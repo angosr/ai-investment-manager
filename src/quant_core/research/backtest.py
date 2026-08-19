@@ -31,7 +31,7 @@ from quant_core.research.dataset import HistoricalDataset, InstrumentSpec
 from quant_core.risk import RiskEngine
 from quant_core.strategy import PriceTrendStrategy, Strategy
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v6"
+BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v7"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -263,6 +263,7 @@ def run_bar_backtest(
             "ONE_POSITION_PER_SYMBOL",
             "ROUND_TRIP_COST_POST_PROCESSED_FROM_FROZEN_POLICIES",
             "INTRABAR_STOP_MATCHED_BY_NAUTILUS_BAR_ENGINE",
+            "PROTECTION_SIZED_FROM_FINAL_ENTRY_POSITION",
             "PROGRAM_EXIT_EVALUATED_FROM_MATCHED_CLOSED_BARS",
             "DRAWDOWN_MARKED_TO_EACH_BAR_CLOSE",
             "DAILY_AND_COOLDOWN_FREQUENCY_LIMITS_APPLIED",
@@ -471,7 +472,9 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce  # noqa: E402
 from nautilus_trader.model.events import (  # noqa: E402
     OrderCanceled,
     OrderDenied,
+    OrderFilled,
     OrderRejected,
+    PositionChanged,
     PositionClosed,
     PositionOpened,
 )
@@ -687,25 +690,52 @@ class _QuantCoreBarStrategy(NautilusStrategy):
         self.submit_order(order)
 
     def on_position_opened(self, event: PositionOpened) -> None:
-        if self._active is None:
+        self._sync_filled_entry(event.position_id)
+
+    def on_position_changed(self, event: PositionChanged) -> None:
+        self._sync_filled_entry(event.position_id)
+
+    def on_order_filled(self, event: OrderFilled) -> None:
+        if event.client_order_id == self._entry_order_id:
+            self._sync_filled_entry(event.position_id)
+
+    def _sync_filled_entry(self, position_id) -> None:
+        """在市价开仓全部成交后，按最终净持仓一次性建立保护。"""
+
+        if self._active is None or self._stop_order_id is not None:
+            return
+        position = self.cache.position(position_id)
+        if position is None or not position.is_open:
+            return
+        self._active_entry_price = Decimal(str(position.avg_px_open))
+        self._active_quantity = Decimal(str(position.quantity))
+        entry = self.cache.order(self._entry_order_id) if self._entry_order_id else None
+        # 一笔市价单可能对应多次 PositionOpened/Changed。首个部分成交就挂止损，
+        # 会让保护数量小于最终持仓并在退出时留下无法成交的 dust。
+        if entry is None or not entry.is_closed:
+            return
+        self._arm_entry_protection(_from_nanoseconds(position.ts_opened))
+
+    def _arm_entry_protection(self, opened_at: datetime) -> None:
+        if (
+            self._active is None
+            or self._active_quantity is None
+            or self._stop_order_id is not None
+        ):
             return
         instrument = self.cache.instrument(self.config.instrument_id)
-        quantity = Decimal(str(event.quantity))
-        self._active_entry_price = Decimal(str(event.avg_px_open))
-        self._active_quantity = quantity
-        opened_at = _from_nanoseconds(event.ts_opened)
         self._last_entry_at = opened_at
         self._daily_entries[opened_at.date()] = self._daily_entries.get(opened_at.date(), 0) + 1
         stop = self.order_factory.stop_market(
             instrument_id=self.config.instrument_id,
             order_side=OrderSide.SELL,
-            quantity=instrument.make_qty(quantity),
+            quantity=instrument.make_qty(self._active_quantity),
             trigger_price=instrument.make_price(self._active.stop_price),
             time_in_force=TimeInForce.GTC,
         )
         self._stop_order_id = stop.client_order_id
         self.submit_order(stop)
-        self._horizon_timer = f"horizon-{event.position_id}"
+        self._horizon_timer = f"horizon-{self._active.candidate_id}"
         self.clock.set_time_alert(
             self._horizon_timer,
             opened_at + timedelta(minutes=self._active.horizon_minutes),
@@ -734,6 +764,10 @@ class _QuantCoreBarStrategy(NautilusStrategy):
     def on_order_canceled(self, event: OrderCanceled) -> None:
         if self._forced_exit_reason and event.client_order_id == self._stop_order_id:
             self.close_all_positions(self.config.instrument_id)
+        elif event.client_order_id == self._entry_order_id:
+            position = self.cache.position_for_order(event.client_order_id)
+            if position is not None:
+                self._sync_filled_entry(position.id)
 
     def on_order_denied(self, event: OrderDenied) -> None:
         self._handle_order_failure(
@@ -880,7 +914,22 @@ class _QuantCoreBarStrategy(NautilusStrategy):
         self, client_order_id, reason: str, detail: str
     ) -> None:
         self._reject(reason)
-        self.order_failure_reasons.append(detail)
-        if client_order_id == self._entry_order_id and self._active_entry_price is None:
-            self._active = None
-            self._entry_order_id = None
+        role = (
+            "ENTRY"
+            if client_order_id == self._entry_order_id
+            else "STOP"
+            if client_order_id == self._stop_order_id
+            else "EXIT_OR_UNKNOWN"
+        )
+        net_position = self.portfolio.net_position(self.config.instrument_id)
+        self.order_failure_reasons.append(
+            f"{role}:{detail}:active_quantity={self._active_quantity}:"
+            f"net_position={net_position}"
+        )
+        if client_order_id == self._entry_order_id:
+            position = self.cache.position_for_order(client_order_id)
+            if position is not None and position.is_open:
+                self._sync_filled_entry(position.id)
+            elif self._active_entry_price is None:
+                self._active = None
+                self._entry_order_id = None
