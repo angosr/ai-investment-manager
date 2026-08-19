@@ -38,6 +38,8 @@ def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
         "oldest_pending_outbox_at": None,
         "release_aligned": True,
         "calls_last_hour": 1,
+        "overdue_forecast_count": 0,
+        "oldest_overdue_analysis_at": None,
     }
     values.update(updates)
     return AnalysisRuntimeStatus(**values)
@@ -239,6 +241,8 @@ def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> Non
             oldest_pending_outbox_at=now - timedelta(seconds=10),
             release_aligned=False,
             calls_last_hour=6,
+            overdue_forecast_count=2,
+            oldest_overdue_analysis_at=now - timedelta(hours=5),
         ),
     )
     config = SimpleNamespace(
@@ -255,6 +259,7 @@ def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> Non
 
     checks = {item["key"]: item for item in result["checks"]}
     assert checks["trigger_delivery"]["state"] == "bad"
+    assert checks["forecast_settlement"]["state"] == "bad"
     assert checks["release_alignment"]["state"] == "bad"
     assert checks["ai_call_budget"]["state"] == "warn"
     assert result["overall"] == "bad"

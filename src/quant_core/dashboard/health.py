@@ -31,6 +31,7 @@ def assemble_health(
         _freshness_check(reader, report, config, now),
         _kill_switch_check(reader, config),
         _analysis_check(analysis, config, now),
+        _forecast_settlement_check(analysis, now),
         _trigger_delivery_check(analysis, config, now),
         _release_alignment_check(analysis),
         _call_budget_check(analysis, config),
@@ -174,6 +175,27 @@ def _trigger_delivery_check(
         "触发投递",
         state,
         f"{status.pending_outbox_count} 条 · 最久 {int(age)} 秒",
+    )
+
+
+def _forecast_settlement_check(
+    status: AnalysisRuntimeStatus,
+    now: datetime,
+) -> dict:
+    count = status.overdue_forecast_count
+    if count == 0:
+        return _check("forecast_settlement", "预测结算", "ok", "无逾期预测")
+    oldest = status.oldest_overdue_analysis_at
+    if oldest is None:
+        return _check("forecast_settlement", "预测结算", "unknown", "逾期时间不可用")
+    age = (now - oldest).total_seconds()
+    if age < 0:
+        return _check("forecast_settlement", "预测结算", "bad", "分析时间晚于当前时间")
+    return _check(
+        "forecast_settlement",
+        "预测结算",
+        "bad",
+        f"{count} 个 Proposal 未完整结算 · 最久 {int(age)} 秒",
     )
 
 

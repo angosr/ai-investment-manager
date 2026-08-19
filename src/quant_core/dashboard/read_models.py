@@ -31,6 +31,7 @@ from quant_core.persistence import (
     SqlOpenLifecycleRepository,
     analysis_call_admissions,
     analysis_cycles,
+    analysis_forecast_outcomes,
     analysis_proposals,
     analysis_trigger_events,
     analysis_trigger_plans,
@@ -111,6 +112,8 @@ class AnalysisRuntimeStatus:
     oldest_pending_outbox_at: datetime | None
     release_aligned: bool | None
     calls_last_hour: int
+    overdue_forecast_count: int
+    oldest_overdue_analysis_at: datetime | None
 
 
 class DashboardReader:
@@ -435,6 +438,13 @@ class DashboardReader:
         pipeline = self._config.pipeline.version
         recent_start = now - timedelta(hours=1)
         scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.market_data.symbols)
+        forecast_cutoff = now - timedelta(
+            seconds=(
+                max(self._config.proposal.forecast_horizons_minutes) * 60
+                + self._config.shadow.analysis_deadline_seconds
+                + self._config.outcome_evaluation.poll_seconds * 2
+            )
+        )
         with self._engine.connect() as connection:
             recent_rows = connection.execute(
                 select(codex_runs.c.status, codex_runs.c.payload)
@@ -488,6 +498,38 @@ class DashboardReader:
                 if len(manifest_ids) == 1
                 else None
             )
+            overdue_proposals = (
+                select(
+                    analysis_proposals.c.proposal_id,
+                    analysis_cycles.c.as_of.label("analysis_at"),
+                )
+                .join(
+                    analysis_cycles,
+                    analysis_cycles.c.cycle_id == analysis_proposals.c.cycle_id,
+                )
+                .outerjoin(
+                    analysis_forecast_outcomes,
+                    analysis_forecast_outcomes.c.proposal_id
+                    == analysis_proposals.c.proposal_id,
+                )
+                .where(analysis_cycles.c.as_of <= forecast_cutoff)
+                .group_by(
+                    analysis_proposals.c.proposal_id,
+                    analysis_proposals.c.forecast_count,
+                    analysis_cycles.c.as_of,
+                )
+                .having(
+                    func.count(analysis_forecast_outcomes.c.outcome_id)
+                    < analysis_proposals.c.forecast_count
+                )
+                .subquery()
+            )
+            overdue_count, oldest_overdue = connection.execute(
+                select(
+                    func.count(),
+                    func.min(overdue_proposals.c.analysis_at),
+                ).select_from(overdue_proposals)
+            ).one()
 
         latest_success_at = None
         if isinstance(latest_payload, dict):
@@ -521,6 +563,10 @@ class DashboardReader:
             ),
             release_aligned=release_aligned,
             calls_last_hour=self.ai_calls_last_hour(now=now),
+            overdue_forecast_count=int(overdue_count),
+            oldest_overdue_analysis_at=(
+                _database_utc(oldest_overdue) if oldest_overdue is not None else None
+            ),
         )
 
     def _latest_capacity(self) -> dict[str, tuple]:
