@@ -691,6 +691,10 @@ class AnalysisForecastOutcome(FrozenModel):
     proposal_id: str
     cycle_id: str
     pipeline_version: str
+    analysis_behavior_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     evaluation_version: str
     symbol: str
     directional_view: DirectionalView

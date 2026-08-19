@@ -35,6 +35,7 @@ class PendingAnalysisForecast:
     forecast: DirectionalForecast
     cycle_id: str
     pipeline_version: str
+    analysis_behavior_hash: str | None
     analysis_as_of: datetime
     available_at: datetime | None
     source_run_id: str | None
@@ -75,7 +76,12 @@ class ForecastEvaluationReport(FrozenModel):
     report_id: str
     report_version: str
     outcome_evaluation_version: str
-    pipeline_version: str
+    pipeline_version: str | None = None
+    analysis_behavior_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    source_pipeline_versions: tuple[str, ...] = Field(min_length=1)
     window_start: datetime
     window_end: datetime
     published_at: datetime
@@ -93,11 +99,25 @@ class ForecastEvaluationReport(FrozenModel):
     def identity_and_window_match(self):
         if not self.window_start < self.window_end <= self.published_at:
             raise ValueError("预测评价窗口和发布时间顺序非法")
+        if (self.pipeline_version is None) == (self.analysis_behavior_hash is None):
+            raise ValueError("预测评价必须且只能选择 Pipeline 或分析行为作用域")
+        if tuple(sorted(set(self.source_pipeline_versions))) != (
+            self.source_pipeline_versions
+        ):
+            raise ValueError("预测评价来源 Pipeline 必须唯一且有序")
+        if self.pipeline_version is not None and self.source_pipeline_versions != (
+            self.pipeline_version,
+        ):
+            raise ValueError("Pipeline 评价不得混入其他运行代次")
+        scope = {
+            "pipeline_version": self.pipeline_version,
+            "analysis_behavior_hash": self.analysis_behavior_hash,
+        }
         expected_id = stable_id(
             "forecast_evaluation_report",
             self.report_version,
             self.outcome_evaluation_version,
-            self.pipeline_version,
+            scope,
             self.window_start,
             self.window_end,
             self.published_at,
@@ -209,7 +229,11 @@ class SqlAnalysisForecastOutcomeStore:
                     raise ValueError("方向预测冻结参考价格必须为正")
                 cycle_id = str(row["cycle_id"])
                 analysis_as_of = _database_utc(row["as_of"])
-                available_at, source_run_id = unique_successful_codex_completion(
+                (
+                    available_at,
+                    source_run_id,
+                    analysis_behavior_hash,
+                ) = unique_successful_codex_completion(
                     runs_by_cycle.get(cycle_id, []),
                     analysis_as_of=analysis_as_of,
                 )
@@ -222,6 +246,7 @@ class SqlAnalysisForecastOutcomeStore:
                             forecast=forecast,
                             cycle_id=cycle_id,
                             pipeline_version=str(row["pipeline_version"]),
+                            analysis_behavior_hash=analysis_behavior_hash,
                             analysis_as_of=analysis_as_of,
                             available_at=available_at,
                             source_run_id=source_run_id,
@@ -242,6 +267,7 @@ class SqlAnalysisForecastOutcomeStore:
                         proposal_id=outcome.proposal_id,
                         cycle_id=outcome.cycle_id,
                         pipeline_version=outcome.pipeline_version,
+                        analysis_behavior_hash=outcome.analysis_behavior_hash,
                         view_horizon_minutes=outcome.view_horizon_minutes,
                         status=outcome.status.value,
                         evaluation_at=outcome.evaluation_at,
@@ -267,7 +293,8 @@ class SqlAnalysisForecastOutcomeStore:
     def visible_outcomes(
         self,
         *,
-        pipeline_version: str,
+        pipeline_version: str | None = None,
+        analysis_behavior_hash: str | None = None,
         window_start: datetime,
         window_end: datetime,
         published_at: datetime,
@@ -277,12 +304,19 @@ class SqlAnalysisForecastOutcomeStore:
         published = _require_utc(published_at)
         if not start < end <= published:
             raise ValueError("预测评价窗口和发布时间顺序非法")
+        if (pipeline_version is None) == (analysis_behavior_hash is None):
+            raise ValueError("预测评价必须且只能选择 Pipeline 或分析行为作用域")
+        scope_filter = (
+            analysis_forecast_outcomes.c.pipeline_version == pipeline_version
+            if pipeline_version is not None
+            else analysis_forecast_outcomes.c.analysis_behavior_hash
+            == analysis_behavior_hash
+        )
         with self._engine.connect() as connection:
             payloads = connection.execute(
                 select(analysis_forecast_outcomes.c.payload)
                 .where(
-                    analysis_forecast_outcomes.c.pipeline_version
-                    == pipeline_version,
+                    scope_filter,
                     analysis_forecast_outcomes.c.evaluation_at >= start,
                     analysis_forecast_outcomes.c.evaluation_at < end,
                     analysis_forecast_outcomes.c.settled_at <= published,
@@ -299,7 +333,7 @@ class SqlAnalysisForecastOutcomeStore:
 
 @dataclass(frozen=True, slots=True)
 class AnalysisForecastEvaluator:
-    report_version: str = "analysis-forecast-report-v2"
+    report_version: str = "analysis-forecast-report-v3"
     minimum_non_overlapping_samples: int = 30
     lower_confidence_z: Decimal = Decimal("1.96")
 
@@ -308,7 +342,8 @@ class AnalysisForecastEvaluator:
         *,
         outcomes: tuple[AnalysisForecastOutcome, ...],
         outcome_evaluation_version: str,
-        pipeline_version: str,
+        pipeline_version: str | None = None,
+        analysis_behavior_hash: str | None = None,
         window_start: datetime,
         window_end: datetime,
         published_at: datetime,
@@ -318,6 +353,8 @@ class AnalysisForecastEvaluator:
         published = _require_utc(published_at)
         if not start < end <= published:
             raise ValueError("预测评价窗口和发布时间顺序非法")
+        if (pipeline_version is None) == (analysis_behavior_hash is None):
+            raise ValueError("预测评价必须且只能选择 Pipeline 或分析行为作用域")
         if not outcomes:
             raise ValueError("预测评价至少需要一个到期结果")
         if self.minimum_non_overlapping_samples < 2:
@@ -333,7 +370,11 @@ class AnalysisForecastEvaluator:
         ):
             raise ValueError("预测评价结果或 Proposal 周期不得重复")
         if any(
-            item.pipeline_version != pipeline_version
+            (
+                item.pipeline_version != pipeline_version
+                if pipeline_version is not None
+                else item.analysis_behavior_hash != analysis_behavior_hash
+            )
             or item.evaluation_version != outcome_evaluation_version
             or not start <= item.evaluation_at < end
             or item.settled_at > published
@@ -343,6 +384,9 @@ class AnalysisForecastEvaluator:
 
         ordered = tuple(
             sorted(outcomes, key=lambda item: (item.evaluation_at, item.outcome_id))
+        )
+        source_pipeline_versions = tuple(
+            sorted({item.pipeline_version for item in ordered})
         )
         scopes: list[ForecastScopeMetrics] = []
         scope_keys = sorted(
@@ -452,12 +496,16 @@ class AnalysisForecastEvaluator:
         source_hash = content_hash(
             [item.model_dump(mode="json") for item in ordered]
         )
+        scope = {
+            "pipeline_version": pipeline_version,
+            "analysis_behavior_hash": analysis_behavior_hash,
+        }
         return ForecastEvaluationReport(
             report_id=stable_id(
                 "forecast_evaluation_report",
                 self.report_version,
                 outcome_evaluation_version,
-                pipeline_version,
+                scope,
                 start,
                 end,
                 published,
@@ -466,6 +514,8 @@ class AnalysisForecastEvaluator:
             report_version=self.report_version,
             outcome_evaluation_version=outcome_evaluation_version,
             pipeline_version=pipeline_version,
+            analysis_behavior_hash=analysis_behavior_hash,
+            source_pipeline_versions=source_pipeline_versions,
             window_start=start,
             window_end=end,
             published_at=published,
@@ -512,6 +562,7 @@ class AnalysisForecastOutcomeSettler:
                 "proposal_id": proposal.proposal_id,
                 "cycle_id": forecast.cycle_id,
                 "pipeline_version": forecast.pipeline_version,
+                "analysis_behavior_hash": forecast.analysis_behavior_hash,
                 "evaluation_version": self.evaluation_version,
                 "symbol": proposal.symbol,
                 "directional_view": directional.directional_view,
@@ -620,27 +671,35 @@ def unique_successful_codex_completion(
     rows: list[dict],
     *,
     analysis_as_of: datetime,
-) -> tuple[datetime | None, str | None]:
+) -> tuple[datetime | None, str | None, str | None]:
     successful = [row for row in rows if row.get("status") == "SUCCEEDED"]
     if len(successful) != 1:
-        return None, None
+        return None, None, None
     row = successful[0]
     payload = row.get("payload")
     if not isinstance(payload, dict):
-        return None, None
+        return None, None, None
     raw_completed_at = payload.get("completed_at")
     if not isinstance(raw_completed_at, str):
-        return None, None
+        return None, None, None
     try:
         completed_at = _database_utc(datetime.fromisoformat(raw_completed_at))
     except ValueError:
-        return None, None
+        return None, None, None
     if completed_at < analysis_as_of:
-        return None, None
+        return None, None, None
     run_id = row.get("run_id")
     if not isinstance(run_id, str) or not run_id:
-        return None, None
-    return completed_at, run_id
+        return None, None, None
+    raw_behavior_hash = payload.get("analysis_behavior_hash")
+    behavior_hash = (
+        raw_behavior_hash
+        if isinstance(raw_behavior_hash, str)
+        and len(raw_behavior_hash) == 64
+        and all(character in "0123456789abcdef" for character in raw_behavior_hash)
+        else None
+    )
+    return completed_at, run_id, behavior_hash
 
 
 def _non_overlapping(

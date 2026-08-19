@@ -223,7 +223,7 @@ class SqlForecastDecisionTapeReader:
         for row in rows:
             cycle_id = str(row["cycle_id"])
             analysis_as_of = _database_utc(row["as_of"])
-            available_at, source_run_id = unique_successful_codex_completion(
+            available_at, source_run_id, _ = unique_successful_codex_completion(
                 attempts_by_cycle.get(cycle_id, []),
                 analysis_as_of=analysis_as_of,
             )

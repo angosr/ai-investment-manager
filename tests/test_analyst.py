@@ -31,6 +31,7 @@ from quant_core.analyst import (
     _capacity_snapshot,
     _recover_completed_turn,
     _terminal_message_is_idle,
+    analysis_behavior_hash,
     assemble_codex_router,
     audit_codex_isolation,
     strict_output_schema,
@@ -70,6 +71,27 @@ def _runtime(app_config):
     return app_config.codex_runtime.model_copy(
         update={"enabled": True, "isolation_verified": True, "timeout_seconds": 10}
     )
+
+
+def test_analysis_behavior_identity_ignores_only_pipeline_generation(app_config) -> None:
+    baseline = analysis_behavior_hash(app_config)
+    redeployed = app_config.model_copy(
+        update={
+            "pipeline": app_config.pipeline.model_copy(
+                update={"version": "another-runtime-generation"}
+            )
+        }
+    )
+    changed_behavior = app_config.model_copy(
+        update={
+            "proposal": app_config.proposal.model_copy(
+                update={"minimum_confidence": Decimal("0.91")}
+            )
+        }
+    )
+
+    assert analysis_behavior_hash(redeployed) == baseline
+    assert analysis_behavior_hash(changed_behavior) != baseline
 
 
 def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal:
@@ -227,6 +249,7 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
         app_config.proposal,
         code_version="release-commit-v1",
         configuration_hash="a" * 64,
+        analysis_behavior_hash="b" * 64,
     ).build(panel, target, trigger=trigger)
 
     assert verify_bundle(bundle)
@@ -243,6 +266,10 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     assert json.loads((target / "manifest.json").read_text())[
         "configuration_hash"
     ] == "a" * 64
+    assert bundle.analysis_behavior_hash == "b" * 64
+    assert json.loads((target / "manifest.json").read_text())[
+        "analysis_behavior_hash"
+    ] == "b" * 64
     assert '"cycle_id":"cycle-replay-001"' in bundle.prompt
     assert "禁止调用任何工具" in bundle.prompt
     assert "必须遵守 panel_view_json.rules_digest" in bundle.prompt

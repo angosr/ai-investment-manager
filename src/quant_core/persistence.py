@@ -77,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "6a7d9f2c1b84"
+DATABASE_SCHEMA_VERSION = "c2a8f4d9e617"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -392,6 +392,7 @@ analysis_forecast_outcomes = Table(
     ),
     Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
     Column("pipeline_version", String(128), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=True),
     Column("view_horizon_minutes", Integer, nullable=False),
     Column("status", String(32), nullable=False),
     Column("evaluation_at", DateTime(timezone=True), nullable=False),
@@ -407,6 +408,11 @@ analysis_forecast_outcomes = Table(
 Index(
     "ix_analysis_forecast_outcomes_pipeline_evaluation",
     analysis_forecast_outcomes.c.pipeline_version,
+    analysis_forecast_outcomes.c.evaluation_at,
+)
+Index(
+    "ix_analysis_forecast_outcomes_behavior_evaluation",
+    analysis_forecast_outcomes.c.analysis_behavior_hash,
     analysis_forecast_outcomes.c.evaluation_at,
 )
 
@@ -1099,6 +1105,8 @@ class SqlCodexAuditStore:
             "usage": attempt.usage,
             "diagnostics": attempt.diagnostics,
         }
+        if attempt.analysis_behavior_hash is not None:
+            payload["analysis_behavior_hash"] = attempt.analysis_behavior_hash
         try:
             with self._engine.begin() as connection:
                 connection.execute(

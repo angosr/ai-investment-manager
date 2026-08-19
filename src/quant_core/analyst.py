@@ -46,6 +46,36 @@ from quant_core.trigger import TriggerDecision
 ANALYST_INPUT_VERSION = "analyst-input-v2"
 
 
+def analysis_behavior_hash(config: AppConfig) -> str:
+    """Identify analyst behavior independently from the runtime generation ID."""
+
+    normalized = config.model_copy(
+        update={
+            "pipeline": config.pipeline.model_copy(
+                update={"version": "analysis-behavior"}
+            )
+        }
+    )
+    return content_hash(
+        {
+            "analyst_input_version": ANALYST_INPUT_VERSION,
+            "config": normalized,
+        }
+    )
+
+
+def _validated_behavior_hash(value: object) -> str | None:
+    if value is None:
+        return None
+    if not (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("analysis_behavior_hash 必须是 64 位十六进制摘要")
+    return value
+
+
 class AccountState(StrEnum):
     UNKNOWN = "UNKNOWN"
     HEALTHY = "HEALTHY"
@@ -295,6 +325,7 @@ class RunBundle:
     path: Path
     bundle_hash: str
     prompt: str
+    analysis_behavior_hash: str | None = None
 
 
 class _ProposalOutputBase(FrozenModel):
@@ -340,6 +371,7 @@ def write_run_bundle(
     files: dict[str, str],
     manifest: dict[str, Any],
 ) -> RunBundle:
+    behavior_hash = _validated_behavior_hash(manifest.get("analysis_behavior_hash"))
     if target.exists() and any(target.iterdir()):
         raise ValueError("运行包目录必须为空")
     target.mkdir(parents=True, exist_ok=True)
@@ -368,6 +400,7 @@ def write_run_bundle(
         path=target,
         bundle_hash=content_hash({"manifest": complete_manifest}),
         prompt=prompt,
+        analysis_behavior_hash=behavior_hash,
     )
 
 
@@ -379,12 +412,16 @@ class RunBundleBuilder:
         *,
         code_version: str = "working-tree",
         configuration_hash: str = "unbound",
+        analysis_behavior_hash: str | None = None,
         mcp_config_version: str = "none",
     ) -> None:
         self._runtime = runtime
         self._proposal = proposal
         self._code_version = code_version
         self._configuration_hash = configuration_hash
+        self._analysis_behavior_hash = _validated_behavior_hash(
+            analysis_behavior_hash
+        )
         self._mcp_config_version = mcp_config_version
 
     def build(
@@ -458,6 +495,8 @@ class RunBundleBuilder:
             "code_version": self._code_version,
             "configuration_hash": self._configuration_hash,
         }
+        if self._analysis_behavior_hash is not None:
+            manifest["analysis_behavior_hash"] = self._analysis_behavior_hash
         return write_run_bundle(
             cycle_id=panel.cycle_id,
             target=target,
@@ -1251,6 +1290,7 @@ class AttemptAudit:
     bundle_hash: str
     usage: dict[str, int]
     diagnostics: dict[str, int | str | bool] = field(default_factory=dict)
+    analysis_behavior_hash: str | None = None
 
 
 class RouterAuditStore(Protocol):
@@ -1413,6 +1453,7 @@ class CodexAccountRouter:
                 bundle_hash=bundle.bundle_hash,
                 usage=result.usage,
                 diagnostics=result.diagnostics,
+                analysis_behavior_hash=bundle.analysis_behavior_hash,
             )
             try:
                 self._audit.record_attempt(audit)
@@ -1598,6 +1639,9 @@ class CodexAnalyst:
             path=target,
             bundle_hash=content_hash({"manifest": manifest}),
             prompt=(target / "analyst_prompt.md").read_text(encoding="utf-8").strip(),
+            analysis_behavior_hash=_validated_behavior_hash(
+                manifest.get("analysis_behavior_hash")
+            ),
         )
         if not verify_bundle(bundle):
             raise ValueError("已有运行包校验失败")
@@ -1622,6 +1666,7 @@ def assemble_codex_analyst(
             config.proposal,
             code_version=code_version,
             configuration_hash=content_hash(config),
+            analysis_behavior_hash=analysis_behavior_hash(config),
         ),
         router,
     )

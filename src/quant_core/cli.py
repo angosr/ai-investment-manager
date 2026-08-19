@@ -207,6 +207,7 @@ def evaluate_ai_forecasts(
     window_end: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间（不含）")],
     published_at: Annotated[str, typer.Option(help="评价事实发布时间")],
     pipeline_version: Annotated[str | None, typer.Option()] = None,
+    analysis_behavior_hash: Annotated[str | None, typer.Option()] = None,
     minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
 ) -> None:
     """评价结果发生前冻结的 AI 方向预测；不把方向收益冒充可交易 PnL。"""
@@ -220,10 +221,17 @@ def evaluate_ai_forecasts(
     start = _parse_utc_option(window_start, name="window_start")
     end = _parse_utc_option(window_end, name="window_end")
     publication = _parse_utc_option(published_at, name="published_at")
-    pipeline = pipeline_version or loaded.pipeline.version
+    if pipeline_version is not None and analysis_behavior_hash is not None:
+        raise typer.BadParameter(
+            "pipeline-version 与 analysis-behavior-hash 只能指定一个"
+        )
+    pipeline = None
+    if analysis_behavior_hash is None:
+        pipeline = pipeline_version or loaded.pipeline.version
     store = SqlAnalysisForecastOutcomeStore(_runtime_engine(database_url))
     outcomes = store.visible_outcomes(
         pipeline_version=pipeline,
+        analysis_behavior_hash=analysis_behavior_hash,
         window_start=start,
         window_end=end,
         published_at=publication,
@@ -234,6 +242,7 @@ def evaluate_ai_forecasts(
         outcomes=outcomes,
         outcome_evaluation_version=loaded.outcome_evaluation.forecast_version,
         pipeline_version=pipeline,
+        analysis_behavior_hash=analysis_behavior_hash,
         window_start=start,
         window_end=end,
         published_at=publication,

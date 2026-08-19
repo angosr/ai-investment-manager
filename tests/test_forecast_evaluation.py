@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, insert, select, update
 
-from quant_core.analyst import AnalystResult
+from quant_core.analyst import AnalystResult, analysis_behavior_hash
 from quant_core.config import AiMode
 from quant_core.cycle import AnalysisCycle
 from quant_core.domain import (
@@ -83,6 +83,7 @@ def _seed(app_config, replay_input, view: DirectionalView):
         ),
     )
     completed_at = replay_input.market.as_of + timedelta(seconds=10)
+    behavior_hash = analysis_behavior_hash(config)
     AnalysisCycle.with_adapters(
         config,
         ledger=SqlFactLedger(engine),
@@ -102,6 +103,7 @@ def _seed(app_config, replay_input, view: DirectionalView):
                 payload={
                     "observed_at": replay_input.market.as_of.isoformat(),
                     "completed_at": completed_at.isoformat(),
+                    "analysis_behavior_hash": behavior_hash,
                 },
             )
         )
@@ -214,6 +216,18 @@ def test_directional_view_settles_without_creating_a_trade(
     assert first.settled == 1
     assert replay.settled == 0
     assert outcome.status == ForecastOutcomeStatus.SETTLED
+    assert outcome.analysis_behavior_hash == analysis_behavior_hash(
+        app_config.model_copy(
+            update={
+                "pipeline": app_config.pipeline.model_copy(
+                    update={
+                        "version": "forecast-shadow-test-v1",
+                        "ai_mode": AiMode.PROPOSE,
+                    }
+                )
+            }
+        )
+    )
     assert outcome.market_return_bps == Decimal("100")
     assert outcome.directional_return_bps == expected_directional
     assert outcome.direction_correct is (view == DirectionalView.UP)
@@ -461,6 +475,92 @@ def test_forecast_report_uses_non_overlapping_samples_and_scope_gate(
     assert scope.sample_sufficient
     assert report.statistically_conclusive
     assert report.limitations == ("NON_TRADABLE_DIRECTIONAL_FORECAST_ONLY",)
+
+
+def test_forecast_report_aggregates_behavior_equivalent_runtime_generations(
+    replay_input,
+) -> None:
+    start = replay_input.market.as_of
+    behavior_hash = "a" * 64
+    outcomes = (
+        _scored_outcome(21, signal_at=start, return_bps="10").model_copy(
+            update={
+                "pipeline_version": "runtime-v1",
+                "analysis_behavior_hash": behavior_hash,
+            }
+        ),
+        _scored_outcome(
+            22,
+            signal_at=start + timedelta(minutes=60),
+            return_bps="20",
+        ).model_copy(
+            update={
+                "pipeline_version": "runtime-v2",
+                "analysis_behavior_hash": behavior_hash,
+            }
+        ),
+    )
+    published_at = start + timedelta(hours=3)
+
+    report = AnalysisForecastEvaluator(
+        minimum_non_overlapping_samples=2
+    ).evaluate(
+        outcomes=outcomes,
+        outcome_evaluation_version="analysis-forecast-v2",
+        analysis_behavior_hash=behavior_hash,
+        window_start=start,
+        window_end=published_at,
+        published_at=published_at,
+    )
+
+    assert report.pipeline_version is None
+    assert report.analysis_behavior_hash == behavior_hash
+    assert report.source_pipeline_versions == ("runtime-v1", "runtime-v2")
+    assert report.scopes[0].non_overlapping_scored_count == 2
+
+
+def test_forecast_store_selects_exactly_one_evidence_scope(replay_input) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlAnalysisForecastOutcomeStore(engine)
+    start = replay_input.market.as_of
+    behavior_hash = "d" * 64
+    first = _scored_outcome(31, signal_at=start, return_bps="10").model_copy(
+        update={
+            "pipeline_version": "runtime-v1",
+            "analysis_behavior_hash": behavior_hash,
+        }
+    )
+    second = _scored_outcome(
+        32,
+        signal_at=start + timedelta(minutes=60),
+        return_bps="20",
+    ).model_copy(
+        update={
+            "pipeline_version": "runtime-v2",
+            "analysis_behavior_hash": behavior_hash,
+        }
+    )
+    assert store.record(first)
+    assert store.record(second)
+    published_at = start + timedelta(hours=3)
+
+    selected = store.visible_outcomes(
+        analysis_behavior_hash=behavior_hash,
+        window_start=start,
+        window_end=published_at,
+        published_at=published_at,
+    )
+
+    assert [item.pipeline_version for item in selected] == ["runtime-v1", "runtime-v2"]
+    with pytest.raises(ValueError, match="只能选择"):
+        store.visible_outcomes(
+            pipeline_version="runtime-v1",
+            analysis_behavior_hash=behavior_hash,
+            window_start=start,
+            window_end=published_at,
+            published_at=published_at,
+        )
 
 
 def test_forecast_report_exposes_incremental_value_against_same_timestamp_baseline(

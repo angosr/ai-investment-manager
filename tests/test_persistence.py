@@ -151,6 +151,7 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
         bundle_hash="bundle-hash",
         usage={"input_tokens": 10},
         diagnostics={"event_count": 4, "last_event": "turn/started"},
+        analysis_behavior_hash="c" * 64,
     )
 
     store.record_capacity(snapshot)
@@ -168,5 +169,6 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
         "event_count": 4,
         "last_event": "turn/started",
     }
+    assert run["payload"]["analysis_behavior_hash"] == "c" * 64
     assert "codex_home" not in serialized
     assert "auth.json" not in serialized
