@@ -1057,15 +1057,8 @@ def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
     )
 
 
-def test_candidate_registry_rejects_retired_research_code(
-    app_config, replay_input
-) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.research.candidates import (
-        LongOnlyDualTrendSpec,
-        LongOnlyDualTrendStrategy,
-        resolve_research_candidate,
-    )
+def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
+    from quant_core.research.candidates import resolve_research_candidate
 
     effective, strategy = resolve_research_candidate("configured", app_config)
     assert effective is app_config
@@ -1079,32 +1072,11 @@ def test_candidate_registry_rejects_retired_research_code(
         resolve_research_candidate("configured", disabled)
     with pytest.raises(ValueError, match="未知或已退役"):
         resolve_research_candidate("long-only-tsmom-12m-v1", app_config)
-
-    spec = LongOnlyDualTrendSpec(
-        momentum_lookback_bars=3,
-        regime_moving_average_bars=5,
-        atr_bars=3,
-    )
-    strategy = LongOnlyDualTrendStrategy(spec)
-    effective, resolved = resolve_research_candidate(
-        "long-only-dual-trend-28d-sma200-5d-v1",
-        app_config,
-    )
-    assert effective.market_data.interval == "1d"
-    assert effective.market_data.bar_window == 200
-    assert effective.frequency.cooldown_minutes == 7_200
-    assert resolved.research_spec == LongOnlyDualTrendSpec()
-
-    market = replay_input.market
-    features = FeatureEngine(app_config.feature).compute(market)
-    candidates = strategy.evaluate(
-        market=market,
-        account=replay_input.account,
-        features=features,
-    )
-    assert len(candidates) == 1
-    assert candidates[0].producer_version == spec.version
-    assert candidates[0].signal_observed_at == market.as_of
+    with pytest.raises(ValueError, match="未知或已退役"):
+        resolve_research_candidate(
+            "long-only-dual-trend-28d-sma200-5d-v1",
+            app_config,
+        )
 
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
