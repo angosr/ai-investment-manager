@@ -326,18 +326,32 @@ def fetch_binance_history_command(
     start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
     end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
     candidate: Annotated[str, typer.Option()] = "configured",
+    funding_dataset_id: Annotated[str | None, typer.Option()] = None,
     catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(".runtime/datasets"),
+    funding_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/funding-datasets"
+    ),
 ) -> None:
     """抓取并内容寻址保存 Binance 官方已收盘 K 线；不生成 Markdown 报告。"""
 
     from quant_core.research.candidates import resolve_research_candidate
     from quant_core.research.dataset import (
         HistoricalDatasetCatalog,
+        HistoricalFundingDatasetCatalog,
         fetch_binance_history,
     )
 
+    funding_dataset = (
+        HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
+        if funding_dataset_id is not None
+        else None
+    )
     try:
-        loaded, _ = resolve_research_candidate(candidate, load_config(config))
+        loaded, _ = resolve_research_candidate(
+            candidate,
+            load_config(config),
+            funding_dataset=funding_dataset,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
     canonical_symbol = symbol.upper()
@@ -372,6 +386,55 @@ def fetch_binance_history_command(
     )
 
 
+@app.command("fetch-binance-funding-history")
+def fetch_binance_funding_history_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    symbol: Annotated[str, typer.Option()],
+    start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
+    end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/funding-datasets"
+    ),
+) -> None:
+    """冻结 Binance 官方校验的 USD-M 资金费率；不调用模型或生成报告。"""
+
+    from quant_core.research.dataset import (
+        HistoricalFundingDatasetCatalog,
+        fetch_binance_funding_history,
+    )
+
+    loaded = load_config(config)
+    canonical_symbol = symbol.upper()
+    if canonical_symbol not in loaded.market_data.symbols:
+        raise typer.BadParameter("symbol 必须在当前 MarketDataPolicy 中显式登记")
+    dataset = asyncio.run(
+        fetch_binance_funding_history(
+            base_url="https://data.binance.vision",
+            symbol=canonical_symbol,
+            start=_parse_utc_option(start, name="start"),
+            end=_parse_utc_option(end, name="end"),
+            timeout_seconds=loaded.market_data.rest_timeout_seconds,
+        )
+    )
+    target = HistoricalFundingDatasetCatalog(catalog).store(dataset)
+    typer.echo(
+        json.dumps(
+            {
+                "dataset_id": dataset.manifest.dataset_id,
+                "symbol": dataset.manifest.symbol,
+                "observation_count": dataset.manifest.observation_count,
+                "first_available_at": dataset.manifest.first_available_at.isoformat(),
+                "last_available_at": dataset.manifest.last_available_at.isoformat(),
+                "observations_hash": dataset.manifest.observations_hash,
+                "source_artifact_count": len(dataset.manifest.source_artifacts),
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("walk-forward")
 def walk_forward_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
@@ -386,11 +449,15 @@ def walk_forward_command(
     blind_bars: Annotated[int, typer.Option(min=0)] = 0,
     candidate: Annotated[str, typer.Option()] = "configured",
     event_dataset_id: Annotated[str | None, typer.Option()] = None,
+    funding_dataset_id: Annotated[str | None, typer.Option()] = None,
     catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/datasets"
     ),
     event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/event-datasets"
+    ),
+    funding_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/funding-datasets"
     ),
     evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/evaluations"
@@ -417,6 +484,7 @@ def walk_forward_command(
     from quant_core.research.dataset import (
         HistoricalDatasetCatalog,
         HistoricalEventDatasetCatalog,
+        HistoricalFundingDatasetCatalog,
     )
     from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
     from quant_core.research.walk_forward import (
@@ -447,9 +515,16 @@ def walk_forward_command(
     ):
         raise typer.BadParameter("盈利因子必须为正，回撤与正收益窗口比例必须在 (0,1] 内")
     loaded_config = load_config(config)
+    funding_dataset = (
+        HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
+        if funding_dataset_id is not None
+        else None
+    )
     try:
         effective_config, research_strategy = resolve_research_candidate(
-            candidate, loaded_config
+            candidate,
+            loaded_config,
+            funding_dataset=funding_dataset,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
@@ -476,6 +551,7 @@ def walk_forward_command(
         candidate=candidate,
         dataset=dataset,
         event_dataset=event_dataset,
+        funding_dataset=funding_dataset,
         config=effective_config,
         strategy=research_strategy,
         plan=walk_forward_plan,
@@ -519,6 +595,7 @@ def walk_forward_command(
     result = run_walk_forward(
         dataset=dataset,
         event_dataset=event_dataset,
+        funding_dataset=funding_dataset,
         config=effective_config,
         plan=walk_forward_plan,
         strategy=research_strategy,
@@ -547,6 +624,9 @@ def blind_evaluate_command(
     event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/event-datasets"
     ),
+    funding_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/funding-datasets"
+    ),
     evaluation_catalog: Annotated[
         Path, typer.Option(exists=True, file_okay=False)
     ] = Path(".runtime/evaluations"),
@@ -563,6 +643,7 @@ def blind_evaluate_command(
     from quant_core.research.dataset import (
         HistoricalDatasetCatalog,
         HistoricalEventDatasetCatalog,
+        HistoricalFundingDatasetCatalog,
     )
     from quant_core.research.evaluation_catalog import (
         BlindEvaluationCatalog,
@@ -603,16 +684,26 @@ def blind_evaluate_command(
         source.plan != spec.plan
         or source.dataset_id != spec.dataset_id
         or source.event_dataset_id != spec.event_dataset_id
+        or source.funding_dataset_id != spec.funding_dataset_id
         or source.evaluation_spec_hash != content_hash(spec)
     ):
         raise typer.BadParameter(
             "源 walk-forward 与预登记规格不一致",
             param_hint="source-evaluation-id",
         )
+    funding_dataset = (
+        HistoricalFundingDatasetCatalog(funding_catalog).load(
+            spec.funding_dataset_id
+        )
+        if spec.funding_dataset_id is not None
+        else None
+    )
     loaded_config = load_config(config)
     try:
         effective_config, research_strategy = resolve_research_candidate(
-            spec.candidate, loaded_config
+            spec.candidate,
+            loaded_config,
+            funding_dataset=funding_dataset,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
@@ -665,6 +756,7 @@ def blind_evaluate_command(
             query_id=query_id,
             dataset=dataset,
             event_dataset=event_dataset,
+            funding_dataset=funding_dataset,
             config=effective_config,
             strategy=research_strategy,
         )

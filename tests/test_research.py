@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import io
 import json
+import zipfile
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -15,6 +18,7 @@ from quant_core.domain import (
     FeatureSnapshot,
     FrozenModel,
     IntelligenceEvent,
+    MarketBar,
     MarketSnapshot,
     OrderType,
     PriceCondition,
@@ -25,12 +29,19 @@ from quant_core.domain import (
 from quant_core.ids import content_hash, stable_id
 from quant_core.market_data import ClosedMarketBar
 from quant_core.research.dataset import (
+    FundingRateObservation,
+    FundingSourceArtifact,
     HistoricalDataset,
     HistoricalDatasetCatalog,
     HistoricalDatasetManifest,
     HistoricalEventDatasetCatalog,
+    HistoricalFundingDataset,
+    HistoricalFundingDatasetCatalog,
+    HistoricalFundingDatasetManifest,
     InstrumentSpec,
     _bars_hash,
+    _funding_observations_hash,
+    fetch_binance_funding_history,
     fetch_binance_history,
     freeze_historical_events,
 )
@@ -384,6 +395,156 @@ def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
     assert dataset.manifest.instrument.quantity_increment == Decimal("0.000001")
     assert dataset.bars[0].observed_at == dataset.bars[0].close_time
     assert calls == 1
+
+
+def _funding_archive(filename: str, rows: tuple[tuple[str, str, str], ...]) -> bytes:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        body = "calc_time,funding_interval_hours,last_funding_rate\n" + "".join(
+            f"{timestamp},{interval},{rate}\n"
+            for timestamp, interval, rate in rows
+        )
+        archive.writestr(filename.removesuffix(".zip") + ".csv", body)
+    return stream.getvalue()
+
+
+def _funding_dataset(rates: tuple[Decimal, ...]) -> HistoricalFundingDataset:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=8 * len(rates))
+    observations = tuple(
+        FundingRateObservation(
+            symbol="BTCUSDT",
+            funding_time=start + timedelta(hours=8 * index),
+            available_at=start + timedelta(hours=8 * index, minutes=1),
+            funding_interval_hours=8,
+            funding_rate=rate,
+        )
+        for index, rate in enumerate(rates)
+    )
+    observations_hash = _funding_observations_hash(observations)
+    artifacts = (
+        FundingSourceArtifact(
+            archive_key=(
+                "data/futures/um/monthly/fundingRate/BTCUSDT/"
+                "BTCUSDT-fundingRate-2026-01.zip"
+            ),
+            sha256="a" * 64,
+        ),
+    )
+    identity = (
+        "historical-funding-rates-v1",
+        "binance-public-data-usdm-funding-rate",
+        "BTCUSDT",
+        "BINANCE_USDM",
+        60,
+        start,
+        end,
+        observations_hash,
+        artifacts,
+    )
+    return HistoricalFundingDataset(
+        manifest=HistoricalFundingDatasetManifest(
+            dataset_id=stable_id("historical_funding_dataset", *identity),
+            symbol="BTCUSDT",
+            collected_at=end + timedelta(days=1),
+            requested_start=start,
+            requested_end=end,
+            first_available_at=observations[0].available_at,
+            last_available_at=observations[-1].available_at,
+            observation_count=len(observations),
+            observations_hash=observations_hash,
+            source_artifacts=artifacts,
+        ),
+        observations=observations,
+    )
+
+
+def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility(
+    tmp_path,
+) -> None:
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    end = start + timedelta(hours=16)
+    first_ms = int(start.timestamp() * 1000)
+    filename = "BTCUSDT-fundingRate-2026-07.zip"
+    archive = _funding_archive(
+        filename,
+        (
+            (str(first_ms), "8", "0.0001"),
+            (str(first_ms + 8 * 60 * 60 * 1000), "8", "-0.00005"),
+        ),
+    )
+    checksum = hashlib.sha256(archive).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{checksum}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    dataset = asyncio.run(
+        fetch_binance_funding_history(
+            base_url="https://data.binance.vision",
+            symbol="BTCUSDT",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: end + timedelta(days=1),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert dataset.manifest.observation_count == 2
+    assert dataset.observations[0].available_at == start + timedelta(minutes=1)
+    assert dataset.observations[1].funding_rate == Decimal("-0.00005")
+    assert dataset.manifest.source_artifacts[0].sha256 == checksum
+    catalog = HistoricalFundingDatasetCatalog(tmp_path)
+    target = catalog.store(dataset)
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
+
+    rows = json.loads((target / "observations.json").read_text())
+    rows[0][3] = "9"
+    (target / "observations.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="内容哈希"):
+        catalog.load(dataset.manifest.dataset_id)
+
+
+def test_funding_history_rejects_untrusted_source_and_checksum() -> None:
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    end = start + timedelta(hours=8)
+    filename = "BTCUSDT-fundingRate-2026-07.zip"
+    archive = _funding_archive(
+        filename,
+        ((str(int(start.timestamp() * 1000)), "8", "0.0001"),),
+    )
+
+    with pytest.raises(ValueError, match="官方公开数据站"):
+        asyncio.run(
+            fetch_binance_funding_history(
+                base_url="https://example.com",
+                symbol="BTCUSDT",
+                start=start,
+                end=end,
+                timeout_seconds=1,
+                clock=lambda: end,
+            )
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{'0' * 64}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    with pytest.raises(ValueError, match="归档校验失败"):
+        asyncio.run(
+            fetch_binance_funding_history(
+                base_url="https://data.binance.vision",
+                symbol="BTCUSDT",
+                start=start,
+                end=end,
+                timeout_seconds=1,
+                clock=lambda: end,
+                transport=httpx.MockTransport(handler),
+            )
+        )
 
 
 def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
@@ -973,12 +1134,13 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
         result.version,
         result.query_id,
         result.source_evaluation_id,
-        result.evaluation_spec_hash,
-        result.dataset_id,
-        result.event_dataset_id,
-        result.artifact_hash,
-        result.run.run_id,
-    )
+            result.evaluation_spec_hash,
+            result.dataset_id,
+            result.event_dataset_id,
+            result.funding_dataset_id,
+            result.artifact_hash,
+            result.run.run_id,
+        )
     blind_catalog = BlindEvaluationCatalog(tmp_path / "blind-evaluations")
     blind_catalog.store(result)
     assert blind_catalog.load(result.result_id) == result
@@ -1100,6 +1262,105 @@ def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
             "long-only-volatility-dip-sma200-3d-v1",
             app_config,
         )
+
+
+def test_funding_candidate_binds_point_in_time_dataset_and_vetoes_crowding(
+    app_config,
+) -> None:
+    from quant_core.features import FeatureEngine
+    from quant_core.research.candidates import (
+        FUNDING_FILTERED_DUAL_TREND_CANDIDATE,
+        LongOnlyFundingFilteredDualTrendSpec,
+        LongOnlyFundingFilteredDualTrendStrategy,
+        resolve_research_candidate,
+    )
+
+    quiet_dataset = _funding_dataset((Decimal("0"),) * 40)
+    effective, resolved = resolve_research_candidate(
+        FUNDING_FILTERED_DUAL_TREND_CANDIDATE,
+        app_config,
+        funding_dataset=quiet_dataset,
+    )
+    assert effective.market_data.interval == "1d"
+    assert effective.market_data.symbols == ("BTCUSDT",)
+    assert resolved.research_spec.funding_dataset_id == quiet_dataset.manifest.dataset_id
+    with pytest.raises(ValueError, match="必须绑定"):
+        resolve_research_candidate(FUNDING_FILTERED_DUAL_TREND_CANDIDATE, app_config)
+    with pytest.raises(ValueError, match="不接受未使用"):
+        resolve_research_candidate(
+            "configured",
+            app_config,
+            funding_dataset=quiet_dataset,
+        )
+
+    bars_dataset = _dataset(
+        count=20,
+        price_step=Decimal("1.01"),
+        interval="1d",
+        bar_delta=timedelta(days=1),
+    )
+    bars = tuple(
+        MarketBar(
+            event_time=item.close_time,
+            observed_at=item.observed_at,
+            open=item.open,
+            high=item.high,
+            low=item.low,
+            close=item.close,
+            volume=item.volume,
+        )
+        for item in bars_dataset.bars
+    )
+    as_of = bars[-1].observed_at
+    market = MarketSnapshot(
+        cycle_id="funding-filter-cycle",
+        symbol="BTCUSDT",
+        as_of=as_of,
+        observed_at=as_of,
+        bid=bars[-1].close * Decimal("0.9999"),
+        ask=bars[-1].close * Decimal("1.0001"),
+        last=bars[-1].close,
+        bars=bars,
+        source="test",
+    )
+    features = FeatureEngine(
+        app_config.feature.model_copy(update={"volatility_window": 2})
+    ).compute(market)
+    account = AccountSnapshot(
+        cycle_id=market.cycle_id,
+        as_of=as_of,
+        observed_at=as_of,
+        quote_balance=Decimal("10000"),
+    )
+
+    def strategy_for(dataset: HistoricalFundingDataset):
+        return LongOnlyFundingFilteredDualTrendStrategy(
+            LongOnlyFundingFilteredDualTrendSpec(
+                momentum_lookback_bars=2,
+                regime_moving_average_bars=2,
+                atr_bars=2,
+                funding_smoothing_observations=2,
+                funding_reference_observations=30,
+                funding_dataset_id=dataset.manifest.dataset_id,
+                funding_observations_hash=dataset.manifest.observations_hash,
+                symbol="BTCUSDT",
+            ),
+            dataset,
+        )
+
+    assert strategy_for(quiet_dataset).evaluate(
+        market=market,
+        account=account,
+        features=features,
+    )
+    crowded_dataset = _funding_dataset(
+        (Decimal("0"),) * 38 + (Decimal("0.01"),) * 2
+    )
+    assert not strategy_for(crowded_dataset).evaluate(
+        market=market,
+        account=account,
+        features=features,
+    )
 
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:

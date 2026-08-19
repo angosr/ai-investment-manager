@@ -19,10 +19,14 @@ from quant_core.research.backtest import (
     artifact_hash,
     run_bar_backtest,
 )
-from quant_core.research.dataset import HistoricalDataset, HistoricalEventDataset
+from quant_core.research.dataset import (
+    HistoricalDataset,
+    HistoricalEventDataset,
+    HistoricalFundingDataset,
+)
 from quant_core.strategy import PriceTrendStrategy
 
-WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v1"
+WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v2"
 BLIND_EVALUATION_VERSION = "blind-evaluation-v1"
 RESEARCH_REGRESSION_SUITE_VERSION = "quant-core-research-regression-v1"
 
@@ -50,6 +54,7 @@ class WalkForwardEvaluationSpec(FrozenModel):
     candidate: str = Field(min_length=1)
     dataset_id: str = Field(min_length=1)
     event_dataset_id: str | None = None
+    funding_dataset_id: str | None = None
     research_artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     plan: WalkForwardPlan
 
@@ -60,6 +65,7 @@ class WalkForwardEvaluationSpec(FrozenModel):
         candidate: str,
         dataset: HistoricalDataset,
         event_dataset: HistoricalEventDataset | None,
+        funding_dataset: HistoricalFundingDataset | None = None,
         config: AppConfig,
         strategy: ResearchStrategy,
         plan: WalkForwardPlan,
@@ -69,6 +75,11 @@ class WalkForwardEvaluationSpec(FrozenModel):
             dataset_id=dataset.manifest.dataset_id,
             event_dataset_id=(
                 event_dataset.manifest.dataset_id if event_dataset is not None else None
+            ),
+            funding_dataset_id=(
+                funding_dataset.manifest.dataset_id
+                if funding_dataset is not None
+                else None
             ),
             research_artifact_hash=artifact_hash(
                 config,
@@ -170,6 +181,7 @@ class WalkForwardResult(FrozenModel):
     evaluation_spec_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     dataset_id: str
     event_dataset_id: str | None = None
+    funding_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     # Old catalog entries predate this field. New evaluations freeze the exact
     # candidate parameters so a failed named candidate can be removed from code.
@@ -190,6 +202,7 @@ class WalkForwardResult(FrozenModel):
         if any(
             item.run.dataset_id != self.dataset_id
             or item.run.event_dataset_id != self.event_dataset_id
+            or item.run.funding_dataset_id != self.funding_dataset_id
             for item in self.folds
         ):
             raise ValueError("walk-forward 折叠数据制品身份不一致")
@@ -207,6 +220,7 @@ class BlindEvaluationResult(FrozenModel):
     evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     dataset_id: str
     event_dataset_id: str | None = None
+    funding_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     strategy_spec_snapshot: dict[str, object]
     reserved_start: datetime
@@ -228,6 +242,7 @@ class BlindEvaluationResult(FrozenModel):
         if (
             self.run.dataset_id != self.dataset_id
             or self.run.event_dataset_id != self.event_dataset_id
+            or self.run.funding_dataset_id != self.funding_dataset_id
         ):
             raise ValueError("盲测运行的数据制品身份不一致")
         expected = stable_id(
@@ -238,6 +253,7 @@ class BlindEvaluationResult(FrozenModel):
             self.evaluation_spec_hash,
             self.dataset_id,
             self.event_dataset_id,
+            self.funding_dataset_id,
             self.artifact_hash,
             self.run.run_id,
         )
@@ -276,6 +292,7 @@ def run_walk_forward(
     *,
     dataset: HistoricalDataset,
     event_dataset: HistoricalEventDataset | None = None,
+    funding_dataset: HistoricalFundingDataset | None = None,
     config: AppConfig,
     plan: WalkForwardPlan,
     strategy: ResearchStrategy | None = None,
@@ -324,6 +341,7 @@ def run_walk_forward(
         run = run_bar_backtest(
             dataset=dataset,
             event_dataset=event_dataset,
+            funding_dataset=funding_dataset,
             config=config,
             signal_start=signal_start,
             signal_end=signal_end,
@@ -367,6 +385,7 @@ def run_walk_forward(
         plan,
         evaluation_spec_hash,
         dataset.manifest.dataset_id,
+        funding_dataset.manifest.dataset_id if funding_dataset is not None else None,
         frozen_artifact,
         [item.run.run_id for item in folds],
     )
@@ -384,6 +403,11 @@ def run_walk_forward(
         dataset_id=dataset.manifest.dataset_id,
         event_dataset_id=(
             event_dataset.manifest.dataset_id if event_dataset is not None else None
+        ),
+        funding_dataset_id=(
+            funding_dataset.manifest.dataset_id
+            if funding_dataset is not None
+            else None
         ),
         artifact_hash=frozen_artifact,
         strategy_spec_snapshot=strategy_spec_snapshot,
@@ -406,6 +430,7 @@ def run_blind_evaluation(
     query_id: str,
     dataset: HistoricalDataset,
     event_dataset: HistoricalEventDataset | None,
+    funding_dataset: HistoricalFundingDataset | None = None,
     config: AppConfig,
     strategy: ResearchStrategy,
 ) -> BlindEvaluationResult:
@@ -424,6 +449,11 @@ def run_blind_evaluation(
     )
     if observed_event_dataset_id != source.event_dataset_id:
         raise ValueError("盲测事件数据集与 walk-forward 不一致")
+    observed_funding_dataset_id = (
+        funding_dataset.manifest.dataset_id if funding_dataset is not None else None
+    )
+    if observed_funding_dataset_id != source.funding_dataset_id:
+        raise ValueError("盲测资金费率数据集与 walk-forward 不一致")
     if dataset.manifest.interval != config.market_data.interval:
         raise ValueError("历史数据周期必须与当前 MarketDataPolicy 一致")
 
@@ -469,6 +499,7 @@ def run_blind_evaluation(
     run = run_bar_backtest(
         dataset=dataset,
         event_dataset=event_dataset,
+        funding_dataset=funding_dataset,
         config=config,
         signal_start=signal_start,
         signal_end=signal_end,
@@ -502,6 +533,7 @@ def run_blind_evaluation(
         source.evaluation_spec_hash,
         source.dataset_id,
         source.event_dataset_id,
+        source.funding_dataset_id,
         frozen_artifact,
         run.run_id,
     )
@@ -513,6 +545,7 @@ def run_blind_evaluation(
         evaluation_spec_hash=source.evaluation_spec_hash,
         dataset_id=source.dataset_id,
         event_dataset_id=source.event_dataset_id,
+        funding_dataset_id=source.funding_dataset_id,
         artifact_hash=frozen_artifact,
         strategy_spec_snapshot=strategy_snapshot,
         reserved_start=reserved_start,

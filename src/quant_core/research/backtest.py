@@ -31,12 +31,13 @@ from quant_core.ids import content_hash, stable_id
 from quant_core.research.dataset import (
     HistoricalDataset,
     HistoricalEventDataset,
+    HistoricalFundingDataset,
     InstrumentSpec,
 )
 from quant_core.risk import RiskEngine
 from quant_core.strategy import PriceTrendStrategy, Strategy
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v10"
+BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v11"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -108,6 +109,7 @@ class BacktestRun(FrozenModel):
     run_id: str
     dataset_id: str
     event_dataset_id: str | None = None
+    funding_dataset_id: str | None = None
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     engine: str
     engine_version: str
@@ -149,6 +151,7 @@ def run_bar_backtest(
     *,
     dataset: HistoricalDataset,
     event_dataset: HistoricalEventDataset | None = None,
+    funding_dataset: HistoricalFundingDataset | None = None,
     config: AppConfig,
     signal_start: datetime,
     signal_end: datetime,
@@ -201,6 +204,12 @@ def run_bar_backtest(
         or event_dataset.manifest.requested_end < effective_replay_end
     ):
         raise ValueError("历史事件数据集必须覆盖完整回放窗口")
+    if funding_dataset is not None and (
+        funding_dataset.manifest.symbol != dataset.manifest.symbol
+        or funding_dataset.manifest.requested_start > effective_replay_start
+        or funding_dataset.manifest.requested_end < effective_replay_end
+    ):
+        raise ValueError("历史资金费率数据集必须匹配品种并覆盖完整回放窗口")
 
     instrument = _build_instrument(dataset.manifest.instrument)
     bar_type, events = _to_nautilus_events(
@@ -211,6 +220,16 @@ def run_bar_backtest(
     )
     core_strategy: ResearchStrategy = strategy or PriceTrendStrategy(config.strategy)
     strategy_spec = core_strategy.research_spec
+    expected_funding_dataset_id = getattr(
+        strategy_spec,
+        "funding_dataset_id",
+        None,
+    )
+    observed_funding_dataset_id = (
+        funding_dataset.manifest.dataset_id if funding_dataset is not None else None
+    )
+    if expected_funding_dataset_id != observed_funding_dataset_id:
+        raise ValueError("历史策略与资金费率数据集身份不一致")
     adapter = _QuantCoreBarStrategy(
         _AdapterConfig(
             instrument_id=instrument.id,
@@ -269,6 +288,7 @@ def run_bar_backtest(
         "event_dataset_id": (
             event_dataset.manifest.dataset_id if event_dataset is not None else None
         ),
+        "funding_dataset_id": observed_funding_dataset_id,
         "artifact_hash": frozen_artifact,
         "engine": "nautilus-trader",
         "engine_version": nautilus_trader.__version__,
@@ -285,6 +305,7 @@ def run_bar_backtest(
         event_dataset_id=(
             event_dataset.manifest.dataset_id if event_dataset is not None else None
         ),
+        funding_dataset_id=observed_funding_dataset_id,
         artifact_hash=frozen_artifact,
         engine="nautilus-trader",
         engine_version=nautilus_trader.__version__,
@@ -319,6 +340,11 @@ def run_bar_backtest(
                 "TRIGGER_PLAN_NOT_REPLAYED_BAR_CLOCK_ONLY",
             )
             if event_dataset is not None
+            else ()
+        )
+        + (
+            ("FUNDING_VISIBLE_AFTER_FROZEN_SETTLEMENT_LAG",)
+            if funding_dataset is not None
             else ()
         ),
         trades=adapter.trades,

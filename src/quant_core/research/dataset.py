@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import tempfile
+import zipfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import Field, field_validator, model_validator
@@ -28,6 +32,9 @@ _INTERVAL_MILLISECONDS = {
     "4h": 14_400_000,
     "1d": 86_400_000,
 }
+
+_BINANCE_FUNDING_ARCHIVE_SOURCE = "binance-public-data-usdm-funding-rate"
+_BINANCE_FUNDING_AVAILABILITY_LAG = timedelta(minutes=1)
 
 
 class InstrumentSpec(FrozenModel):
@@ -264,6 +271,159 @@ class HistoricalEventDatasetCatalog:
         )
 
 
+class FundingRateObservation(FrozenModel):
+    symbol: str
+    funding_time: datetime
+    available_at: datetime
+    funding_interval_hours: int = Field(gt=0, le=24)
+    funding_rate: Decimal
+
+    _utc_funding_time = field_validator("funding_time")(_require_utc)
+    _utc_available_at = field_validator("available_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def availability_follows_settlement(self):
+        if self.available_at <= self.funding_time:
+            raise ValueError("资金费率只能在结算后可见")
+        return self
+
+
+class FundingSourceArtifact(FrozenModel):
+    archive_key: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class HistoricalFundingDatasetManifest(FrozenModel):
+    schema_version: Literal["historical-funding-rates-v1"] = (
+        "historical-funding-rates-v1"
+    )
+    dataset_id: str
+    symbol: str
+    venue: Literal["BINANCE_USDM"] = "BINANCE_USDM"
+    source: Literal["binance-public-data-usdm-funding-rate"] = (
+        _BINANCE_FUNDING_ARCHIVE_SOURCE
+    )
+    availability_lag_seconds: Literal[60] = 60
+    collected_at: datetime
+    requested_start: datetime
+    requested_end: datetime
+    first_available_at: datetime
+    last_available_at: datetime
+    observation_count: int = Field(gt=0)
+    observations_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_artifacts: tuple[FundingSourceArtifact, ...] = Field(min_length=1)
+
+    _utc_collected_at = field_validator("collected_at")(_require_utc)
+    _utc_requested_start = field_validator("requested_start")(_require_utc)
+    _utc_requested_end = field_validator("requested_end")(_require_utc)
+    _utc_first_available = field_validator("first_available_at")(_require_utc)
+    _utc_last_available = field_validator("last_available_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_bounds_match(self):
+        if not self.requested_start < self.requested_end <= self.collected_at:
+            raise ValueError("历史资金费率请求窗口或冻结时间非法")
+        if not (
+            self.requested_start < self.first_available_at
+            <= self.last_available_at
+            < self.requested_end + _BINANCE_FUNDING_AVAILABILITY_LAG
+        ):
+            raise ValueError("历史资金费率可见边界与请求窗口不一致")
+        keys = [item.archive_key for item in self.source_artifacts]
+        if keys != sorted(set(keys)):
+            raise ValueError("资金费率来源文件必须唯一且有序")
+        expected_keys = [
+            (
+                "data/futures/um/monthly/fundingRate/"
+                f"{self.symbol}/{self.symbol}-fundingRate-{year:04d}-{month:02d}.zip"
+            )
+            for year, month in _months_covering(
+                self.requested_start,
+                self.requested_end,
+            )
+        ]
+        if keys != expected_keys:
+            raise ValueError("资金费率来源月档没有完整覆盖请求窗口")
+        expected = stable_id(
+            "historical_funding_dataset",
+            self.schema_version,
+            self.source,
+            self.symbol,
+            self.venue,
+            self.availability_lag_seconds,
+            self.requested_start,
+            self.requested_end,
+            self.observations_hash,
+            self.source_artifacts,
+        )
+        if self.dataset_id != expected:
+            raise ValueError("历史资金费率数据集 ID 与冻结内容不一致")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalFundingDataset:
+    manifest: HistoricalFundingDatasetManifest
+    observations: tuple[FundingRateObservation, ...]
+
+    def __post_init__(self) -> None:
+        _validate_funding_observations(self.observations, self.manifest)
+
+
+class HistoricalFundingDatasetCatalog:
+    """Immutable normalized funding rates plus exact official archive checksums."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    def store(self, dataset: HistoricalFundingDataset) -> Path:
+        target = self._root / dataset.manifest.dataset_id
+        if target.exists():
+            existing = self.load(dataset.manifest.dataset_id)
+            same_manifest_identity = existing.manifest.model_copy(
+                update={"collected_at": dataset.manifest.collected_at}
+            ) == dataset.manifest
+            if (
+                not same_manifest_identity
+                or existing.observations != dataset.observations
+            ):
+                raise ValueError("同一资金费率数据集 ID 的内容不一致")
+            return target
+
+        self._root.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=".funding-dataset-", dir=self._root))
+        try:
+            _write_json(
+                temporary / "observations.json",
+                [_compact_funding(item) for item in dataset.observations],
+            )
+            _write_json(
+                temporary / "manifest.json",
+                dataset.manifest.model_dump(mode="json"),
+            )
+            temporary.replace(target)
+        except BaseException:
+            for item in temporary.iterdir() if temporary.exists() else ():
+                item.unlink()
+            if temporary.exists():
+                temporary.rmdir()
+            raise
+        return target
+
+    def load(self, dataset_id: str) -> HistoricalFundingDataset:
+        target = self._root / dataset_id
+        manifest = HistoricalFundingDatasetManifest.model_validate(
+            json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        )
+        rows = json.loads((target / "observations.json").read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            raise ValueError("历史 funding observations 根节点必须是数组")
+        return HistoricalFundingDataset(
+            manifest=manifest,
+            observations=tuple(_funding_from_compact(row, manifest) for row in rows),
+        )
+
+
 def freeze_historical_events(
     *,
     events: Iterable[IntelligenceEvent],
@@ -299,6 +459,105 @@ def freeze_historical_events(
         **payload,
     )
     return HistoricalEventDataset(manifest=manifest, events=ordered)
+
+
+async def fetch_binance_funding_history(
+    *,
+    base_url: str,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    timeout_seconds: int,
+    clock: Callable[[], datetime] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> HistoricalFundingDataset:
+    """Freeze Binance USD-M settled funding rates from checksum-protected archives."""
+
+    if base_url.rstrip("/") != "https://data.binance.vision":
+        raise ValueError("资金费率历史只接受 Binance 官方公开数据站")
+    start = _require_utc(start)
+    end = _require_utc(end)
+    collected_at = _require_utc((clock or (lambda: datetime.now(UTC)))())
+    if not start < end <= collected_at:
+        raise ValueError("历史资金费率请求窗口或冻结时间非法")
+    symbol = symbol.upper()
+    if not symbol.isalnum():
+        raise ValueError("历史资金费率 symbol 非法")
+
+    rows: list[FundingRateObservation] = []
+    artifacts: list[FundingSourceArtifact] = []
+    async with httpx.AsyncClient(
+        base_url=base_url,
+        timeout=timeout_seconds,
+        follow_redirects=False,
+        transport=transport,
+    ) as client:
+        for year, month in _months_covering(start, end):
+            filename = f"{symbol}-fundingRate-{year:04d}-{month:02d}.zip"
+            archive_key = (
+                f"data/futures/um/monthly/fundingRate/{symbol}/{filename}"
+            )
+            archive_response = await client.get(f"/{archive_key}")
+            archive_response.raise_for_status()
+            checksum_response = await client.get(f"/{archive_key}.CHECKSUM")
+            checksum_response.raise_for_status()
+            expected_hash = _parse_archive_checksum(
+                checksum_response.text,
+                filename=filename,
+            )
+            archive = archive_response.content
+            observed_hash = hashlib.sha256(archive).hexdigest()
+            if observed_hash != expected_hash:
+                raise ValueError(f"Binance 资金费率归档校验失败: {filename}")
+            artifacts.append(
+                FundingSourceArtifact(
+                    archive_key=archive_key,
+                    sha256=observed_hash,
+                )
+            )
+            rows.extend(
+                _funding_rows_from_archive(
+                    archive,
+                    filename=filename,
+                    symbol=symbol,
+                    start=start,
+                    end=end,
+                )
+            )
+
+    observations = tuple(
+        sorted(rows, key=lambda item: (item.available_at, item.funding_time))
+    )
+    if not observations:
+        raise ValueError("指定区间没有 Binance 资金费率结算事实")
+    digest = _funding_observations_hash(observations)
+    source_artifacts = tuple(sorted(artifacts, key=lambda item: item.archive_key))
+    payload = {
+        "schema_version": "historical-funding-rates-v1",
+        "source": _BINANCE_FUNDING_ARCHIVE_SOURCE,
+        "symbol": symbol,
+        "venue": "BINANCE_USDM",
+        "availability_lag_seconds": 60,
+        "requested_start": start,
+        "requested_end": end,
+        "observations_hash": digest,
+        "source_artifacts": source_artifacts,
+    }
+    manifest = HistoricalFundingDatasetManifest(
+        dataset_id=stable_id(
+            "historical_funding_dataset",
+            *payload.values(),
+        ),
+        collected_at=collected_at,
+        first_available_at=observations[0].available_at,
+        last_available_at=observations[-1].available_at,
+        observation_count=len(observations),
+        **payload,
+    )
+    return HistoricalFundingDataset(
+        manifest=manifest,
+        observations=observations,
+    )
 
 
 async def fetch_binance_history(
@@ -502,6 +761,22 @@ def _events_hash(events: Iterable[IntelligenceEvent]) -> str:
     return digest.hexdigest()
 
 
+def _funding_observations_hash(
+    observations: Iterable[FundingRateObservation],
+) -> str:
+    digest = hashlib.sha256()
+    for observation in observations:
+        digest.update(
+            json.dumps(
+                _compact_funding(observation),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _validate_events(
     events: tuple[IntelligenceEvent, ...],
     manifest: HistoricalEventDatasetManifest,
@@ -529,6 +804,52 @@ def _validate_events(
         raise ValueError("历史事件内容哈希与 Manifest 不一致")
 
 
+def _validate_funding_observations(
+    observations: tuple[FundingRateObservation, ...],
+    manifest: HistoricalFundingDatasetManifest,
+) -> None:
+    if len(observations) != manifest.observation_count or not observations:
+        raise ValueError("历史资金费率数量与 Manifest 不一致")
+    order = tuple(
+        (item.available_at, item.funding_time) for item in observations
+    )
+    if order != tuple(sorted(order)):
+        raise ValueError("历史资金费率必须按可见时间严格排序")
+    if len({item.funding_time for item in observations}) != len(observations):
+        raise ValueError("历史资金费率结算时间不得重复")
+    if any(item.symbol != manifest.symbol for item in observations):
+        raise ValueError("历史资金费率品种与 Manifest 不一致")
+    if any(
+        item.funding_time < manifest.requested_start
+        or item.funding_time >= manifest.requested_end
+        or item.available_at
+        != item.funding_time
+        + timedelta(seconds=manifest.availability_lag_seconds)
+        for item in observations
+    ):
+        raise ValueError("历史资金费率包含窗口外事实或可见延迟不一致")
+    for previous, current in pairwise(observations):
+        if current.funding_time - previous.funding_time > timedelta(
+            hours=previous.funding_interval_hours,
+            minutes=1,
+        ):
+            raise ValueError("历史资金费率结算序列存在缺口")
+    if (
+        observations[0].funding_time - manifest.requested_start
+        > timedelta(hours=observations[0].funding_interval_hours, minutes=1)
+        or manifest.requested_end - observations[-1].funding_time
+        > timedelta(hours=observations[-1].funding_interval_hours, minutes=1)
+    ):
+        raise ValueError("历史资金费率首尾没有覆盖完整请求窗口")
+    if (
+        observations[0].available_at != manifest.first_available_at
+        or observations[-1].available_at != manifest.last_available_at
+    ):
+        raise ValueError("历史资金费率可见边界与 Manifest 不一致")
+    if _funding_observations_hash(observations) != manifest.observations_hash:
+        raise ValueError("历史资金费率内容哈希与 Manifest 不一致")
+
+
 def _compact_bar(bar: ClosedMarketBar) -> list[Any]:
     return [
         int(bar.open_time.timestamp() * 1000),
@@ -539,6 +860,102 @@ def _compact_bar(bar: ClosedMarketBar) -> list[Any]:
         str(bar.volume),
         int(bar.close_time.timestamp() * 1000),
     ]
+
+
+def _compact_funding(observation: FundingRateObservation) -> list[Any]:
+    return [
+        int(observation.funding_time.timestamp() * 1000),
+        int(observation.available_at.timestamp() * 1000),
+        observation.funding_interval_hours,
+        str(observation.funding_rate),
+    ]
+
+
+def _funding_from_compact(
+    row: Any,
+    manifest: HistoricalFundingDatasetManifest,
+) -> FundingRateObservation:
+    if not isinstance(row, list) or len(row) != 4:
+        raise ValueError("历史资金费率条目必须包含 4 个字段")
+    return FundingRateObservation(
+        symbol=manifest.symbol,
+        funding_time=datetime.fromtimestamp(int(row[0]) / 1000, tz=UTC),
+        available_at=datetime.fromtimestamp(int(row[1]) / 1000, tz=UTC),
+        funding_interval_hours=int(row[2]),
+        funding_rate=Decimal(str(row[3])),
+    )
+
+
+def _months_covering(start: datetime, end: datetime) -> tuple[tuple[int, int], ...]:
+    year, month = start.year, start.month
+    result: list[tuple[int, int]] = []
+    while datetime(year, month, 1, tzinfo=UTC) < end:
+        result.append((year, month))
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+    return tuple(result)
+
+
+def _parse_archive_checksum(raw: str, *, filename: str) -> str:
+    parts = raw.strip().split()
+    if (
+        len(parts) != 2
+        or parts[1].lstrip("*") != filename
+        or len(parts[0]) != 64
+        or any(character not in "0123456789abcdef" for character in parts[0])
+    ):
+        raise ValueError(f"Binance 资金费率 CHECKSUM 非法: {filename}")
+    return parts[0]
+
+
+def _funding_rows_from_archive(
+    archive: bytes,
+    *,
+    filename: str,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+) -> list[FundingRateObservation]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+            expected_csv = filename.removesuffix(".zip") + ".csv"
+            if zipped.namelist() != [expected_csv]:
+                raise ValueError("归档必须且只能包含对应 CSV")
+            text = zipped.read(expected_csv).decode("utf-8")
+    except (UnicodeDecodeError, zipfile.BadZipFile, KeyError) as exc:
+        raise ValueError(f"Binance 资金费率归档非法: {filename}") from exc
+    reader = csv.DictReader(io.StringIO(text))
+    expected_fields = [
+        "calc_time",
+        "funding_interval_hours",
+        "last_funding_rate",
+    ]
+    if reader.fieldnames != expected_fields:
+        raise ValueError(f"Binance 资金费率 CSV Schema 非法: {filename}")
+    rows: list[FundingRateObservation] = []
+    try:
+        for raw in reader:
+            funding_time = datetime.fromtimestamp(
+                int(raw["calc_time"]) / 1000,
+                tz=UTC,
+            )
+            if not start <= funding_time < end:
+                continue
+            rows.append(
+                FundingRateObservation(
+                    symbol=symbol,
+                    funding_time=funding_time,
+                    available_at=funding_time + _BINANCE_FUNDING_AVAILABILITY_LAG,
+                    funding_interval_hours=int(raw["funding_interval_hours"]),
+                    funding_rate=Decimal(raw["last_funding_rate"]),
+                )
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Binance 资金费率 CSV 条目非法: {filename}") from exc
+    return rows
 
 
 def _bar_from_compact(row: Any, manifest: HistoricalDatasetManifest) -> ClosedMarketBar:

@@ -23,6 +23,7 @@ class HistoricalExperimentSummary(FrozenModel):
     plan_ids: tuple[str, ...]
     dataset_id: str
     event_dataset_id: str | None = None
+    funding_dataset_id: str | None = None
     strategy_family: str | None
     strategy_versions: tuple[str, ...]
     strategy_family_attempt_count: int | None
@@ -91,14 +92,19 @@ class HistoricalEvaluationCatalog:
             return ()
         results = [self.load(path.stem) for path in sorted(self._root.glob("*.json"))]
         plan_identities: dict[
-            tuple[str, str, str | None], tuple[str | None, str | None]
+            tuple[str, str, str | None, str | None], tuple[str | None, str | None]
         ] = {}
         plan_groups: dict[
-            tuple[str, str, str | None], list[WalkForwardResult]
+            tuple[str, str, str | None, str | None], list[WalkForwardResult]
         ] = defaultdict(list)
         for result in results:
             plan_groups[
-                (result.plan.plan_id, result.dataset_id, result.event_dataset_id)
+                (
+                    result.plan.plan_id,
+                    result.dataset_id,
+                    result.event_dataset_id,
+                    result.funding_dataset_id,
+                )
             ].append(result)
         for key, members in plan_groups.items():
             families = {_snapshot_value(item, "family") for item in members} - {None}
@@ -112,7 +118,12 @@ class HistoricalEvaluationCatalog:
         family_attempts: dict[str, int] = defaultdict(int)
         for result in results:
             family, version = plan_identities[
-                (result.plan.plan_id, result.dataset_id, result.event_dataset_id)
+                (
+                    result.plan.plan_id,
+                    result.dataset_id,
+                    result.event_dataset_id,
+                    result.funding_dataset_id,
+                )
             ]
             if family is not None:
                 family_attempts[family] += 1
@@ -121,6 +132,7 @@ class HistoricalEvaluationCatalog:
                     "plan",
                     result.dataset_id,
                     result.event_dataset_id,
+                    result.funding_dataset_id,
                     result.plan.plan_id,
                 )
             else:
@@ -129,6 +141,7 @@ class HistoricalEvaluationCatalog:
                     "strategy",
                     result.dataset_id,
                     result.event_dataset_id,
+                    result.funding_dataset_id,
                     version,
                     content_hash(plan_policy),
                 )
@@ -214,6 +227,10 @@ def _summarize_experiment(
     if len(event_dataset_ids) != 1:
         raise ValueError("同一历史实验包含多个事件数据集")
     event_dataset_id = next(iter(event_dataset_ids))
+    funding_dataset_ids = {item.funding_dataset_id for item in results}
+    if len(funding_dataset_ids) != 1:
+        raise ValueError("同一历史实验包含多个资金费率数据集")
+    funding_dataset_id = next(iter(funding_dataset_ids))
     ranked: list[tuple[int, str, WalkForwardResult]] = []
     invalid_model_version = False
     families: set[str] = set()
@@ -260,6 +277,7 @@ def _summarize_experiment(
         plan_ids=tuple(sorted({item.plan.plan_id for item in results})),
         dataset_id=dataset_id,
         event_dataset_id=event_dataset_id,
+        funding_dataset_id=funding_dataset_id,
         strategy_family=next(iter(families)) if len(families) == 1 else None,
         strategy_versions=tuple(sorted(strategy_versions)),
         strategy_family_attempt_count=(
