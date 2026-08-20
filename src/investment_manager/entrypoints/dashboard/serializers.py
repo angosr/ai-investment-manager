@@ -9,18 +9,18 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from investment_manager.dashboard import formatting as fmt
-from investment_manager.dashboard.read_models import (
-    AccountStatus,
-    CycleRow,
-    EquityWindow,
-    WorldEvent,
-)
 from investment_manager.domain import (
     AnalysisProposal,
     MetricObservation,
     PanelSnapshot,
     TradeIntent,
+)
+from investment_manager.entrypoints.dashboard import formatting as fmt
+from investment_manager.entrypoints.dashboard.read_models import (
+    AccountStatus,
+    CycleRow,
+    EquityWindow,
+    WorldEvent,
 )
 from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.lifecycle import OpenLifecycleRecord

@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
-from investment_manager.cli import app
+from investment_manager.entrypoints.cli.app import app
 from investment_manager.kernel.identity import content_hash
 from investment_manager.schema import compose_metadata
 
@@ -685,5 +685,7 @@ def test_old_package_and_console_entry_are_removed() -> None:
     assert not (ROOT / "src" / "quant_core").exists()
     assert project["name"] == "investment-manager"
     assert project["scripts"] == {
-        "investment-manager": "investment_manager.cli:app"
+        "investment-manager": "investment_manager.entrypoints.cli:app"
     }
+    assert not (PACKAGE_ROOT / "cli.py").exists()
+    assert not (PACKAGE_ROOT / "dashboard").exists()

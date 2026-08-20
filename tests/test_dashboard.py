@@ -8,22 +8,23 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
 
-from investment_manager.cli import _default_web_dist
-from investment_manager.dashboard import formatting as fmt
-from investment_manager.dashboard import serializers as ser
-from investment_manager.dashboard.health import assemble_health
-from investment_manager.dashboard.read_models import (
+from investment_manager.entrypoints.cli.app import _default_web_dist
+from investment_manager.entrypoints.dashboard import formatting as fmt
+from investment_manager.entrypoints.dashboard import serializers as ser
+from investment_manager.entrypoints.dashboard.health import assemble_health
+from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
     AnalysisScopeRuntimeStatus,
     EquityWindow,
     WorldEvent,
 )
-from investment_manager.dashboard.resources import sample_host_resources
+from investment_manager.entrypoints.dashboard.resources import sample_host_resources
 from investment_manager.execution.models import Side
 
 
@@ -502,9 +503,18 @@ def test_default_web_dist_does_not_depend_on_process_working_directory(
     runtime_directory = tmp_path / "systemd-runtime"
     runtime_directory.mkdir()
     monkeypatch.chdir(runtime_directory)
+    cli_module = import_module("investment_manager.entrypoints.cli.app")
     monkeypatch.setattr(
-        "investment_manager.cli.__file__",
-        str(repository / "src" / "investment_manager" / "cli.py"),
+        cli_module,
+        "__file__",
+        str(
+            repository
+            / "src"
+            / "investment_manager"
+            / "entrypoints"
+            / "cli"
+            / "app.py"
+        ),
     )
 
     assert _default_web_dist() == dist.resolve()

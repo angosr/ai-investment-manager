@@ -14,12 +14,12 @@ import pytest
 import typer
 
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
-from investment_manager.cli import _parse_research_symbol
 from investment_manager.domain import (
     Action,
     PriceCondition,
     SignalCandidate,
 )
+from investment_manager.entrypoints.cli.app import _parse_research_symbol
 from investment_manager.execution.models import (
     AccountSnapshot,
     OrderType,
@@ -102,7 +102,7 @@ def test_history_command_overrides_production_symbol_and_interval(
     monkeypatch,
     capsys,
 ) -> None:
-    from investment_manager.cli import fetch_binance_history_command
+    from investment_manager.entrypoints.cli.app import fetch_binance_history_command
     from investment_manager.research import dataset as dataset_module
 
     instrument = _instrument().model_copy(

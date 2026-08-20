@@ -6,6 +6,6 @@ plain DTO、经 Starlette 暴露只读 JSON 与 SSE。指标口径以既有事�
 
 from __future__ import annotations
 
-from investment_manager.dashboard.app import create_app
+from investment_manager.entrypoints.dashboard.app import create_app
 
 __all__ = ["create_app"]

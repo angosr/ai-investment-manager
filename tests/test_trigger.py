@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from investment_manager import cli
 from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisEventRule,
@@ -38,6 +38,8 @@ from investment_manager.scheduling.runtime import (
     terminate_superseded_trigger_coordinators,
 )
 from investment_manager.scheduling.workflows import coordinator_workflow_id
+
+cli = import_module("investment_manager.entrypoints.cli.app")
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(

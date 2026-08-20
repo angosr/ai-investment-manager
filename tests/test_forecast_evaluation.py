@@ -9,7 +9,6 @@ import typer
 from sqlalchemy import create_engine, insert, select, update
 
 from investment_manager.analyst import AnalystResult, analysis_behavior_hash
-from investment_manager.cli import register_ai_forecast_plan
 from investment_manager.config import AiMode
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.domain import (
@@ -20,6 +19,7 @@ from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
 )
+from investment_manager.entrypoints.cli.app import register_ai_forecast_plan
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,

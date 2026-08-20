@@ -2755,7 +2755,7 @@ def dashboard_service(
 
     import uvicorn
 
-    from investment_manager.dashboard import create_app
+    from investment_manager.entrypoints.dashboard import create_app
 
     resolved_dist = web_dist if web_dist is not None else _default_web_dist()
     if resolved_dist is None:
@@ -2780,7 +2780,7 @@ def _default_web_dist() -> Path | None:
 
     candidates = (
         Path.cwd() / "web" / "dist",
-        Path(__file__).resolve().parents[2] / "web" / "dist",
+        Path(__file__).resolve().parents[4] / "web" / "dist",
     )
     for candidate in candidates:
         if candidate.is_dir():
