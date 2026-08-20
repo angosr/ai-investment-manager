@@ -77,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "f8d2c6a4b901"
+DATABASE_SCHEMA_VERSION = "a3c9e5f7b204"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -242,13 +242,6 @@ source_observations = Table(
         name="uq_source_observation_record_time",
     ),
 )
-Index(
-    "ix_source_observations_record_observed",
-    source_observations.c.source_id,
-    source_observations.c.source_record_id,
-    source_observations.c.observed_at,
-)
-
 market_calendar_event_revisions = Table(
     "market_calendar_event_revisions",
     metadata,
@@ -279,14 +272,99 @@ market_calendar_event_revisions = Table(
     ),
 )
 Index(
-    "ix_market_calendar_event_revisions_event_observed",
-    market_calendar_event_revisions.c.event_id,
-    market_calendar_event_revisions.c.observed_at,
-)
-Index(
     "ix_market_calendar_event_revisions_release",
     market_calendar_event_revisions.c.scheduled_release_at,
 )
+
+canonical_fact_revisions = Table(
+    "canonical_fact_revisions",
+    metadata,
+    Column("revision_id", String(128), primary_key=True),
+    Column("fact_id", String(128), nullable=False),
+    Column(
+        "previous_revision_id",
+        ForeignKey("canonical_fact_revisions.revision_id"),
+        nullable=True,
+    ),
+    Column("projection_version", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("revision_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "fact_id",
+        "observed_at",
+        name="uq_canonical_fact_revision_time",
+    ),
+)
+canonical_fact_revision_sources = Table(
+    "canonical_fact_revision_sources",
+    metadata,
+    Column(
+        "revision_id",
+        ForeignKey("canonical_fact_revisions.revision_id"),
+        nullable=False,
+    ),
+    Column(
+        "observation_id",
+        ForeignKey("source_observations.observation_id"),
+        nullable=False,
+    ),
+    PrimaryKeyConstraint("revision_id", "observation_id"),
+)
+
+state_snapshots = Table(
+    "state_snapshots",
+    metadata,
+    Column("state_id", String(128), primary_key=True),
+    Column("projection_version", String(128), nullable=False),
+    Column("analysis_scope", String(128), nullable=False),
+    Column("as_of", DateTime(timezone=True), nullable=False),
+    Column("built_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "analysis_scope",
+        "projection_version",
+        "as_of",
+        name="uq_state_snapshot_scope_projection_time",
+    ),
+)
+material_deltas = Table(
+    "material_deltas",
+    metadata,
+    Column("delta_id", String(128), primary_key=True),
+    Column("policy_version", String(128), nullable=False),
+    Column("analysis_scope", String(128), nullable=False),
+    Column(
+        "previous_state_id",
+        ForeignKey("state_snapshots.state_id"),
+        nullable=False,
+    ),
+    Column(
+        "current_state_id",
+        ForeignKey("state_snapshots.state_id"),
+        nullable=False,
+    ),
+    Column("category", String(32), nullable=False),
+    Column("materiality", String(32), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "current_state_id",
+        "policy_version",
+        "category",
+        name="uq_material_delta_state_policy_category",
+    ),
+)
+Index(
+    "ix_material_deltas_scope_observed",
+    material_deltas.c.analysis_scope,
+    material_deltas.c.observed_at,
+)
+Index("ix_material_deltas_expires", material_deltas.c.expires_at)
 
 analysis_proposals = Table(
     "analysis_proposals",

@@ -13,10 +13,16 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
+from quant_core.asset_management import CanonicalFactRevision
 from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
 from quant_core.cycle import AnalysisCycle
 from quant_core.domain import MarketSnapshot
 from quant_core.execution import MockExchange
+from quant_core.fact_pipeline import (
+    OfficialFactProjectionPolicy,
+    project_fomc_calendar_fact,
+)
+from quant_core.fact_state_sql import SqlFactStateStore
 from quant_core.governance import ReleaseManifest
 from quant_core.governance_context import GovernanceSnapshotAssembler
 from quant_core.lifecycle import PositionLifecycleManager
@@ -34,6 +40,7 @@ from quant_core.persistence import (
     account_snapshots,
     build_engine,
     candidate_outcomes,
+    canonical_fact_revisions,
     decision_outcomes,
     market_calendar_event_revisions,
     metadata,
@@ -169,6 +176,65 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         current.previous_revision_id == previous.revision_id
         for previous, current in pairwise(revision_chain)
     )
+    fact_store = SqlFactStateStore(engine)
+    root_fact = project_fomc_calendar_fact(
+        revision_chain[0],
+        policy=OfficialFactProjectionPolicy(
+            version="postgres-fed-fact-v1",
+            affected_assets=("BTC", "ETH"),
+        ),
+    )
+    fact_store.put_fact(root_fact)
+    competing_calendars = []
+    for offset, date_text in ((3, "18-19"), (4, "19-20")):
+        result = official_store.put(
+            parse_fomc_calendar(
+                f"""
+                <h4>2036 FOMC Meetings</h4>
+                <div class="row fomc-meeting">
+                  <div class="fomc-meeting__month"><strong>September</strong></div>
+                  <div class="fomc-meeting__date">{date_text}</div>
+                </div>
+                """,
+                observed_at=observed_at + timedelta(minutes=offset),
+            )[0]
+        )
+        assert result.calendar_revision is not None
+        competing_calendars.append(result.calendar_revision)
+    competing_facts = tuple(
+        project_fomc_calendar_fact(
+            calendar,
+            policy=OfficialFactProjectionPolicy(
+                version="postgres-fed-fact-v1",
+                affected_assets=("BTC", "ETH"),
+            ),
+            previous=root_fact,
+        )
+        for calendar in competing_calendars
+    )
+    fact_barrier = Barrier(2)
+
+    def put_fact_revision(fact):
+        fact_barrier.wait()
+        try:
+            return fact_store.put_fact(fact)
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fact_writes = tuple(pool.map(put_fact_revision, competing_facts))
+    assert sum(write is not None for write in fact_writes) == 1
+    with engine.connect() as connection:
+        fact_payloads = connection.execute(
+            select(canonical_fact_revisions.c.payload)
+            .where(canonical_fact_revisions.c.fact_id == root_fact.fact_id)
+            .order_by(canonical_fact_revisions.c.observed_at)
+        ).scalars()
+        fact_chain = tuple(
+            CanonicalFactRevision.model_validate(payload) for payload in fact_payloads
+        )
+    assert len(fact_chain) == 2
+    assert fact_chain[1].previous_revision_id == root_fact.revision_id
     SqlGovernanceRepository(engine).record_release(
         ReleaseManifest(
             manifest_id="release-bootstrap-v1",

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import insert, select
 from sqlalchemy.engine import Connection, Engine
 
 from quant_core.domain import _require_utc
@@ -21,6 +20,7 @@ from quant_core.persistence import (
     market_calendar_event_revisions,
     source_observations,
 )
+from quant_core.sql_locking import advisory_xact_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +39,11 @@ class SqlOfficialInformationStore:
     def put(self, record: OfficialRecord) -> OfficialRecordWrite:
         observation = record.observation
         with self._engine.begin() as connection:
-            _lock_source_record(
+            advisory_xact_lock(
                 connection,
-                source_id=observation.source_id,
-                source_record_id=observation.source_record_id,
+                "source_observation",
+                observation.source_id,
+                observation.source_record_id,
             )
             latest_payload = connection.execute(
                 select(source_observations.c.payload)
@@ -218,16 +219,3 @@ def _calendar_event_id(record: FomcMeetingRecord) -> str:
         observation.source_id,
         observation.source_record_id,
     )
-
-
-def _lock_source_record(
-    connection: Connection,
-    *,
-    source_id: str,
-    source_record_id: str,
-) -> None:
-    if connection.dialect.name != "postgresql":
-        return
-    digest = hashlib.sha256(f"{source_id}\0{source_record_id}".encode()).digest()
-    lock_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
-    connection.execute(select(func.pg_advisory_xact_lock(lock_key))).scalar_one()

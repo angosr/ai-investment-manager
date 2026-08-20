@@ -252,6 +252,37 @@ def build_fact_material_delta(
     )
 
 
+def validate_fact_revision_identity(fact: CanonicalFactRevision) -> None:
+    expected_hash = content_hash(_fact_semantic_payload(fact))
+    if fact.revision_hash != expected_hash:
+        raise ValueError("CanonicalFactRevision revision_hash 与语义内容不一致")
+    expected_id = stable_id(
+        "canonical_fact_revision",
+        fact.fact_id,
+        fact.previous_revision_id or "ROOT",
+        fact.revision_hash,
+        fact.source_observation_ids,
+    )
+    if fact.revision_id != expected_id:
+        raise ValueError("CanonicalFactRevision revision_id 与修订内容不一致")
+
+
+def validate_state_snapshot_identity(state: StateSnapshot) -> None:
+    expected_hash = content_hash(_state_identity_payload(state))
+    if state.content_hash != expected_hash:
+        raise ValueError("StateSnapshot content_hash 与状态内容不一致")
+    if state.state_id != stable_id("state_snapshot", state.content_hash):
+        raise ValueError("StateSnapshot state_id 与内容不一致")
+
+
+def validate_material_delta_identity(delta: MaterialDelta) -> None:
+    expected_hash = content_hash(_delta_identity_payload(delta))
+    if delta.content_hash != expected_hash:
+        raise ValueError("MaterialDelta content_hash 与变化内容不一致")
+    if delta.delta_id != stable_id("material_delta", delta.content_hash):
+        raise ValueError("MaterialDelta delta_id 与内容不一致")
+
+
 def _build_fact_revision(
     *,
     fact_id: str,
@@ -273,17 +304,19 @@ def _build_fact_revision(
             raise ValueError("前序事实修订不属于同一 fact_id")
         if previous.observed_at >= observed_at:
             raise ValueError("事实修订 observed_at 必须严格递增")
-    semantic_payload = {
-        "projection_version": projection_version,
-        "fact_id": fact_id,
-        "fact_type": fact_type,
-        "status": status.value,
-        "event_time": event_time.isoformat() if event_time is not None else None,
-        "headline": headline,
-        "claim": claim,
-        "affected_assets": _unique_sorted(affected_assets, name="affected_assets"),
-        "risk_factors": _unique_sorted(risk_factors, name="risk_factors"),
-    }
+    semantic_payload = _fact_semantic_payload(
+        CanonicalFactRevision.model_construct(
+            fact_id=fact_id,
+            projection_version=projection_version,
+            fact_type=fact_type,
+            status=status,
+            event_time=event_time,
+            headline=headline,
+            claim=claim,
+            affected_assets=_unique_sorted(affected_assets, name="affected_assets"),
+            risk_factors=_unique_sorted(risk_factors, name="risk_factors"),
+        )
+    )
     revision_hash = content_hash(semantic_payload)
     if previous is not None and previous.revision_hash == revision_hash:
         raise ValueError("相同事实语义不得创建新修订")
@@ -312,6 +345,53 @@ def _unique_sorted(values: tuple, *, name: str) -> tuple:
     if len(set(values)) != len(values):
         raise ValueError(f"{name} 不能包含重复值")
     return tuple(sorted(values))
+
+
+def _fact_semantic_payload(fact: CanonicalFactRevision) -> dict:
+    return {
+        "projection_version": fact.projection_version,
+        "fact_id": fact.fact_id,
+        "fact_type": fact.fact_type,
+        "status": fact.status.value,
+        "event_time": fact.event_time.isoformat() if fact.event_time is not None else None,
+        "headline": fact.headline,
+        "claim": fact.claim,
+        "affected_assets": fact.affected_assets,
+        "risk_factors": fact.risk_factors,
+    }
+
+
+def _state_identity_payload(state: StateSnapshot) -> dict:
+    return {
+        "projection_version": state.projection_version,
+        "analysis_scope": state.analysis_scope,
+        "as_of": state.as_of.isoformat(),
+        "fact_revision_ids": state.fact_revision_ids,
+        "market_snapshot_refs": state.market_snapshot_refs,
+        "feature_snapshot_refs": state.feature_snapshot_refs,
+        "account_snapshot_ref": state.account_snapshot_ref,
+        "data_quality_codes": state.data_quality_codes,
+        "coverage_gap_codes": state.coverage_gap_codes,
+    }
+
+
+def _delta_identity_payload(delta: MaterialDelta) -> dict:
+    return {
+        "policy_version": delta.policy_version,
+        "analysis_scope": delta.analysis_scope,
+        "previous_state_id": delta.previous_state_id,
+        "current_state_id": delta.current_state_id,
+        "observed_at": delta.observed_at.isoformat(),
+        "expires_at": delta.expires_at.isoformat(),
+        "category": delta.category.value,
+        "materiality": delta.materiality.value,
+        "affected_assets": delta.affected_assets,
+        "risk_factors": delta.risk_factors,
+        "horizons_minutes": delta.horizons_minutes,
+        "fact_revision_ids": delta.fact_revision_ids,
+        "feature_snapshot_refs": delta.feature_snapshot_refs,
+        "reason_codes": delta.reason_codes,
+    }
 
 
 def _materiality_rank(value: Materiality) -> int:
