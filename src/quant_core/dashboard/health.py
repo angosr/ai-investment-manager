@@ -132,29 +132,40 @@ def _analysis_check(
     config,
     now: datetime,
 ) -> dict:
-    latest = status.latest_success_at
-    if latest is None:
-        return _check("ai_analysis", "AI 分析", "unknown", "当前版本尚无成功分析")
-    age = (now - latest).total_seconds()
-    if age < 0:
-        return _check("ai_analysis", "AI 分析", "bad", "完成时间晚于当前时间")
-    expected_seconds = (
-        config.trigger.heartbeat_minutes * 60 + config.shadow.analysis_deadline_seconds
-    )
-    if age > expected_seconds * 2:
-        state = "bad"
-    elif age > expected_seconds or (
-        status.recent_attempts >= 3
+    scope_states: list[tuple[int, str, float | None, int | None, str]] = []
+    for scope in status.scopes:
+        if scope.latest_success_at is None or scope.heartbeat_seconds is None:
+            scope_states.append((1, "unknown", None, None, scope.symbol))
+            continue
+        age = (now - scope.latest_success_at).total_seconds()
+        expected = scope.heartbeat_seconds + config.shadow.analysis_deadline_seconds
+        if age < 0 or age > expected * 2:
+            scope_states.append((3, "bad", age, expected, scope.symbol))
+        elif age > expected:
+            scope_states.append((2, "warn", age, expected, scope.symbol))
+        else:
+            scope_states.append((0, "ok", age, expected, scope.symbol))
+    if not scope_states:
+        return _check("ai_analysis", "AI 分析", "unknown", "当前版本缺少分析作用域")
+    worst = max(scope_states, key=lambda item: item[0])
+    _, state, age, expected, symbol = worst
+    if (
+        _SEVERITY[state] < _SEVERITY["warn"]
+        and status.recent_attempts >= 3
         and status.recent_successes < status.recent_attempts
     ):
         state = "warn"
+    if age is None or expected is None:
+        detail = f"{symbol} 等待当前版本首次分析或 TriggerPlan"
+    elif age < 0:
+        detail = f"{symbol} 完成时间晚于当前时间"
     else:
-        state = "ok"
+        detail = f"最久 {symbol} {int(age)}/{expected} 秒"
     return _check(
         "ai_analysis",
         "AI 分析",
         state,
-        f"最近成功 {int(age)} 秒 · 近 1h {status.recent_successes}/{status.recent_attempts} 成功",
+        f"{detail} · 近 1h {status.recent_successes}/{status.recent_attempts} 成功",
     )
 
 

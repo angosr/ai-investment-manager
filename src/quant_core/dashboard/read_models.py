@@ -104,8 +104,14 @@ class EquityWindow:
 
 
 @dataclass(frozen=True, slots=True)
-class AnalysisRuntimeStatus:
+class AnalysisScopeRuntimeStatus:
+    symbol: str
     latest_success_at: datetime | None
+    heartbeat_seconds: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisRuntimeStatus:
     recent_attempts: int
     recent_successes: int
     pending_outbox_count: int
@@ -114,6 +120,7 @@ class AnalysisRuntimeStatus:
     calls_last_hour: int
     overdue_forecast_count: int
     oldest_overdue_analysis_at: datetime | None
+    scopes: tuple[AnalysisScopeRuntimeStatus, ...]
 
 
 class DashboardReader:
@@ -461,20 +468,6 @@ class DashboardReader:
                     analysis_cycles.c.as_of <= now,
                 )
             ).all()
-            latest_payload = connection.execute(
-                select(codex_runs.c.payload)
-                .join(
-                    analysis_cycles,
-                    analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
-                )
-                .where(
-                    analysis_cycles.c.pipeline_version == pipeline,
-                    codex_runs.c.status == "SUCCEEDED",
-                    analysis_cycles.c.as_of <= now,
-                )
-                .order_by(analysis_cycles.c.as_of.desc())
-                .limit(1)
-            ).scalar_one_or_none()
             pending_count, oldest_pending = connection.execute(
                 select(func.count(), func.min(trigger_outbox.c.available_at)).where(
                     trigger_outbox.c.status == "PENDING",
@@ -486,12 +479,13 @@ class DashboardReader:
                 select(
                     analysis_trigger_plans.c.symbol,
                     analysis_trigger_plans.c.manifest_id,
+                    analysis_trigger_plans.c.payload,
                 ).where(
                     analysis_trigger_plans.c.pipeline_id == pipeline,
                     analysis_trigger_plans.c.is_current.is_(True),
                 )
             ).all()
-            manifest_ids = {manifest_id for _, manifest_id in plan_rows}
+            manifest_ids = {manifest_id for _, manifest_id, _ in plan_rows}
             manifest_payload = (
                 connection.execute(
                     select(release_manifests.c.payload).where(
@@ -534,13 +528,58 @@ class DashboardReader:
                 ).select_from(overdue_proposals)
             ).one()
 
-        latest_success_at = None
-        if isinstance(latest_payload, dict):
-            completed_at = latest_payload.get("completed_at")
-            if isinstance(completed_at, str):
-                latest_success_at = _database_utc(datetime.fromisoformat(completed_at))
+            plan_by_symbol = {symbol: payload for symbol, _, payload in plan_rows}
+            scope_statuses: list[AnalysisScopeRuntimeStatus] = []
+            for symbol in self._config.market_data.symbols:
+                payload = connection.execute(
+                    select(codex_runs.c.payload)
+                    .join(
+                        analysis_cycles,
+                        analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
+                    )
+                    .join(
+                        market_snapshots,
+                        market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
+                    )
+                    .where(
+                        analysis_cycles.c.pipeline_version == pipeline,
+                        market_snapshots.c.symbol == symbol,
+                        codex_runs.c.status == "SUCCEEDED",
+                        analysis_cycles.c.as_of <= now,
+                    )
+                    .order_by(analysis_cycles.c.as_of.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                completed = None
+                if isinstance(payload, dict) and isinstance(
+                    payload.get("completed_at"), str
+                ):
+                    try:
+                        completed = _database_utc(
+                            datetime.fromisoformat(payload["completed_at"])
+                        )
+                    except ValueError:
+                        completed = None
+                plan_payload = plan_by_symbol.get(symbol)
+                heartbeat = (
+                    plan_payload.get("heartbeat_seconds")
+                    if isinstance(plan_payload, dict)
+                    else None
+                )
+                scope_statuses.append(
+                    AnalysisScopeRuntimeStatus(
+                        symbol=symbol,
+                        latest_success_at=completed,
+                        heartbeat_seconds=(
+                            heartbeat
+                            if isinstance(heartbeat, int) and heartbeat > 0
+                            else None
+                        ),
+                    )
+                )
+
         expected_symbols = set(self._config.market_data.symbols)
-        actual_symbols = {symbol for symbol, _ in plan_rows}
+        actual_symbols = {symbol for symbol, _, _ in plan_rows}
         if not plan_rows or manifest_payload is None:
             release_aligned = None
         else:
@@ -557,7 +596,6 @@ class DashboardReader:
                 except (TypeError, ValueError):
                     release_aligned = False
         return AnalysisRuntimeStatus(
-            latest_success_at=latest_success_at,
             recent_attempts=len(recent_rows),
             recent_successes=sum(status == "SUCCEEDED" for status, _ in recent_rows),
             pending_outbox_count=int(pending_count),
@@ -570,6 +608,7 @@ class DashboardReader:
             oldest_overdue_analysis_at=(
                 _database_utc(oldest_overdue) if oldest_overdue is not None else None
             ),
+            scopes=tuple(scope_statuses),
         )
 
     def _latest_capacity(self) -> dict[str, tuple]:

@@ -19,6 +19,7 @@ from quant_core.dashboard.health import assemble_health
 from quant_core.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
+    AnalysisScopeRuntimeStatus,
     EquityWindow,
     WorldEvent,
 )
@@ -35,8 +36,8 @@ def _intent(side: Side) -> SimpleNamespace:
 
 
 def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
+    latest = updates.pop("latest_success_at", now)
     values = {
-        "latest_success_at": now,
         "recent_attempts": 1,
         "recent_successes": 1,
         "pending_outbox_count": 0,
@@ -45,9 +46,78 @@ def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
         "calls_last_hour": 1,
         "overdue_forecast_count": 0,
         "oldest_overdue_analysis_at": None,
+        "scopes": (
+            AnalysisScopeRuntimeStatus(
+                symbol="BTCUSDT",
+                latest_success_at=latest,
+                heartbeat_seconds=900,
+            ),
+        ),
     }
     values.update(updates)
     return AnalysisRuntimeStatus(**values)
+
+
+def test_health_uses_authoritative_per_scope_heartbeat() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    healthy_reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(
+            now,
+            scopes=(
+                AnalysisScopeRuntimeStatus(
+                    symbol="BTCUSDT",
+                    latest_success_at=now - timedelta(minutes=40),
+                    heartbeat_seconds=3600,
+                ),
+            ),
+        ),
+    )
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(
+            now,
+            latest_success_at=now - timedelta(minutes=40),
+            scopes=(
+                AnalysisScopeRuntimeStatus(
+                    symbol="BTCUSDT",
+                    latest_success_at=now - timedelta(minutes=40),
+                    heartbeat_seconds=3600,
+                ),
+                AnalysisScopeRuntimeStatus(
+                    symbol="ETHUSDT",
+                    latest_success_at=None,
+                    heartbeat_seconds=3600,
+                ),
+            ),
+        ),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+
+    healthy = assemble_health(healthy_reader, config, now=now)
+    result = assemble_health(reader, config, now=now)
+    healthy_check = next(
+        item for item in healthy["checks"] if item["key"] == "ai_analysis"
+    )
+    check = next(item for item in result["checks"] if item["key"] == "ai_analysis")
+
+    assert healthy_check["state"] == "ok"
+    assert "2400/3900 秒" in healthy_check["detail"]
+    assert check["state"] == "unknown"
+    assert "ETHUSDT 等待当前版本首次分析" in check["detail"]
 
 
 def _health_policy_extras() -> dict:
