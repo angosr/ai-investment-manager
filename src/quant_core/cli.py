@@ -11,7 +11,7 @@ from typing import Annotated
 
 import typer
 
-from quant_core.acceptance import PhaseAAuditor
+from quant_core.acceptance import AuditProfile, PhaseAAuditor
 from quant_core.analyst import audit_codex_isolation
 from quant_core.binance_testnet import (
     BinanceApiError,
@@ -1690,6 +1690,29 @@ def shadow_audit(
     payload["codex_ready"] = report.ready
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     if loaded.deployment.stage != DeploymentStage.SHADOW or not report.shadow_ready:
+        raise typer.Exit(code=1)
+
+
+@app.command("challenger-audit")
+def challenger_audit(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    release_manifest: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
+) -> None:
+    """验收真实 Codex、Mock 交易的私有 Shadow Challenger。"""
+
+    loaded = load_config(config)
+    report = PhaseAAuditor(
+        loaded,
+        project_root.resolve(),
+        profile=AuditProfile.PRIVATE_CODEX_CHALLENGER,
+        runtime_manifest=release_manifest.resolve(),
+    ).run()
+    payload = report.model_dump(mode="json")
+    payload["profile"] = AuditProfile.PRIVATE_CODEX_CHALLENGER
+    payload["challenger_ready"] = report.ready
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not report.ready:
         raise typer.Exit(code=1)
 
 

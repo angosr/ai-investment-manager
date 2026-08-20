@@ -4,13 +4,14 @@ import subprocess
 from enum import StrEnum
 from pathlib import Path
 
-from quant_core.config import AppConfig
+from quant_core.config import AiMode, AppConfig, DeploymentStage
 from quant_core.domain import FrozenModel
 from quant_core.governance import (
     load_constitution,
     load_regression_suite,
     load_release_manifest,
     validate_manifest_against_config,
+    validate_manifest_code_version,
 )
 from quant_core.persistence import metadata
 
@@ -19,6 +20,11 @@ class CheckStatus(StrEnum):
     PASS = "PASS"
     FAIL = "FAIL"
     BLOCKED = "BLOCKED"
+
+
+class AuditProfile(StrEnum):
+    PUBLIC_READONLY = "PUBLIC_READONLY"
+    PRIVATE_CODEX_CHALLENGER = "PRIVATE_CODEX_CHALLENGER"
 
 
 class AuditCheck(FrozenModel):
@@ -53,13 +59,22 @@ class PhaseAAuditReport(FrozenModel):
 class PhaseAAuditor:
     """只核对可机械验证的发布前置条件，不用声明代替安全证据。"""
 
-    def __init__(self, config: AppConfig, project_root: Path) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        project_root: Path,
+        *,
+        profile: AuditProfile = AuditProfile.PUBLIC_READONLY,
+        runtime_manifest: Path | None = None,
+    ) -> None:
         self._config = config
         self._root = project_root
+        self._profile = profile
+        self._runtime_manifest = runtime_manifest
 
     def run(self) -> PhaseAAuditReport:
         checks = [
-            self._real_execution_disabled(),
+            self._runtime_boundary(),
             self._account_registry_is_explicit_whitelist(),
             self._locked_cli_matches(),
             self._governance_assets_exist(),
@@ -72,11 +87,28 @@ class PhaseAAuditor:
         ]
         return PhaseAAuditReport(checks=tuple(checks))
 
-    def _real_execution_disabled(self) -> AuditCheck:
-        status = CheckStatus.PASS if not self._config.codex_runtime.enabled else CheckStatus.FAIL
+    def _runtime_boundary(self) -> AuditCheck:
+        deployment = self._config.deployment
+        if self._profile == AuditProfile.PRIVATE_CODEX_CHALLENGER:
+            safe = (
+                deployment.stage == DeploymentStage.SHADOW
+                and self._config.pipeline.ai_mode == AiMode.PROPOSE
+                and self._config.codex_runtime.enabled
+                and not deployment.testnet_order_submission_enabled
+                and not deployment.live_order_submission_enabled
+            )
+            return AuditCheck(
+                check_id="REAL_CODEX_PROPOSE_AND_TRADING_DISABLED",
+                status=CheckStatus.PASS if safe else CheckStatus.FAIL,
+                detail="私有 Challenger 必须启用隔离 Codex PROPOSE，且交易仍保持关闭。",
+            )
         return AuditCheck(
             check_id="REAL_CODEX_AND_TRADING_DISABLED",
-            status=status,
+            status=(
+                CheckStatus.PASS
+                if not self._config.codex_runtime.enabled
+                else CheckStatus.FAIL
+            ),
             detail="当前仓库默认不调用真实 Codex，且没有真实交易适配器。",
         )
 
@@ -117,18 +149,41 @@ class PhaseAAuditor:
         try:
             load_constitution(self._root / "config" / "system-constitution.yaml")
             load_regression_suite(self._root / "config" / "regression-suite.yaml")
-            manifest = load_release_manifest(self._root / "config" / "release-manifest.yaml")
-            validate_manifest_against_config(manifest, self._config)
+            manifest_path = self._runtime_manifest or (
+                self._root / "config" / "release-manifest.yaml"
+            )
+            manifest = load_release_manifest(manifest_path)
+            strict_runtime = (
+                self._profile == AuditProfile.PRIVATE_CODEX_CHALLENGER
+            )
+            if strict_runtime and self._runtime_manifest is None:
+                raise ValueError("私有 Challenger 必须显式指定运行 Manifest")
+            validate_manifest_against_config(
+                manifest,
+                self._config,
+                require_configuration_hash=strict_runtime,
+            )
+            if strict_runtime:
+                validate_manifest_code_version(
+                    manifest,
+                    repository_root=self._root,
+                )
         except (OSError, ValueError):
             return AuditCheck(
                 check_id="TYPED_GOVERNANCE_ASSETS",
                 status=CheckStatus.FAIL,
-                detail="系统宪法、固定回归集或当前 ReleaseManifest 缺失/非法。",
+                detail=(
+                    "系统宪法、固定回归集或运行 ReleaseManifest "
+                    "缺失、非法或与代码/配置不一致。"
+                ),
             )
         return AuditCheck(
             check_id="TYPED_GOVERNANCE_ASSETS",
             status=CheckStatus.PASS,
-            detail="系统宪法、固定回归集和当前 ReleaseManifest 均通过严格 Schema。",
+            detail=(
+                "系统宪法、固定回归集和运行 ReleaseManifest "
+                "均通过严格 Schema 与发布一致性校验。"
+            ),
         )
 
     def _regression_targets_exist(self) -> AuditCheck:

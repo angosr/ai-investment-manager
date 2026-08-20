@@ -81,6 +81,17 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 使用 `config/quant-core.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前运行 `shadow-audit`。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
 
+真实 Codex、Mock 交易的私有 Challenger 不能沿用公开 Shadow 的验收语义。冻结发布后必须从该提交的 checkout 执行专用验收，并显式传入同一运行配置、Manifest 和源码根：
+
+```bash
+PYTHONPATH='<冻结 checkout>/src' .venv/bin/quant-core challenger-audit \
+  --config '<运行覆盖配置>' \
+  --release-manifest '<运行 ReleaseManifest>' \
+  --project-root '<冻结 checkout>'
+```
+
+该命令要求真实 Codex `PROPOSE`、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex，也不消耗 AI 调用预算。
+
 Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角色协作，不使用仓库脚本承载状态：
 
 - `information-collector`：只调用本机 TrendRadar MCP 固定读工具和 NewsNow 类型化白名单源，将标准事件去重写入事实库。

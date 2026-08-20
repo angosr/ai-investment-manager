@@ -222,6 +222,8 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 该审计允许公开只读行情和 Mock 撮合，不会把真实 Codex 的账号目录与 OS 隔离两项 `BLOCKED` 伪造成通过。完成迁移并创建独立 Temporal namespace 后，由进程监督器分别运行：
 
+私有 Codex Challenger 使用 `challenger-audit`，并必须显式绑定冻结运行配置、ReleaseManifest 与对应代码 checkout；完整命令和失败语义见 [docs/OPERATIONS.md](./docs/OPERATIONS.md)。公开 `shadow-audit` 不能替代这项验收。
+
 ```bash
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
   information-collector --config config/quant-core.shadow.yaml \

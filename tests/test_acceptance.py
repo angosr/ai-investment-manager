@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from quant_core.acceptance import CheckStatus, PhaseAAuditor
+import yaml
+
+from quant_core.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
+from quant_core.config import AiMode, DeploymentStage
+from quant_core.governance import load_release_manifest
+from quant_core.ids import content_hash
 
 
 def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
@@ -23,3 +28,82 @@ def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
     assert checks["DEPLOYMENT_FAIL_CLOSED"].status == CheckStatus.PASS
     assert checks["MALICIOUS_READ_ISOLATION_GATE"].status == CheckStatus.BLOCKED
     assert checks["ENABLED_ACCOUNT_DIRECTORIES_READY"].status == CheckStatus.BLOCKED
+
+
+def test_private_challenger_audit_accepts_exact_runtime_release(
+    app_config,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    first, *remaining = app_config.codex_accounts.accounts
+    loaded = app_config.model_copy(
+        update={
+            "deployment": app_config.deployment.model_copy(
+                update={
+                    "stage": DeploymentStage.SHADOW,
+                    "shadow_market_data_enabled": True,
+                }
+            ),
+            "pipeline": app_config.pipeline.model_copy(
+                update={"ai_mode": AiMode.PROPOSE}
+            ),
+            "codex_runtime": app_config.codex_runtime.model_copy(
+                update={"enabled": True, "isolation_verified": True}
+            ),
+            "codex_accounts": app_config.codex_accounts.model_copy(
+                update={
+                    "accounts": (
+                        first.model_copy(
+                            update={"enabled": True, "codex_home": root}
+                        ),
+                        *remaining,
+                    )
+                }
+            ),
+        }
+    )
+    manifest = load_release_manifest(root / "config" / "release-manifest.yaml")
+    manifest = manifest.model_copy(
+        update={"configuration_hash": content_hash(loaded)}
+    )
+    manifest_path = tmp_path / "release-manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(manifest.model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "quant_core.acceptance.validate_manifest_code_version",
+        lambda manifest, *, repository_root: repository_root,
+    )
+
+    report = PhaseAAuditor(
+        loaded,
+        root,
+        profile=AuditProfile.PRIVATE_CODEX_CHALLENGER,
+        runtime_manifest=manifest_path,
+    ).run()
+    checks = {item.check_id: item for item in report.checks}
+
+    assert report.ready
+    assert (
+        checks["REAL_CODEX_PROPOSE_AND_TRADING_DISABLED"].status
+        == CheckStatus.PASS
+    )
+    assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.PASS
+
+
+def test_private_challenger_audit_rejects_missing_runtime_manifest(
+    app_config,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    report = PhaseAAuditor(
+        app_config,
+        root,
+        profile=AuditProfile.PRIVATE_CODEX_CHALLENGER,
+    ).run()
+    checks = {item.check_id: item for item in report.checks}
+
+    assert not report.ready
+    assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.FAIL
