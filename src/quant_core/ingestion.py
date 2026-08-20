@@ -321,6 +321,61 @@ class EventNormalizer:
         "居民消费价格",
         "霍尔木兹",
     )
+    # v7 不再把无国家/政策主体的 CPI、加息等短语直接当成
+    # 全球高影响事件。事件仍作为低优先级背景入库，只是不消耗 AI 预算。
+    _v7_intrinsic_global_shocks: ClassVar[tuple[str, ...]] = (
+        "nonfarm payroll",
+        "nfp",
+        "hormuz",
+        "非农",
+        "霍尔木兹",
+    )
+    _v7_systemic_policy_authorities: ClassVar[tuple[str, ...]] = (
+        "federal reserve",
+        "fomc",
+        "fed",
+        "european central bank",
+        "ecb",
+        "bank of japan",
+        "boj",
+        "bank of england",
+        "boe",
+        "people's bank of china",
+        "pboc",
+        "美联储",
+        "欧洲央行",
+        "日本央行",
+        "英格兰银行",
+        "中国人民银行",
+        "中国央行",
+    )
+    _v7_policy_actions: ClassVar[tuple[str, ...]] = (
+        "rate decision",
+        "rate cut",
+        "rate hike",
+        "cuts rates",
+        "raises rates",
+        "holds rates",
+        "keeps rates",
+        "leaves rates",
+        "利率决议",
+        "降息",
+        "加息",
+        "维持利率",
+        "保持利率",
+        "利率不变",
+    )
+    _v7_us_context: ClassVar[tuple[str, ...]] = (
+        "united states",
+        "u.s.",
+        "us",
+        "美国",
+    )
+    _v7_inflation_releases: ClassVar[tuple[str, ...]] = (
+        "cpi",
+        "consumer price index",
+        "居民消费价格",
+    )
 
     def __init__(
         self,
@@ -353,7 +408,7 @@ class EventNormalizer:
         )
         relevance = Decimal("1")
         if not symbols:
-            if self._version.endswith("v6") and self._has_crypto_context(text):
+            if self._version.endswith(("v6", "v7")) and self._has_crypto_context(text):
                 symbols = self._universe
                 relevance = Decimal("0.85")
             else:
@@ -402,6 +457,8 @@ class EventNormalizer:
         )
 
     def _has_cross_asset_relevance(self, text: str) -> bool:
+        if self._version.endswith("v7") and self._has_v7_critical_cross_asset_relevance(text):
+            return True
         if any(keyword in text for keyword in self._cross_asset_keywords):
             return True
         if self._version.endswith("v4"):
@@ -418,13 +475,27 @@ class EventNormalizer:
         )
 
     def _has_critical_cross_asset_relevance(self, text: str) -> bool:
-        if not self._version.endswith("v6"):
-            # 历史 v4/v5 使用子串匹配；回放时必须保持原语义。
-            return any(keyword in text for keyword in self._legacy_critical_cross_asset_keywords)
-        return any(
-            self._contains_symbol_keyword(text, keyword)
-            for keyword in self._refined_critical_cross_asset_keywords
+        if self._version.endswith("v7"):
+            return self._has_v7_critical_cross_asset_relevance(text)
+        if self._version.endswith("v6"):
+            return self._contains_any(text, self._refined_critical_cross_asset_keywords)
+        # 历史 v4/v5 使用子串匹配；回放时必须保持原语义。
+        return any(keyword in text for keyword in self._legacy_critical_cross_asset_keywords)
+
+    def _has_v7_critical_cross_asset_relevance(self, text: str) -> bool:
+        if self._contains_any(text, self._v7_intrinsic_global_shocks):
+            return True
+        policy_decision = self._contains_any(text, self._v7_policy_actions)
+        systemic_authority = self._contains_any(text, self._v7_systemic_policy_authorities)
+        if policy_decision and systemic_authority:
+            return True
+        return self._contains_any(text, self._v7_us_context) and self._contains_any(
+            text, self._v7_inflation_releases
         )
+
+    @classmethod
+    def _contains_any(cls, text: str, keywords: tuple[str, ...]) -> bool:
+        return any(cls._contains_symbol_keyword(text, keyword) for keyword in keywords)
 
     @staticmethod
     def _contains_symbol_keyword(text: str, keyword: str) -> bool:
