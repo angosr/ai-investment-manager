@@ -165,6 +165,7 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 - 租约：`SELECT codex_account_leases where status='ACTIVE' and expires_at > now`（避免副作用方法，也不把未清理的过期行误报为占用）。
 - 近期失败：`codex_runs` 近窗口按 `status/error_class` 计数（`FailureClass`）。
 - 账号身份与开关：配置 `CodexAccountRegistry`（目录同名 `account_id`、`enabled`）；默认白名单全部禁用并如实显示 `DISABLED`。
+- 展示状态与路由新鲜度分离：容量 TTL 只约束真实调用前能否依赖该快照，不把已启用但快照过期的账号误报为 `UNKNOWN`；观测台继续显示“已启用”、最近一次探测余量及探测时间。从未取得额度快照时显示“已启用 / 尚无额度探测”，配置关闭始终显示“未启用”。
 - 每小时调用预算：配置 `TriggerPolicy.maximum_ai_calls_per_hour`（默认 12）与 `minimum_call_interval_seconds`（默认 15）；已用次数由近 1 小时跨品种原子 `analysis_call_admissions` 计数，与实际门禁保持同口径。`codex_runs` 单独表达真实 Codex 尝试及结果。
 - 说明：余量是**百分比余量（headroom%）**，非绝对 token 数——如实以百分比与重置时间呈现。
 

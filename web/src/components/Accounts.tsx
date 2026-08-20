@@ -1,6 +1,7 @@
 import { api } from "../api/client";
 import type { AccountStatus } from "../api/types";
 import { useLive } from "../hooks";
+import { hhmm } from "../lib/format";
 import { Card } from "./Card";
 import { Meter } from "./Meter";
 import styles from "./Accounts.module.css";
@@ -9,7 +10,7 @@ const STATE_LABEL: Record<string, string> = {
   HEALTHY: "健康",
   COOLDOWN: "冷却中",
   DISABLED: "未启用",
-  ENABLED: "已启用 · 待探测",
+  ENABLED: "已启用",
   UNKNOWN: "未知",
   LEASED: "分析中",
 };
@@ -59,13 +60,16 @@ function AccountLine({ account }: { account: AccountStatus }) {
       </div>
       <div className={styles.headroom}>
         <div className={styles.lbl}>
-          <span>余量</span>
+          <span>最近探测余量</span>
           <span className="mono">{headroom === null ? "—" : `${headroom}%`}</span>
         </div>
         <Meter percent={headroom ?? 0} tone={headroom !== null && headroom > 25 ? "pos" : "warn"} />
       </div>
       <div className={styles.meta}>
-        <span>近一小时失败 {account.recent_failures}</span>
+        <span>
+          {account.observed_at ? `探测于 ${hhmm(account.observed_at)} UTC` : "尚无额度探测"}
+          {` · 近一小时失败 ${account.recent_failures}`}
+        </span>
       </div>
     </div>
   );
@@ -74,7 +78,6 @@ function AccountLine({ account }: { account: AccountStatus }) {
 function stateTone(state: string): string {
   if (state === "HEALTHY") return "ok";
   if (state === "LEASED") return "ok";
-  if (state === "ENABLED") return "warn";
   if (state === "COOLDOWN") return "warn";
   return "off";
 }
