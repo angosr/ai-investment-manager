@@ -134,6 +134,8 @@ class TradePlanner:
         as_of = _require_utc(as_of)
         if approved.valid_until <= as_of:
             raise ValueError("ApprovedTarget 已过期")
+        if approved.as_of != as_of:
+            raise ValueError("TradePlanner 必须使用 Risk 批准时点")
         if content_hash(account) != approved.account_snapshot_hash:
             raise ValueError("TradePlanner account 与 Risk 批准快照不一致")
         market_by_symbol = self._unique(markets, "MarketSnapshot")
@@ -170,7 +172,7 @@ class TradePlanner:
             desired_notional = (
                 approved_asset.approved_quote_notional
                 if approved_asset is not None
-                else Decimal("0")
+                else current_notional
             )
             delta = TargetDelta(
                 symbol=symbol,
@@ -199,11 +201,8 @@ class TradePlanner:
                     )
                 )
                 continue
-            if (
-                delta.delta_quote_notional > 0
-                and content_hash(market) not in approved_market_hashes
-            ):
-                raise ValueError("新增风险行情与 Risk 批准快照不一致")
+            if content_hash(market) not in approved_market_hashes:
+                raise ValueError("交易行情与 Risk 批准快照不一致")
             planned = self._trade(
                 approved=approved,
                 approved_asset=approved_asset,
@@ -256,7 +255,11 @@ class TradePlanner:
     ) -> PlannedTrade | None:
         reducing = delta.delta_quote_notional < 0
         price = market.bid if reducing else market.ask
-        raw_quantity = abs(delta.delta_quote_notional) / price
+        raw_quantity = (
+            current_quantity
+            if reducing and delta.desired_quote_notional == 0
+            else abs(delta.delta_quote_notional) / price
+        )
         if reducing:
             raw_quantity = min(raw_quantity, current_quantity)
         quantity = (raw_quantity / spec.quantity_step).to_integral_value(

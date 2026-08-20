@@ -135,7 +135,9 @@ def test_planner_translates_approved_increase_to_buy(replay_input) -> None:
     assert trade.protective_stop_price == Decimal("95")
 
 
-def test_planner_reduces_non_target_position_before_buy(replay_input) -> None:
+def test_planner_does_not_trade_position_missing_from_risk_approval(
+    replay_input,
+) -> None:
     account = _account(eth_quantity="5")
     markets = _markets(replay_input)
     plan = _planner().plan(
@@ -147,20 +149,24 @@ def test_planner_reduces_non_target_position_before_buy(replay_input) -> None:
     )
 
     assert tuple((item.symbol, item.side) for item in plan.trades) == (
-        ("ETHUSDT", Side.SELL),
         ("BTCUSDT", Side.BUY),
     )
-    assert plan.trades[0].reduce_only
-    assert plan.trades[0].protective_stop_price is None
+    eth_delta = next(item for item in plan.target_deltas if item.symbol == "ETHUSDT")
+    assert eth_delta.delta_quote_notional == 0
 
 
 def test_planner_never_sells_more_than_current_position(replay_input) -> None:
     account = _account(btc_quantity="3")
-    approved = _approved(account, desired="0")
+    markets = _markets(replay_input)
+    approved = _approved(
+        account,
+        desired="0",
+        market_hash=content_hash(markets[0]),
+    )
     plan = _planner().plan(
         approved=approved,
         account=account,
-        markets=_markets(replay_input),
+        markets=markets,
         specs=_specs(),
         as_of=NOW,
     )
@@ -216,6 +222,33 @@ def test_planner_rejects_market_snapshot_drift_for_new_risk(replay_input) -> Non
             markets=_markets(replay_input),
             specs=_specs(),
             as_of=NOW,
+        )
+
+
+def test_planner_rejects_market_snapshot_drift_for_reduction(replay_input) -> None:
+    account = _account(btc_quantity="3")
+
+    with pytest.raises(ValueError, match=r"行情.*不一致"):
+        _planner().plan(
+            approved=_approved(account, desired="0"),
+            account=account,
+            markets=_markets(replay_input),
+            specs=_specs(),
+            as_of=NOW,
+        )
+
+
+def test_planner_rejects_reuse_after_risk_approval_time(replay_input) -> None:
+    account = _account()
+    markets = _markets(replay_input)
+
+    with pytest.raises(ValueError, match="Risk 批准时点"):
+        _planner().plan(
+            approved=_approved(account, market_hash=content_hash(markets[0])),
+            account=account,
+            markets=markets,
+            specs=_specs(),
+            as_of=NOW + timedelta(seconds=1),
         )
 
 

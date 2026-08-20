@@ -169,20 +169,30 @@ class PortfolioRiskEngine:
             account.equity if account.equity is not None else target.reference_equity,
         )
         position_by_symbol = {item.symbol: item for item in account.positions}
-        for requested in target.targets:
-            market = market_by_symbol.get(requested.symbol)
-            stop = stop_by_symbol.get(requested.symbol)
+        requested_by_symbol = {item.symbol: item for item in target.targets}
+        decision_symbols = tuple(
+            sorted(set(requested_by_symbol).union(position_by_symbol))
+        )
+        for symbol in decision_symbols:
+            requested = requested_by_symbol.get(symbol)
+            requested_notional = (
+                requested.desired_quote_notional
+                if requested is not None
+                else Decimal("0")
+            )
+            market = market_by_symbol.get(symbol)
+            stop = stop_by_symbol.get(symbol)
             if market is not None:
                 market_hashes.append(content_hash(market))
-            position = position_by_symbol.get(requested.symbol)
+            position = position_by_symbol.get(symbol)
             current_notional = (
                 max(Decimal("0"), position.quantity) * market.bid
                 if position is not None and market is not None
                 else Decimal("0")
             )
             approved_notional, reason_codes, asset_rules = self._clamp_asset(
-                symbol=requested.symbol,
-                requested_notional=requested.desired_quote_notional,
+                symbol=symbol,
+                requested_notional=requested_notional,
                 current_notional=current_notional,
                 market=market,
                 stop=stop,
@@ -194,8 +204,8 @@ class PortfolioRiskEngine:
             rules.extend(asset_rules)
             approved_assets.append(
                 ApprovedAssetTarget(
-                    symbol=requested.symbol,
-                    requested_quote_notional=requested.desired_quote_notional,
+                    symbol=symbol,
+                    requested_quote_notional=requested_notional,
                     approved_quote_notional=approved_notional,
                     protective_stop_price=(stop.stop_price if stop is not None else None),
                     reason_codes=tuple(sorted(reason_codes)),

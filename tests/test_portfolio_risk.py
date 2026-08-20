@@ -67,11 +67,12 @@ def _account(
     drawdown: str = "0",
     kill_switch: bool = False,
     equity: str = "10000",
+    symbol: str = "BTCUSDT",
 ) -> AccountSnapshot:
     positions = (
         (
             Position(
-                symbol="BTCUSDT",
+                symbol=symbol,
                 quantity=Decimal(quantity),
                 average_price=Decimal("100"),
             ),
@@ -166,6 +167,40 @@ def test_risk_reduction_is_not_blocked_by_missing_stop_or_stale_account(
     approved = decision.approved_target.targets[0]
     assert approved.approved_quote_notional == Decimal("500")
     assert approved.reason_codes == ("RISK_REDUCTION_ALLOWED",)
+
+
+def test_risk_explicitly_authorizes_cash_target_for_unselected_position(
+    replay_input,
+) -> None:
+    btc_market = replay_input.market.model_copy(
+        update={
+            "cycle_id": "cycle-1",
+            "symbol": "BTCUSDT",
+            "as_of": NOW,
+            "observed_at": NOW,
+            "bid": Decimal("100"),
+            "ask": Decimal("100"),
+            "last": Decimal("100"),
+        }
+    )
+    eth_market = btc_market.model_copy(update={"symbol": "ETHUSDT"})
+
+    decision = PortfolioRiskEngine(_policy()).evaluate(
+        target=_target(),
+        account=_account(quantity="5", symbol="ETHUSDT"),
+        markets=(btc_market, eth_market),
+        protective_stops=(
+            ProtectiveStop(symbol="BTCUSDT", stop_price=Decimal("95")),
+        ),
+        as_of=NOW,
+    )
+
+    assert decision.approved_target is not None
+    approved = decision.approved_target.targets
+    assert tuple(item.symbol for item in approved) == ("BTCUSDT", "ETHUSDT")
+    assert approved[1].requested_quote_notional == 0
+    assert approved[1].approved_quote_notional == 0
+    assert approved[1].reason_codes == ("RISK_REDUCTION_ALLOWED",)
 
 
 def test_kill_switch_forces_target_to_cash(replay_input) -> None:
