@@ -16,7 +16,7 @@ component_versions:
   - [risk, risk-v1]
   - [execution, mock-execution-v1]
   - [reconciliation, reconciliation-v1]
-  - [outcome_evaluation, outcome-window-v9]
+  - [outcome_evaluation, outcome-window-v8]
   - [trigger, analysis-trigger-v8]
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-shadow-v2]
