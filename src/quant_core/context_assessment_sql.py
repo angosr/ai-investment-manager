@@ -65,6 +65,7 @@ class SqlContextAssessmentStore:
                         analysis_scope=assessment.analysis_scope,
                         available_at=assessment.available_at,
                         analysis_behavior_hash=assessment.analysis_behavior_hash,
+                        view_count=len(assessment.views),
                         payload=assessment.model_dump(mode="json"),
                     )
                 )

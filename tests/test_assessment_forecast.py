@@ -2,12 +2,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine, select
 
 from quant_core.assessment_forecast import (
     AssessmentForecastPolicy,
     AssessmentForecastProjector,
     AssessmentViewCalibration,
     build_assessment_view_calibration,
+)
+from quant_core.assessment_outcome import (
+    AssessmentViewOutcome,
+    AssessmentViewOutcomeSettler,
+    SqlAssessmentViewOutcomeStore,
 )
 from quant_core.asset_management import (
     AssessmentUncertainty,
@@ -16,6 +22,7 @@ from quant_core.asset_management import (
     ForecastRole,
     PricedState,
 )
+from quant_core.context_assessment_sql import SqlContextAssessmentStore
 from quant_core.decision_packet import (
     DecisionPacket,
     PacketAssetState,
@@ -25,6 +32,8 @@ from quant_core.decision_packet import (
 )
 from quant_core.domain import DirectionalView
 from quant_core.market_data import MarketTrade
+from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
+from quant_core.persistence import assessment_view_outcomes, create_schema
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 HASH = "a" * 64
@@ -245,3 +254,91 @@ def test_calibration_identity_is_content_addressed() -> None:
 
     with pytest.raises(ValueError, match="content_hash"):
         AssessmentViewCalibration.model_validate(payload)
+
+
+def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    create_market_schema(engine)
+    evidence = SqlContextAssessmentStore(engine)
+    packet = _packet()
+    assessment = _assessment()
+    evidence.record_packet(packet)
+    evidence.record_assessment(packet.packet_id, assessment)
+    market = SqlMarketDataStore(engine)
+    reference = _reference_trade()
+    evaluation_at = assessment.available_at + timedelta(minutes=240)
+    exit_trade = _reference_trade(
+        trade_id="trade-exit-1",
+        aggregate_trade_id=2,
+        event_time=evaluation_at,
+        observed_at=evaluation_at,
+        price=Decimal("70710.10"),
+    )
+    market.put_trade(reference)
+    market.put_trade(exit_trade)
+    store = SqlAssessmentViewOutcomeStore(engine)
+    settler = AssessmentViewOutcomeSettler(
+        engine=engine,
+        store=store,
+        evaluation_version="assessment-outcome-v1",
+        maximum_market_age_seconds=30,
+        settlement_grace_minutes=5,
+    )
+
+    before_maturity = settler.settle(as_of=evaluation_at - timedelta(seconds=1))
+    settled = settler.settle(as_of=evaluation_at + timedelta(seconds=1))
+    replayed = settler.settle(as_of=evaluation_at + timedelta(seconds=2))
+
+    assert before_maturity.pending == 1
+    assert settled.settled == 1
+    assert replayed.settled == 0
+    with engine.connect() as connection:
+        payload = connection.execute(
+            select(assessment_view_outcomes.c.payload)
+        ).scalar_one()
+    outcome = AssessmentViewOutcome.model_validate(payload)
+    assert outcome.reference_price == Decimal("70010")
+    assert outcome.exit_price == Decimal("70710.10")
+    assert outcome.market_return_bps == Decimal("100")
+    assert outcome.directional_return_bps == Decimal("100")
+    assert outcome.signal_observed_at == assessment.available_at
+    assert store.visible_outcomes(
+        analysis_behavior_hash=assessment.analysis_behavior_hash,
+        evaluation_version="assessment-outcome-v1",
+        signal_window_start=NOW,
+        signal_window_end=NOW + timedelta(hours=1),
+        published_at=evaluation_at + timedelta(seconds=1),
+    ) == (outcome,)
+
+
+def test_missing_signal_time_market_data_is_unscorable_not_packet_price() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    create_market_schema(engine)
+    evidence = SqlContextAssessmentStore(engine)
+    packet = _packet()
+    assessment = _assessment()
+    evidence.record_packet(packet)
+    evidence.record_assessment(packet.packet_id, assessment)
+    evaluation_at = assessment.available_at + timedelta(minutes=240)
+    store = SqlAssessmentViewOutcomeStore(engine)
+
+    result = AssessmentViewOutcomeSettler(
+        engine=engine,
+        store=store,
+        evaluation_version="assessment-outcome-v1",
+        maximum_market_age_seconds=30,
+        settlement_grace_minutes=5,
+    ).settle(as_of=evaluation_at + timedelta(minutes=6))
+
+    assert result.unscorable == 1
+    with engine.connect() as connection:
+        payload = connection.execute(
+            select(assessment_view_outcomes.c.payload)
+        ).scalar_one()
+    outcome = AssessmentViewOutcome.model_validate(payload)
+    assert outcome.reference_price is None
+    assert outcome.reason_code == (
+        "REFERENCE_MARKET_DATA_MISSING_AT_ASSESSMENT_AVAILABILITY"
+    )
