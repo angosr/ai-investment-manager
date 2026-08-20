@@ -16,6 +16,11 @@ from quant_core.decision_packet import (
     VisibleFact,
 )
 from quant_core.domain import AccountSnapshot, FeatureSnapshot, MarketSnapshot
+from quant_core.fact_pipeline import (
+    validate_fact_revision_identity,
+    validate_material_delta_identity,
+    validate_state_snapshot_identity,
+)
 from quant_core.fact_state_sql import SqlFactStateStore
 from quant_core.persistence import (
     canonical_fact_revisions,
@@ -54,6 +59,7 @@ class SqlDecisionPacketAssembler:
         state = self._states.state(state_id)
         if state is None:
             raise ValueError("DecisionPacket 引用的 StateSnapshot 不存在")
+        validate_state_snapshot_identity(state)
         if state.analysis_scope != mandate.analysis_scope:
             raise ValueError("DecisionPacket StateSnapshot 与 Mandate scope 不一致")
         deltas = self._load_deltas(delta_ids)
@@ -80,9 +86,11 @@ class SqlDecisionPacketAssembler:
                     material_deltas.c.delta_id.in_(delta_ids)
                 )
             ).all()
-        by_id = {
-            row.delta_id: MaterialDelta.model_validate(row.payload) for row in rows
-        }
+        by_id: dict[str, MaterialDelta] = {}
+        for row in rows:
+            delta = MaterialDelta.model_validate(row.payload)
+            validate_material_delta_identity(delta)
+            by_id[row.delta_id] = delta
         missing = tuple(sorted(set(delta_ids) - set(by_id)))
         if missing:
             raise ValueError("DecisionPacket 引用的 MaterialDelta 不存在: " + ", ".join(missing))
@@ -101,10 +109,11 @@ class SqlDecisionPacketAssembler:
                     canonical_fact_revisions.c.payload,
                 ).where(canonical_fact_revisions.c.revision_id.in_(revision_ids))
             ).all()
-            facts_by_id = {
-                row.revision_id: CanonicalFactRevision.model_validate(row.payload)
-                for row in fact_rows
-            }
+            facts_by_id: dict[str, CanonicalFactRevision] = {}
+            for row in fact_rows:
+                fact = CanonicalFactRevision.model_validate(row.payload)
+                validate_fact_revision_identity(fact)
+                facts_by_id[row.revision_id] = fact
             missing_facts = tuple(sorted(set(revision_ids) - set(facts_by_id)))
             if missing_facts:
                 raise ValueError(
