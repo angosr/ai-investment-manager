@@ -358,6 +358,15 @@ def test_decision_cycle_is_the_minimal_one_way_cross_domain_layer() -> None:
         isinstance(node, (ast.Import, ast.ImportFrom)) for node in init_tree.body
     )
 
+    graph = _internal_import_graph()
+    for module, dependencies in graph.items():
+        if module.startswith("investment_manager.decision_cycle"):
+            assert not {
+                dependency
+                for dependency in dependencies
+                if dependency.startswith("investment_manager.legacy")
+            }, module
+
     business_domains = {
         "execution",
         "forecast",

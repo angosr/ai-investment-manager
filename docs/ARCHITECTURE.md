@@ -53,7 +53,10 @@ Observation
 
 AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 `ContextAssessment`/`AI_EVENT`，默认不能直接取得资本；程序机制产生 `PROGRAM_BASE`，也必须先通过预登记、样本外评估和显式发布。只有 Portfolio 能决定经济目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
 
-现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径。新链完成生产接线、恢复和回放验收后，旧模型、表写入、配置、CLI 和测试一次性删除；不得双写、双读或用适配器长期共存。
+现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
+`TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
+恢复；新链完成生产接线、恢复和回放验收后，旧模型、表写入、配置、CLI 和测试一次性删除；
+不得双写、双读或用适配器长期共存。
 
 ### 3.1 外部事件证据边界
 
@@ -97,6 +100,7 @@ src/investment_manager/
   schema.py                   # 唯一数据库 Schema 组合入口
 
   kernel/                     # 极少量稳定原语
+    configuration.py
     identity.py
     time.py
     types.py
@@ -135,6 +139,15 @@ src/investment_manager/
     dashboard/                # 纯读投影和 Web 静态资源
   platform/                   # 数据库、Temporal、时钟等无投资语义设施
 ```
+
+这里的一级领域目录不是“平铺文件”：每个目录都是拥有独立业务不变量的稳定边界。不得为了减少
+一级目录数量再增加无业务含义的 `domains/`、`services/` 或 `components/` 容器；这只会延长 import
+路径并隐藏所有权。真正需要治理的平铺，是同一领域根目录中混入多个独立状态机或不同变化原因的
+文件；它们达到本节条件时才进入能力子包。
+
+主线已经完成 `quant_core → investment_manager` 的硬迁移，包根只保留配置与 Schema 组合入口；
+受保护的历史冻结 Release 仍可能显示旧包名和旧命令，这是不可变运行制品，不是当前源码结构。
+当前迁移重点不是再次改顶层名称，而是逐步切断 `legacy` 消费者并最终删除整条旧交易链。
 
 领域是第一级稳定边界，能力是可选的第二级边界。只有同时满足以下条件才建立能力子包：它拥有独立状态机或外部协议；至少有两个不同技术职责因同一业务原因一起变化；能够用一句业务语言命名。子包只允许再包含文件，不继续按技术层级无限嵌套。
 
@@ -265,9 +278,9 @@ Codex 账号选择、调用审计和行为隔离属于 Forecast/Governance 共�
 
 数据库名称与用户、`QUANT_CORE_*` 环境变量、Temporal task queue、历史评价版本和制品 ID 是已持久化的外部运行身份，本阶段保持不变。它们不构成旧 Python 包或命令兼容层；只有在独立预登记迁移能够同时覆盖部署、恢复和历史读取时才允许更名。
 
-冻结 v51 checkout 和它正在使用的共享虚拟环境中仍可观察到旧 `quant_core` 包元数据；这是
-受保护的在运行发布，不是主线目录。后续发布只从自己的冻结 checkout 加载
-`investment_manager`，不得重新安装或复用旧包入口；v51 完整退役并验证不可恢复需求后，才删除
+受保护的历史 checkout 和它正在使用的共享虚拟环境中仍可观察到旧 `quant_core` 包元数据；这是
+不可变的在运行发布，不是主线目录。后续发布只从自己的冻结 checkout 加载
+`investment_manager`，不得重新安装或复用旧包入口；旧发布完整退役并验证不可恢复需求后，才删除
 共享环境中的旧 editable 安装。不得为了目录观感修改在线冻结代码或破坏其恢复入口。
 
 先更名再分包，避免每个模块经历两次路径迁移，也避免两个顶层包长期共存。
@@ -302,7 +315,9 @@ kernel/platform
 
 按以下纵向切片迁移；每个切片必须同时接好生产、回放、恢复和评价，随后删除被替代代码，禁止只搬文件：
 
-1. **触发解耦**：`decision_cycle` 对一个 `TriggerBatch` 只冻结一次行情、账户和 Evidence，再分别生成已启用消费者的不可变请求；旧 AnalysisCycle 只是临时消费者，不能继续拥有通用触发逻辑。
+1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
+   的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
+   契约，不能恢复旧分支。
 2. **预测接线**：将通过预登记评估的 ProgramBase 接入 Forecast 的持久化与结算；ContextAssessment 保持独立可评价输入，未获权限时不能影响资本。
 3. **组合接线**：以同一冻结时点生成 `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；空仓、拒绝和低于最小交易额都是完整终态。
 4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成幂等订单、未知结果恢复、部分成交、保护与对账，不再接收 `TradeIntent`。

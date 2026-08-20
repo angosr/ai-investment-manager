@@ -12,11 +12,7 @@ from investment_manager.decision_cycle.trigger import (
 )
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
-from investment_manager.information.repository import SqlEventStore
-from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
-from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.scheduling.application import ensure_trigger_plans
 from investment_manager.scheduling.repository import (
     PostgresOutboxListener,
@@ -61,24 +57,6 @@ def run_trigger_service(
         activities = TriggerCoordinatorActivities(
             TriggerDispatchBuilder(
                 config=config,
-                market_store=SqlMarketDataStore(engine),
-                event_store=SqlEventStore(
-                    engine,
-                    pipeline_id=config.pipeline.version,
-                    trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
-                    max_visible_events=config.information.read_limit,
-                ),
-                state=SqlShadowStateReader(
-                    engine,
-                    maximum_reconciliation_age_seconds=(
-                        config.reconciliation.maximum_report_age_seconds
-                    ),
-                ),
-                protection=SqlPortfolioProtectionStore(
-                    engine,
-                    policy=config.risk,
-                    initial_equity=config.shadow.initial_quote_balance,
-                ),
                 packet_preparation=(
                     assemble_decision_packet_preparation(config, engine)
                     if config.assessment.enabled

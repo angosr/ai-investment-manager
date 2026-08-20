@@ -6,20 +6,11 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
-from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.orchestration import WorkflowRequest
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.market.models import (
-    ClosedMarketBar,
-    MarketQuote,
-    MarketTrade,
-)
-from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.risk.protection import InMemoryPortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_initial_trigger_plan,
@@ -55,76 +46,6 @@ def _shadow_config(app_config) -> AppConfig:
     return AppConfig.model_validate(raw)
 
 
-def _market_store() -> InMemoryMarketDataStore:
-    store = InMemoryMarketDataStore()
-    store.put_quote(
-        MarketQuote(
-            quote_id="q1",
-            symbol="BTCUSDT",
-            observed_at=NOW - timedelta(seconds=1),
-            bid="100",
-            bid_quantity="1",
-            ask="100.1",
-            ask_quantity="1",
-            update_id=1,
-            source="test",
-        )
-    )
-    store.put_trade(
-        MarketTrade(
-            trade_id="t1",
-            symbol="BTCUSDT",
-            aggregate_trade_id=1,
-            event_time=NOW - timedelta(seconds=2),
-            observed_at=NOW - timedelta(seconds=1),
-            price="100.05",
-            quantity="0.1",
-            buyer_is_maker=False,
-            source="test",
-        )
-    )
-    for minutes in range(40, 0, -5):
-        opened = NOW.replace(second=0) - timedelta(minutes=minutes)
-        store.put_bar(
-            ClosedMarketBar(
-                symbol="BTCUSDT",
-                interval="5m",
-                open_time=opened,
-                close_time=opened + timedelta(minutes=5) - timedelta(milliseconds=1),
-                observed_at=NOW - timedelta(seconds=1),
-                open="99",
-                high="101",
-                low="98",
-                close="100",
-                volume="10",
-                source="test",
-            )
-        )
-    return store
-
-
-class EmptyShadowState:
-    def account_for_cycle(self, *, cycle_id, as_of, initial_quote_balance):
-        from investment_manager.execution.models import AccountSnapshot
-
-        return AccountSnapshot(
-            cycle_id=cycle_id,
-            as_of=as_of,
-            observed_at=as_of,
-            quote_balance=initial_quote_balance,
-            reconciled=True,
-        )
-
-    def last_cycle_at(self, *, symbol, as_of):
-        return None
-
-    def last_entry_order_at(self, *, symbol, as_of):
-        return None
-
-    def entry_orders_today(self, *, as_of):
-        return 0
-
-
 class RecordingPacketPreparation:
     def __init__(self) -> None:
         self.intelligence_evidence_ids: tuple[str, ...] | None = None
@@ -140,7 +61,7 @@ class RecordingPacketPreparation:
         )
 
 
-def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_config) -> None:
+def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
         symbol="BTCUSDT",
@@ -166,21 +87,10 @@ def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_c
     )
     dispatches = TriggerDispatchBuilder(
         config=config,
-        market_store=_market_store(),
-        event_store=InMemoryEventStore(),
-        state=EmptyShadowState(),
-        protection=InMemoryPortfolioProtectionStore(
-            policy=config.risk,
-            initial_equity=config.shadow.initial_quote_balance,
-        ),
     ).build(batch)
-    request = WorkflowRequest.model_validate(dispatches[0].payload)
 
-    assert len(dispatches) == 1
-    assert request.cycle_input.market.cycle_id == request.cycle_input.account.cycle_id
-    assert request.cycle_input.account.quote_balance == app_config.shadow.initial_quote_balance
-    assert request.cycle_input.account.equity == app_config.shadow.initial_quote_balance
-    assert request.trigger.reason.value == "EVENT_BATCH"
+    assert config.strategy.enabled
+    assert dispatches == ()
 
 
 def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:
@@ -221,13 +131,6 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
 
     TriggerDispatchBuilder(
         config=config,
-        market_store=_market_store(),
-        event_store=InMemoryEventStore(),
-        state=EmptyShadowState(),
-        protection=InMemoryPortfolioProtectionStore(
-            policy=config.risk,
-            initial_equity=config.shadow.initial_quote_balance,
-        ),
         packet_preparation=preparation,
     ).build(
         build_trigger_batch(
@@ -240,53 +143,6 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
 
     assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
     assert preparation.market_shock_symbols == ("BTCUSDT",)
-
-
-def test_disabled_program_strategy_skips_legacy_cycle_projection(app_config) -> None:
-    config = _shadow_config(app_config).model_copy(
-        update={
-            "strategy": app_config.strategy.model_copy(update={"enabled": False}),
-            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
-            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
-        }
-    )
-    plan = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id=config.pipeline.version,
-        manifest_id="manifest-v1",
-        updated_at=NOW,
-        heartbeat_seconds=3600,
-    )
-    trigger = build_trigger_event(
-        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
-        symbol="BTCUSDT",
-        pipeline_id=config.pipeline.version,
-        occurred_at=NOW,
-        observed_at=NOW,
-        priority=90,
-        dedup_key="intel-disabled-strategy",
-        evidence_ids=("intel-evidence-1",),
-    )
-    preparation = RecordingPacketPreparation()
-
-    dispatches = TriggerDispatchBuilder(
-        config=config,
-        market_store=object(),
-        event_store=object(),
-        state=object(),
-        protection=object(),
-        packet_preparation=preparation,
-    ).build(
-        build_trigger_batch(
-            plan=plan,
-            triggers=(trigger,),
-            created_at=NOW,
-            deadline=NOW + timedelta(minutes=5),
-        )
-    )
-
-    assert dispatches == ()
-    assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
 
 
 def test_sql_shadow_account_is_projected_from_latest_business_fact(
