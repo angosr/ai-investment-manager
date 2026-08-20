@@ -8,7 +8,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.execution.exit_policy import program_exit_triggered
+from investment_manager.execution.lifecycle.exit_policy import program_exit_triggered
 from investment_manager.execution.models import (
     AccountSnapshot,
     OrderType,

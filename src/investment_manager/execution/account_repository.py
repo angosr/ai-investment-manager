@@ -8,7 +8,7 @@ from sqlalchemy import case, select
 from sqlalchemy.engine import Connection, Engine
 
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.execution.reconciliation import (
+from investment_manager.execution.reconciliation.engine import (
     ReconciliationReport,
     ReconciliationStatus,
 )

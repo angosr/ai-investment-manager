@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.information.official import parse_fomc_calendar
-from investment_manager.information.official_repository import (
+from investment_manager.information.official.records import parse_fomc_calendar
+from investment_manager.information.official.repository import (
     SqlFedOfficialInformationIngestor,
     SqlOfficialInformationStore,
 )

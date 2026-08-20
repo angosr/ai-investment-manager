@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.governance.performance import (
+from investment_manager.governance.evaluation.performance import (
     EvaluationVariant,
     ReplayCase,
     ReplayEvaluator,

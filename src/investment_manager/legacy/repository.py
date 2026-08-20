@@ -29,7 +29,7 @@ from investment_manager.execution.contracts import (
     RiskTransition,
 )
 from investment_manager.execution.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
-from investment_manager.execution.lifecycle import OpenLifecycleRecord
+from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
@@ -42,7 +42,7 @@ from investment_manager.execution.tables import (
     orders,
     position_lifecycles,
 )
-from investment_manager.governance.metrics import MetricObservation
+from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.legacy.models import (

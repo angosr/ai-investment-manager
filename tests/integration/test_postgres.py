@@ -13,20 +13,19 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from investment_manager.execution.legacy_exchange import MockExchange
-from investment_manager.execution.lifecycle import PositionLifecycleManager
-from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.lifecycle.manager import PositionLifecycleManager
+from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.execution.tables import account_snapshots, orders
-from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.change.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
-from investment_manager.information.official import (
+from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,
     MarketCalendarEventRevision,
     parse_fomc_calendar,
 )
-from investment_manager.information.official_repository import SqlOfficialInformationStore
+from investment_manager.information.official.repository import SqlOfficialInformationStore
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
 from investment_manager.information.repository import SqlEventStore
@@ -39,6 +38,7 @@ from investment_manager.legacy.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,

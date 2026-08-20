@@ -8,14 +8,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from investment_manager.execution.binance import (
-    BinanceCredentials,
-    BinanceManualIntervention,
-    BinanceTestnetClient,
-    BinanceTestnetExchange,
-    BinanceTradingStateSource,
-    SymbolRules,
-)
 from investment_manager.execution.models import (
     AccountSnapshot,
     ExitReason,
@@ -24,7 +16,15 @@ from investment_manager.execution.models import (
     PositionLifecycle,
     PositionLifecycleStatus,
 )
-from investment_manager.execution.reconciliation import TradingStateSnapshot
+from investment_manager.execution.reconciliation.engine import TradingStateSnapshot
+from investment_manager.execution.venue.binance import (
+    BinanceCredentials,
+    BinanceManualIntervention,
+    BinanceTestnetClient,
+    BinanceTestnetExchange,
+    BinanceTradingStateSource,
+    SymbolRules,
+)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.legacy.cycle import AnalysisCycle
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine, select, update
 
-from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.legacy.candidate_evaluation import (
     CandidateOutcomeSettler,
     SqlCandidateOutcomeStore,

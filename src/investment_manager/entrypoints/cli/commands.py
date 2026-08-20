@@ -18,15 +18,15 @@ from investment_manager.entrypoints.cli.support import (
     reject_invalidated_evaluation_plan as _reject_invalidated_evaluation_plan,
 )
 from investment_manager.entrypoints.cli.support import runtime_engine as _runtime_engine
-from investment_manager.execution.binance import (
+from investment_manager.execution.models import Side
+from investment_manager.execution.venue.binance import (
     BinanceApiError,
     BinanceCredentials,
     BinanceTestnetClient,
     SymbolRules,
 )
-from investment_manager.execution.models import Side
-from investment_manager.forecast.codex import audit_codex_isolation
-from investment_manager.governance.acceptance import AuditProfile, PhaseAAuditor
+from investment_manager.forecast.codex.runtime import audit_codex_isolation
+from investment_manager.governance.audit.acceptance import AuditProfile, PhaseAAuditor
 from investment_manager.governance.models import (
     build_evaluation_plan_invalidation,
     load_release_manifest,
@@ -548,7 +548,7 @@ def codex_isolation_audit(
             )
             for account in accounts
         )
-    from investment_manager.governance.isolation import (
+    from investment_manager.governance.audit.isolation import (
         CodexIsolationAuditCatalog,
         build_codex_isolation_audit_artifact,
     )

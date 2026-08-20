@@ -29,7 +29,7 @@ from investment_manager.scheduling.runtime import (
     terminate_superseded_trigger_coordinators,
 )
 from investment_manager.settings import AppConfig
-from investment_manager.state.runtime import assemble_decision_packet_preparation
+from investment_manager.state.decision.service import assemble_decision_packet_preparation
 
 
 def run_trigger_service(

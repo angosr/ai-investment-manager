@@ -11,7 +11,7 @@ from investment_manager.execution.models import (
     OrderStatus,
     PositionLifecycle,
 )
-from investment_manager.governance.metrics import MetricObservation
+from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

@@ -4,26 +4,26 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
-from investment_manager.forecast.analyst import AssessRunBundleBuilder, CodexContextAnalyst
-from investment_manager.forecast.assessment import (
+from investment_manager.forecast.codex.runtime import AnalystResult, verify_bundle
+from investment_manager.forecast.context.analyst import AssessRunBundleBuilder, CodexContextAnalyst
+from investment_manager.forecast.context.contract import (
     AssessStructuredOutput,
     ContextAssessmentDraft,
     build_assess_prompt,
     finalize_context_assessment,
 )
-from investment_manager.forecast.codex import AnalystResult, verify_bundle
+from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextView,
     DirectionalView,
     PricedState,
 )
-from investment_manager.forecast.repository import SqlContextAssessmentStore
 from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.market.features import FeatureEngine
 from investment_manager.platform.database import metadata
-from investment_manager.state.decision_packet import (
+from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
     DecisionPacketBuilder,

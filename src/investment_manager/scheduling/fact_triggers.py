@@ -13,7 +13,7 @@ from investment_manager.scheduling.models import (
     build_trigger_plan_patch,
 )
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.state.decision_packet import AnalysisMandate
+from investment_manager.state.decision.packet import AnalysisMandate
 from investment_manager.state.facts import FOMC_MEETING_FACT_TYPE, FactDeltaPolicy
 from investment_manager.state.models import (
     CanonicalFactRevision,

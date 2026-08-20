@@ -15,7 +15,7 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
-from investment_manager.forecast.codex import (
+from investment_manager.forecast.codex.runtime import (
     AccountState,
     AnalystResult,
     AppServerCapacityProbe,
@@ -520,9 +520,12 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
         return process
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr("investment_manager.forecast.codex.selectors.DefaultSelector", FakeSelector)
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.runtime.selectors.DefaultSelector",
+        FakeSelector,
+    )
+    monkeypatch.setattr(
+        "investment_manager.forecast.codex.runtime.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: True,
     )
 
@@ -994,10 +997,13 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "must-not-leak")
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakeProcess)
-    monkeypatch.setattr("investment_manager.forecast.codex.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr(
+        "investment_manager.forecast.codex.runtime.selectors.DefaultSelector",
+        FakeSelector,
+    )
     checks = iter((True, False))
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.runtime.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: next(checks),
     )
 
@@ -1042,7 +1048,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
 def test_codex_runtime_integrity_rejects_binary_drift(
     app_config, tmp_path, monkeypatch
 ) -> None:
-    from investment_manager.forecast.codex import codex_runtime_integrity_matches
+    from investment_manager.forecast.codex.runtime import codex_runtime_integrity_matches
 
     binary = tmp_path / "codex-0.148.0"
     binary.write_bytes(b"frozen-codex-binary")
@@ -1199,7 +1205,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     }
 
     monkeypatch.setattr(
-        "investment_manager.forecast.codex._write_json_rpc",
+        "investment_manager.forecast.codex.runtime._write_json_rpc",
         lambda _process, value: sent.append(value),
     )
 
@@ -1207,7 +1213,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
         kwargs["observed"].append(response)
         return response
 
-    monkeypatch.setattr("investment_manager.forecast.codex._read_json_rpc_until", fake_read)
+    monkeypatch.setattr("investment_manager.forecast.codex.runtime._read_json_rpc_until", fake_read)
 
     assert _terminal_message_is_idle(events)
     assert _recover_completed_turn(object(), thread_id="thread-1", turn_id="turn-1", events=events)

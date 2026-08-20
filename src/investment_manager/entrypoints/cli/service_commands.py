@@ -15,23 +15,23 @@ from investment_manager.entrypoints.cli.support import (
     require_runtime_database,
     runtime_engine,
 )
-from investment_manager.execution.lifecycle_runtime import (
+from investment_manager.execution.lifecycle.service import (
     LifecycleTemporalWorker,
     assemble_lifecycle_activities,
     assemble_lifecycle_supervisor,
 )
-from investment_manager.execution.reconciliation_runtime import assemble_reconciliation
-from investment_manager.forecast.analyst import assess_behavior_hash
-from investment_manager.forecast.application import AssessmentCommand
-from investment_manager.forecast.runtime import (
+from investment_manager.execution.reconciliation.service import assemble_reconciliation
+from investment_manager.forecast.context.analyst import assess_behavior_hash
+from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.service import (
     AssessmentTemporalCoordinator,
     assemble_assessment_application,
     run_assessment_worker_process,
 )
-from investment_manager.forecast.workflows import AssessmentWorkflowRequest
-from investment_manager.governance.outcome_runtime import assemble_outcome_evaluation
+from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
+from investment_manager.governance.change.service import assemble_governance
+from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.governance.runtime import assemble_governance
 from investment_manager.information.collector import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -41,7 +41,7 @@ from investment_manager.information.collector import (
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
-from investment_manager.information.official_source import HttpFedOfficialSource
+from investment_manager.information.official.source import HttpFedOfficialSource
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.application import submit_frozen_analysis
 from investment_manager.legacy.cycle import CycleInput
@@ -58,7 +58,7 @@ from investment_manager.scheduling.application import trigger_now as apply_trigg
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
-from investment_manager.state.decision_packet import DecisionPacket
+from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.official_ingestion import (
     FedOfficialCollectorService,
     SqlFedFactIngestor,

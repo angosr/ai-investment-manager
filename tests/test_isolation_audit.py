@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from investment_manager.forecast.codex import IsolationAuditCheck
-from investment_manager.governance.isolation import (
+from investment_manager.forecast.codex.runtime import IsolationAuditCheck
+from investment_manager.governance.audit.isolation import (
     CodexIsolationAuditCatalog,
     build_codex_isolation_audit_artifact,
 )
@@ -54,7 +54,7 @@ def test_isolation_audit_artifact_binds_release_and_rejects_tampering(
         if item.enabled
     )
     monkeypatch.setattr(
-        "investment_manager.governance.isolation.codex_runtime_integrity_matches",
+        "investment_manager.governance.audit.isolation.codex_runtime_integrity_matches",
         lambda runtime: True,
     )
 

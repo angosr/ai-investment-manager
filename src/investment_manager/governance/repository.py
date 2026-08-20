@@ -4,6 +4,7 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from investment_manager.governance.evaluation.performance import ReplayEvaluationReport
 from investment_manager.governance.models import (
     BlindEvaluationClaim,
     ChangeProposal,
@@ -17,7 +18,6 @@ from investment_manager.governance.models import (
     ReleaseManifest,
     SystemConstitution,
 )
-from investment_manager.governance.performance import ReplayEvaluationReport
 from investment_manager.governance.tables import (
     blind_evaluation_claims,
     change_proposals,

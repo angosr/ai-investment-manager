@@ -5,10 +5,9 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.execution.exit_policy import program_exit_triggered
 from investment_manager.execution.ledger import InMemoryFactLedger
-from investment_manager.execution.legacy_exchange import MockExchange
-from investment_manager.execution.lifecycle import PositionLifecycleManager
+from investment_manager.execution.lifecycle.exit_policy import program_exit_triggered
+from investment_manager.execution.lifecycle.manager import PositionLifecycleManager
 from investment_manager.execution.models import (
     ExitReason,
     Fill,
@@ -16,8 +15,9 @@ from investment_manager.execution.models import (
     PositionLifecycleStatus,
     ProgramExitCondition,
 )
-from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.exchange import MockExchange
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.budget import InMemoryRiskBudgetStore
 

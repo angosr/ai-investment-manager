@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from pydantic import Field, model_validator
 
-from investment_manager.information.official import (
+from investment_manager.information.official.records import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
     MarketCalendarEventRevision,

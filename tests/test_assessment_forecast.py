@@ -8,20 +8,37 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.forecast.application import (
+from investment_manager.forecast.codex.runtime import AnalystResult
+from investment_manager.forecast.context.application import (
     AssessmentApplication,
     AssessmentCommand,
     AssessmentWorkflowStatus,
 )
-from investment_manager.forecast.calibration import (
+from investment_manager.forecast.context.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
-from investment_manager.forecast.codex import AnalystResult
-from investment_manager.forecast.execution import (
+from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
 )
+from investment_manager.forecast.context.projection import (
+    AssessmentForecastPolicy,
+    AssessmentForecastProjector,
+    AssessmentViewCalibration,
+    build_assessment_view_calibration,
+)
+from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.forecast.context.service import (
+    AssessmentTemporalCoordinator,
+    AssessmentTemporalWorker,
+)
+from investment_manager.forecast.context.settlement import (
+    AssessmentViewOutcome,
+    AssessmentViewOutcomeSettler,
+    SqlAssessmentViewOutcomeStore,
+)
+from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
@@ -31,30 +48,13 @@ from investment_manager.forecast.models import (
     ForecastRole,
     PricedState,
 )
-from investment_manager.forecast.outcomes import (
-    AssessmentViewOutcome,
-    AssessmentViewOutcomeSettler,
-    SqlAssessmentViewOutcomeStore,
-)
-from investment_manager.forecast.projection import (
-    AssessmentForecastPolicy,
-    AssessmentForecastProjector,
-    AssessmentViewCalibration,
-    build_assessment_view_calibration,
-)
-from investment_manager.forecast.repository import SqlContextAssessmentStore
-from investment_manager.forecast.runtime import (
-    AssessmentTemporalCoordinator,
-    AssessmentTemporalWorker,
-)
 from investment_manager.forecast.tables import assessment_view_outcomes
-from investment_manager.forecast.workflows import AssessmentWorkflowRequest
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.schema import create_schema
-from investment_manager.state.decision_packet import (
+from investment_manager.state.decision.packet import (
     DecisionPacket,
     PacketAssetState,
     PacketDelta,

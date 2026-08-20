@@ -9,7 +9,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.configuration import StrictConfig
-from investment_manager.state.decision_packet import AnalysisMandate
+from investment_manager.state.decision.packet import AnalysisMandate
 
 
 class StrategyPolicy(StrictConfig):

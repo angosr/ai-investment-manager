@@ -9,8 +9,8 @@ import typer
 from sqlalchemy import create_engine, insert, select, update
 
 from investment_manager.entrypoints.cli.commands import register_ai_forecast_plan
-from investment_manager.execution.mock_repository import SqlMockExchange
-from investment_manager.forecast.codex import AnalystResult
+from investment_manager.execution.venue.mock import SqlMockExchange
+from investment_manager.forecast.codex.runtime import AnalystResult
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.policy import AiMode
 from investment_manager.forecast.tables import codex_runs

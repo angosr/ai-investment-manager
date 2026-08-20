@@ -6,12 +6,12 @@ from datetime import timedelta
 
 from sqlalchemy import create_engine
 
-from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
     Side,
 )
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.models import CycleOutcome
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader

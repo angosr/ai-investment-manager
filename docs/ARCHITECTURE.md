@@ -69,14 +69,25 @@ src/investment_manager/
     types.py
 
   market/                     # 行情、Instrument、交易状态、Feature
-  information/                # 原始来源、官方日历、新闻与规范化事件
-  state/                      # Fact、State、Delta、Evidence、DecisionPacket
+  information/                # 原始来源、新闻与规范化事件
+    official/                 # 一手官方记录、解析、抓取和存储
+  state/                      # Fact、State、Delta 与 Evidence
+    decision/                 # DecisionPacket 的构建、存储和运行装配
   scheduling/                 # TriggerPlan、触发合并、动态唤醒与分析调度
-  forecast/                   # 程序预测、AI 判断、校准和预测结算
+  forecast/                   # 预测契约与共享表
+    context/                  # ContextAssessment 全生命周期
+    codex/                    # Codex 外部执行、账号路由与审计存储
   portfolio/                  # 组合目标、现金比较、再平衡和成本权衡
   risk/                       # 风险预算、组合保护、压力约束和授权
-  execution/                  # 计划、订单、成交、持仓生命周期与对账
-  governance/                 # 评估计划、盲测、发布、回滚和权限记录
+  execution/                  # 交易计划、订单与成交契约
+    venue/                    # Binance/Mock 交易场所适配
+    lifecycle/                # 持仓生命周期状态机
+    reconciliation/           # 账户事实对账与恢复
+  governance/                 # 治理事实、Policy 与存储
+    change/                   # 治理 Agent 和变更周期
+    evaluation/               # 绩效、结算窗口与版本评价
+    release/                  # 发布验证、审批和可恢复切换
+    audit/                    # 架构及 Codex 隔离审计
 
   legacy/                     # 迁移期隔离的 SignalCandidate/TradeIntent 旧链；只出不进
 
@@ -87,9 +98,13 @@ src/investment_manager/
   platform/                   # 数据库、Temporal、时钟等无投资语义设施
 ```
 
-这不是要求每个领域复制相同文件模板。一个领域只有在确有独立职责时才创建 `models.py`、`policy.py`、`tables.py`、`repository.py`、`application.py`、`runtime.py` 或 `workflows.py`。单个文件足够时保持单文件；出现多个独立不变量或明显变更原因时再拆。
+领域是第一级稳定边界，能力是可选的第二级边界。只有同时满足以下条件才建立能力子包：它拥有独立状态机或外部协议；至少有两个不同技术职责因同一业务原因一起变化；能够用一句业务语言命名。子包只允许再包含文件，不继续按技术层级无限嵌套。
 
-目标状态下顶层不得再存在 `domain.py`、`config.py`、`persistence.py`、巨型 `cli.py` 或散落的 `*_sql.py`、`*_runtime.py`、`*_workflows.py`。这些名字描述技术形态而非业务所有权。
+这不是要求每个领域复制相同文件模板。一个领域只有在确有独立职责时才创建模型、Policy、表、Repository、应用用例或 Workflow。单个文件足够时保持单文件；小领域继续平铺。禁止以减少目录观感为目标拆文件，也禁止以统一模板为目标制造空包、转发入口和重复装配。
+
+文件按它在能力中的实际角色命名：`packet.py`、`executor.py`、`settlement.py`、`engine.py`、`workflow.py`、`service.py`。只在确实承载整个领域共享契约时使用 `models.py`、`policy.py`、`tables.py`、`repository.py`。任何跨子包复用都从真正所有者直接导入，不通过 `__init__.py` 重导出。
+
+目标状态下顶层不得再存在 `domain.py`、`config.py`、`persistence.py`、巨型 `cli.py` 或散落的 `*_sql.py`、`*_runtime.py`、`*_workflows.py`。同一领域内出现两个以上独立运行状态机时，必须按能力归位，不能继续堆在领域根目录。这些名字描述技术形态而非业务所有权。
 
 ## 5. 领域所有权
 
@@ -219,6 +234,14 @@ kernel/platform
 ```
 
 每次只迁一个可运行纵向切片，同时完成模型、Policy、表、Repository、应用用例、Workflow、运行装配、CLI 调用者和测试；随后立即删除旧文件。若必须保留旧路径才能通过测试，说明切片尚未完成，不得提交兼容包装。
+
+域内能力收敛也采用硬迁移，不保留旧 import：
+
+1. `information/official` 与 `state/decision`，先稳定事实和冻结输入；
+2. `forecast/context` 与 `forecast/codex`，隔离投资判断和外部 AI 执行；
+3. `execution/lifecycle`、`execution/reconciliation` 与 `execution/venue`，分开订单事实、恢复和场所协议；
+4. `governance/change`、`evaluation`、`release` 与 `audit`，避免治理成为第二个杂物核心；
+5. 只有完成上述归位后，才根据真实变更证据拆分 `codex/runtime.py`、Research 大文件和 CLI 大文件，禁止只按行数拆分。
 
 ### 阶段 D：替换旧交易链
 

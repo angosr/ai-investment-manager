@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.governance.agent import SqlGovernorDecisionStore
+from investment_manager.governance.change.agent import SqlGovernorDecisionStore
 from investment_manager.governance.models import (
     ChangeProposal,
     ChangeType,
@@ -22,7 +22,7 @@ from investment_manager.governance.models import (
     build_evaluation_result,
     build_governance_snapshot,
 )
-from investment_manager.governance.release_runtime import (
+from investment_manager.governance.release.service import (
     ReleaseActivities,
     ReleaseTemporalCoordinator,
     ReleaseTemporalWorker,

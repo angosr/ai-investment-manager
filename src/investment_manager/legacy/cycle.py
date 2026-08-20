@@ -18,21 +18,16 @@ from investment_manager.execution.ledger import (
     InMemoryFactLedger,
     RiskReservationRejected,
 )
-from investment_manager.execution.legacy_exchange import (
-    ExecutionExchange,
-    MockExchange,
-    entry_client_order_id,
-)
-from investment_manager.execution.lifecycle import PositionLifecycleManager
+from investment_manager.execution.lifecycle.manager import PositionLifecycleManager
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
     OrderStatus,
     PositionLifecycle,
 )
-from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.forecast.policy import AiMode
-from investment_manager.governance.metrics import MetricObservation, observation
+from investment_manager.governance.evaluation.metrics import MetricObservation, observation
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -44,6 +39,11 @@ from investment_manager.legacy.decision import (
     FrequencyState,
     HighestNetEdgeComposer,
     freeze_candidate_cost_basis,
+)
+from investment_manager.legacy.exchange import (
+    ExecutionExchange,
+    MockExchange,
+    entry_client_order_id,
 )
 from investment_manager.legacy.models import (
     AnalysisProposal,

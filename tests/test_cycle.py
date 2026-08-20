@@ -10,7 +10,7 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
-from investment_manager.forecast.codex import AnalystResult
+from investment_manager.forecast.codex.runtime import AnalystResult
 from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import AiMode
 from investment_manager.legacy.cycle import AnalysisCycle, CycleInput

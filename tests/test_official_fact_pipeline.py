@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
-from investment_manager.information.official_repository import SqlFedOfficialInformationIngestor
+from investment_manager.information.official.repository import SqlFedOfficialInformationIngestor
 from investment_manager.information.tables import (
     raw_source_payloads,
     source_observations,

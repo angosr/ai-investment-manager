@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.orchestration import WorkflowRequest
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader

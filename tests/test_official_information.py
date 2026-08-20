@@ -3,12 +3,12 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from investment_manager.information.official import (
+from investment_manager.information.official.records import (
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
-from investment_manager.information.official_source import HttpFedOfficialSource
+from investment_manager.information.official.source import HttpFedOfficialSource
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 

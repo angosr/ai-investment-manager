@@ -303,6 +303,50 @@ def test_current_internal_module_graph_has_no_cycles() -> None:
         visit(module, ())
 
 
+def test_dense_domains_group_independent_capabilities_without_reexports() -> None:
+    root_modules = {
+        "execution": {
+            "account_repository.py",
+            "contracts.py",
+            "ledger.py",
+            "models.py",
+            "planner.py",
+            "policy.py",
+            "tables.py",
+        },
+        "forecast": {"models.py", "policy.py", "tables.py"},
+        "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
+    }
+    capabilities = {
+        "execution": {"lifecycle", "reconciliation", "venue"},
+        "forecast": {"codex", "context"},
+        "governance": {"audit", "change", "evaluation", "release"},
+        "information": {"official"},
+        "state": {"decision"},
+    }
+
+    for domain, expected in root_modules.items():
+        observed = {
+            path.name
+            for path in (PACKAGE_ROOT / domain).glob("*.py")
+            if path.name != "__init__.py"
+        }
+        assert observed == expected
+
+    for domain, names in capabilities.items():
+        for name in names:
+            package = PACKAGE_ROOT / domain / name
+            assert package.is_dir()
+            init_tree = ast.parse((package / "__init__.py").read_text())
+            assert not any(
+                isinstance(node, (ast.Import, ast.ImportFrom))
+                for node in init_tree.body
+            ), package
+
+    assert (PACKAGE_ROOT / "legacy" / "exchange.py").exists()
+    assert not (PACKAGE_ROOT / "execution" / "legacy_exchange.py").exists()
+
+
 def test_platform_does_not_import_business_modules() -> None:
     graph = _internal_import_graph()
 
@@ -423,7 +467,7 @@ def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
         "ForecastOutcomeStatus": "forecast/models.py",
         "PanelEvidence": "state/panel.py",
         "PanelSnapshot": "state/panel.py",
-        "MetricObservation": "governance/metrics.py",
+        "MetricObservation": "governance/evaluation/metrics.py",
     }
     definitions: dict[str, list[str]] = {name: [] for name in owners}
 
@@ -701,7 +745,9 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
     codex_repository_classes = {
         node.name
         for node in ast.parse(
-            (PACKAGE_ROOT / "forecast" / "codex_repository.py").read_text()
+            (
+                PACKAGE_ROOT / "forecast" / "codex" / "repository.py"
+            ).read_text()
         ).body
         if isinstance(node, ast.ClassDef)
     }

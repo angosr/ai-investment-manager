@@ -11,7 +11,7 @@ from investment_manager.execution.models import (
     Order,
     PositionLifecycle,
 )
-from investment_manager.governance.metrics import MetricObservation
+from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.legacy.models import (
     AnalysisProposal,
     DecisionOutcome,

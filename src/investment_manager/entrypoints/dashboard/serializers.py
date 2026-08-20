@@ -17,10 +17,10 @@ from investment_manager.entrypoints.dashboard.read_models import (
     WorldEvent,
 )
 from investment_manager.execution.ledger import CycleFacts
-from investment_manager.execution.lifecycle import OpenLifecycleRecord
+from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.models import Order
-from investment_manager.execution.reconciliation import ReconciliationReport
-from investment_manager.governance.metrics import MetricObservation
+from investment_manager.execution.reconciliation.engine import ReconciliationReport
+from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.legacy.models import (
     AnalysisProposal,
     TradeIntent,

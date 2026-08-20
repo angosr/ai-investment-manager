@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from investment_manager.information.official import (
+from investment_manager.information.official.records import (
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,

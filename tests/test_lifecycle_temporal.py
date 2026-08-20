@@ -7,8 +7,11 @@ from decimal import Decimal
 from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.execution.ledger import InMemoryLifecycleLedger
-from investment_manager.execution.lifecycle import OpenLifecycleRecord, PositionLifecycleManager
-from investment_manager.execution.lifecycle_runtime import (
+from investment_manager.execution.lifecycle.manager import (
+    OpenLifecycleRecord,
+    PositionLifecycleManager,
+)
+from investment_manager.execution.lifecycle.service import (
     LifecycleTemporalCoordinator,
     LifecycleTemporalWorker,
     LifecycleWorkflowExecution,
@@ -17,7 +20,7 @@ from investment_manager.execution.lifecycle_runtime import (
     build_lifecycle_workflow_request,
 )
 from investment_manager.execution.models import PositionLifecycleStatus
-from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.market.models import (
     ClosedMarketBar,

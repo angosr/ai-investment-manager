@@ -10,8 +10,11 @@ from typing import Protocol
 
 from sqlalchemy.engine import Engine
 
-from investment_manager.information.official import FedMonetaryReleaseRecord, FomcMeetingRecord
-from investment_manager.information.official_repository import (
+from investment_manager.information.official.records import (
+    FedMonetaryReleaseRecord,
+    FomcMeetingRecord,
+)
+from investment_manager.information.official.repository import (
     OfficialRecordWrite,
     SqlFedOfficialInformationIngestor,
 )

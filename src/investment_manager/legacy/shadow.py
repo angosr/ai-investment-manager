@@ -11,7 +11,7 @@ from investment_manager.execution.account_repository import (
     SqlAccountSnapshotReader,
 )
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.execution.reconciliation_repository import (
+from investment_manager.execution.reconciliation.repository import (
     SqlReconciliationReportStore,
 )
 from investment_manager.execution.tables import orders

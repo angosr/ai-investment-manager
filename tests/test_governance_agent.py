@@ -7,15 +7,14 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
-from investment_manager.execution.legacy_exchange import MockExchange
-from investment_manager.forecast.codex import AnalystResult
+from investment_manager.forecast.codex.runtime import AnalystResult
 from investment_manager.forecast.tables import codex_runs
-from investment_manager.governance.agent import (
+from investment_manager.governance.change.agent import (
     CodexGovernor,
     GovernorBundleBuilder,
     SqlGovernorDecisionStore,
 )
-from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.change.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import (
     ChangeProposal,
     ChangeType,
@@ -32,6 +31,7 @@ from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.legacy.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.models import (
     CandidateOutcome,
     CandidateOutcomeStatus,

@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from pydantic import TypeAdapter
 
 from investment_manager.execution.models import OrderType, Side
-from investment_manager.forecast.codex import (
+from investment_manager.forecast.codex.runtime import (
     AccountLeaseStore,
     AnalystResult,
     CodexAccountRouter,
