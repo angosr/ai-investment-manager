@@ -15,7 +15,6 @@ from investment_manager.domain import (
     Action,
     OrderType,
     Position,
-    RiskOutcome,
     Side,
     SignalCandidate,
     TradeIntent,
@@ -39,7 +38,8 @@ from investment_manager.research.dataset import (
     HistoricalFundingDataset,
     InstrumentSpec,
 )
-from investment_manager.risk import RiskEngine
+from investment_manager.risk.legacy import RiskEngine
+from investment_manager.risk.models import RiskOutcome
 from investment_manager.strategy import PriceTrendStrategy, Strategy
 
 BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v11"

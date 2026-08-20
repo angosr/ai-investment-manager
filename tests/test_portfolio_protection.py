@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 
 from investment_manager.domain import AccountSnapshot, Position
-from investment_manager.portfolio_protection import SqlPortfolioProtectionStore
+from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.schema import create_schema
 
 NOW = datetime(2026, 8, 18, 17, tzinfo=UTC)

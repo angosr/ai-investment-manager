@@ -42,7 +42,7 @@ from investment_manager.persistence import (
     governance_decisions,
     signal_candidates,
 )
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     TriggerNow,

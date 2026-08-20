@@ -14,7 +14,6 @@ from investment_manager.domain import (
     OrderStatus,
     PositionLifecycle,
     PositionLifecycleStatus,
-    RiskDecision,
     TradeIntent,
 )
 from investment_manager.execution import ExecutionExchange
@@ -25,7 +24,8 @@ from investment_manager.ledger import LifecycleFacts, LifecycleLedger
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.metrics import observation
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import RiskBudgetStore
+from investment_manager.risk.budget import RiskBudgetStore
+from investment_manager.risk.models import RiskDecision
 
 
 class OpenLifecycleRecord(FrozenModel):

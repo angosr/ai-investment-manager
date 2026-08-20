@@ -6,16 +6,14 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from investment_manager.domain import (
-    AccountSnapshot,
-    RiskOutcome,
-)
+from investment_manager.domain import AccountSnapshot
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.portfolio.decision import PortfolioAssetInput, PortfolioDecisionEngine
 from investment_manager.portfolio.models import PortfolioTarget
-from investment_manager.portfolio_risk import (
+from investment_manager.risk.models import RiskOutcome
+from investment_manager.risk.portfolio import (
     PortfolioRiskDecision,
     PortfolioRiskEngine,
     ProtectiveStop,

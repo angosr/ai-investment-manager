@@ -11,13 +11,15 @@ from investment_manager.domain import (
     OrderStatus,
     OrderType,
     PositionLifecycle,
-    RiskDecision,
-    RiskOutcome,
     Side,
     TradeIntent,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketSnapshot
+from investment_manager.risk.models import (
+    RiskDecision,
+    RiskOutcome,
+)
 
 
 def entry_client_order_id(intent: TradeIntent, risk: RiskDecision) -> str:

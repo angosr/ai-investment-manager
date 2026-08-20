@@ -21,12 +21,12 @@ from investment_manager.domain import (
     MetricObservation,
     Order,
     PanelSnapshot,
-    RiskDecision,
     TradeIntent,
 )
 from investment_manager.ledger import CycleFacts
 from investment_manager.lifecycle import OpenLifecycleRecord
 from investment_manager.reconciliation import ReconciliationReport
+from investment_manager.risk.models import RiskDecision
 
 _ECONOMICS_METRICS = (
     "expected_net_edge_bps",

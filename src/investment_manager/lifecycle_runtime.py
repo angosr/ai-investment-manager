@@ -40,7 +40,7 @@ from investment_manager.persistence import (
 )
 from investment_manager.platform.database import build_engine
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.shadow import ShadowStateReader, SqlShadowStateReader
 from investment_manager.workflow import OrchestrationPolicySnapshot
 

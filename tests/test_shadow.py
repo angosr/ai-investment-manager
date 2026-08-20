@@ -16,8 +16,8 @@ from investment_manager.market.models import (
 )
 from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.persistence import SqlFactLedger
-from investment_manager.portfolio_protection import InMemoryPortfolioProtectionStore
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
+from investment_manager.risk.protection import InMemoryPortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_initial_trigger_plan,

@@ -13,12 +13,12 @@ from investment_manager.domain import (
     Order,
     PanelSnapshot,
     PositionLifecycle,
-    RiskDecision,
     SignalCandidate,
     TradeIntent,
 )
 from investment_manager.execution_contract import ExecutionRequest, ExecutionResult, RiskTransition
-from investment_manager.risk_budget import InMemoryRiskBudgetStore
+from investment_manager.risk.budget import InMemoryRiskBudgetStore
+from investment_manager.risk.models import RiskDecision
 
 
 class RiskReservationRejected(ValueError):

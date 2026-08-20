@@ -19,7 +19,7 @@ from investment_manager.ledger import InMemoryFactLedger
 from investment_manager.lifecycle import PositionLifecycleManager
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import InMemoryRiskBudgetStore
+from investment_manager.risk.budget import InMemoryRiskBudgetStore
 
 
 def _later_market(replay_input, *, last: Decimal, minutes: int) -> MarketSnapshot:

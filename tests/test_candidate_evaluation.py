@@ -19,7 +19,7 @@ from investment_manager.persistence import (
     candidate_outcomes,
     signal_candidates,
 )
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 
 

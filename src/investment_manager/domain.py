@@ -46,17 +46,6 @@ class OrderType(StrEnum):
     LIMIT = "LIMIT"
 
 
-class GuardState(StrEnum):
-    PASS = "PASS"
-    FAIL = "FAIL"
-    UNKNOWN = "UNKNOWN"
-
-
-class RiskOutcome(StrEnum):
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-
-
 class CycleOutcome(StrEnum):
     NO_ACTION = "NO_ACTION"
     NO_TRADE = "NO_TRADE"
@@ -389,41 +378,6 @@ class TradeIntent(FrozenModel):
         if self.signal_observed_at >= self.valid_until:
             raise ValueError("TradeIntent signal_observed_at 必须早于 valid_until")
         return self
-
-
-class RuleResult(FrozenModel):
-    rule_id: str
-    rule_version: str
-    state: GuardState
-    reason_code: str
-    observed: str | None = None
-    limit: str | None = None
-
-
-class RiskReservation(FrozenModel):
-    reservation_id: str
-    cycle_id: str
-    intent_id: str
-    symbol: str
-    risk_amount: Money
-    quantity: PositiveDecimal
-    expires_at: datetime
-
-    _utc_expires_at = field_validator("expires_at")(require_utc)
-
-
-class RiskDecision(FrozenModel):
-    decision_id: str
-    cycle_id: str
-    intent_id: str
-    outcome: RiskOutcome
-    policy_version: str
-    intent_hash: str
-    account_snapshot_hash: str
-    market_snapshot_hash: str
-    rule_results: tuple[RuleResult, ...]
-    quantity: PositiveDecimal | None = None
-    reservation: RiskReservation | None = None
 
 
 class Fill(FrozenModel):

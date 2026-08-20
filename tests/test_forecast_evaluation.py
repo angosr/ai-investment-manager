@@ -41,7 +41,7 @@ from investment_manager.persistence import (
     codex_runs,
 )
 from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 
 

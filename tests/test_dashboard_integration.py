@@ -25,7 +25,7 @@ from investment_manager.persistence import (
     SqlFactLedger,
     decision_outcomes,
 )
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.scheduling.tables import analysis_call_admissions

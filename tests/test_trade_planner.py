@@ -5,7 +5,7 @@ import pytest
 
 from investment_manager.domain import AccountSnapshot, Position, Side
 from investment_manager.kernel.identity import content_hash
-from investment_manager.portfolio_risk import ApprovedAssetTarget, ApprovedTarget
+from investment_manager.risk.portfolio import ApprovedAssetTarget, ApprovedTarget
 from investment_manager.trade_planner import (
     MarketExecutionSpec,
     TradePlanner,

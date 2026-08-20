@@ -10,7 +10,6 @@ from investment_manager.domain import (
     Order,
     OrderStatus,
     PositionLifecycle,
-    RiskDecision,
     TradeIntent,
 )
 from investment_manager.execution import (
@@ -21,6 +20,7 @@ from investment_manager.execution import (
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.persistence import mock_exchange_orders, mock_exchange_protections
+from investment_manager.risk.models import RiskDecision
 
 
 class SqlMockExchange:

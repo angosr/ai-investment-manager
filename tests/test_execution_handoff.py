@@ -28,7 +28,7 @@ from investment_manager.persistence import (
     position_lifecycles,
 )
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import (
+from investment_manager.risk.budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,

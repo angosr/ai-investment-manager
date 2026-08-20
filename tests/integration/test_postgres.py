@@ -51,7 +51,7 @@ from investment_manager.persistence import (
 )
 from investment_manager.platform.database import build_engine, metadata
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
+from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     TriggerNow,

@@ -17,7 +17,7 @@ from investment_manager.portfolio.pipeline import (
     PortfolioDecisionPipeline,
     PortfolioPipelineOutcome,
 )
-from investment_manager.portfolio_risk import (
+from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
     ProtectiveStop,

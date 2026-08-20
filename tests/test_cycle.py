@@ -23,9 +23,9 @@ from investment_manager.domain import (
     OrderStatus,
     OrderType,
     PriceCondition,
-    RiskOutcome,
     Side,
 )
+from investment_manager.risk.models import RiskOutcome
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 
 

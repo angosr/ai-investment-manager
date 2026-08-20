@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from investment_manager.domain import RiskReservation
-from investment_manager.risk_budget import InMemoryRiskBudgetStore
+from investment_manager.risk.budget import InMemoryRiskBudgetStore
+from investment_manager.risk.models import RiskReservation
 
 
 def _reservation(identifier: str, risk_amount: str) -> RiskReservation:

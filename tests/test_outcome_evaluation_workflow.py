@@ -26,7 +26,7 @@ from investment_manager.persistence import (
     SqlLifecycleLedger,
 )
 from investment_manager.reconciliation import MockReconciler
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 
 

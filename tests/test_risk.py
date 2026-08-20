@@ -10,14 +10,16 @@ from investment_manager.cycle import AnalysisCycle
 from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     CycleOutcome,
-    GuardState,
-    RiskOutcome,
     Side,
 )
 from investment_manager.execution import MockExchange
 from investment_manager.persistence import SqlFactLedger
-from investment_manager.risk import RiskEngine
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
+from investment_manager.risk.legacy import RiskEngine
+from investment_manager.risk.models import (
+    GuardState,
+    RiskOutcome,
+)
 from investment_manager.schema import create_schema
 from investment_manager.shadow import SqlShadowStateReader
 

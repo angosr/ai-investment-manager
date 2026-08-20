@@ -43,9 +43,9 @@ from investment_manager.persistence import (
     release_manifests,
     trade_intents,
 )
-from investment_manager.portfolio_protection import portfolio_protection_states
 from investment_manager.reconciliation import ReconciliationReport
 from investment_manager.reconciliation_sql import SqlReconciliationReportStore
+from investment_manager.risk.protection import portfolio_protection_states
 from investment_manager.scheduling.tables import (
     analysis_call_admissions,
     analysis_trigger_events,

@@ -19,8 +19,8 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import RiskReservation
 from investment_manager.platform.database import metadata
+from investment_manager.risk.models import RiskReservation
 
 risk_reservations = Table(
     "risk_reservations",

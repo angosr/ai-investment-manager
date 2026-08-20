@@ -24,8 +24,6 @@ from investment_manager.domain import (
     OrderType,
     Position,
     PositionLifecycle,
-    RiskDecision,
-    RiskOutcome,
     Side,
     TradeIntent,
 )
@@ -34,6 +32,10 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import floor_to_step
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.reconciliation import TradingStateSnapshot, TradingStateSource
+from investment_manager.risk.models import (
+    RiskDecision,
+    RiskOutcome,
+)
 
 
 @dataclass(frozen=True, slots=True)

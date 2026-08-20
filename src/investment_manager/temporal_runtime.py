@@ -26,7 +26,7 @@ from investment_manager.persistence import (
     SqlFactLedger,
 )
 from investment_manager.platform.database import build_engine
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.temporal_workflows import (
     EXECUTION_ACTIVITY_NAME,
     PREPARE_ACTIVITY_NAME,

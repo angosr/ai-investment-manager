@@ -19,7 +19,7 @@ from investment_manager.kernel.types import (
     floor_to_step,
 )
 from investment_manager.market.models import MarketSnapshot
-from investment_manager.portfolio_risk import ApprovedTarget
+from investment_manager.risk.portfolio import ApprovedTarget
 
 
 class TradePlannerPolicy(FrozenModel):

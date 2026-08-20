@@ -26,7 +26,7 @@ from investment_manager.persistence import (
     metric_observations,
     orders,
 )
-from investment_manager.risk_budget import (
+from investment_manager.risk.budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,

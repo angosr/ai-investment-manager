@@ -36,7 +36,6 @@ from investment_manager.domain import (
     Order,
     PanelSnapshot,
     PositionLifecycle,
-    RiskDecision,
     SignalCandidate,
     TradeIntent,
 )
@@ -64,10 +63,11 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
 from investment_manager.lifecycle import OpenLifecycleRecord
 from investment_manager.platform.database import metadata
-from investment_manager.risk_budget import (
+from investment_manager.risk.budget import (
     portfolio_risk_budgets,
     risk_reservations,
 )
+from investment_manager.risk.models import RiskDecision
 
 analysis_cycles = Table(
     "analysis_cycles",

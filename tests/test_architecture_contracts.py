@@ -504,6 +504,34 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
         assert not (PACKAGE_ROOT / filename).exists()
 
 
+def test_risk_models_and_modules_have_one_domain_owner() -> None:
+    moved_models = {
+        "GuardState",
+        "RiskDecision",
+        "RiskOutcome",
+        "RiskReservation",
+        "RuleResult",
+    }
+
+    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "investment_manager.domain"
+            ):
+                assert not moved_models.intersection(
+                    alias.name for alias in node.names
+                ), path
+
+    for filename in (
+        "portfolio_protection.py",
+        "portfolio_risk.py",
+        "risk.py",
+        "risk_budget.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

@@ -28,7 +28,7 @@ from investment_manager.reconciliation_sql import (
     SqlMockExchangeTruthSource,
     SqlReconciliationReportStore,
 )
-from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 from investment_manager.shadow import SqlShadowStateReader
 

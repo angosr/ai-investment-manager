@@ -24,7 +24,7 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.repository import MarketDataStore
-from investment_manager.portfolio_protection import PortfolioProtectionStore
+from investment_manager.risk.protection import PortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisCallAdmission,
     AnalysisTriggerPlan,

@@ -13,14 +13,16 @@ from investment_manager.domain import (
     Order,
     OrderStatus,
     PositionLifecycle,
-    RiskDecision,
-    RiskOutcome,
     TradeIntent,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import MarketSnapshot
+from investment_manager.risk.models import (
+    RiskDecision,
+    RiskOutcome,
+)
 
 
 class RiskTransition(StrEnum):

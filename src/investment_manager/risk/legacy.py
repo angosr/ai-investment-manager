@@ -6,11 +6,6 @@ from investment_manager.config import RiskPolicy
 from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
-    GuardState,
-    RiskDecision,
-    RiskOutcome,
-    RiskReservation,
-    RuleResult,
     Side,
     TradeIntent,
 )
@@ -18,6 +13,13 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import floor_to_step
 from investment_manager.market.models import MarketSnapshot
+from investment_manager.risk.models import (
+    GuardState,
+    RiskDecision,
+    RiskOutcome,
+    RiskReservation,
+    RuleResult,
+)
 
 
 class RiskEngine:

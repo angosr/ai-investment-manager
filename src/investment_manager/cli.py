@@ -60,8 +60,8 @@ from investment_manager.market.runtime import MarketShockDetector, assemble_shad
 from investment_manager.outcome_evaluation_runtime import assemble_outcome_evaluation
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
-from investment_manager.portfolio_protection import SqlPortfolioProtectionStore
 from investment_manager.reconciliation_runtime import assemble_reconciliation
+from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,

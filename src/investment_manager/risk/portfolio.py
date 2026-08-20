@@ -5,12 +5,7 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import (
-    AccountSnapshot,
-    GuardState,
-    RiskOutcome,
-    RuleResult,
-)
+from investment_manager.domain import AccountSnapshot
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
@@ -21,6 +16,11 @@ from investment_manager.kernel.types import (
 )
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.portfolio.models import PortfolioTarget
+from investment_manager.risk.models import (
+    GuardState,
+    RiskOutcome,
+    RuleResult,
+)
 
 
 class PortfolioRiskPolicy(FrozenModel):
