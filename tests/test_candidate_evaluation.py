@@ -13,11 +13,11 @@ from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
 from quant_core.mock_exchange_sql import SqlMockExchange
 from quant_core.persistence import (
     SqlFactLedger,
-    SqlRiskBudgetStore,
     candidate_outcomes,
     create_schema,
     signal_candidates,
 )
+from quant_core.risk_budget import SqlRiskBudgetStore
 
 
 def _seed_candidate(app_config, replay_input):

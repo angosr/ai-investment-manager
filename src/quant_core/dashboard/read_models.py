@@ -43,11 +43,11 @@ from quant_core.persistence import (
     normalized_events,
     orders,
     panel_snapshots,
-    portfolio_protection_states,
     release_manifests,
     trade_intents,
     trigger_outbox,
 )
+from quant_core.portfolio_protection import portfolio_protection_states
 from quant_core.reconciliation import ReconciliationReport
 from quant_core.reconciliation_sql import SqlReconciliationReportStore
 from quant_core.sql_time import database_utc

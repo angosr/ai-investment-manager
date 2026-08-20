@@ -6,12 +6,65 @@ from decimal import Decimal
 from threading import RLock
 from typing import Protocol
 
-from sqlalchemy import select, update
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Numeric,
+    String,
+    Table,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.engine import Engine
 
 from quant_core.config import RiskPolicy
 from quant_core.domain import AccountSnapshot, FrozenModel, _require_utc
-from quant_core.persistence import portfolio_protection_states
+from quant_core.platform.database import metadata
+
+portfolio_protection_states = Table(
+    "portfolio_protection_states",
+    metadata,
+    Column("portfolio_id", String(64), primary_key=True),
+    Column("kill_switch_active", Boolean, nullable=False),
+    Column("high_water_equity", Numeric(38, 18), nullable=True),
+    Column("last_equity", Numeric(38, 18), nullable=True),
+    Column("drawdown_fraction", Numeric(38, 18), nullable=False),
+    Column("trip_reason", String(128), nullable=True),
+    Column("tripped_at", DateTime(timezone=True), nullable=True),
+    Column("last_reset_at", DateTime(timezone=True), nullable=True),
+    Column("last_reset_reason", String(512), nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=True),
+)
+
+
+def bootstrap_portfolio_protection(
+    engine: Engine,
+    *,
+    portfolio_id: str = "primary",
+) -> None:
+    with engine.begin() as connection:
+        exists = connection.execute(
+            select(portfolio_protection_states.c.portfolio_id).where(
+                portfolio_protection_states.c.portfolio_id == portfolio_id
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            connection.execute(
+                insert(portfolio_protection_states).values(
+                    portfolio_id=portfolio_id,
+                    kill_switch_active=False,
+                    high_water_equity=None,
+                    last_equity=None,
+                    drawdown_fraction=0,
+                    trip_reason=None,
+                    tripped_at=None,
+                    last_reset_at=None,
+                    last_reset_reason=None,
+                    updated_at=None,
+                )
+            )
 
 
 class PortfolioProtectionState(FrozenModel):

@@ -46,7 +46,6 @@ from quant_core.persistence import (
     SqlGovernanceRepository,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
-    SqlRiskBudgetStore,
     account_snapshots,
     candidate_outcomes,
     canonical_fact_revisions,
@@ -54,11 +53,11 @@ from quant_core.persistence import (
     market_calendar_event_revisions,
     metric_observations,
     orders,
-    portfolio_risk_budgets,
     source_observations,
 )
 from quant_core.platform.database import build_engine, metadata
 from quant_core.reconciliation import MockReconciler
+from quant_core.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from quant_core.source_payload import build_raw_source_payload
 from quant_core.source_payload_sql import SqlRawSourcePayloadStore
 from quant_core.trigger import (

@@ -36,13 +36,13 @@ from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
 from quant_core.mock_exchange_sql import SqlMockExchange
 from quant_core.persistence import (
     SqlFactLedger,
-    SqlRiskBudgetStore,
     analysis_cycles,
     analysis_forecast_outcomes,
     codex_runs,
     create_schema,
 )
 from quant_core.research.decision_tape import SqlForecastDecisionTapeReader
+from quant_core.risk_budget import SqlRiskBudgetStore
 
 
 class StaticAnalyst:

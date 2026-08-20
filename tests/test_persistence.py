@@ -19,7 +19,6 @@ from quant_core.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
     SqlFactLedger,
-    SqlRiskBudgetStore,
     analysis_cycles,
     codex_account_capacity,
     codex_runs,
@@ -27,6 +26,9 @@ from quant_core.persistence import (
     fills,
     metric_observations,
     orders,
+)
+from quant_core.risk_budget import (
+    SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,
 )

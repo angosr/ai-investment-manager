@@ -19,11 +19,11 @@ from quant_core.execution import MockExchange
 from quant_core.persistence import (
     SqlEventStore,
     SqlFactLedger,
-    SqlRiskBudgetStore,
     analysis_call_admissions,
     create_schema,
     decision_outcomes,
 )
+from quant_core.risk_budget import SqlRiskBudgetStore
 from quant_core.trigger import AnalysisTriggerType, build_trigger_event
 from quant_core.trigger_sql import SqlTriggerRepository
 

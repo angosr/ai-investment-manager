@@ -9,7 +9,7 @@ from temporalio.testing import WorkflowEnvironment
 
 from quant_core.cycle import AnalysisCycle
 from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.persistence import SqlFactLedger, SqlRiskBudgetStore, create_schema
+from quant_core.persistence import SqlFactLedger, create_schema
 from quant_core.reconciliation import (
     DifferenceKind,
     ReconciliationEngine,
@@ -28,6 +28,7 @@ from quant_core.reconciliation_sql import (
     SqlMockExchangeTruthSource,
     SqlReconciliationReportStore,
 )
+from quant_core.risk_budget import SqlRiskBudgetStore
 from quant_core.shadow import SqlShadowStateReader
 
 

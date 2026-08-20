@@ -31,7 +31,6 @@ from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
     SqlFactLedger,
     SqlGovernanceRepository,
-    SqlRiskBudgetStore,
     analysis_cycles,
     analysis_trigger_batches,
     change_proposals,
@@ -41,6 +40,7 @@ from quant_core.persistence import (
     normalized_events,
     signal_candidates,
 )
+from quant_core.risk_budget import SqlRiskBudgetStore
 from quant_core.trigger import (
     AnalysisTriggerType,
     TriggerNow,

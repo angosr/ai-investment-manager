@@ -24,10 +24,10 @@ from quant_core.outcome_evaluation_sql import SqlOutcomeWindowRepository
 from quant_core.persistence import (
     SqlFactLedger,
     SqlLifecycleLedger,
-    SqlRiskBudgetStore,
     create_schema,
 )
 from quant_core.reconciliation import MockReconciler
+from quant_core.risk_budget import SqlRiskBudgetStore
 
 
 def _cycle(engine, config):

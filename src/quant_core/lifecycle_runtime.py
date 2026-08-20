@@ -36,10 +36,10 @@ from quant_core.mock_exchange_sql import SqlMockExchange
 from quant_core.persistence import (
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
-    SqlRiskBudgetStore,
 )
 from quant_core.platform.database import build_engine
 from quant_core.reconciliation import MockReconciler
+from quant_core.risk_budget import SqlRiskBudgetStore
 from quant_core.shadow import ShadowStateReader, SqlShadowStateReader
 from quant_core.workflow import OrchestrationPolicySnapshot
 

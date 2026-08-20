@@ -6,8 +6,10 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select, text
 
 from quant_core.market_data_sql import market_quotes
-from quant_core.persistence import analysis_cycles, portfolio_risk_budgets
+from quant_core.persistence import analysis_cycles
 from quant_core.platform.database import require_current_schema
+from quant_core.portfolio_protection import portfolio_protection_states
+from quant_core.risk_budget import portfolio_risk_budgets, risk_reservations
 from quant_core.schema import compose_metadata
 
 
@@ -52,3 +54,6 @@ def test_all_physical_database_tables_share_one_metadata_registry() -> None:
 
     assert analysis_cycles.metadata is registry
     assert market_quotes.metadata is registry
+    assert portfolio_protection_states.metadata is registry
+    assert portfolio_risk_budgets.metadata is registry
+    assert risk_reservations.metadata is registry
