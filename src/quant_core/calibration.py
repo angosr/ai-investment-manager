@@ -19,8 +19,34 @@ from quant_core.ids import content_hash, stable_id
 EDGE_CALIBRATION_MISSING = "EDGE_CALIBRATION_MISSING"
 
 
-def uncalibrated_ref(producer_version: str) -> str:
-    return f"uncalibrated:{producer_version}"
+def uncalibrated_ref(
+    producer_version: str,
+    analysis_behavior_hash: str | None = None,
+) -> str:
+    """Identify one exact producer cohort before an edge artifact exists."""
+
+    reference = f"uncalibrated:{producer_version}"
+    if analysis_behavior_hash is None:
+        return reference
+    if not (
+        len(analysis_behavior_hash) == 64
+        and all(character in "0123456789abcdef" for character in analysis_behavior_hash)
+    ):
+        raise ValueError("analysis_behavior_hash 必须是 64 位十六进制摘要")
+    return f"{reference}@{analysis_behavior_hash}"
+
+
+def _is_uncalibrated_ref(reference: str, producer_version: str) -> bool:
+    base = uncalibrated_ref(producer_version)
+    if reference == base:
+        return True
+    prefix = f"{base}@"
+    behavior_hash = reference.removeprefix(prefix)
+    return (
+        reference.startswith(prefix)
+        and len(behavior_hash) == 64
+        and all(character in "0123456789abcdef" for character in behavior_hash)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +222,10 @@ class EdgeCalibrationBook:
     def apply(self, candidate: SignalCandidate) -> SignalCandidate:
         if candidate.expected_gross_bps != Decimal(
             "0"
-        ) or candidate.calibration_ref != uncalibrated_ref(candidate.producer_version):
+        ) or not _is_uncalibrated_ref(
+            candidate.calibration_ref,
+            candidate.producer_version,
+        ):
             raise ValueError("Candidate Producer 不得自行填充校准收益")
         matches = [
             artifact

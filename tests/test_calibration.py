@@ -12,6 +12,7 @@ from quant_core.calibration import (
     CalibrationBuildSpec,
     EdgeCalibrationBook,
     EdgeCalibrationBuilder,
+    uncalibrated_ref,
 )
 from quant_core.config import CalibrationPolicy
 from quant_core.cycle import AnalysisCycle
@@ -72,6 +73,45 @@ def test_calibration_never_applies_an_artifact_from_a_different_source_cohort(
 
     assert unresolved.expected_gross_bps == 0
     assert unresolved.unknowns == (EDGE_CALIBRATION_MISSING,)
+
+
+def test_calibration_isolates_analysis_behavior_cohorts(
+    app_config, base_app_config, replay_input
+) -> None:
+    raw = AnalysisCycle.create(base_app_config).run(replay_input).candidates[0]
+    behavior_ref = uncalibrated_ref(raw.producer_version, "a" * 64)
+    artifact = app_config.calibration.artifacts[0]
+    payload = artifact.model_dump(mode="python", exclude={"artifact_hash"})
+    payload["source_calibration_ref"] = behavior_ref
+    scoped = EdgeCalibration(**payload, artifact_hash=content_hash(payload))
+    policy = app_config.calibration.model_copy(update={"artifacts": (scoped,)})
+
+    calibrated = EdgeCalibrationBook(policy).apply(
+        raw.model_copy(update={"calibration_ref": behavior_ref})
+    )
+    unresolved = EdgeCalibrationBook(policy).apply(
+        raw.model_copy(
+            update={
+                "calibration_ref": uncalibrated_ref(raw.producer_version, "b" * 64)
+            }
+        )
+    )
+
+    assert calibrated.calibration_ref == scoped.calibration_id
+    assert unresolved.calibration_ref.endswith("b" * 64)
+    assert unresolved.unknowns == (EDGE_CALIBRATION_MISSING,)
+
+
+def test_calibration_rejects_malformed_behavior_cohort(
+    app_config, base_app_config, replay_input
+) -> None:
+    raw = AnalysisCycle.create(base_app_config).run(replay_input).candidates[0]
+    malformed = raw.model_copy(
+        update={"calibration_ref": f"uncalibrated:{raw.producer_version}@not-a-hash"}
+    )
+
+    with pytest.raises(ValueError, match="不得自行填充校准收益"):
+        EdgeCalibrationBook(app_config.calibration).apply(malformed)
 
 
 def test_candidate_producer_cannot_self_assign_expected_edge(

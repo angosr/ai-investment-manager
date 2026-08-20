@@ -1327,21 +1327,33 @@ def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
         events=replay_input.events,
     )
     normalizer = ProposalNormalizer(app_config.proposal)
+    behavior_hash = analysis_behavior_hash(app_config)
 
-    candidates = normalizer.normalize(_proposal(replay_input), panel)
+    candidates = normalizer.normalize(
+        _proposal(replay_input),
+        panel,
+        analysis_behavior_hash=behavior_hash,
+    )
 
     assert len(candidates) == 1
     assert candidates[0].producer_id == "codex-analyst"
+    assert candidates[0].calibration_ref == (
+        f"uncalibrated:{app_config.proposal.version}@{behavior_hash}"
+    )
     assert not hasattr(candidates[0], "quantity")
 
     disclosed = _proposal(replay_input).model_copy(update={"unknowns": ("缺少资金费率与持仓量",)})
-    disclosed_candidates = normalizer.normalize(disclosed, panel)
+    disclosed_candidates = normalizer.normalize(
+        disclosed,
+        panel,
+        analysis_behavior_hash=behavior_hash,
+    )
     assert disclosed.unknowns == ("缺少资金费率与持仓量",)
     assert disclosed_candidates[0].unknowns == ("EDGE_CALIBRATION_MISSING",)
 
     bad = _proposal(replay_input).model_copy(update={"evidence_ids": ("missing",)})
     with pytest.raises(ValueError, match="evidence_id"):
-        normalizer.normalize(bad, panel)
+        normalizer.normalize(bad, panel, analysis_behavior_hash=behavior_hash)
 
     mismatched = _proposal(replay_input).model_copy(
         update={
@@ -1356,7 +1368,7 @@ def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
         }
     )
     with pytest.raises(ValueError, match="方向预测不一致"):
-        normalizer.normalize(mismatched, panel)
+        normalizer.normalize(mismatched, panel, analysis_behavior_hash=behavior_hash)
 
     unsupported_horizon = _proposal(replay_input).model_copy(
         update={
@@ -1370,7 +1382,11 @@ def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
         }
     )
     with pytest.raises(ValueError, match="冻结允许集合"):
-        normalizer.normalize(unsupported_horizon, panel)
+        normalizer.normalize(
+            unsupported_horizon,
+            panel,
+            analysis_behavior_hash=behavior_hash,
+        )
 
 
 @dataclass

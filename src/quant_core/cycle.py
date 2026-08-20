@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator
 
-from quant_core.analyst import Analyst, ProposalNormalizer
+from quant_core.analyst import Analyst, ProposalNormalizer, analysis_behavior_hash
 from quant_core.calibration import EdgeCalibrationBook
 from quant_core.config import AiMode, AppConfig
 from quant_core.decision import (
@@ -274,6 +274,7 @@ class AnalysisCycle:
                             for candidate in ProposalNormalizer(self.config.proposal).normalize(
                                 proposal,
                                 panel,
+                                analysis_behavior_hash=analysis_behavior_hash(self.config),
                                 signal_observed_at=decision_at,
                             )
                         )

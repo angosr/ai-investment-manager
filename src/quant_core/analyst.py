@@ -1715,6 +1715,7 @@ class ProposalNormalizer:
         proposal: AnalysisProposal,
         panel: PanelSnapshot,
         *,
+        analysis_behavior_hash: str,
         signal_observed_at: datetime | None = None,
     ) -> tuple[SignalCandidate, ...]:
         signal_at = signal_observed_at or panel.as_of
@@ -1785,7 +1786,10 @@ class ProposalNormalizer:
             expected_edge_half_life_seconds=(self._policy.expected_edge_half_life_seconds),
             raw_score=proposal.confidence,
             expected_gross_bps=Decimal("0"),
-            calibration_ref=uncalibrated_ref(self._policy.version),
+            calibration_ref=uncalibrated_ref(
+                self._policy.version,
+                analysis_behavior_hash,
+            ),
             unknowns=(EDGE_CALIBRATION_MISSING,),
         )
         return (candidate,)
