@@ -10,12 +10,14 @@ from quant_core.asset_management import (
     AssessmentUncertainty,
     CalibratedForecast,
     ContextAssessment,
+    ContextView,
     ForecastRole,
     PricedState,
 )
 from quant_core.decision_packet import DecisionPacket
 from quant_core.domain import DirectionalView, FrozenModel, Money, _require_utc
 from quant_core.ids import content_hash, stable_id
+from quant_core.market_data import MarketTrade
 
 
 class AssessmentForecastPolicy(FrozenModel):
@@ -23,6 +25,7 @@ class AssessmentForecastPolicy(FrozenModel):
     producer_id: str = Field(default="codex-context-assessment", min_length=1)
     forecast_family: str = Field(default="AI_EVENT_CONTEXT", min_length=1)
     maximum_age_seconds: int = Field(gt=0, le=604_800)
+    maximum_reference_market_age_seconds: int = Field(gt=0, le=3_600)
     minimum_sample_size: int = Field(gt=0)
     minimum_non_overlapping_sample_size: int = Field(gt=0)
 
@@ -137,6 +140,7 @@ class AssessmentForecastProjector:
         packet: DecisionPacket,
         assessment: ContextAssessment,
         calibrations: tuple[AssessmentViewCalibration, ...],
+        reference_trades: tuple[MarketTrade, ...],
     ) -> AssessmentForecastProjectionResult:
         self._require_assessment_binding(packet=packet, assessment=assessment)
         calibration_by_key: dict[tuple, AssessmentViewCalibration] = {}
@@ -149,6 +153,11 @@ class AssessmentForecastProjector:
             calibration_by_key[key] = calibration
 
         asset_states = {item.asset: item for item in packet.asset_states}
+        trades_by_symbol = self._reference_trades(
+            packet=packet,
+            assessment=assessment,
+            reference_trades=reference_trades,
+        )
         forecasts: list[CalibratedForecast] = []
         uncalibrated: list[tuple[str, int]] = []
         for view in assessment.views:
@@ -171,7 +180,7 @@ class AssessmentForecastProjector:
                     packet=packet,
                     assessment=assessment,
                     view=view,
-                    reference_price=asset_state.last,
+                    reference_trade=trades_by_symbol[asset_state.market_symbol],
                     calibration=calibration,
                 )
             )
@@ -192,8 +201,8 @@ class AssessmentForecastProjector:
         *,
         packet: DecisionPacket,
         assessment: ContextAssessment,
-        view,
-        reference_price: Decimal,
+        view: ContextView,
+        reference_trade: MarketTrade,
         calibration: AssessmentViewCalibration,
     ) -> CalibratedForecast:
         validity_seconds = min(
@@ -208,7 +217,7 @@ class AssessmentForecastProjector:
             "symbol": calibration.symbol,
             "horizon_minutes": view.horizon_minutes,
             "direction": view.direction.value,
-            "reference_price": reference_price,
+            "reference_price": reference_trade.price,
             "expected_edge_half_life_seconds": (
                 calibration.expected_edge_half_life_seconds
             ),
@@ -233,6 +242,7 @@ class AssessmentForecastProjector:
                         packet.content_hash,
                         assessment.assessment_id,
                         calibration.calibration_id,
+                        content_hash(reference_trade),
                     )
                 )
             ),
@@ -241,6 +251,34 @@ class AssessmentForecastProjector:
             forecast_id=stable_id("calibrated_forecast", content_hash(payload)),
             **payload,
         )
+
+    def _reference_trades(
+        self,
+        *,
+        packet: DecisionPacket,
+        assessment: ContextAssessment,
+        reference_trades: tuple[MarketTrade, ...],
+    ) -> dict[str, MarketTrade]:
+        by_symbol = {item.symbol: item for item in reference_trades}
+        if len(by_symbol) != len(reference_trades):
+            raise ValueError("AI_EVENT reference trade 不能重复 symbol")
+        required_symbols = {item.market_symbol for item in packet.asset_states}
+        missing = tuple(sorted(required_symbols - set(by_symbol)))
+        if missing:
+            raise ValueError(
+                "AI_EVENT 缺少 Assessment 完成时的 reference trade: "
+                + ", ".join(missing)
+            )
+        for trade in reference_trades:
+            age = assessment.available_at - trade.event_time
+            if (
+                trade.observed_at > assessment.available_at
+                or age < timedelta(0)
+                or age
+                > timedelta(seconds=self._policy.maximum_reference_market_age_seconds)
+            ):
+                raise ValueError("AI_EVENT reference trade 在 Assessment 完成时不可见或过期")
+        return by_symbol
 
     @staticmethod
     def _require_assessment_binding(

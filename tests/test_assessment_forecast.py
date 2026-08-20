@@ -24,6 +24,7 @@ from quant_core.decision_packet import (
     RequiredView,
 )
 from quant_core.domain import DirectionalView
+from quant_core.market_data import MarketTrade
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 HASH = "a" * 64
@@ -149,10 +150,27 @@ def _projector() -> AssessmentForecastProjector:
         AssessmentForecastPolicy(
             version="assessment-forecast-v1",
             maximum_age_seconds=3_600,
+            maximum_reference_market_age_seconds=30,
             minimum_sample_size=40,
             minimum_non_overlapping_sample_size=30,
         )
     )
+
+
+def _reference_trade(**updates) -> MarketTrade:
+    values = {
+        "trade_id": "trade-reference-1",
+        "symbol": "BTCUSDT",
+        "aggregate_trade_id": 1,
+        "event_time": NOW + timedelta(seconds=19),
+        "observed_at": NOW + timedelta(seconds=20),
+        "price": Decimal("70010"),
+        "quantity": Decimal("1"),
+        "buyer_is_maker": False,
+        "source": "binance",
+    }
+    values.update(updates)
+    return MarketTrade(**values)
 
 
 def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
@@ -160,6 +178,7 @@ def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
         packet=_packet(),
         assessment=_assessment(),
         calibrations=(_calibration(),),
+        reference_trades=(_reference_trade(),),
     )
 
     assert result.uncalibrated_views == ()
@@ -167,7 +186,7 @@ def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
     forecast = result.forecasts[0]
     assert forecast.role == ForecastRole.AI_EVENT
     assert forecast.symbol == "BTCUSDT"
-    assert forecast.reference_price == Decimal("70000")
+    assert forecast.reference_price == Decimal("70010")
     assert forecast.assessment_id == "assessment-1"
     assert forecast.base_forecast_id is None
     assert forecast.conservative_gross_bps == Decimal("7")
@@ -179,11 +198,13 @@ def test_missing_or_underpowered_calibration_cannot_grant_ai_capital_signal() ->
         packet=_packet(),
         assessment=_assessment(),
         calibrations=(),
+        reference_trades=(_reference_trade(),),
     )
     underpowered = _projector().project(
         packet=_packet(),
         assessment=_assessment(),
         calibrations=(_calibration(non_overlapping_sample_size=29),),
+        reference_trades=(_reference_trade(),),
     )
 
     assert missing.forecasts == ()
@@ -198,6 +219,22 @@ def test_future_calibration_is_rejected_instead_of_leaking() -> None:
             packet=_packet(),
             assessment=_assessment(),
             calibrations=(_calibration(available_at=NOW + timedelta(seconds=1)),),
+            reference_trades=(_reference_trade(),),
+        )
+
+
+def test_stale_reference_trade_cannot_hide_ai_latency() -> None:
+    with pytest.raises(ValueError, match="过期"):
+        _projector().project(
+            packet=_packet(),
+            assessment=_assessment(),
+            calibrations=(_calibration(),),
+            reference_trades=(
+                _reference_trade(
+                    event_time=NOW - timedelta(minutes=1),
+                    observed_at=NOW - timedelta(minutes=1),
+                ),
+            ),
         )
 
 
