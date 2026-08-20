@@ -24,10 +24,15 @@ class AssessmentForecastPolicy(FrozenModel):
     version: str = Field(min_length=1)
     producer_id: str = Field(default="codex-context-assessment", min_length=1)
     forecast_family: str = Field(default="AI_EVENT_CONTEXT", min_length=1)
+    calibration_method_version: str = Field(
+        default="assessment-mean-lower-bound-v1",
+        min_length=1,
+    )
+    lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
     maximum_age_seconds: int = Field(gt=0, le=604_800)
     maximum_reference_market_age_seconds: int = Field(gt=0, le=3_600)
-    minimum_sample_size: int = Field(gt=0)
-    minimum_non_overlapping_sample_size: int = Field(gt=0)
+    minimum_sample_size: int = Field(ge=2)
+    minimum_non_overlapping_sample_size: int = Field(ge=2)
 
     @model_validator(mode="after")
     def sample_thresholds_must_be_possible(self):
@@ -39,12 +44,19 @@ class AssessmentForecastPolicy(FrozenModel):
 class AssessmentViewCalibration(FrozenModel):
     calibration_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
+    analysis_scope: str = Field(min_length=1)
+    analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    outcome_evaluation_version: str = Field(min_length=1)
+    method_version: str = Field(min_length=1)
+    lower_confidence_z: Decimal = Field(gt=0)
     asset: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
     already_priced: PricedState
     uncertainty: AssessmentUncertainty
+    training_start: datetime
+    training_end: datetime
     trained_through: datetime
     available_at: datetime
     expected_edge_half_life_seconds: int = Field(gt=0, le=604_800)
@@ -54,21 +66,38 @@ class AssessmentViewCalibration(FrozenModel):
     sample_size: int = Field(gt=0)
     non_overlapping_sample_size: int = Field(gt=0)
     source_refs: tuple[str, ...] = Field(min_length=1)
+    non_overlapping_source_refs: tuple[str, ...] = Field(min_length=1)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
+    _utc_training_start = field_validator("training_start")(_require_utc)
+    _utc_training_end = field_validator("training_end")(_require_utc)
     _utc_trained_through = field_validator("trained_through")(_require_utc)
     _utc_available_at = field_validator("available_at")(_require_utc)
 
     @model_validator(mode="after")
     def identity_and_evidence_must_be_valid(self):
-        if self.trained_through > self.available_at:
-            raise ValueError("校准训练截止时间不能晚于制品可用时间")
+        if not (
+            self.training_start
+            < self.trained_through
+            <= self.training_end
+            <= self.available_at
+        ):
+            raise ValueError("校准训练窗口、标签截止和制品可用时间顺序非法")
         if self.conservative_gross_bps > self.expected_gross_bps:
             raise ValueError("校准保守收益不能高于均值")
         if self.non_overlapping_sample_size > self.sample_size:
             raise ValueError("校准非重叠样本不能超过总样本")
-        if tuple(sorted(set(self.source_refs))) != self.source_refs:
-            raise ValueError("校准 source_refs 必须唯一且排序")
+        for name in ("source_refs", "non_overlapping_source_refs"):
+            values = getattr(self, name)
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"校准 {name} 必须唯一且排序")
+        if (
+            len(self.source_refs) != self.sample_size
+            or len(self.non_overlapping_source_refs)
+            != self.non_overlapping_sample_size
+            or not set(self.non_overlapping_source_refs).issubset(self.source_refs)
+        ):
+            raise ValueError("校准样本数量与 Outcome 引用不一致")
         expected_hash = content_hash(_calibration_payload(self))
         if self.content_hash != expected_hash:
             raise ValueError("AssessmentViewCalibration content_hash 不匹配")
@@ -80,12 +109,19 @@ class AssessmentViewCalibration(FrozenModel):
 def build_assessment_view_calibration(
     *,
     version: str,
+    analysis_scope: str,
+    analysis_behavior_hash: str,
+    outcome_evaluation_version: str,
+    method_version: str,
+    lower_confidence_z: Decimal,
     asset: str,
     symbol: str,
     horizon_minutes: int,
     direction: DirectionalView,
     already_priced: PricedState,
     uncertainty: AssessmentUncertainty,
+    training_start: datetime,
+    training_end: datetime,
     trained_through: datetime,
     available_at: datetime,
     expected_edge_half_life_seconds: int,
@@ -95,15 +131,23 @@ def build_assessment_view_calibration(
     sample_size: int,
     non_overlapping_sample_size: int,
     source_refs: tuple[str, ...],
+    non_overlapping_source_refs: tuple[str, ...],
 ) -> AssessmentViewCalibration:
     payload = {
         "version": version,
+        "analysis_scope": analysis_scope,
+        "analysis_behavior_hash": analysis_behavior_hash,
+        "outcome_evaluation_version": outcome_evaluation_version,
+        "method_version": method_version,
+        "lower_confidence_z": lower_confidence_z,
         "asset": asset,
         "symbol": symbol,
         "horizon_minutes": horizon_minutes,
         "direction": direction.value,
         "already_priced": already_priced.value,
         "uncertainty": uncertainty.value,
+        "training_start": _require_utc(training_start).isoformat(),
+        "training_end": _require_utc(training_end).isoformat(),
         "trained_through": _require_utc(trained_through).isoformat(),
         "available_at": _require_utc(available_at).isoformat(),
         "expected_edge_half_life_seconds": expected_edge_half_life_seconds,
@@ -113,6 +157,9 @@ def build_assessment_view_calibration(
         "sample_size": sample_size,
         "non_overlapping_sample_size": non_overlapping_sample_size,
         "source_refs": tuple(sorted(source_refs)),
+        "non_overlapping_source_refs": tuple(
+            sorted(non_overlapping_source_refs)
+        ),
     }
     digest = content_hash(payload)
     return AssessmentViewCalibration(
@@ -150,6 +197,10 @@ class AssessmentForecastProjector:
                 raise ValueError("同一 Assessment view cohort 只能有一个校准制品")
             if calibration.available_at > assessment.as_of:
                 raise ValueError("Assessment 不能使用 as_of 之后才可用的校准制品")
+            if calibration.analysis_behavior_hash != assessment.analysis_behavior_hash:
+                raise ValueError("Assessment 不能使用其他分析行为 cohort 的校准制品")
+            if calibration.analysis_scope != assessment.analysis_scope:
+                raise ValueError("Assessment 不能使用其他 analysis scope 的校准制品")
             calibration_by_key[key] = calibration
 
         asset_states = {item.asset: item for item in packet.asset_states}
@@ -316,12 +367,19 @@ def _calibration_key(calibration: AssessmentViewCalibration) -> tuple:
 def _calibration_payload(calibration: AssessmentViewCalibration) -> dict:
     return {
         "version": calibration.version,
+        "analysis_scope": calibration.analysis_scope,
+        "analysis_behavior_hash": calibration.analysis_behavior_hash,
+        "outcome_evaluation_version": calibration.outcome_evaluation_version,
+        "method_version": calibration.method_version,
+        "lower_confidence_z": calibration.lower_confidence_z,
         "asset": calibration.asset,
         "symbol": calibration.symbol,
         "horizon_minutes": calibration.horizon_minutes,
         "direction": calibration.direction.value,
         "already_priced": calibration.already_priced.value,
         "uncertainty": calibration.uncertainty.value,
+        "training_start": calibration.training_start.isoformat(),
+        "training_end": calibration.training_end.isoformat(),
         "trained_through": calibration.trained_through.isoformat(),
         "available_at": calibration.available_at.isoformat(),
         "expected_edge_half_life_seconds": (
@@ -333,4 +391,5 @@ def _calibration_payload(calibration: AssessmentViewCalibration) -> dict:
         "sample_size": calibration.sample_size,
         "non_overlapping_sample_size": calibration.non_overlapping_sample_size,
         "source_refs": calibration.source_refs,
+        "non_overlapping_source_refs": calibration.non_overlapping_source_refs,
     }
