@@ -6,12 +6,13 @@ from investment_manager.execution.account_repository import SqlAccountSnapshotRe
 from investment_manager.execution.reconciliation.repository import (
     SqlReconciliationReportStore,
 )
+from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.application import DecisionPacketPreparation
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
-from investment_manager.state.projection import SqlFactStateProjector
+from investment_manager.state.projection import SqlStateProjector
 from investment_manager.state.repository import SqlFactStateStore
 
 
@@ -30,8 +31,9 @@ def assemble_decision_packet_preparation(
             ),
             reports=SqlReconciliationReportStore(engine),
         ),
+        event_reader=SqlEventStore(engine),
         facts=SqlFactStateStore(engine),
-        projector=SqlFactStateProjector(
+        projector=SqlStateProjector(
             engine,
             projection_version=config.decision_state.version,
             delta_policy=config.decision_state.delta_policy,

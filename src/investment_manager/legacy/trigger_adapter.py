@@ -129,6 +129,16 @@ class TriggerDispatchBuilder:
         evidence_ids = tuple(
             sorted({evidence for item in batch.triggers for evidence in item.evidence_ids})
         )
+        intelligence_evidence_ids = tuple(
+            sorted(
+                {
+                    evidence
+                    for item in batch.triggers
+                    if item.trigger_type == AnalysisTriggerType.INTELLIGENCE_INSERTED
+                    for evidence in item.evidence_ids
+                }
+            )
+        )
         cycle_input = CycleInput(
             market=market,
             account=account,
@@ -163,6 +173,7 @@ class TriggerDispatchBuilder:
                 analysis_id=stable_id("assessment_input", batch.batch_id),
                 as_of=as_of,
                 mandate=self._config.assessment.mandate,
+                intelligence_evidence_ids=intelligence_evidence_ids,
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None

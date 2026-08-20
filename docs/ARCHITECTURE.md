@@ -55,6 +55,27 @@ AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 
 
 现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径。新链完成生产接线、恢复和回放验收后，旧模型、表写入、配置、CLI 和测试一次性删除；不得双写、双读或用适配器长期共存。
 
+### 3.1 外部事件证据边界
+
+一手记录与聚合事件不得共享事实身份。官方原文经过可修订投影成为
+`CanonicalFactRevision`；新闻聚合、快讯和社区内容保持为 `IntelligenceEvent`，无论标题
+多么确定都不能冒充权威事实或独立来源确认。
+
+外部事件进入新分析链必须同时满足：
+
+1. 采集路由、来源、事件时间、本地首次可见时间和内容身份已经冻结；
+2. 当前 `TriggerPlan` 已按来源无关的优先级、冷却和合并规则接受该事件；
+3. `TriggerBatch` 精确引用的 `evidence_id` 能在同一时点重建，禁止分析时扫描“最近全部新闻”；
+4. State 将事件保存为内容寻址的 Evidence ref，`MaterialDelta` 明确使用
+   `INTELLIGENCE_EVENT` 类别，不能改写为 `FIRST_PARTY_FACT`；
+5. `DecisionPacket` 对事件单独执行数量、字符、时间和相关性上限，所有外部文本先清洗，
+   且事件永久标记 `prompt_injection_suspected=true`；容量不足时以显式 omitted refs 留痕，
+   不用截断后的半条事实顶替原输入。
+
+事件可以触发 `ContextAssessment` 和风险复核，但不能直接生成 Forecast、仓位或订单。
+同一事件跨品种产生的触发仍只形成一个 portfolio scope 的新状态变化；稳定 Evidence ref、
+State 内容身份和 Assessment 权威复用共同抑制重复 Codex 调用。
+
 ## 4. 目标目录
 
 ```text

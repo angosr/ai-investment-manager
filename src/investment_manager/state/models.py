@@ -19,6 +19,7 @@ class FactRevisionStatus(StrEnum):
 
 class DeltaCategory(StrEnum):
     FIRST_PARTY_FACT = "FIRST_PARTY_FACT"
+    INTELLIGENCE_EVENT = "INTELLIGENCE_EVENT"
     MARKET = "MARKET"
     DERIVATIVES = "DERIVATIVES"
     CROSS_ASSET = "CROSS_ASSET"
@@ -74,6 +75,7 @@ class StateSnapshot(FrozenModel):
     fact_revision_ids: tuple[str, ...] = ()
     market_snapshot_refs: tuple[str, ...] = ()
     feature_snapshot_refs: tuple[str, ...] = ()
+    intelligence_event_refs: tuple[str, ...] = ()
     account_snapshot_ref: str | None = Field(default=None, min_length=1)
     data_quality_codes: tuple[str, ...] = ()
     coverage_gap_codes: tuple[str, ...] = ()
@@ -90,6 +92,7 @@ class StateSnapshot(FrozenModel):
             "fact_revision_ids",
             "market_snapshot_refs",
             "feature_snapshot_refs",
+            "intelligence_event_refs",
             "data_quality_codes",
             "coverage_gap_codes",
         ):
@@ -114,6 +117,7 @@ class MaterialDelta(FrozenModel):
     horizons_minutes: tuple[int, ...] = Field(min_length=1)
     fact_revision_ids: tuple[str, ...] = ()
     feature_snapshot_refs: tuple[str, ...] = ()
+    intelligence_event_refs: tuple[str, ...] = ()
     reason_codes: tuple[str, ...] = Field(min_length=1)
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
@@ -132,6 +136,7 @@ class MaterialDelta(FrozenModel):
             "horizons_minutes",
             "fact_revision_ids",
             "feature_snapshot_refs",
+            "intelligence_event_refs",
             "reason_codes",
         ):
             values = getattr(self, name)
@@ -139,6 +144,10 @@ class MaterialDelta(FrozenModel):
                 raise ValueError(f"{name} 必须唯一且排序")
         if any(value <= 0 for value in self.horizons_minutes):
             raise ValueError("horizons_minutes 必须全部为正数")
-        if not self.fact_revision_ids and not self.feature_snapshot_refs:
-            raise ValueError("MaterialDelta 必须引用事实或特征变化")
+        if (
+            not self.fact_revision_ids
+            and not self.feature_snapshot_refs
+            and not self.intelligence_event_refs
+        ):
+            raise ValueError("MaterialDelta 必须引用事实、特征或事件变化")
         return self

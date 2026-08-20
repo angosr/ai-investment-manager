@@ -307,8 +307,18 @@ def test_sql_event_store_reads_only_latest_bounded_symbol_events(replay_input) -
         inserted.append(event)
 
     visible = store.visible(symbol="BTCUSDT", as_of=inserted[-1].observed_at)
+    exact = store.exact(
+        evidence_ids=("bounded-0", "bounded-2"),
+        as_of=inserted[-1].observed_at,
+    )
 
     assert [item.evidence_id for item in visible] == ["bounded-1", "bounded-2"]
+    assert [item.evidence_id for item in exact] == ["bounded-0", "bounded-2"]
+    with pytest.raises(ValueError, match="缺少截至 as_of 可见的事件"):
+        store.exact(
+            evidence_ids=("bounded-2",),
+            as_of=inserted[1].observed_at,
+        )
 
 
 def test_collector_service_runs_bounded_collector_and_stops_cleanly() -> None:

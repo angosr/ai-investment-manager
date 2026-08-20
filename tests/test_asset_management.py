@@ -113,7 +113,7 @@ def test_state_snapshot_rejects_non_deterministic_reference_order() -> None:
 
 
 def test_material_delta_requires_real_referenced_change() -> None:
-    with pytest.raises(ValidationError, match="必须引用事实或特征变化"):
+    with pytest.raises(ValidationError, match="必须引用事实、特征或事件变化"):
         MaterialDelta(
             delta_id="delta-1",
             policy_version="delta-policy-v1",

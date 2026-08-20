@@ -8,10 +8,10 @@ from investment_manager.information.official.repository import SqlFedOfficialInf
 from investment_manager.schema import create_schema
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
-    FactDeltaPolicy,
     FactDeltaRule,
     OfficialFactProjectionPolicy,
-    build_fact_material_delta,
+    StateDeltaPolicy,
+    build_state_material_delta,
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
@@ -29,10 +29,12 @@ FACT_POLICY = OfficialFactProjectionPolicy(
     version="fed-fact-v1",
     affected_assets=("BTC", "ETH"),
 )
-DELTA_POLICY = FactDeltaPolicy(
+DELTA_POLICY = StateDeltaPolicy(
     version="fact-delta-v1",
     validity_seconds=3_600,
     horizons_minutes=(60, 240),
+    intelligence_risk_factors=("EXTERNAL_INFORMATION",),
+    intelligence_reason_code="INTELLIGENCE_EVENT_INSERTED",
     rules=(
         FactDeltaRule(
             fact_type=FOMC_MEETING_FACT_TYPE,
@@ -165,7 +167,7 @@ def test_state_and_delta_transition_is_atomic_idempotent_and_replayable() -> Non
         built_at=second_at,
         facts=(second_fact,),
     )
-    delta = build_fact_material_delta(
+    delta = build_state_material_delta(
         previous=first_state,
         current=second_state,
         current_facts=(second_fact,),
@@ -221,7 +223,7 @@ def test_failed_delta_rolls_back_new_state() -> None:
         built_at=OBSERVED_AT,
         facts=(fact,),
     )
-    delta = build_fact_material_delta(
+    delta = build_state_material_delta(
         previous=missing_previous,
         current=current,
         current_facts=(fact,),
@@ -335,7 +337,7 @@ def test_transition_cannot_skip_the_latest_comparable_state() -> None:
         built_at=OBSERVED_AT,
         facts=(fact,),
     )
-    skipped = build_fact_material_delta(
+    skipped = build_state_material_delta(
         previous=root,
         current=current,
         current_facts=(fact,),

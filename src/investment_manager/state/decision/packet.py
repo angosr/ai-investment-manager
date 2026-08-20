@@ -6,7 +6,7 @@ from decimal import Decimal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.information.models import SourceTier
+from investment_manager.information.models import IntelligenceEvent, SourceTier
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -132,6 +132,7 @@ class PacketDelta(FrozenModel):
     horizons_minutes: tuple[int, ...]
     fact_revision_ids: tuple[str, ...]
     feature_snapshot_refs: tuple[str, ...]
+    intelligence_event_refs: tuple[str, ...] = ()
     reason_codes: tuple[str, ...]
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
@@ -158,6 +159,28 @@ class PacketFact(FrozenModel):
     _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
+class PacketIntelligenceEvent(FrozenModel):
+    evidence_ref: str = Field(pattern=SHA256_PATTERN)
+    evidence_id: str = Field(min_length=1)
+    normalizer_version: str = Field(min_length=1)
+    acquisition_route: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    event_time: datetime
+    observed_at: datetime
+    title: str = Field(min_length=1)
+    body: str
+    symbols: tuple[str, ...]
+    relevance: Decimal
+    impact: Decimal
+    source_reliability: Decimal
+    novelty: Decimal
+    prompt_injection_suspected: bool = True
+    directly_triggered: bool
+
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+
 class RequiredView(FrozenModel):
     asset: str
     horizon_minutes: int = Field(gt=0)
@@ -178,12 +201,14 @@ class DecisionPacket(FrozenModel):
     asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
     deltas: tuple[PacketDelta, ...] = Field(min_length=1)
     facts: tuple[PacketFact, ...]
+    intelligence_events: tuple[PacketIntelligenceEvent, ...] = ()
     active_hypotheses: tuple[str, ...]
     previous_assessment_refs: tuple[str, ...]
     data_quality_codes: tuple[str, ...]
     coverage_gap_codes: tuple[str, ...]
     missing_fact_revision_ids: tuple[str, ...]
     omitted_fact_revision_ids: tuple[str, ...]
+    omitted_intelligence_event_refs: tuple[str, ...] = ()
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
     _utc_as_of = field_validator("as_of")(require_utc)
@@ -223,12 +248,16 @@ class DecisionPacket(FrozenModel):
         revision_ids = tuple(item.revision_id for item in self.facts)
         if len(set(revision_ids)) != len(revision_ids):
             raise ValueError("DecisionPacket facts revision_id 不得重复")
+        event_refs = tuple(item.evidence_ref for item in self.intelligence_events)
+        if len(set(event_refs)) != len(event_refs):
+            raise ValueError("DecisionPacket intelligence event ref 不得重复")
         for name in (
             "previous_assessment_refs",
             "data_quality_codes",
             "coverage_gap_codes",
             "missing_fact_revision_ids",
             "omitted_fact_revision_ids",
+            "omitted_intelligence_event_refs",
         ):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
@@ -261,6 +290,7 @@ class DecisionPacketBuilder:
         state: StateSnapshot,
         deltas: tuple[MaterialDelta, ...],
         facts: tuple[VisibleFact, ...],
+        intelligence_events: tuple[IntelligenceEvent, ...] = (),
         account: AccountSnapshot,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
@@ -275,6 +305,7 @@ class DecisionPacketBuilder:
             state=state,
             deltas=ordered_deltas,
             facts=facts,
+            intelligence_events=intelligence_events,
             account=account,
             markets=markets,
             features=features,
@@ -297,6 +328,15 @@ class DecisionPacketBuilder:
             mandate=mandate,
             facts=facts,
             direct_fact_ids=frozenset(direct_fact_ids),
+        )
+        direct_event_refs = frozenset(
+            event_ref
+            for delta in ordered_deltas
+            for event_ref in delta.intelligence_event_refs
+        )
+        selected_events, omitted_events = self._select_intelligence_events(
+            events=intelligence_events,
+            direct_event_refs=direct_event_refs,
         )
         market_by_symbol = {item.symbol: item for item in markets}
         feature_by_symbol = {item.symbol: item for item in features}
@@ -328,12 +368,14 @@ class DecisionPacketBuilder:
             "asset_states": asset_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
             "facts": selected,
+            "intelligence_events": selected_events,
             "active_hypotheses": active_hypotheses,
             "previous_assessment_refs": previous_assessment_refs,
             "data_quality_codes": state.data_quality_codes,
             "coverage_gap_codes": state.coverage_gap_codes,
             "missing_fact_revision_ids": missing_fact_ids,
             "omitted_fact_revision_ids": omitted,
+            "omitted_intelligence_event_refs": omitted_events,
         }
         packet = DecisionPacket.create(**payload)
         packet_characters = len(canonical_json(packet))
@@ -350,6 +392,7 @@ class DecisionPacketBuilder:
         state: StateSnapshot,
         deltas: tuple[MaterialDelta, ...],
         facts: tuple[VisibleFact, ...],
+        intelligence_events: tuple[IntelligenceEvent, ...],
         account: AccountSnapshot,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
@@ -393,6 +436,14 @@ class DecisionPacketBuilder:
                 raise ValueError("事实修订晚于 StateSnapshot as_of")
             if visible.fact.revision_id not in state_fact_ids:
                 raise ValueError("事实修订不属于 StateSnapshot")
+        event_ids = tuple(item.evidence_id for item in intelligence_events)
+        if tuple(sorted(set(event_ids))) != event_ids:
+            raise ValueError("IntelligenceEvent 必须按 evidence_id 唯一且排序")
+        event_refs = tuple(sorted(content_hash(item) for item in intelligence_events))
+        if state.intelligence_event_refs != event_refs:
+            raise ValueError("事件事实与 StateSnapshot intelligence refs 不一致")
+        if any(item.observed_at > state.as_of for item in intelligence_events):
+            raise ValueError("IntelligenceEvent 晚于 StateSnapshot as_of")
         for delta in deltas:
             if delta.analysis_scope != mandate.analysis_scope:
                 raise ValueError("MaterialDelta 与 AnalysisMandate scope 不一致")
@@ -400,6 +451,70 @@ class DecisionPacketBuilder:
                 raise ValueError("MaterialDelta 未指向当前 StateSnapshot")
             if not delta.observed_at <= state.as_of < delta.expires_at:
                 raise ValueError("MaterialDelta 在 DecisionPacket as_of 不可用")
+
+    def _select_intelligence_events(
+        self,
+        *,
+        events: tuple[IntelligenceEvent, ...],
+        direct_event_refs: frozenset[str],
+    ) -> tuple[tuple[PacketIntelligenceEvent, ...], tuple[str, ...]]:
+        ordered = sorted(
+            events,
+            key=lambda item: (
+                content_hash(item) not in direct_event_refs,
+                -item.impact,
+                -item.source_reliability,
+                -item.novelty,
+                -item.observed_at.timestamp(),
+                item.evidence_id,
+            ),
+        )
+        selected: list[PacketIntelligenceEvent] = []
+        omitted: list[str] = []
+        used_characters = 0
+        for event in ordered:
+            evidence_ref = content_hash(event)
+            title, _ = sanitize_external_text(
+                event.title,
+                maximum_length=min(
+                    240,
+                    self._policy.maximum_characters_per_intelligence_event,
+                ),
+            )
+            body, _ = sanitize_external_text(
+                event.body,
+                maximum_length=self._policy.maximum_characters_per_intelligence_event,
+            )
+            character_cost = len(title) + len(body)
+            if (
+                len(selected) >= self._policy.maximum_intelligence_events
+                or used_characters + character_cost
+                > self._policy.maximum_intelligence_characters
+            ):
+                omitted.append(evidence_ref)
+                continue
+            selected.append(
+                PacketIntelligenceEvent(
+                    evidence_ref=evidence_ref,
+                    evidence_id=event.evidence_id,
+                    normalizer_version=event.normalizer_version,
+                    acquisition_route=event.acquisition_route,
+                    source=event.source,
+                    event_time=event.event_time,
+                    observed_at=event.observed_at,
+                    title=title,
+                    body=body,
+                    symbols=event.symbols,
+                    relevance=event.relevance,
+                    impact=event.impact,
+                    source_reliability=event.source_reliability,
+                    novelty=event.novelty,
+                    prompt_injection_suspected=True,
+                    directly_triggered=evidence_ref in direct_event_refs,
+                )
+            )
+            used_characters += character_cost
+        return tuple(selected), tuple(sorted(omitted))
 
     def _select_facts(
         self,
@@ -537,5 +652,6 @@ class DecisionPacketBuilder:
             horizons_minutes=delta.horizons_minutes,
             fact_revision_ids=delta.fact_revision_ids,
             feature_snapshot_refs=delta.feature_snapshot_refs,
+            intelligence_event_refs=delta.intelligence_event_refs,
             reason_codes=delta.reason_codes,
         )

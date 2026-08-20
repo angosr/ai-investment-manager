@@ -10,10 +10,10 @@ from investment_manager.information.official.records import (
 from investment_manager.state.facts import (
     FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
-    FactDeltaPolicy,
     FactDeltaRule,
     OfficialFactProjectionPolicy,
-    build_fact_material_delta,
+    StateDeltaPolicy,
+    build_state_material_delta,
     build_state_snapshot,
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
@@ -25,10 +25,12 @@ FACT_POLICY = OfficialFactProjectionPolicy(
     version="fed-fact-v1",
     affected_assets=("BTC", "ETH"),
 )
-DELTA_POLICY = FactDeltaPolicy(
+DELTA_POLICY = StateDeltaPolicy(
     version="fact-delta-v1",
     validity_seconds=3_600,
     horizons_minutes=(60, 240),
+    intelligence_risk_factors=("EXTERNAL_INFORMATION",),
+    intelligence_reason_code="INTELLIGENCE_EVENT_INSERTED",
     rules=(
         FactDeltaRule(
             fact_type=FED_MONETARY_RELEASE_FACT_TYPE,
@@ -157,7 +159,7 @@ def test_fact_delta_is_noop_on_bootstrap_and_emits_only_new_revision() -> None:
         facts=(first_fact,),
     )
     assert (
-        build_fact_material_delta(
+        build_state_material_delta(
             previous=None,
             current=first_state,
             current_facts=(first_fact,),
@@ -188,7 +190,7 @@ def test_fact_delta_is_noop_on_bootstrap_and_emits_only_new_revision() -> None:
         facts=(second_fact,),
     )
 
-    delta = build_fact_material_delta(
+    delta = build_state_material_delta(
         previous=first_state,
         current=second_state,
         current_facts=(second_fact,),
@@ -221,10 +223,12 @@ def test_fact_delta_fails_closed_when_policy_does_not_classify_fact() -> None:
         built_at=OBSERVED_AT,
         facts=(fact,),
     )
-    incomplete_policy = FactDeltaPolicy(
+    incomplete_policy = StateDeltaPolicy(
         version="fact-delta-v1",
         validity_seconds=3_600,
         horizons_minutes=(60,),
+        intelligence_risk_factors=("EXTERNAL_INFORMATION",),
+        intelligence_reason_code="INTELLIGENCE_EVENT_INSERTED",
         rules=(
             FactDeltaRule(
                 fact_type=FED_MONETARY_RELEASE_FACT_TYPE,
@@ -235,7 +239,7 @@ def test_fact_delta_fails_closed_when_policy_does_not_classify_fact() -> None:
     )
 
     with pytest.raises(ValueError, match="缺少规则"):
-        build_fact_material_delta(
+        build_state_material_delta(
             previous=previous,
             current=current,
             current_facts=(fact,),

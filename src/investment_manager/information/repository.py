@@ -125,4 +125,33 @@ class SqlEventStore:
             events = tuple(IntelligenceEvent.model_validate(item) for item in rows)
         return tuple(sorted(events, key=lambda item: (item.event_time, item.evidence_id)))
 
+    def exact(
+        self,
+        *,
+        evidence_ids: tuple[str, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]:
+        as_of = require_utc(as_of)
+        if tuple(sorted(set(evidence_ids))) != evidence_ids:
+            raise ValueError("evidence_ids 必须唯一且排序")
+        if not evidence_ids:
+            return ()
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(
+                    normalized_events.c.evidence_id,
+                    normalized_events.c.payload,
+                ).where(
+                    normalized_events.c.evidence_id.in_(evidence_ids),
+                    normalized_events.c.observed_at <= as_of,
+                )
+            ).all()
+        by_id = {
+            row.evidence_id: IntelligenceEvent.model_validate(row.payload)
+            for row in payloads
+        }
+        missing = tuple(item for item in evidence_ids if item not in by_id)
+        if missing:
+            raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
+        return tuple(by_id[item] for item in evidence_ids)
 

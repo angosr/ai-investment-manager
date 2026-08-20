@@ -4,10 +4,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Protocol
 
 from pydantic import Field, model_validator
 
 from investment_manager.execution.account_repository import AccountSnapshotReader
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import FeatureEngine
@@ -17,7 +19,7 @@ from investment_manager.state.decision.packet import (
     DecisionPacket,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
-from investment_manager.state.projection import SqlFactStateProjector
+from investment_manager.state.projection import SqlStateProjector
 from investment_manager.state.repository import SqlFactStateStore
 
 
@@ -49,16 +51,26 @@ class DecisionPacketPreparationResult(FrozenModel):
         return self
 
 
+class IntelligenceEventReader(Protocol):
+    def exact(
+        self,
+        *,
+        evidence_ids: tuple[str, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]: ...
+
+
 class DecisionPacketPreparation:
-    """Build one portfolio-wide Packet only when canonical facts materially change."""
+    """Build one portfolio-wide Packet only when accepted evidence materially changes."""
 
     def __init__(
         self,
         *,
         market_store: MarketDataStore,
         account_reader: AccountSnapshotReader,
+        event_reader: IntelligenceEventReader,
         facts: SqlFactStateStore,
-        projector: SqlFactStateProjector,
+        projector: SqlStateProjector,
         assembler: SqlDecisionPacketAssembler,
         features: FeatureEngine,
         market_interval: str,
@@ -74,6 +86,7 @@ class DecisionPacketPreparation:
             raise ValueError("DecisionPacket market window/age 配置非法")
         self._market_store = market_store
         self._account_reader = account_reader
+        self._event_reader = event_reader
         self._facts = facts
         self._projector = projector
         self._assembler = assembler
@@ -91,12 +104,35 @@ class DecisionPacketPreparation:
         analysis_id: str,
         as_of: datetime,
         mandate: AnalysisMandate,
+        intelligence_evidence_ids: tuple[str, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
     ) -> DecisionPacketPreparationResult:
         if not analysis_id:
             raise ValueError("DecisionPacket analysis_id 不能为空")
         as_of = require_utc(as_of)
+        if tuple(sorted(set(intelligence_evidence_ids))) != intelligence_evidence_ids:
+            raise ValueError("intelligence_evidence_ids 必须唯一且排序")
+        intelligence_events = self._event_reader.exact(
+            evidence_ids=intelligence_evidence_ids,
+            as_of=as_of,
+        )
+        symbol_to_asset = {
+            item.market_symbol: item.asset
+            for item in mandate.assets
+        }
+        intelligence_affected_assets = tuple(
+            sorted(
+                {
+                    symbol_to_asset[symbol]
+                    for event in intelligence_events
+                    for symbol in event.symbols
+                    if symbol in symbol_to_asset
+                }
+            )
+        )
+        if intelligence_events and not intelligence_affected_assets:
+            raise ValueError("IntelligenceEvent 未命中 Mandate assets")
         markets = tuple(
             self._market_store.snapshot(
                 cycle_id=analysis_id,
@@ -131,6 +167,8 @@ class DecisionPacketPreparation:
             markets=markets,
             features=feature_snapshots,
             account=account,
+            intelligence_events=intelligence_events,
+            intelligence_affected_assets=intelligence_affected_assets,
             data_quality_codes=data_quality_codes,
         )
         if projection.delta is None:
@@ -147,7 +185,7 @@ class DecisionPacketPreparation:
                 reason_code=(
                     "STATE_BASELINE_RECORDED"
                     if baseline
-                    else "NO_MATERIAL_FACT_CHANGE"
+                    else "NO_MATERIAL_STATE_CHANGE"
                 ),
                 state_id=projection.state.state_id,
             )

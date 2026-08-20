@@ -28,6 +28,10 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.schema import create_schema
 from investment_manager.settings import AppConfig
+from investment_manager.state.decision.application import (
+    DecisionPacketPreparationResult,
+    PacketPreparationStatus,
+)
 
 NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 
@@ -121,6 +125,19 @@ class EmptyShadowState:
         return 0
 
 
+class RecordingPacketPreparation:
+    def __init__(self) -> None:
+        self.intelligence_evidence_ids: tuple[str, ...] | None = None
+
+    def prepare(self, **kwargs):
+        self.intelligence_evidence_ids = kwargs["intelligence_evidence_ids"]
+        return DecisionPacketPreparationResult(
+            status=PacketPreparationStatus.NO_MATERIAL_DELTA,
+            reason_code="NO_MATERIAL_STATE_CHANGE",
+            state_id="state-1",
+        )
+
+
 def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
@@ -162,6 +179,64 @@ def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_c
     assert request.cycle_input.account.quote_balance == app_config.shadow.initial_quote_balance
     assert request.cycle_input.account.equity == app_config.shadow.initial_quote_balance
     assert request.trigger.reason.value == "EVENT_BATCH"
+
+
+def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    intelligence = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=90,
+        dedup_key="intel-1",
+        evidence_ids=("intel-evidence-1",),
+    )
+    market = build_trigger_event(
+        trigger_type=AnalysisTriggerType.MARKET_SHOCK,
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=80,
+        dedup_key="market-1",
+        evidence_ids=("market-evidence-1",),
+    )
+    preparation = RecordingPacketPreparation()
+
+    TriggerDispatchBuilder(
+        config=config,
+        market_store=_market_store(),
+        event_store=InMemoryEventStore(),
+        state=EmptyShadowState(),
+        protection=InMemoryPortfolioProtectionStore(
+            policy=config.risk,
+            initial_equity=config.shadow.initial_quote_balance,
+        ),
+        packet_preparation=preparation,
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(market, intelligence),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
 
 
 def test_sql_shadow_account_is_projected_from_latest_business_fact(

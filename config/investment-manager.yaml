@@ -20,9 +20,12 @@ decision_state:
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
-    version: first-party-fact-delta-v1
+    version: state-delta-v2
     validity_seconds: 3600
     horizons_minutes: [60, 240]
+    intelligence_materiality: NORMAL
+    intelligence_risk_factors: [EXTERNAL_INFORMATION]
+    intelligence_reason_code: INTELLIGENCE_EVENT_INSERTED
     rules:
       - fact_type: FED_MONETARY_RELEASE
         materiality: HIGH
@@ -31,11 +34,14 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v2
-    schema_version: decision-packet-v2
+    version: decision-packet-policy-v3
+    schema_version: decision-packet-v3
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
+    maximum_intelligence_events: 8
+    maximum_intelligence_characters: 3000
+    maximum_characters_per_intelligence_event: 500
     maximum_packet_characters: 12000
     maximum_active_hypotheses: 5
 
@@ -226,7 +232,7 @@ assessment:
   mandate:
     version: primary-portfolio-mandate-v1
     analysis_scope: primary-portfolio
-    question: Assess material first-party changes and their portfolio implications.
+    question: Assess accepted material evidence and its portfolio implications.
     assets:
       - asset: BTC
         market_symbol: BTCUSDT
@@ -234,7 +240,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [US_MONETARY_POLICY]
+    required_risk_factors: [EXTERNAL_INFORMATION, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

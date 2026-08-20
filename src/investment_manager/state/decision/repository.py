@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.information.models import SourceTier
+from investment_manager.information.models import IntelligenceEvent, SourceTier
 from investment_manager.information.tables import source_observations
 from investment_manager.market.models import (
     FeatureSnapshot,
@@ -69,12 +69,13 @@ class SqlDecisionPacketAssembler:
             raise ValueError("DecisionPacket StateSnapshot 与 Mandate scope 不一致")
         deltas = self._load_deltas(delta_ids)
         facts = self._load_visible_facts(state.fact_revision_ids)
-        markets, features, account = self._load_state_evidence(state)
+        markets, features, account, intelligence_events = self._load_state_evidence(state)
         return self._builder.build(
             mandate=mandate,
             state=state,
             deltas=deltas,
             facts=facts,
+            intelligence_events=intelligence_events,
             account=account,
             markets=markets,
             features=features,
@@ -179,12 +180,14 @@ class SqlDecisionPacketAssembler:
         tuple[MarketSnapshot, ...],
         tuple[FeatureSnapshot, ...],
         AccountSnapshot,
+        tuple[IntelligenceEvent, ...],
     ]:
         if state.account_snapshot_ref is None:
             raise ValueError("DecisionPacket StateSnapshot 缺少 Account evidence ref")
         refs = (
             *state.market_snapshot_refs,
             *state.feature_snapshot_refs,
+            *state.intelligence_event_refs,
             state.account_snapshot_ref,
         )
         evidence = self._evidence.get_many(refs)
@@ -214,9 +217,20 @@ class SqlDecisionPacketAssembler:
                 key=lambda item: item.symbol,
             )
         )
+        intelligence_events = tuple(
+            sorted(
+                (
+                    value
+                    for kind, value in evidence.values()
+                    if kind == StateEvidenceKind.INTELLIGENCE
+                    and isinstance(value, IntelligenceEvent)
+                ),
+                key=lambda item: item.evidence_id,
+            )
+        )
         account_entry = evidence[state.account_snapshot_ref]
         if account_entry[0] != StateEvidenceKind.ACCOUNT or not isinstance(
             account_entry[1], AccountSnapshot
         ):
             raise ValueError("DecisionPacket Account evidence 类型不一致")
-        return markets, features, account_entry[1]
+        return markets, features, account_entry[1], intelligence_events

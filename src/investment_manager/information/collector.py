@@ -438,6 +438,13 @@ class EventNormalizer:
 class EventStore(Protocol):
     def put(self, event: IntelligenceEvent) -> bool: ...
 
+    def exact(
+        self,
+        *,
+        evidence_ids: tuple[str, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]: ...
+
     def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]: ...
 
 
@@ -465,6 +472,26 @@ class InMemoryEventStore:
                 if symbol in item.symbols and item.observed_at <= as_of
             ]
         return tuple(sorted(events, key=lambda item: (item.event_time, item.evidence_id)))
+
+    def exact(
+        self,
+        *,
+        evidence_ids: tuple[str, ...],
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]:
+        as_of = require_utc(as_of)
+        if tuple(sorted(set(evidence_ids))) != evidence_ids:
+            raise ValueError("evidence_ids 必须唯一且排序")
+        with self._lock:
+            missing = tuple(
+                evidence_id
+                for evidence_id in evidence_ids
+                if evidence_id not in self._events
+                or self._events[evidence_id].observed_at > as_of
+            )
+            if missing:
+                raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
+            return tuple(self._events[evidence_id] for evidence_id in evidence_ids)
 
 
 @dataclass(frozen=True, slots=True)

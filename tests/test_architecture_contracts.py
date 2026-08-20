@@ -952,3 +952,11 @@ def test_old_package_and_console_entry_are_removed() -> None:
     }
     assert not (PACKAGE_ROOT / "cli.py").exists()
     assert not (PACKAGE_ROOT / "dashboard").exists()
+
+
+def test_package_root_contains_only_composition_entries() -> None:
+    assert {
+        path.name
+        for path in PACKAGE_ROOT.iterdir()
+        if path.is_file()
+    } == {"__init__.py", "schema.py", "settings.py"}

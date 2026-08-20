@@ -67,10 +67,10 @@ from investment_manager.scheduling.repository import (
 from investment_manager.schema import compose_metadata
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
-    FactDeltaPolicy,
     FactDeltaRule,
     OfficialFactProjectionPolicy,
-    build_fact_material_delta,
+    StateDeltaPolicy,
+    build_state_material_delta,
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
@@ -311,10 +311,12 @@ def test_postgres_cycle_transaction_and_risk_budget(
         fact_store.put_fact(fact)
         transition_facts.append(fact)
         previous_fact = fact
-    delta_policy = FactDeltaPolicy(
+    delta_policy = StateDeltaPolicy(
         version="postgres-fact-delta-v1",
         validity_seconds=3_600,
         horizons_minutes=(60, 240),
+        intelligence_risk_factors=("EXTERNAL_INFORMATION",),
+        intelligence_reason_code="INTELLIGENCE_EVENT_INSERTED",
         rules=(
             FactDeltaRule(
                 fact_type=FOMC_MEETING_FACT_TYPE,
@@ -336,7 +338,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
     competing_transitions = tuple(
         (
             state,
-            build_fact_material_delta(
+            build_state_material_delta(
                 previous=baseline_state,
                 current=state,
                 current_facts=(fact,),

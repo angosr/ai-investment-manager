@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.engine import Engine
 
 from investment_manager.execution.models import AccountSnapshot
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
@@ -14,8 +15,8 @@ from investment_manager.market.models import (
 )
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore
 from investment_manager.state.facts import (
-    FactDeltaPolicy,
-    build_fact_material_delta,
+    StateDeltaPolicy,
+    build_state_material_delta,
     build_state_snapshot,
 )
 from investment_manager.state.models import (
@@ -27,21 +28,21 @@ from investment_manager.state.repository import SqlFactStateStore
 
 
 @dataclass(frozen=True, slots=True)
-class FactStateProjectionResult:
+class StateProjectionResult:
     state: StateSnapshot
     delta: MaterialDelta | None
     changed: bool
 
 
-class SqlFactStateProjector:
-    """Sole assembly boundary for fact-driven State and MaterialDelta writes."""
+class SqlStateProjector:
+    """Sole assembly boundary for point-in-time State and MaterialDelta writes."""
 
     def __init__(
         self,
         engine: Engine,
         *,
         projection_version: str,
-        delta_policy: FactDeltaPolicy,
+        delta_policy: StateDeltaPolicy,
     ) -> None:
         if not projection_version:
             raise ValueError("projection_version 不能为空")
@@ -64,9 +65,11 @@ class SqlFactStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         account: AccountSnapshot,
+        intelligence_events: tuple[IntelligenceEvent, ...] = (),
+        intelligence_affected_assets: tuple[str, ...] = (),
         data_quality_codes: tuple[str, ...] = (),
         coverage_gap_codes: tuple[str, ...] = (),
-    ) -> FactStateProjectionResult:
+    ) -> StateProjectionResult:
         as_of = require_utc(as_of)
         built_at = require_utc(built_at)
         self._require_complete_evidence(
@@ -74,6 +77,7 @@ class SqlFactStateProjector:
             markets=markets,
             features=features,
             account=account,
+            intelligence_events=intelligence_events,
         )
         candidate = build_state_snapshot(
             projection_version=self._projection_version,
@@ -83,6 +87,9 @@ class SqlFactStateProjector:
             facts=facts,
             market_snapshot_refs=tuple(content_hash(item) for item in markets),
             feature_snapshot_refs=tuple(content_hash(item) for item in features),
+            intelligence_event_refs=tuple(
+                content_hash(item) for item in intelligence_events
+            ),
             account_snapshot_ref=content_hash(account),
             data_quality_codes=data_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
@@ -104,22 +111,29 @@ class SqlFactStateProjector:
             projection_version=self._projection_version,
             as_of=as_of,
         )
-        self._persist_evidence(markets=markets, features=features, account=account)
+        self._persist_evidence(
+            markets=markets,
+            features=features,
+            account=account,
+            intelligence_events=intelligence_events,
+        )
         if previous is None:
             state = self._states.record_state(
                 state=candidate,
                 previous_state_id=None,
             )
-            return FactStateProjectionResult(
+            return StateProjectionResult(
                 state=state,
                 delta=None,
                 changed=not already_recorded,
             )
 
-        delta = build_fact_material_delta(
+        delta = build_state_material_delta(
             previous=previous,
             current=candidate,
             current_facts=facts,
+            current_events=intelligence_events,
+            intelligence_affected_assets=intelligence_affected_assets,
             policy=self._delta_policy,
         )
         if delta is None:
@@ -127,7 +141,7 @@ class SqlFactStateProjector:
                 state=candidate,
                 previous_state_id=previous.state_id,
             )
-            return FactStateProjectionResult(
+            return StateProjectionResult(
                 state=state,
                 delta=None,
                 changed=not already_recorded,
@@ -136,7 +150,7 @@ class SqlFactStateProjector:
             state=candidate,
             delta=delta,
         )
-        return FactStateProjectionResult(
+        return StateProjectionResult(
             state=state,
             delta=stored_delta,
             changed=not already_recorded,
@@ -148,12 +162,15 @@ class SqlFactStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         account: AccountSnapshot,
+        intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
         for market in markets:
             self._evidence.put_market(market)
         for feature in features:
             self._evidence.put_feature(feature)
         self._evidence.put_account(account)
+        for event in intelligence_events:
+            self._evidence.put_intelligence(event)
 
     @staticmethod
     def _require_complete_evidence(
@@ -162,6 +179,7 @@ class SqlFactStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         account: AccountSnapshot,
+        intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
         market_symbols = tuple(item.symbol for item in markets)
         feature_symbols = tuple(item.symbol for item in features)
@@ -179,3 +197,8 @@ class SqlFactStateProjector:
             raise ValueError("State projection 不能使用 as_of 之后的 Feature evidence")
         if account.as_of > as_of or account.observed_at > as_of:
             raise ValueError("State projection 不能使用 as_of 之后的 Account evidence")
+        event_ids = tuple(item.evidence_id for item in intelligence_events)
+        if tuple(sorted(set(event_ids))) != event_ids:
+            raise ValueError("State projection IntelligenceEvent 必须按 evidence_id 唯一且排序")
+        if any(item.observed_at > as_of for item in intelligence_events):
+            raise ValueError("State projection 不能使用 as_of 之后的 IntelligenceEvent")

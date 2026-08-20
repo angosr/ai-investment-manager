@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from pydantic import Field, model_validator
 
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.official.records import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
@@ -48,11 +49,14 @@ class FactDeltaRule(FrozenModel):
     reason_code: str = Field(min_length=1, max_length=128)
 
 
-class FactDeltaPolicy(FrozenModel):
+class StateDeltaPolicy(FrozenModel):
     version: str = Field(min_length=1)
     validity_seconds: int = Field(gt=0, le=604_800)
     horizons_minutes: tuple[int, ...] = Field(min_length=1)
     rules: tuple[FactDeltaRule, ...] = Field(min_length=1)
+    intelligence_materiality: Materiality = Materiality.NORMAL
+    intelligence_risk_factors: tuple[str, ...] = Field(min_length=1)
+    intelligence_reason_code: str = Field(min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def policy_must_be_unambiguous(self):
@@ -64,6 +68,10 @@ class FactDeltaPolicy(FrozenModel):
         fact_types = tuple(rule.fact_type for rule in self.rules)
         if tuple(sorted(set(fact_types))) != fact_types:
             raise ValueError("FactDeltaRule 必须按 fact_type 唯一且排序")
+        if tuple(sorted(set(self.intelligence_risk_factors))) != (
+            self.intelligence_risk_factors
+        ):
+            raise ValueError("intelligence_risk_factors 必须唯一且排序")
         return self
 
 
@@ -143,6 +151,7 @@ def build_state_snapshot(
     facts: tuple[CanonicalFactRevision, ...],
     market_snapshot_refs: tuple[str, ...] = (),
     feature_snapshot_refs: tuple[str, ...] = (),
+    intelligence_event_refs: tuple[str, ...] = (),
     account_snapshot_ref: str | None = None,
     data_quality_codes: tuple[str, ...] = (),
     coverage_gap_codes: tuple[str, ...] = (),
@@ -155,6 +164,10 @@ def build_state_snapshot(
     if any(item.observed_at > as_of for item in facts):
         raise ValueError("StateSnapshot 不能引用 as_of 之后观察到的事实")
     fact_revision_ids = tuple(sorted(item.revision_id for item in facts))
+    intelligence_refs = _unique_sorted(
+        intelligence_event_refs,
+        name="intelligence_event_refs",
+    )
     payload = {
         "projection_version": projection_version,
         "analysis_scope": analysis_scope,
@@ -174,6 +187,8 @@ def build_state_snapshot(
             coverage_gap_codes, name="coverage_gap_codes"
         ),
     }
+    if intelligence_refs:
+        payload["intelligence_event_refs"] = intelligence_refs
     digest = content_hash(payload)
     return StateSnapshot(
         state_id=stable_id("state_snapshot", digest),
@@ -183,12 +198,14 @@ def build_state_snapshot(
     )
 
 
-def build_fact_material_delta(
+def build_state_material_delta(
     *,
     previous: StateSnapshot | None,
     current: StateSnapshot,
     current_facts: tuple[CanonicalFactRevision, ...],
-    policy: FactDeltaPolicy,
+    current_events: tuple[IntelligenceEvent, ...] = (),
+    intelligence_affected_assets: tuple[str, ...] = (),
+    policy: StateDeltaPolicy,
 ) -> MaterialDelta | None:
     if previous is None:
         return None
@@ -204,27 +221,59 @@ def build_fact_material_delta(
         raise ValueError("current_facts 不能重复 revision_id")
     if frozenset(facts_by_revision) != frozenset(current.fact_revision_ids):
         raise ValueError("current_facts 必须与 current StateSnapshot 完全一致")
+    events_by_ref = {content_hash(item): item for item in current_events}
+    if len(events_by_ref) != len(current_events):
+        raise ValueError("current_events 不能包含重复内容")
+    if frozenset(events_by_ref) != frozenset(current.intelligence_event_refs):
+        raise ValueError("current_events 必须与 current StateSnapshot 完全一致")
     changed_ids = tuple(
         sorted(set(current.fact_revision_ids) - set(previous.fact_revision_ids))
     )
-    if not changed_ids:
+    changed_event_refs = tuple(
+        sorted(
+            set(current.intelligence_event_refs)
+            - set(previous.intelligence_event_refs)
+        )
+    )
+    if not changed_ids and not changed_event_refs:
         return None
 
     changed_facts = tuple(facts_by_revision[item] for item in changed_ids)
+    changed_events = tuple(events_by_ref[item] for item in changed_event_refs)
     rules_by_type = {rule.fact_type: rule for rule in policy.rules}
     missing_rules = tuple(
         sorted({item.fact_type for item in changed_facts if item.fact_type not in rules_by_type})
     )
     if missing_rules:
-        raise ValueError(f"FactDeltaPolicy 缺少规则: {', '.join(missing_rules)}")
+        raise ValueError(f"StateDeltaPolicy 缺少规则: {', '.join(missing_rules)}")
     rules = tuple(rules_by_type[item.fact_type] for item in changed_facts)
-    observed_at = max(item.observed_at for item in changed_facts)
+    observed_at = max(
+        tuple(item.observed_at for item in changed_facts)
+        + tuple(item.observed_at for item in changed_events)
+    )
     if observed_at > current.as_of:
-        raise ValueError("MaterialDelta 不能引用 current as_of 之后的事实")
+        raise ValueError("MaterialDelta 不能引用 current as_of 之后的证据")
     materiality = max(
-        (rule.materiality for rule in rules),
+        (
+            *(rule.materiality for rule in rules),
+            *(
+                (policy.intelligence_materiality,)
+                if changed_event_refs
+                else ()
+            ),
+        ),
         key=_materiality_rank,
     )
+    event_assets = (
+        _unique_sorted(
+            intelligence_affected_assets,
+            name="intelligence_affected_assets",
+        )
+        if changed_event_refs
+        else ()
+    )
+    if changed_event_refs and not event_assets:
+        raise ValueError("IntelligenceEvent MaterialDelta 缺少受影响资产")
     payload = {
         "policy_version": policy.version,
         "analysis_scope": current.analysis_scope,
@@ -232,19 +281,50 @@ def build_fact_material_delta(
         "current_state_id": current.state_id,
         "observed_at": observed_at.isoformat(),
         "expires_at": (observed_at + timedelta(seconds=policy.validity_seconds)).isoformat(),
-        "category": DeltaCategory.FIRST_PARTY_FACT.value,
+        "category": (
+            DeltaCategory.FIRST_PARTY_FACT.value
+            if changed_ids
+            else DeltaCategory.INTELLIGENCE_EVENT.value
+        ),
         "materiality": materiality.value,
         "affected_assets": tuple(
-            sorted({asset for item in changed_facts for asset in item.affected_assets})
+            sorted(
+                {
+                    *(asset for item in changed_facts for asset in item.affected_assets),
+                    *event_assets,
+                }
+            )
         ),
         "risk_factors": tuple(
-            sorted({factor for item in changed_facts for factor in item.risk_factors})
+            sorted(
+                {
+                    *(factor for item in changed_facts for factor in item.risk_factors),
+                    *(
+                        policy.intelligence_risk_factors
+                        if changed_event_refs
+                        else ()
+                    ),
+                }
+            )
         ),
         "horizons_minutes": policy.horizons_minutes,
         "fact_revision_ids": changed_ids,
         "feature_snapshot_refs": (),
-        "reason_codes": tuple(sorted({rule.reason_code for rule in rules})),
+        "reason_codes": tuple(
+            sorted(
+                {
+                    *(rule.reason_code for rule in rules),
+                    *(
+                        (policy.intelligence_reason_code,)
+                        if changed_event_refs
+                        else ()
+                    ),
+                }
+            )
+        ),
     }
+    if changed_event_refs:
+        payload["intelligence_event_refs"] = changed_event_refs
     digest = content_hash(payload)
     return MaterialDelta(
         delta_id=stable_id("material_delta", digest),
@@ -363,7 +443,7 @@ def _fact_semantic_payload(fact: CanonicalFactRevision) -> dict:
 
 
 def _state_identity_payload(state: StateSnapshot) -> dict:
-    return {
+    payload = {
         "projection_version": state.projection_version,
         "analysis_scope": state.analysis_scope,
         "as_of": state.as_of.isoformat(),
@@ -374,10 +454,13 @@ def _state_identity_payload(state: StateSnapshot) -> dict:
         "data_quality_codes": state.data_quality_codes,
         "coverage_gap_codes": state.coverage_gap_codes,
     }
+    if state.intelligence_event_refs:
+        payload["intelligence_event_refs"] = state.intelligence_event_refs
+    return payload
 
 
 def _delta_identity_payload(delta: MaterialDelta) -> dict:
-    return {
+    payload = {
         "policy_version": delta.policy_version,
         "analysis_scope": delta.analysis_scope,
         "previous_state_id": delta.previous_state_id,
@@ -393,6 +476,9 @@ def _delta_identity_payload(delta: MaterialDelta) -> dict:
         "feature_snapshot_refs": delta.feature_snapshot_refs,
         "reason_codes": delta.reason_codes,
     }
+    if delta.intelligence_event_refs:
+        payload["intelligence_event_refs"] = delta.intelligence_event_refs
+    return payload
 
 
 def _materiality_rank(value: Materiality) -> int:

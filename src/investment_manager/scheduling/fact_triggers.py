@@ -14,7 +14,7 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.state.decision.packet import AnalysisMandate
-from investment_manager.state.facts import FOMC_MEETING_FACT_TYPE, FactDeltaPolicy
+from investment_manager.state.facts import FOMC_MEETING_FACT_TYPE, StateDeltaPolicy
 from investment_manager.state.models import (
     CanonicalFactRevision,
     FactRevisionStatus,
@@ -39,7 +39,7 @@ class CanonicalFactTriggerPublisher:
         facts: SqlFactStateStore,
         triggers: SqlTriggerRepository,
         mandate: AnalysisMandate,
-        delta_policy: FactDeltaPolicy,
+        delta_policy: StateDeltaPolicy,
         pipeline_id: str,
         trigger_expiry_seconds: int,
         required_freshness_seconds: int,

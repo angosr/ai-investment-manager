@@ -420,6 +420,7 @@ class SqlFactStateStore:
         expected_kind = {
             **{item: "MARKET" for item in state.market_snapshot_refs},
             **{item: "FEATURE" for item in state.feature_snapshot_refs},
+            **{item: "INTELLIGENCE" for item in state.intelligence_event_refs},
         }
         if state.account_snapshot_ref is not None:
             expected_kind[state.account_snapshot_ref] = "ACCOUNT"
@@ -497,9 +498,19 @@ class SqlFactStateStore:
             raise ValueError("MaterialDelta 事实修订不属于 current StateSnapshot")
         if not set(delta.feature_snapshot_refs).issubset(current.feature_snapshot_refs):
             raise ValueError("MaterialDelta 特征引用不属于 current StateSnapshot")
-        if set(delta.fact_revision_ids).issubset(previous.fact_revision_ids) and set(
-            delta.feature_snapshot_refs
-        ).issubset(previous.feature_snapshot_refs):
+        if not set(delta.intelligence_event_refs).issubset(
+            current.intelligence_event_refs
+        ):
+            raise ValueError("MaterialDelta 事件引用不属于 current StateSnapshot")
+        if (
+            set(delta.fact_revision_ids).issubset(previous.fact_revision_ids)
+            and set(delta.feature_snapshot_refs).issubset(
+                previous.feature_snapshot_refs
+            )
+            and set(delta.intelligence_event_refs).issubset(
+                previous.intelligence_event_refs
+            )
+        ):
             raise ValueError("MaterialDelta 未引用相对 previous StateSnapshot 的新内容")
 
         connection.execute(

@@ -7,6 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.execution.models import AccountSnapshot
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import (
     FeatureSnapshot,
@@ -19,9 +20,10 @@ class StateEvidenceKind(StrEnum):
     MARKET = "MARKET"
     FEATURE = "FEATURE"
     ACCOUNT = "ACCOUNT"
+    INTELLIGENCE = "INTELLIGENCE"
 
 
-StateEvidence = MarketSnapshot | FeatureSnapshot | AccountSnapshot
+StateEvidence = MarketSnapshot | FeatureSnapshot | AccountSnapshot | IntelligenceEvent
 
 
 class SqlStateEvidenceStore:
@@ -38,6 +40,9 @@ class SqlStateEvidenceStore:
 
     def put_account(self, snapshot: AccountSnapshot) -> str:
         return self._put(StateEvidenceKind.ACCOUNT, snapshot)
+
+    def put_intelligence(self, event: IntelligenceEvent) -> str:
+        return self._put(StateEvidenceKind.INTELLIGENCE, event)
 
     def get(
         self,
@@ -69,9 +74,13 @@ class SqlStateEvidenceStore:
 
     def _put(self, kind: StateEvidenceKind, snapshot: StateEvidence) -> str:
         evidence_ref = content_hash(snapshot)
-        observed_at = (
+        if isinstance(snapshot, (MarketSnapshot, AccountSnapshot, IntelligenceEvent)):
+            observed_at = snapshot.observed_at
+        else:
+            observed_at = snapshot.as_of
+        as_of = (
             snapshot.observed_at
-            if isinstance(snapshot, (MarketSnapshot, AccountSnapshot))
+            if isinstance(snapshot, IntelligenceEvent)
             else snapshot.as_of
         )
         try:
@@ -80,7 +89,7 @@ class SqlStateEvidenceStore:
                     insert(state_evidence_snapshots).values(
                         evidence_ref=evidence_ref,
                         evidence_kind=kind.value,
-                        as_of=snapshot.as_of,
+                        as_of=as_of,
                         observed_at=observed_at,
                         payload=snapshot.model_dump(mode="json"),
                     )
@@ -97,4 +106,6 @@ def _parse_evidence(kind: StateEvidenceKind, payload: dict) -> StateEvidence:
         return MarketSnapshot.model_validate(payload)
     if kind == StateEvidenceKind.FEATURE:
         return FeatureSnapshot.model_validate(payload)
+    if kind == StateEvidenceKind.INTELLIGENCE:
+        return IntelligenceEvent.model_validate(payload)
     return AccountSnapshot.model_validate(payload)

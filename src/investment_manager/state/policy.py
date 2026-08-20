@@ -5,8 +5,8 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.facts import (
     FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
-    FactDeltaPolicy,
     OfficialFactProjectionPolicy,
+    StateDeltaPolicy,
 )
 
 
@@ -16,6 +16,13 @@ class DecisionPacketPolicy(FrozenModel):
     maximum_facts: int = Field(default=12, ge=1, le=50)
     maximum_fact_characters: int = Field(default=4_000, ge=500, le=10_000)
     maximum_characters_per_fact: int = Field(default=600, ge=100, le=1_200)
+    maximum_intelligence_events: int = Field(default=8, ge=0, le=20)
+    maximum_intelligence_characters: int = Field(default=3_000, ge=0, le=6_000)
+    maximum_characters_per_intelligence_event: int = Field(
+        default=500,
+        ge=100,
+        le=1_000,
+    )
     maximum_packet_characters: int = Field(default=12_000, ge=2_000, le=16_000)
     maximum_active_hypotheses: int = Field(default=5, ge=0, le=20)
 
@@ -36,7 +43,7 @@ class DecisionStatePolicy(StrictConfig):
     version: str
     analysis_scope: str
     official_fact_policy: OfficialFactProjectionPolicy
-    delta_policy: FactDeltaPolicy
+    delta_policy: StateDeltaPolicy
     packet_policy: DecisionPacketPolicy
 
     @model_validator(mode="after")

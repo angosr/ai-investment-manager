@@ -27,10 +27,12 @@ def test_state_evidence_is_content_addressed_and_replayable(
     market = replay_input.market
     feature = FeatureEngine(app_config.feature).compute(market)
     account = replay_input.account
+    event = replay_input.events[0]
 
     market_ref = evidence.put_market(market)
     feature_ref = evidence.put_feature(feature)
     account_ref = evidence.put_account(account)
+    event_ref = evidence.put_intelligence(event)
     state = build_state_snapshot(
         projection_version="state-v1",
         analysis_scope="crypto-portfolio",
@@ -39,6 +41,7 @@ def test_state_evidence_is_content_addressed_and_replayable(
         facts=(),
         market_snapshot_refs=(market_ref,),
         feature_snapshot_refs=(feature_ref,),
+        intelligence_event_refs=(event_ref,),
         account_snapshot_ref=account_ref,
     )
 
@@ -46,11 +49,12 @@ def test_state_evidence_is_content_addressed_and_replayable(
     assert evidence.get(market_ref) == (StateEvidenceKind.MARKET, market)
     assert evidence.get(feature_ref) == (StateEvidenceKind.FEATURE, feature)
     assert evidence.get(account_ref) == (StateEvidenceKind.ACCOUNT, account)
+    assert evidence.get(event_ref) == (StateEvidenceKind.INTELLIGENCE, event)
     assert evidence.put_market(market) == market_ref
     with engine.connect() as connection:
         assert connection.scalar(
             select(func.count()).select_from(state_evidence_snapshots)
-        ) == 3
+        ) == 4
 
 
 def test_state_rejects_missing_or_future_evidence(app_config, replay_input) -> None:
