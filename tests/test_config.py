@@ -26,8 +26,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.information.version == "information-intake-v7"
-    assert config.information.normalizer_version == "trendradar-collector-v6"
+    assert config.information.version == "information-intake-v8"
+    assert config.information.normalizer_version == "trendradar-collector-v7"
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",

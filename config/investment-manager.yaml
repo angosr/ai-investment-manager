@@ -182,8 +182,8 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v7
-  normalizer_version: trendradar-collector-v6
+  version: information-intake-v8
+  normalizer_version: trendradar-collector-v7
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。

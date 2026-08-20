@@ -292,6 +292,17 @@ class EventNormalizer:
         "加密货币",
         "数字资产",
     )
+    _v7_crypto_context_keywords: ClassVar[tuple[str, ...]] = (
+        *_crypto_context_keywords,
+        "blockchain",
+        "stablecoin",
+        "crypto exchange",
+        "coinbase",
+        "binance",
+        "区块链",
+        "稳定币",
+        "加密交易所",
+    )
     _legacy_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
         "federal reserve",
         "cpi",
@@ -355,7 +366,7 @@ class EventNormalizer:
         )
         relevance = Decimal("1")
         if not symbols:
-            if self._version.endswith("v6") and self._has_crypto_context(text):
+            if self._version.endswith(("v6", "v7")) and self._has_crypto_context(text):
                 symbols = self._universe
                 relevance = Decimal("0.85")
             else:
@@ -404,7 +415,11 @@ class EventNormalizer:
         )
 
     def _has_cross_asset_relevance(self, text: str) -> bool:
-        if any(keyword in text for keyword in self._cross_asset_keywords):
+        if any(
+            keyword in text
+            for keyword in self._cross_asset_keywords
+            if not (self._version.endswith("v7") and keyword == "sec ")
+        ):
             return True
         if self._version.endswith("v4"):
             return "etf" in text
@@ -414,13 +429,18 @@ class EventNormalizer:
         )
 
     def _has_crypto_context(self, text: str) -> bool:
+        keywords = (
+            self._v7_crypto_context_keywords
+            if self._version.endswith("v7")
+            else self._crypto_context_keywords
+        )
         return any(
             self._contains_symbol_keyword(text, keyword)
-            for keyword in self._crypto_context_keywords
+            for keyword in keywords
         )
 
     def _has_critical_cross_asset_relevance(self, text: str) -> bool:
-        if not self._version.endswith("v6"):
+        if not self._version.endswith(("v6", "v7")):
             # 历史 v4/v5 使用子串匹配；回放时必须保持原语义。
             return any(keyword in text for keyword in self._legacy_critical_cross_asset_keywords)
         return any(

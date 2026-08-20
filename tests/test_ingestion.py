@@ -583,6 +583,47 @@ def test_v6_high_impact_requires_crypto_context_or_specific_macro_shock() -> Non
         assert event.impact == Decimal("0.8415")
 
 
+def test_v7_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
+    observed_at = datetime(2026, 8, 20, 21, 8, tzinfo=UTC)
+    legacy = EventNormalizer(
+        version="trendradar-collector-v6",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+    refined = EventNormalizer(
+        version="trendradar-collector-v7",
+        universe=("BTCUSDT", "ETHUSDT"),
+    )
+    unrelated = RawIntelligenceItem(
+        source_item_id="sec-cerebras-sale",
+        source="wire",
+        event_time=observed_at,
+        observed_at=observed_at,
+        title=(
+            "SEC filings show Cerebras executive plans to sell "
+            "$153.19 million of company shares"
+        ),
+        rank=1,
+    )
+    crypto_enforcement = RawIntelligenceItem(
+        source_item_id="sec-coinbase-enforcement",
+        source="wire",
+        event_time=observed_at,
+        observed_at=observed_at,
+        title="SEC enforcement action against Coinbase targets digital asset trading",
+        rank=1,
+    )
+
+    legacy_event = legacy.normalize(unrelated)
+    assert legacy_event is not None and legacy_event.relevance == Decimal("0.50")
+    assert refined.normalize(unrelated) is None
+
+    relevant = refined.normalize(crypto_enforcement)
+    assert relevant is not None
+    assert relevant.symbols == ("BTCUSDT", "ETHUSDT")
+    assert relevant.relevance == Decimal("0.85")
+    assert relevant.impact == Decimal("0.8415")
+
+
 def test_normalizer_routes_configured_symbol_without_hardcoded_alias() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     event = EventNormalizer(universe=("SOLUSDT",)).normalize(
