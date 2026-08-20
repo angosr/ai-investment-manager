@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from investment_manager.forecast.policy import AiMode
@@ -31,10 +32,16 @@ def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
     assert checks["ENABLED_ACCOUNT_DIRECTORIES_READY"].status == CheckStatus.BLOCKED
 
 
+@pytest.mark.parametrize(
+    ("ai_mode", "assessment_enabled"),
+    ((AiMode.PROPOSE, False), (AiMode.OFF, True)),
+)
 def test_private_challenger_audit_accepts_exact_runtime_release(
     app_config,
     tmp_path,
     monkeypatch,
+    ai_mode,
+    assessment_enabled,
 ) -> None:
     root = Path(__file__).resolve().parents[1]
     first, *remaining = app_config.codex_accounts.accounts
@@ -47,7 +54,10 @@ def test_private_challenger_audit_accepts_exact_runtime_release(
                 }
             ),
             "pipeline": app_config.pipeline.model_copy(
-                update={"ai_mode": AiMode.PROPOSE}
+                update={"ai_mode": ai_mode}
+            ),
+            "assessment": app_config.assessment.model_copy(
+                update={"enabled": assessment_enabled}
             ),
             "codex_runtime": app_config.codex_runtime.model_copy(
                 update={"enabled": True, "isolation_verified": True}
@@ -92,7 +102,7 @@ def test_private_challenger_audit_accepts_exact_runtime_release(
 
     assert report.ready
     assert (
-        checks["REAL_CODEX_PROPOSE_AND_TRADING_DISABLED"].status
+        checks["REAL_CODEX_ANALYSIS_AND_TRADING_DISABLED"].status
         == CheckStatus.PASS
     )
     assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.PASS

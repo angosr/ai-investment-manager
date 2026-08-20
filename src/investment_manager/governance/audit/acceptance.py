@@ -95,17 +95,24 @@ class PhaseAAuditor:
     def _runtime_boundary(self) -> AuditCheck:
         deployment = self._config.deployment
         if self._profile == AuditProfile.PRIVATE_CODEX_CHALLENGER:
+            analysis_enabled = (
+                self._config.pipeline.ai_mode == AiMode.PROPOSE
+                or self._config.assessment.enabled
+            )
             safe = (
                 deployment.stage == DeploymentStage.SHADOW
-                and self._config.pipeline.ai_mode == AiMode.PROPOSE
+                and analysis_enabled
                 and self._config.codex_runtime.enabled
                 and not deployment.testnet_order_submission_enabled
                 and not deployment.live_order_submission_enabled
             )
             return AuditCheck(
-                check_id="REAL_CODEX_PROPOSE_AND_TRADING_DISABLED",
+                check_id="REAL_CODEX_ANALYSIS_AND_TRADING_DISABLED",
                 status=CheckStatus.PASS if safe else CheckStatus.FAIL,
-                detail="私有 Challenger 必须启用隔离 Codex PROPOSE，且交易仍保持关闭。",
+                detail=(
+                    "私有 Challenger 必须启用唯一的隔离 Codex 分析路径，"
+                    "且交易仍保持关闭。"
+                ),
             )
         return AuditCheck(
             check_id="REAL_CODEX_AND_TRADING_DISABLED",
