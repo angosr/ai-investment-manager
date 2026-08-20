@@ -62,6 +62,7 @@ class AssessRunBundleBuilder:
         self._runtime = runtime
         self._code_version = code_version
         self._configuration_hash = configuration_hash
+
     def behavior_hash(self, packet: DecisionPacket) -> str:
         return assess_behavior_hash(self._runtime, packet)
 
@@ -111,6 +112,9 @@ class CodexContextAnalyst:
         self._bundle_root = bundle_root
         self._bundle_builder = bundle_builder
         self._router = router
+
+    def behavior_hash(self, packet: DecisionPacket) -> str:
+        return self._bundle_builder.behavior_hash(packet)
 
     def assess(self, packet: DecisionPacket) -> AnalystResult:
         target = self._bundle_root / stable_id(

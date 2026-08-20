@@ -4,6 +4,11 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, select
 
+from quant_core.analyst import AnalystResult
+from quant_core.assess_execution import (
+    AssessmentExecutionStatus,
+    ContextAssessmentExecutor,
+)
 from quant_core.assessment_calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
@@ -494,3 +499,43 @@ def test_overlapping_assessment_outcomes_cannot_satisfy_calibration_gate() -> No
             outcomes,
             _calibration_spec(),
         )
+
+
+class _CountingContextAnalyst:
+    def __init__(self, assessment: ContextAssessment) -> None:
+        self.assessment = assessment
+        self.calls = 0
+
+    def behavior_hash(self, packet: DecisionPacket) -> str:
+        return self.assessment.analysis_behavior_hash
+
+    def assess(self, packet: DecisionPacket) -> AnalystResult:
+        self.calls += 1
+        return AnalystResult(
+            success=True,
+            output=self.assessment,
+            reason_code="CODEX_OK",
+            account_id=".codex",
+            run_id="assess-run-1",
+        )
+
+
+def test_assessment_execution_replay_never_calls_codex_twice() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    assessment = _assessment()
+    analyst = _CountingContextAnalyst(assessment)
+    executor = ContextAssessmentExecutor(
+        SqlContextAssessmentStore(engine),
+        analyst,
+    )
+
+    first = executor.execute(_packet())
+    replayed = executor.execute(_packet())
+
+    assert first.status == AssessmentExecutionStatus.SUCCEEDED
+    assert first.reused_authoritative is False
+    assert replayed.status == AssessmentExecutionStatus.SUCCEEDED
+    assert replayed.reused_authoritative is True
+    assert replayed.assessment == first.assessment
+    assert analyst.calls == 1
