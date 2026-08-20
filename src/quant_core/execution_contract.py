@@ -23,12 +23,6 @@ from quant_core.domain import (
 from quant_core.ids import content_hash, stable_id
 
 
-class ExecutionRequestStatus(StrEnum):
-    PENDING = "PENDING"
-    UNKNOWN = "UNKNOWN"
-    COMPLETED = "COMPLETED"
-
-
 class RiskTransition(StrEnum):
     CONSUMED = "CONSUMED"
     RELEASED = "RELEASED"
