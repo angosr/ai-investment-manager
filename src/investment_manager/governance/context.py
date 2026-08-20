@@ -25,6 +25,7 @@ from investment_manager.governance.models import (
     validate_manifest_against_config,
 )
 from investment_manager.governance.performance import OutcomeWindowReport
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import (
     architecture_decisions,
     change_proposals,
@@ -38,7 +39,6 @@ from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
-    SqlGovernanceRepository,
     analysis_cycles,
     candidate_outcomes,
     codex_runs,

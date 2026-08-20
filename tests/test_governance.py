@@ -28,6 +28,7 @@ from investment_manager.governance.models import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import (
     blind_evaluation_claims,
     change_proposals,
@@ -37,7 +38,6 @@ from investment_manager.governance.tables import (
     release_manifests,
 )
 from investment_manager.kernel.identity import stable_id
-from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 

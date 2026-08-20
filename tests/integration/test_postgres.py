@@ -24,6 +24,7 @@ from investment_manager.execution.reconciliation import MockReconciler
 from investment_manager.execution.tables import orders
 from investment_manager.governance.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.official import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,
@@ -42,7 +43,6 @@ from investment_manager.market.models import MarketSnapshot, MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.persistence import (
     SqlFactLedger,
-    SqlGovernanceRepository,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
     account_snapshots,

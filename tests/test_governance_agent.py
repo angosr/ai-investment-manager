@@ -30,13 +30,13 @@ from investment_manager.governance.models import (
     NoChange,
     ReleaseManifest,
 )
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import change_proposals, governance_decisions
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     SqlFactLedger,
-    SqlGovernanceRepository,
     analysis_cycles,
     codex_runs,
     signal_candidates,

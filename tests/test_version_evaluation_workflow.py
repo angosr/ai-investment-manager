@@ -20,6 +20,7 @@ from investment_manager.governance.models import (
     SystemConstitution,
     build_governance_snapshot,
 )
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import evaluation_results
 from investment_manager.governance.version_evaluation_runtime import (
     VersionEvaluationActivities,
@@ -28,7 +29,6 @@ from investment_manager.governance.version_evaluation_runtime import (
     VersionEvaluationWorkflowStatus,
     build_version_evaluation_workflow_request,
 )
-from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 

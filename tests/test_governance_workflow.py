@@ -15,6 +15,7 @@ from investment_manager.governance.agent import (
 )
 from investment_manager.governance.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import NoChange, ReleaseManifest
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.runtime import (
     GovernanceActivities,
     GovernanceTemporalCoordinator,
@@ -23,7 +24,6 @@ from investment_manager.governance.runtime import (
     build_governance_workflow_request,
 )
 from investment_manager.governance.tables import governance_decisions
-from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 

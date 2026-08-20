@@ -639,6 +639,25 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
 
     expected = PACKAGE_ROOT / "governance" / "tables.py"
     assert owners == {name: [expected] for name in owned_tables}
+    persistence_tree = ast.parse((PACKAGE_ROOT / "persistence.py").read_text())
+    central_classes = {
+        node.name
+        for node in persistence_tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert not {"SqlEvaluationRepository", "SqlGovernanceRepository"}.intersection(
+        central_classes
+    )
+    governance_classes = {
+        node.name
+        for node in ast.parse(
+            (PACKAGE_ROOT / "governance" / "repository.py").read_text()
+        ).body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert {"SqlEvaluationRepository", "SqlGovernanceRepository"}.issubset(
+        governance_classes
+    )
     for filename in (
         "acceptance.py",
         "deployment.py",

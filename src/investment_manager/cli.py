@@ -45,6 +45,7 @@ from investment_manager.governance.models import (
     validate_manifest_code_version,
 )
 from investment_manager.governance.outcome_runtime import assemble_outcome_evaluation
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.runtime import assemble_governance
 from investment_manager.information.collector import (
     EventNormalizer,
@@ -59,7 +60,6 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
-from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.scheduling.models import (
@@ -781,7 +781,7 @@ def carry_walk_forward_command(
 ) -> None:
     """预登记或评价固定现货/永续 carry；不调用模型或生产执行。"""
 
-    from investment_manager.persistence import SqlGovernanceRepository
+    from investment_manager.governance.repository import SqlGovernanceRepository
     from investment_manager.research.carry import HistoricalCarryDatasetCatalog
     from investment_manager.research.carry_evaluation import (
         CarryEvaluationCatalog,
@@ -903,7 +903,7 @@ def carry_blind_evaluate_command(
     """原子消费固定 carry 策略的唯一尾窗；失败或重叠时不读取标签。"""
 
     from investment_manager.governance.models import BlindEvaluationClaim
-    from investment_manager.persistence import SqlGovernanceRepository
+    from investment_manager.governance.repository import SqlGovernanceRepository
     from investment_manager.research.carry import HistoricalCarryDatasetCatalog
     from investment_manager.research.carry_evaluation import (
         CarryBlindCatalog,
@@ -1284,7 +1284,7 @@ def walk_forward_command(
 ) -> None:
     """预登记或运行冻结程序策略的 walk-forward；不调用 Codex。"""
 
-    from investment_manager.persistence import SqlGovernanceRepository
+    from investment_manager.governance.repository import SqlGovernanceRepository
     from investment_manager.research.candidates import resolve_research_candidate
     from investment_manager.research.dataset import (
         HistoricalDatasetCatalog,
@@ -1453,7 +1453,7 @@ def blind_evaluate_command(
     """一次性揭示已通过 walk-forward 的预留尾窗；不调用 Codex。"""
 
     from investment_manager.governance.models import BlindEvaluationClaim
-    from investment_manager.persistence import SqlGovernanceRepository
+    from investment_manager.governance.repository import SqlGovernanceRepository
     from investment_manager.research.candidates import resolve_research_candidate
     from investment_manager.research.dataset import (
         HistoricalDatasetCatalog,
@@ -1855,7 +1855,7 @@ def paired_decision_tape_command(
 ) -> None:
     """预登记或运行 Codex 前瞻 CONTEXT 带的 Q/Q+AI 配对回放。"""
 
-    from investment_manager.persistence import SqlGovernanceRepository
+    from investment_manager.governance.repository import SqlGovernanceRepository
     from investment_manager.research.candidates import resolve_research_candidate
     from investment_manager.research.dataset import HistoricalDatasetCatalog
     from investment_manager.research.decision_tape import (

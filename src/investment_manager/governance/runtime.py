@@ -28,6 +28,7 @@ from investment_manager.governance.agent import (
 )
 from investment_manager.governance.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import GovernanceSnapshot
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.workflows import (
     BUILD_GOVERNANCE_SNAPSHOT_ACTIVITY,
     RUN_GOVERNOR_ACTIVITY,
@@ -39,7 +40,6 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
-    SqlGovernanceRepository,
 )
 from investment_manager.platform.database import build_engine
 from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch

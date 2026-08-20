@@ -29,8 +29,8 @@ from investment_manager.governance.release_runtime import (
     ReleaseWorkflowStatus,
     build_release_workflow_request,
 )
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import release_approval_requests, release_manifests
-from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 
