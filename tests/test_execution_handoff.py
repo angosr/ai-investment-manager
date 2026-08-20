@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, event, func, select
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.domain import CycleOutcome, MarketSnapshot, Order, OrderStatus
 from investment_manager.execution import MockExchange
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.ledger import InMemoryFactLedger
 from investment_manager.lifecycle import PositionLifecycleManager
 from investment_manager.mock_exchange_sql import SqlMockExchange

@@ -19,7 +19,7 @@ import httpx
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.domain import FrozenModel, IntelligenceEvent, _require_utc
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market_data import ClosedMarketBar
 
 _INTERVAL_MILLISECONDS = {

@@ -8,7 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.config import AppConfig
 from investment_manager.domain import FrozenModel, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.research.dataset import HistoricalEventDataset
 from investment_manager.trigger import (
     AnalysisTriggerEvent,

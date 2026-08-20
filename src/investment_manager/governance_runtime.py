@@ -34,7 +34,7 @@ from investment_manager.governance_workflows import (
     RUN_GOVERNOR_ACTIVITY,
     GovernanceCycleWorkflow,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,

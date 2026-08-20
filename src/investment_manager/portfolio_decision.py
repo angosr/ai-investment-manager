@@ -19,7 +19,7 @@ from investment_manager.domain import (
     UnitInterval,
     _require_utc,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 
 
 class PortfolioDecisionPolicy(FrozenModel):

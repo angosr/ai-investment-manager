@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from investment_manager.domain import FrozenModel, MetricObservation
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 
 METRIC_VERSION = "metrics-v3"
 

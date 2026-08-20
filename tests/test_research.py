@@ -28,7 +28,7 @@ from investment_manager.domain import (
     Side,
     SignalCandidate,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market_data import ClosedMarketBar
 from investment_manager.research.carry import (
     CarryFundingSettlement,
@@ -1461,7 +1461,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         DirectionalForecast,
         DirectionalView,
     )
-    from investment_manager.ids import content_hash
+    from investment_manager.kernel.identity import content_hash
     from investment_manager.research.decision_tape import (
         ForecastDecisionTape,
         ForecastGateEvaluationSpec,

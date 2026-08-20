@@ -27,7 +27,7 @@ from investment_manager.governance_agent import (
     SqlGovernorDecisionStore,
 )
 from investment_manager.governance_context import GovernanceSnapshotAssembler
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     SqlFactLedger,
     SqlGovernanceRepository,

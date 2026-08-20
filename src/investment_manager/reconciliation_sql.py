@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.domain import AccountSnapshot, Order, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     analysis_cycles,
     latest_account_snapshot_payload,

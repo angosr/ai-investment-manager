@@ -5,7 +5,7 @@ import yaml
 from investment_manager.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
 from investment_manager.config import AiMode, DeploymentStage
 from investment_manager.governance import load_release_manifest
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 
 
 def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(

@@ -21,7 +21,7 @@ from investment_manager.governance import (
     ReleaseGate,
     ReleaseManifest,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.release_workflows import EVALUATE_RELEASE_ACTIVITY, ReleaseWorkflow
 from investment_manager.temporal_worker import SingleActivityWorker

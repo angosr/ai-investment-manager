@@ -17,7 +17,7 @@ from investment_manager.domain import (
     Side,
     _require_utc,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 
 
 def _differences_hash(

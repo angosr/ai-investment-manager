@@ -16,7 +16,7 @@ from investment_manager.domain import (
     PanelEvidence,
     PanelSnapshot,
 )
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAGS = re.compile(r"<[^>]+>")

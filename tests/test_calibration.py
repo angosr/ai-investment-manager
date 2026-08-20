@@ -24,7 +24,7 @@ from investment_manager.domain import (
     EdgeCalibration,
     Side,
 )
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 
 
 def test_published_calibration_replaces_only_the_edge_fields(

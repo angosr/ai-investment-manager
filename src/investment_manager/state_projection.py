@@ -17,7 +17,7 @@ from investment_manager.fact_pipeline import (
     build_state_snapshot,
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 from investment_manager.state_evidence_sql import SqlStateEvidenceStore
 
 

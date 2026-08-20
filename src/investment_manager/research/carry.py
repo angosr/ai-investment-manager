@@ -15,7 +15,7 @@ import httpx
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.domain import FrozenModel, _require_utc
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.research.dataset import HistoricalDataset, HistoricalFundingDataset
 
 _BINANCE_USDM_REST = "https://fapi.binance.com"

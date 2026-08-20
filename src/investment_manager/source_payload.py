@@ -7,7 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.asset_management import SHA256_PATTERN
 from investment_manager.domain import FrozenModel, _require_utc
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 
 
 class RawSourcePayload(FrozenModel):

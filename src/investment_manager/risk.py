@@ -17,7 +17,7 @@ from investment_manager.domain import (
     _require_utc,
     floor_to_step,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 
 
 class RiskEngine:

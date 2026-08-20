@@ -40,7 +40,7 @@ from investment_manager.decision_packet import (
     RequiredView,
 )
 from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market_data import MarketTrade
 from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
 from investment_manager.persistence import assessment_view_outcomes

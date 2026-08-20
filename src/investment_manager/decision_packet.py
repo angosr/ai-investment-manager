@@ -27,7 +27,7 @@ from investment_manager.domain import (
     _optional_utc,
     _require_utc,
 )
-from investment_manager.ids import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.panel import sanitize_external_text
 
 

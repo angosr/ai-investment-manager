@@ -64,7 +64,7 @@ from investment_manager.governance import (
     ReleaseManifest,
     SystemConstitution,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
 from investment_manager.lifecycle import OpenLifecycleRecord
 from investment_manager.platform.database import metadata
@@ -2464,12 +2464,12 @@ def _insert_order(connection: Connection, order: Order, cycle_id: str, role: str
 
 
 def _snapshot_id(cycle_id: str, phase: str) -> str:
-    from investment_manager.ids import stable_id
+    from investment_manager.kernel.identity import stable_id
 
     return stable_id("account", cycle_id, phase)
 
 
 def _payload_hash(value) -> str:
-    from investment_manager.ids import content_hash
+    from investment_manager.kernel.identity import content_hash
 
     return content_hash(value)

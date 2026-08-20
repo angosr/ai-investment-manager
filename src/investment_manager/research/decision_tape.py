@@ -26,7 +26,7 @@ from investment_manager.domain import (
 )
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance import EvaluationPlan, EvaluationStage
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_proposals,

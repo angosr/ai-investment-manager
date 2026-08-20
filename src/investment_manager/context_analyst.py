@@ -25,7 +25,7 @@ from investment_manager.decision_packet import (
     build_assess_prompt,
     finalize_context_assessment,
 )
-from investment_manager.ids import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 
 ASSESS_INPUT_VERSION = "assess-input-v1"
 

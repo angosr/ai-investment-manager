@@ -20,7 +20,7 @@ from temporalio.worker import Worker
 from investment_manager.binance_testnet import assemble_binance_testnet
 from investment_manager.config import AppConfig, DeploymentStage, TemporalPolicy
 from investment_manager.domain import FrozenModel, PositionLifecycle, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.lifecycle import (
     OpenLifecycleRecord,
     OpenLifecycleRepository,

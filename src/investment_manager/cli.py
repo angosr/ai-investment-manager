@@ -39,7 +39,6 @@ from investment_manager.governance import (
     validate_manifest_code_version,
 )
 from investment_manager.governance_runtime import assemble_governance
-from investment_manager.ids import content_hash, stable_id
 from investment_manager.ingestion import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -49,6 +48,7 @@ from investment_manager.ingestion import (
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.lifecycle_runtime import (
     LifecycleTemporalWorker,
     assemble_lifecycle_activities,

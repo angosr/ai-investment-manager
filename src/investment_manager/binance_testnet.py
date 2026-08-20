@@ -32,7 +32,7 @@ from investment_manager.domain import (
     floor_to_step,
 )
 from investment_manager.execution import entry_client_order_id, exit_client_order_id
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.reconciliation import TradingStateSnapshot, TradingStateSource
 
 

@@ -336,7 +336,7 @@ class EdgeCalibration(FrozenModel):
             < self.valid_until
         ):
             raise ValueError("校准训练、发布和有效时间顺序非法")
-        from investment_manager.ids import content_hash
+        from investment_manager.kernel.identity import content_hash
 
         expected_hash = content_hash(self.model_dump(mode="json", exclude={"artifact_hash"}))
         if self.artifact_hash != expected_hash:

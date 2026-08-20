@@ -8,7 +8,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, ChildWorkflowError
 
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.temporal_compat import default_activity_versioning_intent
 from investment_manager.temporal_workflows import AnalysisCycleWorkflow
 from investment_manager.trigger import (

@@ -25,7 +25,7 @@ from investment_manager.domain import (
     PositiveDecimal,
     _require_utc,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.trigger import AnalysisTriggerType, build_trigger_event
 
 logger = logging.getLogger(__name__)

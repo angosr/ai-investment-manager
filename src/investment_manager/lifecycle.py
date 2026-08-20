@@ -21,7 +21,7 @@ from investment_manager.domain import (
 )
 from investment_manager.execution import ExecutionExchange
 from investment_manager.exit_policy import program_exit_triggered
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.ledger import LifecycleFacts, LifecycleLedger
 from investment_manager.metrics import observation
 from investment_manager.reconciliation import MockReconciler

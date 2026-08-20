@@ -8,7 +8,7 @@ from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
 from investment_manager.cli import app
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 from investment_manager.schema import compose_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -240,7 +240,21 @@ def test_platform_does_not_import_business_modules() -> None:
             assert not {
                 dependency
                 for dependency in dependencies
-                if not dependency.startswith("investment_manager.platform")
+                if not dependency.startswith(
+                    ("investment_manager.kernel", "investment_manager.platform")
+                )
+            }
+
+
+def test_kernel_does_not_import_platform_or_business_modules() -> None:
+    graph = _internal_import_graph()
+
+    for module, dependencies in graph.items():
+        if module.startswith("investment_manager.kernel"):
+            assert not {
+                dependency
+                for dependency in dependencies
+                if not dependency.startswith("investment_manager.kernel")
             }
 
 

@@ -24,7 +24,7 @@ from investment_manager.governance import (
     GovernanceSnapshot,
     NoChange,
 )
-from investment_manager.ids import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.persistence import change_proposals, governance_decisions
 from investment_manager.trigger import AnalysisTriggerPlan, TriggerPlanPatch
 

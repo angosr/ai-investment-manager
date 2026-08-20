@@ -26,7 +26,7 @@ from investment_manager.governance import (
     load_release_manifest,
     validate_manifest_against_config,
 )
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.persistence import (
     SqlGovernanceRepository,
     analysis_cycles,

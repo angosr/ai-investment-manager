@@ -42,7 +42,7 @@ from investment_manager.execution_contract import (
     build_execution_result,
 )
 from investment_manager.features import FeatureEngine
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.ledger import (
     CycleFacts,
     FactLedger,

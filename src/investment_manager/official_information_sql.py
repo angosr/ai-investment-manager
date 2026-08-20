@@ -7,7 +7,7 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
 from investment_manager.domain import _require_utc
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.official_information import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,

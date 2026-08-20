@@ -26,7 +26,7 @@ from investment_manager.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.outcome_evaluation_sql import SqlOutcomeWindowRepository
 from investment_manager.outcome_evaluation_workflows import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,

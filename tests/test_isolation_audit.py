@@ -7,11 +7,11 @@ import pytest
 
 from investment_manager.analyst import IsolationAuditCheck
 from investment_manager.governance import load_release_manifest
-from investment_manager.ids import content_hash
 from investment_manager.isolation_audit import (
     CodexIsolationAuditCatalog,
     build_codex_isolation_audit_artifact,
 )
+from investment_manager.kernel.identity import content_hash
 
 
 def test_isolation_audit_artifact_binds_release_and_rejects_tampering(

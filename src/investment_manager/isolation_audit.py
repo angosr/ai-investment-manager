@@ -15,7 +15,8 @@ from investment_manager.analyst import (
 from investment_manager.config import AppConfig
 from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import ReleaseManifest, validate_manifest_against_config
-from investment_manager.ids import content_hash, stable_id, write_json_artifact
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.platform.artifacts import write_json_artifact
 
 
 class CodexIsolationAuditArtifact(FrozenModel):

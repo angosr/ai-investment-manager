@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.domain import AccountSnapshot, FeatureSnapshot, MarketSnapshot
-from investment_manager.ids import content_hash
+from investment_manager.kernel.identity import content_hash
 from investment_manager.persistence import state_evidence_snapshots
 
 

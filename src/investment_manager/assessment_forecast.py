@@ -16,7 +16,7 @@ from investment_manager.asset_management import (
 )
 from investment_manager.decision_packet import DecisionPacket
 from investment_manager.domain import DirectionalView, FrozenModel, Money, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market_data import MarketTrade
 
 

@@ -42,7 +42,7 @@ from investment_manager.domain import (
     Side,
     SignalCandidate,
 )
-from investment_manager.ids import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.trigger import TriggerDecision
 
 ANALYST_INPUT_VERSION = "analyst-input-v4"

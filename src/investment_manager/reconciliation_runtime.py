@@ -23,7 +23,7 @@ from investment_manager.config import (
     TemporalPolicy,
 )
 from investment_manager.domain import FrozenModel, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.platform.database import build_engine
 from investment_manager.reconciliation import (
     ReconciliationEngine,

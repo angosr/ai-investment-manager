@@ -24,7 +24,7 @@ from investment_manager.domain import (
     _require_utc,
 )
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
-from investment_manager.ids import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_forecast_outcomes,

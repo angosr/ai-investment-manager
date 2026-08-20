@@ -28,7 +28,7 @@ from investment_manager.domain import (
 )
 from investment_manager.exit_policy import program_exit_triggered
 from investment_manager.features import FeatureEngine
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.research.dataset import (
     HistoricalDataset,
     HistoricalEventDataset,

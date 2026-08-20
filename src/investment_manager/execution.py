@@ -17,7 +17,7 @@ from investment_manager.domain import (
     Side,
     TradeIntent,
 )
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 
 
 def entry_client_order_id(intent: TradeIntent, risk: RiskDecision) -> str:

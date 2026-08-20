@@ -19,7 +19,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import Field, field_validator
 
 from investment_manager.domain import FrozenModel, IntelligenceEvent, _require_utc
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 
 logger = logging.getLogger(__name__)
 

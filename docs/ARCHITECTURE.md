@@ -155,7 +155,7 @@ dashboard 只读，不能导入任何写用例或控制入口
 
 强制规则：
 
-1. `kernel` 不依赖任何业务包、SQLAlchemy、Temporal、Typer 或 Web 框架。
+1. `kernel` 不依赖任何业务包、SQLAlchemy、Temporal、Typer 或 Web 框架；只允许 Pydantic 及其序列化核心作为全系统不可变模型与内容身份的统一基础。
 2. 领域模型和 Policy 不依赖 tables、Repository、runtime、CLI。
 3. Repository 只写本领域表；跨域事务由应用组合层协调。
 4. Workflow 不包含投资规则，Activity 不通过 CLI 调用业务。

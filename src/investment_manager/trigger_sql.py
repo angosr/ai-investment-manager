@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from investment_manager.config import TriggerPolicy
 from investment_manager.domain import FrozenModel, _require_utc
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.persistence import (
     analysis_call_admissions,
     analysis_scheduled_wakeups,

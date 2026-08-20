@@ -25,7 +25,7 @@ from investment_manager.domain import (
     _optional_utc,
     _require_utc,
 )
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 from investment_manager.persistence import (
     assessment_view_outcomes,
     context_assessments,

@@ -20,7 +20,7 @@ from investment_manager.governance import (
     StageResult,
     build_evaluation_result,
 )
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.temporal_worker import SingleActivityWorker
 from investment_manager.version_evaluation_workflows import (

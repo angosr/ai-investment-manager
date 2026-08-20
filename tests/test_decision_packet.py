@@ -34,7 +34,7 @@ from investment_manager.decision_packet import (
 )
 from investment_manager.domain import DirectionalView
 from investment_manager.features import FeatureEngine
-from investment_manager.ids import canonical_json, content_hash
+from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.platform.database import metadata
 
 HASH = "a" * 64

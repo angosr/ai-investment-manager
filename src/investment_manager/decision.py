@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from investment_manager.config import CompositionPolicy, ExecutionPolicy, FrequencyPolicy
 from investment_manager.domain import MarketSnapshot, OrderType, Side, SignalCandidate, TradeIntent
-from investment_manager.ids import stable_id
+from investment_manager.kernel.identity import stable_id
 
 
 @dataclass(frozen=True, slots=True)

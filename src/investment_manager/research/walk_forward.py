@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from investment_manager.config import AppConfig
 from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
-from investment_manager.ids import content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.research.backtest import (
     BacktestMetrics,
     BacktestRun,
