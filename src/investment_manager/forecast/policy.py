@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import EdgeCalibration
+from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.configuration import StrictConfig
 
 

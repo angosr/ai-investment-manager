@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 
-from investment_manager.domain import DirectionalView
 from investment_manager.forecast.models import (
     CalibratedForecast,
+    DirectionalView,
     ForecastRole,
 )
 from investment_manager.kernel.identity import content_hash, stable_id

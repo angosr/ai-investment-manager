@@ -14,7 +14,6 @@ from urllib.parse import urlencode
 
 import httpx
 
-from investment_manager.domain import TradeIntent
 from investment_manager.execution.legacy_exchange import entry_client_order_id, exit_client_order_id
 from investment_manager.execution.models import (
     AccountSnapshot,
@@ -32,6 +31,7 @@ from investment_manager.execution.reconciliation import TradingStateSnapshot, Tr
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import floor_to_step
+from investment_manager.legacy.models import TradeIntent
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.models import (
     RiskDecision,

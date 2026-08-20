@@ -6,12 +6,12 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import DirectionalView
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     CalibratedForecast,
     ContextAssessment,
     ContextView,
+    DirectionalView,
     ForecastRole,
     PricedState,
 )

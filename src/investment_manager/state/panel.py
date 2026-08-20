@@ -3,24 +3,55 @@ from __future__ import annotations
 import html
 import re
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from investment_manager.domain import (
-    PanelEvidence,
-    PanelSnapshot,
-)
+from pydantic import field_validator
+
 from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
 )
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
 from investment_manager.state.policy import PanelPolicy
+
+
+class PanelEvidence(FrozenModel):
+    evidence_id: str
+    event_time: datetime
+    observed_at: datetime
+    source: str
+    title: str
+    excerpt: str
+    value_score: Decimal
+    prompt_injection_suspected: bool = False
+
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+
+class PanelSnapshot(FrozenModel):
+    cycle_id: str
+    as_of: datetime
+    schema_version: str
+    policy_version: str
+    symbol: str
+    account: AccountSnapshot
+    market: MarketSnapshot
+    features: FeatureSnapshot
+    evidence: tuple[PanelEvidence, ...]
+    data_quality: tuple[str, ...]
+    rules_digest: tuple[str, ...]
+    content_hash: str
+
+    _utc_as_of = field_validator("as_of")(require_utc)
 
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAGS = re.compile(r"<[^>]+>")

@@ -14,11 +14,6 @@ import pytest
 import typer
 
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
-from investment_manager.domain import (
-    Action,
-    PriceCondition,
-    SignalCandidate,
-)
 from investment_manager.entrypoints.cli.commands import _parse_research_symbol
 from investment_manager.execution.models import (
     AccountSnapshot,
@@ -29,6 +24,11 @@ from investment_manager.execution.models import (
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.models import (
+    Action,
+    PriceCondition,
+    SignalCandidate,
+)
 from investment_manager.market.models import (
     ClosedMarketBar,
     FeatureSnapshot,
@@ -1459,13 +1459,13 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from investment_manager.domain import (
+    from investment_manager.forecast.models import DirectionalView
+    from investment_manager.kernel.identity import content_hash
+    from investment_manager.legacy.models import (
         Action,
         AnalysisProposal,
         DirectionalForecast,
-        DirectionalView,
     )
-    from investment_manager.kernel.identity import content_hash
     from investment_manager.research.decision_tape import (
         ForecastDecisionTape,
         ForecastGateEvaluationSpec,

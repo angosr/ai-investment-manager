@@ -5,12 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import (
-    DirectionalView,
-    ForecastOutcomeStatus,
-)
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
+    DirectionalView,
+    ForecastOutcomeStatus,
     PricedState,
 )
 from investment_manager.forecast.outcomes import AssessmentViewOutcome

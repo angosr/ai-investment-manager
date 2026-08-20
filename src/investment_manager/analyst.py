@@ -21,19 +21,11 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
-from investment_manager.domain import (
-    Action,
-    AnalysisProposal,
-    DirectionalForecast,
-    DirectionalView,
-    PanelSnapshot,
-    PriceCondition,
-    SignalCandidate,
-)
 from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import (
     AiMode,
     CodexAccount,
@@ -46,8 +38,16 @@ from investment_manager.kernel.types import (
     FrozenModel,
     PositiveDecimal,
 )
+from investment_manager.legacy.models import (
+    Action,
+    AnalysisProposal,
+    DirectionalForecast,
+    PriceCondition,
+    SignalCandidate,
+)
 from investment_manager.scheduling.models import TriggerDecision
 from investment_manager.settings import AppConfig
+from investment_manager.state.panel import PanelSnapshot
 
 ANALYST_INPUT_VERSION = "analyst-input-v4"
 _ANALYST_BASE_INSTRUCTIONS = (

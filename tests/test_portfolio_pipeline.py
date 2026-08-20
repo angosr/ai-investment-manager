@@ -3,7 +3,6 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.domain import DirectionalView
 from investment_manager.execution.models import Position
 from investment_manager.execution.planner import (
     MarketExecutionSpec,
@@ -12,6 +11,7 @@ from investment_manager.execution.planner import (
 )
 from investment_manager.forecast.models import (
     CalibratedForecast,
+    DirectionalView,
     ForecastRole,
 )
 from investment_manager.portfolio.decision import (

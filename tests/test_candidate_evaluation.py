@@ -10,8 +10,8 @@ from investment_manager.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import CandidateOutcome, CandidateOutcomeStatus
 from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.legacy.models import CandidateOutcome, CandidateOutcomeStatus
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.persistence import (

@@ -13,20 +13,20 @@ from investment_manager.decision import (
     estimate_round_trip_cost_amount,
     estimate_round_trip_cost_bps,
 )
-from investment_manager.domain import (
-    Action,
-    AnalysisProposal,
-    CycleOutcome,
-    DirectionalForecast,
-    DirectionalView,
-    PriceCondition,
-)
 from investment_manager.execution.models import (
     OrderStatus,
     OrderType,
     Side,
 )
+from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import AiMode
+from investment_manager.legacy.models import (
+    Action,
+    AnalysisProposal,
+    CycleOutcome,
+    DirectionalForecast,
+    PriceCondition,
+)
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 

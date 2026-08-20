@@ -5,11 +5,6 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Protocol
 
-from investment_manager.domain import (
-    DecisionOutcome,
-    MetricObservation,
-    TradeIntent,
-)
 from investment_manager.execution.exit_policy import program_exit_triggered
 from investment_manager.execution.ledger import LifecycleFacts, LifecycleLedger
 from investment_manager.execution.legacy_exchange import ExecutionExchange
@@ -22,10 +17,14 @@ from investment_manager.execution.models import (
     PositionLifecycleStatus,
 )
 from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.governance.metrics import MetricObservation, observation
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.models import (
+    DecisionOutcome,
+    TradeIntent,
+)
 from investment_manager.market.models import MarketSnapshot
-from investment_manager.metrics import observation
 from investment_manager.risk.budget import RiskBudgetStore
 from investment_manager.risk.models import RiskDecision
 

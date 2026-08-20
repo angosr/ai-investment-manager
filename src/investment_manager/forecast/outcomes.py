@@ -10,14 +10,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.candidate_evaluation import trade_at_or_before
-from investment_manager.domain import (
-    DirectionalView,
-    ForecastOutcomeStatus,
-)
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
     ContextView,
+    DirectionalView,
+    ForecastOutcomeStatus,
     PricedState,
 )
 from investment_manager.forecast.tables import (

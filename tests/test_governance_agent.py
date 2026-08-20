@@ -10,10 +10,6 @@ from sqlalchemy import create_engine, func, insert, select
 from investment_manager.analyst import AnalystResult, canonical_json
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import (
-    CandidateOutcome,
-    CandidateOutcomeStatus,
-)
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.governance.agent import (
     CodexGovernor,
@@ -35,6 +31,10 @@ from investment_manager.governance.tables import change_proposals, governance_de
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.legacy.models import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+)
 from investment_manager.persistence import (
     SqlFactLedger,
     analysis_cycles,

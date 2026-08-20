@@ -38,18 +38,18 @@ from investment_manager.analyst import (
     strict_output_schema,
     verify_bundle,
 )
-from investment_manager.domain import (
-    Action,
-    AnalysisProposal,
-    DirectionalForecast,
-    DirectionalView,
-    PriceCondition,
-)
 from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
+from investment_manager.legacy.models import (
+    Action,
+    AnalysisProposal,
+    DirectionalForecast,
+    PriceCondition,
+)
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 from investment_manager.settings import AppConfig
 
@@ -250,7 +250,7 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     app_config, replay_input, tmp_path
 ) -> None:
     from investment_manager.market.features import FeatureEngine
-    from investment_manager.panel import PanelBuilder
+    from investment_manager.state.panel import PanelBuilder
 
     duplicate_body = replay_input.events[0].model_copy(
         update={"body": replay_input.events[0].title}
@@ -340,7 +340,7 @@ def test_analyst_bundle_rejects_prompt_above_explicit_limit(
     app_config, replay_input, tmp_path
 ) -> None:
     from investment_manager.market.features import FeatureEngine
-    from investment_manager.panel import PanelBuilder
+    from investment_manager.state.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(
         market=replay_input.market,
@@ -864,7 +864,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     app_config, replay_input, tmp_path, monkeypatch
 ) -> None:
     from investment_manager.market.features import FeatureEngine
-    from investment_manager.panel import PanelBuilder
+    from investment_manager.state.panel import PanelBuilder
 
     registry = _account_registry(tmp_path)
     panel = PanelBuilder(app_config.panel).build(
@@ -1398,7 +1398,7 @@ def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
     app_config, replay_input
 ) -> None:
     from investment_manager.market.features import FeatureEngine
-    from investment_manager.panel import PanelBuilder
+    from investment_manager.state.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(
         market=replay_input.market,

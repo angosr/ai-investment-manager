@@ -14,17 +14,16 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.candidate_evaluation import trade_at_or_before
-from investment_manager.domain import (
-    AnalysisForecastOutcome,
-    AnalysisProposal,
-    DirectionalForecast,
-    DirectionalView,
-    ForecastOutcomeStatus,
-)
+from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.models import (
+    AnalysisForecastOutcome,
+    AnalysisProposal,
+    DirectionalForecast,
+)
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_forecast_outcomes,

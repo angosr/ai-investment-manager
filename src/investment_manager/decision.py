@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import (
-    SignalCandidate,
-    TradeIntent,
-)
 from investment_manager.execution.models import (
     OrderType,
     Side,
 )
 from investment_manager.execution.policy import ExecutionPolicy
 from investment_manager.kernel.identity import stable_id
+from investment_manager.legacy.models import (
+    SignalCandidate,
+    TradeIntent,
+)
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.portfolio.policy import CompositionPolicy, FrequencyPolicy
 

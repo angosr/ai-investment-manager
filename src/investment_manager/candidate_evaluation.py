@@ -8,17 +8,17 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import (
-    CandidateOutcome,
-    CandidateOutcomeStatus,
-    SignalCandidate,
-)
 from investment_manager.execution.models import (
     OrderType,
     Side,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.models import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+    SignalCandidate,
+)
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import market_trades
 from investment_manager.persistence import candidate_outcomes, signal_candidates

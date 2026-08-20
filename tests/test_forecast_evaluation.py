@@ -10,16 +10,9 @@ from sqlalchemy import create_engine, insert, select, update
 
 from investment_manager.analyst import AnalystResult, analysis_behavior_hash
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import (
-    Action,
-    AnalysisForecastOutcome,
-    AnalysisProposal,
-    DirectionalForecast,
-    DirectionalView,
-    ForecastOutcomeStatus,
-)
 from investment_manager.entrypoints.cli.commands import register_ai_forecast_plan
 from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.policy import AiMode
 from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,
@@ -31,6 +24,12 @@ from investment_manager.forecast_evaluation import (
     evaluate_forward_forecast_plan,
     failed_forward_forecast_experiment,
     validate_forward_forecast_evaluation_plan,
+)
+from investment_manager.legacy.models import (
+    Action,
+    AnalysisForecastOutcome,
+    AnalysisProposal,
+    DirectionalForecast,
 )
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema

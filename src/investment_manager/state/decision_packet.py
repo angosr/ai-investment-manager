@@ -30,7 +30,6 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
-from investment_manager.panel import sanitize_external_text
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -39,6 +38,7 @@ from investment_manager.state.models import (
     Materiality,
     StateSnapshot,
 )
+from investment_manager.state.panel import sanitize_external_text
 
 
 class DecisionPacketCapacityError(ValueError):

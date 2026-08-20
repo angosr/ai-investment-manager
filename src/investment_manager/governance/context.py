@@ -9,10 +9,6 @@ from pathlib import Path
 from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.domain import (
-    CandidateOutcome,
-    CandidateOutcomeStatus,
-)
 from investment_manager.execution.tables import reconciliation_reports
 from investment_manager.governance.models import (
     EvaluationPlan,
@@ -37,6 +33,10 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.models import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+)
 from investment_manager.persistence import (
     analysis_cycles,
     candidate_outcomes,

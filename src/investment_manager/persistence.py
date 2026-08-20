@@ -26,14 +26,6 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.analyst import AttemptAudit, CapacitySnapshot, CodexLease
-from investment_manager.domain import (
-    AnalysisProposal,
-    DecisionOutcome,
-    MetricObservation,
-    PanelSnapshot,
-    SignalCandidate,
-    TradeIntent,
-)
 from investment_manager.execution.contracts import (
     ExecutionRequest,
     ExecutionResult,
@@ -52,14 +44,22 @@ from investment_manager.execution.tables import (
     orders,
     position_lifecycles,
 )
+from investment_manager.governance.metrics import MetricObservation
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.models import (
+    AnalysisProposal,
+    DecisionOutcome,
+    SignalCandidate,
+    TradeIntent,
+)
 from investment_manager.platform.database import metadata
 from investment_manager.risk.budget import (
     portfolio_risk_budgets,
     risk_reservations,
 )
 from investment_manager.risk.models import RiskDecision
+from investment_manager.state.panel import PanelSnapshot
 
 analysis_cycles = Table(
     "analysis_cycles",

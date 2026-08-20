@@ -5,7 +5,6 @@ import pytest
 from sqlalchemy import create_engine, select
 
 from investment_manager.analyst import AnalystResult
-from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
@@ -18,6 +17,8 @@ from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
     ContextView,
+    DirectionalView,
+    ForecastOutcomeStatus,
     ForecastRole,
     PricedState,
 )

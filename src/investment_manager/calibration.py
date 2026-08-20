@@ -5,16 +5,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import (
-    CandidateOutcome,
-    CandidateOutcomeStatus,
-    EdgeCalibration,
-    SignalCandidate,
-)
 from investment_manager.execution.models import Side
+from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.forecast.policy import CalibrationPolicy
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.models import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+    SignalCandidate,
+)
 
 EDGE_CALIBRATION_MISSING = "EDGE_CALIBRATION_MISSING"
 

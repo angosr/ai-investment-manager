@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import create_engine, event, func, select
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import CycleOutcome
 from investment_manager.execution.ledger import InMemoryFactLedger
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.lifecycle import PositionLifecycleManager
@@ -24,6 +23,7 @@ from investment_manager.execution.tables import (
     position_lifecycles,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.legacy.models import CycleOutcome
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.persistence import (
     SqlFactLedger,

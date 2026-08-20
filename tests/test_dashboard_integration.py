@@ -12,13 +12,13 @@ from decimal import Decimal
 from sqlalchemy import create_engine, insert
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import DecisionOutcome
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.models import ExitReason
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
+from investment_manager.legacy.models import DecisionOutcome
 from investment_manager.persistence import (
     SqlFactLedger,
     decision_outcomes,

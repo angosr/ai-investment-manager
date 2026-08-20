@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from investment_manager.domain import TradeIntent
 from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
@@ -11,6 +10,7 @@ from investment_manager.execution.models import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import floor_to_step
+from investment_manager.legacy.models import TradeIntent
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.models import (
     GuardState,

@@ -17,14 +17,14 @@ from investment_manager.calibration import (
 )
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.decision import HighestNetEdgeComposer
-from investment_manager.domain import (
-    CandidateOutcome,
-    CandidateOutcomeStatus,
-    EdgeCalibration,
-)
 from investment_manager.execution.models import Side
+from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.forecast.policy import CalibrationPolicy
 from investment_manager.kernel.identity import content_hash
+from investment_manager.legacy.models import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+)
 
 
 def test_published_calibration_replaces_only_the_edge_fields(

@@ -7,12 +7,12 @@ from datetime import timedelta
 from sqlalchemy import create_engine
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import CycleOutcome
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
     Side,
 )
+from investment_manager.legacy.models import CycleOutcome
 from investment_manager.persistence import SqlFactLedger
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.risk.legacy import RiskEngine

@@ -5,22 +5,22 @@ from decimal import Decimal
 from threading import RLock
 from typing import Protocol
 
-from investment_manager.domain import (
-    AnalysisProposal,
-    DecisionOutcome,
-    MetricObservation,
-    PanelSnapshot,
-    SignalCandidate,
-    TradeIntent,
-)
 from investment_manager.execution.contracts import ExecutionRequest, ExecutionResult, RiskTransition
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
     PositionLifecycle,
 )
+from investment_manager.governance.metrics import MetricObservation
+from investment_manager.legacy.models import (
+    AnalysisProposal,
+    DecisionOutcome,
+    SignalCandidate,
+    TradeIntent,
+)
 from investment_manager.risk.budget import InMemoryRiskBudgetStore
 from investment_manager.risk.models import RiskDecision
+from investment_manager.state.panel import PanelSnapshot
 
 
 class RiskReservationRejected(ValueError):

@@ -5,21 +5,21 @@ from enum import StrEnum
 
 from pydantic import field_validator, model_validator
 
-from investment_manager.domain import (
-    CycleOutcome,
-    DecisionOutcome,
-    MetricObservation,
-    TradeIntent,
-)
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
     OrderStatus,
     PositionLifecycle,
 )
+from investment_manager.governance.metrics import MetricObservation
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.models import (
+    CycleOutcome,
+    DecisionOutcome,
+    TradeIntent,
+)
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.models import (
     RiskDecision,

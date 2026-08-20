@@ -13,11 +13,6 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.domain import (
-    AnalysisProposal,
-    DecisionOutcome,
-    TradeIntent,
-)
 from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.lifecycle import OpenLifecycleRecord
 from investment_manager.execution.reconciliation import ReconciliationReport
@@ -28,8 +23,12 @@ from investment_manager.governance.performance import OutcomeMetrics, calculate_
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
+from investment_manager.legacy.models import (
+    AnalysisProposal,
+    DecisionOutcome,
+    TradeIntent,
+)
 from investment_manager.market.repository import market_quotes, market_trades
-from investment_manager.panel import sanitize_external_text
 from investment_manager.persistence import (
     SqlFactLedger,
     SqlOpenLifecycleRepository,
@@ -53,6 +52,7 @@ from investment_manager.scheduling.tables import (
     trigger_outbox,
 )
 from investment_manager.settings import AppConfig
+from investment_manager.state.panel import sanitize_external_text
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500

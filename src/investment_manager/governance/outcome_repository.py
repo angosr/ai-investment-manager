@@ -7,10 +7,6 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import (
-    CycleOutcome,
-    DecisionOutcome,
-)
 from investment_manager.execution.tables import (
     fills,
     orders,
@@ -21,6 +17,10 @@ from investment_manager.governance.performance import (
 )
 from investment_manager.governance.tables import outcome_window_reports
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.models import (
+    CycleOutcome,
+    DecisionOutcome,
+)
 from investment_manager.persistence import (
     analysis_cycles,
     decision_outcomes,

@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import CycleOutcome
 from investment_manager.execution.contracts import (
     ExecutionRequest,
     RiskTransition,
     build_execution_request,
     build_execution_result,
 )
+from investment_manager.legacy.models import CycleOutcome
 
 
 def test_execution_request_has_stable_identity_and_hash(app_config, replay_input) -> None:

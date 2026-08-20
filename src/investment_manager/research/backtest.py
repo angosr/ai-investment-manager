@@ -9,11 +9,6 @@ from typing import Any, Literal, Protocol
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.decision import estimate_round_trip_cost_amount
-from investment_manager.domain import (
-    Action,
-    SignalCandidate,
-    TradeIntent,
-)
 from investment_manager.execution.exit_policy import program_exit_triggered
 from investment_manager.execution.models import (
     AccountSnapshot,
@@ -27,6 +22,11 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
     floor_to_step,
+)
+from investment_manager.legacy.models import (
+    Action,
+    SignalCandidate,
+    TradeIntent,
 )
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import (

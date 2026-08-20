@@ -8,12 +8,12 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import (
-    AccountSnapshot,
     ExitReason,
     OrderType,
     ProgramExitCondition,
     Side,
 )
+from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
@@ -21,7 +21,6 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     UnitInterval,
 )
-from investment_manager.market.models import FeatureSnapshot, MarketSnapshot
 
 
 class Action(StrEnum):
@@ -32,49 +31,12 @@ class Action(StrEnum):
     CANCEL_PENDING = "CANCEL_PENDING"
 
 
-class DirectionalView(StrEnum):
-    UP = "UP"
-    DOWN = "DOWN"
-    UNCERTAIN = "UNCERTAIN"
-
-
 class CycleOutcome(StrEnum):
     NO_ACTION = "NO_ACTION"
     NO_TRADE = "NO_TRADE"
     RISK_REJECTED = "RISK_REJECTED"
     EXECUTION_PENDING = "EXECUTION_PENDING"
     EXECUTED = "EXECUTED"
-
-
-class PanelEvidence(FrozenModel):
-    evidence_id: str
-    event_time: datetime
-    observed_at: datetime
-    source: str
-    title: str
-    excerpt: str
-    value_score: Decimal
-    prompt_injection_suspected: bool = False
-
-    _utc_event_time = field_validator("event_time")(require_utc)
-    _utc_observed_at = field_validator("observed_at")(require_utc)
-
-
-class PanelSnapshot(FrozenModel):
-    cycle_id: str
-    as_of: datetime
-    schema_version: str
-    policy_version: str
-    symbol: str
-    account: AccountSnapshot
-    market: MarketSnapshot
-    features: FeatureSnapshot
-    evidence: tuple[PanelEvidence, ...]
-    data_quality: tuple[str, ...]
-    rules_digest: tuple[str, ...]
-    content_hash: str
-
-    _utc_as_of = field_validator("as_of")(require_utc)
 
 
 class PriceCondition(FrozenModel):
@@ -87,70 +49,6 @@ class PriceCondition(FrozenModel):
         if info.data.get("order_type") == OrderType.LIMIT and value is None:
             raise ValueError("限价条件必须包含价格")
         return value
-
-
-class EdgeCalibration(FrozenModel):
-    """A published, point-in-time-safe mapping from one producer scope to gross edge."""
-
-    calibration_id: str
-    producer_id: str
-    producer_version: str
-    symbol: str
-    side: Side
-    horizon_minutes: int = Field(gt=0)
-    expected_gross_bps: Decimal
-    conservative_gross_bps: Decimal
-    sample_size: int = Field(gt=0)
-    non_overlapping_sample_size: int = Field(gt=0)
-    training_start: datetime
-    training_end: datetime
-    published_at: datetime
-    valid_from: datetime
-    valid_until: datetime
-    evaluation_version: str
-    source_calibration_ref: str
-    source_execution_policy_version: str
-    source_frequency_policy_version: str
-    method_version: str
-    dataset_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-    _utc_training_start = field_validator("training_start")(require_utc)
-    _utc_training_end = field_validator("training_end")(require_utc)
-    _utc_published_at = field_validator("published_at")(require_utc)
-    _utc_valid_from = field_validator("valid_from")(require_utc)
-    _utc_valid_until = field_validator("valid_until")(require_utc)
-
-    @model_validator(mode="after")
-    def evidence_and_time_ranges_must_be_consistent(self):
-        if self.non_overlapping_sample_size > self.sample_size:
-            raise ValueError("非重叠校准样本不能超过原始样本")
-        if self.conservative_gross_bps > self.expected_gross_bps:
-            raise ValueError("保守毛优势不能高于均值估计")
-        if not (
-            self.training_start
-            < self.training_end
-            <= self.published_at
-            <= self.valid_from
-            < self.valid_until
-        ):
-            raise ValueError("校准训练、发布和有效时间顺序非法")
-        from investment_manager.kernel.identity import content_hash
-
-        expected_hash = content_hash(self.model_dump(mode="json", exclude={"artifact_hash"}))
-        if self.artifact_hash != expected_hash:
-            raise ValueError("校准制品哈希与内容不一致")
-        return self
-
-    @property
-    def scope(self) -> tuple[str, str, str, Side, int]:
-        return (
-            self.producer_id,
-            self.producer_version,
-            self.symbol,
-            self.side,
-            self.horizon_minutes,
-        )
 
 
 class SignalCandidate(FrozenModel):
@@ -419,12 +317,6 @@ class CandidateOutcome(FrozenModel):
         return self
 
 
-class ForecastOutcomeStatus(StrEnum):
-    SETTLED = "SETTLED"
-    ABSTAINED = "ABSTAINED"
-    UNSCORABLE = "UNSCORABLE"
-
-
 class AnalysisForecastOutcome(FrozenModel):
     """Non-tradable label for every Codex directional view, including abstention."""
 
@@ -483,14 +375,3 @@ class AnalysisForecastOutcome(FrozenModel):
         ):
             raise ValueError("SETTLED 方向预测必须包含 UP/DOWN 得分")
         return self
-
-
-class MetricObservation(FrozenModel):
-    metric_id: str
-    metric_version: str
-    cycle_id: str
-    observed_at: datetime
-    value: Decimal
-    dimensions: tuple[tuple[str, str], ...] = ()
-
-    _utc_observed_at = field_validator("observed_at")(require_utc)

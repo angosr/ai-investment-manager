@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.market.features import FeatureEngine
-from investment_manager.panel import PanelBuilder
+from investment_manager.state.panel import PanelBuilder
 
 
 def test_panel_is_deterministic_and_marks_prompt_injection(app_config, replay_input) -> None:

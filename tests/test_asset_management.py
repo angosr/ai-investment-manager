@@ -4,13 +4,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.domain import DirectionalView
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     BaseForecast,
     CalibratedForecast,
     ContextAssessment,
     ContextView,
+    DirectionalView,
     ForecastRole,
     PricedState,
 )

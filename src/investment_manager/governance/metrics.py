@@ -3,11 +3,24 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import MetricObservation
+from pydantic import field_validator
+
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 METRIC_VERSION = "metrics-v3"
+
+
+class MetricObservation(FrozenModel):
+    metric_id: str
+    metric_version: str
+    cycle_id: str
+    observed_at: datetime
+    value: Decimal
+    dimensions: tuple[tuple[str, str], ...] = ()
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class MetricDefinition(FrozenModel):

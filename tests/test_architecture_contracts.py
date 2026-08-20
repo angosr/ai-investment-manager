@@ -323,6 +323,41 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
     assert settings_classes == {"AppConfig"}
 
 
+def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
+    owners = {
+        "DirectionalView": "forecast/models.py",
+        "EdgeCalibration": "forecast/models.py",
+        "ForecastOutcomeStatus": "forecast/models.py",
+        "PanelEvidence": "state/panel.py",
+        "PanelSnapshot": "state/panel.py",
+        "MetricObservation": "governance/metrics.py",
+    }
+    definitions: dict[str, list[str]] = {name: [] for name in owners}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        relative = path.relative_to(PACKAGE_ROOT).as_posix()
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name in definitions:
+                definitions[node.name].append(relative)
+        if relative.split("/", 1)[0] not in {
+            "forecast",
+            "information",
+            "market",
+            "portfolio",
+            "scheduling",
+            "state",
+        }:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("investment_manager.legacy"), path
+
+    assert definitions == {name: [owner] for name, owner in owners.items()}
+    for filename in ("domain.py", "metrics.py", "panel.py"):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
 def test_shared_kernel_primitives_are_not_imported_from_domain() -> None:
     kernel_primitives = {
         "FrozenModel",
@@ -337,7 +372,7 @@ def test_shared_kernel_primitives_are_not_imported_from_domain() -> None:
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.ImportFrom) and node.module == (
-                "investment_manager.domain"
+                "investment_manager.legacy.models"
             ):
                 assert not kernel_primitives.intersection(
                     alias.name for alias in node.names
@@ -352,7 +387,7 @@ def test_market_models_are_imported_from_their_domain_owner() -> None:
             continue
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.ImportFrom) and node.module == (
-                "investment_manager.domain"
+                "investment_manager.legacy.models"
             ):
                 assert not market_models.intersection(
                     alias.name for alias in node.names
@@ -366,7 +401,7 @@ def test_market_models_are_imported_from_their_domain_owner() -> None:
 def test_information_facts_are_imported_from_their_domain_owner() -> None:
     moved_models = {"IntelligenceEvent", "SourceObservation", "SourceTier"}
     old_modules = {
-        "investment_manager.domain",
+        "investment_manager.legacy.models",
         "investment_manager.portfolio.models",
     }
 
@@ -582,7 +617,7 @@ def test_risk_models_and_modules_have_one_domain_owner() -> None:
         for node in ast.walk(ast.parse(path.read_text())):
             if (
                 isinstance(node, ast.ImportFrom)
-                and node.module == "investment_manager.domain"
+                and node.module == "investment_manager.legacy.models"
             ):
                 assert not moved_models.intersection(
                     alias.name for alias in node.names
@@ -629,7 +664,7 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
             for node in ast.walk(tree):
                 if (
                     isinstance(node, ast.ImportFrom)
-                    and node.module == "investment_manager.domain"
+                    and node.module == "investment_manager.legacy.models"
                 ):
                     assert not moved_models.intersection(
                         alias.name for alias in node.names
