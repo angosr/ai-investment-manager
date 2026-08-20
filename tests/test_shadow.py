@@ -5,13 +5,13 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
+from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.orchestration import WorkflowRequest
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.legacy.trigger_adapter import TriggerDispatchBuilder
 from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,

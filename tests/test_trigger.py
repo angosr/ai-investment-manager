@@ -41,7 +41,7 @@ from investment_manager.scheduling.runtime import (
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.state.models import CanonicalFactRevision, FactRevisionStatus
 
-trigger_runtime = import_module("investment_manager.legacy.trigger_runtime")
+trigger_runtime = import_module("investment_manager.decision_cycle.service")
 
 
 def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(

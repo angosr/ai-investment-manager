@@ -4,15 +4,16 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from investment_manager.governance.models import ReleaseManifest
-from investment_manager.governance.repository import SqlGovernanceRepository
-from investment_manager.information.repository import SqlEventStore
-from investment_manager.legacy.runtime import TemporalAnalysisCoordinator
-from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.legacy.trigger_adapter import (
+from temporalio.client import Client
+
+from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
 )
+from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.information.repository import SqlEventStore
+from investment_manager.legacy.shadow import SqlShadowStateReader
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
@@ -39,16 +40,19 @@ def run_trigger_service(
     database_url: str,
     on_superseded: Callable[[tuple[str, ...]], None] | None = None,
 ) -> None:
-    """Run trigger coordination with the retiring AnalysisCycle adapter."""
+    """Run trigger admission and dispatch for every enabled decision consumer."""
 
     engine = build_engine(database_url)
     require_current_schema(engine)
     repository = SqlTriggerRepository(engine, config.trigger)
 
     async def run(wakeup: PostgresOutboxListener) -> None:
-        temporal = await TemporalAnalysisCoordinator.connect(config.temporal)
+        client = await Client.connect(
+            config.temporal.address,
+            namespace=config.temporal.namespace,
+        )
         terminated = await terminate_superseded_trigger_coordinators(
-            client=temporal.client,
+            client=client,
             plans=repository.current_plans_for_symbols(config.market_data.symbols),
             active_pipeline_id=config.pipeline.version,
         )
@@ -85,11 +89,11 @@ def run_trigger_service(
         )
         dispatcher = TriggerOutboxDispatcherService(
             repository=repository,
-            dispatcher=TemporalTriggerDispatcher(temporal.client, config, repository),
+            dispatcher=TemporalTriggerDispatcher(client, config, repository),
             poll_seconds=config.trigger.outbox_fallback_poll_seconds,
             wakeup=wakeup,
         )
-        async with TriggerTemporalWorker(temporal.client, config.temporal, activities):
+        async with TriggerTemporalWorker(client, config.temporal, activities):
             await dispatcher.run(asyncio.Event())
 
     leadership = PostgresTriggerLeadership(

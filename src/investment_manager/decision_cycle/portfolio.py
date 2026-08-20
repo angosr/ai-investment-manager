@@ -52,7 +52,7 @@ class PortfolioPipelineResult(FrozenModel):
 
 
 class PortfolioDecisionPipeline:
-    """Pure orchestration only; every economic and safety decision stays downstream-owned."""
+    """Coordinate one frozen Portfolio → Risk → Execution planning decision."""
 
     def __init__(
         self,

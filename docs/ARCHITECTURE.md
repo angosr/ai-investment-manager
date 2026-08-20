@@ -101,6 +101,11 @@ src/investment_manager/
     time.py
     types.py
 
+  decision_cycle/             # 冻结输入后跨域推进一次决策；不拥有领域事实
+    trigger.py                # 一个 TriggerBatch 生成全部已启用消费者的不可变请求
+    portfolio.py              # Portfolio → Risk → TradePlan 的纯编排
+    service.py                # Trigger Worker 的运行装配
+
   market/                     # 行情、Instrument、交易状态、Feature
   information/                # 原始来源、新闻与规范化事件
     official/                 # 一手官方记录、解析、抓取和存储
@@ -132,6 +137,8 @@ src/investment_manager/
 ```
 
 领域是第一级稳定边界，能力是可选的第二级边界。只有同时满足以下条件才建立能力子包：它拥有独立状态机或外部协议；至少有两个不同技术职责因同一业务原因一起变化；能够用一句业务语言命名。子包只允许再包含文件，不继续按技术层级无限嵌套。
+
+`decision_cycle` 是唯一例外：它不是业务事实域，而是最薄的跨域应用层。它只负责冻结同一批输入并按唯一决策链调用各领域，不能定义投资模型、Policy、数据库表、Repository 或第二套裁决。领域不得反向导入它。只有一个用例确实跨越两个以上领域、放入任一领域都会造成反向依赖时，代码才能进入这里。
 
 这不是要求每个领域复制相同文件模板。一个领域只有在确有独立职责时才创建模型、Policy、表、Repository、应用用例或 Workflow。单个文件足够时保持单文件；小领域继续平铺。禁止以减少目录观感为目标拆文件，也禁止以统一模板为目标制造空包、转发入口和重复装配。
 
@@ -179,6 +186,10 @@ src/investment_manager/
 
 拥有 EvaluationPlan、盲测 claim、FailedExperiment、ReleaseManifest、权限授予与撤回。治理 Agent 可以提出策略、数据、调度和系统变更，但不能直接修改生产状态；变更通过冻结制品和发布流程生效。
 
+### Decision Cycle
+
+不拥有新的业务语义。它将 Scheduling 已接受的批次冻结为各个已启用分析消费者的请求，并将已冻结 Forecast、账户与行情依次交给 Portfolio、Risk 和 Execution Planner。每个经济或安全判断仍由对应领域作出；该层只校验输入时点一致、保存阶段结果并推进可恢复流程。
+
 ## 6. 跨域组合与事务
 
 一个物理数据库只使用 `platform.database.metadata` 这一份 `MetaData`。领域在自己的 `tables.py` 声明表，根 `schema.py` 显式加载所有表所有者并向 Alembic 暴露完整注册表。平台层不导入业务领域；Schema 组合入口可以导入领域，因为它是最外层装配点。
@@ -198,7 +209,9 @@ business domain models/policies
   ↑
 domain application/repository/workflow
   ↑
-cross-domain composition / entrypoints
+decision_cycle
+  ↑
+entrypoints
 
 platform 由外层注入，不能反向依赖业务领域
 research 可以依赖生产纯逻辑，生产不得依赖 research
@@ -214,6 +227,7 @@ dashboard 只读，不能导入任何写用例或控制入口
 5. CLI 不直接拼 SQL、不构造评估规则、不启动隐含第二套 runtime。
 6. 生产不得导入 `research`；Research 必须复用生产的时间、成本、取整和风控语义。
 7. 禁止循环依赖、旧路径 re-export、兼容别名和两个机制同时拥有同一裁决。
+8. 业务领域不得导入 `decision_cycle`；`decision_cycle` 不得声明领域模型、Policy、表或 Repository。
 
 迁移期 `legacy` 可以依赖目标领域以复用已经归位的事实、风控和执行语义；目标领域不得
 反向导入 `legacy`。它不是长期兼容层，只在第 9 节阶段 D 的生产接线、恢复和回放证据
@@ -263,6 +277,7 @@ kernel/platform
   → portfolio/risk
   → execution
   → governance
+  → decision_cycle
   → entrypoints
 ```
 
@@ -278,10 +293,15 @@ kernel/platform
 
 ### 阶段 D：替换旧交易链
 
-- 将经过评估授权的 ProgramBase 预测接入 Forecast 持久化与结算；
-- 将 ContextAssessment 作为独立可评价输入，不默认拥有交易权限；
-- 接通 PortfolioTarget → RiskDecision → TradePlan → Execution 的唯一生产 Workflow；
-- 用点时回放、故障恢复和冻结模拟盘证明新链后，删除 SignalCandidate/TradeIntent 旧链。
+按以下纵向切片迁移；每个切片必须同时接好生产、回放、恢复和评价，随后删除被替代代码，禁止只搬文件：
+
+1. **触发解耦**：`decision_cycle` 对一个 `TriggerBatch` 只冻结一次行情、账户和 Evidence，再分别生成已启用消费者的不可变请求；旧 AnalysisCycle 只是临时消费者，不能继续拥有通用触发逻辑。
+2. **预测接线**：将通过预登记评估的 ProgramBase 接入 Forecast 的持久化与结算；ContextAssessment 保持独立可评价输入，未获权限时不能影响资本。
+3. **组合接线**：以同一冻结时点生成 `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；空仓、拒绝和低于最小交易额都是完整终态。
+4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成幂等订单、未知结果恢复、部分成交、保护与对账，不再接收 `TradeIntent`。
+5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
+
+迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。
 
 ## 10. 每阶段验收
 

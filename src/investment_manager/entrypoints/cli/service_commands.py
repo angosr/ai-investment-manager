@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 
+from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
     default_web_dist,
@@ -50,7 +51,6 @@ from investment_manager.legacy.runtime import (
     assemble_analysis_cycle,
     run_worker_process,
 )
-from investment_manager.legacy.trigger_runtime import run_trigger_service
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot

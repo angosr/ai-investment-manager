@@ -3,6 +3,10 @@ from decimal import Decimal
 
 import pytest
 
+from investment_manager.decision_cycle.portfolio import (
+    PortfolioDecisionPipeline,
+    PortfolioPipelineOutcome,
+)
 from investment_manager.execution.models import Position
 from investment_manager.execution.planner import (
     MarketExecutionSpec,
@@ -18,10 +22,6 @@ from investment_manager.portfolio.decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
-)
-from investment_manager.portfolio.pipeline import (
-    PortfolioDecisionPipeline,
-    PortfolioPipelineOutcome,
 )
 from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,

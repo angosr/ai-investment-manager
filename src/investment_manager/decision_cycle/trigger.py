@@ -61,7 +61,7 @@ class AnalysisCallDeferred(Exception):
 
 
 class TriggerDispatchBuilder:
-    """Freeze every enabled consumer of one admitted trigger batch."""
+    """Freeze every enabled decision consumer of one admitted trigger batch."""
 
     def __init__(
         self,

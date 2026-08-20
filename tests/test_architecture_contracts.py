@@ -347,6 +347,62 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
     assert not (PACKAGE_ROOT / "execution" / "legacy_exchange.py").exists()
 
 
+def test_decision_cycle_is_the_minimal_one_way_cross_domain_layer() -> None:
+    package = PACKAGE_ROOT / "decision_cycle"
+    assert {
+        path.name for path in package.glob("*.py")
+    } == {"__init__.py", "portfolio.py", "service.py", "trigger.py"}
+
+    init_tree = ast.parse((package / "__init__.py").read_text())
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom)) for node in init_tree.body
+    )
+
+    business_domains = {
+        "execution",
+        "forecast",
+        "governance",
+        "information",
+        "legacy",
+        "market",
+        "portfolio",
+        "risk",
+        "scheduling",
+        "state",
+    }
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        relative = path.relative_to(PACKAGE_ROOT)
+        tree = ast.parse(path.read_text())
+        if relative.parts[0] in business_domains:
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    assert not node.module.startswith(
+                        "investment_manager.decision_cycle"
+                    ), path
+                if isinstance(node, ast.Import):
+                    assert not any(
+                        alias.name.startswith("investment_manager.decision_cycle")
+                        for alias in node.names
+                    ), path
+        if relative.parts[0] != "decision_cycle":
+            continue
+        for node in tree.body:
+            assert not (
+                isinstance(node, ast.ClassDef)
+                and node.name.endswith(("Policy", "Repository"))
+            ), path
+            assert not (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ), path
+
+    assert not (PACKAGE_ROOT / "portfolio" / "pipeline.py").exists()
+    assert not (PACKAGE_ROOT / "legacy" / "trigger_adapter.py").exists()
+    assert not (PACKAGE_ROOT / "legacy" / "trigger_runtime.py").exists()
+
+
 def test_platform_does_not_import_business_modules() -> None:
     graph = _internal_import_graph()
 
