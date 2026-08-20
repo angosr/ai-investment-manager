@@ -114,6 +114,12 @@ class SqlFedFactIngestor:
         for write in writes:
             candidate = self._candidate(write, previous=None)
             previous = self._facts.latest_fact(candidate.fact_id)
+            # An unchanged source replay can repair a missing first projection,
+            # but must not rewrite an existing fact merely because the deployed
+            # projector version changed. Normal revisions require a newly stored
+            # source observation with a later visibility time.
+            if previous is not None and not write.inserted:
+                continue
             if previous is not None and previous.revision_hash == candidate.revision_hash:
                 continue
             fact = (

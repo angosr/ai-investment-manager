@@ -124,6 +124,39 @@ def test_retry_repairs_official_record_to_fact_projection_gap() -> None:
     assert recovered.new_fact_revisions[0].observed_at == OBSERVED_AT
 
 
+def test_unchanged_source_replay_does_not_reproject_existing_fact() -> None:
+    engine = _engine()
+    xml = """<rss><channel><item>
+      <title>Federal Reserve issues FOMC statement</title>
+      <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary.htm</link>
+      <guid>fed-release-policy-replay</guid><description>Policy statement.</description>
+      <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+    first = SqlFedFactIngestor(engine, POLICY).ingest_monetary_rss(
+        xml,
+        observed_at=OBSERVED_AT,
+    )
+    revised_policy = POLICY.model_copy(update={"version": "fed-fact-v2"})
+
+    replayed = SqlFedFactIngestor(engine, revised_policy).ingest_monetary_rss(
+        xml,
+        observed_at=OBSERVED_AT + timedelta(minutes=1),
+    )
+
+    assert replayed.records[0].inserted is False
+    assert replayed.new_fact_revisions == ()
+    assert SqlFactStateStore(engine).latest_fact(
+        first.new_fact_revisions[0].fact_id
+    ) == first.new_fact_revisions[0]
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(canonical_fact_revisions)
+            )
+            == 1
+        )
+
+
 def test_fed_rss_projects_canonical_release_fact() -> None:
     engine = _engine()
     pipeline = SqlFedFactIngestor(engine, POLICY)
