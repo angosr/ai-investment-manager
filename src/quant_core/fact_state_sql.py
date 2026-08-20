@@ -215,6 +215,28 @@ class SqlFactStateStore:
             ).scalar_one_or_none()
         return None if payload is None else StateSnapshot.model_validate(payload)
 
+    def latest_state_before(
+        self,
+        *,
+        analysis_scope: str,
+        projection_version: str,
+        as_of: datetime,
+    ) -> StateSnapshot | None:
+        """Return the direct point-in-time predecessor, excluding ``as_of``."""
+        as_of = _require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(state_snapshots.c.payload)
+                .where(
+                    state_snapshots.c.analysis_scope == analysis_scope,
+                    state_snapshots.c.projection_version == projection_version,
+                    state_snapshots.c.as_of < as_of,
+                )
+                .order_by(state_snapshots.c.as_of.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+        return None if payload is None else StateSnapshot.model_validate(payload)
+
     def delta(self, delta_id: str) -> MaterialDelta | None:
         with self._engine.connect() as connection:
             payload = connection.execute(
