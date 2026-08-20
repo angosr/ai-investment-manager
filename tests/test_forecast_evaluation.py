@@ -19,7 +19,7 @@ from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
 )
-from investment_manager.entrypoints.cli.app import register_ai_forecast_plan
+from investment_manager.entrypoints.cli.commands import register_ai_forecast_plan
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,

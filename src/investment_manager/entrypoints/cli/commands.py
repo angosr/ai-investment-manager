@@ -21,6 +21,7 @@ from investment_manager.calibration import (
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.config import AppConfig, DeploymentStage, load_config
 from investment_manager.cycle import AnalysisCycle, CycleInput
+from investment_manager.entrypoints.cli.root import app
 from investment_manager.execution.binance import (
     BinanceApiError,
     BinanceCredentials,
@@ -92,8 +93,6 @@ from investment_manager.temporal_runtime import (
     run_worker_process,
 )
 from investment_manager.workflow import build_workflow_request
-
-app = typer.Typer(no_args_is_help=True, help="Quant Core 事件驱动交易与回放命令")
 
 
 def _runtime_engine(database_url: str):
@@ -2786,7 +2785,3 @@ def _default_web_dist() -> Path | None:
         if candidate.is_dir():
             return candidate.resolve()
     return None
-
-
-if __name__ == "__main__":
-    app()

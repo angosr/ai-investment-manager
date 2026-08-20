@@ -7,7 +7,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError
 
-from investment_manager.temporal_compat import default_activity_versioning_intent
+from investment_manager.platform.temporal import default_activity_versioning_intent
 
 PREPARE_ACTIVITY_NAME = "prepare-analysis-decision-v1"
 EXECUTION_ACTIVITY_NAME = "execute-trade-request-v1"

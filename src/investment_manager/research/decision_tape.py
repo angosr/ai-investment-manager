@@ -37,6 +37,7 @@ from investment_manager.persistence import (
     codex_runs,
     market_snapshots,
 )
+from investment_manager.platform.time import database_utc
 from investment_manager.research.backtest import (
     BacktestRun,
     ResearchStrategy,
@@ -45,7 +46,6 @@ from investment_manager.research.backtest import (
 )
 from investment_manager.research.dataset import HistoricalDataset
 from investment_manager.research.walk_forward import BlindEvaluationResult
-from investment_manager.sql_time import database_utc
 
 FORECAST_DECISION_TAPE_VERSION = "forecast-decision-tape-v1"
 PAIRED_DECISION_TAPE_EVALUATION_VERSION = "paired-decision-tape-evaluation-v4"

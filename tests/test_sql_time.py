@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta, timezone
 
-from investment_manager.sql_time import database_utc
+from investment_manager.platform.time import database_utc
 
 
 def test_database_utc_attaches_utc_to_naive_driver_value() -> None:

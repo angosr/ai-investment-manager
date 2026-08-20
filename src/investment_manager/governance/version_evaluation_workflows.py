@@ -7,7 +7,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
-from investment_manager.temporal_compat import default_activity_versioning_intent
+from investment_manager.platform.temporal import default_activity_versioning_intent
 
 RUN_EVALUATION_STAGE_ACTIVITY = "run-version-evaluation-stage-v1"
 FINALIZE_EVALUATION_ACTIVITY = "finalize-version-evaluation-v1"

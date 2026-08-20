@@ -11,6 +11,7 @@ from investment_manager.config import TriggerPolicy
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.platform.time import database_utc
 from investment_manager.scheduling.models import (
     AnalysisCallAdmission,
     AnalysisTriggerEvent,
@@ -30,7 +31,6 @@ from investment_manager.scheduling.tables import (
     analysis_trigger_plans,
     trigger_outbox,
 )
-from investment_manager.sql_time import database_utc
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:

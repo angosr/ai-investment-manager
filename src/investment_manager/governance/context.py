@@ -44,6 +44,7 @@ from investment_manager.persistence import (
     codex_runs,
     signal_candidates,
 )
+from investment_manager.platform.time import database_utc
 from investment_manager.scheduling.models import (
     AnalysisTriggerPlan,
     AnalysisTriggerType,
@@ -54,7 +55,6 @@ from investment_manager.scheduling.tables import (
     analysis_trigger_plans,
     trigger_outbox,
 )
-from investment_manager.sql_time import database_utc
 
 
 @dataclass(slots=True)

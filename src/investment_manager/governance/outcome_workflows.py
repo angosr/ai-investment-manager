@@ -7,7 +7,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
-from investment_manager.temporal_compat import default_activity_versioning_intent
+from investment_manager.platform.temporal import default_activity_versioning_intent
 
 OUTCOME_EVALUATION_ACTIVITY_NAME = "evaluate-outcome-window-v1"
 

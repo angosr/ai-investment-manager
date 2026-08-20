@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from investment_manager.information.tables import source_observations
 from investment_manager.kernel.time import require_utc
-from investment_manager.sql_locking import advisory_xact_lock
+from investment_manager.platform.locking import advisory_xact_lock
 from investment_manager.state.facts import (
     validate_fact_revision_identity,
     validate_material_delta_identity,

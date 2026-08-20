@@ -45,6 +45,7 @@ from investment_manager.persistence import (
     panel_snapshots,
     trade_intents,
 )
+from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
 from investment_manager.scheduling.tables import (
     analysis_call_admissions,
@@ -52,7 +53,6 @@ from investment_manager.scheduling.tables import (
     analysis_trigger_plans,
     trigger_outbox,
 )
-from investment_manager.sql_time import database_utc
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500

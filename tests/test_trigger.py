@@ -39,7 +39,7 @@ from investment_manager.scheduling.runtime import (
 )
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 
-cli = import_module("investment_manager.entrypoints.cli.app")
+cli = import_module("investment_manager.entrypoints.cli.commands")
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(

@@ -3,8 +3,17 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Self
 
+from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
+
+
+def default_activity_versioning_intent() -> workflow.VersioningIntent | None:
+    """让新 Activity 可跨 Worker 升级接手，同时保持旧历史可重放。"""
+
+    if workflow.patched("activity-routing-default-v1"):
+        return workflow.VersioningIntent.DEFAULT
+    return None
 
 
 class SingleActivityWorker:

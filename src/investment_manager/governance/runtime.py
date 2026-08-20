@@ -42,9 +42,9 @@ from investment_manager.persistence import (
     SqlCodexAuditStore,
 )
 from investment_manager.platform.database import build_engine
+from investment_manager.platform.temporal import SingleActivityWorker
 from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.temporal_worker import SingleActivityWorker
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)

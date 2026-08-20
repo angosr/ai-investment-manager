@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
-from investment_manager.entrypoints.cli.app import app
+from investment_manager.entrypoints.cli.commands import app
 from investment_manager.kernel.identity import content_hash
 from investment_manager.schema import compose_metadata
 
@@ -244,6 +244,14 @@ def test_platform_does_not_import_business_modules() -> None:
                     ("investment_manager.kernel", "investment_manager.platform")
                 )
             }
+
+    for filename in (
+        "sql_locking.py",
+        "sql_time.py",
+        "temporal_compat.py",
+        "temporal_worker.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
 
 
 def test_kernel_does_not_import_platform_or_business_modules() -> None:

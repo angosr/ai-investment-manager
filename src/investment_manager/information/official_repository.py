@@ -28,7 +28,7 @@ from investment_manager.information.tables import (
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.sql_locking import advisory_xact_lock
+from investment_manager.platform.locking import advisory_xact_lock
 
 
 @dataclass(frozen=True, slots=True)
