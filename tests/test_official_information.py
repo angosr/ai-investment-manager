@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from quant_core.official_information import (
+    build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
@@ -68,6 +69,68 @@ def test_fomc_calendar_revision_changes_payload_identity_not_logical_record() ->
     assert first.observation.source_record_id == second.observation.source_record_id
     assert first.observation.payload_hash != second.observation.payload_hash
     assert first.observation.observation_id != second.observation.observation_id
+
+
+def test_same_source_content_seen_later_has_distinct_candidate_identity() -> None:
+    html = """
+    <h4>2026 FOMC Meetings</h4>
+    <div class="row fomc-meeting">
+      <div class="fomc-meeting__month"><strong>September</strong></div>
+      <div class="fomc-meeting__date">15-16*</div>
+    </div>
+    """
+
+    first = parse_fomc_calendar(html, observed_at=OBSERVED_AT)[0]
+    later = parse_fomc_calendar(
+        html,
+        observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=UTC),
+    )[0]
+
+    assert first.observation.payload_hash == later.observation.payload_hash
+    assert first.observation.observation_id != later.observation.observation_id
+
+
+def test_fomc_calendar_revision_links_real_semantic_change() -> None:
+    original = """
+    <h4>2026 FOMC Meetings</h4><div class="row fomc-meeting">
+      <div class="fomc-meeting__month"><strong>September</strong></div>
+      <div class="fomc-meeting__date">15-16*</div>
+      <strong>Projection Materials</strong>
+    </div>
+    """
+    revised = original.replace("15-16*", "16-17*")
+    first_record = parse_fomc_calendar(original, observed_at=OBSERVED_AT)[0]
+    second_record = parse_fomc_calendar(
+        revised,
+        observed_at=datetime(2026, 8, 21, 12, tzinfo=UTC),
+    )[0]
+
+    first = build_fomc_calendar_revision(first_record)
+    second = build_fomc_calendar_revision(second_record, previous=first)
+
+    assert second.event_id == first.event_id
+    assert second.previous_revision_id == first.revision_id
+    assert second.content_hash != first.content_hash
+    assert second.scheduled_release_at == datetime(2026, 9, 17, 18, tzinfo=UTC)
+
+
+def test_fomc_calendar_does_not_create_poll_only_revision() -> None:
+    html = """
+    <h4>2026 FOMC Meetings</h4><div class="row fomc-meeting">
+      <div class="fomc-meeting__month"><strong>September</strong></div>
+      <div class="fomc-meeting__date">15-16*</div>
+    </div>
+    """
+    first_record = parse_fomc_calendar(html, observed_at=OBSERVED_AT)[0]
+    repeated_record = parse_fomc_calendar(
+        html,
+        observed_at=datetime(2026, 8, 21, 12, tzinfo=UTC),
+    )[0]
+
+    first = build_fomc_calendar_revision(first_record)
+
+    with pytest.raises(ValueError, match="相同日历语义"):
+        build_fomc_calendar_revision(repeated_record, previous=first)
 
 
 def test_fed_monetary_rss_preserves_guid_and_detects_content_revision() -> None:

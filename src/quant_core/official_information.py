@@ -67,6 +67,11 @@ class OfficialRecordKind(StrEnum):
     FED_MONETARY_RELEASE = "FED_MONETARY_RELEASE"
 
 
+class CalendarEventStatus(StrEnum):
+    SCHEDULED = "SCHEDULED"
+    CANCELLED = "CANCELLED"
+
+
 class FomcMeetingRecord(FrozenModel):
     observation: SourceObservation
     kind: Literal[OfficialRecordKind.FOMC_MEETING] = OfficialRecordKind.FOMC_MEETING
@@ -86,6 +91,7 @@ class FomcMeetingRecord(FrozenModel):
             raise ValueError("FOMC statement_at 必须落在会议结束日")
         if self.observation.source_id != FED_SOURCE_ID:
             raise ValueError("FOMC record 必须引用 Federal Reserve observation")
+        _validate_record_observation(self, self.observation)
         return self
 
 
@@ -108,7 +114,108 @@ class FedMonetaryReleaseRecord(FrozenModel):
             "www.federalreserve.gov",
         }:
             raise ValueError("Fed RSS 记录必须引用 federalreserve.gov HTTPS 页面")
+        _validate_record_observation(self, self.observation)
         return self
+
+
+OfficialRecord = FomcMeetingRecord | FedMonetaryReleaseRecord
+
+
+class MarketCalendarEventRevision(FrozenModel):
+    event_id: str
+    revision_id: str
+    previous_revision_id: str | None = None
+    event_type: Literal[OfficialRecordKind.FOMC_MEETING] = OfficialRecordKind.FOMC_MEETING
+    status: CalendarEventStatus
+    source_id: str
+    source_record_id: str
+    source_observation_id: str
+    event_start_at: datetime
+    event_end_at: datetime
+    scheduled_release_at: datetime
+    observed_at: datetime
+    risk_factors: tuple[str, ...] = Field(min_length=1)
+    has_projection_materials: bool
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    _utc_event_start = field_validator("event_start_at")(_require_utc)
+    _utc_event_end = field_validator("event_end_at")(_require_utc)
+    _utc_release = field_validator("scheduled_release_at")(_require_utc)
+    _utc_observed = field_validator("observed_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_window_are_consistent(self):
+        if not self.event_start_at < self.event_end_at:
+            raise ValueError("日历事件窗口必须为正")
+        if not self.event_start_at <= self.scheduled_release_at <= self.event_end_at:
+            raise ValueError("scheduled_release_at 必须位于事件窗口内")
+        if self.previous_revision_id == self.revision_id:
+            raise ValueError("日历修订不能引用自身")
+        if tuple(sorted(set(self.risk_factors))) != self.risk_factors:
+            raise ValueError("日历 risk_factors 必须唯一且排序")
+        if self.event_id != stable_id(
+            "market_calendar_event", self.source_id, self.source_record_id
+        ):
+            raise ValueError("日历 event_id 与来源逻辑身份不一致")
+        if self.content_hash != content_hash(_calendar_semantic_payload(self)):
+            raise ValueError("日历 content_hash 与语义内容不一致")
+        expected_revision_id = stable_id(
+            "market_calendar_revision",
+            self.event_id,
+            self.source_observation_id,
+            self.content_hash,
+        )
+        if self.revision_id != expected_revision_id:
+            raise ValueError("日历 revision_id 与来源观测和内容不一致")
+        return self
+
+
+def build_fomc_calendar_revision(
+    record: FomcMeetingRecord,
+    *,
+    previous: MarketCalendarEventRevision | None = None,
+) -> MarketCalendarEventRevision:
+    observation = record.observation
+    event_id = stable_id(
+        "market_calendar_event", observation.source_id, observation.source_record_id
+    )
+    if previous is not None:
+        if previous.event_id != event_id:
+            raise ValueError("前序日历修订不属于同一事件")
+        if previous.observed_at >= observation.observed_at:
+            raise ValueError("日历修订观察时间必须严格递增")
+    event_start_at = datetime.combine(record.meeting_start, time.min, tzinfo=_EASTERN).astimezone(
+        UTC
+    )
+    candidate = MarketCalendarEventRevision.model_construct(
+        event_id=event_id,
+        revision_id="pending",
+        previous_revision_id=previous.revision_id if previous is not None else None,
+        status=CalendarEventStatus.SCHEDULED,
+        source_id=observation.source_id,
+        source_record_id=observation.source_record_id,
+        source_observation_id=observation.observation_id,
+        event_start_at=event_start_at,
+        event_end_at=record.statement_at,
+        scheduled_release_at=record.statement_at,
+        observed_at=observation.observed_at,
+        risk_factors=("US_MONETARY_POLICY",),
+        has_projection_materials=record.has_projection_materials,
+        content_hash="pending",
+    )
+    semantic_hash = content_hash(_calendar_semantic_payload(candidate))
+    if previous is not None and previous.content_hash == semantic_hash:
+        raise ValueError("相同日历语义不得创建新修订")
+    return MarketCalendarEventRevision(
+        **candidate.model_dump(exclude={"revision_id", "content_hash"}),
+        content_hash=semantic_hash,
+        revision_id=stable_id(
+            "market_calendar_revision",
+            event_id,
+            observation.observation_id,
+            semantic_hash,
+        ),
+    )
 
 
 def parse_fomc_calendar(
@@ -150,6 +257,7 @@ def parse_fomc_calendar(
             FED_SOURCE_ID,
             source_record_id,
             payload_hash,
+            observed_at.isoformat(),
         )
         records.append(
             FomcMeetingRecord(
@@ -160,7 +268,7 @@ def parse_fomc_calendar(
                     source_record_id=source_record_id,
                     observed_at=observed_at,
                     payload_hash=payload_hash,
-                    payload_ref=f"sha256:{payload_hash}",
+                    payload_ref=f"official-record:{observation_id}",
                 ),
                 meeting_start=meeting_start,
                 meeting_end=meeting_end,
@@ -198,7 +306,13 @@ def parse_fed_monetary_rss(
             "link": link,
         }
         payload_hash = content_hash(identity)
-        observation_id = stable_id("source_observation", FED_SOURCE_ID, guid, payload_hash)
+        observation_id = stable_id(
+            "source_observation",
+            FED_SOURCE_ID,
+            guid,
+            payload_hash,
+            observed_at.isoformat(),
+        )
         records.append(
             FedMonetaryReleaseRecord(
                 observation=SourceObservation(
@@ -209,7 +323,7 @@ def parse_fed_monetary_rss(
                     observed_at=observed_at,
                     source_published_at=published_at,
                     payload_hash=payload_hash,
-                    payload_ref=f"sha256:{payload_hash}",
+                    payload_ref=f"official-record:{observation_id}",
                 ),
                 title=title,
                 summary=summary,
@@ -345,6 +459,62 @@ def _parse_rss_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("Fed monetary RSS pubDate 缺少时区")
     return parsed.astimezone(UTC)
+
+
+def _calendar_semantic_payload(revision: MarketCalendarEventRevision) -> dict:
+    return {
+        "event_id": revision.event_id,
+        "event_type": revision.event_type.value,
+        "status": revision.status.value,
+        "source_id": revision.source_id,
+        "source_record_id": revision.source_record_id,
+        "event_start_at": revision.event_start_at.isoformat(),
+        "event_end_at": revision.event_end_at.isoformat(),
+        "scheduled_release_at": revision.scheduled_release_at.isoformat(),
+        "risk_factors": revision.risk_factors,
+        "has_projection_materials": revision.has_projection_materials,
+    }
+
+
+def _validate_record_observation(
+    record: OfficialRecord,
+    observation: SourceObservation,
+) -> None:
+    expected_payload_hash = content_hash(_official_record_payload(record))
+    if observation.payload_hash != expected_payload_hash:
+        raise ValueError("官方记录 payload_hash 与解析内容不一致")
+    expected_id = stable_id(
+        "source_observation",
+        observation.source_id,
+        observation.source_record_id,
+        observation.payload_hash,
+        observation.observed_at.isoformat(),
+    )
+    if observation.observation_id != expected_id:
+        raise ValueError("官方记录 observation_id 与来源、内容和观察时间不一致")
+    if observation.payload_ref != f"official-record:{observation.observation_id}":
+        raise ValueError("官方记录 payload_ref 不能解析到自身记录")
+
+
+def _official_record_payload(record: OfficialRecord) -> dict:
+    if isinstance(record, FomcMeetingRecord):
+        return {
+            "source_record_id": record.observation.source_record_id,
+            "meeting_start": record.meeting_start.isoformat(),
+            "meeting_end": record.meeting_end.isoformat(),
+            "statement_at": record.statement_at.isoformat(),
+            "has_projection_materials": record.has_projection_materials,
+        }
+    published_at = record.observation.source_published_at
+    if published_at is None:
+        raise ValueError("Fed release observation 必须包含来源发布时间")
+    return {
+        "guid": record.observation.source_record_id,
+        "title": record.title,
+        "summary": record.summary,
+        "published_at": published_at.isoformat(),
+        "link": record.source_url,
+    }
 
 
 def _clean_text(parts: list[str]) -> str:

@@ -4,7 +4,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from alembic import command
@@ -20,6 +22,8 @@ from quant_core.governance_context import GovernanceSnapshotAssembler
 from quant_core.lifecycle import PositionLifecycleManager
 from quant_core.market_data import MarketTrade
 from quant_core.market_data_sql import SqlMarketDataStore, market_metadata
+from quant_core.official_information import MarketCalendarEventRevision, parse_fomc_calendar
+from quant_core.official_information_sql import SqlOfficialInformationStore
 from quant_core.persistence import (
     SqlEventStore,
     SqlFactLedger,
@@ -31,10 +35,12 @@ from quant_core.persistence import (
     build_engine,
     candidate_outcomes,
     decision_outcomes,
+    market_calendar_event_revisions,
     metadata,
     metric_observations,
     orders,
     portfolio_risk_budgets,
+    source_observations,
 )
 from quant_core.reconciliation import MockReconciler
 from quant_core.trigger import (
@@ -74,6 +80,95 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
     migration_config.set_main_option("sqlalchemy.url", database_url)
     migration_config.attributes["database_url"] = database_url
     command.upgrade(migration_config, "head")
+    official_store = SqlOfficialInformationStore(engine)
+    observed_at = datetime(2026, 8, 20, 12, tzinfo=UTC)
+    concurrent_records = tuple(
+        parse_fomc_calendar(
+            f"""
+            <h4>{year} FOMC Meetings</h4>
+            <div class="row fomc-meeting">
+              <div class="fomc-meeting__month"><strong>September</strong></div>
+              <div class="fomc-meeting__date">15-16</div>
+            </div>
+            """,
+            observed_at=observed_at,
+        )[0]
+        for year in range(2030, 2036)
+    )
+    barriers = {
+        record.observation.source_record_id: Barrier(2) for record in concurrent_records
+    }
+
+    def put_concurrently(record):
+        barriers[record.observation.source_record_id].wait()
+        return official_store.put(record)
+
+    paired_records = tuple(record for record in concurrent_records for _ in range(2))
+    with ThreadPoolExecutor(max_workers=len(paired_records)) as pool:
+        official_writes = tuple(pool.map(put_concurrently, paired_records))
+    assert sum(write.inserted for write in official_writes) == len(concurrent_records)
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(source_observations)) == len(
+            concurrent_records
+        )
+        assert connection.scalar(
+            select(func.count()).select_from(market_calendar_event_revisions)
+        ) == len(concurrent_records)
+
+    initial = parse_fomc_calendar(
+        """
+        <h4>2036 FOMC Meetings</h4>
+        <div class="row fomc-meeting">
+          <div class="fomc-meeting__month"><strong>September</strong></div>
+          <div class="fomc-meeting__date">15-16</div>
+        </div>
+        """,
+        observed_at=observed_at,
+    )[0]
+    official_store.put(initial)
+    revisions = tuple(
+        parse_fomc_calendar(
+            f"""
+            <h4>2036 FOMC Meetings</h4>
+            <div class="row fomc-meeting">
+              <div class="fomc-meeting__month"><strong>September</strong></div>
+              <div class="fomc-meeting__date">{date_text}</div>
+            </div>
+            """,
+            observed_at=observed_at + timedelta(minutes=offset),
+        )[0]
+        for offset, date_text in ((1, "16-17"), (2, "17-18"))
+    )
+    revision_barrier = Barrier(2)
+
+    def put_revision(record):
+        revision_barrier.wait()
+        try:
+            return official_store.put(record)
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        revision_writes = tuple(pool.map(put_revision, revisions))
+    assert sum(write is not None for write in revision_writes) in {1, 2}
+    with engine.connect() as connection:
+        revision_payloads = connection.execute(
+            select(market_calendar_event_revisions.c.payload)
+            .where(
+                market_calendar_event_revisions.c.source_record_id
+                == initial.observation.source_record_id
+            )
+            .order_by(market_calendar_event_revisions.c.observed_at)
+        ).scalars()
+        revision_chain = tuple(
+            MarketCalendarEventRevision.model_validate(payload)
+            for payload in revision_payloads
+        )
+    assert len(revision_chain) in {2, 3}
+    assert all(
+        current.previous_revision_id == previous.revision_id
+        for previous, current in pairwise(revision_chain)
+    )
     SqlGovernanceRepository(engine).record_release(
         ReleaseManifest(
             manifest_id="release-bootstrap-v1",

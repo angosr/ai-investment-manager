@@ -77,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "f1c7a4d8e209"
+DATABASE_SCHEMA_VERSION = "f8d2c6a4b901"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -221,6 +221,71 @@ Index(
     "ix_context_assessments_behavior_available",
     context_assessments.c.analysis_behavior_hash,
     context_assessments.c.available_at,
+)
+
+source_observations = Table(
+    "source_observations",
+    metadata,
+    Column("observation_id", String(128), primary_key=True),
+    Column("source_id", String(128), nullable=False),
+    Column("source_record_id", String(2_000), nullable=False),
+    Column("record_kind", String(64), nullable=False),
+    Column("source_tier", String(32), nullable=False),
+    Column("source_published_at", DateTime(timezone=True), nullable=True),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "source_id",
+        "source_record_id",
+        "observed_at",
+        name="uq_source_observation_record_time",
+    ),
+)
+Index(
+    "ix_source_observations_record_observed",
+    source_observations.c.source_id,
+    source_observations.c.source_record_id,
+    source_observations.c.observed_at,
+)
+
+market_calendar_event_revisions = Table(
+    "market_calendar_event_revisions",
+    metadata,
+    Column("revision_id", String(128), primary_key=True),
+    Column("event_id", String(128), nullable=False),
+    Column(
+        "previous_revision_id",
+        ForeignKey("market_calendar_event_revisions.revision_id"),
+        nullable=True,
+    ),
+    Column(
+        "source_observation_id",
+        ForeignKey("source_observations.observation_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("source_id", String(128), nullable=False),
+    Column("source_record_id", String(2_000), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("scheduled_release_at", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "event_id",
+        "observed_at",
+        name="uq_market_calendar_event_revision_time",
+    ),
+)
+Index(
+    "ix_market_calendar_event_revisions_event_observed",
+    market_calendar_event_revisions.c.event_id,
+    market_calendar_event_revisions.c.observed_at,
+)
+Index(
+    "ix_market_calendar_event_revisions_release",
+    market_calendar_event_revisions.c.scheduled_release_at,
 )
 
 analysis_proposals = Table(
