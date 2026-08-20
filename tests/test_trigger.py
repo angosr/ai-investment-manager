@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from importlib import import_module
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
+from investment_manager.scheduling.application import ensure_trigger_plans, trigger_now
 from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisEventRule,
@@ -39,7 +39,7 @@ from investment_manager.scheduling.runtime import (
 )
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 
-cli = import_module("investment_manager.entrypoints.cli.commands")
+trigger_runtime = import_module("investment_manager.legacy.trigger_runtime")
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(
@@ -58,29 +58,113 @@ def test_trigger_service_acquires_leadership_before_durable_release_setup(
         def __exit__(self, exc_type, exc, traceback):
             return None
 
+    monkeypatch.setattr(trigger_runtime, "build_engine", lambda _database_url: object())
+    monkeypatch.setattr(trigger_runtime, "require_current_schema", lambda _engine: None)
     monkeypatch.setattr(
-        cli,
-        "_load_runtime_release",
-        lambda _config, _manifest: (app_config, SimpleNamespace(manifest_id="release-v2")),
+        trigger_runtime,
+        "SqlTriggerRepository",
+        lambda _engine, _policy: object(),
     )
-    monkeypatch.setattr(cli, "_runtime_engine", lambda _database_url: object())
-    monkeypatch.setattr(cli, "SqlTriggerRepository", lambda _engine, _policy: object())
-    monkeypatch.setattr(cli, "PostgresTriggerLeadership", RejectingLeadership)
     monkeypatch.setattr(
-        cli,
+        trigger_runtime,
+        "PostgresTriggerLeadership",
+        RejectingLeadership,
+    )
+    monkeypatch.setattr(
+        trigger_runtime,
         "SqlGovernanceRepository",
         lambda _engine: events.append("release-write"),
     )
     monkeypatch.setattr(
-        cli,
-        "_ensure_trigger_plans",
+        trigger_runtime,
+        "ensure_trigger_plans",
         lambda *_args, **_kwargs: events.append("plan-write"),
     )
 
     with pytest.raises(RuntimeError, match="已有 Trigger Dispatcher"):
-        cli.trigger_service(Path("config.yaml"), "postgresql://unused", Path("manifest.yaml"))
+        trigger_runtime.run_trigger_service(
+            config=app_config,
+            manifest=SimpleNamespace(manifest_id="release-v2"),
+            database_url="postgresql://unused",
+        )
 
     assert events == ["leadership"]
+
+
+def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
+    app_config, replay_input,
+) -> None:
+    created = []
+
+    class Repository:
+        def current_plans_for_symbols(self, _symbols):
+            return ()
+
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            raise KeyError((symbol, pipeline_id))
+
+        def create_plan(self, plan):
+            created.append(plan)
+
+    ensure_trigger_plans(
+        repository=Repository(),
+        symbols=("BTCUSDT",),
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        heartbeat_seconds=900,
+        high_impact_threshold=app_config.trigger.high_impact_threshold,
+        debounce_seconds=30,
+        now=replay_input.market.as_of,
+    )
+
+    assert len(created) == 1
+    assert created[0].heartbeat_seconds == 900
+    assert tuple(rule.rule_id for rule in created[0].event_rules) == (
+        "intelligence-default",
+        "market-shock-default",
+        "position-recheck-default",
+    )
+    assert created[0].event_rules[0].minimum_priority == 80
+
+
+def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(
+    app_config, replay_input
+) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=None,
+    )
+
+    class Repository:
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            assert (symbol, pipeline_id) == (plan.symbol, plan.pipeline_id)
+            return plan
+
+        def apply_patch(self, patch, *, now, current_manifest_id):
+            return TriggerPlanGate(app_config.trigger).apply(
+                plan,
+                patch,
+                now=now,
+                current_manifest_id=current_manifest_id,
+            )
+
+    result = trigger_now(
+        repository=Repository(),
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        manifest_id=plan.manifest_id,
+        request_id="manual-1",
+        reason="risk review",
+        now=now,
+    )
+
+    assert result.plan.revision == 2
+    assert len(result.emitted_triggers) == 1
+    assert result.emitted_triggers[0].trigger_type == AnalysisTriggerType.AGENT_WAKEUP
 
 
 def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(

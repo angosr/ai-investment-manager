@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from investment_manager.entrypoints.cli.commands import _default_web_dist
+from investment_manager.entrypoints.cli.support import default_web_dist
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -503,7 +503,7 @@ def test_default_web_dist_does_not_depend_on_process_working_directory(
     runtime_directory = tmp_path / "systemd-runtime"
     runtime_directory.mkdir()
     monkeypatch.chdir(runtime_directory)
-    cli_module = import_module("investment_manager.entrypoints.cli.commands")
+    cli_module = import_module("investment_manager.entrypoints.cli.support")
     monkeypatch.setattr(
         cli_module,
         "__file__",
@@ -517,4 +517,4 @@ def test_default_web_dist_does_not_depend_on_process_working_directory(
         ),
     )
 
-    assert _default_web_dist() == dist.resolve()
+    assert default_web_dist() == dist.resolve()

@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
-from investment_manager.entrypoints.cli.commands import app
+from investment_manager.entrypoints.cli import app
 from investment_manager.kernel.identity import content_hash
 from investment_manager.schema import compose_metadata
 
@@ -209,6 +209,73 @@ def test_cli_subcommand_parameter_contract_is_frozen() -> None:
     }
 
     assert observed == CLI_CONTRACT
+
+
+def test_cli_commands_are_owned_by_change_reason() -> None:
+    expected = {
+        "entrypoints/cli/commands.py": {
+            "build-edge-calibration",
+            "evaluate-ai-forecast-plan",
+            "evaluate-ai-forecasts",
+            "register-ai-forecast-plan",
+            "invalidate-evaluation-plan",
+            "validate-config",
+            "reset-portfolio-protection",
+            "run-mock",
+            "phase-a-audit",
+            "shadow-audit",
+            "challenger-audit",
+            "codex-isolation-audit",
+            "binance-testnet-audit",
+            "binance-testnet-order-test",
+        },
+        "entrypoints/cli/service_commands.py": {
+            "temporal-worker",
+            "submit-analysis",
+            "market-stream",
+            "trigger-service",
+            "trigger-now",
+            "lifecycle-service",
+            "reconciliation-service",
+            "outcome-evaluation-service",
+            "governance-service",
+            "information-collector",
+            "dashboard-service",
+        },
+        "research/cli.py": {
+            "fetch-binance-history",
+            "fetch-binance-funding-history",
+            "fetch-binance-carry-history",
+            "carry-walk-forward",
+            "carry-blind-evaluate",
+            "register-carry-forward-plan",
+            "evaluate-carry-forward-plan",
+            "screen-signals",
+            "walk-forward",
+            "blind-evaluate",
+            "freeze-event-history",
+            "replay-event-triggers",
+            "research-catalog",
+            "paired-decision-tape",
+        },
+    }
+
+    for relative, names in expected.items():
+        tree = ast.parse((PACKAGE_ROOT / relative).read_text())
+        actual = {
+            decorator.args[0].value
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            for decorator in node.decorator_list
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "command"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+            )
+        }
+        assert actual == names
 
 
 def test_current_internal_module_graph_has_no_cycles() -> None:

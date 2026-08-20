@@ -13,7 +13,7 @@ import httpx
 import pytest
 import typer
 
-from investment_manager.entrypoints.cli.commands import _parse_research_symbol
+from investment_manager.entrypoints.cli.support import parse_research_symbol
 from investment_manager.execution.models import (
     AccountSnapshot,
     OrderType,
@@ -91,10 +91,10 @@ def test_public_data_research_symbol_is_independent_of_production_allowlist(
 ) -> None:
     assert "BNBUSDT" not in app_config.market_data.symbols
     assert "BNBUSDT" not in app_config.risk.symbol_allowlist
-    assert _parse_research_symbol("bnbusdt") == "BNBUSDT"
+    assert parse_research_symbol("bnbusdt") == "BNBUSDT"
 
     with pytest.raises(typer.BadParameter, match="字母和数字"):
-        _parse_research_symbol("BNB/USDT")
+        parse_research_symbol("BNB/USDT")
 
 
 def test_history_command_overrides_production_symbol_and_interval(
@@ -102,8 +102,8 @@ def test_history_command_overrides_production_symbol_and_interval(
     monkeypatch,
     capsys,
 ) -> None:
-    from investment_manager.entrypoints.cli.commands import fetch_binance_history_command
     from investment_manager.research import dataset as dataset_module
+    from investment_manager.research.cli import fetch_binance_history_command
 
     instrument = _instrument().model_copy(
         update={"symbol": "BNBUSDT", "base_asset": "BNB"}
