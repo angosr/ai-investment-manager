@@ -13,14 +13,14 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v2
+  version: portfolio-state-v3
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: fed-official-fact-v1
+    version: fed-official-fact-v2
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
-    version: state-delta-v3
+    version: state-delta-v4
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -30,6 +30,9 @@ decision_state:
     market_risk_factors: [MARKET_VOLATILITY]
     market_reason_code: MARKET_SHOCK_TRIGGERED
     rules:
+      - fact_type: FED_CHAIR_PUBLIC_EVENT_SCHEDULE
+        materiality: NORMAL
+        reason_code: FED_CHAIR_EVENT_SCHEDULE_REVISION
       - fact_type: FED_MONETARY_RELEASE
         materiality: HIGH
         reason_code: FED_RELEASE_REVISION
@@ -182,7 +185,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v9
+  version: information-intake-v10
   normalizer_version: trendradar-collector-v7
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

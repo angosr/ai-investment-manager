@@ -10,6 +10,9 @@ from typing import Protocol
 
 from sqlalchemy.engine import Engine
 
+from investment_manager.information.official.public_calendar import (
+    FedChairPublicEventRecord,
+)
 from investment_manager.information.official.records import (
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
@@ -21,6 +24,7 @@ from investment_manager.information.official.repository import (
 from investment_manager.kernel.time import require_utc
 from investment_manager.state.facts import (
     OfficialFactProjectionPolicy,
+    project_fed_chair_public_event_fact,
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
@@ -32,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 class FedOfficialSource(Protocol):
     def fetch_calendar(self) -> str | None: ...
+
+    def fetch_public_calendar(self) -> str | None: ...
 
     def fetch_monetary_rss(self) -> str | None: ...
 
@@ -83,6 +89,23 @@ class SqlFedFactIngestor:
             new_fact_revisions=self._project(writes),
         )
 
+    def ingest_public_calendar(
+        self,
+        payload: str,
+        *,
+        observed_at: datetime,
+        years: tuple[int, ...] | None = None,
+    ) -> OfficialFactIngestionResult:
+        writes = self._official.ingest_public_calendar(
+            payload,
+            observed_at=observed_at,
+            years=years,
+        )
+        return OfficialFactIngestionResult(
+            records=writes,
+            new_fact_revisions=self._project(writes),
+        )
+
     def _project(
         self,
         writes: tuple[OfficialRecordWrite, ...],
@@ -118,6 +141,15 @@ class SqlFedFactIngestor:
                 policy=self._policy,
                 previous=previous,
             )
+        if isinstance(record, FedChairPublicEventRecord):
+            if write.calendar_revision is None:
+                raise ValueError("Fed Chair 官方记录缺少 Calendar revision")
+            return project_fed_chair_public_event_fact(
+                record,
+                write.calendar_revision,
+                policy=self._policy,
+                previous=previous,
+            )
         if isinstance(record, FedMonetaryReleaseRecord):
             return project_fed_monetary_release_fact(
                 record,
@@ -130,12 +162,15 @@ class SqlFedFactIngestor:
 @dataclass(slots=True)
 class FedOfficialCollectorHealth:
     calendar_poll_count: int = 0
+    public_calendar_poll_count: int = 0
     monetary_poll_count: int = 0
     new_fact_revision_count: int = 0
     publication_count: int = 0
     last_calendar_success_at: datetime | None = None
+    last_public_calendar_success_at: datetime | None = None
     last_monetary_success_at: datetime | None = None
     calendar_error_class: str | None = None
+    public_calendar_error_class: str | None = None
     monetary_error_class: str | None = None
     publication_error_class: str | None = None
 
@@ -171,6 +206,7 @@ class FedOfficialCollectorService:
             if next_calendar_at is None or now >= next_calendar_at:
                 next_calendar_at = now + timedelta(seconds=self._calendar_poll_seconds)
                 await self._poll("calendar")
+                await self._poll("public_calendar")
             if next_monetary_at is None or now >= next_monetary_at:
                 next_monetary_at = now + timedelta(seconds=self._monetary_poll_seconds)
                 await self._poll("monetary")
@@ -197,18 +233,22 @@ class FedOfficialCollectorService:
                 await asyncio.wait_for(stop.wait(), timeout=delay)
 
     async def _poll(self, kind: str) -> None:
-        if kind == "calendar":
-            self.health.calendar_poll_count += 1
-        else:
-            self.health.monetary_poll_count += 1
+        counter_field = {
+            "calendar": "calendar_poll_count",
+            "public_calendar": "public_calendar_poll_count",
+            "monetary": "monetary_poll_count",
+        }.get(kind)
+        if counter_field is None:
+            raise ValueError(f"未知 Fed official collector kind: {kind}")
+        setattr(self.health, counter_field, getattr(self.health, counter_field) + 1)
         try:
             result = await asyncio.to_thread(self._collect, kind)
-            if kind == "calendar":
-                self.health.last_calendar_success_at = require_utc(self._clock())
-                self.health.calendar_error_class = None
-            else:
-                self.health.last_monetary_success_at = require_utc(self._clock())
-                self.health.monetary_error_class = None
+            setattr(
+                self.health,
+                f"last_{kind}_success_at",
+                require_utc(self._clock()),
+            )
+            setattr(self.health, f"{kind}_error_class", None)
             self.health.new_fact_revision_count += len(result.new_fact_revisions)
         except asyncio.CancelledError:
             raise
@@ -226,7 +266,17 @@ class FedOfficialCollectorService:
                 observed_at=observed_at,
                 years=(observed_at.year, observed_at.year + 1),
             )
-        else:
+        elif kind == "public_calendar":
+            content = self._source.fetch_public_calendar()
+            if content is None:
+                return OfficialFactIngestionResult(records=(), new_fact_revisions=())
+            observed_at = require_utc(self._clock())
+            result = self._ingestor.ingest_public_calendar(
+                content,
+                observed_at=observed_at,
+                years=(observed_at.year, observed_at.year + 1),
+            )
+        elif kind == "monetary":
             content = self._source.fetch_monetary_rss()
             if content is None:
                 return OfficialFactIngestionResult(records=(), new_fact_revisions=())
@@ -234,6 +284,8 @@ class FedOfficialCollectorService:
                 content,
                 observed_at=require_utc(self._clock()),
             )
+        else:
+            raise ValueError(f"未知 Fed official collector kind: {kind}")
         if not result.records:
             raise ValueError(f"Fed official {kind} 响应没有可解析记录")
         return result

@@ -3,6 +3,7 @@ from pydantic import Field, model_validator
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.facts import (
+    FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     OfficialFactProjectionPolicy,
@@ -50,7 +51,11 @@ class DecisionStatePolicy(StrictConfig):
     def official_projection_must_have_delta_rules(self):
         if not self.official_fact_policy.affected_assets:
             raise ValueError("OfficialFact projection 必须声明受影响资产")
-        required = {FOMC_MEETING_FACT_TYPE, FED_MONETARY_RELEASE_FACT_TYPE}
+        required = {
+            FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+            FED_MONETARY_RELEASE_FACT_TYPE,
+            FOMC_MEETING_FACT_TYPE,
+        }
         configured = {item.fact_type for item in self.delta_policy.rules}
         if not required.issubset(configured):
             raise ValueError("OfficialFact projection 缺少对应 MaterialDelta 规则")

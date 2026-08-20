@@ -14,7 +14,11 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.state.decision.packet import AnalysisMandate
-from investment_manager.state.facts import FOMC_MEETING_FACT_TYPE, StateDeltaPolicy
+from investment_manager.state.facts import (
+    FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+    FOMC_MEETING_FACT_TYPE,
+    StateDeltaPolicy,
+)
 from investment_manager.state.models import (
     CanonicalFactRevision,
     FactRevisionStatus,
@@ -27,6 +31,10 @@ _PRIORITY = {
     Materiality.NORMAL: 75,
     Materiality.HIGH: 90,
     Materiality.CRITICAL: 100,
+}
+_SCHEDULED_FACT_TYPES = {
+    FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+    FOMC_MEETING_FACT_TYPE,
 }
 
 
@@ -124,7 +132,7 @@ class CanonicalFactTriggerPublisher:
                     self._calendar_wakeup(fact, symbol=symbol)
                     for fact in facts
                     if (
-                        fact.fact_type == FOMC_MEETING_FACT_TYPE
+                        fact.fact_type in _SCHEDULED_FACT_TYPES
                         and fact.status == FactRevisionStatus.ACTIVE
                         and fact.event_time is not None
                         and fact.event_time > as_of

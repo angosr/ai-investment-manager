@@ -1,9 +1,16 @@
+import json
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 
+from investment_manager.information.official.public_calendar import (
+    build_fed_chair_calendar_revision,
+    build_fed_chair_cancellation,
+    parse_fed_chair_calendar,
+)
 from investment_manager.information.official.records import (
+    CalendarEventStatus,
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
@@ -59,6 +66,23 @@ def test_fed_monetary_source_retries_406_once_with_broad_xml_accept() -> None:
     assert len(requests) == 2
 
 
+def test_fed_public_calendar_source_requests_fixed_json_endpoint() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text='{"events": []}')
+
+    source = HttpFedOfficialSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert source.fetch_public_calendar() == '{"events": []}'
+    assert requests[0].url == "https://www.federalreserve.gov/json/calendar.json"
+    assert requests[0].headers["accept"] == "application/json"
+
+
 def test_fed_official_source_does_not_retry_other_http_errors() -> None:
     requests: list[httpx.Request] = []
 
@@ -100,6 +124,69 @@ def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:
     assert meetings[0].statement_at == datetime(2026, 1, 28, 19, tzinfo=UTC)
     assert meetings[1].statement_at == datetime(2026, 3, 18, 18, tzinfo=UTC)
     assert meetings[1].has_projection_materials is True
+
+
+def _public_calendar(*events: dict) -> str:
+    return json.dumps({"events": [*events, {}]})
+
+
+def _chair_event(*, day: str = "28", time: str = "10:00 a.m.") -> dict:
+    return {
+        "description": "Keynote Remarks",
+        "live": "www.youtube.com/KansasCityFed",
+        "location": "At the Jackson Hole Economic Policy Symposium",
+        "title": "Speech - Chairman Kevin Warsh",
+        "time": time,
+        "month": "2026-08",
+        "days": day,
+        "type": "Speeches",
+    }
+
+
+def test_fed_public_calendar_selects_board_chair_and_preserves_reschedule_identity() -> None:
+    vice_chair = {
+        **_chair_event(day="8"),
+        "title": "Discussion - Vice Chair Michelle W. Bowman",
+    }
+    first = parse_fed_chair_calendar(
+        _public_calendar(_chair_event(), vice_chair),
+        observed_at=OBSERVED_AT,
+        years=(2026,),
+    )
+    revised = parse_fed_chair_calendar(
+        _public_calendar(_chair_event(day="29", time="11:30 a.m."), vice_chair),
+        observed_at=datetime(2026, 8, 21, 12, tzinfo=UTC),
+        years=(2026,),
+    )
+
+    assert first.covered_years == (2026,)
+    assert len(first.records) == 1
+    assert first.records[0].scheduled_at == datetime(2026, 8, 28, 14, tzinfo=UTC)
+    assert (
+        first.records[0].observation.source_record_id
+        == revised.records[0].observation.source_record_id
+    )
+    assert first.records[0].observation.payload_hash != revised.records[0].observation.payload_hash
+
+
+def test_fed_chair_calendar_revision_and_cancellation_keep_logical_event() -> None:
+    record = parse_fed_chair_calendar(
+        _public_calendar(_chair_event()),
+        observed_at=OBSERVED_AT,
+        years=(2026,),
+    ).records[0]
+    first = build_fed_chair_calendar_revision(record)
+    cancelled_record = build_fed_chair_cancellation(
+        record,
+        observed_at=datetime(2026, 8, 21, 12, tzinfo=UTC),
+        payload_ref="raw_source_payload_cancelled",
+    )
+    cancelled = build_fed_chair_calendar_revision(cancelled_record, previous=first)
+
+    assert cancelled.event_id == first.event_id
+    assert cancelled.previous_revision_id == first.revision_id
+    assert cancelled.status == CalendarEventStatus.CANCELLED
+    assert cancelled.scheduled_release_at == first.scheduled_release_at
 
 
 def test_fomc_calendar_parses_cross_month_meeting() -> None:

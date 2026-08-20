@@ -154,7 +154,7 @@ src/investment_manager/
 
 ### Information
 
-拥有 RawSourcePayload、SourceObservation、官方经济日历、新闻采集和 NormalizedEvent。所有外部文本先保留原始制品，再形成可修订观察；Information 不裁决方向。
+拥有 RawSourcePayload、SourceObservation、官方经济日历、新闻采集和 NormalizedEvent。固定官方日历中的重要活动以可改期、可取消的逻辑事件保存，不能把一次页面快照直接变成永久 Wakeup。所有外部文本先保留原始制品，再形成可修订观察；Information 不裁决方向。
 
 ### State
 

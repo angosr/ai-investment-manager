@@ -67,6 +67,7 @@ _MONTH_ALIASES = {
 
 class OfficialRecordKind(StrEnum):
     FOMC_MEETING = "FOMC_MEETING"
+    FED_CHAIR_PUBLIC_EVENT = "FED_CHAIR_PUBLIC_EVENT"
     FED_MONETARY_RELEASE = "FED_MONETARY_RELEASE"
 
 
@@ -128,7 +129,10 @@ class MarketCalendarEventRevision(FrozenModel):
     event_id: str
     revision_id: str
     previous_revision_id: str | None = None
-    event_type: Literal[OfficialRecordKind.FOMC_MEETING] = OfficialRecordKind.FOMC_MEETING
+    event_type: Literal[
+        OfficialRecordKind.FOMC_MEETING,
+        OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT,
+    ] = OfficialRecordKind.FOMC_MEETING
     status: CalendarEventStatus
     source_id: str
     source_record_id: str
@@ -148,8 +152,11 @@ class MarketCalendarEventRevision(FrozenModel):
 
     @model_validator(mode="after")
     def identity_and_window_are_consistent(self):
-        if not self.event_start_at < self.event_end_at:
-            raise ValueError("日历事件窗口必须为正")
+        if self.event_start_at > self.event_end_at or (
+            self.event_type == OfficialRecordKind.FOMC_MEETING
+            and self.event_start_at == self.event_end_at
+        ):
+            raise ValueError("日历事件窗口非法")
         if not self.event_start_at <= self.scheduled_release_at <= self.event_end_at:
             raise ValueError("scheduled_release_at 必须位于事件窗口内")
         if self.previous_revision_id == self.revision_id:
@@ -160,7 +167,7 @@ class MarketCalendarEventRevision(FrozenModel):
             "market_calendar_event", self.source_id, self.source_record_id
         ):
             raise ValueError("日历 event_id 与来源逻辑身份不一致")
-        if self.content_hash != content_hash(_calendar_semantic_payload(self)):
+        if self.content_hash != content_hash(calendar_semantic_payload(self)):
             raise ValueError("日历 content_hash 与语义内容不一致")
         expected_revision_id = stable_id(
             "market_calendar_revision",
@@ -206,7 +213,7 @@ def build_fomc_calendar_revision(
         has_projection_materials=record.has_projection_materials,
         content_hash="pending",
     )
-    semantic_hash = content_hash(_calendar_semantic_payload(candidate))
+    semantic_hash = content_hash(calendar_semantic_payload(candidate))
     if previous is not None and previous.content_hash == semantic_hash:
         raise ValueError("相同日历语义不得创建新修订")
     return MarketCalendarEventRevision(
@@ -482,7 +489,7 @@ def _parse_rss_time(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _calendar_semantic_payload(revision: MarketCalendarEventRevision) -> dict:
+def calendar_semantic_payload(revision: MarketCalendarEventRevision) -> dict:
     return {
         "event_id": revision.event_id,
         "event_type": revision.event_type.value,
@@ -501,7 +508,17 @@ def _validate_record_observation(
     record: OfficialRecord,
     observation: SourceObservation,
 ) -> None:
-    expected_payload_hash = content_hash(_official_record_payload(record))
+    validate_official_record_observation(
+        observation,
+        _official_record_payload(record),
+    )
+
+
+def validate_official_record_observation(
+    observation: SourceObservation,
+    payload: dict,
+) -> None:
+    expected_payload_hash = content_hash(payload)
     if observation.payload_hash != expected_payload_hash:
         raise ValueError("官方记录 payload_hash 与解析内容不一致")
     expected_id = stable_id(

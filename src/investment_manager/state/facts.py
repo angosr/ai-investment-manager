@@ -5,10 +5,14 @@ from datetime import datetime, timedelta
 from pydantic import Field, model_validator
 
 from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.official.public_calendar import (
+    FedChairPublicEventRecord,
+)
 from investment_manager.information.official.records import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
     MarketCalendarEventRevision,
+    OfficialRecordKind,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -23,6 +27,7 @@ from investment_manager.state.models import (
 )
 
 FOMC_MEETING_FACT_TYPE = "FOMC_MEETING_SCHEDULE"
+FED_CHAIR_PUBLIC_EVENT_FACT_TYPE = "FED_CHAIR_PUBLIC_EVENT_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"
 
 
@@ -147,6 +152,57 @@ def project_fed_monetary_release_fact(
         claim=record.summary or record.title,
         affected_assets=policy.affected_assets,
         risk_factors=policy.release_risk_factors,
+        source_observation_ids=(observation.observation_id,),
+        previous=previous,
+    )
+
+
+def project_fed_chair_public_event_fact(
+    record: FedChairPublicEventRecord,
+    revision: MarketCalendarEventRevision,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    observation = record.observation
+    if (
+        revision.event_type != OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT
+        or revision.source_observation_id != observation.observation_id
+        or revision.source_record_id != observation.source_record_id
+    ):
+        raise ValueError("Fed Chair 事实投影记录与日历修订不一致")
+    status = (
+        FactRevisionStatus.ACTIVE
+        if record.status == CalendarEventStatus.SCHEDULED
+        else FactRevisionStatus.CANCELLED
+    )
+    details = "; ".join(
+        item
+        for item in (
+            record.description,
+            record.location,
+            f"status {record.status.value}",
+        )
+        if item
+    )
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+            revision.event_id,
+        ),
+        projection_version=policy.version,
+        fact_type=FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+        status=status,
+        event_time=record.scheduled_at,
+        observed_at=observation.observed_at,
+        headline=record.title,
+        claim=(
+            f"Federal Reserve Board Chair public event scheduled at "
+            f"{record.scheduled_at.isoformat()}; {details}."
+        ),
+        affected_assets=policy.affected_assets,
+        risk_factors=revision.risk_factors,
         source_observation_ids=(observation.observation_id,),
         previous=previous,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 
+from investment_manager.information.official.public_calendar import FED_PUBLIC_CALENDAR_URL
 from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
@@ -31,12 +32,16 @@ class HttpFedOfficialSource:
     def fetch_monetary_rss(self) -> str | None:
         return self._fetch(FED_MONETARY_RSS_URL)
 
+    def fetch_public_calendar(self) -> str | None:
+        return self._fetch(FED_PUBLIC_CALENDAR_URL)
+
     def _fetch(self, url: str) -> str | None:
-        accept = (
-            "text/html, application/xhtml+xml;q=0.9"
-            if url == FED_FOMC_CALENDAR_URL
-            else "application/rss+xml, application/xml, text/xml;q=0.9"
-        )
+        if url == FED_FOMC_CALENDAR_URL:
+            accept = "text/html, application/xhtml+xml;q=0.9"
+        elif url == FED_PUBLIC_CALENDAR_URL:
+            accept = "application/json"
+        else:
+            accept = "application/rss+xml, application/xml, text/xml;q=0.9"
         headers = {
             "Accept": accept,
             "User-Agent": "investment-manager-official-source/1.0",

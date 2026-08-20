@@ -8,7 +8,7 @@ complexity_score: 1
 component_versions:
   - [feature, feature-v1]
   - [panel, panel-policy-v5]
-  - [decision_state, portfolio-state-v2]
+  - [decision_state, portfolio-state-v3]
   - [strategy, price-trend-v4]
   - [calibration, edge-calibration-v1]
   - [composition, calibrated-net-edge-v1]
@@ -21,7 +21,7 @@ component_versions:
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-shadow-v2]
   - [shadow, shadow-simulation-v1]
-  - [information, information-intake-v9]
+  - [information, information-intake-v10]
   - [pipeline, off-pipeline-v6]
   - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import create_engine, func, select
@@ -36,6 +37,34 @@ def _calendar(date_text: str) -> str:
       <div class="fomc-meeting__date">{date_text}</div>
     </div>
     """
+
+
+def _public_calendar(*, include_chair: bool = True) -> str:
+    events = (
+        [
+            {
+                "description": "Keynote Remarks",
+                "location": "At the Jackson Hole Economic Policy Symposium",
+                "title": "Speech - Chairman Kevin Warsh",
+                "time": "10:00 a.m.",
+                "month": "2026-08",
+                "days": "28",
+                "type": "Speeches",
+            }
+        ]
+        if include_chair
+        else []
+    )
+    events.append(
+        {
+            "title": "Speech - Governor Example",
+            "time": "1:00 p.m.",
+            "month": "2026-09",
+            "days": "1",
+            "type": "Speeches",
+        }
+    )
+    return json.dumps({"events": [*events, {}]})
 
 
 def _engine():
@@ -76,9 +105,7 @@ def test_fed_ingestion_projects_revision_once_and_preserves_lineage() -> None:
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(raw_source_payloads)) == 2
         assert connection.scalar(select(func.count()).select_from(source_observations)) == 2
-        assert connection.scalar(
-            select(func.count()).select_from(canonical_fact_revisions)
-        ) == 2
+        assert connection.scalar(select(func.count()).select_from(canonical_fact_revisions)) == 2
 
 
 def test_retry_repairs_official_record_to_fact_projection_gap() -> None:
@@ -122,6 +149,9 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
         def fetch_calendar(self):
             return _calendar("15-16")
 
+        def fetch_public_calendar(self):
+            return _public_calendar()
+
         def fetch_monetary_rss(self):
             return """<rss><channel><item>
               <title>Federal Reserve issues FOMC statement</title>
@@ -147,8 +177,9 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
     asyncio.run(service.run(stop))
 
     assert service.health.calendar_poll_count == 1
+    assert service.health.public_calendar_poll_count == 1
     assert service.health.monetary_poll_count == 1
-    assert service.health.new_fact_revision_count == 2
+    assert service.health.new_fact_revision_count == 3
     assert service.health.publication_count == 1
     assert published_at == [OBSERVED_AT]
 
@@ -170,6 +201,11 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     calendar = fed.ingest_calendar(
         _calendar("15-16"),
         observed_at=OBSERVED_AT,
+    )
+    chair = fed.ingest_public_calendar(
+        _public_calendar(),
+        observed_at=OBSERVED_AT,
+        years=(2026,),
     )
     fed.ingest_monetary_rss(
         """<rss><channel><item>
@@ -194,26 +230,40 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     publisher.publish_recent(OBSERVED_AT)
     publisher.publish_recent(OBSERVED_AT)
     with engine.connect() as connection:
-        assert connection.scalar(
-            select(func.count())
-            .select_from(analysis_trigger_events)
-            .where(analysis_trigger_events.c.trigger_type == "CANONICAL_FACT_REVISED")
-        ) == 4
-        assert connection.scalar(
-            select(func.count())
-            .select_from(trigger_outbox)
-            .where(trigger_outbox.c.message_kind == "TRIGGER_CREATED")
-        ) == 4
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(analysis_trigger_events)
+                .where(analysis_trigger_events.c.trigger_type == "CANONICAL_FACT_REVISED")
+            )
+            == 6
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(trigger_outbox)
+                .where(trigger_outbox.c.message_kind == "TRIGGER_CREATED")
+            )
+            == 6
+        )
     for symbol in app_config.market_data.symbols:
         plan = triggers.plan_for_scope(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
         )
-        assert len(plan.scheduled_wakeups) == 1
-        assert plan.scheduled_wakeups[0].evidence_ids == (
+        assert len(plan.scheduled_wakeups) == 2
+        assert plan.scheduled_wakeups[0].evidence_ids == (chair.new_fact_revisions[0].revision_id,)
+        assert plan.scheduled_wakeups[0].wake_at == datetime(
+            2026,
+            8,
+            28,
+            14,
+            tzinfo=UTC,
+        )
+        assert plan.scheduled_wakeups[1].evidence_ids == (
             calendar.new_fact_revisions[0].revision_id,
         )
-        assert plan.scheduled_wakeups[0].wake_at == datetime(
+        assert plan.scheduled_wakeups[1].wake_at == datetime(
             2026,
             9,
             16,
@@ -232,14 +282,32 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
         )
-        assert len(plan.scheduled_wakeups) == 1
-        assert plan.scheduled_wakeups[0].evidence_ids == (
+        assert len(plan.scheduled_wakeups) == 2
+        assert plan.scheduled_wakeups[1].evidence_ids == (
             revised_calendar.new_fact_revisions[0].revision_id,
         )
-        assert plan.scheduled_wakeups[0].wake_at == datetime(
+        assert plan.scheduled_wakeups[1].wake_at == datetime(
             2026,
             9,
             17,
             18,
             tzinfo=UTC,
+        )
+
+    cancelled_at = OBSERVED_AT + timedelta(minutes=2)
+    cancelled = fed.ingest_public_calendar(
+        _public_calendar(include_chair=False),
+        observed_at=cancelled_at,
+        years=(2026,),
+    )
+    assert cancelled.new_fact_revisions[0].status.value == "CANCELLED"
+    publisher.publish_recent(cancelled_at)
+    for symbol in app_config.market_data.symbols:
+        plan = triggers.plan_for_scope(
+            symbol=symbol,
+            pipeline_id=app_config.pipeline.version,
+        )
+        assert len(plan.scheduled_wakeups) == 1
+        assert plan.scheduled_wakeups[0].evidence_ids == (
+            revised_calendar.new_fact_revisions[0].revision_id,
         )

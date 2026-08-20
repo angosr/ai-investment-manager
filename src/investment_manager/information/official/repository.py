@@ -6,18 +6,28 @@ from datetime import datetime
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
+from investment_manager.information.official.public_calendar import (
+    FED_PUBLIC_CALENDAR_URL,
+    FedChairPublicEventRecord,
+    build_fed_chair_calendar_revision,
+    build_fed_chair_cancellation,
+    parse_fed_chair_calendar,
+)
 from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
     FED_SOURCE_ID,
+    CalendarEventStatus,
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
     MarketCalendarEventRevision,
-    OfficialRecord,
     OfficialRecordKind,
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
+)
+from investment_manager.information.official.records import (
+    OfficialRecord as BaseOfficialRecord,
 )
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
@@ -29,6 +39,9 @@ from investment_manager.information.tables import (
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
+
+OfficialRecord = BaseOfficialRecord | FedChairPublicEventRecord
+CalendarOfficialRecord = FomcMeetingRecord | FedChairPublicEventRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +90,7 @@ class SqlOfficialInformationStore:
                 if latest.observation.payload_hash == observation.payload_hash:
                     revision = (
                         self._calendar_revision_for_observation(connection, latest)
-                        if isinstance(latest, FomcMeetingRecord)
+                        if isinstance(latest, (FomcMeetingRecord, FedChairPublicEventRecord))
                         else None
                     )
                     return OfficialRecordWrite(
@@ -103,7 +116,7 @@ class SqlOfficialInformationStore:
             )
             revision = (
                 self._append_calendar_revision(connection, record)
-                if isinstance(record, FomcMeetingRecord)
+                if isinstance(record, (FomcMeetingRecord, FedChairPublicEventRecord))
                 else None
             )
         return OfficialRecordWrite(
@@ -212,7 +225,7 @@ class SqlOfficialInformationStore:
     @staticmethod
     def _calendar_revision_for_observation(
         connection: Connection,
-        record: FomcMeetingRecord,
+        record: CalendarOfficialRecord,
     ) -> MarketCalendarEventRevision:
         payload = connection.execute(
             select(market_calendar_event_revisions.c.payload).where(
@@ -225,7 +238,7 @@ class SqlOfficialInformationStore:
     @staticmethod
     def _append_calendar_revision(
         connection: Connection,
-        record: FomcMeetingRecord,
+        record: CalendarOfficialRecord,
     ) -> MarketCalendarEventRevision:
         event_id = _calendar_event_id(record)
         previous_payload = connection.execute(
@@ -240,7 +253,11 @@ class SqlOfficialInformationStore:
             if previous_payload is not None
             else None
         )
-        revision = build_fomc_calendar_revision(record, previous=previous)
+        revision = (
+            build_fomc_calendar_revision(record, previous=previous)
+            if isinstance(record, FomcMeetingRecord)
+            else build_fed_chair_calendar_revision(record, previous=previous)
+        )
         connection.execute(
             insert(market_calendar_event_revisions).values(
                 revision_id=revision.revision_id,
@@ -311,6 +328,59 @@ class SqlFedOfficialInformationIngestor:
             for record in parse_fed_monetary_rss(xml, observed_at=observed_at)
         )
 
+    def ingest_public_calendar(
+        self,
+        payload: str,
+        *,
+        observed_at: datetime,
+        years: tuple[int, ...] | None = None,
+    ) -> tuple[OfficialRecordWrite, ...]:
+        observed_at = require_utc(observed_at)
+        content = payload.encode("utf-8")
+        raw = build_raw_source_payload(
+            source_id=FED_SOURCE_ID,
+            source_url=FED_PUBLIC_CALENDAR_URL,
+            media_type="application/json",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        snapshot = parse_fed_chair_calendar(
+            payload,
+            observed_at=observed_at,
+            years=years,
+        )
+        current = tuple(
+            record for record in snapshot.records if record.scheduled_at >= observed_at
+        )
+        current_ids = {record.observation.source_record_id for record in current}
+        previous = tuple(
+            record
+            for record in self._records.records_as_of(
+                as_of=observed_at,
+                source_id=FED_SOURCE_ID,
+            )
+            if (
+                isinstance(record, FedChairPublicEventRecord)
+                and record.status == CalendarEventStatus.SCHEDULED
+                and record.scheduled_at > observed_at
+                and record.observation.observed_at < observed_at
+                and record.calendar_year in snapshot.covered_years
+                and record.observation.source_record_id not in current_ids
+            )
+        )
+        cancellations = tuple(
+            build_fed_chair_cancellation(
+                record,
+                observed_at=observed_at,
+                payload_ref=raw.payload_id,
+            )
+            for record in previous
+        )
+        return tuple(
+            self._records.put(record) for record in (*current, *cancellations)
+        )
+
 
 def _record_from_payload(payload: dict) -> OfficialRecord:
     kind = payload.get("kind")
@@ -318,10 +388,12 @@ def _record_from_payload(payload: dict) -> OfficialRecord:
         return FomcMeetingRecord.model_validate(payload)
     if kind == OfficialRecordKind.FED_MONETARY_RELEASE.value:
         return FedMonetaryReleaseRecord.model_validate(payload)
+    if kind == OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT.value:
+        return FedChairPublicEventRecord.model_validate(payload)
     raise ValueError("未知官方记录类型")
 
 
-def _calendar_event_id(record: FomcMeetingRecord) -> str:
+def _calendar_event_id(record: CalendarOfficialRecord) -> str:
     observation = record.observation
     return stable_id(
         "market_calendar_event",

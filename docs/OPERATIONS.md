@@ -67,7 +67,7 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 ## 实时 Shadow
 
-当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
+当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。Fed FOMC 日历、Board Chair 公开活动 JSON 和货币政策 RSS 走独立固定一手端点，未来活动的改期或取消通过同一 CanonicalFact/Wakeup 链同步。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
 
 资讯标准化器保留直接资产事件，并用版本化有限词表路由跨资产宏观事件。关键跨资产事件可越过高优先级阈值，但同一波事件先按品种合并；一般跨资产事件只进入下一次面板。资讯触发具有固定有效期，过期触发丢弃但原始标准事件事实不删除。
 

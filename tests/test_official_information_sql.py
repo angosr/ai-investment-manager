@@ -1,10 +1,17 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.information.official.records import parse_fomc_calendar
+from investment_manager.information.official.public_calendar import (
+    FedChairPublicEventRecord,
+)
+from investment_manager.information.official.records import (
+    CalendarEventStatus,
+    parse_fomc_calendar,
+)
 from investment_manager.information.official.repository import (
     SqlFedOfficialInformationIngestor,
     SqlOfficialInformationStore,
@@ -27,6 +34,34 @@ def _calendar(date_text: str) -> str:
     """
 
 
+def _public_calendar(*, day: str = "28", include_chair: bool = True) -> str:
+    events = (
+        [
+            {
+                "description": "Keynote Remarks",
+                "location": "At the Jackson Hole Economic Policy Symposium",
+                "title": "Speech - Chairman Kevin Warsh",
+                "time": "10:00 a.m.",
+                "month": "2026-08",
+                "days": day,
+                "type": "Speeches",
+            }
+        ]
+        if include_chair
+        else []
+    )
+    events.append(
+        {
+            "title": "Speech - Governor Example",
+            "time": "1:00 p.m.",
+            "month": "2026-09",
+            "days": "1",
+            "type": "Speeches",
+        }
+    )
+    return json.dumps({"events": [*events, {}]})
+
+
 def _store() -> tuple[
     SqlFedOfficialInformationIngestor,
     SqlOfficialInformationStore,
@@ -46,12 +81,8 @@ def test_unchanged_poll_keeps_first_seen_observation_and_no_revision() -> None:
     first_seen = datetime(2026, 8, 20, 12, tzinfo=UTC)
     repeated_at = datetime(2026, 8, 20, 12, 1, tzinfo=UTC)
 
-    inserted = ingestor.ingest_calendar(
-        _calendar("15-16*"), observed_at=first_seen
-    )[0]
-    duplicate = ingestor.ingest_calendar(
-        _calendar("15-16*"), observed_at=repeated_at
-    )[0]
+    inserted = ingestor.ingest_calendar(_calendar("15-16*"), observed_at=first_seen)[0]
+    duplicate = ingestor.ingest_calendar(_calendar("15-16*"), observed_at=repeated_at)[0]
 
     assert inserted.inserted is True
     assert inserted.calendar_revision is not None
@@ -74,15 +105,13 @@ def test_calendar_revision_and_reversion_are_both_point_in_time_visible() -> Non
     second_at = datetime(2026, 8, 21, 12, tzinfo=UTC)
     reverted_at = datetime(2026, 8, 22, 12, tzinfo=UTC)
 
-    first = ingestor.ingest_calendar(
-        _calendar("15-16*"), observed_at=first_at
-    )[0].calendar_revision
-    second = ingestor.ingest_calendar(
-        _calendar("16-17*"), observed_at=second_at
-    )[0].calendar_revision
-    reverted = ingestor.ingest_calendar(
-        _calendar("15-16*"), observed_at=reverted_at
-    )[0].calendar_revision
+    first = ingestor.ingest_calendar(_calendar("15-16*"), observed_at=first_at)[0].calendar_revision
+    second = ingestor.ingest_calendar(_calendar("16-17*"), observed_at=second_at)[
+        0
+    ].calendar_revision
+    reverted = ingestor.ingest_calendar(_calendar("15-16*"), observed_at=reverted_at)[
+        0
+    ].calendar_revision
 
     assert first is not None and second is not None and reverted is not None
     assert second.previous_revision_id == first.revision_id
@@ -141,6 +170,51 @@ def test_rss_observation_is_immutable_without_creating_calendar_event() -> None:
         assert (
             connection.scalar(select(func.count()).select_from(market_calendar_event_revisions))
             == 0
+        )
+
+
+def test_public_calendar_reschedule_and_disappearance_are_durable_revisions() -> None:
+    ingestor, store, engine = _store()
+    first_at = datetime(2026, 8, 20, 12, tzinfo=UTC)
+    revised_at = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    cancelled_at = datetime(2026, 8, 22, 12, tzinfo=UTC)
+
+    first = ingestor.ingest_public_calendar(
+        _public_calendar(),
+        observed_at=first_at,
+        years=(2026,),
+    )[0]
+    revised = ingestor.ingest_public_calendar(
+        _public_calendar(day="29"),
+        observed_at=revised_at,
+        years=(2026,),
+    )[0]
+    cancelled = ingestor.ingest_public_calendar(
+        _public_calendar(include_chair=False),
+        observed_at=cancelled_at,
+        years=(2026,),
+    )[0]
+
+    assert isinstance(first.record, FedChairPublicEventRecord)
+    assert isinstance(revised.record, FedChairPublicEventRecord)
+    assert isinstance(cancelled.record, FedChairPublicEventRecord)
+    assert first.calendar_revision is not None
+    assert revised.calendar_revision is not None
+    assert cancelled.calendar_revision is not None
+    assert revised.calendar_revision.event_id == first.calendar_revision.event_id
+    assert revised.calendar_revision.previous_revision_id == first.calendar_revision.revision_id
+    assert cancelled.calendar_revision.previous_revision_id == revised.calendar_revision.revision_id
+    assert cancelled.record.status == CalendarEventStatus.CANCELLED
+    latest = tuple(
+        item
+        for item in store.records_as_of(as_of=cancelled_at)
+        if isinstance(item, FedChairPublicEventRecord)
+    )
+    assert latest == (cancelled.record,)
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(select(func.count()).select_from(market_calendar_event_revisions))
+            == 3
         )
 
 
