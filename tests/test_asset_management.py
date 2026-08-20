@@ -202,6 +202,7 @@ def test_calibrated_forecast_roles_have_one_unambiguous_provenance(
         forecast_family="EVENT",
         symbol="BTCUSDT",
         horizon_minutes=240,
+        direction=DirectionalView.UP,
         available_at=NOW,
         valid_until=NOW + timedelta(hours=1),
         base_forecast_id=base_id,
@@ -228,6 +229,7 @@ def test_calibrated_forecast_rejects_role_reference_mismatch() -> None:
             forecast_family="EVENT",
             symbol="BTCUSDT",
             horizon_minutes=240,
+            direction=DirectionalView.UP,
             available_at=NOW,
             valid_until=NOW + timedelta(hours=1),
             base_forecast_id="base-1",
@@ -278,3 +280,17 @@ def test_asset_target_net_edge_has_one_formula() -> None:
 
     with pytest.raises(ValidationError, match="净收益必须等于"):
         AssetTarget.model_validate(payload)
+
+
+def test_portfolio_target_can_represent_all_cash() -> None:
+    target = PortfolioTarget(
+        target_id="target-cash",
+        cycle_id="cycle-1",
+        portfolio_id="mock-main",
+        policy_version="portfolio-v1",
+        as_of=NOW,
+        valid_until=NOW + timedelta(minutes=30),
+        reference_equity=Decimal("10000"),
+    )
+
+    assert target.targets == ()

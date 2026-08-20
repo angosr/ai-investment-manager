@@ -279,6 +279,7 @@ class CalibratedForecast(FrozenModel):
     forecast_family: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     horizon_minutes: int = Field(gt=0)
+    direction: DirectionalView
     available_at: datetime
     valid_until: datetime
     base_forecast_id: str | None = Field(default=None, min_length=1)
@@ -346,7 +347,7 @@ class PortfolioTarget(FrozenModel):
     as_of: datetime
     valid_until: datetime
     reference_equity: PositiveDecimal
-    targets: tuple[AssetTarget, ...] = Field(min_length=1)
+    targets: tuple[AssetTarget, ...] = ()
 
     _utc_as_of = field_validator("as_of")(_require_utc)
     _utc_valid_until = field_validator("valid_until")(_require_utc)
