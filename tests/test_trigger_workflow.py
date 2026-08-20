@@ -240,6 +240,47 @@ def test_trigger_coordinator_uses_most_specific_matching_event_rule() -> None:
     assert coordinator._rule_value(urgent, "coalesce_seconds") == 0
 
 
+def test_trigger_signal_can_arrive_before_workflow_run_initializes_settings(
+    app_config,
+) -> None:
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=None,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="news",
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+            ),
+        ),
+    )
+    event = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=100,
+        dedup_key="signal-before-run",
+    )
+    coordinator = TriggerCoordinatorWorkflow()
+    coordinator._plan = plan.model_dump(mode="json")
+
+    coordinator.deliver(
+        {
+            "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+            "trigger": event.model_dump(mode="json"),
+        }
+    )
+
+    assert tuple(coordinator._pending) == (event.trigger_id,)
+    coordinator._settings = {"maximum_pending_triggers": 1}
+    coordinator._trim_pending()
+    assert tuple(coordinator._pending) == (event.trigger_id,)
+
+
 def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
     app_config,
 ) -> None:

@@ -97,17 +97,6 @@ class TriggerCoordinatorWorkflow:
             return
         self._remember(trigger_id)
         self._pending[trigger_id] = raw_trigger
-        maximum = int(self._settings["maximum_pending_triggers"])
-        if len(self._pending) > maximum:
-            ordered = sorted(
-                self._pending.values(),
-                key=lambda item: (
-                    -int(item.get("priority", 0)),
-                    str(item.get("observed_at", "")),
-                    str(item.get("trigger_id", "")),
-                ),
-            )
-            self._pending = {item["trigger_id"]: item for item in ordered[:maximum]}
         self._signal_sequence += 1
 
     @workflow.signal
@@ -131,6 +120,7 @@ class TriggerCoordinatorWorkflow:
         while not self._stopping:
             now = workflow.now()
             self._enqueue_due(now, started_at)
+            self._trim_pending()
             self._discard_expired(now)
             eligible = self._eligible_pending()
             if eligible:
@@ -349,6 +339,20 @@ class TriggerCoordinatorWorkflow:
             for key, item in self._pending.items()
             if item.get("expires_at") is None or _parse_time(item["expires_at"]) > now
         }
+
+    def _trim_pending(self) -> None:
+        maximum = int(self._settings["maximum_pending_triggers"])
+        if len(self._pending) <= maximum:
+            return
+        ordered = sorted(
+            self._pending.values(),
+            key=lambda item: (
+                -int(item.get("priority", 0)),
+                str(item.get("observed_at", "")),
+                str(item.get("trigger_id", "")),
+            ),
+        )
+        self._pending = {item["trigger_id"]: item for item in ordered[:maximum]}
 
     def _next_timer_delay(self, now: datetime, started_at: datetime) -> timedelta:
         if self._plan is None or bool(self._plan.get("ai_paused")):
