@@ -42,7 +42,7 @@ def test_state_evidence_is_content_addressed_and_replayable(
         account_snapshot_ref=account_ref,
     )
 
-    assert states.put_state(state) == state
+    assert states.record_state(state=state, previous_state_id=None) == state
     assert evidence.get(market_ref) == (StateEvidenceKind.MARKET, market)
     assert evidence.get(feature_ref) == (StateEvidenceKind.FEATURE, feature)
     assert evidence.get(account_ref) == (StateEvidenceKind.ACCOUNT, account)
@@ -75,7 +75,7 @@ def test_state_rejects_missing_or_future_evidence(app_config, replay_input) -> N
     )
 
     with pytest.raises(ValueError, match="evidence"):
-        states.put_state(state)
+        states.record_state(state=state, previous_state_id=None)
 
 
 def test_idempotent_state_replay_audits_pre_evidence_rows(replay_input) -> None:
@@ -103,4 +103,4 @@ def test_idempotent_state_replay_audits_pre_evidence_rows(replay_input) -> None:
         )
 
     with pytest.raises(ValueError, match=market_ref):
-        states.put_state(legacy_state)
+        states.record_state(state=legacy_state, previous_state_id=None)

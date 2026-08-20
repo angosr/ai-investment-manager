@@ -80,7 +80,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
-def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) -> None:
+def test_postgres_cycle_transaction_and_risk_budget(
+    app_config,
+    replay_input,
+    request: pytest.FixtureRequest,
+) -> None:
     database_url = os.environ.get("QUANT_CORE_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("未配置隔离的 PostgreSQL 测试数据库")
@@ -88,6 +92,7 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         raise RuntimeError("集成测试只允许操作名称包含 quant_core_test 的专用数据库")
 
     engine = build_engine(database_url)
+    request.addfinalizer(engine.dispose)
     if engine.dialect.name != "postgresql":
         raise RuntimeError("该契约测试必须使用 PostgreSQL")
     market_metadata.drop_all(engine)
@@ -247,7 +252,42 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         built_at=baseline_at,
         facts=(baseline_fact,),
     )
-    fact_store.put_state(baseline_state)
+    fact_store.record_state(state=baseline_state, previous_state_id=None)
+    non_material_root = build_state_snapshot(
+        projection_version="postgres-state-v1",
+        analysis_scope="postgres-non-material",
+        as_of=baseline_at,
+        built_at=baseline_at,
+        facts=(baseline_fact,),
+    )
+    fact_store.record_state(state=non_material_root, previous_state_id=None)
+    competing_non_material_states = tuple(
+        build_state_snapshot(
+            projection_version="postgres-state-v1",
+            analysis_scope="postgres-non-material",
+            as_of=baseline_at + timedelta(seconds=offset),
+            built_at=baseline_at + timedelta(seconds=offset),
+            facts=(baseline_fact,),
+        )
+        for offset in (1, 2)
+    )
+    non_material_barrier = Barrier(2)
+
+    def record_non_material_state(state):
+        non_material_barrier.wait()
+        try:
+            return fact_store.record_state(
+                state=state,
+                previous_state_id=non_material_root.state_id,
+            )
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        non_material_writes = tuple(
+            pool.map(record_non_material_state, competing_non_material_states)
+        )
+    assert sum(write is not None for write in non_material_writes) == 1
     transition_facts = []
     previous_fact = baseline_fact
     for offset, date_text in ((5, "20-21"), (6, "21-22")):

@@ -145,7 +145,7 @@ def test_state_and_delta_transition_is_atomic_idempotent_and_replayable() -> Non
         built_at=OBSERVED_AT,
         facts=(first_fact,),
     )
-    fact_store.put_state(first_state)
+    fact_store.record_state(state=first_state, previous_state_id=None)
 
     second_at = OBSERVED_AT + timedelta(minutes=1)
     second_calendar = official_store.ingest_calendar(
@@ -246,7 +246,31 @@ def test_state_store_rejects_tampered_content_identity() -> None:
     ).model_copy(update={"content_hash": "b" * 64})
 
     with pytest.raises(ValueError, match="content_hash"):
-        fact_store.put_state(state)
+        fact_store.record_state(state=state, previous_state_id=None)
+
+
+def test_state_store_rejects_non_material_transition_that_skips_latest() -> None:
+    _, _, fact_store = _stores()
+    first = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT,
+        built_at=OBSERVED_AT,
+        facts=(),
+    )
+    second = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT + timedelta(minutes=1),
+        built_at=OBSERVED_AT + timedelta(minutes=1),
+        facts=(),
+    )
+    fact_store.record_state(state=first, previous_state_id=None)
+
+    with pytest.raises(ValueError, match="当前最新状态"):
+        fact_store.record_state(state=second, previous_state_id=None)
+
+    assert fact_store.state(second.state_id) is None
 
 
 def test_state_store_rejects_stale_fact_revision_visible_at_as_of() -> None:
@@ -277,7 +301,7 @@ def test_state_store_rejects_stale_fact_revision_visible_at_as_of() -> None:
     )
 
     with pytest.raises(ValueError, match="已过期的事实修订"):
-        fact_store.put_state(stale_state)
+        fact_store.record_state(state=stale_state, previous_state_id=None)
 
 
 def test_transition_cannot_skip_the_latest_comparable_state() -> None:
@@ -296,8 +320,8 @@ def test_transition_cannot_skip_the_latest_comparable_state() -> None:
         built_at=OBSERVED_AT,
         facts=(),
     )
-    fact_store.put_state(root)
-    fact_store.put_state(middle)
+    fact_store.record_state(state=root, previous_state_id=None)
+    fact_store.record_state(state=middle, previous_state_id=root.state_id)
     calendar = official_store.ingest_calendar(
         _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
     )[0].calendar_revision

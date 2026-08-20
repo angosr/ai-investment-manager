@@ -78,24 +78,34 @@ class SqlFactStateProjector:
             data_quality_codes=data_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
         )
+        existing = self._states.latest_state(
+            analysis_scope=analysis_scope,
+            projection_version=self._projection_version,
+            as_of=as_of,
+        )
+        already_recorded = bool(
+            existing is not None
+            and existing.as_of == as_of
+            and existing.state_id == candidate.state_id
+        )
+        if existing is not None and existing.as_of == as_of and not already_recorded:
+            raise ValueError("同一 scope/projection/as_of 已存在不同 StateSnapshot")
         previous = self._states.latest_state_before(
             analysis_scope=analysis_scope,
             projection_version=self._projection_version,
             as_of=as_of,
         )
-        if previous is not None and (
-            previous.fact_revision_ids == candidate.fact_revision_ids
-        ):
-            return FactStateProjectionResult(
-                state=previous,
-                delta=None,
-                changed=False,
-            )
-
         self._persist_evidence(markets=markets, features=features, account=account)
         if previous is None:
-            state = self._states.put_state(candidate)
-            return FactStateProjectionResult(state=state, delta=None, changed=True)
+            state = self._states.record_state(
+                state=candidate,
+                previous_state_id=None,
+            )
+            return FactStateProjectionResult(
+                state=state,
+                delta=None,
+                changed=not already_recorded,
+            )
 
         delta = build_fact_material_delta(
             previous=previous,
@@ -104,7 +114,15 @@ class SqlFactStateProjector:
             policy=self._delta_policy,
         )
         if delta is None:
-            raise ValueError("事实驱动 State 发生变化但没有可解释的 Fact MaterialDelta")
+            state = self._states.record_state(
+                state=candidate,
+                previous_state_id=previous.state_id,
+            )
+            return FactStateProjectionResult(
+                state=state,
+                delta=None,
+                changed=not already_recorded,
+            )
         state, stored_delta = self._states.record_transition(
             state=candidate,
             delta=delta,
@@ -112,7 +130,7 @@ class SqlFactStateProjector:
         return FactStateProjectionResult(
             state=state,
             delta=stored_delta,
-            changed=True,
+            changed=not already_recorded,
         )
 
     def _persist_evidence(

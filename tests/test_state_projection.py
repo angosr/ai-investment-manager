@@ -55,7 +55,7 @@ def _calendar(date_text: str) -> str:
     """
 
 
-def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
+def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
     app_config,
     replay_input,
 ) -> None:
@@ -97,7 +97,7 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
         features=(first_feature,),
         account=first_account,
     )
-    unchanged = projector.project(
+    refreshed = projector.project(
         analysis_scope="crypto-portfolio",
         as_of=OBSERVED_AT + timedelta(minutes=1),
         built_at=OBSERVED_AT + timedelta(minutes=1),
@@ -155,13 +155,16 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
 
     assert bootstrap.changed is True
     assert bootstrap.delta is None
-    assert unchanged.state == bootstrap.state
-    assert unchanged.delta is None
-    assert unchanged.changed is False
+    assert refreshed.state != bootstrap.state
+    assert refreshed.state.fact_revision_ids == bootstrap.state.fact_revision_ids
+    assert refreshed.state.market_snapshot_refs != bootstrap.state.market_snapshot_refs
+    assert refreshed.delta is None
+    assert refreshed.changed is True
     assert revised.changed is True
     assert revised.delta is not None
     assert replayed.state == revised.state
     assert replayed.delta == revised.delta
+    assert replayed.changed is False
     assembler = SqlDecisionPacketAssembler(
         engine,
         DecisionPacketPolicy(
@@ -194,11 +197,11 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
     assert packet.facts[0].highest_source_tier == "FIRST_PARTY"
     assert packet.facts[0].independent_source_count == 1
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(state_snapshots)) == 2
+        assert connection.scalar(select(func.count()).select_from(state_snapshots)) == 3
         assert connection.scalar(select(func.count()).select_from(material_deltas)) == 1
         assert connection.scalar(
             select(func.count()).select_from(state_evidence_snapshots)
-        ) == 6
+        ) == 7
 
     with engine.begin() as connection:
         payload = connection.scalar(

@@ -118,7 +118,14 @@ class SqlFactStateStore:
                 latest.setdefault(fact.fact_id, fact)
         return tuple(sorted(latest.values(), key=lambda item: item.fact_id))
 
-    def put_state(self, state: StateSnapshot) -> StateSnapshot:
+    def record_state(
+        self,
+        *,
+        state: StateSnapshot,
+        previous_state_id: str | None,
+    ) -> StateSnapshot:
+        """Append one non-material State without allowing the scope history to fork."""
+
         validate_state_snapshot_identity(state)
         with self._engine.begin() as connection:
             advisory_xact_lock(
@@ -127,6 +134,14 @@ class SqlFactStateStore:
                 state.analysis_scope,
                 state.projection_version,
             )
+            existing = self._state_at_exact_time(connection, state)
+            if existing is not None:
+                return existing
+            latest_state_id = self._latest_state_id(connection, state)
+            if latest_state_id != previous_state_id:
+                raise ValueError(
+                    "StateSnapshot previous_state_id 不是 scope 当前最新状态"
+                )
             return self._put_state(connection, state)
 
     def record_transition(
@@ -167,16 +182,7 @@ class SqlFactStateStore:
                     raise ValueError("StateSnapshot 幂等重放身份对应不同内容")
                 self._require_state_dependencies(connection, replayed_state)
                 return replayed_state, replayed_delta
-            latest_state_id = connection.execute(
-                select(state_snapshots.c.state_id)
-                .where(
-                    state_snapshots.c.analysis_scope == state.analysis_scope,
-                    state_snapshots.c.projection_version == state.projection_version,
-                )
-                .order_by(state_snapshots.c.as_of.desc())
-                .limit(1)
-                .with_for_update()
-            ).scalar_one_or_none()
+            latest_state_id = self._latest_state_id(connection, state)
             if latest_state_id != delta.previous_state_id:
                 raise ValueError(
                     "MaterialDelta previous_state_id 不是 scope 当前最新状态"
@@ -269,21 +275,43 @@ class SqlFactStateStore:
             )
 
     @staticmethod
-    def _put_state(connection: Connection, state: StateSnapshot) -> StateSnapshot:
-        existing_payload = connection.execute(
+    def _state_at_exact_time(
+        connection: Connection,
+        state: StateSnapshot,
+    ) -> StateSnapshot | None:
+        payload = connection.execute(
             select(state_snapshots.c.payload).where(
                 state_snapshots.c.analysis_scope == state.analysis_scope,
                 state_snapshots.c.projection_version == state.projection_version,
                 state_snapshots.c.as_of == state.as_of,
             )
         ).scalar_one_or_none()
-        if existing_payload is not None:
-            existing = StateSnapshot.model_validate(existing_payload)
-            if existing.state_id != state.state_id:
-                raise ValueError("同一 scope/projection/as_of 已存在不同 StateSnapshot")
-            SqlFactStateStore._require_state_dependencies(connection, existing)
-            return existing
+        if payload is None:
+            return None
+        existing = StateSnapshot.model_validate(payload)
+        if existing.state_id != state.state_id:
+            raise ValueError("同一 scope/projection/as_of 已存在不同 StateSnapshot")
+        SqlFactStateStore._require_state_dependencies(connection, existing)
+        return existing
 
+    @staticmethod
+    def _latest_state_id(
+        connection: Connection,
+        state: StateSnapshot,
+    ) -> str | None:
+        return connection.execute(
+            select(state_snapshots.c.state_id)
+            .where(
+                state_snapshots.c.analysis_scope == state.analysis_scope,
+                state_snapshots.c.projection_version == state.projection_version,
+            )
+            .order_by(state_snapshots.c.as_of.desc())
+            .limit(1)
+            .with_for_update()
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _put_state(connection: Connection, state: StateSnapshot) -> StateSnapshot:
         SqlFactStateStore._require_state_dependencies(connection, state)
         connection.execute(
             insert(state_snapshots).values(
