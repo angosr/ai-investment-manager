@@ -4,6 +4,8 @@ import subprocess
 from enum import StrEnum
 from pathlib import Path
 
+import yaml
+
 from quant_core.config import AiMode, AppConfig, DeploymentStage
 from quant_core.domain import FrozenModel
 from quant_core.governance import (
@@ -168,7 +170,7 @@ class PhaseAAuditor:
                     manifest,
                     repository_root=self._root,
                 )
-        except (OSError, ValueError):
+        except (OSError, ValueError, yaml.YAMLError):
             return AuditCheck(
                 check_id="TYPED_GOVERNANCE_ASSETS",
                 status=CheckStatus.FAIL,
@@ -187,7 +189,16 @@ class PhaseAAuditor:
         )
 
     def _regression_targets_exist(self) -> AuditCheck:
-        suite = load_regression_suite(self._root / "config" / "regression-suite.yaml")
+        try:
+            suite = load_regression_suite(
+                self._root / "config" / "regression-suite.yaml"
+            )
+        except (OSError, ValueError, yaml.YAMLError):
+            return AuditCheck(
+                check_id="FIXED_REGRESSION_TARGETS",
+                status=CheckStatus.FAIL,
+                detail="固定回归集缺失或非法。",
+            )
         missing = [
             target
             for item in suite.cases

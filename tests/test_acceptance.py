@@ -107,3 +107,20 @@ def test_private_challenger_audit_rejects_missing_runtime_manifest(
 
     assert not report.ready
     assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.FAIL
+
+
+def test_audit_returns_fail_instead_of_crashing_on_invalid_regression_yaml(
+    app_config,
+    tmp_path,
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "regression-suite.yaml").write_text(
+        "cases: [invalid",
+        encoding="utf-8",
+    )
+
+    check = PhaseAAuditor(app_config, tmp_path)._regression_targets_exist()
+
+    assert check.status == CheckStatus.FAIL
+    assert check.detail == "固定回归集缺失或非法。"
