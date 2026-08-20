@@ -19,7 +19,7 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.scheduling.runtime import build_trigger_coordinator_input
 from investment_manager.scheduling.workflows import (
-    BUILD_TRIGGER_REQUEST_ACTIVITY,
+    BUILD_TRIGGER_DISPATCHES_ACTIVITY,
     TRIGGER_SIGNAL,
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
@@ -28,23 +28,30 @@ from investment_manager.scheduling.workflows import (
 NOW = datetime(2026, 8, 18, 12, tzinfo=UTC)
 
 
-@activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+@activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
 async def build_request(raw_batch):
     workflow_id = stable_id("analysis_workflow", raw_batch["batch_id"])
     return {
-        "workflow_request": {
-            "workflow_id": workflow_id,
-            "input_hash": "test-input-hash",
-            "deadline": raw_batch["deadline"],
-            "orchestration": {
-                "activity_start_to_close_seconds": 10,
-                "activity_schedule_to_close_seconds": 30,
-                "retry_initial_seconds": 1,
-                "retry_maximum_seconds": 2,
-                "retry_backoff_coefficient": 2,
-                "retry_maximum_attempts": 1,
+        "workflow_dispatches": [
+            {
+                "workflow_name": "AnalysisCycleWorkflow",
+                "workflow_id": workflow_id,
+                "task_queue": "trigger-analysis-test",
+                "payload": {
+                    "workflow_id": workflow_id,
+                    "input_hash": "test-input-hash",
+                    "deadline": raw_batch["deadline"],
+                    "orchestration": {
+                        "activity_start_to_close_seconds": 10,
+                        "activity_schedule_to_close_seconds": 30,
+                        "retry_initial_seconds": 1,
+                        "retry_maximum_seconds": 2,
+                        "retry_backoff_coefficient": 2,
+                        "retry_maximum_attempts": 1,
+                    },
+                },
             },
-        }
+        ]
     }
 
 
@@ -132,6 +139,76 @@ def test_trigger_coordinator_deduplicates_and_runs_one_event_batch(app_config) -
     asyncio.run(scenario())
 
 
+def test_trigger_coordinator_consumes_valid_batch_with_no_enabled_consumer(
+    app_config,
+) -> None:
+    async def scenario() -> None:
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def build_no_dispatch(_raw_batch):
+            return {"workflow_dispatches": []}
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            trigger_queue = "trigger-no-consumer-test"
+            temporal = app_config.temporal.model_copy(
+                update={"trigger_task_queue": trigger_queue}
+            )
+            config = app_config.model_copy(update={"temporal": temporal})
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=NOW,
+                heartbeat_seconds=None,
+                event_rules=(
+                    AnalysisEventRule(
+                        rule_id="news",
+                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    ),
+                ),
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=100,
+                dedup_key="no-consumer",
+            )
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[build_no_dispatch],
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    build_trigger_coordinator_input(plan, config),
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await handle.signal(
+                    TRIGGER_SIGNAL,
+                    {
+                        "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                        "trigger": event.model_dump(mode="json"),
+                    },
+                )
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["completed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert status["completed_batches"] == 1
+                assert status["pending_count"] == 0
+                assert status["failed_batches"] == 0
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
 def test_trigger_coordinator_uses_most_specific_matching_event_rule() -> None:
     coordinator = TriggerCoordinatorWorkflow()
     coordinator._plan = {
@@ -169,7 +246,7 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
     async def scenario() -> None:
         attempts = 0
 
-        @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
         async def fail_once(raw_batch):
             nonlocal attempts
             attempts += 1
@@ -182,7 +259,7 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             trigger_queue = "trigger-retry-test"
-            analysis_queue = "trigger-retry-analysis-test"
+            analysis_queue = "trigger-analysis-test"
             temporal = app_config.temporal.model_copy(
                 update={
                     "trigger_task_queue": trigger_queue,
@@ -263,7 +340,7 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
     async def scenario() -> None:
         attempts = 0
 
-        @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
         async def defer_once(raw_batch):
             nonlocal attempts
             attempts += 1
@@ -273,7 +350,7 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             trigger_queue = "trigger-admission-delay-test"
-            analysis_queue = "trigger-admission-delay-analysis-test"
+            analysis_queue = "trigger-analysis-test"
             temporal = app_config.temporal.model_copy(
                 update={"trigger_task_queue": trigger_queue, "task_queue": analysis_queue}
             )
@@ -351,7 +428,7 @@ def test_trigger_coordinator_discards_event_at_expiry_before_admission_retry(
         async with await WorkflowEnvironment.start_time_skipping() as env:
             test_now = await env.get_current_time()
 
-            @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+            @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
             async def defer_beyond_expiry(raw_batch):
                 nonlocal attempts
                 attempts += 1
@@ -427,7 +504,7 @@ def test_heartbeat_remains_pending_past_generic_trigger_expiry(app_config) -> No
         attempts = 0
         observed_expiries: list[str | None] = []
 
-        @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
         async def defer_past_expiry(raw_batch):
             nonlocal attempts
             attempts += 1
@@ -439,7 +516,7 @@ def test_heartbeat_remains_pending_past_generic_trigger_expiry(app_config) -> No
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             trigger_queue = "durable-heartbeat-test"
-            analysis_queue = "durable-heartbeat-analysis-test"
+            analysis_queue = "trigger-analysis-test"
             temporal = app_config.temporal.model_copy(
                 update={"trigger_task_queue": trigger_queue, "task_queue": analysis_queue}
             )

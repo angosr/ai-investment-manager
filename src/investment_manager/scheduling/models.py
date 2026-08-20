@@ -49,6 +49,21 @@ class AnalysisCallAdmission(FrozenModel):
         return self
 
 
+class AnalysisDispatchRequest(FrozenModel):
+    """Infrastructure-neutral handoff from trigger admission to one Workflow."""
+
+    workflow_name: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    task_queue: str = Field(min_length=1)
+    payload: dict[str, Any]
+
+    @model_validator(mode="after")
+    def payload_identity_must_match(self):
+        if self.payload.get("workflow_id") != self.workflow_id:
+            raise ValueError("Workflow dispatch 的 payload/workflow_id 不一致")
+        return self
+
+
 def decide_analysis_call_admission(
     *,
     requested_at: datetime,

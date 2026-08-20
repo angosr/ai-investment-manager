@@ -14,7 +14,6 @@ from investment_manager.state.decision_packet import (
     AnalysisMandate,
     DecisionPacket,
     DecisionPacketBuilder,
-    DecisionPacketPolicy,
     VisibleFact,
 )
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore, StateEvidenceKind
@@ -28,6 +27,7 @@ from investment_manager.state.models import (
     MaterialDelta,
     StateSnapshot,
 )
+from investment_manager.state.policy import DecisionPacketPolicy
 from investment_manager.state.repository import SqlFactStateStore
 from investment_manager.state.tables import (
     canonical_fact_revisions,

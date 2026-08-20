@@ -18,6 +18,7 @@ from investment_manager.forecast.policy import (
     CalibrationPolicy,
     CodexAccountRegistry,
     CodexRuntimePolicy,
+    ContextAssessmentPolicy,
     PipelinePolicy,
     ProposalPolicy,
     StrategyPolicy,
@@ -34,12 +35,13 @@ from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import CompositionPolicy, FrequencyPolicy
 from investment_manager.risk.policy import RiskPolicy
 from investment_manager.scheduling.policy import TemporalPolicy, TriggerPolicy
-from investment_manager.state.policy import PanelPolicy
+from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
 
 
 class AppConfig(StrictConfig):
     feature: FeaturePolicy
     panel: PanelPolicy
+    decision_state: DecisionStatePolicy
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
     composition: CompositionPolicy
@@ -57,12 +59,35 @@ class AppConfig(StrictConfig):
     pipeline: PipelinePolicy
     proposal: ProposalPolicy
     codex_runtime: CodexRuntimePolicy
+    assessment: ContextAssessmentPolicy
     codex_accounts: CodexAccountRegistry
     binance_testnet: BinanceTestnetPolicy
     deployment: DeploymentPolicy
 
     @model_validator(mode="after")
     def cross_domain_invariants_hold(self):
+        if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:
+            raise ValueError("DecisionState 与 Assessment mandate scope 必须一致")
+        mandate_symbols = tuple(
+            item.market_symbol for item in self.assessment.mandate.assets
+        )
+        if tuple(sorted(mandate_symbols)) != tuple(sorted(self.market_data.symbols)):
+            raise ValueError("Assessment mandate 必须完整覆盖且排序匹配行情 universe")
+        mandate_horizons = tuple(
+            sorted(
+                {
+                    horizon
+                    for asset in self.assessment.mandate.assets
+                    for horizon in asset.horizons_minutes
+                }
+            )
+        )
+        if mandate_horizons != self.decision_state.delta_policy.horizons_minutes:
+            raise ValueError("Assessment mandate 与 FactDelta 时域必须一致")
+        if self.assessment.enabled and not self.codex_runtime.enabled:
+            raise ValueError("启用 ContextAssessment 前必须启用受控 Codex runtime")
+        if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
+            raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
         if any(

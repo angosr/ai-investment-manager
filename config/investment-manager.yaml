@@ -12,6 +12,29 @@ panel:
   max_market_age_seconds: 180
   maximum_evidence_age_seconds: 86400
 
+decision_state:
+  version: portfolio-state-v1
+  analysis_scope: primary-portfolio
+  delta_policy:
+    version: first-party-fact-delta-v1
+    validity_seconds: 3600
+    horizons_minutes: [60, 240]
+    rules:
+      - fact_type: FED_MONETARY_RELEASE
+        materiality: HIGH
+        reason_code: FED_RELEASE_REVISION
+      - fact_type: FOMC_MEETING_SCHEDULE
+        materiality: NORMAL
+        reason_code: FOMC_SCHEDULE_REVISION
+  packet_policy:
+    version: decision-packet-policy-v1
+    schema_version: decision-packet-v1
+    maximum_facts: 12
+    maximum_fact_characters: 4000
+    maximum_characters_per_fact: 600
+    maximum_packet_characters: 12000
+    maximum_active_hypotheses: 5
+
 strategy:
   strategy_id: price-trend
   version: price-trend-v4
@@ -188,6 +211,22 @@ codex_runtime:
   transient_failure_cooldown_seconds: 300
   lease_ttl_seconds: 240
   max_account_switches: 2
+
+assessment:
+  version: context-assessment-v1
+  enabled: false
+  mandate:
+    version: primary-portfolio-mandate-v1
+    analysis_scope: primary-portfolio
+    question: Assess material first-party changes and their portfolio implications.
+    assets:
+      - asset: BTC
+        market_symbol: BTCUSDT
+        horizons_minutes: [60, 240]
+      - asset: ETH
+        market_symbol: ETHUSDT
+        horizons_minutes: [60, 240]
+    required_risk_factors: [US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

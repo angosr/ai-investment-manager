@@ -8,9 +8,10 @@ from sqlalchemy import create_engine
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.orchestration import WorkflowRequest
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.legacy.trigger_adapter import TriggerAnalysisRequestBuilder
+from investment_manager.legacy.trigger_adapter import TriggerDispatchBuilder
 from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,
@@ -43,6 +44,9 @@ def _shadow_config(app_config) -> AppConfig:
         "manual_approval_ref": None,
     }
     raw["market_data"]["symbols"] = ("BTCUSDT",)
+    raw["assessment"]["mandate"]["assets"] = (
+        raw["assessment"]["mandate"]["assets"][0],
+    )
     return AppConfig.model_validate(raw)
 
 
@@ -140,7 +144,7 @@ def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_c
         created_at=NOW,
         deadline=NOW + timedelta(minutes=5),
     )
-    request = TriggerAnalysisRequestBuilder(
+    dispatches = TriggerDispatchBuilder(
         config=config,
         market_store=_market_store(),
         event_store=InMemoryEventStore(),
@@ -150,7 +154,9 @@ def test_trigger_request_builder_freezes_one_batch_without_owning_schedule(app_c
             initial_equity=config.shadow.initial_quote_balance,
         ),
     ).build(batch)
+    request = WorkflowRequest.model_validate(dispatches[0].payload)
 
+    assert len(dispatches) == 1
     assert request.cycle_input.market.cycle_id == request.cycle_input.account.cycle_id
     assert request.cycle_input.account.quote_balance == app_config.shadow.initial_quote_balance
     assert request.cycle_input.account.equity == app_config.shadow.initial_quote_balance

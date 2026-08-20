@@ -44,7 +44,6 @@ def build_trigger_coordinator_input(plan: AnalysisTriggerPlan, config: AppConfig
             "maximum_pending_triggers": config.trigger.maximum_pending_triggers,
             "trigger_expiry_seconds": config.trigger.trigger_expiry_seconds,
             "analysis_deadline_seconds": config.shadow.analysis_deadline_seconds,
-            "analysis_task_queue": config.temporal.task_queue,
             "activity_start_to_close_seconds": config.temporal.activity_start_to_close_seconds,
             "activity_schedule_to_close_seconds": (
                 config.temporal.activity_schedule_to_close_seconds
@@ -124,7 +123,7 @@ class TriggerTemporalWorker:
             client,
             task_queue=policy.trigger_task_queue,
             workflows=[TriggerCoordinatorWorkflow],
-            activities=[activities.build_analysis_request],
+            activities=[activities.build_analysis_dispatches],
             activity_executor=self._executor,
             max_concurrent_activities=1,
         )

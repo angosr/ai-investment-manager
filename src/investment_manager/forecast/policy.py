@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.state.decision_packet import AnalysisMandate
 
 
 class StrategyPolicy(StrictConfig):
@@ -159,3 +160,9 @@ class CodexRuntimePolicy(StrictConfig):
         if self.enabled and self.expected_binary_sha256 is None:
             raise ValueError("启用真实 Codex 前必须冻结可执行文件 SHA-256")
         return self
+
+
+class ContextAssessmentPolicy(StrictConfig):
+    version: str
+    enabled: bool = False
+    mandate: AnalysisMandate

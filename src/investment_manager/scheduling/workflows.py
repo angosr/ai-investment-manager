@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
@@ -11,6 +12,7 @@ from temporalio.exceptions import ActivityError, ChildWorkflowError
 from investment_manager.kernel.identity import stable_id
 from investment_manager.platform.temporal import default_activity_versioning_intent
 from investment_manager.scheduling.models import (
+    AnalysisDispatchRequest,
     AnalysisTriggerEvent,
     AnalysisTriggerPlan,
     AnalysisTriggerType,
@@ -22,9 +24,8 @@ from investment_manager.scheduling.models import (
     trigger_rule_value,
 )
 
-BUILD_TRIGGER_REQUEST_ACTIVITY = "build-trigger-analysis-request-v1"
+BUILD_TRIGGER_DISPATCHES_ACTIVITY = "build-trigger-analysis-dispatches-v2"
 TRIGGER_SIGNAL = "deliver-trigger-outbox-v1"
-ANALYSIS_WORKFLOW_NAME = "AnalysisCycleWorkflow"
 
 
 @workflow.defn(name="TriggerCoordinatorWorkflow")
@@ -154,10 +155,10 @@ class TriggerCoordinatorWorkflow:
                     + timedelta(seconds=int(self._settings["analysis_deadline_seconds"])),
                 )
                 self._active_batch_id = batch.batch_id
-                request_payload, deferred_until = await self._build_request(
+                dispatches, deferred_until = await self._build_dispatches(
                     batch.model_dump(mode="json")
                 )
-                if request_payload is None:
+                if dispatches is None:
                     self._active_batch_id = None
                     self._input_retry_not_before = deferred_until or (
                         workflow.now()
@@ -169,17 +170,10 @@ class TriggerCoordinatorWorkflow:
                     self._pending.pop(str(item["trigger_id"]), None)
                 self._last_batch_id = batch.batch_id
                 try:
-                    try:
-                        await workflow.execute_child_workflow(
-                            ANALYSIS_WORKFLOW_NAME,
-                            request_payload,
-                            id=str(request_payload["workflow_id"]),
-                            task_queue=str(self._settings["analysis_task_queue"]),
-                            result_type=dict,
-                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                            static_summary="执行事件驱动分析批次",
-                        )
-                    except ChildWorkflowError:
+                    results = await asyncio.gather(
+                        *(self._execute_dispatch(item) for item in dispatches)
+                    )
+                    if not all(results):
                         self._failed_batches += 1
                 finally:
                     self._active_batch_id = None
@@ -199,10 +193,10 @@ class TriggerCoordinatorWorkflow:
             "last_batch_id": self._last_batch_id,
         }
 
-    async def _build_request(
+    async def _build_dispatches(
         self,
         batch: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, datetime | None]:
+    ) -> tuple[tuple[AnalysisDispatchRequest, ...] | None, datetime | None]:
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=int(self._settings["retry_initial_seconds"])),
             maximum_interval=timedelta(seconds=int(self._settings["retry_maximum_seconds"])),
@@ -212,7 +206,7 @@ class TriggerCoordinatorWorkflow:
         )
         try:
             result = await workflow.execute_activity(
-                BUILD_TRIGGER_REQUEST_ACTIVITY,
+                BUILD_TRIGGER_DISPATCHES_ACTIVITY,
                 batch,
                 result_type=dict,
                 start_to_close_timeout=timedelta(
@@ -230,8 +224,32 @@ class TriggerCoordinatorWorkflow:
         deferred_until = result.get("deferred_until")
         if isinstance(deferred_until, str):
             return None, _parse_time(deferred_until)
-        raw_request = result.get("workflow_request")
-        return (raw_request, None) if isinstance(raw_request, dict) else (None, None)
+        raw_dispatches = result.get("workflow_dispatches")
+        if not isinstance(raw_dispatches, list):
+            return None, None
+        try:
+            dispatches = tuple(
+                AnalysisDispatchRequest.model_validate(item) for item in raw_dispatches
+            )
+        except (TypeError, ValueError):
+            return None, None
+        return dispatches, None
+
+    @staticmethod
+    async def _execute_dispatch(dispatch: AnalysisDispatchRequest) -> bool:
+        try:
+            await workflow.execute_child_workflow(
+                dispatch.workflow_name,
+                dispatch.payload,
+                id=dispatch.workflow_id,
+                task_queue=dispatch.task_queue,
+                result_type=dict,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                static_summary="执行事件驱动分析任务",
+            )
+        except ChildWorkflowError:
+            return False
+        return True
 
     def _accepts(self, trigger: dict[str, Any]) -> bool:
         assert self._plan is not None

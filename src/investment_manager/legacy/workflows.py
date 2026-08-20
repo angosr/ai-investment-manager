@@ -11,6 +11,7 @@ from investment_manager.platform.temporal import default_activity_versioning_int
 
 PREPARE_ACTIVITY_NAME = "prepare-analysis-decision-v1"
 EXECUTION_ACTIVITY_NAME = "execute-trade-request-v1"
+ANALYSIS_CYCLE_WORKFLOW_NAME = "AnalysisCycleWorkflow"
 
 
 def _activity_options(request: dict[str, Any]) -> tuple[datetime, timedelta, int, RetryPolicy]:
@@ -111,7 +112,7 @@ class ExecutionWorkflow:
         )
 
 
-@workflow.defn(name="AnalysisCycleWorkflow")
+@workflow.defn(name=ANALYSIS_CYCLE_WORKFLOW_NAME)
 class AnalysisCycleWorkflow:
     """冻结决策后，用稳定 ID 子 Workflow 完成执行交接。"""
 

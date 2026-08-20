@@ -5,9 +5,12 @@ from sqlalchemy import create_engine, func, select, update
 
 from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
+from investment_manager.state.application import (
+    DecisionPacketPreparation,
+    PacketPreparationStatus,
+)
 from investment_manager.state.decision_packet import (
     AnalysisMandate,
-    DecisionPacketPolicy,
     MandateAsset,
 )
 from investment_manager.state.decision_packet_repository import SqlDecisionPacketAssembler
@@ -19,6 +22,7 @@ from investment_manager.state.facts import (
 )
 from investment_manager.state.models import Materiality
 from investment_manager.state.official_ingestion import SqlFedFactIngestor
+from investment_manager.state.policy import DecisionPacketPolicy
 from investment_manager.state.projection import SqlFactStateProjector
 from investment_manager.state.repository import SqlFactStateStore
 from investment_manager.state.tables import (
@@ -53,6 +57,36 @@ def _calendar(date_text: str) -> str:
       <div class="fomc-meeting__date">{date_text}</div>
     </div>
     """
+
+
+class _PointInTimeMarketStore:
+    def __init__(self, market) -> None:
+        self.market = market
+
+    def snapshot(self, *, cycle_id, symbol, interval, as_of, bar_window, source):
+        assert symbol == self.market.symbol
+        return self.market.model_copy(
+            update={
+                "cycle_id": cycle_id,
+                "as_of": as_of,
+                "observed_at": as_of,
+                "source": source,
+            }
+        )
+
+
+class _PointInTimeAccountReader:
+    def __init__(self, account) -> None:
+        self.account = account
+
+    def account_for_cycle(self, *, cycle_id, as_of, initial_quote_balance):
+        return self.account.model_copy(
+            update={
+                "cycle_id": cycle_id,
+                "as_of": as_of,
+                "observed_at": as_of,
+            }
+        )
 
 
 def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
@@ -220,3 +254,86 @@ def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
             state_id=revised.state.state_id,
             delta_ids=(revised.delta.delta_id,),
         )
+
+
+def test_packet_preparation_runs_only_for_material_canonical_fact_change(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    fed = SqlFedFactIngestor(engine, FACT_POLICY)
+    facts = SqlFactStateStore(engine)
+    projector = SqlFactStateProjector(
+        engine,
+        projection_version="portfolio-state-v1",
+        delta_policy=DELTA_POLICY,
+    )
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        account_reader=_PointInTimeAccountReader(replay_input.account),
+        facts=facts,
+        projector=projector,
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-v1",
+                schema_version="decision-packet-v1",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        clock=lambda: OBSERVED_AT + timedelta(minutes=2),
+    )
+    mandate = AnalysisMandate(
+        version="crypto-mandate-v1",
+        analysis_scope="crypto-portfolio",
+        question="Assess material first-party changes across the portfolio.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("US_MONETARY_POLICY",),
+    )
+    fed.ingest_calendar(_calendar("15-16"), observed_at=OBSERVED_AT)
+
+    baseline = preparation.prepare(
+        analysis_id="assessment-baseline",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+    )
+    unchanged = preparation.prepare(
+        analysis_id="assessment-unchanged",
+        as_of=OBSERVED_AT + timedelta(minutes=1),
+        mandate=mandate,
+    )
+    revised_at = OBSERVED_AT + timedelta(minutes=2)
+    fed.ingest_calendar(_calendar("16-17"), observed_at=revised_at)
+    revised = preparation.prepare(
+        analysis_id="assessment-revised",
+        as_of=revised_at,
+        mandate=mandate,
+    )
+    replayed = preparation.prepare(
+        analysis_id="assessment-revised",
+        as_of=revised_at,
+        mandate=mandate,
+    )
+
+    assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
+    assert baseline.packet is None
+    assert unchanged.status == PacketPreparationStatus.NO_MATERIAL_DELTA
+    assert unchanged.packet is None
+    assert revised.status == PacketPreparationStatus.READY
+    assert revised.packet is not None
+    assert revised.packet.analysis_scope == "crypto-portfolio"
+    assert revised.packet.trigger_ids == (revised.delta_id,)
+    assert revised.packet.facts[0].highest_source_tier == "FIRST_PARTY"
+    assert replayed == revised

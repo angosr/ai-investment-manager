@@ -50,6 +50,10 @@ class SqlFactStateProjector:
         self._projection_version = projection_version
         self._delta_policy = delta_policy
 
+    @property
+    def projection_version(self) -> str:
+        return self._projection_version
+
     def project(
         self,
         *,

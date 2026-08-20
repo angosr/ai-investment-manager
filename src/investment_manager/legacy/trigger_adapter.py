@@ -9,25 +9,38 @@ from pydantic import ValidationError
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from investment_manager.forecast.analyst import assess_behavior_hash
+from investment_manager.forecast.application import AssessmentCommand
+from investment_manager.forecast.workflows import (
+    ASSESSMENT_WORKFLOW_NAME,
+    AssessmentWorkflowRequest,
+)
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.information.collector import EventStore
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.legacy.cycle import CycleInput
-from investment_manager.legacy.orchestration import WorkflowRequest, build_workflow_request
+from investment_manager.legacy.orchestration import build_workflow_request
 from investment_manager.legacy.shadow import ShadowStateReader
+from investment_manager.legacy.workflows import ANALYSIS_CYCLE_WORKFLOW_NAME
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.repository import MarketDataStore
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.risk.protection import PortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisCallAdmission,
+    AnalysisDispatchRequest,
     AnalysisTriggerType,
     TriggerBatch,
     TriggerDecision,
     TriggerReason,
 )
-from investment_manager.scheduling.workflows import BUILD_TRIGGER_REQUEST_ACTIVITY
+from investment_manager.scheduling.workflows import BUILD_TRIGGER_DISPATCHES_ACTIVITY
 from investment_manager.settings import AppConfig
+from investment_manager.state.application import (
+    DecisionPacketPreparation,
+    PacketPreparationStatus,
+)
 
 
 class TriggerBatchRecorder(Protocol):
@@ -47,8 +60,8 @@ class AnalysisCallDeferred(Exception):
         super().__init__(f"analysis call deferred until {self.retry_at.isoformat()}")
 
 
-class TriggerAnalysisRequestBuilder:
-    """Adapt an immutable trigger batch to the retiring AnalysisCycle contract."""
+class TriggerDispatchBuilder:
+    """Freeze every enabled consumer of one admitted trigger batch."""
 
     def __init__(
         self,
@@ -58,21 +71,25 @@ class TriggerAnalysisRequestBuilder:
         event_store: EventStore,
         state: ShadowStateReader,
         protection: PortfolioProtectionStore,
+        packet_preparation: DecisionPacketPreparation | None = None,
         batch_recorder: TriggerBatchRecorder | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if config.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
             raise ValueError("Trigger 分析构建器只允许在 SHADOW 或 TESTNET 阶段启动")
+        if config.assessment.enabled and packet_preparation is None:
+            raise ValueError("启用 ContextAssessment 时必须装配 DecisionPacket preparation")
         self._config = config
         self._market_store = market_store
         self._event_store = event_store
         self._state = state
         self._protection = protection
+        self._packet_preparation = packet_preparation
         self._batch_recorder = batch_recorder
         self._clock = clock
         self._features = FeatureEngine(config.feature)
 
-    def build(self, batch: TriggerBatch) -> WorkflowRequest:
+    def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
         cycle_id = stable_id("triggered_cycle", batch.batch_id)
         market = self._market_store.snapshot(
@@ -121,7 +138,7 @@ class TriggerAnalysisRequestBuilder:
                 symbol=batch.symbol, as_of=as_of
             ),
         )
-        request = build_workflow_request(
+        legacy_request = build_workflow_request(
             cycle_input=cycle_input,
             trigger=TriggerDecision(
                 should_run=True,
@@ -132,6 +149,46 @@ class TriggerAnalysisRequestBuilder:
             created_at=as_of,
             deadline=batch.deadline,
         )
+        dispatches = [
+            AnalysisDispatchRequest(
+                workflow_name=ANALYSIS_CYCLE_WORKFLOW_NAME,
+                workflow_id=legacy_request.workflow_id,
+                task_queue=self._config.temporal.task_queue,
+                payload=legacy_request.model_dump(mode="json"),
+            )
+        ]
+        if self._config.assessment.enabled:
+            assert self._packet_preparation is not None
+            prepared = self._packet_preparation.prepare(
+                analysis_id=stable_id("assessment_input", batch.batch_id),
+                as_of=as_of,
+                mandate=self._config.assessment.mandate,
+            )
+            if prepared.status == PacketPreparationStatus.READY:
+                assert prepared.packet is not None
+                command = AssessmentCommand.create(
+                    packet=prepared.packet,
+                    analysis_behavior_hash=assess_behavior_hash(
+                        self._config.codex_runtime,
+                        prepared.packet,
+                    ),
+                )
+                assessment_request = AssessmentWorkflowRequest.create(
+                    command=command,
+                    orchestration=OrchestrationPolicySnapshot.from_config(
+                        self._config.temporal
+                    ),
+                    created_at=as_of,
+                    deadline=batch.deadline,
+                )
+                dispatches.append(
+                    AnalysisDispatchRequest(
+                        workflow_name=ASSESSMENT_WORKFLOW_NAME,
+                        workflow_id=assessment_request.workflow_id,
+                        task_queue=self._config.temporal.assessment_task_queue,
+                        payload=assessment_request.model_dump(mode="json"),
+                    )
+                )
         if self._batch_recorder is not None:
             submitted_at = max(require_utc(self._clock()), as_of)
             admission = self._batch_recorder.admit_analysis_call(
@@ -143,18 +200,18 @@ class TriggerAnalysisRequestBuilder:
                     raise RuntimeError("调用准入缺少 retry_at")
                 raise AnalysisCallDeferred(admission.retry_at)
             self._batch_recorder.record_batch(batch, analysis_submitted_at=submitted_at)
-        return request
+        return tuple(dispatches)
 
 
 @dataclass(slots=True)
 class TriggerCoordinatorActivities:
-    builder: TriggerAnalysisRequestBuilder
+    builder: TriggerDispatchBuilder
 
-    @activity.defn(name=BUILD_TRIGGER_REQUEST_ACTIVITY)
-    def build_analysis_request(self, raw_batch: dict[str, Any]) -> dict[str, Any]:
+    @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+    def build_analysis_dispatches(self, raw_batch: dict[str, Any]) -> dict[str, Any]:
         try:
             batch = TriggerBatch.model_validate(raw_batch)
-            request = self.builder.build(batch)
+            dispatches = self.builder.build(batch)
         except ValidationError as exc:
             raise ApplicationError(
                 "TriggerBatch 未通过契约校验",
@@ -168,4 +225,6 @@ class TriggerCoordinatorActivities:
                 "TriggerBatch 的行情或账户输入暂不可用",
                 type="TriggerInputUnavailable",
             ) from exc
-        return {"workflow_request": request.model_dump(mode="json")}
+        return {
+            "workflow_dispatches": [item.model_dump(mode="json") for item in dispatches]
+        }

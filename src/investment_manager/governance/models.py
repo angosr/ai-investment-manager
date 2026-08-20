@@ -623,6 +623,7 @@ def validate_manifest_against_config(
     component_names = (
         "feature",
         "panel",
+        "decision_state",
         "strategy",
         "calibration",
         "composition",
@@ -639,6 +640,7 @@ def validate_manifest_against_config(
         "pipeline",
         "proposal",
         "codex_runtime",
+        "assessment",
         "codex_accounts",
         "binance_testnet",
         "governance",

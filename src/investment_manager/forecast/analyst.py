@@ -5,6 +5,12 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from investment_manager.forecast.assessment import (
+    ASSESS_INSTRUCTIONS,
+    AssessStructuredOutput,
+    build_assess_prompt,
+    finalize_context_assessment,
+)
 from investment_manager.forecast.codex import (
     AccountLeaseStore,
     AnalystResult,
@@ -20,13 +26,7 @@ from investment_manager.forecast.codex import (
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.settings import AppConfig
-from investment_manager.state.decision_packet import (
-    ASSESS_INSTRUCTIONS,
-    AssessStructuredOutput,
-    DecisionPacket,
-    build_assess_prompt,
-    finalize_context_assessment,
-)
+from investment_manager.state.decision_packet import DecisionPacket
 
 ASSESS_INPUT_VERSION = "assess-input-v1"
 

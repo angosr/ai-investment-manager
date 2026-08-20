@@ -10,8 +10,8 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.runtime import TemporalAnalysisCoordinator
 from investment_manager.legacy.shadow import SqlShadowStateReader
 from investment_manager.legacy.trigger_adapter import (
-    TriggerAnalysisRequestBuilder,
     TriggerCoordinatorActivities,
+    TriggerDispatchBuilder,
 )
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -29,6 +29,7 @@ from investment_manager.scheduling.runtime import (
     terminate_superseded_trigger_coordinators,
 )
 from investment_manager.settings import AppConfig
+from investment_manager.state.runtime import assemble_decision_packet_preparation
 
 
 def run_trigger_service(
@@ -54,7 +55,7 @@ def run_trigger_service(
         if terminated and on_superseded is not None:
             on_superseded(terminated)
         activities = TriggerCoordinatorActivities(
-            TriggerAnalysisRequestBuilder(
+            TriggerDispatchBuilder(
                 config=config,
                 market_store=SqlMarketDataStore(engine),
                 event_store=SqlEventStore(
@@ -73,6 +74,11 @@ def run_trigger_service(
                     engine,
                     policy=config.risk,
                     initial_equity=config.shadow.initial_quote_balance,
+                ),
+                packet_preparation=(
+                    assemble_decision_packet_preparation(config, engine)
+                    if config.assessment.enabled
+                    else None
                 ),
                 batch_recorder=repository,
             )

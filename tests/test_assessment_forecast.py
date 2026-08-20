@@ -127,7 +127,6 @@ def _packet() -> DecisionPacket:
         coverage_gap_codes=(),
         missing_fact_revision_ids=(),
         omitted_fact_revision_ids=(),
-        rules_digest=("rule-v1",),
     )
 
 

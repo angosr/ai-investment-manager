@@ -343,6 +343,8 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "FeaturePolicy": "market/policy.py",
         "MarketDataPolicy": "market/policy.py",
         "PanelPolicy": "state/policy.py",
+        "DecisionPacketPolicy": "state/policy.py",
+        "DecisionStatePolicy": "state/policy.py",
         "StrategyPolicy": "forecast/policy.py",
         "CalibrationPolicy": "forecast/policy.py",
         "AiMode": "forecast/policy.py",
@@ -351,6 +353,7 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "CodexAccount": "forecast/policy.py",
         "CodexAccountRegistry": "forecast/policy.py",
         "CodexRuntimePolicy": "forecast/policy.py",
+        "ContextAssessmentPolicy": "forecast/policy.py",
         "CompositionPolicy": "portfolio/policy.py",
         "FrequencyPolicy": "portfolio/policy.py",
         "RiskPolicy": "risk/policy.py",
@@ -392,6 +395,25 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         if isinstance(node, ast.ClassDef)
     }
     assert settings_classes == {"AppConfig"}
+
+
+def test_evidence_and_scheduling_domains_do_not_depend_on_forecast() -> None:
+    graph = _internal_import_graph()
+
+    for module, dependencies in graph.items():
+        if module.startswith(
+            (
+                "investment_manager.information",
+                "investment_manager.market",
+                "investment_manager.scheduling",
+                "investment_manager.state",
+            )
+        ):
+            assert not {
+                dependency
+                for dependency in dependencies
+                if dependency.startswith("investment_manager.forecast")
+            }, module
 
 
 def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
