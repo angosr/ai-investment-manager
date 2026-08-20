@@ -1266,12 +1266,23 @@ class CodexAccountRouter:
         self._refresh_capacity(current)
         attempted: set[str] = set()
         maximum_attempts = 1 + self._policy.max_account_switches
+        invocation_id = stable_id(
+            "codex_invocation",
+            bundle.cycle_id,
+            bundle.bundle_hash,
+            current.isoformat(),
+        )
         for attempt_number in range(1, maximum_attempts + 1):
             account = self._select(current, attempted)
             if account is None:
                 break
             attempted.add(account.account_id)
-            attempt_id = stable_id("attempt", bundle.cycle_id, attempt_number, bundle.bundle_hash)
+            attempt_id = stable_id(
+                "attempt",
+                invocation_id,
+                account.account_id,
+                attempt_number,
+            )
             lease = self._leases.try_acquire(
                 account.account_id,
                 bundle.cycle_id,
@@ -1291,7 +1302,7 @@ class CodexAccountRouter:
                 self._leases.release(lease.lease_id)
             duration_ms = max(0, round((time.monotonic() - attempt_started) * 1000))
             audit = AttemptAudit(
-                run_id=stable_id("codex_run", bundle.cycle_id, attempt_id),
+                run_id=stable_id("codex_run", attempt_id),
                 cycle_id=bundle.cycle_id,
                 account_id=account.account_id,
                 attempt=attempt_number,

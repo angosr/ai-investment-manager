@@ -132,21 +132,25 @@ class SqlCodexAuditStore:
         }
         if attempt.analysis_behavior_hash is not None:
             payload["analysis_behavior_hash"] = attempt.analysis_behavior_hash
+        values = {
+            "run_id": attempt.run_id,
+            "cycle_id": attempt.cycle_id,
+            "account_id": attempt.account_id,
+            "attempt": attempt.attempt,
+            "status": attempt.status,
+            "error_class": attempt.failure.value if attempt.failure else None,
+            "payload": payload,
+        }
         try:
             with self._engine.begin() as connection:
-                connection.execute(
-                    insert(codex_runs).values(
-                        run_id=attempt.run_id,
-                        cycle_id=attempt.cycle_id,
-                        account_id=attempt.account_id,
-                        attempt=attempt.attempt,
-                        status=attempt.status,
-                        error_class=attempt.failure.value if attempt.failure else None,
-                        payload=payload,
-                    )
-                )
-        except IntegrityError:
-            return
+                connection.execute(insert(codex_runs).values(**values))
+        except IntegrityError as exc:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(codex_runs).where(codex_runs.c.run_id == attempt.run_id)
+                ).mappings().one_or_none()
+            if existing is None or any(existing[key] != value for key, value in values.items()):
+                raise ValueError("相同 Codex run_id 的审计事实不一致") from exc
 
     @staticmethod
     def _window_payload(window):

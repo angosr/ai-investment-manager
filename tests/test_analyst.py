@@ -790,6 +790,40 @@ def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_bat
     assert router.account_states["codex_a"] == AccountState.HEALTHY
 
 
+def test_repeated_bundle_analysis_gets_a_distinct_invocation_identity(
+    app_config, replay_input, tmp_path
+) -> None:
+    registry = _account_registry(tmp_path)
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    executor = FakeExecutor(
+        {
+            account.account_id: [
+                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
+            ]
+            for account in registry.accounts
+        }
+    )
+    router = CodexAccountRouter(
+        registry,
+        _runtime(app_config),
+        FakeProbe(
+            {
+                account.account_id: _snapshot(account.account_id, now, "10")
+                for account in registry.accounts
+            }
+        ),
+        executor,
+    )
+    bundle = RunBundle("cycle", tmp_path, "bundle-hash", "prompt")
+
+    first = router.run(bundle, now=now)
+    second = router.run(bundle, now=now + timedelta(seconds=1))
+
+    assert first.success and second.success
+    assert first.run_id != second.run_id
+
+
 def test_expired_cooldown_requires_successful_capacity_reprobe(
     app_config, replay_input, tmp_path
 ) -> None:

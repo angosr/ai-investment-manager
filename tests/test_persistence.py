@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -161,6 +162,10 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
 
     store.record_capacity(snapshot)
     store.record_attempt(attempt)
+    store.record_attempt(attempt)
+
+    with pytest.raises(ValueError, match="审计事实不一致"):
+        store.record_attempt(replace(attempt, status="SUCCEEDED", failure=None))
 
     with engine.connect() as connection:
         capacity = connection.execute(select(codex_account_capacity)).mappings().one()
