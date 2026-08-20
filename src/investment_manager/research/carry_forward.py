@@ -10,9 +10,10 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.research.carry import HistoricalCarryDataset
 from investment_manager.research.carry_evaluation import (
@@ -63,8 +64,8 @@ class CarryForwardEvaluationSpec(FrozenModel):
     )
     report_version: Literal["carry-forward-report-v1"] = "carry-forward-report-v1"
 
-    _utc_observation_start = field_validator("observation_start")(_require_utc)
-    _utc_observation_end = field_validator("observation_end")(_require_utc)
+    _utc_observation_start = field_validator("observation_start")(require_utc)
+    _utc_observation_end = field_validator("observation_end")(require_utc)
 
     @model_validator(mode="after")
     def window_is_complete_calendar_months(self):
@@ -82,8 +83,8 @@ class CarryForwardMonth(FrozenModel):
     end: datetime
     run: CarryBacktestRun
 
-    _utc_start = field_validator("start")(_require_utc)
-    _utc_end = field_validator("end")(_require_utc)
+    _utc_start = field_validator("start")(require_utc)
+    _utc_end = field_validator("end")(require_utc)
 
 
 class CarryForwardMetrics(FrozenModel):
@@ -113,8 +114,8 @@ class CarryForwardResult(FrozenModel):
     passed: bool
     reason_codes: tuple[str, ...]
 
-    _utc_observation_start = field_validator("observation_start")(_require_utc)
-    _utc_observation_end = field_validator("observation_end")(_require_utc)
+    _utc_observation_start = field_validator("observation_start")(require_utc)
+    _utc_observation_end = field_validator("observation_end")(require_utc)
 
 
 class _CarryForwardEnvelope(FrozenModel):
@@ -159,7 +160,7 @@ def build_carry_forward_evaluation_plan(
     base_manifest_id: str,
     registered_at: datetime,
 ) -> EvaluationPlan:
-    registered_at = _require_utc(registered_at)
+    registered_at = require_utc(registered_at)
     if registered_at >= spec.observation_start:
         raise ValueError("carry forward 计划必须在观察窗口开始前登记")
     if base_manifest_id != spec.base_manifest_id:
@@ -201,7 +202,7 @@ def validate_carry_forward_evaluation_plan(
     evaluator_code_version: str,
     evaluator_environment: tuple[tuple[str, str], ...],
 ) -> None:
-    evaluated_at = _require_utc(evaluated_at)
+    evaluated_at = require_utc(evaluated_at)
     if evaluated_at < spec.observation_end + timedelta(
         days=spec.settlement_grace_days
     ):
@@ -328,7 +329,7 @@ def failed_carry_forward_experiment(
             {"hypothesis": hypothesis.strip().lower()}
         ),
         evidence_ids=(f"hypothesis:{hypothesis}", result.result_id),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("CARRY_FORWARD_FAILED", *result.reason_codes),
     )
 

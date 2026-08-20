@@ -43,7 +43,6 @@ from investment_manager.domain import (
     RiskDecision,
     SignalCandidate,
     TradeIntent,
-    _require_utc,
 )
 from investment_manager.evaluation import ReplayEvaluationReport
 from investment_manager.execution_contract import (
@@ -65,6 +64,7 @@ from investment_manager.governance import (
     SystemConstitution,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
 from investment_manager.lifecycle import OpenLifecycleRecord
 from investment_manager.platform.database import metadata
@@ -1635,7 +1635,7 @@ class SqlEventStore:
         return True
 
     def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         # Trigger 激活必须按 pipeline 隔离，但已观测到的世界事实不应在每次
         # 发布时清空。这里只复用历史 Trigger 中的品种路由事实，不会让旧
         # pipeline 的触发器、待处理批次或调用准入进入新 pipeline。
@@ -2201,7 +2201,7 @@ class SqlFactLedger:
         maximum_total_risk: Decimal | None,
     ) -> None:
         panel = facts.panel
-        created_at = _require_utc(self._clock())
+        created_at = require_utc(self._clock())
         connection.execute(
             insert(analysis_cycles).values(
                 cycle_id=facts.cycle_id,

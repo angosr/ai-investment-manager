@@ -20,11 +20,11 @@ from investment_manager.domain import (
     DirectionalForecast,
     DirectionalView,
     ForecastOutcomeStatus,
-    FrozenModel,
-    _require_utc,
 )
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_forecast_outcomes,
@@ -97,9 +97,9 @@ class ForecastEvaluationReport(FrozenModel):
     limitations: tuple[str, ...]
     outcome_ids: tuple[str, ...]
 
-    _utc_window_start = field_validator("window_start")(_require_utc)
-    _utc_window_end = field_validator("window_end")(_require_utc)
-    _utc_published_at = field_validator("published_at")(_require_utc)
+    _utc_window_start = field_validator("window_start")(require_utc)
+    _utc_window_end = field_validator("window_end")(require_utc)
+    _utc_published_at = field_validator("published_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_window_match(self):
@@ -157,8 +157,8 @@ class ForwardForecastEvaluationSpec(FrozenModel):
         "always-up-on-ai-scored-timestamps-v1"
     )
 
-    _utc_signal_start = field_validator("signal_window_start")(_require_utc)
-    _utc_signal_end = field_validator("signal_window_end")(_require_utc)
+    _utc_signal_start = field_validator("signal_window_start")(require_utc)
+    _utc_signal_end = field_validator("signal_window_end")(require_utc)
 
     @model_validator(mode="after")
     def scope_is_canonical_and_feasible(self):
@@ -278,7 +278,7 @@ def failed_forward_forecast_experiment(
             {"hypothesis": hypothesis.strip().lower()}
         ),
         evidence_ids=(f"hypothesis:{hypothesis}", result.result_id),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("FORWARD_FORECAST_FAILED", *result.reason_codes),
     )
 
@@ -289,7 +289,7 @@ def build_forward_forecast_evaluation_plan(
     base_manifest_id: str,
     registered_at: datetime,
 ) -> EvaluationPlan:
-    registered = _require_utc(registered_at)
+    registered = require_utc(registered_at)
     if registered >= spec.signal_window_start:
         raise ValueError("前向预测计划必须在首个信号生成前登记")
     return EvaluationPlan(
@@ -323,7 +323,7 @@ def validate_forward_forecast_evaluation_plan(
     champion_manifest_id: str,
     published_at: datetime,
 ) -> None:
-    published = _require_utc(published_at)
+    published = require_utc(published_at)
     if plan.plan_id != spec.plan_id or plan.base_manifest_id != champion_manifest_id:
         raise ValueError("前向预测计划身份或治理基线不一致")
     if plan.registered_at >= spec.signal_window_start:
@@ -519,9 +519,9 @@ class SqlAnalysisForecastOutcomeStore:
         window_end: datetime,
         published_at: datetime,
     ) -> tuple[AnalysisForecastOutcome, ...]:
-        start = _require_utc(window_start)
-        end = _require_utc(window_end)
-        published = _require_utc(published_at)
+        start = require_utc(window_start)
+        end = require_utc(window_end)
+        published = require_utc(published_at)
         if not start < end <= published:
             raise ValueError("预测评价窗口和发布时间顺序非法")
         if (pipeline_version is None) == (analysis_behavior_hash is None):
@@ -558,7 +558,7 @@ class SqlAnalysisForecastOutcomeStore:
     ) -> tuple[AnalysisForecastOutcome, ...]:
         """Select exact Codex-completion times without widening horizon boundaries."""
 
-        published = _require_utc(published_at)
+        published = require_utc(published_at)
         horizon_ranges = tuple(
             and_(
                 analysis_forecast_outcomes.c.view_horizon_minutes == horizon,
@@ -618,9 +618,9 @@ class AnalysisForecastEvaluator:
         window_end: datetime,
         published_at: datetime,
     ) -> ForecastEvaluationReport:
-        start = _require_utc(window_start)
-        end = _require_utc(window_end)
-        published = _require_utc(published_at)
+        start = require_utc(window_start)
+        end = require_utc(window_end)
+        published = require_utc(published_at)
         if not start < end <= published:
             raise ValueError("预测评价窗口和发布时间顺序非法")
         if (pipeline_version is None) == (analysis_behavior_hash is None):
@@ -805,7 +805,7 @@ def evaluate_forward_forecast_plan(
 ) -> ForwardForecastEvaluationResult:
     """Evaluate only the cohort frozen by a result-before-known signal window."""
 
-    published = _require_utc(published_at)
+    published = require_utc(published_at)
     if any(
         item.analysis_behavior_hash != spec.analysis_behavior_hash
         or item.symbol not in spec.symbols
@@ -896,7 +896,7 @@ class AnalysisForecastOutcomeSettler:
     batch_size: int = 100
 
     def settle(self, *, as_of: datetime) -> ForecastSettlementResult:
-        now = _require_utc(as_of)
+        now = require_utc(as_of)
         settled = abstained = unscorable = pending = 0
         forecasts = self.store.pending(
             limit=self.batch_size,

@@ -14,10 +14,10 @@ from investment_manager.domain import (
     RuleResult,
     Side,
     TradeIntent,
-    _require_utc,
-    floor_to_step,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import floor_to_step
 
 
 class RiskEngine:
@@ -32,7 +32,7 @@ class RiskEngine:
         account: AccountSnapshot,
         as_of: datetime | None = None,
     ) -> RiskDecision:
-        decision_at = market.as_of if as_of is None else _require_utc(as_of)
+        decision_at = market.as_of if as_of is None else require_utc(as_of)
         rules = [
             self._boolean_rule(
                 "kill-switch",

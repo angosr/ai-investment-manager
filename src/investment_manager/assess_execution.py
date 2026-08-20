@@ -9,7 +9,7 @@ from investment_manager.analyst import AnalystResult
 from investment_manager.asset_management import ContextAssessment
 from investment_manager.context_assessment_sql import SqlContextAssessmentStore
 from investment_manager.decision_packet import DecisionPacket
-from investment_manager.domain import FrozenModel
+from investment_manager.kernel.types import FrozenModel
 
 
 class ContextAnalyst(Protocol):

@@ -20,13 +20,14 @@ from investment_manager.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.config import AppConfig, OutcomeEvaluationPolicy, TemporalPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
 from investment_manager.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.outcome_evaluation_sql import SqlOutcomeWindowRepository
 from investment_manager.outcome_evaluation_workflows import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
@@ -49,8 +50,8 @@ class OutcomeEvaluationWorkflowRequest(FrozenModel):
     orchestration: OrchestrationPolicySnapshot
     input_hash: str
 
-    _utc_window_start = field_validator("window_start")(_require_utc)
-    _utc_window_end = field_validator("window_end")(_require_utc)
+    _utc_window_start = field_validator("window_start")(require_utc)
+    _utc_window_end = field_validator("window_end")(require_utc)
 
     @model_validator(mode="after")
     def identity_must_match(self):
@@ -102,8 +103,8 @@ def build_outcome_evaluation_workflow_request(
     policy: OutcomeEvaluationPolicy,
     temporal_policy: TemporalPolicy,
 ) -> OutcomeEvaluationWorkflowRequest:
-    window_start = _require_utc(window_start)
-    window_end = _require_utc(window_end)
+    window_start = require_utc(window_start)
+    window_end = require_utc(window_end)
     orchestration = OrchestrationPolicySnapshot.from_config(temporal_policy)
     payload = {
         "pipeline_version": pipeline_version,
@@ -240,7 +241,7 @@ class OutcomeEvaluationSupervisor:
         policy = self.config.outcome_evaluation
         window = timedelta(hours=policy.window_hours)
         while not stop.is_set():
-            now = _require_utc(self.clock())
+            now = require_utc(self.clock())
             try:
                 result = await asyncio.to_thread(self.candidate_settler.settle, as_of=now)
                 self.health.candidate_settled += result.settled
@@ -291,7 +292,7 @@ class OutcomeEvaluationSupervisor:
                     logger.exception("outcome evaluation supervisor failed")
                 self.health.last_error_class = type(exc).__name__
             delay = _seconds_until_next_poll(
-                _require_utc(self.clock()),
+                require_utc(self.clock()),
                 poll_seconds=policy.poll_seconds,
             )
             with suppress(TimeoutError):

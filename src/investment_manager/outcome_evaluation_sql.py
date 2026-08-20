@@ -7,11 +7,15 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import CycleOutcome, DecisionOutcome, _require_utc
+from investment_manager.domain import (
+    CycleOutcome,
+    DecisionOutcome,
+)
 from investment_manager.evaluation import (
     CycleDecisionFact,
     OutcomeWindowReport,
 )
+from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     decision_outcomes,
@@ -39,8 +43,8 @@ class SqlOutcomeWindowRepository:
         window_start: datetime,
         window_end: datetime,
     ) -> OutcomeWindowFacts:
-        window_start = _require_utc(window_start)
-        window_end = _require_utc(window_end)
+        window_start = require_utc(window_start)
+        window_end = require_utc(window_end)
         conditions = (
             analysis_cycles.c.pipeline_version == pipeline_version,
             analysis_cycles.c.as_of >= window_start,
@@ -140,8 +144,8 @@ class SqlOutcomeWindowRepository:
                 select(outcome_window_reports.c.payload)
                 .where(
                     outcome_window_reports.c.pipeline_version == pipeline_version,
-                    outcome_window_reports.c.window_start == _require_utc(window_start),
-                    outcome_window_reports.c.window_end == _require_utc(window_end),
+                    outcome_window_reports.c.window_start == require_utc(window_start),
+                    outcome_window_reports.c.window_end == require_utc(window_end),
                 )
                 .order_by(outcome_window_reports.c.report_id.desc())
                 .limit(1)

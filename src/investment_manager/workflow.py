@@ -7,8 +7,9 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.config import TemporalPolicy
 from investment_manager.cycle import CycleInput, CycleResult
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.trigger import TriggerDecision
 
 
@@ -57,8 +58,8 @@ class WorkflowRequest(FrozenModel):
     deadline: datetime
     input_hash: str
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
-    _utc_deadline = field_validator("deadline")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
+    _utc_deadline = field_validator("deadline")(require_utc)
 
     @model_validator(mode="after")
     def identity_must_match_frozen_input(self):
@@ -112,8 +113,8 @@ def build_workflow_request(
     created_at: datetime,
     deadline: datetime,
 ) -> WorkflowRequest:
-    created_at = _require_utc(created_at)
-    deadline = _require_utc(deadline)
+    created_at = require_utc(created_at)
+    deadline = require_utc(deadline)
     orchestration = OrchestrationPolicySnapshot.from_config(temporal_policy)
     payload = {
         "cycle_input": cycle_input.model_dump(mode="json"),

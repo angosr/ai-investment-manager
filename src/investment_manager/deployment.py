@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from investment_manager.config import DeploymentStage
-from investment_manager.domain import FrozenModel
+from investment_manager.kernel.types import FrozenModel
 
 
 class StageEvidence(FrozenModel):

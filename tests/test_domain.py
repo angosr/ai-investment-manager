@@ -5,7 +5,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.domain import MarketSnapshot, floor_to_step
+from investment_manager.domain import MarketSnapshot
+from investment_manager.kernel.types import floor_to_step
 
 
 def test_floor_to_step_is_exact_and_rejects_invalid_step() -> None:

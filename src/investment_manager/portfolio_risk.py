@@ -8,17 +8,19 @@ from pydantic import Field, field_validator, model_validator
 from investment_manager.asset_management import PortfolioTarget
 from investment_manager.domain import (
     AccountSnapshot,
-    FrozenModel,
     GuardState,
     MarketSnapshot,
-    Money,
-    PositiveDecimal,
     RiskOutcome,
     RuleResult,
-    UnitInterval,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+    PositiveDecimal,
+    UnitInterval,
+)
 
 
 class PortfolioRiskPolicy(FrozenModel):
@@ -78,8 +80,8 @@ class ApprovedTarget(FrozenModel):
     market_snapshot_hashes: tuple[str, ...]
     targets: tuple[ApprovedAssetTarget, ...] = ()
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def approved_target_must_be_bounded_and_sorted(self):
@@ -108,7 +110,7 @@ class PortfolioRiskDecision(FrozenModel):
     rule_results: tuple[RuleResult, ...] = Field(min_length=1)
     approved_target: ApprovedTarget | None = None
 
-    _utc_decided_at = field_validator("decided_at")(_require_utc)
+    _utc_decided_at = field_validator("decided_at")(require_utc)
 
     @model_validator(mode="after")
     def outcome_must_match_approved_target(self):
@@ -139,7 +141,7 @@ class PortfolioRiskEngine:
         protective_stops: tuple[ProtectiveStop, ...],
         as_of: datetime,
     ) -> PortfolioRiskDecision:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         if len(target.targets) > 1:
             raise ValueError("单 Sleeve MVP 不接受多个 PortfolioTarget 资产")
         market_by_symbol = self._unique_markets(markets)

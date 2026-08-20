@@ -22,8 +22,9 @@ from investment_manager.config import (
     ReconciliationPolicy,
     TemporalPolicy,
 )
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import build_engine
 from investment_manager.reconciliation import (
     ReconciliationEngine,
@@ -55,7 +56,7 @@ class ReconciliationWorkflowRequest(FrozenModel):
 
     @model_validator(mode="after")
     def identity_must_match(self):
-        as_of = _require_utc(self.as_of)
+        as_of = require_utc(self.as_of)
         expected_hash = content_hash(_request_identity(self))
         if self.input_hash != expected_hash:
             raise ValueError("Reconciliation Workflow input_hash 不一致")
@@ -92,7 +93,7 @@ def build_reconciliation_workflow_request(
     reconciliation_policy: ReconciliationPolicy,
     temporal_policy: TemporalPolicy,
 ) -> ReconciliationWorkflowRequest:
-    as_of = _require_utc(as_of)
+    as_of = require_utc(as_of)
     orchestration = OrchestrationPolicySnapshot.from_config(temporal_policy)
     payload = {
         "as_of": as_of.isoformat(),
@@ -206,7 +207,7 @@ class ReconciliationSupervisor:
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
-            now = _require_utc(self.clock())
+            now = require_utc(self.clock())
             bucket_seconds = self.reconciliation_policy.poll_seconds
             bucket = datetime.fromtimestamp(
                 int(now.timestamp()) // bucket_seconds * bucket_seconds,
@@ -234,7 +235,7 @@ class ReconciliationSupervisor:
                     logger.exception("reconciliation supervisor failed")
                 self.health.last_error_class = type(exc).__name__
             delay = _seconds_until_next_bucket(
-                _require_utc(self.clock()),
+                require_utc(self.clock()),
                 bucket_seconds=bucket_seconds,
             )
             with suppress(TimeoutError):

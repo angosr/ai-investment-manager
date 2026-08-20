@@ -18,8 +18,10 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import Field, field_validator
 
-from investment_manager.domain import FrozenModel, IntelligenceEvent, _require_utc
+from investment_manager.domain import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +37,8 @@ class RawIntelligenceItem(FrozenModel):
     url: str | None = Field(default=None, max_length=2_000)
     rank: int | None = Field(default=None, ge=0)
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class IntelligenceSource(Protocol):
@@ -95,7 +97,7 @@ class TrendRadarMcpSource:
         self._timezone = ZoneInfo(source_timezone)
 
     def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
-        observed_at = _require_utc(observed_at)
+        observed_at = require_utc(observed_at)
         response = self._transport.call(
             "get_latest_news",
             {
@@ -192,11 +194,11 @@ class NewsNowSource:
         self._clock = clock
 
     def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
-        requested_at = _require_utc(observed_at)
+        requested_at = require_utc(observed_at)
         items: list[RawIntelligenceItem] = []
         for source_id in self._sources:
             response = self._transport.fetch(source_id)
-            actual_observed_at = max(requested_at, _require_utc(self._clock()))
+            actual_observed_at = max(requested_at, require_utc(self._clock()))
             if not isinstance(response, dict):
                 raise ValueError("NewsNow 响应必须是对象")
             if response.get("status") not in {"success", "cache"}:
@@ -455,7 +457,7 @@ class InMemoryEventStore:
             return True
 
     def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._lock:
             events = [
                 item
@@ -528,7 +530,7 @@ class InformationCollectorService:
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
-            observed_at = _require_utc(self._clock())
+            observed_at = require_utc(self._clock())
             self.health.collection_count += 1
             try:
                 result = await asyncio.to_thread(

@@ -14,9 +14,9 @@ from investment_manager.domain import (
     OrderType,
     Side,
     SignalCandidate,
-    _require_utc,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.market_data import MarketTrade
 from investment_manager.market_data_sql import market_trades
 from investment_manager.persistence import candidate_outcomes, signal_candidates
@@ -43,8 +43,8 @@ def trade_at_or_before(
             select(market_trades.c.payload)
             .where(
                 market_trades.c.symbol == symbol,
-                market_trades.c.event_time <= _require_utc(evaluation_at),
-                market_trades.c.observed_at <= _require_utc(visible_at),
+                market_trades.c.event_time <= require_utc(evaluation_at),
+                market_trades.c.observed_at <= require_utc(visible_at),
             )
             .order_by(
                 market_trades.c.event_time.desc(),
@@ -77,7 +77,7 @@ class SqlCandidateOutcomeStore:
                     )
                     .where(
                         candidate_outcomes.c.candidate_id.is_(None),
-                        signal_candidates.c.valid_until <= _require_utc(as_of),
+                        signal_candidates.c.valid_until <= require_utc(as_of),
                     )
                     .order_by(signal_candidates.c.valid_until, signal_candidates.c.candidate_id)
                     .limit(limit)
@@ -96,9 +96,9 @@ class SqlCandidateOutcomeStore:
     ) -> tuple[CandidateOutcome, ...]:
         """Read only labels that existed by publication time; scope filtering is pure."""
 
-        start = _require_utc(training_start)
-        end = _require_utc(training_end)
-        published = _require_utc(published_at)
+        start = require_utc(training_start)
+        end = require_utc(training_end)
+        published = require_utc(published_at)
         if not start < end <= published:
             raise ValueError("校准查询时间边界非法")
         with self._engine.connect() as connection:
@@ -127,9 +127,9 @@ class SqlCandidateOutcomeStore:
         evaluation_at: datetime,
         visible_at: datetime,
     ) -> tuple[MarketTrade, ...]:
-        signal_at = _require_utc(signal_observed_at)
-        evaluation = _require_utc(evaluation_at)
-        visible = min(_require_utc(visible_at), evaluation)
+        signal_at = require_utc(signal_observed_at)
+        evaluation = require_utc(evaluation_at)
+        visible = min(require_utc(visible_at), evaluation)
         with self._engine.connect() as connection:
             payloads = tuple(
                 connection.execute(
@@ -187,7 +187,7 @@ class CandidateOutcomeSettler:
     batch_size: int = 100
 
     def settle(self, *, as_of: datetime) -> CandidateSettlementResult:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         settled = unscorable = pending = 0
         for candidate in self.store.pending(as_of=as_of, limit=self.batch_size):
             evaluation_at = candidate.signal_observed_at + timedelta(

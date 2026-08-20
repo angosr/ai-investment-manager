@@ -20,7 +20,6 @@ from investment_manager.domain import (
     AnalysisProposal,
     CycleOutcome,
     DecisionOutcome,
-    FrozenModel,
     IntelligenceEvent,
     MarketSnapshot,
     MetricObservation,
@@ -32,7 +31,6 @@ from investment_manager.domain import (
     RiskOutcome,
     SignalCandidate,
     TradeIntent,
-    _require_utc,
 )
 from investment_manager.execution import ExecutionExchange, MockExchange, entry_client_order_id
 from investment_manager.execution_contract import (
@@ -43,6 +41,8 @@ from investment_manager.execution_contract import (
 )
 from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.ledger import (
     CycleFacts,
     FactLedger,
@@ -69,7 +69,7 @@ class CycleInput(FrozenModel):
     @field_validator("frequency_last_entry_order_at")
     @classmethod
     def last_entry_order_must_be_utc(cls, value: datetime | None) -> datetime | None:
-        return None if value is None else _require_utc(value)
+        return None if value is None else require_utc(value)
 
     @field_validator("account")
     @classmethod
@@ -242,7 +242,7 @@ class AnalysisCycle:
                     else self.analyst.analyze(panel)
                 )
                 if analyst_result.completed_at is not None:
-                    decision_at = _require_utc(analyst_result.completed_at)
+                    decision_at = require_utc(analyst_result.completed_at)
                     if decision_at < market.as_of:
                         raise ValueError("Codex 完成时间不能早于冻结行情")
                 metrics.append(
@@ -462,7 +462,7 @@ class AnalysisCycle:
         intent = request.intent
         risk = request.risk_decision
         market = request.market
-        execution_at = _require_utc(observed_at or market.as_of)
+        execution_at = require_utc(observed_at or market.as_of)
         existing_order = self.exchange.query_entry_order(
             intent=intent,
             risk=risk,

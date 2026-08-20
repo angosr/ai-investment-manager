@@ -6,13 +6,15 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import (
-    DirectionalView,
+from investment_manager.domain import DirectionalView
+from investment_manager.kernel.time import (
+    optional_utc,
+    require_utc,
+)
+from investment_manager.kernel.types import (
     FrozenModel,
     Money,
     PositiveDecimal,
-    _optional_utc,
-    _require_utc,
 )
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -77,8 +79,8 @@ class SourceObservation(FrozenModel):
     payload_hash: str = Field(pattern=SHA256_PATTERN)
     payload_ref: str = Field(min_length=1)
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
-    _utc_source_published_at = field_validator("source_published_at")(_optional_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_source_published_at = field_validator("source_published_at")(optional_utc)
 
     @model_validator(mode="after")
     def publication_must_be_point_in_time_visible(self):
@@ -106,8 +108,8 @@ class CanonicalFactRevision(FrozenModel):
     source_observation_ids: tuple[str, ...] = Field(min_length=1)
     revision_hash: str = Field(pattern=SHA256_PATTERN)
 
-    _utc_event_time = field_validator("event_time")(_optional_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(optional_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
     def revision_identity_and_refs_must_be_consistent(self):
@@ -136,8 +138,8 @@ class StateSnapshot(FrozenModel):
     coverage_gap_codes: tuple[str, ...] = ()
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_built_at = field_validator("built_at")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_built_at = field_validator("built_at")(require_utc)
 
     @model_validator(mode="after")
     def snapshot_must_be_deterministic_and_point_in_time_safe(self):
@@ -174,8 +176,8 @@ class MaterialDelta(FrozenModel):
     reason_codes: tuple[str, ...] = Field(min_length=1)
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
-    _utc_expires_at = field_validator("expires_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_expires_at = field_validator("expires_at")(require_utc)
 
     @model_validator(mode="after")
     def delta_must_reference_a_real_bounded_change(self):
@@ -235,8 +237,8 @@ class ContextAssessment(FrozenModel):
     contradictions: tuple[str, ...] = ()
     data_gaps: tuple[str, ...] = ()
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
     def completion_and_view_identity_must_be_unambiguous(self):
@@ -265,9 +267,9 @@ class BaseForecast(FrozenModel):
     input_refs: tuple[str, ...] = Field(min_length=1)
     unknowns: tuple[str, ...] = ()
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def forecast_timing_and_refs_must_be_valid(self):
@@ -301,8 +303,8 @@ class CalibratedForecast(FrozenModel):
     non_overlapping_sample_size: int = Field(gt=0)
     input_refs: tuple[str, ...] = Field(min_length=1)
 
-    _utc_available_at = field_validator("available_at")(_require_utc)
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def role_evidence_and_calibration_must_match(self):
@@ -358,8 +360,8 @@ class PortfolioTarget(FrozenModel):
     reference_equity: PositiveDecimal
     targets: tuple[AssetTarget, ...] = ()
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def target_set_must_be_bounded_and_unambiguous(self):

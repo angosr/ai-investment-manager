@@ -1,43 +1,20 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-Money = Annotated[Decimal, Field(ge=0)]
-PositiveDecimal = Annotated[Decimal, Field(gt=0)]
-UnitInterval = Annotated[Decimal, Field(ge=0, le=1)]
-
-
-def floor_to_step(value: Decimal, step: Decimal) -> Decimal:
-    """Quantize ``value`` down to the nearest multiple of ``step``.
-
-    Shared by risk sizing, trade planning, the venue lot-size floor and
-    research backtests so every sizing path rounds identically. Divergence
-    here lets an order pass internal checks yet be re-rounded or rejected at
-    the exchange, so this is the single owner of quantity/price flooring.
-    """
-    if step <= 0:
-        raise ValueError("步长必须大于零")
-    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
-
-
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
-
-
-def _require_utc(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("时间必须包含时区")
-    return value.astimezone(UTC)
-
-
-def _optional_utc(value: datetime | None) -> datetime | None:
-    return _require_utc(value) if value is not None else None
+from investment_manager.kernel.time import optional_utc, require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+    PositiveDecimal,
+    UnitInterval,
+)
 
 
 class Action(StrEnum):
@@ -122,8 +99,8 @@ class MarketBar(FrozenModel):
     close: PositiveDecimal
     volume: Money
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @field_validator("high")
     @classmethod
@@ -154,8 +131,8 @@ class MarketSnapshot(FrozenModel):
     bars: tuple[MarketBar, ...] = Field(min_length=2)
     source: str
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @field_validator("observed_at")
     @classmethod
@@ -208,8 +185,8 @@ class AccountSnapshot(FrozenModel):
     kill_switch_active: bool = False
     reconciled: bool = True
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class IntelligenceEvent(FrozenModel):
@@ -227,8 +204,8 @@ class IntelligenceEvent(FrozenModel):
     source_reliability: UnitInterval
     novelty: UnitInterval
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class FeatureSnapshot(FrozenModel):
@@ -244,7 +221,7 @@ class FeatureSnapshot(FrozenModel):
     regime: Literal["TRENDING_UP", "TRENDING_DOWN", "RANGING", "UNKNOWN"]
     market_age_seconds: int = Field(ge=0)
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
 
 class PanelEvidence(FrozenModel):
@@ -257,8 +234,8 @@ class PanelEvidence(FrozenModel):
     value_score: Decimal
     prompt_injection_suspected: bool = False
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class PanelSnapshot(FrozenModel):
@@ -275,7 +252,7 @@ class PanelSnapshot(FrozenModel):
     rules_digest: tuple[str, ...]
     content_hash: str
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
 
 class PriceCondition(FrozenModel):
@@ -316,11 +293,11 @@ class EdgeCalibration(FrozenModel):
     dataset_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_training_start = field_validator("training_start")(_require_utc)
-    _utc_training_end = field_validator("training_end")(_require_utc)
-    _utc_published_at = field_validator("published_at")(_require_utc)
-    _utc_valid_from = field_validator("valid_from")(_require_utc)
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_training_start = field_validator("training_start")(require_utc)
+    _utc_training_end = field_validator("training_end")(require_utc)
+    _utc_published_at = field_validator("published_at")(require_utc)
+    _utc_valid_from = field_validator("valid_from")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def evidence_and_time_ranges_must_be_consistent(self):
@@ -392,8 +369,8 @@ class SignalCandidate(FrozenModel):
     estimated_cost_bps: Decimal | None = Field(default=None, ge=0)
     unknowns: tuple[str, ...] = ()
 
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
-    _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
+    _utc_signal_observed_at = field_validator("signal_observed_at")(require_utc)
 
     @model_validator(mode="after")
     def signal_timing_must_be_valid(self):
@@ -441,7 +418,7 @@ class AnalysisProposal(FrozenModel):
     unknowns: tuple[str, ...] = ()
     forecasts: tuple[DirectionalForecast, ...] = Field(min_length=1, max_length=4)
 
-    _utc_valid_until = field_validator("valid_until")(_optional_utc)
+    _utc_valid_until = field_validator("valid_until")(optional_utc)
 
     @model_validator(mode="before")
     @classmethod
@@ -514,8 +491,8 @@ class TradeIntent(FrozenModel):
     expected_gross_bps: Decimal
     program_exit: ProgramExitCondition | None = None
 
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
-    _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
+    _utc_signal_observed_at = field_validator("signal_observed_at")(require_utc)
 
     @model_validator(mode="after")
     def signal_timing_must_be_valid(self):
@@ -542,7 +519,7 @@ class RiskReservation(FrozenModel):
     quantity: PositiveDecimal
     expires_at: datetime
 
-    _utc_expires_at = field_validator("expires_at")(_require_utc)
+    _utc_expires_at = field_validator("expires_at")(require_utc)
 
 
 class RiskDecision(FrozenModel):
@@ -567,7 +544,7 @@ class Fill(FrozenModel):
     quantity: PositiveDecimal
     fee: Money
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
 
 
 class Order(FrozenModel):
@@ -606,9 +583,9 @@ class PositionLifecycle(FrozenModel):
     exit_reason: ExitReason | None = None
     program_exit: ProgramExitCondition | None = None
 
-    _utc_opened_at = field_validator("opened_at")(_require_utc)
-    _utc_max_exit_at = field_validator("max_exit_at")(_require_utc)
-    _utc_closed_at = field_validator("closed_at")(_optional_utc)
+    _utc_opened_at = field_validator("opened_at")(require_utc)
+    _utc_max_exit_at = field_validator("max_exit_at")(require_utc)
+    _utc_closed_at = field_validator("closed_at")(optional_utc)
 
 
 class DecisionOutcome(FrozenModel):
@@ -630,8 +607,8 @@ class DecisionOutcome(FrozenModel):
     maximum_favorable_excursion: Decimal
     maximum_adverse_excursion: Decimal
 
-    _utc_opened_at = field_validator("opened_at")(_require_utc)
-    _utc_closed_at = field_validator("closed_at")(_require_utc)
+    _utc_opened_at = field_validator("opened_at")(require_utc)
+    _utc_closed_at = field_validator("closed_at")(require_utc)
 
 
 class CandidateOutcomeStatus(StrEnum):
@@ -669,13 +646,13 @@ class CandidateOutcome(FrozenModel):
     net_return_bps: Decimal | None = None
     reason_code: str
 
-    _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
-    _utc_evaluation_at = field_validator("evaluation_at")(_require_utc)
-    _utc_settled_at = field_validator("settled_at")(_require_utc)
-    _utc_entry_event_time = field_validator("entry_event_time")(_optional_utc)
-    _utc_entry_observed_at = field_validator("entry_observed_at")(_optional_utc)
-    _utc_exit_event_time = field_validator("exit_event_time")(_optional_utc)
-    _utc_exit_observed_at = field_validator("exit_observed_at")(_optional_utc)
+    _utc_signal_observed_at = field_validator("signal_observed_at")(require_utc)
+    _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+    _utc_settled_at = field_validator("settled_at")(require_utc)
+    _utc_entry_event_time = field_validator("entry_event_time")(optional_utc)
+    _utc_entry_observed_at = field_validator("entry_observed_at")(optional_utc)
+    _utc_exit_event_time = field_validator("exit_event_time")(optional_utc)
+    _utc_exit_observed_at = field_validator("exit_observed_at")(optional_utc)
 
     @model_validator(mode="after")
     def settlement_fields_must_match_status(self):
@@ -752,10 +729,10 @@ class AnalysisForecastOutcome(FrozenModel):
     direction_correct: bool | None = None
     reason_code: str
 
-    _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
-    _utc_evaluation_at = field_validator("evaluation_at")(_require_utc)
-    _utc_settled_at = field_validator("settled_at")(_require_utc)
-    _utc_exit_event_time = field_validator("exit_event_time")(_optional_utc)
+    _utc_signal_observed_at = field_validator("signal_observed_at")(require_utc)
+    _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+    _utc_settled_at = field_validator("settled_at")(require_utc)
+    _utc_exit_event_time = field_validator("exit_event_time")(optional_utc)
 
     @model_validator(mode="after")
     def settlement_fields_match_status(self):
@@ -792,4 +769,4 @@ class MetricObservation(FrozenModel):
     value: Decimal
     dimensions: tuple[tuple[str, str], ...] = ()
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)

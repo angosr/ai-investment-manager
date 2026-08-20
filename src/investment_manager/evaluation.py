@@ -12,11 +12,11 @@ from investment_manager.cycle import AnalysisCycle, CycleInput
 from investment_manager.domain import (
     CycleOutcome,
     DecisionOutcome,
-    FrozenModel,
     MarketSnapshot,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.lifecycle import PositionLifecycleManager
 from investment_manager.reconciliation import MockReconciler
 
@@ -148,8 +148,8 @@ class OutcomeWindowReport(FrozenModel):
     incremental_net_pnl_vs_never_trade: Decimal
     outcome_ids: tuple[str, ...] = ()
 
-    _utc_window_start = field_validator("window_start")(_require_utc)
-    _utc_window_end = field_validator("window_end")(_require_utc)
+    _utc_window_start = field_validator("window_start")(require_utc)
+    _utc_window_end = field_validator("window_end")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_completion_must_match(self):
@@ -184,8 +184,8 @@ class OutcomeWindowEvaluator:
         outcomes: tuple[DecisionOutcome, ...],
         unresolved_cycle_ids: tuple[str, ...],
     ) -> OutcomeWindowReport:
-        window_start = _require_utc(window_start)
-        window_end = _require_utc(window_end)
+        window_start = require_utc(window_start)
+        window_end = require_utc(window_end)
         if window_end <= window_start:
             raise ValueError("结果窗口结束时间必须晚于开始时间")
         if any(item.pipeline_version != pipeline_version for item in cycles):

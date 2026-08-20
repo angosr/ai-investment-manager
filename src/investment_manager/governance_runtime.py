@@ -18,7 +18,6 @@ from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.analyst import assemble_codex_router
 from investment_manager.config import AppConfig, TemporalPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import GovernanceSnapshot
 from investment_manager.governance_agent import (
     GOVERNOR_OUTPUT_ADAPTER,
@@ -35,6 +34,8 @@ from investment_manager.governance_workflows import (
     GovernanceCycleWorkflow,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
@@ -57,7 +58,7 @@ class GovernanceWorkflowRequest(FrozenModel):
     orchestration: OrchestrationPolicySnapshot
     input_hash: str
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
     @model_validator(mode="after")
     def identity_must_match(self):
@@ -104,7 +105,7 @@ def build_governance_workflow_request(
     config: AppConfig,
     expected_champion_manifest_id: str,
 ) -> GovernanceWorkflowRequest:
-    as_of = _require_utc(as_of)
+    as_of = require_utc(as_of)
     orchestration = OrchestrationPolicySnapshot.from_config(config.temporal)
     payload = {
         "as_of": as_of.isoformat(),
@@ -235,7 +236,7 @@ class GovernanceSupervisor:
     async def run(self, stop: asyncio.Event) -> None:
         interval_seconds = self.config.governance.cycle_interval_hours * 3600
         while not stop.is_set():
-            now = _require_utc(self.clock())
+            now = require_utc(self.clock())
             bucket = datetime.fromtimestamp(
                 int(now.timestamp()) // interval_seconds * interval_seconds,
                 tz=UTC,

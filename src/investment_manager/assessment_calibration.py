@@ -12,7 +12,11 @@ from investment_manager.assessment_forecast import (
 )
 from investment_manager.assessment_outcome import AssessmentViewOutcome
 from investment_manager.asset_management import AssessmentUncertainty, PricedState
-from investment_manager.domain import DirectionalView, ForecastOutcomeStatus, _require_utc
+from investment_manager.domain import (
+    DirectionalView,
+    ForecastOutcomeStatus,
+)
+from investment_manager.kernel.time import require_utc
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +37,7 @@ class AssessmentCalibrationBuildSpec:
 
     def __post_init__(self) -> None:
         for name in ("training_start", "training_end", "published_at"):
-            object.__setattr__(self, name, _require_utc(getattr(self, name)))
+            object.__setattr__(self, name, require_utc(getattr(self, name)))
         if not self.analysis_scope or not self.outcome_evaluation_version:
             raise ValueError("Assessment calibration scope/version 不能为空")
         if not (

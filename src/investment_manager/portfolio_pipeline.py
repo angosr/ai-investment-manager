@@ -9,11 +9,11 @@ from pydantic import Field, model_validator
 from investment_manager.asset_management import PortfolioTarget
 from investment_manager.domain import (
     AccountSnapshot,
-    FrozenModel,
     MarketSnapshot,
     RiskOutcome,
-    _require_utc,
 )
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.portfolio_decision import PortfolioAssetInput, PortfolioDecisionEngine
 from investment_manager.portfolio_risk import (
     PortfolioRiskDecision,
@@ -78,7 +78,7 @@ class PortfolioDecisionPipeline:
         protective_stops: tuple[ProtectiveStop, ...],
         execution_specs: tuple[MarketExecutionSpec, ...],
     ) -> PortfolioPipelineResult:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         if reference_equity <= 0:
             raise ValueError("PortfolioPipeline reference_equity 必须为正数")
         if account.cycle_id != cycle_id or any(

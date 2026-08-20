@@ -19,10 +19,10 @@ from temporalio.worker import Worker
 
 from investment_manager.config import AppConfig, DeploymentStage, TemporalPolicy
 from investment_manager.cycle import CycleInput
-from investment_manager.domain import _require_utc
 from investment_manager.features import FeatureEngine
 from investment_manager.ingestion import EventStore
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.market_data import MarketDataStore
 from investment_manager.portfolio_protection import PortfolioProtectionStore
 from investment_manager.shadow import ShadowStateReader
@@ -59,7 +59,7 @@ class TriggerBatchRecorder(Protocol):
 
 class AnalysisCallDeferred(Exception):
     def __init__(self, retry_at: datetime) -> None:
-        self.retry_at = _require_utc(retry_at)
+        self.retry_at = require_utc(retry_at)
         super().__init__(f"analysis call deferred until {self.retry_at.isoformat()}")
 
 
@@ -153,7 +153,7 @@ class TriggerAnalysisRequestBuilder:
             deadline=batch.deadline,
         )
         if self._batch_recorder is not None:
-            submitted_at = max(_require_utc(self._clock()), as_of)
+            submitted_at = max(require_utc(self._clock()), as_of)
             admission = self._batch_recorder.admit_analysis_call(
                 batch,
                 requested_at=submitted_at,

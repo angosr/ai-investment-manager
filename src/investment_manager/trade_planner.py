@@ -7,16 +7,18 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.domain import (
     AccountSnapshot,
-    FrozenModel,
     MarketSnapshot,
-    Money,
     OrderType,
-    PositiveDecimal,
     Side,
-    _require_utc,
-    floor_to_step,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+    PositiveDecimal,
+    floor_to_step,
+)
 from investment_manager.portfolio_risk import ApprovedTarget
 
 
@@ -73,7 +75,7 @@ class PlannedTrade(FrozenModel):
     protective_stop_price: PositiveDecimal | None = None
     valid_until: datetime
 
-    _utc_valid_until = field_validator("valid_until")(_require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
     def direction_and_protection_must_be_consistent(self):
@@ -99,7 +101,7 @@ class TradePlan(FrozenModel):
     omissions: tuple[PlanningOmission, ...]
     plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
 
     @model_validator(mode="after")
     def plan_order_and_identity_must_be_deterministic(self):
@@ -132,7 +134,7 @@ class TradePlanner:
         specs: tuple[MarketExecutionSpec, ...],
         as_of: datetime,
     ) -> TradePlan:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         if approved.valid_until <= as_of:
             raise ValueError("ApprovedTarget 已过期")
         if approved.as_of != as_of:

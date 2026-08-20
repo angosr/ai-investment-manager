@@ -18,8 +18,10 @@ from typing import Any, Literal
 import httpx
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import FrozenModel, IntelligenceEvent, _require_utc
+from investment_manager.domain import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.market_data import ClosedMarketBar
 
 _INTERVAL_MILLISECONDS = {
@@ -74,11 +76,11 @@ class HistoricalDatasetManifest(FrozenModel):
     bars_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     instrument: InstrumentSpec
 
-    _utc_collected_at = field_validator("collected_at")(_require_utc)
-    _utc_requested_start = field_validator("requested_start")(_require_utc)
-    _utc_requested_end = field_validator("requested_end")(_require_utc)
-    _utc_first_open_time = field_validator("first_open_time")(_require_utc)
-    _utc_last_close_time = field_validator("last_close_time")(_require_utc)
+    _utc_collected_at = field_validator("collected_at")(require_utc)
+    _utc_requested_start = field_validator("requested_start")(require_utc)
+    _utc_requested_end = field_validator("requested_end")(require_utc)
+    _utc_first_open_time = field_validator("first_open_time")(require_utc)
+    _utc_last_close_time = field_validator("last_close_time")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_bounds_match(self):
@@ -191,8 +193,8 @@ class HistoricalDatasetCatalog:
     ) -> HistoricalBarWindow:
         """Verify the complete artifact while materializing only a bounded window."""
 
-        start = _require_utc(start)
-        end = _require_utc(end)
+        start = require_utc(start)
+        end = require_utc(end)
         if start >= end:
             raise ValueError("历史 K 线窗口起点必须早于终点")
         if warmup_bars < 0:
@@ -260,14 +262,14 @@ class HistoricalEventDatasetManifest(FrozenModel):
     event_count: int = Field(ge=0)
     events_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_collected_at = field_validator("collected_at")(_require_utc)
-    _utc_requested_start = field_validator("requested_start")(_require_utc)
-    _utc_requested_end = field_validator("requested_end")(_require_utc)
+    _utc_collected_at = field_validator("collected_at")(require_utc)
+    _utc_requested_start = field_validator("requested_start")(require_utc)
+    _utc_requested_end = field_validator("requested_end")(require_utc)
 
     @field_validator("first_observed_at", "last_observed_at")
     @classmethod
     def optional_times_must_be_utc(cls, value: datetime | None) -> datetime | None:
-        return _require_utc(value) if value is not None else None
+        return require_utc(value) if value is not None else None
 
     @model_validator(mode="after")
     def identity_and_bounds_match(self):
@@ -369,8 +371,8 @@ class FundingRateObservation(FrozenModel):
     funding_interval_hours: int = Field(gt=0, le=24)
     funding_rate: Decimal
 
-    _utc_funding_time = field_validator("funding_time")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_funding_time = field_validator("funding_time")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
     def availability_follows_settlement(self):
@@ -404,11 +406,11 @@ class HistoricalFundingDatasetManifest(FrozenModel):
     observations_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_artifacts: tuple[FundingSourceArtifact, ...] = Field(min_length=1)
 
-    _utc_collected_at = field_validator("collected_at")(_require_utc)
-    _utc_requested_start = field_validator("requested_start")(_require_utc)
-    _utc_requested_end = field_validator("requested_end")(_require_utc)
-    _utc_first_available = field_validator("first_available_at")(_require_utc)
-    _utc_last_available = field_validator("last_available_at")(_require_utc)
+    _utc_collected_at = field_validator("collected_at")(require_utc)
+    _utc_requested_start = field_validator("requested_start")(require_utc)
+    _utc_requested_end = field_validator("requested_end")(require_utc)
+    _utc_first_available = field_validator("first_available_at")(require_utc)
+    _utc_last_available = field_validator("last_available_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_bounds_match(self):
@@ -525,9 +527,9 @@ def freeze_historical_events(
 ) -> HistoricalEventDataset:
     """Freeze facts with real arrival times; never infer historical observed_at."""
 
-    start = _require_utc(requested_start)
-    end = _require_utc(requested_end)
-    collected = _require_utc(collected_at)
+    start = require_utc(requested_start)
+    end = require_utc(requested_end)
+    collected = require_utc(collected_at)
     if start >= end:
         raise ValueError("历史事件请求起点必须早于终点")
     if end > collected:
@@ -566,9 +568,9 @@ async def fetch_binance_funding_history(
 
     if base_url.rstrip("/") != "https://data.binance.vision":
         raise ValueError("资金费率历史只接受 Binance 官方公开数据站")
-    start = _require_utc(start)
-    end = _require_utc(end)
-    collected_at = _require_utc((clock or (lambda: datetime.now(UTC)))())
+    start = require_utc(start)
+    end = require_utc(end)
+    collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
     if not start < end <= collected_at:
         raise ValueError("历史资金费率请求窗口或冻结时间非法")
     symbol = symbol.upper()
@@ -664,9 +666,9 @@ async def fetch_binance_history(
 ) -> HistoricalDataset:
     """从 Binance 官方 REST 按页抓取完整已收盘 K 线并冻结交易规则。"""
 
-    start = _require_utc(start)
-    end = _require_utc(end)
-    collected_at = _require_utc((clock or (lambda: datetime.now(UTC)))())
+    start = require_utc(start)
+    end = require_utc(end)
+    collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
     if start >= end:
         raise ValueError("历史数据请求起点必须早于终点")
     interval_ms = _INTERVAL_MILLISECONDS.get(interval)

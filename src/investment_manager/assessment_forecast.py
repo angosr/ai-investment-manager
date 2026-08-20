@@ -15,8 +15,13 @@ from investment_manager.asset_management import (
     PricedState,
 )
 from investment_manager.decision_packet import DecisionPacket
-from investment_manager.domain import DirectionalView, FrozenModel, Money, _require_utc
+from investment_manager.domain import DirectionalView
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+)
 from investment_manager.market_data import MarketTrade
 
 
@@ -69,10 +74,10 @@ class AssessmentViewCalibration(FrozenModel):
     non_overlapping_source_refs: tuple[str, ...] = Field(min_length=1)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_training_start = field_validator("training_start")(_require_utc)
-    _utc_training_end = field_validator("training_end")(_require_utc)
-    _utc_trained_through = field_validator("trained_through")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_training_start = field_validator("training_start")(require_utc)
+    _utc_training_end = field_validator("training_end")(require_utc)
+    _utc_trained_through = field_validator("trained_through")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_evidence_must_be_valid(self):
@@ -146,10 +151,10 @@ def build_assessment_view_calibration(
         "direction": direction.value,
         "already_priced": already_priced.value,
         "uncertainty": uncertainty.value,
-        "training_start": _require_utc(training_start).isoformat(),
-        "training_end": _require_utc(training_end).isoformat(),
-        "trained_through": _require_utc(trained_through).isoformat(),
-        "available_at": _require_utc(available_at).isoformat(),
+        "training_start": require_utc(training_start).isoformat(),
+        "training_end": require_utc(training_end).isoformat(),
+        "trained_through": require_utc(trained_through).isoformat(),
+        "available_at": require_utc(available_at).isoformat(),
         "expected_edge_half_life_seconds": expected_edge_half_life_seconds,
         "expected_gross_bps": expected_gross_bps,
         "conservative_gross_bps": conservative_gross_bps,

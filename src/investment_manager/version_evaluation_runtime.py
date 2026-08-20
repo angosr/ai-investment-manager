@@ -12,7 +12,6 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.config import TemporalPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import (
     EvaluationResult,
     EvaluationStage,
@@ -21,6 +20,8 @@ from investment_manager.governance import (
     build_evaluation_result,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.temporal_worker import SingleActivityWorker
 from investment_manager.version_evaluation_workflows import (
@@ -153,7 +154,7 @@ class VersionEvaluationActivities:
         try:
             request = VersionEvaluationWorkflowRequest.model_validate(raw["request"])
             results = tuple(StageResult.model_validate(item) for item in raw["stage_results"])
-            completed_at = _require_utc(datetime.fromisoformat(raw["completed_at"]))
+            completed_at = require_utc(datetime.fromisoformat(raw["completed_at"]))
         except (KeyError, ValueError, ValidationError) as exc:
             raise ApplicationError(
                 "版本评估结果未通过契约校验",

@@ -12,8 +12,9 @@ from investment_manager.asset_management import (
     Materiality,
     StateSnapshot,
 )
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.official_information import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
@@ -146,8 +147,8 @@ def build_state_snapshot(
     data_quality_codes: tuple[str, ...] = (),
     coverage_gap_codes: tuple[str, ...] = (),
 ) -> StateSnapshot:
-    as_of = _require_utc(as_of)
-    built_at = _require_utc(built_at)
+    as_of = require_utc(as_of)
+    built_at = require_utc(built_at)
     fact_ids = tuple(item.fact_id for item in facts)
     if len(set(fact_ids)) != len(fact_ids):
         raise ValueError("StateSnapshot 每个 fact_id 只能引用一个修订")
@@ -298,7 +299,7 @@ def _build_fact_revision(
     source_observation_ids: tuple[str, ...],
     previous: CanonicalFactRevision | None,
 ) -> CanonicalFactRevision:
-    observed_at = _require_utc(observed_at)
+    observed_at = require_utc(observed_at)
     if previous is not None:
         if previous.fact_id != fact_id:
             raise ValueError("前序事实修订不属于同一 fact_id")

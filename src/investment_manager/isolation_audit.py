@@ -13,9 +13,10 @@ from investment_manager.analyst import (
     codex_runtime_integrity_matches,
 )
 from investment_manager.config import AppConfig
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import ReleaseManifest, validate_manifest_against_config
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
 
 
@@ -41,7 +42,7 @@ class CodexIsolationAuditArtifact(FrozenModel):
     ready: bool
     checks: tuple[IsolationAuditCheck, ...] = Field(min_length=1)
 
-    _utc_audited_at = field_validator("audited_at")(_require_utc)
+    _utc_audited_at = field_validator("audited_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_scope_match(self):
@@ -123,7 +124,7 @@ def build_codex_isolation_audit_artifact(
         config.codex_runtime
     )
     values = {
-        "audited_at": _require_utc(audited_at),
+        "audited_at": require_utc(audited_at),
         "manifest_id": manifest.manifest_id,
         "code_version": manifest.code_version,
         "configuration_hash": manifest.configuration_hash,

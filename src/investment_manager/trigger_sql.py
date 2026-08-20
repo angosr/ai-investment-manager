@@ -8,8 +8,9 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.config import TriggerPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import (
     analysis_call_admissions,
     analysis_scheduled_wakeups,
@@ -43,8 +44,8 @@ class TriggerOutboxMessage(FrozenModel):
     attempt_count: int
     payload: dict
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
 
 class SqlTriggerRepository:
@@ -84,7 +85,7 @@ class SqlTriggerRepository:
         return True
 
     def record_batch(self, batch: TriggerBatch, *, analysis_submitted_at: datetime) -> bool:
-        analysis_submitted_at = _require_utc(analysis_submitted_at)
+        analysis_submitted_at = require_utc(analysis_submitted_at)
         payload = batch.model_dump(mode="json")
         values = {
             "batch_id": batch.batch_id,
@@ -120,7 +121,7 @@ class SqlTriggerRepository:
     ) -> AnalysisCallAdmission:
         """跨品种原子防重复；同一批次重试不重复计数。"""
 
-        requested_at = _require_utc(requested_at)
+        requested_at = require_utc(requested_at)
         with self._engine.begin() as connection:
             if self._engine.dialect.name == "postgresql":
                 # 与 Dispatcher 的会话级领导锁使用不同 key；xact 锁只保护短事务。
@@ -225,7 +226,7 @@ class SqlTriggerRepository:
         now: datetime,
         current_manifest_id: str,
     ) -> TriggerPlanApplyResult:
-        now = _require_utc(now)
+        now = require_utc(now)
         with self._engine.begin() as connection:
             replay = connection.execute(
                 select(analysis_trigger_plans.c.payload).where(
@@ -274,7 +275,7 @@ class SqlTriggerRepository:
         as_of: datetime,
         limit: int = 100,
     ) -> tuple[TriggerOutboxMessage, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         if not 1 <= limit <= 1000:
             raise ValueError("Outbox batch limit 必须在 1..1000")
         with self._engine.connect() as connection:
@@ -301,7 +302,7 @@ class SqlTriggerRepository:
             )
 
     def mark_delivered(self, outbox_id: str, *, delivered_at: datetime) -> None:
-        delivered_at = _require_utc(delivered_at)
+        delivered_at = require_utc(delivered_at)
         with self._engine.begin() as connection:
             existing = connection.execute(
                 select(trigger_outbox.c.status).where(trigger_outbox.c.outbox_id == outbox_id)

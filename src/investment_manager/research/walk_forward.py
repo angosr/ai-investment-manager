@@ -7,9 +7,10 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from investment_manager.config import AppConfig
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.research.backtest import (
     BacktestMetrics,
     BacktestRun,
@@ -104,7 +105,7 @@ def build_walk_forward_evaluation_plan(
         stages.append(EvaluationStage.BLIND)
     return EvaluationPlan(
         plan_id=spec.plan.plan_id,
-        registered_at=_require_utc(registered_at),
+        registered_at=require_utc(registered_at),
         base_manifest_id=base_manifest_id,
         primary_metric="average_net_return_bps_lower_bound",
         minimum_sample_size=spec.plan.minimum_trades,
@@ -131,7 +132,7 @@ def validate_walk_forward_evaluation_plan(
 ) -> None:
     if plan.plan_id != spec.plan.plan_id:
         raise ValueError("walk-forward 与预登记计划 ID 不一致")
-    if plan.registered_at > _require_utc(evaluated_at):
+    if plan.registered_at > require_utc(evaluated_at):
         raise ValueError("walk-forward 不能早于计划预登记时间")
     if plan.base_manifest_id != champion_manifest_id:
         raise ValueError("walk-forward 计划不属于当前 Champion")
@@ -163,10 +164,10 @@ class WalkForwardFold(FrozenModel):
     purge_bars: int = Field(gt=0)
     run: BacktestRun
 
-    _utc_training_start = field_validator("training_start")(_require_utc)
-    _utc_training_end = field_validator("training_end")(_require_utc)
-    _utc_test_start = field_validator("test_start")(_require_utc)
-    _utc_test_end = field_validator("test_end")(_require_utc)
+    _utc_training_start = field_validator("training_start")(require_utc)
+    _utc_training_end = field_validator("training_end")(require_utc)
+    _utc_test_start = field_validator("test_start")(require_utc)
+    _utc_test_end = field_validator("test_end")(require_utc)
 
     @model_validator(mode="after")
     def windows_are_separated(self):
@@ -232,8 +233,8 @@ class BlindEvaluationResult(FrozenModel):
     reason_codes: tuple[str, ...]
     run: BacktestRun
 
-    _utc_reserved_start = field_validator("reserved_start")(_require_utc)
-    _utc_reserved_end = field_validator("reserved_end")(_require_utc)
+    _utc_reserved_start = field_validator("reserved_start")(require_utc)
+    _utc_reserved_end = field_validator("reserved_end")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_provenance_match(self):
@@ -280,7 +281,7 @@ def failed_walk_forward_experiment(
             {"hypothesis": hypothesis.strip().lower()}
         ),
         evidence_ids=(f"hypothesis:{hypothesis}", result.evaluation_id),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("WALK_FORWARD_FAILED", *result.reason_codes),
     )
 
@@ -307,7 +308,7 @@ def failed_blind_experiment(
             result.source_evaluation_id,
             result.result_id,
         ),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("BLIND_FAILED", *result.reason_codes),
     )
 

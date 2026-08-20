@@ -7,7 +7,8 @@ from typing import Protocol
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.domain import AccountSnapshot, _require_utc
+from investment_manager.domain import AccountSnapshot
+from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     latest_account_snapshot_payload,
@@ -54,7 +55,7 @@ class SqlShadowStateReader:
         as_of: datetime,
         initial_quote_balance,
     ) -> AccountSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         if self._maximum_reconciliation_age_seconds is not None:
             report = self._reconciliation_reports.latest(as_of=as_of)
             if report is not None:
@@ -101,7 +102,7 @@ class SqlShadowStateReader:
         )
 
     def last_cycle_at(self, *, symbol: str, as_of: datetime) -> datetime | None:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             value = connection.execute(
                 select(func.max(analysis_cycles.c.as_of))
@@ -125,7 +126,7 @@ class SqlShadowStateReader:
         产生了 ENTRY 订单的周期，并按 symbol 定界。
         """
 
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             value = connection.execute(
                 select(func.max(analysis_cycles.c.as_of))
@@ -148,7 +149,7 @@ class SqlShadowStateReader:
         return value
 
     def entry_orders_today(self, *, as_of: datetime) -> int:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         day_start = as_of.replace(hour=0, minute=0, second=0, microsecond=0)
         with self._engine.connect() as connection:
             return int(

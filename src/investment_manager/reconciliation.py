@@ -10,14 +10,14 @@ from pydantic import field_validator, model_validator
 from investment_manager.config import ReconciliationPolicy
 from investment_manager.domain import (
     AccountSnapshot,
-    FrozenModel,
     Order,
     OrderStatus,
     Position,
     Side,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 
 
 def _differences_hash(
@@ -53,8 +53,8 @@ class TradingStateSnapshot(FrozenModel):
     account: AccountSnapshot
     orders: tuple[Order, ...] = ()
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
     def visible_and_unique(self):
@@ -84,7 +84,7 @@ class ReconciliationReport(FrozenModel):
     authoritative_account: AccountSnapshot
     differences: tuple[ReconciliationDifference, ...] = ()
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
     @model_validator(mode="after")
     def state_must_be_consistent(self):
@@ -127,7 +127,7 @@ class ReconciliationEngine:
         *,
         as_of: datetime,
     ) -> ReconciliationReport:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         differences: list[ReconciliationDifference] = []
         stale = False
         for name, snapshot in (("local", local), ("remote", remote)):
@@ -179,7 +179,7 @@ class ReconciliationEngine:
         as_of: datetime,
         reason_code: str,
     ) -> ReconciliationReport:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         difference = ReconciliationDifference(
             kind=DifferenceKind.SNAPSHOT_STALE,
             key="remote_query",

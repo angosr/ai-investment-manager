@@ -18,14 +18,16 @@ from websockets.asyncio.client import connect
 
 from investment_manager.config import AppConfig, DeploymentStage, MarketDataPolicy
 from investment_manager.domain import (
-    FrozenModel,
     MarketBar,
     MarketSnapshot,
-    Money,
-    PositiveDecimal,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+    PositiveDecimal,
+)
 from investment_manager.trigger import AnalysisTriggerType, build_trigger_event
 
 logger = logging.getLogger(__name__)
@@ -46,7 +48,7 @@ class MarketQuote(FrozenModel):
     update_id: int | None = Field(default=None, ge=0)
     source: str
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
     def ask_must_not_be_below_bid(self):
@@ -66,8 +68,8 @@ class MarketTrade(FrozenModel):
     buyer_is_maker: bool
     source: str
 
-    _utc_event_time = field_validator("event_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class ClosedMarketBar(FrozenModel):
@@ -83,9 +85,9 @@ class ClosedMarketBar(FrozenModel):
     volume: Money
     source: str
 
-    _utc_open_time = field_validator("open_time")(_require_utc)
-    _utc_close_time = field_validator("close_time")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_open_time = field_validator("open_time")(require_utc)
+    _utc_close_time = field_validator("close_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
     def range_and_times_must_be_valid(self):
@@ -225,7 +227,7 @@ class MarketShockDetector:
         occurred_at: datetime,
         price: Decimal,
     ) -> Decimal | None:
-        second = int(_require_utc(occurred_at).timestamp())
+        second = int(require_utc(occurred_at).timestamp())
         current = state.seconds[-1]
         if second < current.second:
             return None
@@ -259,7 +261,7 @@ class MarketShockDetector:
         *,
         last_triggered_at: datetime | None = None,
     ) -> _MarketShockWindow:
-        second = int(_require_utc(at).timestamp())
+        second = int(require_utc(at).timestamp())
         sample = _MarketShockSecond(
             second=second,
             low_price=price,
@@ -373,7 +375,7 @@ class InMemoryMarketDataStore:
             return True
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._lock:
             visible = [
                 item
@@ -397,7 +399,7 @@ class InMemoryMarketDataStore:
         bar_window: int,
         source: str,
     ) -> MarketSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._lock:
             quotes = [
                 item
@@ -439,7 +441,7 @@ class InMemoryMarketDataStore:
 
 class BinanceMessageParser:
     def parse(self, payload: str | bytes, *, observed_at: datetime) -> MarketEvent | None:
-        observed_at = _require_utc(observed_at)
+        observed_at = require_utc(observed_at)
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
         raw = json.loads(payload)
@@ -532,7 +534,7 @@ class BinancePublicRestClient:
 
     async def fetch_quote(self, symbol: str) -> MarketQuote:
         raw = await self.transport.get("/api/v3/ticker/bookTicker", {"symbol": symbol})
-        observed_at = _require_utc(self.clock())
+        observed_at = require_utc(self.clock())
         if not isinstance(raw, dict) or str(raw.get("symbol")) != symbol:
             raise ValueError("Binance bookTicker REST 响应非法")
         identity = content_hash({"symbol": symbol, "raw": raw, "at": observed_at.isoformat()})
@@ -549,7 +551,7 @@ class BinancePublicRestClient:
 
     async def fetch_latest_trade(self, symbol: str) -> MarketTrade:
         raw = await self.transport.get("/api/v3/aggTrades", {"symbol": symbol, "limit": 1})
-        observed_at = _require_utc(self.clock())
+        observed_at = require_utc(self.clock())
         if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
             raise ValueError("Binance aggTrades REST 响应非法")
         item = raw[0]
@@ -573,7 +575,7 @@ class BinancePublicRestClient:
             "/api/v3/klines",
             {"symbol": symbol, "interval": interval, "limit": limit},
         )
-        observed_at = _require_utc(self.clock())
+        observed_at = require_utc(self.clock())
         if not isinstance(raw, list):
             raise ValueError("Binance klines REST 响应非法")
         observed_ms = int(observed_at.timestamp() * 1000)
@@ -712,7 +714,7 @@ class BinanceMarketStreamService:
                             self._policy.planned_reconnect_seconds - age,
                         )
                         payload = await asyncio.wait_for(anext(messages), timeout=timeout)
-                        observed_at = _require_utc(self._clock())
+                        observed_at = require_utc(self._clock())
                         event = self._parser.parse(payload, observed_at=observed_at)
                         self.health.message_count += 1
                         self.health.last_message_at = observed_at

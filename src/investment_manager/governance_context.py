@@ -14,7 +14,6 @@ from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
     IntelligenceEvent,
-    _require_utc,
 )
 from investment_manager.evaluation import OutcomeWindowReport
 from investment_manager.governance import (
@@ -27,6 +26,7 @@ from investment_manager.governance import (
     validate_manifest_against_config,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     SqlGovernanceRepository,
     analysis_cycles,
@@ -72,7 +72,7 @@ class GovernanceSnapshotAssembler:
         self._repository = SqlGovernanceRepository(engine)
 
     def build(self, *, as_of) -> GovernanceSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         constitution = load_constitution(self._root / "config" / "system-constitution.yaml")
         bootstrap = load_release_manifest(self._root / "config" / "release-manifest.yaml")
         validate_manifest_against_config(bootstrap, self._config)
@@ -527,7 +527,7 @@ def _trigger_latency_summaries(
 def _codex_run_summaries(rows, *, as_of: datetime) -> tuple[tuple[str, str], ...]:
     """按实际尝试耗时汇总 Codex 运行；旧事实缺耗时时只参与计数。"""
 
-    as_of = _require_utc(as_of)
+    as_of = require_utc(as_of)
     global_counts: Counter[str] = Counter()
     groups: dict[tuple[str, str], _CodexRuntimeStats] = {}
     for row in rows:
@@ -535,10 +535,10 @@ def _codex_run_summaries(rows, *, as_of: datetime) -> tuple[tuple[str, str], ...
         raw_observed_at = payload.get("observed_at")
         if not isinstance(raw_observed_at, str):
             continue
-        observed_at = _require_utc(datetime.fromisoformat(raw_observed_at))
+        observed_at = require_utc(datetime.fromisoformat(raw_observed_at))
         raw_completed_at = payload.get("completed_at")
         completed_at = (
-            _require_utc(datetime.fromisoformat(raw_completed_at))
+            require_utc(datetime.fromisoformat(raw_completed_at))
             if isinstance(raw_completed_at, str)
             else observed_at
         )
@@ -646,7 +646,7 @@ def _intelligence_event_summaries(
 
 
 def _duration_seconds(later: datetime, earlier: datetime) -> Decimal:
-    return Decimal(str((_require_utc(later) - _require_utc(earlier)).total_seconds()))
+    return Decimal(str((require_utc(later) - require_utc(earlier)).total_seconds()))
 
 
 def _percentile(values: list[Decimal], percentile: Decimal) -> Decimal:

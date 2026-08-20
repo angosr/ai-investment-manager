@@ -20,7 +20,9 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from investment_manager.config import RiskPolicy
-from investment_manager.domain import AccountSnapshot, FrozenModel, _require_utc
+from investment_manager.domain import AccountSnapshot
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import metadata
 
 portfolio_protection_states = Table(
@@ -150,7 +152,7 @@ class InMemoryPortfolioProtectionStore:
         marks: Mapping[str, Decimal],
         as_of: datetime,
     ) -> AccountSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         equity = marked_equity(account, marks)
         with self._lock:
             (
@@ -203,7 +205,7 @@ class SqlPortfolioProtectionStore:
         marks: Mapping[str, Decimal],
         as_of: datetime,
     ) -> AccountSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         equity = marked_equity(account, marks)
         with self._engine.begin() as connection:
             row = (
@@ -264,7 +266,7 @@ class SqlPortfolioProtectionStore:
         return PortfolioProtectionState.model_validate(dict(row))
 
     def reset(self, *, reset_at: datetime, reason: str) -> PortfolioProtectionState:
-        reset_at = _require_utc(reset_at)
+        reset_at = require_utc(reset_at)
         reason = reason.strip()
         if not reason:
             raise ValueError("人工恢复必须提供原因")

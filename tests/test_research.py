@@ -19,7 +19,6 @@ from investment_manager.domain import (
     AccountSnapshot,
     Action,
     FeatureSnapshot,
-    FrozenModel,
     IntelligenceEvent,
     MarketSnapshot,
     OrderType,
@@ -29,6 +28,7 @@ from investment_manager.domain import (
     SignalCandidate,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.market_data import ClosedMarketBar
 from investment_manager.research.carry import (
     CarryFundingSettlement,

@@ -258,6 +258,27 @@ def test_kernel_does_not_import_platform_or_business_modules() -> None:
             }
 
 
+def test_shared_kernel_primitives_are_not_imported_from_domain() -> None:
+    kernel_primitives = {
+        "FrozenModel",
+        "Money",
+        "PositiveDecimal",
+        "UnitInterval",
+        "floor_to_step",
+        "optional_utc",
+        "require_utc",
+    }
+
+    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module == (
+                "investment_manager.domain"
+            ):
+                assert not kernel_primitives.intersection(
+                    alias.name for alias in node.names
+                ), path
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

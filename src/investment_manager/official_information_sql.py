@@ -6,8 +6,8 @@ from datetime import datetime
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
-from investment_manager.domain import _require_utc
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.official_information import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
@@ -129,7 +129,7 @@ class SqlOfficialInformationStore:
         as_of: datetime,
         source_id: str | None = None,
     ) -> tuple[OfficialRecord, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         conditions = [source_observations.c.observed_at <= as_of]
         if source_id is not None:
             conditions.append(source_observations.c.source_id == source_id)
@@ -174,7 +174,7 @@ class SqlOfficialInformationStore:
         as_of: datetime,
         source_id: str | None = None,
     ) -> tuple[MarketCalendarEventRevision, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         conditions = [market_calendar_event_revisions.c.observed_at <= as_of]
         if source_id is not None:
             conditions.append(market_calendar_event_revisions.c.source_id == source_id)

@@ -12,9 +12,9 @@ from investment_manager.domain import (
     EdgeCalibration,
     Side,
     SignalCandidate,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
 
 EDGE_CALIBRATION_MISSING = "EDGE_CALIBRATION_MISSING"
 
@@ -74,7 +74,7 @@ class CalibrationBuildSpec:
             "valid_from",
             "valid_until",
         ):
-            object.__setattr__(self, name, _require_utc(getattr(self, name)))
+            object.__setattr__(self, name, require_utc(getattr(self, name)))
         if self.horizon_minutes <= 0:
             raise ValueError("校准周期必须为正数")
         if not (

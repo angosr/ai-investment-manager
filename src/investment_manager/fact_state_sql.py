@@ -6,12 +6,12 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Connection, Engine
 
 from investment_manager.asset_management import CanonicalFactRevision, MaterialDelta, StateSnapshot
-from investment_manager.domain import _require_utc
 from investment_manager.fact_pipeline import (
     validate_fact_revision_identity,
     validate_material_delta_identity,
     validate_state_snapshot_identity,
 )
+from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
@@ -102,7 +102,7 @@ class SqlFactStateStore:
         return None if payload is None else CanonicalFactRevision.model_validate(payload)
 
     def facts_as_of(self, *, as_of: datetime) -> tuple[CanonicalFactRevision, ...]:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             payloads = connection.execute(
                 select(canonical_fact_revisions.c.payload)
@@ -207,7 +207,7 @@ class SqlFactStateStore:
         projection_version: str,
         as_of: datetime,
     ) -> StateSnapshot | None:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(state_snapshots.c.payload)
@@ -229,7 +229,7 @@ class SqlFactStateStore:
         as_of: datetime,
     ) -> StateSnapshot | None:
         """Return the direct point-in-time predecessor, excluding ``as_of``."""
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(state_snapshots.c.payload)

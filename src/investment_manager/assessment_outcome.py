@@ -20,12 +20,16 @@ from investment_manager.decision_packet import DecisionPacket
 from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
-    FrozenModel,
-    PositiveDecimal,
-    _optional_utc,
-    _require_utc,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import (
+    optional_utc,
+    require_utc,
+)
+from investment_manager.kernel.types import (
+    FrozenModel,
+    PositiveDecimal,
+)
 from investment_manager.persistence import (
     assessment_view_outcomes,
     context_assessments,
@@ -58,10 +62,10 @@ class AssessmentViewOutcome(FrozenModel):
     direction_correct: bool | None = None
     reason_code: str = Field(min_length=1)
 
-    _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
-    _utc_evaluation_at = field_validator("evaluation_at")(_require_utc)
-    _utc_settled_at = field_validator("settled_at")(_require_utc)
-    _utc_exit_event_time = field_validator("exit_event_time")(_optional_utc)
+    _utc_signal_observed_at = field_validator("signal_observed_at")(require_utc)
+    _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+    _utc_settled_at = field_validator("settled_at")(require_utc)
+    _utc_exit_event_time = field_validator("exit_event_time")(optional_utc)
 
     @model_validator(mode="after")
     def identity_and_settlement_must_match(self):
@@ -291,9 +295,9 @@ class SqlAssessmentViewOutcomeStore:
         signal_window_end: datetime,
         published_at: datetime,
     ) -> tuple[AssessmentViewOutcome, ...]:
-        start = _require_utc(signal_window_start)
-        end = _require_utc(signal_window_end)
-        published = _require_utc(published_at)
+        start = require_utc(signal_window_start)
+        end = require_utc(signal_window_end)
+        published = require_utc(published_at)
         if not start < end <= published:
             raise ValueError("Assessment outcome 查询窗口与发布时间顺序非法")
         with self._engine.connect() as connection:
@@ -392,7 +396,7 @@ class AssessmentViewOutcomeSettler:
     batch_size: int = 100
 
     def settle(self, *, as_of: datetime) -> AssessmentSettlementResult:
-        now = _require_utc(as_of)
+        now = require_utc(as_of)
         settled = abstained = unscorable = pending_count = 0
         for pending in self.store.pending(
             evaluation_version=self.evaluation_version,

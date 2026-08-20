@@ -13,16 +13,16 @@ from investment_manager.decision import estimate_round_trip_cost_amount
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    FrozenModel,
     IntelligenceEvent,
     MarketBar,
     MarketSnapshot,
     OrderType,
     Side,
-    _require_utc,
 )
 from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.research.dataset import (
     HistoricalBarWindow,
     HistoricalDataset,
@@ -54,9 +54,9 @@ class SignalScreenExample(FrozenModel):
     exit_at: datetime
     net_return_bps: Decimal
 
-    _utc_signal = field_validator("signal_at")(_require_utc)
-    _utc_entry = field_validator("entry_at")(_require_utc)
-    _utc_exit = field_validator("exit_at")(_require_utc)
+    _utc_signal = field_validator("signal_at")(require_utc)
+    _utc_entry = field_validator("entry_at")(require_utc)
+    _utc_exit = field_validator("exit_at")(require_utc)
 
     @model_validator(mode="after")
     def times_are_ordered(self):
@@ -93,8 +93,8 @@ class SignalScreenResult(FrozenModel):
     examples: tuple[SignalScreenExample, ...] = ()
     limitations: tuple[str, ...]
 
-    _utc_start = field_validator("signal_start")(_require_utc)
-    _utc_end = field_validator("signal_end")(_require_utc)
+    _utc_start = field_validator("signal_start")(require_utc)
+    _utc_end = field_validator("signal_end")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_summary_match(self):
@@ -146,8 +146,8 @@ def run_raw_signal_screen(
     preregistered Nautilus walk-forward; it never grants trading eligibility.
     """
 
-    start = _require_utc(signal_start)
-    end = _require_utc(signal_end)
+    start = require_utc(signal_start)
+    end = require_utc(signal_end)
     if start >= end:
         raise ValueError("快速筛选窗口起点必须早于终点")
     if spread_bps < 0:

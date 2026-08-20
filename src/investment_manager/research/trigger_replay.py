@@ -7,8 +7,9 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.config import AppConfig
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.research.dataset import HistoricalEventDataset
 from investment_manager.trigger import (
     AnalysisTriggerEvent,
@@ -30,7 +31,7 @@ class TriggerReplayInitialScopeState(FrozenModel):
     last_analysis_at: datetime | None = None
 
     _utc_last_analysis = field_validator("last_analysis_at")(
-        lambda value: _require_utc(value) if value is not None else None
+        lambda value: require_utc(value) if value is not None else None
     )
 class ExternalTriggerReplaySpec(FrozenModel):
     """冻结生产触发规则及跨品种最小调用间隔。"""
@@ -50,7 +51,7 @@ class ExternalTriggerReplaySpec(FrozenModel):
     initial_state_source: Literal["EMPTY", "CYCLE_PERSISTENCE_PROXY", "EXACT"] = "EMPTY"
 
     _utc_initial_global = field_validator("initial_global_last_admitted_at")(
-        lambda value: _require_utc(value) if value is not None else None
+        lambda value: require_utc(value) if value is not None else None
     )
 
     @model_validator(mode="after")
@@ -113,7 +114,7 @@ class ReplayedTriggerBatch(FrozenModel):
     batch: TriggerBatch
     analysis_completed_at: datetime
 
-    _utc_completed_at = field_validator("analysis_completed_at")(_require_utc)
+    _utc_completed_at = field_validator("analysis_completed_at")(require_utc)
 
     @model_validator(mode="after")
     def completion_follows_submission(self):
@@ -169,8 +170,8 @@ class ExternalTriggerReplay(FrozenModel):
     batches: tuple[ReplayedTriggerBatch, ...]
     limitations: tuple[ReplayLimitation, ...]
 
-    _utc_replay_start = field_validator("replay_start")(_require_utc)
-    _utc_replay_end = field_validator("replay_end")(_require_utc)
+    _utc_replay_start = field_validator("replay_start")(require_utc)
+    _utc_replay_end = field_validator("replay_end")(require_utc)
 
     @model_validator(mode="after")
     def identity_scope_and_order_match(self):
@@ -236,8 +237,8 @@ def run_external_trigger_replay(
 ) -> ExternalTriggerReplay:
     """在一个离散时钟中回放所有品种协调器及其共享防重复间隔。"""
 
-    start = _require_utc(replay_start)
-    end = _require_utc(replay_end)
+    start = require_utc(replay_start)
+    end = require_utc(replay_end)
     if start >= end:
         raise ValueError("触发回放起点必须早于终点")
     if event_dataset.manifest.requested_start > start or event_dataset.manifest.requested_end < end:
@@ -472,4 +473,4 @@ def _eligible(pending: tuple[dict, ...]) -> list[dict]:
 
 def _payload_time(value: str | datetime) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
-    return _require_utc(parsed)
+    return require_utc(parsed)

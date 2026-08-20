@@ -8,9 +8,13 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import FrozenModel, _require_utc, floor_to_step
 from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    floor_to_step,
+)
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.research.carry import (
     CarryFundingSettlement,
@@ -76,8 +80,8 @@ class CarryBacktestRun(FrozenModel):
     assumptions: tuple[str, ...]
     metrics: CarryRunMetrics
 
-    _utc_start = field_validator("start")(_require_utc)
-    _utc_end = field_validator("end")(_require_utc)
+    _utc_start = field_validator("start")(require_utc)
+    _utc_end = field_validator("end")(require_utc)
 
 
 class CarryWalkForwardPlan(FrozenModel):
@@ -106,8 +110,8 @@ class CarryWalkForwardFold(FrozenModel):
     end: datetime
     run: CarryBacktestRun
 
-    _utc_start = field_validator("start")(_require_utc)
-    _utc_end = field_validator("end")(_require_utc)
+    _utc_start = field_validator("start")(require_utc)
+    _utc_end = field_validator("end")(require_utc)
 
 
 class CarryWalkForwardMetrics(FrozenModel):
@@ -136,8 +140,8 @@ class CarryWalkForwardResult(FrozenModel):
     passed: bool
     reason_codes: tuple[str, ...]
 
-    _utc_blind_start = field_validator("blind_start")(_require_utc)
-    _utc_blind_end = field_validator("blind_end")(_require_utc)
+    _utc_blind_start = field_validator("blind_start")(require_utc)
+    _utc_blind_end = field_validator("blind_end")(require_utc)
 
 
 class CarryBlindResult(FrozenModel):
@@ -270,7 +274,7 @@ def build_carry_evaluation_plan(
 ) -> EvaluationPlan:
     return EvaluationPlan(
         plan_id=spec.plan.plan_id,
-        registered_at=_require_utc(registered_at),
+        registered_at=require_utc(registered_at),
         base_manifest_id=base_manifest_id,
         primary_metric="annualized_return_lower_bound",
         minimum_sample_size=spec.plan.fold_count,
@@ -308,7 +312,7 @@ def validate_carry_evaluation_plan(
         raise ValueError("carry 必须使用预登记的精确评价依赖环境")
     if plan.plan_id != spec.plan.plan_id:
         raise ValueError("carry 评价与预登记计划 ID 不一致")
-    if plan.registered_at > _require_utc(evaluated_at):
+    if plan.registered_at > require_utc(evaluated_at):
         raise ValueError("carry 评价不能早于计划预登记时间")
     if plan.base_manifest_id != champion_manifest_id:
         raise ValueError("carry 计划不属于当前 Champion")
@@ -342,7 +346,7 @@ def failed_carry_walk_forward_experiment(
             {"hypothesis": hypothesis.strip().lower()}
         ),
         evidence_ids=(f"hypothesis:{hypothesis}", result.evaluation_id),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("CARRY_WALK_FORWARD_FAILED", *result.reason_codes),
     )
 
@@ -366,7 +370,7 @@ def failed_carry_blind_experiment(
             result.source_evaluation_id,
             result.result_id,
         ),
-        rejected_at=_require_utc(rejected_at),
+        rejected_at=require_utc(rejected_at),
         reason_codes=("CARRY_BLIND_FAILED", *result.reason_codes),
     )
 
@@ -382,8 +386,8 @@ def run_carry_backtest(
 ) -> CarryBacktestRun:
     """Replay one fixed spot/perpetual pair; no signal fitting or AI calls."""
 
-    start = _require_utc(start)
-    end = _require_utc(end)
+    start = require_utc(start)
+    end = require_utc(end)
     if start >= end:
         raise ValueError("carry 回放起点必须早于终点")
     _validate_external_carry_inputs(carry_dataset, spot_dataset)

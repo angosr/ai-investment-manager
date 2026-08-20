@@ -10,8 +10,12 @@ import yaml
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.config import AppConfig
-from investment_manager.domain import FrozenModel, _optional_utc, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import (
+    optional_utc,
+    require_utc,
+)
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.trigger import AnalysisTriggerPlan
 
 
@@ -93,7 +97,7 @@ class ReleaseManifest(FrozenModel):
     parent_manifest_id: str | None = None
     complexity_score: int = Field(default=0, ge=0)
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
 
 
 class FailedExperiment(FrozenModel):
@@ -103,7 +107,7 @@ class FailedExperiment(FrozenModel):
     rejected_at: datetime
     reason_codes: tuple[str, ...]
 
-    _utc_rejected_at = field_validator("rejected_at")(_require_utc)
+    _utc_rejected_at = field_validator("rejected_at")(require_utc)
 
 
 def evaluation_plan_invalidation_id(plan_id: str) -> str:
@@ -125,7 +129,7 @@ def build_evaluation_plan_invalidation(
             {"invalidated_evaluation_plan": plan_id}
         ),
         evidence_ids=(f"evaluation_plan:{plan_id}", *evidence_ids),
-        rejected_at=_require_utc(invalidated_at),
+        rejected_at=require_utc(invalidated_at),
         reason_codes=("EVALUATION_PLAN_INVALIDATED", *reason_codes),
     )
 
@@ -146,7 +150,7 @@ class GovernanceSnapshot(FrozenModel):
     complexity_limit: int = Field(default=10, ge=0)
     content_hash: str
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
     @model_validator(mode="after")
     def plans_must_be_preregistered_for_champion(self):
@@ -183,7 +187,7 @@ class EvaluationPlan(FrozenModel):
     candidate_spec_snapshot: dict[str, object] | None = None
     blind_query_budget: int = Field(default=0, ge=0)
 
-    _utc_registered_at = field_validator("registered_at")(_require_utc)
+    _utc_registered_at = field_validator("registered_at")(require_utc)
 
     @field_validator("required_stages")
     @classmethod
@@ -223,10 +227,10 @@ class BlindEvaluationClaim(FrozenModel):
     result_id: str | None = None
     result_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
-    _utc_claimed_at = field_validator("claimed_at")(_require_utc)
-    _utc_completed_at = field_validator("completed_at")(_optional_utc)
-    _utc_blind_start = field_validator("blind_start")(_require_utc)
-    _utc_blind_end = field_validator("blind_end")(_require_utc)
+    _utc_claimed_at = field_validator("claimed_at")(require_utc)
+    _utc_completed_at = field_validator("completed_at")(optional_utc)
+    _utc_blind_start = field_validator("blind_start")(require_utc)
+    _utc_blind_end = field_validator("blind_end")(require_utc)
 
     @model_validator(mode="after")
     def completion_fields_are_atomic(self):
@@ -270,7 +274,7 @@ class ChangeProposal(FrozenModel):
     manual_only: bool = False
     indivisible_change_rationale: str | None = None
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
 
     @property
     def hypothesis_fingerprint(self) -> str:
@@ -290,7 +294,7 @@ class NoChange(FrozenModel):
     reason_codes: tuple[str, ...] = Field(min_length=1)
     revisit_conditions: tuple[str, ...] = Field(min_length=1)
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class GovernanceGateResult(FrozenModel):
@@ -362,7 +366,7 @@ class EvaluationResult(FrozenModel):
     completed_at: datetime
     stage_results: tuple[StageResult, ...]
 
-    _utc_completed_at = field_validator("completed_at")(_require_utc)
+    _utc_completed_at = field_validator("completed_at")(require_utc)
 
     @model_validator(mode="after")
     def stages_must_be_unique_and_bound_to_one_artifact(self):
@@ -400,7 +404,7 @@ def build_evaluation_result(
     completed_at: datetime,
     stage_results: tuple[StageResult, ...],
 ) -> EvaluationResult:
-    completed_at = _require_utc(completed_at)
+    completed_at = require_utc(completed_at)
     if any(item.artifact_hash != target.artifact_hash for item in stage_results):
         raise ValueError("StageResult 与候选制品哈希不一致")
     evaluation_id = stable_id(
@@ -464,7 +468,7 @@ class ReleaseApprovalDecision(FrozenModel):
     status: ReleaseApprovalStatus
     reason_codes: tuple[str, ...] = Field(min_length=1)
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
 
 
 class ReleaseGate:
@@ -479,7 +483,7 @@ class ReleaseGate:
         complexity_limit: int,
         created_at: datetime,
     ) -> ReleaseApprovalDecision:
-        created_at = _require_utc(created_at)
+        created_at = require_utc(created_at)
         reasons: list[str] = []
         if evaluation.proposal_id != target.proposal.proposal_id:
             reasons.append("EVALUATION_PROPOSAL_MISMATCH")

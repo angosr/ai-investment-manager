@@ -12,7 +12,6 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.config import TemporalPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.governance import (
     EvaluationResult,
     EvaluationTarget,
@@ -22,6 +21,8 @@ from investment_manager.governance import (
     ReleaseManifest,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.release_workflows import EVALUATE_RELEASE_ACTIVITY, ReleaseWorkflow
 from investment_manager.temporal_worker import SingleActivityWorker
@@ -38,7 +39,7 @@ class ReleaseWorkflowRequest(FrozenModel):
     orchestration: OrchestrationPolicySnapshot
     input_hash: str
 
-    _utc_requested_at = field_validator("requested_at")(_require_utc)
+    _utc_requested_at = field_validator("requested_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_frozen_relationships_must_match(self):
@@ -91,7 +92,7 @@ def build_release_workflow_request(
     requested_at: datetime,
     temporal_policy: TemporalPolicy,
 ) -> ReleaseWorkflowRequest:
-    requested_at = _require_utc(requested_at)
+    requested_at = require_utc(requested_at)
     orchestration = OrchestrationPolicySnapshot.from_config(temporal_policy)
     payload = {
         "target": target.model_dump(mode="json"),

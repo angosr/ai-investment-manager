@@ -7,8 +7,8 @@ from pathlib import Path
 
 from pydantic import Field
 
-from investment_manager.domain import FrozenModel
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.research.walk_forward import BlindEvaluationResult, WalkForwardResult
 

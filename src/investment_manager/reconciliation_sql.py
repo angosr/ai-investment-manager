@@ -7,8 +7,12 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import AccountSnapshot, Order, _require_utc
+from investment_manager.domain import (
+    AccountSnapshot,
+    Order,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     latest_account_snapshot_payload,
@@ -37,7 +41,7 @@ class SqlLocalTradingStateSource:
         self._reports = SqlReconciliationReportStore(engine)
 
     def snapshot(self, *, as_of: datetime) -> TradingStateSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             account_payload = latest_account_snapshot_payload(connection, as_of=as_of)
             order_payloads = tuple(
@@ -94,7 +98,7 @@ class SqlMockExchangeTruthSource:
         self._initial_quote_balance = initial_quote_balance
 
     def snapshot(self, *, as_of: datetime) -> TradingStateSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(
@@ -175,7 +179,7 @@ class SqlReconciliationReportStore:
         return report
 
     def latest(self, *, as_of: datetime) -> ReconciliationReport | None:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(reconciliation_reports.c.payload)

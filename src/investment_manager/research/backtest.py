@@ -13,7 +13,6 @@ from investment_manager.decision import estimate_round_trip_cost_amount
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    FrozenModel,
     IntelligenceEvent,
     MarketBar,
     MarketSnapshot,
@@ -23,12 +22,15 @@ from investment_manager.domain import (
     Side,
     SignalCandidate,
     TradeIntent,
-    _require_utc,
-    floor_to_step,
 )
 from investment_manager.exit_policy import program_exit_triggered
 from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
+    FrozenModel,
+    floor_to_step,
+)
 from investment_manager.research.dataset import (
     HistoricalDataset,
     HistoricalEventDataset,
@@ -63,9 +65,9 @@ class BacktestTrade(FrozenModel):
     net_return_bps: Decimal
     exit_reason: Literal["STOP_LOSS", "PROGRAM_SIGNAL", "MAX_HOLDING_TIME"]
 
-    _utc_signal_at = field_validator("signal_at")(_require_utc)
-    _utc_opened_at = field_validator("opened_at")(_require_utc)
-    _utc_closed_at = field_validator("closed_at")(_require_utc)
+    _utc_signal_at = field_validator("signal_at")(require_utc)
+    _utc_opened_at = field_validator("opened_at")(require_utc)
+    _utc_closed_at = field_validator("closed_at")(require_utc)
 
     @model_validator(mode="after")
     def times_are_ordered(self):
@@ -129,8 +131,8 @@ class BacktestRun(FrozenModel):
     trades: tuple[BacktestTrade, ...]
     metrics: BacktestMetrics
 
-    _utc_signal_start = field_validator("signal_start")(_require_utc)
-    _utc_signal_end = field_validator("signal_end")(_require_utc)
+    _utc_signal_start = field_validator("signal_start")(require_utc)
+    _utc_signal_end = field_validator("signal_end")(require_utc)
 
 
 def artifact_hash(config: AppConfig, *, strategy_spec: object | None = None) -> str:
@@ -178,10 +180,10 @@ def run_bar_backtest(
     except ModuleNotFoundError as exc:  # pragma: no cover - 环境契约由 CLI 覆盖
         raise RuntimeError("回测需要安装 investment-manager[research]") from exc
 
-    signal_start = _require_utc(signal_start)
-    signal_end = _require_utc(signal_end)
-    replay_start = _require_utc(replay_start) if replay_start is not None else None
-    replay_end = _require_utc(replay_end) if replay_end is not None else None
+    signal_start = require_utc(signal_start)
+    signal_end = require_utc(signal_end)
+    replay_start = require_utc(replay_start) if replay_start is not None else None
+    replay_end = require_utc(replay_end) if replay_end is not None else None
     if signal_start >= signal_end:
         raise ValueError("回测信号窗口起点必须早于终点")
     if spread_bps < 0:
@@ -556,7 +558,7 @@ def _fixed(value: Decimal, precision: int) -> str:
 
 
 def _to_nanoseconds(value: datetime) -> int:
-    return int(_require_utc(value).timestamp() * 1_000_000_000)
+    return int(require_utc(value).timestamp() * 1_000_000_000)
 
 
 def _from_nanoseconds(value: int) -> datetime:

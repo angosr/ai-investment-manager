@@ -14,8 +14,9 @@ from typing import Any, Literal
 import httpx
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.research.dataset import HistoricalDataset, HistoricalFundingDataset
 
 _BINANCE_USDM_REST = "https://fapi.binance.com"
@@ -40,7 +41,7 @@ class CarryInstrumentSpec(FrozenModel):
     maximum_quantity: Decimal = Field(gt=0)
     minimum_notional: Decimal = Field(gt=0)
 
-    _utc_onboarded_at = field_validator("onboarded_at")(_require_utc)
+    _utc_onboarded_at = field_validator("onboarded_at")(require_utc)
 
     @model_validator(mode="after")
     def bounds_are_ordered(self):
@@ -70,8 +71,8 @@ class CarryMarketDay(FrozenModel):
     premium_low: Decimal
     premium_close: Decimal
 
-    _utc_open_time = field_validator("open_time")(_require_utc)
-    _utc_close_time = field_validator("close_time")(_require_utc)
+    _utc_open_time = field_validator("open_time")(require_utc)
+    _utc_close_time = field_validator("close_time")(require_utc)
 
     @model_validator(mode="after")
     def candle_bounds_are_valid(self):
@@ -95,8 +96,8 @@ class CarryFundingSettlement(FrozenModel):
     funding_rate: Decimal
     mark_price: Decimal = Field(gt=0)
 
-    _utc_funding_time = field_validator("funding_time")(_require_utc)
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_funding_time = field_validator("funding_time")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
     def availability_follows_settlement(self):
@@ -131,13 +132,13 @@ class HistoricalCarryDatasetManifest(FrozenModel):
     )
     instrument: CarryInstrumentSpec
 
-    _utc_collected_at = field_validator("collected_at")(_require_utc)
-    _utc_requested_start = field_validator("requested_start")(_require_utc)
-    _utc_requested_end = field_validator("requested_end")(_require_utc)
-    _utc_first_open = field_validator("first_open_time")(_require_utc)
-    _utc_last_close = field_validator("last_close_time")(_require_utc)
-    _utc_first_funding = field_validator("first_funding_time")(_require_utc)
-    _utc_last_funding = field_validator("last_funding_time")(_require_utc)
+    _utc_collected_at = field_validator("collected_at")(require_utc)
+    _utc_requested_start = field_validator("requested_start")(require_utc)
+    _utc_requested_end = field_validator("requested_end")(require_utc)
+    _utc_first_open = field_validator("first_open_time")(require_utc)
+    _utc_last_close = field_validator("last_close_time")(require_utc)
+    _utc_first_funding = field_validator("first_funding_time")(require_utc)
+    _utc_last_funding = field_validator("last_funding_time")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_bounds_match(self):
@@ -277,7 +278,7 @@ async def fetch_binance_carry_history(
         or spot.requested_end != funding.requested_end
     ):
         raise ValueError("carry 现货与资金费率数据必须同品种、同窗口且为日线")
-    collected_at = _require_utc((clock or (lambda: datetime.now(UTC)))())
+    collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
     if spot.requested_end > collected_at:
         raise ValueError("carry 数据窗口终点不能晚于冻结时间")
 

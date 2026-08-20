@@ -10,8 +10,9 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.config import TriggerPolicy
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 
 
 class TriggerReason(StrEnum):
@@ -33,10 +34,10 @@ class AnalysisCallAdmission(FrozenModel):
     retry_at: datetime | None = None
 
     _utc_admitted_at = field_validator("admitted_at")(
-        lambda value: _require_utc(value) if value is not None else None
+        lambda value: require_utc(value) if value is not None else None
     )
     _utc_retry_at = field_validator("retry_at")(
-        lambda value: _require_utc(value) if value is not None else None
+        lambda value: require_utc(value) if value is not None else None
     )
 
     @model_validator(mode="after")
@@ -56,10 +57,10 @@ def decide_analysis_call_admission(
 ) -> AnalysisCallAdmission:
     """Pure global de-duplication interval shared by production and replay."""
 
-    requested_at = _require_utc(requested_at)
+    requested_at = require_utc(requested_at)
     if minimum_call_interval_seconds < 0:
         raise ValueError("minimum_call_interval_seconds 不能为负数")
-    last = _require_utc(last_admitted_at) if last_admitted_at is not None else None
+    last = require_utc(last_admitted_at) if last_admitted_at is not None else None
     if last is not None and last > requested_at:
         raise ValueError("last_admitted_at 不能晚于 requested_at")
     retry_at = (
@@ -98,13 +99,13 @@ class AnalysisTriggerEvent(FrozenModel):
     expires_at: datetime | None = None
     plan_revision: int | None = Field(default=None, ge=1)
 
-    _utc_occurred_at = field_validator("occurred_at")(_require_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_occurred_at = field_validator("occurred_at")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @field_validator("expires_at")
     @classmethod
     def expires_at_must_be_utc(cls, value: datetime | None) -> datetime | None:
-        return _require_utc(value) if value is not None else None
+        return require_utc(value) if value is not None else None
 
     @model_validator(mode="after")
     def fact_and_identity_must_be_consistent(self):
@@ -187,8 +188,8 @@ class ScheduledWakeup(FrozenModel):
     hypothesis: str = Field(default="", max_length=2_000)
     required_freshness_seconds: int = Field(default=180, ge=1, le=86_400)
 
-    _utc_wake_at = field_validator("wake_at")(_require_utc)
-    _utc_expires_at = field_validator("expires_at")(_require_utc)
+    _utc_wake_at = field_validator("wake_at")(require_utc)
+    _utc_expires_at = field_validator("expires_at")(require_utc)
 
     @model_validator(mode="after")
     def window_must_be_valid(self):
@@ -212,7 +213,7 @@ class AnalysisTriggerPlan(FrozenModel):
     updated_at: datetime
     applied_patch_id: str | None = None
 
-    _utc_updated_at = field_validator("updated_at")(_require_utc)
+    _utc_updated_at = field_validator("updated_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_members_must_be_unique(self):
@@ -263,7 +264,7 @@ def carry_forward_trigger_plan(
 ) -> AnalysisTriggerPlan:
     """发布新代际时保留主 Agent 动态计划，并重新绑定新身份。"""
 
-    updated_at = _require_utc(updated_at)
+    updated_at = require_utc(updated_at)
     return AnalysisTriggerPlan(
         plan_id=stable_id("analysis_trigger_plan", previous.symbol, pipeline_id),
         revision=1,
@@ -344,7 +345,7 @@ class TriggerPlanPatch(FrozenModel):
     evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
     operations: tuple[TriggerPlanOperation, ...] = Field(min_length=1, max_length=100)
 
-    _utc_submitted_at = field_validator("submitted_at")(_require_utc)
+    _utc_submitted_at = field_validator("submitted_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_must_match(self):
@@ -368,7 +369,7 @@ def build_trigger_plan_patch(
         plan_id=plan.plan_id,
         expected_revision=plan.revision,
         manifest_id=plan.manifest_id,
-        submitted_at=_require_utc(submitted_at),
+        submitted_at=require_utc(submitted_at),
         evidence_ids=tuple(sorted(evidence_ids)),
         operations=operations,
     )
@@ -403,8 +404,8 @@ class TriggerBatch(FrozenModel):
     deadline: datetime
     triggers: tuple[AnalysisTriggerEvent, ...] = Field(min_length=1, max_length=1000)
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
-    _utc_deadline = field_validator("deadline")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
+    _utc_deadline = field_validator("deadline")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_scope_must_match(self):
@@ -486,12 +487,12 @@ def trigger_reconsideration(
 ) -> TriggerTiming:
     """Return the next wake time; reaching an expiry means discard, not execute."""
 
-    current = _require_utc(now)
+    current = require_utc(now)
     if not pending:
         raise ValueError("触发重算至少需要一个待处理事件")
-    last = _require_utc(last_analysis_at) if last_analysis_at is not None else None
+    last = require_utc(last_analysis_at) if last_analysis_at is not None else None
     retry_at = (
-        _require_utc(input_retry_not_before)
+        require_utc(input_retry_not_before)
         if input_retry_not_before is not None
         else None
     )
@@ -523,7 +524,7 @@ def trigger_reconsideration(
 
 def _trigger_payload_time(value: str | datetime) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
-    return _require_utc(parsed)
+    return require_utc(parsed)
 
 
 def build_trigger_batch(
@@ -541,7 +542,7 @@ def build_trigger_batch(
             plan.pipeline_id,
             plan.revision,
             *(item.trigger_id for item in ordered),
-            _require_utc(deadline).isoformat(),
+            require_utc(deadline).isoformat(),
         ),
         symbol=plan.symbol,
         pipeline_id=plan.pipeline_id,
@@ -566,7 +567,7 @@ class TriggerPlanGate:
         now: datetime,
         current_manifest_id: str,
     ) -> TriggerPlanApplyResult:
-        now = _require_utc(now)
+        now = require_utc(now)
         if patch.plan_id != current.plan_id:
             raise ValueError("TriggerPlanPatch 目标计划不一致")
         if patch.expected_revision != current.revision:

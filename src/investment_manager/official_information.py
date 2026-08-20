@@ -13,8 +13,9 @@ from zoneinfo import ZoneInfo
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.asset_management import SourceObservation, SourceTier
-from investment_manager.domain import FrozenModel, _require_utc
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.source_payload import build_raw_source_payload
 
 FED_SOURCE_ID = "federal-reserve"
@@ -82,7 +83,7 @@ class FomcMeetingRecord(FrozenModel):
     has_projection_materials: bool
     source_url: Literal[FED_FOMC_CALENDAR_URL] = FED_FOMC_CALENDAR_URL
 
-    _utc_statement_at = field_validator("statement_at")(_require_utc)
+    _utc_statement_at = field_validator("statement_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_schedule_are_consistent(self):
@@ -139,10 +140,10 @@ class MarketCalendarEventRevision(FrozenModel):
     has_projection_materials: bool
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_event_start = field_validator("event_start_at")(_require_utc)
-    _utc_event_end = field_validator("event_end_at")(_require_utc)
-    _utc_release = field_validator("scheduled_release_at")(_require_utc)
-    _utc_observed = field_validator("observed_at")(_require_utc)
+    _utc_event_start = field_validator("event_start_at")(require_utc)
+    _utc_event_end = field_validator("event_end_at")(require_utc)
+    _utc_release = field_validator("scheduled_release_at")(require_utc)
+    _utc_observed = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_and_window_are_consistent(self):
@@ -227,7 +228,7 @@ def parse_fomc_calendar(
 ) -> tuple[FomcMeetingRecord, ...]:
     """Parse the Fed calendar without assigning asset relevance or trigger priority."""
 
-    observed_at = _require_utc(observed_at)
+    observed_at = require_utc(observed_at)
     raw_payload_ref = build_raw_source_payload(
         source_id=FED_SOURCE_ID,
         source_url=FED_FOMC_CALENDAR_URL,
@@ -294,7 +295,7 @@ def parse_fed_monetary_rss(
     *,
     observed_at: datetime,
 ) -> tuple[FedMonetaryReleaseRecord, ...]:
-    observed_at = _require_utc(observed_at)
+    observed_at = require_utc(observed_at)
     raw_payload_ref = build_raw_source_payload(
         source_id=FED_SOURCE_ID,
         source_url=FED_MONETARY_RSS_URL,

@@ -20,14 +20,18 @@ from investment_manager.asset_management import (
 from investment_manager.domain import (
     AccountSnapshot,
     FeatureSnapshot,
-    FrozenModel,
     MarketSnapshot,
-    Money,
-    PositiveDecimal,
-    _optional_utc,
-    _require_utc,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.time import (
+    optional_utc,
+    require_utc,
+)
+from investment_manager.kernel.types import (
+    FrozenModel,
+    Money,
+    PositiveDecimal,
+)
 from investment_manager.panel import sanitize_external_text
 
 
@@ -120,7 +124,7 @@ class PacketAssetState(FrozenModel):
     regime: str
     market_age_seconds: int = Field(ge=0)
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class PacketDelta(FrozenModel):
@@ -137,8 +141,8 @@ class PacketDelta(FrozenModel):
     feature_snapshot_refs: tuple[str, ...]
     reason_codes: tuple[str, ...]
 
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
-    _utc_expires_at = field_validator("expires_at")(_require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_expires_at = field_validator("expires_at")(require_utc)
 
 
 class PacketFact(FrozenModel):
@@ -157,8 +161,8 @@ class PacketFact(FrozenModel):
     prompt_injection_suspected: bool
     directly_triggered: bool
 
-    _utc_event_time = field_validator("event_time")(_optional_utc)
-    _utc_observed_at = field_validator("observed_at")(_require_utc)
+    _utc_event_time = field_validator("event_time")(optional_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class RequiredView(FrozenModel):
@@ -190,7 +194,7 @@ class DecisionPacket(FrozenModel):
     rules_digest: tuple[str, ...]
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
-    _utc_as_of = field_validator("as_of")(_require_utc)
+    _utc_as_of = field_validator("as_of")(require_utc)
 
     @classmethod
     def create(cls, **content: object) -> DecisionPacket:
@@ -590,7 +594,7 @@ def finalize_context_assessment(
     analysis_behavior_hash: str,
     available_at: datetime,
 ) -> ContextAssessment:
-    available_at = _require_utc(available_at)
+    available_at = require_utc(available_at)
     expected_views = tuple(
         (item.asset, item.horizon_minutes) for item in packet.required_views
     )

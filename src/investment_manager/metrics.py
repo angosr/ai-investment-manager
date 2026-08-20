@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import FrozenModel, MetricObservation
+from investment_manager.domain import MetricObservation
 from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.types import FrozenModel
 
 METRIC_VERSION = "metrics-v3"
 

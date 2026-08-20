@@ -19,8 +19,10 @@ from temporalio.worker import Worker
 
 from investment_manager.binance_testnet import assemble_binance_testnet
 from investment_manager.config import AppConfig, DeploymentStage, TemporalPolicy
-from investment_manager.domain import FrozenModel, PositionLifecycle, _require_utc
+from investment_manager.domain import PositionLifecycle
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.lifecycle import (
     OpenLifecycleRecord,
     OpenLifecycleRepository,
@@ -135,7 +137,7 @@ class PositionLifecycleActivities:
                 type="InvalidLifecycleInput",
                 non_retryable=True,
             ) from exc
-        now = _require_utc(self.clock())
+        now = require_utc(self.clock())
         lifecycle = request.lifecycle
         market = self.market_store.snapshot(
             cycle_id=lifecycle.cycle_id,

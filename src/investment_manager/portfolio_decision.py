@@ -11,15 +11,15 @@ from investment_manager.asset_management import (
     ForecastRole,
     PortfolioTarget,
 )
-from investment_manager.domain import (
-    DirectionalView,
+from investment_manager.domain import DirectionalView
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import (
     FrozenModel,
     Money,
     PositiveDecimal,
     UnitInterval,
-    _require_utc,
 )
-from investment_manager.kernel.identity import content_hash, stable_id
 
 
 class PortfolioDecisionPolicy(FrozenModel):
@@ -75,7 +75,7 @@ class PortfolioDecisionEngine:
     ) -> PortfolioTarget | None:
         if not self._policy.enabled:
             return None
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         symbols = tuple(item.symbol for item in assets)
         if tuple(sorted(set(symbols))) != symbols:
             raise ValueError("PortfolioAssetInput 必须按 symbol 唯一且排序")

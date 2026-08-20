@@ -17,7 +17,8 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import MarketSnapshot, _require_utc
+from investment_manager.domain import MarketSnapshot
+from investment_manager.kernel.time import require_utc
 from investment_manager.market_data import (
     ClosedMarketBar,
     MarketQuote,
@@ -174,7 +175,7 @@ class SqlMarketDataStore:
             return False
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(market_trades.c.payload)
@@ -203,7 +204,7 @@ class SqlMarketDataStore:
         bar_window: int,
         source: str,
     ) -> MarketSnapshot:
-        as_of = _require_utc(as_of)
+        as_of = require_utc(as_of)
         with self._engine.connect() as connection:
             quote_payload = connection.execute(
                 select(market_quotes.c.payload)

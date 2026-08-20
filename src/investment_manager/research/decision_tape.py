@@ -17,16 +17,16 @@ from investment_manager.domain import (
     DirectionalForecast,
     DirectionalView,
     FeatureSnapshot,
-    FrozenModel,
     IntelligenceEvent,
     MarketSnapshot,
     Side,
     SignalCandidate,
-    _require_utc,
 )
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance import EvaluationPlan, EvaluationStage
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_proposals,
@@ -60,7 +60,7 @@ class ForecastTapeEntry(FrozenModel):
     confidence: Decimal = Field(ge=0, le=1)
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_available_at = field_validator("available_at")(_require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_matches_frozen_source(self):
@@ -91,7 +91,7 @@ class ForecastTapeEntry(FrozenModel):
             "pipeline_version": pipeline_version,
             "source_run_id": source_run_id,
             "symbol": proposal.symbol,
-            "available_at": _require_utc(available_at),
+            "available_at": require_utc(available_at),
             "horizon_minutes": forecast.horizon_minutes,
             "directional_view": forecast.directional_view,
             "confidence": forecast.confidence,
@@ -120,8 +120,8 @@ class ForecastDecisionTape(FrozenModel):
     exclusions: tuple[ForecastTapeExclusion, ...] = ()
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    _utc_window_start = field_validator("window_start")(_require_utc)
-    _utc_window_end = field_validator("window_end")(_require_utc)
+    _utc_window_start = field_validator("window_start")(require_utc)
+    _utc_window_end = field_validator("window_end")(require_utc)
 
     @model_validator(mode="after")
     def bounds_order_and_hash_match(self):
@@ -165,8 +165,8 @@ class SqlForecastDecisionTapeReader:
         window_end: datetime,
         maximum_completion_lag_seconds: int,
     ) -> ForecastDecisionTape:
-        start = _require_utc(window_start)
-        end = _require_utc(window_end)
+        start = require_utc(window_start)
+        end = require_utc(window_end)
         if start >= end:
             raise ValueError("决策带窗口起点必须早于终点")
         if maximum_completion_lag_seconds <= 0:
@@ -289,8 +289,8 @@ class ForecastGatePolicy(FrozenModel):
     minimum_confidence: Decimal = Field(ge=0, le=1)
     minimum_non_overlapping_forecasts: int = Field(default=30, ge=2)
 
-    _utc_registered_at = field_validator("registered_at")(_require_utc)
-    _utc_evaluation_end = field_validator("evaluation_end")(_require_utc)
+    _utc_registered_at = field_validator("registered_at")(require_utc)
+    _utc_evaluation_end = field_validator("evaluation_end")(require_utc)
 
     @model_validator(mode="after")
     def age_does_not_outlive_forecast(self):
@@ -599,8 +599,8 @@ def run_paired_decision_tape_backtest(
     spread_bps: Decimal = Decimal("1"),
     evaluation_spec_hash: str,
 ) -> PairedDecisionTapeResult:
-    start = _require_utc(signal_start)
-    end = _require_utc(signal_end)
+    start = require_utc(signal_start)
+    end = require_utc(signal_end)
     if start < policy.registered_at:
         raise ValueError("配对评价窗口不能早于门控策略预登记时间")
     if start != policy.registered_at or end != policy.evaluation_end:

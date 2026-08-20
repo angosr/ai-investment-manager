@@ -10,7 +10,11 @@ from investment_manager.asset_management import (
     MaterialDelta,
     StateSnapshot,
 )
-from investment_manager.domain import AccountSnapshot, FeatureSnapshot, MarketSnapshot, _require_utc
+from investment_manager.domain import (
+    AccountSnapshot,
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 from investment_manager.fact_pipeline import (
     FactDeltaPolicy,
     build_fact_material_delta,
@@ -18,6 +22,7 @@ from investment_manager.fact_pipeline import (
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.kernel.identity import content_hash
+from investment_manager.kernel.time import require_utc
 from investment_manager.state_evidence_sql import SqlStateEvidenceStore
 
 
@@ -58,8 +63,8 @@ class SqlFactStateProjector:
         data_quality_codes: tuple[str, ...] = (),
         coverage_gap_codes: tuple[str, ...] = (),
     ) -> FactStateProjectionResult:
-        as_of = _require_utc(as_of)
-        built_at = _require_utc(built_at)
+        as_of = require_utc(as_of)
+        built_at = require_utc(built_at)
         self._require_complete_evidence(
             as_of=as_of,
             markets=markets,

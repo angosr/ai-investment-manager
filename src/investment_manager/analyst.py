@@ -34,15 +34,17 @@ from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    FrozenModel,
     OrderType,
     PanelSnapshot,
-    PositiveDecimal,
     PriceCondition,
     Side,
     SignalCandidate,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.types import (
+    FrozenModel,
+    PositiveDecimal,
+)
 from investment_manager.trigger import TriggerDecision
 
 ANALYST_INPUT_VERSION = "analyst-input-v4"

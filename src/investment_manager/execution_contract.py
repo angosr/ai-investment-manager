@@ -9,7 +9,6 @@ from investment_manager.domain import (
     AccountSnapshot,
     CycleOutcome,
     DecisionOutcome,
-    FrozenModel,
     MarketSnapshot,
     MetricObservation,
     Order,
@@ -18,9 +17,10 @@ from investment_manager.domain import (
     RiskDecision,
     RiskOutcome,
     TradeIntent,
-    _require_utc,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 
 
 class RiskTransition(StrEnum):
@@ -39,7 +39,7 @@ class ExecutionRequest(FrozenModel):
     created_at: datetime
     request_hash: str
 
-    _utc_created_at = field_validator("created_at")(_require_utc)
+    _utc_created_at = field_validator("created_at")(require_utc)
 
     @model_validator(mode="after")
     def request_must_be_approved_and_self_identifying(self):

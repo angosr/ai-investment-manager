@@ -17,7 +17,6 @@ from investment_manager.analyst import (
     write_run_bundle,
 )
 from investment_manager.config import CodexRuntimePolicy
-from investment_manager.domain import FrozenModel
 from investment_manager.governance import (
     ChangeProposal,
     GovernanceGate,
@@ -25,6 +24,7 @@ from investment_manager.governance import (
     NoChange,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import change_proposals, governance_decisions
 from investment_manager.trigger import AnalysisTriggerPlan, TriggerPlanPatch
 
