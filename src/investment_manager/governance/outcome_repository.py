@@ -11,19 +11,19 @@ from investment_manager.domain import (
     CycleOutcome,
     DecisionOutcome,
 )
-from investment_manager.evaluation import (
-    CycleDecisionFact,
-    OutcomeWindowReport,
-)
 from investment_manager.execution.tables import (
     fills,
     orders,
 )
+from investment_manager.governance.performance import (
+    CycleDecisionFact,
+    OutcomeWindowReport,
+)
+from investment_manager.governance.tables import outcome_window_reports
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     decision_outcomes,
-    outcome_window_reports,
 )
 
 

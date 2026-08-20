@@ -605,6 +605,61 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
         assert not (PACKAGE_ROOT / filename).exists()
 
 
+def test_governance_tables_and_entry_modules_have_one_owner() -> None:
+    owned_tables = {
+        "architecture_decisions",
+        "blind_evaluation_claims",
+        "change_proposals",
+        "evaluation_plans",
+        "evaluation_results",
+        "failed_experiment_records",
+        "governance_decisions",
+        "governance_snapshots",
+        "outcome_window_reports",
+        "release_approval_requests",
+        "release_manifests",
+        "replay_evaluation_reports",
+        "system_constitutions",
+    }
+    owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        for node in ast.parse(path.read_text()).body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id in owned_tables
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners[target.id].append(path)
+
+    expected = PACKAGE_ROOT / "governance" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
+    for filename in (
+        "acceptance.py",
+        "deployment.py",
+        "evaluation.py",
+        "governance.py",
+        "governance_agent.py",
+        "governance_context.py",
+        "governance_runtime.py",
+        "governance_workflows.py",
+        "isolation_audit.py",
+        "outcome_evaluation_runtime.py",
+        "outcome_evaluation_sql.py",
+        "outcome_evaluation_workflows.py",
+        "release_runtime.py",
+        "release_workflows.py",
+        "version_evaluation_runtime.py",
+        "version_evaluation_workflows.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

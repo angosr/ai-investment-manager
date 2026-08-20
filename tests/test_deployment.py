@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.config import DeploymentPolicy, DeploymentStage
-from investment_manager.deployment import StageEvidence, StagePromotionGate
+from investment_manager.governance.stage_gate import StageEvidence, StagePromotionGate
 
 
 def test_default_deployment_is_mock_without_credentials_or_order_authority(app_config) -> None:

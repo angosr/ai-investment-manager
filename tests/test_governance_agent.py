@@ -15,7 +15,13 @@ from investment_manager.domain import (
     CandidateOutcomeStatus,
 )
 from investment_manager.execution.legacy_exchange import MockExchange
-from investment_manager.governance import (
+from investment_manager.governance.agent import (
+    CodexGovernor,
+    GovernorBundleBuilder,
+    SqlGovernorDecisionStore,
+)
+from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.models import (
     ChangeProposal,
     ChangeType,
     EvaluationPlan,
@@ -24,12 +30,7 @@ from investment_manager.governance import (
     NoChange,
     ReleaseManifest,
 )
-from investment_manager.governance_agent import (
-    CodexGovernor,
-    GovernorBundleBuilder,
-    SqlGovernorDecisionStore,
-)
-from investment_manager.governance_context import GovernanceSnapshotAssembler
+from investment_manager.governance.tables import change_proposals, governance_decisions
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -37,9 +38,7 @@ from investment_manager.persistence import (
     SqlFactLedger,
     SqlGovernanceRepository,
     analysis_cycles,
-    change_proposals,
     codex_runs,
-    governance_decisions,
     signal_candidates,
 )
 from investment_manager.risk.budget import SqlRiskBudgetStore

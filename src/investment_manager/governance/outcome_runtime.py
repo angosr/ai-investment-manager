@@ -20,19 +20,19 @@ from investment_manager.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.config import AppConfig, OutcomeEvaluationPolicy, TemporalPolicy
-from investment_manager.evaluation import OutcomeWindowEvaluator, OutcomeWindowReport
 from investment_manager.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
 )
-from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.kernel.time import require_utc
-from investment_manager.kernel.types import FrozenModel
-from investment_manager.outcome_evaluation_sql import SqlOutcomeWindowRepository
-from investment_manager.outcome_evaluation_workflows import (
+from investment_manager.governance.outcome_repository import SqlOutcomeWindowRepository
+from investment_manager.governance.outcome_workflows import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
     OutcomeEvaluationWorkflow,
 )
+from investment_manager.governance.performance import OutcomeWindowEvaluator, OutcomeWindowReport
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import build_engine
 from investment_manager.temporal_worker import SingleActivityWorker
 from investment_manager.workflow import OrchestrationPolicySnapshot

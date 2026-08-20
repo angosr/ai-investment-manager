@@ -13,7 +13,7 @@ from investment_manager.analyst import (
     codex_runtime_integrity_matches,
 )
 from investment_manager.config import AppConfig
-from investment_manager.governance import ReleaseManifest, validate_manifest_against_config
+from investment_manager.governance.models import ReleaseManifest, validate_manifest_against_config
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

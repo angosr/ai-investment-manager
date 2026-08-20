@@ -8,21 +8,22 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.governance import NoChange, ReleaseManifest
-from investment_manager.governance_agent import (
+from investment_manager.governance.agent import (
     CodexGovernor,
     GovernorBundleBuilder,
     SqlGovernorDecisionStore,
 )
-from investment_manager.governance_context import GovernanceSnapshotAssembler
-from investment_manager.governance_runtime import (
+from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.models import NoChange, ReleaseManifest
+from investment_manager.governance.runtime import (
     GovernanceActivities,
     GovernanceTemporalCoordinator,
     GovernanceTemporalWorker,
     GovernanceWorkflowStatus,
     build_governance_workflow_request,
 )
-from investment_manager.persistence import SqlGovernanceRepository, governance_decisions
+from investment_manager.governance.tables import governance_decisions
+from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 

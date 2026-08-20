@@ -7,7 +7,8 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.governance import (
+from investment_manager.governance.agent import SqlGovernorDecisionStore
+from investment_manager.governance.models import (
     ChangeProposal,
     ChangeType,
     EvaluationPlan,
@@ -19,19 +20,16 @@ from investment_manager.governance import (
     SystemConstitution,
     build_governance_snapshot,
 )
-from investment_manager.governance_agent import SqlGovernorDecisionStore
-from investment_manager.persistence import (
-    SqlGovernanceRepository,
-    evaluation_results,
-)
-from investment_manager.schema import create_schema
-from investment_manager.version_evaluation_runtime import (
+from investment_manager.governance.tables import evaluation_results
+from investment_manager.governance.version_evaluation_runtime import (
     VersionEvaluationActivities,
     VersionEvaluationTemporalCoordinator,
     VersionEvaluationTemporalWorker,
     VersionEvaluationWorkflowStatus,
     build_version_evaluation_workflow_request,
 )
+from investment_manager.persistence import SqlGovernanceRepository
+from investment_manager.schema import create_schema
 
 
 def _target(now: datetime) -> EvaluationTarget:

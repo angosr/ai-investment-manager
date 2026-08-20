@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, func, select
 
 from investment_manager.config import load_config
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     BlindEvaluationClaim,
     ChangeProposal,
     ChangeType,
@@ -28,9 +28,7 @@ from investment_manager.governance import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
-from investment_manager.kernel.identity import stable_id
-from investment_manager.persistence import (
-    SqlGovernanceRepository,
+from investment_manager.governance.tables import (
     blind_evaluation_claims,
     change_proposals,
     evaluation_plans,
@@ -38,6 +36,8 @@ from investment_manager.persistence import (
     governance_snapshots,
     release_manifests,
 )
+from investment_manager.kernel.identity import stable_id
+from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.schema import create_schema
 
 
@@ -109,7 +109,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     manifest = _manifest(now)
     observations = iter((manifest.code_version, ""))
     monkeypatch.setattr(
-        "investment_manager.governance._git_output",
+        "investment_manager.governance.models._git_output",
         lambda _root, *_arguments: next(observations),
     )
 
@@ -119,7 +119,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     ) == tmp_path.resolve()
 
     monkeypatch.setattr(
-        "investment_manager.governance._git_output",
+        "investment_manager.governance.models._git_output",
         lambda _root, *_arguments: "different-commit",
     )
     with pytest.raises(ValueError, match="实际运行源码不一致"):
@@ -127,7 +127,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
 
     observations = iter((manifest.code_version, " M src/investment_manager/risk.py"))
     monkeypatch.setattr(
-        "investment_manager.governance._git_output",
+        "investment_manager.governance.models._git_output",
         lambda _root, *_arguments: next(observations),
     )
     with pytest.raises(ValueError, match="未提交变更"):

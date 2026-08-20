@@ -21,7 +21,7 @@ from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
 )
-from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
+from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

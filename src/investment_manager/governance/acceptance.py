@@ -8,7 +8,7 @@ import yaml
 
 from investment_manager.analyst import codex_runtime_integrity_matches
 from investment_manager.config import AiMode, AppConfig, DeploymentStage
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     load_constitution,
     load_regression_suite,
     load_release_manifest,

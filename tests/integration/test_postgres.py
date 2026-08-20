@@ -22,8 +22,8 @@ from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.lifecycle import PositionLifecycleManager
 from investment_manager.execution.reconciliation import MockReconciler
 from investment_manager.execution.tables import orders
-from investment_manager.governance import ReleaseManifest
-from investment_manager.governance_context import GovernanceSnapshotAssembler
+from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.models import ReleaseManifest
 from investment_manager.information.official import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,

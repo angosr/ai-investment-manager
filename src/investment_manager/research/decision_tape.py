@@ -22,7 +22,7 @@ from investment_manager.execution.models import (
     Side,
 )
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
-from investment_manager.governance import EvaluationPlan, EvaluationStage
+from investment_manager.governance.models import EvaluationPlan, EvaluationStage
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc

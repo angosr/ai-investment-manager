@@ -12,23 +12,23 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.config import TemporalPolicy
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     EvaluationResult,
     EvaluationStage,
     EvaluationTarget,
     StageResult,
     build_evaluation_result,
 )
+from investment_manager.governance.version_evaluation_workflows import (
+    FINALIZE_EVALUATION_ACTIVITY,
+    RUN_EVALUATION_STAGE_ACTIVITY,
+    VersionEvaluationWorkflow,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.temporal_worker import SingleActivityWorker
-from investment_manager.version_evaluation_workflows import (
-    FINALIZE_EVALUATION_ACTIVITY,
-    RUN_EVALUATION_STAGE_ACTIVITY,
-    VersionEvaluationWorkflow,
-)
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 

@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.governance import EvaluationPlan, EvaluationStage, FailedExperiment
+from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

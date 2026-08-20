@@ -18,8 +18,7 @@ from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.analyst import assemble_codex_router
 from investment_manager.config import AppConfig, TemporalPolicy
-from investment_manager.governance import GovernanceSnapshot
-from investment_manager.governance_agent import (
+from investment_manager.governance.agent import (
     GOVERNOR_OUTPUT_ADAPTER,
     CodexGovernor,
     Governor,
@@ -27,8 +26,9 @@ from investment_manager.governance_agent import (
     GovernorDecision,
     SqlGovernorDecisionStore,
 )
-from investment_manager.governance_context import GovernanceSnapshotAssembler
-from investment_manager.governance_workflows import (
+from investment_manager.governance.context import GovernanceSnapshotAssembler
+from investment_manager.governance.models import GovernanceSnapshot
+from investment_manager.governance.workflows import (
     BUILD_GOVERNANCE_SNAPSHOT_ACTIVITY,
     RUN_GOVERNOR_ACTIVITY,
     GovernanceCycleWorkflow,

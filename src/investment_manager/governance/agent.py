@@ -17,15 +17,15 @@ from investment_manager.analyst import (
     write_run_bundle,
 )
 from investment_manager.config import CodexRuntimePolicy
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     ChangeProposal,
     GovernanceGate,
     GovernanceSnapshot,
     NoChange,
 )
+from investment_manager.governance.tables import change_proposals, governance_decisions
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.persistence import change_proposals, governance_decisions
 from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch
 
 GovernorDecision = ChangeProposal | NoChange

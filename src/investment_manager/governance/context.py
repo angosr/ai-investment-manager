@@ -14,9 +14,8 @@ from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
 )
-from investment_manager.evaluation import OutcomeWindowReport
 from investment_manager.execution.tables import reconciliation_reports
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     EvaluationPlan,
     FailedExperiment,
     GovernanceSnapshot,
@@ -25,6 +24,15 @@ from investment_manager.governance import (
     load_release_manifest,
     validate_manifest_against_config,
 )
+from investment_manager.governance.performance import OutcomeWindowReport
+from investment_manager.governance.tables import (
+    architecture_decisions,
+    change_proposals,
+    evaluation_plans,
+    failed_experiment_records,
+    outcome_window_reports,
+    release_manifests,
+)
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import stable_id
@@ -32,14 +40,8 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     SqlGovernanceRepository,
     analysis_cycles,
-    architecture_decisions,
     candidate_outcomes,
-    change_proposals,
     codex_runs,
-    evaluation_plans,
-    failed_experiment_records,
-    outcome_window_reports,
-    release_manifests,
     signal_candidates,
 )
 from investment_manager.scheduling.models import (

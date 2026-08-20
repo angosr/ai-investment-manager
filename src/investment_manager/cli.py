@@ -11,7 +11,6 @@ from typing import Annotated
 
 import typer
 
-from investment_manager.acceptance import AuditProfile, PhaseAAuditor
 from investment_manager.analyst import analysis_behavior_hash as configured_analysis_behavior_hash
 from investment_manager.analyst import audit_codex_isolation
 from investment_manager.calibration import (
@@ -35,7 +34,8 @@ from investment_manager.execution.lifecycle_runtime import (
 )
 from investment_manager.execution.models import Side
 from investment_manager.execution.reconciliation_runtime import assemble_reconciliation
-from investment_manager.governance import (
+from investment_manager.governance.acceptance import AuditProfile, PhaseAAuditor
+from investment_manager.governance.models import (
     ReleaseManifest,
     build_evaluation_plan_invalidation,
     current_clean_code_version,
@@ -44,7 +44,8 @@ from investment_manager.governance import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
-from investment_manager.governance_runtime import assemble_governance
+from investment_manager.governance.outcome_runtime import assemble_outcome_evaluation
+from investment_manager.governance.runtime import assemble_governance
 from investment_manager.information.collector import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -58,7 +59,6 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
-from investment_manager.outcome_evaluation_runtime import assemble_outcome_evaluation
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
@@ -902,7 +902,7 @@ def carry_blind_evaluate_command(
 ) -> None:
     """原子消费固定 carry 策略的唯一尾窗；失败或重叠时不读取标签。"""
 
-    from investment_manager.governance import BlindEvaluationClaim
+    from investment_manager.governance.models import BlindEvaluationClaim
     from investment_manager.persistence import SqlGovernanceRepository
     from investment_manager.research.carry import HistoricalCarryDatasetCatalog
     from investment_manager.research.carry_evaluation import (
@@ -1452,7 +1452,7 @@ def blind_evaluate_command(
 ) -> None:
     """一次性揭示已通过 walk-forward 的预留尾窗；不调用 Codex。"""
 
-    from investment_manager.governance import BlindEvaluationClaim
+    from investment_manager.governance.models import BlindEvaluationClaim
     from investment_manager.persistence import SqlGovernanceRepository
     from investment_manager.research.candidates import resolve_research_candidate
     from investment_manager.research.dataset import (
@@ -2143,7 +2143,7 @@ def codex_isolation_audit(
             )
             for account in accounts
         )
-    from investment_manager.isolation_audit import (
+    from investment_manager.governance.isolation import (
         CodexIsolationAuditCatalog,
         build_codex_isolation_audit_artifact,
     )

@@ -15,7 +15,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Table,
-    Text,
     UniqueConstraint,
     case,
     func,
@@ -36,7 +35,6 @@ from investment_manager.domain import (
     SignalCandidate,
     TradeIntent,
 )
-from investment_manager.evaluation import ReplayEvaluationReport
 from investment_manager.execution.contracts import (
     ExecutionRequest,
     ExecutionResult,
@@ -55,7 +53,7 @@ from investment_manager.execution.tables import (
     orders,
     position_lifecycles,
 )
-from investment_manager.governance import (
+from investment_manager.governance.models import (
     BlindEvaluationClaim,
     ChangeProposal,
     EvaluationPlan,
@@ -67,6 +65,20 @@ from investment_manager.governance import (
     ReleaseApprovalDecision,
     ReleaseManifest,
     SystemConstitution,
+)
+from investment_manager.governance.performance import ReplayEvaluationReport
+from investment_manager.governance.tables import (
+    blind_evaluation_claims,
+    change_proposals,
+    evaluation_plans,
+    evaluation_results,
+    failed_experiment_records,
+    governance_decisions,
+    governance_snapshots,
+    release_approval_requests,
+    release_manifests,
+    replay_evaluation_reports,
+    system_constitutions,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -298,170 +310,6 @@ Index(
     postgresql_where=codex_account_leases.c.status == "ACTIVE",
     sqlite_where=codex_account_leases.c.status == "ACTIVE",
 )
-
-release_manifests = Table(
-    "release_manifests",
-    metadata,
-    Column("manifest_id", String(128), primary_key=True),
-    Column("content_hash", String(64), nullable=False, unique=True),
-    Column("status", String(32), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-system_constitutions = Table(
-    "system_constitutions",
-    metadata,
-    Column("version", String(128), primary_key=True),
-    Column("payload", JSON, nullable=False),
-)
-
-governance_snapshots = Table(
-    "governance_snapshots",
-    metadata,
-    Column("snapshot_id", String(128), primary_key=True),
-    Column("as_of", DateTime(timezone=True), nullable=False),
-    Column("champion_manifest_id", String(128), nullable=False),
-    Column("content_hash", String(64), nullable=False, unique=True),
-    Column("payload", JSON, nullable=False),
-)
-
-governance_decisions = Table(
-    "governance_decisions",
-    metadata,
-    Column("decision_id", String(128), primary_key=True),
-    Column(
-        "snapshot_id",
-        ForeignKey("governance_snapshots.snapshot_id"),
-        nullable=False,
-        unique=True,
-    ),
-    Column("decision_type", String(32), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-release_approval_requests = Table(
-    "release_approval_requests",
-    metadata,
-    Column("decision_id", String(128), primary_key=True),
-    Column(
-        "evaluation_id",
-        ForeignKey("evaluation_results.evaluation_id"),
-        nullable=False,
-        unique=True,
-    ),
-    Column("candidate_manifest_id", String(128), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-evaluation_plans = Table(
-    "evaluation_plans",
-    metadata,
-    Column("plan_id", String(128), primary_key=True),
-    Column("registered_at", DateTime(timezone=True), nullable=False),
-    Column("base_manifest_id", String(128), nullable=False),
-    Column("regression_suite_version", String(128), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-blind_evaluation_claims = Table(
-    "blind_evaluation_claims",
-    metadata,
-    Column(
-        "plan_id",
-        ForeignKey("evaluation_plans.plan_id"),
-        primary_key=True,
-    ),
-    Column("query_id", String(128), nullable=False, unique=True),
-    Column("blind_scope_id", String(128), nullable=False, unique=True),
-    Column("blind_symbol", String(32), nullable=False),
-    Column("blind_start", DateTime(timezone=True), nullable=False),
-    Column("blind_end", DateTime(timezone=True), nullable=False),
-    Column("source_evaluation_id", String(128), nullable=False),
-    Column("claimed_at", DateTime(timezone=True), nullable=False),
-    Column("completed_at", DateTime(timezone=True), nullable=True),
-    Column("result_id", String(128), nullable=True),
-    Column("result_hash", String(64), nullable=True),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_blind_evaluation_claim_symbol_window",
-    blind_evaluation_claims.c.blind_symbol,
-    blind_evaluation_claims.c.blind_start,
-    blind_evaluation_claims.c.blind_end,
-)
-
-evaluation_results = Table(
-    "evaluation_results",
-    metadata,
-    Column("evaluation_id", String(128), primary_key=True),
-    Column("proposal_id", String(128), nullable=False),
-    Column("plan_id", String(128), nullable=False),
-    Column("candidate_manifest_id", String(128), nullable=False),
-    Column("completed_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-failed_experiment_records = Table(
-    "failed_experiments",
-    metadata,
-    Column("experiment_id", String(128), primary_key=True),
-    Column("hypothesis_fingerprint", String(64), nullable=False),
-    Column("rejected_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_failed_experiment_fingerprint", failed_experiment_records.c.hypothesis_fingerprint)
-
-replay_evaluation_reports = Table(
-    "replay_evaluation_reports",
-    metadata,
-    Column("report_id", String(128), primary_key=True),
-    Column("evaluation_version", String(128), nullable=False),
-    Column("dataset_hash", String(64), nullable=False),
-    Column("statistically_conclusive", Boolean, nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-outcome_window_reports = Table(
-    "outcome_window_reports",
-    metadata,
-    Column("report_id", String(128), primary_key=True),
-    Column("evaluation_version", String(128), nullable=False),
-    Column("pipeline_version", String(128), nullable=False),
-    Column("window_start", DateTime(timezone=True), nullable=False),
-    Column("window_end", DateTime(timezone=True), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("source_hash", String(64), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_outcome_window_reports_window",
-    outcome_window_reports.c.pipeline_version,
-    outcome_window_reports.c.window_start,
-    outcome_window_reports.c.window_end,
-)
-
-change_proposals = Table(
-    "change_proposals",
-    metadata,
-    Column("proposal_id", String(128), primary_key=True),
-    Column("base_version", String(128), nullable=False),
-    Column("change_type", String(64), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-architecture_decisions = Table(
-    "architecture_decisions",
-    metadata,
-    Column("decision_id", String(128), primary_key=True),
-    Column("status", String(32), nullable=False),
-    Column("summary", Text, nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
 
 def latest_account_snapshot_payload(connection: Connection, *, as_of: datetime):
     """给定 ``as_of``，返回"当前账户"快照 payload（无则 None）。
