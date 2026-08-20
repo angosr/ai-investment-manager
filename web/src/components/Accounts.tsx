@@ -9,6 +9,7 @@ const STATE_LABEL: Record<string, string> = {
   HEALTHY: "健康",
   COOLDOWN: "冷却中",
   DISABLED: "未启用",
+  ENABLED: "已启用 · 待探测",
   UNKNOWN: "未知",
   LEASED: "分析中",
 };
@@ -73,6 +74,7 @@ function AccountLine({ account }: { account: AccountStatus }) {
 function stateTone(state: string): string {
   if (state === "HEALTHY") return "ok";
   if (state === "LEASED") return "ok";
+  if (state === "ENABLED") return "warn";
   if (state === "COOLDOWN") return "warn";
   return "off";
 }

@@ -392,7 +392,9 @@ def _account_state(status: AccountStatus) -> str:
         return "LEASED"
     if status.healthy is True:
         return "HEALTHY"
-    return "UNKNOWN"
+    # 容量只在真实分析调用前探测，且探测结果很快过期。此时账号的启用状态
+    # 是确定事实，未知的只是瞬时健康度；把两者都显示成 UNKNOWN 会误导运维。
+    return "ENABLED"
 
 
 def _metrics_by_name(metrics: tuple[MetricObservation, ...]) -> dict[str, Decimal]:

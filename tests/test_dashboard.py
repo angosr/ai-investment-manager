@@ -16,7 +16,12 @@ from quant_core.cli import _default_web_dist
 from quant_core.dashboard import formatting as fmt
 from quant_core.dashboard import serializers as ser
 from quant_core.dashboard.health import assemble_health
-from quant_core.dashboard.read_models import AnalysisRuntimeStatus, EquityWindow, WorldEvent
+from quant_core.dashboard.read_models import (
+    AccountStatus,
+    AnalysisRuntimeStatus,
+    EquityWindow,
+    WorldEvent,
+)
 from quant_core.dashboard.resources import sample_host_resources
 from quant_core.domain import Side
 
@@ -137,6 +142,35 @@ def test_world_event_serializes_injection_flag():
     dto = ser.world_event(event)
     assert dto["injection_suspected"] is True
     assert dto["symbols"] == ["BTCUSDT"]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "healthy", "leased", "expected"),
+    [
+        (False, None, False, "DISABLED"),
+        (True, None, False, "ENABLED"),
+        (True, True, False, "HEALTHY"),
+        (True, False, False, "COOLDOWN"),
+        (True, None, True, "LEASED"),
+    ],
+)
+def test_account_state_keeps_enabled_distinct_from_unprobed_health(
+    enabled: bool,
+    healthy: bool | None,
+    leased: bool,
+    expected: str,
+):
+    status = AccountStatus(
+        account_id=".codex-test",
+        enabled=enabled,
+        headroom_percent=None,
+        healthy=healthy,
+        observed_at=None,
+        leased=leased,
+        recent_failures=0,
+    )
+
+    assert ser.account_status(status)["state"] == expected
 
 
 def test_health_is_unknown_without_data_and_bad_on_mismatch():
