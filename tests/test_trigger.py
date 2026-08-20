@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
+from quant_core import cli
 from quant_core.trigger import (
     AddWakeup,
     AnalysisEventRule,
@@ -36,6 +38,47 @@ from quant_core.trigger_runtime import (
 )
 from quant_core.trigger_sql import TriggerOutboxMessage
 from quant_core.trigger_workflows import coordinator_workflow_id
+
+
+def test_trigger_service_acquires_leadership_before_durable_release_setup(
+    monkeypatch, app_config
+) -> None:
+    events: list[str] = []
+
+    class RejectingLeadership:
+        def __init__(self, _engine, _lock_key):
+            pass
+
+        def __enter__(self):
+            events.append("leadership")
+            raise RuntimeError("已有 Trigger Dispatcher 持有领导锁")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    monkeypatch.setattr(
+        cli,
+        "_load_runtime_release",
+        lambda _config, _manifest: (app_config, SimpleNamespace(manifest_id="release-v2")),
+    )
+    monkeypatch.setattr(cli, "_runtime_engine", lambda _database_url: object())
+    monkeypatch.setattr(cli, "SqlTriggerRepository", lambda _engine, _policy: object())
+    monkeypatch.setattr(cli, "PostgresTriggerLeadership", RejectingLeadership)
+    monkeypatch.setattr(
+        cli,
+        "SqlGovernanceRepository",
+        lambda _engine: events.append("release-write"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_ensure_trigger_plans",
+        lambda *_args, **_kwargs: events.append("plan-write"),
+    )
+
+    with pytest.raises(RuntimeError, match="已有 Trigger Dispatcher"):
+        cli.trigger_service(Path("config.yaml"), "postgresql://unused", Path("manifest.yaml"))
+
+    assert events == ["leadership"]
 
 
 def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(

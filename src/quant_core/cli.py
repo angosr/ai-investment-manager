@@ -25,10 +25,11 @@ from quant_core.calibration import (
     uncalibrated_ref,
 )
 from quant_core.candidate_evaluation import SqlCandidateOutcomeStore
-from quant_core.config import DeploymentStage, load_config
+from quant_core.config import AppConfig, DeploymentStage, load_config
 from quant_core.cycle import AnalysisCycle, CycleInput
 from quant_core.domain import Side
 from quant_core.governance import (
+    ReleaseManifest,
     load_release_manifest,
     validate_manifest_against_config,
     validate_manifest_code_version,
@@ -103,6 +104,70 @@ def _runtime_engine(database_url: str):
 def _require_runtime_database(database_url: str) -> None:
     engine = _runtime_engine(database_url)
     engine.dispose()
+
+
+def _ensure_trigger_plans(
+    config: AppConfig,
+    manifest: ReleaseManifest,
+    repository: SqlTriggerRepository,
+    *,
+    now: datetime,
+) -> None:
+    """在 Dispatcher 领导锁内创建或校验本 release 的触发计划。"""
+
+    previous_plans = repository.current_plans_for_symbols(config.market_data.symbols)
+    for symbol in config.market_data.symbols:
+        try:
+            current = repository.plan_for_scope(
+                symbol=symbol,
+                pipeline_id=config.pipeline.version,
+            )
+        except KeyError:
+            predecessors = tuple(item for item in previous_plans if item.symbol == symbol)
+            if predecessors:
+                plan = carry_forward_trigger_plan(
+                    max(
+                        predecessors,
+                        key=lambda item: (item.updated_at, item.revision, item.pipeline_id),
+                    ),
+                    pipeline_id=config.pipeline.version,
+                    manifest_id=manifest.manifest_id,
+                    updated_at=now,
+                )
+            else:
+                plan = build_initial_trigger_plan(
+                    symbol=symbol,
+                    pipeline_id=config.pipeline.version,
+                    manifest_id=manifest.manifest_id,
+                    updated_at=now,
+                    heartbeat_seconds=config.trigger.heartbeat_minutes * 60,
+                    event_rules=(
+                        AnalysisEventRule(
+                            rule_id="intelligence-default",
+                            trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                            minimum_priority=int(config.trigger.high_impact_threshold * 100),
+                            coalesce_seconds=config.trigger.debounce_seconds,
+                            ordinary_cooldown_seconds=config.trigger.debounce_seconds,
+                        ),
+                        AnalysisEventRule(
+                            rule_id="market-shock-default",
+                            trigger_type=AnalysisTriggerType.MARKET_SHOCK,
+                            minimum_priority=0,
+                        ),
+                        AnalysisEventRule(
+                            rule_id="position-recheck-default",
+                            trigger_type=AnalysisTriggerType.POSITION_RECHECK,
+                            minimum_priority=0,
+                        ),
+                    ),
+                )
+            repository.create_plan(plan)
+        else:
+            if current.manifest_id != manifest.manifest_id:
+                raise ValueError(
+                    f"{symbol} 当前 TriggerPlan 的 manifest 与 release 不一致；"
+                    "必须升级 pipeline version 完成切换"
+                )
 
 
 def _parse_utc_option(value: str, *, name: str) -> datetime:
@@ -1938,62 +2003,7 @@ def trigger_service(
 
     loaded, manifest = _load_runtime_release(config, release_manifest)
     engine = _runtime_engine(database_url)
-    SqlGovernanceRepository(engine).record_release(manifest)
     repository = SqlTriggerRepository(engine, loaded.trigger)
-    now = datetime.now(UTC)
-    previous_plans = repository.current_plans_for_symbols(loaded.market_data.symbols)
-    for symbol in loaded.market_data.symbols:
-        try:
-            current = repository.plan_for_scope(
-                symbol=symbol,
-                pipeline_id=loaded.pipeline.version,
-            )
-        except KeyError:
-            predecessors = tuple(item for item in previous_plans if item.symbol == symbol)
-            if predecessors:
-                plan = carry_forward_trigger_plan(
-                    max(
-                        predecessors,
-                        key=lambda item: (item.updated_at, item.revision, item.pipeline_id),
-                    ),
-                    pipeline_id=loaded.pipeline.version,
-                    manifest_id=manifest.manifest_id,
-                    updated_at=now,
-                )
-            else:
-                plan = build_initial_trigger_plan(
-                    symbol=symbol,
-                    pipeline_id=loaded.pipeline.version,
-                    manifest_id=manifest.manifest_id,
-                    updated_at=now,
-                    heartbeat_seconds=loaded.trigger.heartbeat_minutes * 60,
-                    event_rules=(
-                        AnalysisEventRule(
-                            rule_id="intelligence-default",
-                            trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
-                            minimum_priority=int(loaded.trigger.high_impact_threshold * 100),
-                            coalesce_seconds=loaded.trigger.debounce_seconds,
-                            ordinary_cooldown_seconds=loaded.trigger.debounce_seconds,
-                        ),
-                        AnalysisEventRule(
-                            rule_id="market-shock-default",
-                            trigger_type=AnalysisTriggerType.MARKET_SHOCK,
-                            minimum_priority=0,
-                        ),
-                        AnalysisEventRule(
-                            rule_id="position-recheck-default",
-                            trigger_type=AnalysisTriggerType.POSITION_RECHECK,
-                            minimum_priority=0,
-                        ),
-                    ),
-                )
-            repository.create_plan(plan)
-        else:
-            if current.manifest_id != manifest.manifest_id:
-                raise ValueError(
-                    f"{symbol} 当前 TriggerPlan 的 manifest 与 release 不一致；"
-                    "必须升级 pipeline version 完成切换"
-                )
 
     async def run(wakeup: PostgresOutboxListener) -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -2042,8 +2052,18 @@ def trigger_service(
         engine,
         loaded.trigger.dispatcher_advisory_lock_key,
     )
-    with leadership, PostgresOutboxListener(engine) as wakeup:
-        asyncio.run(run(wakeup))
+    with leadership:
+        # 发布和 PLAN_REVISED 都属于单领导者写入。先写后抢锁会让旧 Dispatcher
+        # 把新 pipeline 的启动消息误标为已投递，导致切换后无 Coordinator。
+        SqlGovernanceRepository(engine).record_release(manifest)
+        _ensure_trigger_plans(
+            loaded,
+            manifest,
+            repository,
+            now=datetime.now(UTC),
+        )
+        with PostgresOutboxListener(engine) as wakeup:
+            asyncio.run(run(wakeup))
 
 
 @app.command("trigger-now")
