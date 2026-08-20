@@ -108,10 +108,7 @@ def test_history_command_overrides_production_symbol_and_interval(
         start="2026-01-01T00:00:00Z",
         end="2026-01-03T00:00:00Z",
         interval="1d",
-        candidate="configured",
-        funding_dataset_id=None,
         catalog=tmp_path,
-        funding_catalog=tmp_path,
     )
 
     payload = json.loads(capsys.readouterr().out)

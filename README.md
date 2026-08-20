@@ -83,7 +83,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[research]'
 .venv/bin/quant-core fetch-binance-history \
   --config config/quant-core.yaml --symbol BTCUSDT \
-  --interval 1d --candidate configured \
+  --interval 1d \
   --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/quant-core freeze-event-history \

@@ -338,35 +338,16 @@ def fetch_binance_history_command(
         str | None,
         typer.Option(help="研究 K 线周期；省略时沿用 MarketDataPolicy"),
     ] = None,
-    candidate: Annotated[str, typer.Option()] = "configured",
-    funding_dataset_id: Annotated[str | None, typer.Option()] = None,
     catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(".runtime/datasets"),
-    funding_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
-        ".runtime/funding-datasets"
-    ),
 ) -> None:
     """抓取并内容寻址保存 Binance 官方已收盘 K 线；不生成 Markdown 报告。"""
 
-    from quant_core.research.candidates import resolve_research_candidate
     from quant_core.research.dataset import (
         HistoricalDatasetCatalog,
-        HistoricalFundingDatasetCatalog,
         fetch_binance_history,
     )
 
-    funding_dataset = (
-        HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
-        if funding_dataset_id is not None
-        else None
-    )
-    try:
-        loaded, _ = resolve_research_candidate(
-            candidate,
-            load_config(config),
-            funding_dataset=funding_dataset,
-        )
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    loaded = load_config(config)
     canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_history(
