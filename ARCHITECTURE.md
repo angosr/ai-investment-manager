@@ -124,6 +124,8 @@ Codex 不构成交易控制平面。工作流引擎拥有流程状态，PostgreS
 
 负责持久化事件协调、计划唤醒、超时、重试、任务恢复和分析范围单飞。每个 Pipeline/`AnalysisScope` 只有一个 `TriggerCoordinatorWorkflow`，通过 Signal 接收已持久化触发 ID，并用 durable timer 执行有效 TriggerPlan；Heartbeat 只检查健康。历史达到上限时 Continue-As-New。业务流程不使用分散 cron 或第二套调度状态机。逐笔行情和盘口不经过 Temporal，只有 `MaterialDelta` 成为 Signal。
 
+`AnalysisScope` 是新主链的调度身份，不是单个交易品种的别名。TriggerEvent、TriggerPlan、TriggerBatch、Outbox 聚合键和 Coordinator Workflow ID 必须统一使用 `analysis_scope + pipeline_id`；该范围包含哪些资产只由冻结的 `AnalysisMandate` 决定。现有按 `symbol` 建立的触发合同只服务冻结的旧 Pipeline，迁移时一次性换成 scope 原生合同，不增加 `symbol/analysis_scope` 双字段兼容层，也不把同一个跨资产变化复制到多个品种计划。
+
 Pipeline version 同时是运行代际边界。新 release 启动时必须终止同一交易范围内旧 coordinator，并确认但不投递其历史 Outbox；否则旧计划会跨部署继续竞争 Codex 账号。同一 Pipeline 不允许绑定不同 Manifest。代际切换不能静默重置动态计划：ScheduleProjector 从最新日历修订、有效 override/suppression 和仍未过期的前代点生成新代 revision 1；过期点和已消费身份不继承。
 
 同任务队列的 Activity 使用当前默认 Worker 路由，而不固定到调度它的 Workflow build ID；冻结输入契约和版本化 Activity 名称承担兼容边界。该路由变更必须经 Temporal Patch 引入，保证旧历史仍可确定性重放，也使已调度但未开始的 Activity 能在 Worker 升级或重启后由新进程接手。
@@ -1005,6 +1007,7 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 ### 阶段 A：可回放的 Mock 闭环
 
 - 固定单个 Binance Mock 账户、现货、无杠杆和两个品种的 MVP 范围。
+- 先把新 Pipeline 的触发身份从单品种迁移为组合级 `AnalysisScope`，保持旧 Pipeline 冻结；此后事实、日历、Packet 和 Codex 调用都只接入这一条 scope 原生链路。
 - 建立领域模型、数据库和信息面板 Schema。
 - 建立第一方事实/官方日历/聚合线索的来源层级、统一状态和 MaterialDelta；接入 Binance Mock 行情/账户。
 - 固定本地 Codex CLI 版本，配置目录同名的显式账号白名单；完成额度接口契约测试、容量选择、数据库租约和有界故障切换，Mock 覆盖额度耗尽、认证失败、探测失败和并发竞争。
