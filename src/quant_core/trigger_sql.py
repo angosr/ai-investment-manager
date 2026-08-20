@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from pydantic import field_validator
 from sqlalchemy import func, insert, select, update
@@ -20,6 +20,7 @@ from quant_core.persistence import (
     notify_trigger_outbox,
     trigger_outbox,
 )
+from quant_core.sql_time import database_utc
 from quant_core.trigger import (
     AnalysisCallAdmission,
     AnalysisTriggerEvent,
@@ -136,7 +137,7 @@ class SqlTriggerRepository:
             if existing is not None:
                 return AnalysisCallAdmission(
                     admitted=True,
-                    admitted_at=_database_utc(existing),
+                    admitted_at=database_utc(existing),
                 )
 
             latest = connection.execute(
@@ -146,7 +147,7 @@ class SqlTriggerRepository:
             ).scalar_one()
             admission = decide_analysis_call_admission(
                 requested_at=requested_at,
-                last_admitted_at=_database_utc(latest) if latest is not None else None,
+                last_admitted_at=database_utc(latest) if latest is not None else None,
                 minimum_call_interval_seconds=self._policy.minimum_call_interval_seconds,
             )
             if not admission.admitted:
@@ -291,8 +292,8 @@ class SqlTriggerRepository:
                     outbox_id=row["outbox_id"],
                     aggregate_key=row["aggregate_key"],
                     message_kind=row["message_kind"],
-                    created_at=_database_utc(row["created_at"]),
-                    available_at=_database_utc(row["available_at"]),
+                    created_at=database_utc(row["created_at"]),
+                    available_at=database_utc(row["available_at"]),
                     attempt_count=row["attempt_count"],
                     payload=row["payload"],
                 )
@@ -457,7 +458,3 @@ class PostgresOutboxListener:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
-
-
-def _database_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

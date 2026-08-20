@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -41,6 +41,7 @@ from quant_core.research.backtest import (
 )
 from quant_core.research.dataset import HistoricalDataset
 from quant_core.research.walk_forward import BlindEvaluationResult
+from quant_core.sql_time import database_utc
 
 FORECAST_DECISION_TAPE_VERSION = "forecast-decision-tape-v1"
 PAIRED_DECISION_TAPE_EVALUATION_VERSION = "paired-decision-tape-evaluation-v4"
@@ -222,7 +223,7 @@ class SqlForecastDecisionTapeReader:
         exclusions: list[ForecastTapeExclusion] = []
         for row in rows:
             cycle_id = str(row["cycle_id"])
-            analysis_as_of = _database_utc(row["as_of"])
+            analysis_as_of = database_utc(row["as_of"])
             available_at, source_run_id, _ = unique_successful_codex_completion(
                 attempts_by_cycle.get(cycle_id, []),
                 analysis_as_of=analysis_as_of,
@@ -703,7 +704,3 @@ def _non_overlapping_forecast_count(
         count += 1
         next_available_at = entry.available_at + horizon
     return count
-
-
-def _database_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

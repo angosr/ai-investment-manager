@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -45,6 +45,7 @@ from quant_core.persistence import (
     signal_candidates,
     trigger_outbox,
 )
+from quant_core.sql_time import database_utc
 from quant_core.trigger import AnalysisTriggerPlan, TriggerBatch
 
 
@@ -450,12 +451,12 @@ def _trigger_latency_summaries(
     validity: dict[tuple[str, str, str], list[int]] = {}
     for row in batch_rows:
         batch = TriggerBatch.model_validate(row["payload"])
-        submitted_at = _database_utc(row["analysis_submitted_at"])
+        submitted_at = database_utc(row["analysis_submitted_at"])
         raw_cycle_created_at = cycle_created_at_by_id.get(
             stable_id("triggered_cycle", batch.batch_id)
         )
         cycle_created_at = (
-            _database_utc(raw_cycle_created_at) if raw_cycle_created_at is not None else None
+            database_utc(raw_cycle_created_at) if raw_cycle_created_at is not None else None
         )
         for trigger_type in sorted({item.trigger_type for item in batch.triggers}):
             matching = tuple(item for item in batch.triggers if item.trigger_type == trigger_type)
@@ -638,10 +639,6 @@ def _intelligence_event_summaries(
 
 def _duration_seconds(later: datetime, earlier: datetime) -> Decimal:
     return Decimal(str((_require_utc(later) - _require_utc(earlier)).total_seconds()))
-
-
-def _database_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _percentile(values: list[Decimal], percentile: Decimal) -> Decimal:

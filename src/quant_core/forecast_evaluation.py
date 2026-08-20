@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -32,6 +32,7 @@ from quant_core.persistence import (
     codex_runs,
     market_snapshots,
 )
+from quant_core.sql_time import database_utc
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,7 +448,7 @@ class SqlAnalysisForecastOutcomeStore:
                 if reference_price <= 0:
                     raise ValueError("方向预测冻结参考价格必须为正")
                 cycle_id = str(row["cycle_id"])
-                analysis_as_of = _database_utc(row["as_of"])
+                analysis_as_of = database_utc(row["as_of"])
                 (
                     available_at,
                     source_run_id,
@@ -1021,10 +1022,6 @@ class AnalysisForecastOutcomeSettler:
         )
 
 
-def _database_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
-
 def unique_successful_codex_completion(
     rows: list[dict],
     *,
@@ -1041,7 +1038,7 @@ def unique_successful_codex_completion(
     if not isinstance(raw_completed_at, str):
         return None, None, None
     try:
-        completed_at = _database_utc(datetime.fromisoformat(raw_completed_at))
+        completed_at = database_utc(datetime.fromisoformat(raw_completed_at))
     except ValueError:
         return None, None, None
     if completed_at < analysis_as_of:

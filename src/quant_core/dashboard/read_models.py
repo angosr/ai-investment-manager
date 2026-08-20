@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -50,6 +50,7 @@ from quant_core.persistence import (
 )
 from quant_core.reconciliation import ReconciliationReport
 from quant_core.reconciliation_sql import SqlReconciliationReportStore
+from quant_core.sql_time import database_utc
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500
@@ -387,7 +388,7 @@ class DashboardReader:
                 ).scalar_one_or_none()
                 if quote_at is None or trade_at is None:
                     return None
-                observed.extend((_database_utc(quote_at), _database_utc(trade_at)))
+                observed.extend((database_utc(quote_at), database_utc(trade_at)))
         return min(observed) if observed else None
 
     def portfolio_protection_active(self) -> bool | None:
@@ -407,7 +408,7 @@ class DashboardReader:
         statuses: list[AccountStatus] = []
         for account in self._config.codex_accounts.accounts:
             cap = capacity.get(account.account_id)
-            observed_at = _database_utc(cap[2]) if cap is not None else None
+            observed_at = database_utc(cap[2]) if cap is not None else None
             capacity_fresh = (
                 observed_at is not None
                 and 0
@@ -553,7 +554,7 @@ class DashboardReader:
                     payload.get("completed_at"), str
                 ):
                     try:
-                        completed = _database_utc(
+                        completed = database_utc(
                             datetime.fromisoformat(payload["completed_at"])
                         )
                     except ValueError:
@@ -598,12 +599,12 @@ class DashboardReader:
             recent_successes=sum(status == "SUCCEEDED" for status, _ in recent_rows),
             pending_outbox_count=int(pending_count),
             oldest_pending_outbox_at=(
-                _database_utc(oldest_pending) if oldest_pending is not None else None
+                database_utc(oldest_pending) if oldest_pending is not None else None
             ),
             release_aligned=release_aligned,
             overdue_forecast_count=int(overdue_count),
             oldest_overdue_analysis_at=(
-                _database_utc(oldest_overdue) if oldest_overdue is not None else None
+                database_utc(oldest_overdue) if oldest_overdue is not None else None
             ),
             scopes=tuple(scope_statuses),
         )
@@ -657,7 +658,3 @@ class DashboardReader:
         )
         with self._engine.connect() as connection:
             return {account_id: count for account_id, count in connection.execute(query).all()}
-
-
-def _database_utc(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
