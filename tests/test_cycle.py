@@ -20,9 +20,11 @@ from investment_manager.domain import (
     CycleOutcome,
     DirectionalForecast,
     DirectionalView,
+    PriceCondition,
+)
+from investment_manager.execution.models import (
     OrderStatus,
     OrderType,
-    PriceCondition,
     Side,
 )
 from investment_manager.risk.models import RiskOutcome

@@ -12,12 +12,14 @@ from sqlalchemy.engine import Engine
 from investment_manager.analyst import ANALYST_INPUT_VERSION
 from investment_manager.config import AppConfig
 from investment_manager.domain import (
-    AccountSnapshot,
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    Side,
     SignalCandidate,
+)
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    Side,
 )
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance import EvaluationPlan, EvaluationStage

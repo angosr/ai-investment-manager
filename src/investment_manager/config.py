@@ -10,7 +10,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from investment_manager.domain import SUPPORTED_OPEN_SIDES, EdgeCalibration
+from investment_manager.domain import EdgeCalibration
+from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 
 
 class StrictConfig(BaseModel):

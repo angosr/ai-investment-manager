@@ -20,6 +20,7 @@ from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
 )
+from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
@@ -33,7 +34,6 @@ from investment_manager.forecast_evaluation import (
 )
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
-from investment_manager.mock_exchange_sql import SqlMockExchange
 from investment_manager.persistence import (
     SqlFactLedger,
     analysis_cycles,

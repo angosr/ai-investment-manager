@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from investment_manager.dashboard.read_models import AnalysisRuntimeStatus, DashboardReader
-from investment_manager.reconciliation import ReconciliationReport
+from investment_manager.execution.reconciliation import ReconciliationReport
 
 _SEVERITY = {"ok": 0, "unknown": 1, "warn": 2, "bad": 3}
 _DISK_WARN_PERCENT = 90

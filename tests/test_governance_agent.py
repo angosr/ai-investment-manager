@@ -14,7 +14,7 @@ from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
 )
-from investment_manager.execution import MockExchange
+from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.governance import (
     ChangeProposal,
     ChangeType,

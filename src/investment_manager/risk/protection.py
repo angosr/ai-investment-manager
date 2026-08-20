@@ -20,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from investment_manager.config import RiskPolicy
-from investment_manager.domain import AccountSnapshot
+from investment_manager.execution.models import AccountSnapshot
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import metadata

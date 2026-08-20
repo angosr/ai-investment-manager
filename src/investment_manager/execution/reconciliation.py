@@ -8,7 +8,7 @@ from typing import Protocol
 from pydantic import field_validator, model_validator
 
 from investment_manager.config import ReconciliationPolicy
-from investment_manager.domain import (
+from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
     OrderStatus,

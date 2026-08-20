@@ -18,7 +18,10 @@ from investment_manager.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.execution import MockExchange
+from investment_manager.execution.legacy_exchange import MockExchange
+from investment_manager.execution.lifecycle import PositionLifecycleManager
+from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.tables import orders
 from investment_manager.governance import ReleaseManifest
 from investment_manager.governance_context import GovernanceSnapshotAssembler
 from investment_manager.information.official import (
@@ -35,7 +38,6 @@ from investment_manager.information.tables import (
     market_calendar_event_revisions,
     source_observations,
 )
-from investment_manager.lifecycle import PositionLifecycleManager
 from investment_manager.market.models import MarketSnapshot, MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.persistence import (
@@ -47,10 +49,8 @@ from investment_manager.persistence import (
     candidate_outcomes,
     decision_outcomes,
     metric_observations,
-    orders,
 )
 from investment_manager.platform.database import build_engine, metadata
-from investment_manager.reconciliation import MockReconciler
 from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,

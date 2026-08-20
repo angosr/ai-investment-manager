@@ -11,9 +11,11 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
+    SignalCandidate,
+)
+from investment_manager.execution.models import (
     OrderType,
     Side,
-    SignalCandidate,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc

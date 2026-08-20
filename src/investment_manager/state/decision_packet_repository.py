@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
-from investment_manager.domain import AccountSnapshot
+from investment_manager.execution.models import AccountSnapshot
 from investment_manager.information.models import SourceTier
 from investment_manager.information.tables import source_observations
 from investment_manager.market.models import (

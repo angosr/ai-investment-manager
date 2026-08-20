@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.engine import Engine
 
-from investment_manager.domain import AccountSnapshot
+from investment_manager.execution.models import AccountSnapshot
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (

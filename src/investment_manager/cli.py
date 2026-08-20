@@ -14,12 +14,6 @@ import typer
 from investment_manager.acceptance import AuditProfile, PhaseAAuditor
 from investment_manager.analyst import analysis_behavior_hash as configured_analysis_behavior_hash
 from investment_manager.analyst import audit_codex_isolation
-from investment_manager.binance_testnet import (
-    BinanceApiError,
-    BinanceCredentials,
-    BinanceTestnetClient,
-    SymbolRules,
-)
 from investment_manager.calibration import (
     CalibrationBuildSpec,
     EdgeCalibrationBuilder,
@@ -28,7 +22,19 @@ from investment_manager.calibration import (
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.config import AppConfig, DeploymentStage, load_config
 from investment_manager.cycle import AnalysisCycle, CycleInput
-from investment_manager.domain import Side
+from investment_manager.execution.binance import (
+    BinanceApiError,
+    BinanceCredentials,
+    BinanceTestnetClient,
+    SymbolRules,
+)
+from investment_manager.execution.lifecycle_runtime import (
+    LifecycleTemporalWorker,
+    assemble_lifecycle_activities,
+    assemble_lifecycle_supervisor,
+)
+from investment_manager.execution.models import Side
+from investment_manager.execution.reconciliation_runtime import assemble_reconciliation
 from investment_manager.governance import (
     ReleaseManifest,
     build_evaluation_plan_invalidation,
@@ -50,17 +56,11 @@ from investment_manager.information.collector import (
 )
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.lifecycle_runtime import (
-    LifecycleTemporalWorker,
-    assemble_lifecycle_activities,
-    assemble_lifecycle_supervisor,
-)
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.outcome_evaluation_runtime import assemble_outcome_evaluation
 from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
-from investment_manager.reconciliation_runtime import assemble_reconciliation
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.scheduling.models import (
     AnalysisEventRule,

@@ -9,7 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.domain import AnalysisProposal, Side, TradeIntent
+from investment_manager.domain import (
+    AnalysisProposal,
+    TradeIntent,
+)
+from investment_manager.execution.models import Side
 
 # 周期结果 → 时间线行的类别（决定色条与徽章样式）与徽章中文
 CATEGORY = {

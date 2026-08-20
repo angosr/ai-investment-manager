@@ -5,21 +5,24 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.config import ExecutionPolicy
-from investment_manager.domain import (
-    ExitReason,
-    Order,
-    OrderStatus,
-    PositionLifecycle,
-    TradeIntent,
-)
-from investment_manager.execution import (
+from investment_manager.domain import TradeIntent
+from investment_manager.execution.legacy_exchange import (
     MockExchange,
     entry_client_order_id,
     exit_client_order_id,
 )
+from investment_manager.execution.models import (
+    ExitReason,
+    Order,
+    OrderStatus,
+    PositionLifecycle,
+)
+from investment_manager.execution.tables import (
+    mock_exchange_orders,
+    mock_exchange_protections,
+)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketSnapshot
-from investment_manager.persistence import mock_exchange_orders, mock_exchange_protections
 from investment_manager.risk.models import RiskDecision
 
 

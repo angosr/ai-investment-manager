@@ -6,7 +6,8 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from investment_manager.domain import AccountSnapshot
+from investment_manager.execution.models import AccountSnapshot
+from investment_manager.execution.planner import MarketExecutionSpec, TradePlan, TradePlanner
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import MarketSnapshot
@@ -18,7 +19,6 @@ from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     ProtectiveStop,
 )
-from investment_manager.trade_planner import MarketExecutionSpec, TradePlan, TradePlanner
 
 
 class PortfolioPipelineOutcome(StrEnum):

@@ -34,11 +34,13 @@ from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    OrderType,
     PanelSnapshot,
     PriceCondition,
-    Side,
     SignalCandidate,
+)
+from investment_manager.execution.models import (
+    OrderType,
+    Side,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.types import (

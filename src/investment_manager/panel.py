@@ -8,10 +8,12 @@ from decimal import Decimal
 
 from investment_manager.config import PanelPolicy
 from investment_manager.domain import (
-    SUPPORTED_OPEN_SIDES,
-    AccountSnapshot,
     PanelEvidence,
     PanelSnapshot,
+)
+from investment_manager.execution.models import (
+    SUPPORTED_OPEN_SIDES,
+    AccountSnapshot,
 )
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash

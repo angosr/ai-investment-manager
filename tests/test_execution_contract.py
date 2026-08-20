@@ -4,7 +4,7 @@ import pytest
 
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.domain import CycleOutcome
-from investment_manager.execution_contract import (
+from investment_manager.execution.contracts import (
     ExecutionRequest,
     RiskTransition,
     build_execution_request,

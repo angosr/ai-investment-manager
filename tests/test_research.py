@@ -16,13 +16,15 @@ import typer
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
 from investment_manager.cli import _parse_research_symbol
 from investment_manager.domain import (
-    AccountSnapshot,
     Action,
-    OrderType,
     PriceCondition,
+    SignalCandidate,
+)
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    OrderType,
     ProgramExitCondition,
     Side,
-    SignalCandidate,
 )
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id

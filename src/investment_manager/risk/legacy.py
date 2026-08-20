@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from investment_manager.config import RiskPolicy
-from investment_manager.domain import (
+from investment_manager.domain import TradeIntent
+from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
     Side,
-    TradeIntent,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc

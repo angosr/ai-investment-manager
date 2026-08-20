@@ -3,14 +3,18 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.domain import AccountSnapshot, Position, Side
-from investment_manager.kernel.identity import content_hash
-from investment_manager.risk.portfolio import ApprovedAssetTarget, ApprovedTarget
-from investment_manager.trade_planner import (
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    Position,
+    Side,
+)
+from investment_manager.execution.planner import (
     MarketExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,
 )
+from investment_manager.kernel.identity import content_hash
+from investment_manager.risk.portfolio import ApprovedAssetTarget, ApprovedTarget
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
 HASH = "a" * 64

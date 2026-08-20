@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.domain import (
+from investment_manager.execution.models import (
     AccountSnapshot,
     Position,
 )

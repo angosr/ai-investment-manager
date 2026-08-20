@@ -6,14 +6,16 @@ from enum import StrEnum
 from pydantic import field_validator, model_validator
 
 from investment_manager.domain import (
-    AccountSnapshot,
     CycleOutcome,
     DecisionOutcome,
     MetricObservation,
+    TradeIntent,
+)
+from investment_manager.execution.models import (
+    AccountSnapshot,
     Order,
     OrderStatus,
     PositionLifecycle,
-    TradeIntent,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc

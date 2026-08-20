@@ -44,8 +44,10 @@ from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    OrderType,
     PriceCondition,
+)
+from investment_manager.execution.models import (
+    OrderType,
     Side,
 )
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason

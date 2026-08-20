@@ -7,23 +7,25 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import (
+from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
+)
+from investment_manager.execution.reconciliation import (
+    MockReconciler,
+    ReconciliationReport,
+    TradingStateSnapshot,
+)
+from investment_manager.execution.tables import (
+    mock_exchange_orders,
+    orders,
+    reconciliation_reports,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     latest_account_snapshot_payload,
-    mock_exchange_orders,
-    orders,
-    reconciliation_reports,
-)
-from investment_manager.reconciliation import (
-    MockReconciler,
-    ReconciliationReport,
-    TradingStateSnapshot,
 )
 
 

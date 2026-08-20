@@ -22,8 +22,8 @@ from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
     EdgeCalibration,
-    Side,
 )
+from investment_manager.execution.models import Side
 from investment_manager.kernel.identity import content_hash
 
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import (
+from investment_manager.execution.models import (
     AccountSnapshot,
     OrderType,
     Side,

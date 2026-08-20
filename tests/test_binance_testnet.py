@@ -8,7 +8,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from investment_manager.binance_testnet import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.execution.binance import (
     BinanceCredentials,
     BinanceManualIntervention,
     BinanceTestnetClient,
@@ -16,8 +17,7 @@ from investment_manager.binance_testnet import (
     BinanceTradingStateSource,
     SymbolRules,
 )
-from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import (
+from investment_manager.execution.models import (
     AccountSnapshot,
     ExitReason,
     OrderStatus,
@@ -25,8 +25,8 @@ from investment_manager.domain import (
     PositionLifecycle,
     PositionLifecycleStatus,
 )
+from investment_manager.execution.reconciliation import TradingStateSnapshot
 from investment_manager.kernel.identity import stable_id
-from investment_manager.reconciliation import TradingStateSnapshot
 
 
 def _exchange_info():

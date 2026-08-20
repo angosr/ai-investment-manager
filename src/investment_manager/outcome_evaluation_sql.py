@@ -15,12 +15,14 @@ from investment_manager.evaluation import (
     CycleDecisionFact,
     OutcomeWindowReport,
 )
+from investment_manager.execution.tables import (
+    fills,
+    orders,
+)
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     analysis_cycles,
     decision_outcomes,
-    fills,
-    orders,
     outcome_window_reports,
 )
 

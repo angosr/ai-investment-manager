@@ -532,6 +532,79 @@ def test_risk_models_and_modules_have_one_domain_owner() -> None:
         assert not (PACKAGE_ROOT / filename).exists()
 
 
+def test_execution_models_tables_and_modules_have_one_owner() -> None:
+    moved_models = {
+        "AccountSnapshot",
+        "ExitReason",
+        "Fill",
+        "Order",
+        "OrderStatus",
+        "OrderType",
+        "Position",
+        "PositionLifecycle",
+        "PositionLifecycleStatus",
+        "ProgramExitCondition",
+        "SUPPORTED_OPEN_SIDES",
+        "Side",
+    }
+    owned_tables = {
+        "execution_requests",
+        "fills",
+        "mock_exchange_orders",
+        "mock_exchange_protections",
+        "orders",
+        "position_lifecycles",
+        "reconciliation_reports",
+    }
+    owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
+
+    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        if path != PACKAGE_ROOT / "domain.py":
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "investment_manager.domain"
+                ):
+                    assert not moved_models.intersection(
+                        alias.name for alias in node.names
+                    ), path
+        if not path.is_relative_to(PACKAGE_ROOT):
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id in owned_tables
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners[target.id].append(path)
+
+    expected = PACKAGE_ROOT / "execution" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
+    for filename in (
+        "binance_testnet.py",
+        "execution.py",
+        "execution_contract.py",
+        "exit_policy.py",
+        "ledger.py",
+        "lifecycle.py",
+        "lifecycle_runtime.py",
+        "lifecycle_workflows.py",
+        "mock_exchange_sql.py",
+        "reconciliation.py",
+        "reconciliation_runtime.py",
+        "reconciliation_sql.py",
+        "reconciliation_workflows.py",
+        "trade_planner.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

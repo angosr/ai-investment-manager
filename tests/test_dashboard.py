@@ -24,7 +24,7 @@ from investment_manager.dashboard.read_models import (
     WorldEvent,
 )
 from investment_manager.dashboard.resources import sample_host_resources
-from investment_manager.domain import Side
+from investment_manager.execution.models import Side
 
 
 def _intent(side: Side) -> SimpleNamespace:

@@ -15,6 +15,7 @@ from investment_manager.domain import (
     CandidateOutcomeStatus,
 )
 from investment_manager.evaluation import OutcomeWindowReport
+from investment_manager.execution.tables import reconciliation_reports
 from investment_manager.governance import (
     EvaluationPlan,
     FailedExperiment,
@@ -38,7 +39,6 @@ from investment_manager.persistence import (
     evaluation_plans,
     failed_experiment_records,
     outcome_window_reports,
-    reconciliation_reports,
     release_manifests,
     signal_candidates,
 )

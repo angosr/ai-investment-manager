@@ -16,41 +16,47 @@ from investment_manager.decision import (
     freeze_candidate_cost_basis,
 )
 from investment_manager.domain import (
-    AccountSnapshot,
     AnalysisProposal,
     CycleOutcome,
     DecisionOutcome,
     MetricObservation,
-    Order,
-    OrderStatus,
     PanelSnapshot,
-    PositionLifecycle,
     SignalCandidate,
     TradeIntent,
 )
-from investment_manager.execution import ExecutionExchange, MockExchange, entry_client_order_id
-from investment_manager.execution_contract import (
+from investment_manager.execution.contracts import (
     ExecutionRequest,
     RiskTransition,
     build_execution_request,
     build_execution_result,
 )
-from investment_manager.information.models import IntelligenceEvent
-from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.kernel.time import require_utc
-from investment_manager.kernel.types import FrozenModel
-from investment_manager.ledger import (
+from investment_manager.execution.ledger import (
     CycleFacts,
     FactLedger,
     InMemoryFactLedger,
     RiskReservationRejected,
 )
-from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.execution.legacy_exchange import (
+    ExecutionExchange,
+    MockExchange,
+    entry_client_order_id,
+)
+from investment_manager.execution.lifecycle import PositionLifecycleManager
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    Order,
+    OrderStatus,
+    PositionLifecycle,
+)
+from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.information.models import IntelligenceEvent
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.metrics import observation
 from investment_manager.panel import PanelBuilder
-from investment_manager.reconciliation import MockReconciler
 from investment_manager.risk.budget import InMemoryRiskBudgetStore, RiskBudgetStore
 from investment_manager.risk.legacy import RiskEngine
 from investment_manager.risk.models import (

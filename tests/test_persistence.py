@@ -14,7 +14,11 @@ from investment_manager.analyst import (
     FailureClass,
 )
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.execution import MockExchange
+from investment_manager.execution.legacy_exchange import MockExchange
+from investment_manager.execution.tables import (
+    fills,
+    orders,
+)
 from investment_manager.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
@@ -22,9 +26,7 @@ from investment_manager.persistence import (
     analysis_cycles,
     codex_account_capacity,
     codex_runs,
-    fills,
     metric_observations,
-    orders,
 )
 from investment_manager.risk.budget import (
     SqlRiskBudgetStore,

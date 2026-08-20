@@ -3,7 +3,13 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.domain import DirectionalView, Position
+from investment_manager.domain import DirectionalView
+from investment_manager.execution.models import Position
+from investment_manager.execution.planner import (
+    MarketExecutionSpec,
+    TradePlanner,
+    TradePlannerPolicy,
+)
 from investment_manager.forecast.models import (
     CalibratedForecast,
     ForecastRole,
@@ -21,11 +27,6 @@ from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
     ProtectiveStop,
-)
-from investment_manager.trade_planner import (
-    MarketExecutionSpec,
-    TradePlanner,
-    TradePlannerPolicy,
 )
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)

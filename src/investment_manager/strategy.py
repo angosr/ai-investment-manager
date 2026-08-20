@@ -7,12 +7,14 @@ from typing import Protocol
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
 from investment_manager.config import StrategyPolicy
 from investment_manager.domain import (
-    AccountSnapshot,
     Action,
-    OrderType,
     PriceCondition,
-    Side,
     SignalCandidate,
+)
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    OrderType,
+    Side,
 )
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id

@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from investment_manager.config import AppConfig
 from investment_manager.decision import estimate_round_trip_cost_amount
-from investment_manager.domain import (
+from investment_manager.domain import Action
+from investment_manager.execution.models import (
     AccountSnapshot,
-    Action,
     OrderType,
     Side,
 )

@@ -6,17 +6,19 @@ from threading import RLock
 from typing import Protocol
 
 from investment_manager.domain import (
-    AccountSnapshot,
     AnalysisProposal,
     DecisionOutcome,
     MetricObservation,
-    Order,
     PanelSnapshot,
-    PositionLifecycle,
     SignalCandidate,
     TradeIntent,
 )
-from investment_manager.execution_contract import ExecutionRequest, ExecutionResult, RiskTransition
+from investment_manager.execution.contracts import ExecutionRequest, ExecutionResult, RiskTransition
+from investment_manager.execution.models import (
+    AccountSnapshot,
+    Order,
+    PositionLifecycle,
+)
 from investment_manager.risk.budget import InMemoryRiskBudgetStore
 from investment_manager.risk.models import RiskDecision
 

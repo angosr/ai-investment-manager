@@ -4,7 +4,8 @@ from decimal import Decimal
 from typing import Protocol
 
 from investment_manager.config import ExecutionPolicy
-from investment_manager.domain import (
+from investment_manager.domain import TradeIntent
+from investment_manager.execution.models import (
     ExitReason,
     Fill,
     Order,
@@ -12,7 +13,6 @@ from investment_manager.domain import (
     OrderType,
     PositionLifecycle,
     Side,
-    TradeIntent,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketSnapshot

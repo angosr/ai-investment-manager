@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 
 from investment_manager.config import AppConfig
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.execution import MockExchange
+from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.market.models import (
     ClosedMarketBar,
@@ -96,7 +96,7 @@ def _market_store() -> InMemoryMarketDataStore:
 
 class EmptyShadowState:
     def account_for_cycle(self, *, cycle_id, as_of, initial_quote_balance):
-        from investment_manager.domain import AccountSnapshot
+        from investment_manager.execution.models import AccountSnapshot
 
         return AccountSnapshot(
             cycle_id=cycle_id,

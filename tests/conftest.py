@@ -9,7 +9,8 @@ import pytest
 
 from investment_manager.config import AppConfig, load_config
 from investment_manager.cycle import CycleInput
-from investment_manager.domain import EdgeCalibration, Side
+from investment_manager.domain import EdgeCalibration
+from investment_manager.execution.models import Side
 from investment_manager.kernel.identity import content_hash
 
 ROOT = Path(__file__).resolve().parents[1]
