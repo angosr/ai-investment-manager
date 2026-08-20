@@ -2087,10 +2087,34 @@ def challenger_audit(
 @app.command("codex-isolation-audit")
 def codex_isolation_audit(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ],
+    project_root: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ] = Path("."),
+    audit_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/isolation-audit-artifacts"
+    ),
 ) -> None:
-    """脱敏验证所有已启用白名单账号的额度契约和无工具读取边界。"""
+    """验收已启用账号，并保存绑定精确 Release 的脱敏内容寻址制品。"""
 
     loaded = load_config(config)
+    manifest = load_release_manifest(release_manifest)
+    try:
+        validate_manifest_against_config(
+            manifest,
+            loaded,
+            require_configuration_hash=True,
+        )
+        validate_manifest_code_version(
+            manifest,
+            repository_root=project_root.resolve(),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="release-manifest") from exc
     accounts = tuple(item for item in loaded.codex_accounts.accounts if item.enabled)
     if not accounts:
         typer.echo(
@@ -2106,7 +2130,9 @@ def codex_isolation_audit(
             )
         )
         raise typer.Exit(code=1)
-    runtime = loaded.codex_runtime.model_copy(update={"enabled": True, "isolation_verified": True})
+    runtime = loaded.codex_runtime.model_copy(
+        update={"enabled": True, "isolation_verified": True}
+    )
     audit_parent = loaded.codex_runtime.bundle_root.parent / ".isolation-audits"
     audit_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -2121,7 +2147,19 @@ def codex_isolation_audit(
             )
             for account in accounts
         )
-    ready = all(check.ready for check in checks)
+    from quant_core.isolation_audit import (
+        CodexIsolationAuditCatalog,
+        build_codex_isolation_audit_artifact,
+    )
+
+    artifact = build_codex_isolation_audit_artifact(
+        config=loaded,
+        manifest=manifest,
+        checks=checks,
+        audited_at=datetime.now(UTC),
+    )
+    artifact_path = CodexIsolationAuditCatalog(audit_catalog).store(artifact)
+    ready = artifact.ready
     typer.echo(
         json.dumps(
             {
@@ -2129,6 +2167,9 @@ def codex_isolation_audit(
                 "runtime_policy_version": runtime.version,
                 "reason_code": "OK" if ready else "ISOLATION_AUDIT_FAILED",
                 "checks": [check.model_dump(mode="json") for check in checks],
+                "artifact_id": artifact.artifact_id,
+                "artifact_hash": content_hash(artifact),
+                "artifact_path": str(artifact_path),
             },
             ensure_ascii=False,
             indent=2,

@@ -183,10 +183,12 @@ set -a; . ./.env; set +a
 
 ```bash
 .venv/bin/quant-core codex-isolation-audit \
-  --config /etc/quant-core/quant-core.shadow.yaml
+  --config '<冻结运行配置>' \
+  --release-manifest '<冻结 ReleaseManifest>' \
+  --project-root '<对应代码 checkout>'
 ```
 
-该命令直接复用生产 Runner 的模型、reasoning、完整工具禁用集、严格 App Server 事件解析器和额度探测器；输出只包含匿名账号 ID、有效余量、通过状态和原因码，不输出账号路径、哨兵、Token 或模型原文。容量探测和每次推理前都会重新核对制品摘要与版本，不缓存 Worker 启动时的结果。没有启用槽位，或任一已启用槽位出现摘要/版本漂移、额度契约失败、stderr、工具/错误事件、Schema 异常或哨兵可读，都会以非零状态退出。通过后仍需由部署审批显式修改配置，命令自身不启用 Codex、不改发布清单。
+该命令直接复用生产 Runner 的模型、reasoning、完整工具禁用集、严格 App Server 事件解析器和额度探测器；输出只包含匿名账号 ID、有效余量、通过状态和原因码，不输出账号路径、哨兵、Token 或模型原文。容量探测和每次推理前都会重新核对制品摘要与版本，不缓存 Worker 启动时的结果。每次实际验收保存内容寻址制品，绑定 Manifest、代码/配置/行为哈希、CLI 版本与 SHA、模型、账号集合、完成时间和逐项结果；同一 ID 内容不符时拒绝覆盖。没有启用槽位，或任一已启用槽位出现摘要/版本漂移、额度契约失败、stderr、工具/错误事件、Schema 异常或哨兵可读，都会以非零状态退出。通过后仍需由部署审批显式修改配置，命令自身不启用 Codex、不改发布清单。
 
 Router 不扫描主目录，也不由 Python 读取或复制 `auth.json`。额度探测和分析调用都创建一次性权限目录，只把获准账号的 `auth.json` 软链接进去，不继承原目录的配置、MCP、插件、Skill 或会话。Codex App Server 不挂载本地执行环境，启动环境按允许列表重建，明确不继承 `OPENAI_API_KEY`、`CODEX_API_KEY` 和 `CODEX_ACCESS_TOKEN`。
 
