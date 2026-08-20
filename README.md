@@ -254,7 +254,7 @@ QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
 
 ### 运行 Binance Spot Testnet
 
-`config/investment-manager.testnet.yaml` 是小型环境覆盖：独立数据库/Temporal namespace、AI OFF、每仓最多 25 USDT、每天最多 2 单；`config/release-manifest.testnet.yaml` 与其行为版本严格绑定。先在本机 `.env` 填写由 `testnet.binance.vision` 创建的 Testnet Key/Secret，不要把密钥发到聊天或提交到 Git。验证顺序：
+`config/investment-manager.testnet.yaml` 是小型环境覆盖：独立数据库/Temporal namespace、AI OFF、每仓最多 25 USDT、每天最多 2 单；`config/release-manifest.testnet-v2.yaml` 与其行为版本严格绑定。先在本机 `.env` 填写由 `testnet.binance.vision` 创建的 Testnet Key/Secret，不要把密钥发到聊天或提交到 Git。验证顺序：
 
 ```bash
 set -a; . ./.env; set +a
@@ -265,7 +265,7 @@ set -a; . ./.env; set +a
   --symbol BTCUSDT --config config/investment-manager.testnet.yaml
 ```
 
-`order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。它通过后，才由进程监督器用 Testnet 配置和 `release-manifest.testnet.yaml` 启动与 Shadow 相同的七个角色。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前本机 audit 返回 Binance `401/-2015`，所以提交环境门禁仍为 `false`，未启动 Testnet Worker。
+`order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。它通过后，才由进程监督器用 Testnet 配置和 `release-manifest.testnet-v2.yaml` 启动与 Shadow 相同的七个角色。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前本机 audit 返回 Binance `401/-2015`，所以提交环境门禁仍为 `false`，未启动 Testnet Worker。
 
 ### 运行观测台（只读 Web）
 

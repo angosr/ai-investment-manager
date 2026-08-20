@@ -144,6 +144,17 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
             config,
             require_configuration_hash=True,
         )
+
+
+def test_runtime_release_binds_complete_configuration_content() -> None:
+    config = load_config("config/investment-manager.testnet.yaml")
+    manifest = load_release_manifest("config/release-manifest.testnet-v2.yaml")
+
+    validate_manifest_against_config(
+        manifest,
+        config,
+        require_configuration_hash=True,
+    )
     changed = config.model_copy(
         update={
             "frequency": config.frequency.model_copy(
