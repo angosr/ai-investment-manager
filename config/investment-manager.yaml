@@ -97,8 +97,9 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v8
+  version: outcome-window-v9
   forecast_version: analysis-forecast-v3
+  assessment_version: context-assessment-outcome-v1
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300

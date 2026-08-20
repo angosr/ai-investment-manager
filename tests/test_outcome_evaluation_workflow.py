@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
@@ -12,6 +13,7 @@ from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.governance.evaluation.outcome_service import (
     OutcomeEvaluationActivities,
+    OutcomeEvaluationSupervisor,
     OutcomeEvaluationTemporalCoordinator,
     OutcomeEvaluationTemporalWorker,
     OutcomeEvaluationWorkflowStatus,
@@ -181,3 +183,56 @@ def test_outcome_evaluation_poll_uses_absolute_utc_buckets() -> None:
 
     assert _seconds_until_next_poll(almost_boundary, poll_seconds=300) == 0.25
     assert _seconds_until_next_poll(after_slow_run, poll_seconds=300) == 293
+
+
+def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
+    app_config,
+) -> None:
+    class Settler:
+        def __init__(self, result) -> None:
+            self.result = result
+            self.calls = []
+
+        def settle(self, *, as_of):
+            self.calls.append(as_of)
+            return self.result
+
+    class Coordinator:
+        def __init__(self, stop: asyncio.Event) -> None:
+            self.stop = stop
+            self.requests = []
+
+        async def ensure(self, request):
+            self.requests.append(request)
+            self.stop.set()
+            return request.workflow_id
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        candidate = Settler(SimpleNamespace(settled=1, unscorable=2))
+        forecast = Settler(SimpleNamespace(settled=3, abstained=4, unscorable=5))
+        assessment = Settler(SimpleNamespace(settled=6, abstained=7, unscorable=8))
+        coordinator = Coordinator(stop)
+        supervisor = OutcomeEvaluationSupervisor(
+            coordinator=coordinator,
+            config=app_config,
+            candidate_settler=candidate,
+            forecast_settler=forecast,
+            assessment_settler=assessment,
+            clock=lambda: datetime(2026, 8, 20, 12, tzinfo=UTC),
+        )
+
+        await supervisor.run(stop)
+
+        assert len(candidate.calls) == len(forecast.calls) == len(assessment.calls) == 1
+        assert supervisor.health.candidate_settled == 1
+        assert supervisor.health.candidate_unscorable == 2
+        assert supervisor.health.forecast_settled == 3
+        assert supervisor.health.forecast_abstained == 4
+        assert supervisor.health.forecast_unscorable == 5
+        assert supervisor.health.assessment_settled == 6
+        assert supervisor.health.assessment_abstained == 7
+        assert supervisor.health.assessment_unscorable == 8
+        assert len(coordinator.requests) == 1
+
+    asyncio.run(scenario())

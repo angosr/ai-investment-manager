@@ -8,6 +8,7 @@ from investment_manager.kernel.configuration import StrictConfig
 class OutcomeEvaluationPolicy(StrictConfig):
     version: str
     forecast_version: str = "analysis-forecast-v3"
+    assessment_version: str = "context-assessment-outcome-v1"
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)

@@ -15,6 +15,10 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
+from investment_manager.forecast.context.settlement import (
+    AssessmentViewOutcomeSettler,
+    SqlAssessmentViewOutcomeStore,
+)
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
 from investment_manager.governance.evaluation.outcome_workflow import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
@@ -225,10 +229,14 @@ class OutcomeEvaluationSupervisorHealth:
     forecast_settled: int = 0
     forecast_abstained: int = 0
     forecast_unscorable: int = 0
+    assessment_settled: int = 0
+    assessment_abstained: int = 0
+    assessment_unscorable: int = 0
     last_workflow_id: str | None = None
     last_error_class: str | None = None
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
+    last_assessment_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -237,6 +245,7 @@ class OutcomeEvaluationSupervisor:
     config: AppConfig
     candidate_settler: CandidateOutcomeSettler
     forecast_settler: AnalysisForecastOutcomeSettler
+    assessment_settler: AssessmentViewOutcomeSettler
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -272,6 +281,20 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_forecast_error_class != type(exc).__name__:
                     logger.exception("analysis forecast settlement failed")
                 self.health.last_forecast_error_class = type(exc).__name__
+            try:
+                assessment_result = await asyncio.to_thread(
+                    self.assessment_settler.settle, as_of=now
+                )
+                self.health.assessment_settled += assessment_result.settled
+                self.health.assessment_abstained += assessment_result.abstained
+                self.health.assessment_unscorable += assessment_result.unscorable
+                self.health.last_assessment_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_assessment_error_class != type(exc).__name__:
+                    logger.exception("context assessment settlement failed")
+                self.health.last_assessment_error_class = type(exc).__name__
             eligible = now - timedelta(minutes=policy.settlement_grace_minutes)
             window_seconds = int(window.total_seconds())
             window_end = datetime.fromtimestamp(
@@ -341,6 +364,15 @@ def assemble_outcome_evaluation(
                 evaluation_version=config.outcome_evaluation.forecast_version,
                 maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
                 settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
+            ),
+            assessment_settler=AssessmentViewOutcomeSettler(
+                engine=engine,
+                store=SqlAssessmentViewOutcomeStore(engine),
+                evaluation_version=config.outcome_evaluation.assessment_version,
+                maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
+                settlement_grace_minutes=(
+                    config.outcome_evaluation.settlement_grace_minutes
+                ),
             ),
         ),
     )
