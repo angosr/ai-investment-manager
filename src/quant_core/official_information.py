@@ -15,6 +15,7 @@ from pydantic import Field, field_validator, model_validator
 from quant_core.asset_management import SourceObservation, SourceTier
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.ids import content_hash, stable_id
+from quant_core.source_payload import build_raw_source_payload
 
 FED_SOURCE_ID = "federal-reserve"
 FED_MONETARY_RSS_URL = "https://www.federalreserve.gov/feeds/press_monetary.xml"
@@ -227,6 +228,13 @@ def parse_fomc_calendar(
     """Parse the Fed calendar without assigning asset relevance or trigger priority."""
 
     observed_at = _require_utc(observed_at)
+    raw_payload_ref = build_raw_source_payload(
+        source_id=FED_SOURCE_ID,
+        source_url=FED_FOMC_CALENDAR_URL,
+        media_type="text/html",
+        observed_at=observed_at,
+        content=html.encode("utf-8"),
+    ).payload_id
     parser = _FomcCalendarHtmlParser()
     parser.feed(html)
     parser.close()
@@ -268,7 +276,7 @@ def parse_fomc_calendar(
                     source_record_id=source_record_id,
                     observed_at=observed_at,
                     payload_hash=payload_hash,
-                    payload_ref=f"official-record:{observation_id}",
+                    payload_ref=raw_payload_ref,
                 ),
                 meeting_start=meeting_start,
                 meeting_end=meeting_end,
@@ -287,6 +295,13 @@ def parse_fed_monetary_rss(
     observed_at: datetime,
 ) -> tuple[FedMonetaryReleaseRecord, ...]:
     observed_at = _require_utc(observed_at)
+    raw_payload_ref = build_raw_source_payload(
+        source_id=FED_SOURCE_ID,
+        source_url=FED_MONETARY_RSS_URL,
+        media_type="application/rss+xml",
+        observed_at=observed_at,
+        content=xml.encode("utf-8"),
+    ).payload_id
     try:
         root = ElementTree.fromstring(xml.lstrip("\ufeff"))
     except ElementTree.ParseError as exc:
@@ -323,7 +338,7 @@ def parse_fed_monetary_rss(
                     observed_at=observed_at,
                     source_published_at=published_at,
                     payload_hash=payload_hash,
-                    payload_ref=f"official-record:{observation_id}",
+                    payload_ref=raw_payload_ref,
                 ),
                 title=title,
                 summary=summary,
@@ -492,8 +507,8 @@ def _validate_record_observation(
     )
     if observation.observation_id != expected_id:
         raise ValueError("官方记录 observation_id 与来源、内容和观察时间不一致")
-    if observation.payload_ref != f"official-record:{observation.observation_id}":
-        raise ValueError("官方记录 payload_ref 不能解析到自身记录")
+    if not observation.payload_ref.startswith("raw_source_payload_"):
+        raise ValueError("官方记录 payload_ref 必须引用原始来源 payload")
 
 
 def _official_record_payload(record: OfficialRecord) -> dict:

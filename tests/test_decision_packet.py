@@ -33,7 +33,7 @@ from quant_core.decision_packet import (
 )
 from quant_core.domain import DirectionalView
 from quant_core.features import FeatureEngine
-from quant_core.ids import canonical_json
+from quant_core.ids import canonical_json, content_hash
 from quant_core.persistence import metadata
 
 HASH = "a" * 64
@@ -82,7 +82,7 @@ def _fact(as_of, *, revision_id: str = "revision-1") -> VisibleFact:
     )
 
 
-def _state(as_of) -> StateSnapshot:
+def _state(as_of, *, account, markets, features) -> StateSnapshot:
     return StateSnapshot(
         state_id="state-1",
         projection_version="state-projection-v1",
@@ -90,9 +90,9 @@ def _state(as_of) -> StateSnapshot:
         as_of=as_of,
         built_at=as_of,
         fact_revision_ids=("revision-1",),
-        market_snapshot_refs=("market-btc", "market-eth"),
-        feature_snapshot_refs=("feature-btc", "feature-eth"),
-        account_snapshot_ref="account-1",
+        market_snapshot_refs=tuple(sorted(content_hash(item) for item in markets)),
+        feature_snapshot_refs=tuple(sorted(content_hash(item) for item in features)),
+        account_snapshot_ref=content_hash(account),
         content_hash=HASH,
     )
 
@@ -132,7 +132,12 @@ def _packet(app_config, replay_input):
     )
     packet = builder.build(
         mandate=_mandate(),
-        state=_state(market_btc.as_of),
+        state=_state(
+            market_btc.as_of,
+            account=replay_input.account,
+            markets=(market_btc, market_eth),
+            features=(feature_btc, feature_eth),
+        ),
         deltas=(
             _delta(market_btc.as_of, delta_id="delta-2"),
             _delta(market_btc.as_of, delta_id="delta-1", seconds=1),
@@ -194,7 +199,12 @@ def test_packet_hash_is_independent_of_input_collection_order(
 
     second = builder.build(
         mandate=_mandate(),
-        state=_state(market_btc.as_of),
+        state=_state(
+            market_btc.as_of,
+            account=replay_input.account,
+            markets=(market_btc, market_eth),
+            features=(feature_btc, feature_eth),
+        ),
         deltas=(
             _delta(market_btc.as_of, delta_id="delta-1", seconds=1),
             _delta(market_btc.as_of, delta_id="delta-2"),
@@ -207,6 +217,34 @@ def test_packet_hash_is_independent_of_input_collection_order(
 
     assert second.content_hash == first.content_hash
     assert second.packet_id == first.packet_id
+
+
+def test_packet_rejects_market_replacement_for_frozen_state(
+    app_config, replay_input
+) -> None:
+    builder, _ = _packet(app_config, replay_input)
+    market_btc = replay_input.market
+    market_eth = market_btc.model_copy(update={"symbol": "ETHUSDT"})
+    feature_btc = FeatureEngine(app_config.feature).compute(market_btc)
+    feature_eth = feature_btc.model_copy(update={"symbol": "ETHUSDT"})
+    state = _state(
+        market_btc.as_of,
+        account=replay_input.account,
+        markets=(market_btc, market_eth),
+        features=(feature_btc, feature_eth),
+    )
+    replacement = market_btc.model_copy(update={"last": market_btc.last + 1})
+
+    with pytest.raises(ValueError, match="market_snapshot_refs"):
+        builder.build(
+            mandate=_mandate(),
+            state=state,
+            deltas=(_delta(market_btc.as_of),),
+            facts=(_fact(market_btc.as_of),),
+            account=replay_input.account,
+            markets=(replacement, market_eth),
+            features=(feature_btc, feature_eth),
+        )
 
 
 def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> None:
@@ -229,6 +267,7 @@ def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> N
     )
 
     with pytest.raises(DecisionPacketCapacityError, match="direct facts"):
+        features = (FeatureEngine(app_config.feature).compute(market),)
         builder.build(
             mandate=AnalysisMandate(
                 version="mandate-v1",
@@ -243,12 +282,17 @@ def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> N
                 ),
                 required_risk_factors=("REGULATION",),
             ),
-            state=_state(market.as_of),
+            state=_state(
+                market.as_of,
+                account=replay_input.account,
+                markets=(market,),
+                features=features,
+            ),
             deltas=(_delta(market.as_of),),
             facts=(oversized,),
             account=replay_input.account,
             markets=(market,),
-            features=(FeatureEngine(app_config.feature).compute(market),),
+            features=features,
         )
 
 

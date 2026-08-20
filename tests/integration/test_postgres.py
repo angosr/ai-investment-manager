@@ -13,13 +13,18 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from quant_core.asset_management import CanonicalFactRevision
+from quant_core.asset_management import CanonicalFactRevision, Materiality
 from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
 from quant_core.cycle import AnalysisCycle
 from quant_core.domain import MarketSnapshot
 from quant_core.execution import MockExchange
 from quant_core.fact_pipeline import (
+    FOMC_MEETING_FACT_TYPE,
+    FactDeltaPolicy,
+    FactDeltaRule,
     OfficialFactProjectionPolicy,
+    build_fact_material_delta,
+    build_state_snapshot,
     project_fomc_calendar_fact,
 )
 from quant_core.fact_state_sql import SqlFactStateStore
@@ -28,7 +33,12 @@ from quant_core.governance_context import GovernanceSnapshotAssembler
 from quant_core.lifecycle import PositionLifecycleManager
 from quant_core.market_data import MarketTrade
 from quant_core.market_data_sql import SqlMarketDataStore, market_metadata
-from quant_core.official_information import MarketCalendarEventRevision, parse_fomc_calendar
+from quant_core.official_information import (
+    FED_FOMC_CALENDAR_URL,
+    FED_SOURCE_ID,
+    MarketCalendarEventRevision,
+    parse_fomc_calendar,
+)
 from quant_core.official_information_sql import SqlOfficialInformationStore
 from quant_core.persistence import (
     SqlEventStore,
@@ -50,6 +60,8 @@ from quant_core.persistence import (
     source_observations,
 )
 from quant_core.reconciliation import MockReconciler
+from quant_core.source_payload import build_raw_source_payload
+from quant_core.source_payload_sql import SqlRawSourcePayloadStore
 from quant_core.trigger import (
     AnalysisTriggerType,
     TriggerNow,
@@ -88,18 +100,30 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
     migration_config.attributes["database_url"] = database_url
     command.upgrade(migration_config, "head")
     official_store = SqlOfficialInformationStore(engine)
+    raw_store = SqlRawSourcePayloadStore(engine)
     observed_at = datetime(2026, 8, 20, 12, tzinfo=UTC)
+
+    def calendar_record(year: int, date_text: str, at: datetime):
+        html = f"""
+        <h4>{year} FOMC Meetings</h4>
+        <div class="row fomc-meeting">
+          <div class="fomc-meeting__month"><strong>September</strong></div>
+          <div class="fomc-meeting__date">{date_text}</div>
+        </div>
+        """
+        content = html.encode("utf-8")
+        raw = build_raw_source_payload(
+            source_id=FED_SOURCE_ID,
+            source_url=FED_FOMC_CALENDAR_URL,
+            media_type="text/html",
+            observed_at=at,
+            content=content,
+        )
+        raw_store.put(raw, content)
+        return parse_fomc_calendar(html, observed_at=at)[0]
+
     concurrent_records = tuple(
-        parse_fomc_calendar(
-            f"""
-            <h4>{year} FOMC Meetings</h4>
-            <div class="row fomc-meeting">
-              <div class="fomc-meeting__month"><strong>September</strong></div>
-              <div class="fomc-meeting__date">15-16</div>
-            </div>
-            """,
-            observed_at=observed_at,
-        )[0]
+        calendar_record(year, "15-16", observed_at)
         for year in range(2030, 2036)
     )
     barriers = {
@@ -122,28 +146,14 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
             select(func.count()).select_from(market_calendar_event_revisions)
         ) == len(concurrent_records)
 
-    initial = parse_fomc_calendar(
-        """
-        <h4>2036 FOMC Meetings</h4>
-        <div class="row fomc-meeting">
-          <div class="fomc-meeting__month"><strong>September</strong></div>
-          <div class="fomc-meeting__date">15-16</div>
-        </div>
-        """,
-        observed_at=observed_at,
-    )[0]
+    initial = calendar_record(2036, "15-16", observed_at)
     official_store.put(initial)
     revisions = tuple(
-        parse_fomc_calendar(
-            f"""
-            <h4>2036 FOMC Meetings</h4>
-            <div class="row fomc-meeting">
-              <div class="fomc-meeting__month"><strong>September</strong></div>
-              <div class="fomc-meeting__date">{date_text}</div>
-            </div>
-            """,
-            observed_at=observed_at + timedelta(minutes=offset),
-        )[0]
+        calendar_record(
+            2036,
+            date_text,
+            observed_at + timedelta(minutes=offset),
+        )
         for offset, date_text in ((1, "16-17"), (2, "17-18"))
     )
     revision_barrier = Barrier(2)
@@ -177,37 +187,30 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         for previous, current in pairwise(revision_chain)
     )
     fact_store = SqlFactStateStore(engine)
+    fact_projection_policy = OfficialFactProjectionPolicy(
+        version="postgres-fed-fact-v1",
+        affected_assets=("BTC", "ETH"),
+    )
     root_fact = project_fomc_calendar_fact(
         revision_chain[0],
-        policy=OfficialFactProjectionPolicy(
-            version="postgres-fed-fact-v1",
-            affected_assets=("BTC", "ETH"),
-        ),
+        policy=fact_projection_policy,
     )
     fact_store.put_fact(root_fact)
     competing_calendars = []
     for offset, date_text in ((3, "18-19"), (4, "19-20")):
         result = official_store.put(
-            parse_fomc_calendar(
-                f"""
-                <h4>2036 FOMC Meetings</h4>
-                <div class="row fomc-meeting">
-                  <div class="fomc-meeting__month"><strong>September</strong></div>
-                  <div class="fomc-meeting__date">{date_text}</div>
-                </div>
-                """,
-                observed_at=observed_at + timedelta(minutes=offset),
-            )[0]
+            calendar_record(
+                2036,
+                date_text,
+                observed_at + timedelta(minutes=offset),
+            )
         )
         assert result.calendar_revision is not None
         competing_calendars.append(result.calendar_revision)
     competing_facts = tuple(
         project_fomc_calendar_fact(
             calendar,
-            policy=OfficialFactProjectionPolicy(
-                version="postgres-fed-fact-v1",
-                affected_assets=("BTC", "ETH"),
-            ),
+            policy=fact_projection_policy,
             previous=root_fact,
         )
         for calendar in competing_calendars
@@ -235,6 +238,83 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         )
     assert len(fact_chain) == 2
     assert fact_chain[1].previous_revision_id == root_fact.revision_id
+    baseline_fact = fact_chain[-1]
+    baseline_at = observed_at + timedelta(minutes=4, seconds=30)
+    baseline_state = build_state_snapshot(
+        projection_version="postgres-state-v1",
+        analysis_scope="postgres-portfolio",
+        as_of=baseline_at,
+        built_at=baseline_at,
+        facts=(baseline_fact,),
+    )
+    fact_store.put_state(baseline_state)
+    transition_facts = []
+    previous_fact = baseline_fact
+    for offset, date_text in ((5, "20-21"), (6, "21-22")):
+        calendar_write = official_store.put(
+            calendar_record(
+                2036,
+                date_text,
+                observed_at + timedelta(minutes=offset),
+            )
+        )
+        assert calendar_write.calendar_revision is not None
+        fact = project_fomc_calendar_fact(
+            calendar_write.calendar_revision,
+            policy=fact_projection_policy,
+            previous=previous_fact,
+        )
+        fact_store.put_fact(fact)
+        transition_facts.append(fact)
+        previous_fact = fact
+    delta_policy = FactDeltaPolicy(
+        version="postgres-fact-delta-v1",
+        validity_seconds=3_600,
+        horizons_minutes=(60, 240),
+        rules=(
+            FactDeltaRule(
+                fact_type=FOMC_MEETING_FACT_TYPE,
+                materiality=Materiality.NORMAL,
+                reason_code="FOMC_SCHEDULE_REVISION",
+            ),
+        ),
+    )
+    transition_states = tuple(
+        build_state_snapshot(
+            projection_version="postgres-state-v1",
+            analysis_scope="postgres-portfolio",
+            as_of=fact.observed_at,
+            built_at=fact.observed_at,
+            facts=(fact,),
+        )
+        for fact in transition_facts
+    )
+    competing_transitions = tuple(
+        (
+            state,
+            build_fact_material_delta(
+                previous=baseline_state,
+                current=state,
+                current_facts=(fact,),
+                policy=delta_policy,
+            ),
+        )
+        for state, fact in zip(transition_states, transition_facts, strict=True)
+    )
+    transition_barrier = Barrier(2)
+
+    def record_transition(candidate):
+        state, delta = candidate
+        assert delta is not None
+        transition_barrier.wait()
+        try:
+            return fact_store.record_transition(state=state, delta=delta)
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        transition_writes = tuple(pool.map(record_transition, competing_transitions))
+    assert sum(write is not None for write in transition_writes) == 1
     SqlGovernanceRepository(engine).record_release(
         ReleaseManifest(
             manifest_id="release-bootstrap-v1",

@@ -9,17 +9,25 @@ from sqlalchemy.engine import Connection, Engine
 from quant_core.domain import _require_utc
 from quant_core.ids import stable_id
 from quant_core.official_information import (
+    FED_FOMC_CALENDAR_URL,
+    FED_MONETARY_RSS_URL,
+    FED_SOURCE_ID,
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
     MarketCalendarEventRevision,
     OfficialRecord,
     OfficialRecordKind,
     build_fomc_calendar_revision,
+    parse_fed_monetary_rss,
+    parse_fomc_calendar,
 )
 from quant_core.persistence import (
     market_calendar_event_revisions,
+    raw_source_payloads,
     source_observations,
 )
+from quant_core.source_payload import build_raw_source_payload
+from quant_core.source_payload_sql import SqlRawSourcePayloadStore
 from quant_core.sql_locking import advisory_xact_lock
 
 
@@ -39,6 +47,15 @@ class SqlOfficialInformationStore:
     def put(self, record: OfficialRecord) -> OfficialRecordWrite:
         observation = record.observation
         with self._engine.begin() as connection:
+            raw_payload_exists = connection.execute(
+                select(raw_source_payloads.c.payload_id).where(
+                    raw_source_payloads.c.payload_id == observation.payload_ref,
+                    raw_source_payloads.c.source_id == observation.source_id,
+                    raw_source_payloads.c.observed_at <= observation.observed_at,
+                )
+            ).scalar_one_or_none()
+            if raw_payload_exists is None:
+                raise ValueError("官方记录缺少截至 observed_at 可见的原始来源 payload")
             advisory_xact_lock(
                 connection,
                 "source_observation",
@@ -201,6 +218,59 @@ class SqlOfficialInformationStore:
             )
         )
         return revision
+
+
+class SqlFedOfficialInformationIngestor:
+    """Persist first-seen raw Fed evidence before projecting official records."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._raw = SqlRawSourcePayloadStore(engine)
+        self._records = SqlOfficialInformationStore(engine)
+
+    def ingest_calendar(
+        self,
+        html: str,
+        *,
+        observed_at: datetime,
+        years: tuple[int, ...] | None = None,
+    ) -> tuple[OfficialRecordWrite, ...]:
+        content = html.encode("utf-8")
+        raw = build_raw_source_payload(
+            source_id=FED_SOURCE_ID,
+            source_url=FED_FOMC_CALENDAR_URL,
+            media_type="text/html",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        return tuple(
+            self._records.put(record)
+            for record in parse_fomc_calendar(
+                html,
+                observed_at=observed_at,
+                years=years,
+            )
+        )
+
+    def ingest_monetary_rss(
+        self,
+        xml: str,
+        *,
+        observed_at: datetime,
+    ) -> tuple[OfficialRecordWrite, ...]:
+        content = xml.encode("utf-8")
+        raw = build_raw_source_payload(
+            source_id=FED_SOURCE_ID,
+            source_url=FED_MONETARY_RSS_URL,
+            media_type="application/rss+xml",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        return tuple(
+            self._records.put(record)
+            for record in parse_fed_monetary_rss(xml, observed_at=observed_at)
+        )
 
 
 def _record_from_payload(payload: dict) -> OfficialRecord:

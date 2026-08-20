@@ -327,11 +327,21 @@ class DecisionPacketBuilder:
             raise DecisionPacketCapacityError("active hypotheses exceed policy")
         if account.as_of > state.as_of or account.observed_at > state.as_of:
             raise ValueError("账户事实晚于 StateSnapshot as_of")
+        if state.account_snapshot_ref != content_hash(account):
+            raise ValueError("账户事实与 StateSnapshot account_snapshot_ref 不一致")
         symbols = tuple(item.market_symbol for item in mandate.assets)
         if tuple(sorted(item.symbol for item in markets)) != tuple(sorted(symbols)):
             raise ValueError("MarketSnapshot 集合与 Mandate assets 不一致")
         if tuple(sorted(item.symbol for item in features)) != tuple(sorted(symbols)):
             raise ValueError("FeatureSnapshot 集合与 Mandate assets 不一致")
+        if state.market_snapshot_refs != tuple(
+            sorted(content_hash(item) for item in markets)
+        ):
+            raise ValueError("行情事实与 StateSnapshot market_snapshot_refs 不一致")
+        if state.feature_snapshot_refs != tuple(
+            sorted(content_hash(item) for item in features)
+        ):
+            raise ValueError("特征事实与 StateSnapshot feature_snapshot_refs 不一致")
         for market in markets:
             if market.as_of > state.as_of or market.observed_at > state.as_of:
                 raise ValueError("行情事实晚于 StateSnapshot as_of")

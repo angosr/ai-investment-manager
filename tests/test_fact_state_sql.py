@@ -15,7 +15,7 @@ from quant_core.fact_pipeline import (
 )
 from quant_core.fact_state_sql import SqlFactStateStore
 from quant_core.official_information import parse_fomc_calendar
-from quant_core.official_information_sql import SqlOfficialInformationStore
+from quant_core.official_information_sql import SqlFedOfficialInformationIngestor
 from quant_core.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
@@ -44,36 +44,33 @@ DELTA_POLICY = FactDeltaPolicy(
 
 
 def _record(date_text: str, *, observed_at: datetime):
-    return parse_fomc_calendar(
-        f"""
+    return f"""
         <h4>2026 FOMC Meetings</h4><div class="row fomc-meeting">
           <div class="fomc-meeting__month"><strong>September</strong></div>
           <div class="fomc-meeting__date">{date_text}</div>
         </div>
-        """,
-        observed_at=observed_at,
-    )[0]
+        """
 
 
 def _stores():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    return engine, SqlOfficialInformationStore(engine), SqlFactStateStore(engine)
+    return engine, SqlFedOfficialInformationIngestor(engine), SqlFactStateStore(engine)
 
 
 def test_fact_revision_store_is_append_only_and_point_in_time_visible() -> None:
     engine, official_store, fact_store = _stores()
-    first_calendar = official_store.put(
-        _record("15-16", observed_at=OBSERVED_AT)
-    ).calendar_revision
+    first_calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
     assert first_calendar is not None
     first = project_fomc_calendar_fact(first_calendar, policy=FACT_POLICY)
     fact_store.put_fact(first)
 
     second_at = OBSERVED_AT + timedelta(minutes=1)
-    second_calendar = official_store.put(
-        _record("16-17", observed_at=second_at)
-    ).calendar_revision
+    second_calendar = official_store.ingest_calendar(
+        _record("16-17", observed_at=second_at), observed_at=second_at
+    )[0].calendar_revision
     assert second_calendar is not None
     second = project_fomc_calendar_fact(
         second_calendar,
@@ -96,7 +93,10 @@ def test_fact_revision_store_is_append_only_and_point_in_time_visible() -> None:
 
 def test_fact_requires_persisted_source_observation() -> None:
     engine, _, fact_store = _stores()
-    record = _record("15-16", observed_at=OBSERVED_AT)
+    record = parse_fomc_calendar(
+        _record("15-16", observed_at=OBSERVED_AT),
+        observed_at=OBSERVED_AT,
+    )[0]
     from quant_core.official_information import build_fomc_calendar_revision
 
     fact = project_fomc_calendar_fact(
@@ -114,9 +114,9 @@ def test_fact_requires_persisted_source_observation() -> None:
 
 def test_fact_cannot_be_visible_before_its_source_observation() -> None:
     engine, official_store, fact_store = _stores()
-    calendar = official_store.put(
-        _record("15-16", observed_at=OBSERVED_AT)
-    ).calendar_revision
+    calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
     assert calendar is not None
     fact = project_fomc_calendar_fact(calendar, policy=FACT_POLICY).model_copy(
         update={"observed_at": OBSERVED_AT - timedelta(seconds=1)}
@@ -132,9 +132,9 @@ def test_fact_cannot_be_visible_before_its_source_observation() -> None:
 
 def test_state_and_delta_transition_is_atomic_idempotent_and_replayable() -> None:
     engine, official_store, fact_store = _stores()
-    first_calendar = official_store.put(
-        _record("15-16", observed_at=OBSERVED_AT)
-    ).calendar_revision
+    first_calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
     assert first_calendar is not None
     first_fact = project_fomc_calendar_fact(first_calendar, policy=FACT_POLICY)
     fact_store.put_fact(first_fact)
@@ -148,9 +148,9 @@ def test_state_and_delta_transition_is_atomic_idempotent_and_replayable() -> Non
     fact_store.put_state(first_state)
 
     second_at = OBSERVED_AT + timedelta(minutes=1)
-    second_calendar = official_store.put(
-        _record("16-17", observed_at=second_at)
-    ).calendar_revision
+    second_calendar = official_store.ingest_calendar(
+        _record("16-17", observed_at=second_at), observed_at=second_at
+    )[0].calendar_revision
     assert second_calendar is not None
     second_fact = project_fomc_calendar_fact(
         second_calendar,
@@ -201,9 +201,9 @@ def test_state_and_delta_transition_is_atomic_idempotent_and_replayable() -> Non
 
 def test_failed_delta_rolls_back_new_state() -> None:
     _, official_store, fact_store = _stores()
-    calendar = official_store.put(
-        _record("15-16", observed_at=OBSERVED_AT)
-    ).calendar_revision
+    calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
     assert calendar is not None
     fact = project_fomc_calendar_fact(calendar, policy=FACT_POLICY)
     fact_store.put_fact(fact)
@@ -229,7 +229,7 @@ def test_failed_delta_rolls_back_new_state() -> None:
     )
     assert delta is not None
 
-    with pytest.raises(ValueError, match="StateSnapshot 不完整"):
+    with pytest.raises(ValueError, match=r"StateSnapshot 不完整|最新状态"):
         fact_store.record_transition(state=current, delta=delta)
 
     assert fact_store.state(current.state_id) is None
@@ -251,16 +251,16 @@ def test_state_store_rejects_tampered_content_identity() -> None:
 
 def test_state_store_rejects_stale_fact_revision_visible_at_as_of() -> None:
     _, official_store, fact_store = _stores()
-    first_calendar = official_store.put(
-        _record("15-16", observed_at=OBSERVED_AT)
-    ).calendar_revision
+    first_calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
     assert first_calendar is not None
     first = project_fomc_calendar_fact(first_calendar, policy=FACT_POLICY)
     fact_store.put_fact(first)
     second_at = OBSERVED_AT + timedelta(minutes=1)
-    second_calendar = official_store.put(
-        _record("16-17", observed_at=second_at)
-    ).calendar_revision
+    second_calendar = official_store.ingest_calendar(
+        _record("16-17", observed_at=second_at), observed_at=second_at
+    )[0].calendar_revision
     assert second_calendar is not None
     second = project_fomc_calendar_fact(
         second_calendar,
@@ -278,3 +278,48 @@ def test_state_store_rejects_stale_fact_revision_visible_at_as_of() -> None:
 
     with pytest.raises(ValueError, match="已过期的事实修订"):
         fact_store.put_state(stale_state)
+
+
+def test_transition_cannot_skip_the_latest_comparable_state() -> None:
+    _, official_store, fact_store = _stores()
+    root = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT - timedelta(minutes=2),
+        built_at=OBSERVED_AT,
+        facts=(),
+    )
+    middle = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT - timedelta(minutes=1),
+        built_at=OBSERVED_AT,
+        facts=(),
+    )
+    fact_store.put_state(root)
+    fact_store.put_state(middle)
+    calendar = official_store.ingest_calendar(
+        _record("15-16", observed_at=OBSERVED_AT), observed_at=OBSERVED_AT
+    )[0].calendar_revision
+    assert calendar is not None
+    fact = project_fomc_calendar_fact(calendar, policy=FACT_POLICY)
+    fact_store.put_fact(fact)
+    current = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT,
+        built_at=OBSERVED_AT,
+        facts=(fact,),
+    )
+    skipped = build_fact_material_delta(
+        previous=root,
+        current=current,
+        current_facts=(fact,),
+        policy=DELTA_POLICY,
+    )
+    assert skipped is not None
+
+    with pytest.raises(ValueError, match="最新状态"):
+        fact_store.record_transition(state=current, delta=skipped)
+
+    assert fact_store.state(current.state_id) is None

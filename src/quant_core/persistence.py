@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Numeric,
     PrimaryKeyConstraint,
@@ -77,7 +78,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "a3c9e5f7b204"
+DATABASE_SCHEMA_VERSION = "b6e2d8a4c913"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -242,6 +243,26 @@ source_observations = Table(
         name="uq_source_observation_record_time",
     ),
 )
+
+raw_source_payloads = Table(
+    "raw_source_payloads",
+    metadata,
+    Column("payload_id", String(128), primary_key=True),
+    Column("source_id", String(128), nullable=False),
+    Column("source_url", String(2_000), nullable=False),
+    Column("media_type", String(128), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("byte_count", Integer, nullable=False),
+    Column("content", LargeBinary, nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_raw_source_payloads_source_observed",
+    raw_source_payloads.c.source_id,
+    raw_source_payloads.c.observed_at,
+)
+
 market_calendar_event_revisions = Table(
     "market_calendar_event_revisions",
     metadata,

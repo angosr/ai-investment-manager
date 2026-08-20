@@ -137,6 +137,38 @@ class SqlFactStateStore:
                 state.analysis_scope,
                 state.projection_version,
             )
+            replay_payload = connection.execute(
+                select(material_deltas.c.payload).where(
+                    material_deltas.c.delta_id == delta.delta_id
+                )
+            ).scalar_one_or_none()
+            if replay_payload is not None:
+                replayed_delta = MaterialDelta.model_validate(replay_payload)
+                replayed_state_payload = connection.execute(
+                    select(state_snapshots.c.payload).where(
+                        state_snapshots.c.state_id == state.state_id
+                    )
+                ).scalar_one_or_none()
+                if replayed_state_payload is None or replayed_delta != delta:
+                    raise ValueError("MaterialDelta 幂等重放身份对应不同内容")
+                replayed_state = StateSnapshot.model_validate(replayed_state_payload)
+                if replayed_state.content_hash != state.content_hash:
+                    raise ValueError("StateSnapshot 幂等重放身份对应不同内容")
+                return replayed_state, replayed_delta
+            latest_state_id = connection.execute(
+                select(state_snapshots.c.state_id)
+                .where(
+                    state_snapshots.c.analysis_scope == state.analysis_scope,
+                    state_snapshots.c.projection_version == state.projection_version,
+                )
+                .order_by(state_snapshots.c.as_of.desc())
+                .limit(1)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if latest_state_id != delta.previous_state_id:
+                raise ValueError(
+                    "MaterialDelta previous_state_id 不是 scope 当前最新状态"
+                )
             recorded_state = self._put_state(connection, state)
             recorded_delta = self._put_delta(connection, delta)
         return recorded_state, recorded_delta
@@ -311,6 +343,18 @@ class SqlFactStateStore:
             raise ValueError("MaterialDelta 引用了不可比较的 StateSnapshot")
         if previous.as_of >= current.as_of or delta.observed_at > current.as_of:
             raise ValueError("MaterialDelta 与 StateSnapshot 时间顺序不一致")
+        direct_predecessor_id = connection.execute(
+            select(state_snapshots.c.state_id)
+            .where(
+                state_snapshots.c.analysis_scope == current.analysis_scope,
+                state_snapshots.c.projection_version == current.projection_version,
+                state_snapshots.c.as_of < current.as_of,
+            )
+            .order_by(state_snapshots.c.as_of.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if direct_predecessor_id != delta.previous_state_id:
+            raise ValueError("MaterialDelta previous_state_id 不是 current 的直接前序状态")
         if not set(delta.fact_revision_ids).issubset(current.fact_revision_ids):
             raise ValueError("MaterialDelta 事实修订不属于 current StateSnapshot")
         if not set(delta.feature_snapshot_refs).issubset(current.feature_snapshot_refs):
