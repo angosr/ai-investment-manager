@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from investment_manager.candidate_evaluation import trade_at_or_before
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -24,11 +25,10 @@ from investment_manager.legacy.models import (
     AnalysisProposal,
     DirectionalForecast,
 )
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     analysis_cycles,
     analysis_forecast_outcomes,
     analysis_proposals,
-    codex_runs,
     market_snapshots,
 )
 from investment_manager.platform.time import database_utc

@@ -19,13 +19,14 @@ from investment_manager.execution.tables import (
     fills,
     orders,
 )
-from investment_manager.persistence import (
+from investment_manager.forecast.codex_repository import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
+)
+from investment_manager.forecast.tables import codex_account_capacity, codex_runs
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     analysis_cycles,
-    codex_account_capacity,
-    codex_runs,
     metric_observations,
 )
 from investment_manager.risk.budget import (

@@ -5,8 +5,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select, text
 
+from investment_manager.legacy.repository import analysis_cycles
 from investment_manager.market.repository import market_quotes
-from investment_manager.persistence import analysis_cycles
 from investment_manager.platform.database import require_current_schema
 from investment_manager.risk.budget import portfolio_risk_budgets, risk_reservations
 from investment_manager.risk.protection import portfolio_protection_states

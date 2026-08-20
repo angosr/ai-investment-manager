@@ -21,7 +21,7 @@ from investment_manager.legacy.models import (
     CycleOutcome,
     DecisionOutcome,
 )
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     analysis_cycles,
     decision_outcomes,
 )

@@ -39,9 +39,7 @@ from investment_manager.information.tables import (
     market_calendar_event_revisions,
     source_observations,
 )
-from investment_manager.market.models import MarketSnapshot, MarketTrade
-from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
@@ -50,6 +48,8 @@ from investment_manager.persistence import (
     decision_outcomes,
     metric_observations,
 )
+from investment_manager.market.models import MarketSnapshot, MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, metadata
 from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (

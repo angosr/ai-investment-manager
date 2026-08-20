@@ -34,11 +34,11 @@ from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
 )
+from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.policy import TemporalPolicy

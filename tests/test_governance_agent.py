@@ -11,6 +11,7 @@ from investment_manager.analyst import AnalystResult, canonical_json
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
+from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.agent import (
     CodexGovernor,
     GovernorBundleBuilder,
@@ -35,10 +36,9 @@ from investment_manager.legacy.models import (
     CandidateOutcome,
     CandidateOutcomeStatus,
 )
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     analysis_cycles,
-    codex_runs,
     signal_candidates,
 )
 from investment_manager.risk.budget import SqlRiskBudgetStore

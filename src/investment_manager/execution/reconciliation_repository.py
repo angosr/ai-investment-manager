@@ -23,7 +23,7 @@ from investment_manager.execution.tables import (
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     analysis_cycles,
     latest_account_snapshot_payload,
 )

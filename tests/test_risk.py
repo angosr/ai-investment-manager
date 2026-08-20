@@ -13,7 +13,7 @@ from investment_manager.execution.models import (
     Side,
 )
 from investment_manager.legacy.models import CycleOutcome
-from investment_manager.persistence import SqlFactLedger
+from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.risk.legacy import RiskEngine
 from investment_manager.risk.models import (

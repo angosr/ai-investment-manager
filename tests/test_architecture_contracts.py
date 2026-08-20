@@ -554,7 +554,13 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "ForecastRole",
         "PricedState",
     }
-    owned_tables = {"assessment_view_outcomes", "context_assessments"}
+    owned_tables = {
+        "assessment_view_outcomes",
+        "codex_account_capacity",
+        "codex_account_leases",
+        "codex_runs",
+        "context_assessments",
+    }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
@@ -584,6 +590,16 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
 
     expected = PACKAGE_ROOT / "forecast" / "tables.py"
     assert owners == {name: [expected] for name in owned_tables}
+    codex_repository_classes = {
+        node.name
+        for node in ast.parse(
+            (PACKAGE_ROOT / "forecast" / "codex_repository.py").read_text()
+        ).body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert {"SqlAccountLeaseStore", "SqlCodexAuditStore"}.issubset(
+        codex_repository_classes
+    )
     for filename in (
         "assess_execution.py",
         "assessment_calibration.py",
@@ -739,15 +755,7 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
 
     expected = PACKAGE_ROOT / "governance" / "tables.py"
     assert owners == {name: [expected] for name in owned_tables}
-    persistence_tree = ast.parse((PACKAGE_ROOT / "persistence.py").read_text())
-    central_classes = {
-        node.name
-        for node in persistence_tree.body
-        if isinstance(node, ast.ClassDef)
-    }
-    assert not {"SqlEvaluationRepository", "SqlGovernanceRepository"}.intersection(
-        central_classes
-    )
+    assert not (PACKAGE_ROOT / "persistence.py").exists()
     governance_classes = {
         node.name
         for node in ast.parse(

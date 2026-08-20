@@ -19,9 +19,9 @@ from investment_manager.legacy.models import (
     CandidateOutcomeStatus,
     SignalCandidate,
 )
+from investment_manager.legacy.repository import candidate_outcomes, signal_candidates
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import market_trades
-from investment_manager.persistence import candidate_outcomes, signal_candidates
 
 
 @dataclass(frozen=True, slots=True)

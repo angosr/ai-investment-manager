@@ -8,13 +8,13 @@ from sqlalchemy import create_engine
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
+from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,
     MarketTrade,
 )
 from investment_manager.market.repository import InMemoryMarketDataStore
-from investment_manager.persistence import SqlFactLedger
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.risk.protection import InMemoryPortfolioProtectionStore
 from investment_manager.scheduling.models import (

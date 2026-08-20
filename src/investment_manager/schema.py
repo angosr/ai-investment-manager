@@ -21,7 +21,7 @@ def compose_metadata() -> MetaData:
         "investment_manager.governance.tables",
         "investment_manager.risk.protection",
         "investment_manager.risk.budget",
-        "investment_manager.persistence",
+        "investment_manager.legacy.repository",
     ):
         import_module(owner)
 

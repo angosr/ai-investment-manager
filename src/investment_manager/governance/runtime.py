@@ -17,6 +17,10 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.analyst import assemble_codex_router
+from investment_manager.forecast.codex_repository import (
+    SqlAccountLeaseStore,
+    SqlCodexAuditStore,
+)
 from investment_manager.governance.agent import (
     GOVERNOR_OUTPUT_ADAPTER,
     CodexGovernor,
@@ -36,10 +40,6 @@ from investment_manager.governance.workflows import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.persistence import (
-    SqlAccountLeaseStore,
-    SqlCodexAuditStore,
-)
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.temporal import SingleActivityWorker
 from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch

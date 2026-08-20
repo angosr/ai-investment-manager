@@ -24,12 +24,12 @@ from investment_manager.execution.tables import (
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.legacy.models import CycleOutcome
-from investment_manager.market.models import MarketSnapshot
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
     decision_outcomes,
 )
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,

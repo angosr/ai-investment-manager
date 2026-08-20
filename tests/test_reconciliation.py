@@ -27,7 +27,7 @@ from investment_manager.execution.reconciliation_runtime import (
     _seconds_until_next_bucket,
     build_reconciliation_workflow_request,
 )
-from investment_manager.persistence import SqlFactLedger
+from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 from investment_manager.shadow import SqlShadowStateReader

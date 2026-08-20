@@ -19,7 +19,7 @@ from investment_manager.execution.models import ExitReason
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.models import DecisionOutcome
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     decision_outcomes,
 )

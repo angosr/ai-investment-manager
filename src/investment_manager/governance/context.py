@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.execution.tables import reconciliation_reports
+from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.models import (
     EvaluationPlan,
     FailedExperiment,
@@ -37,10 +38,9 @@ from investment_manager.legacy.models import (
     CandidateOutcome,
     CandidateOutcomeStatus,
 )
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     analysis_cycles,
     candidate_outcomes,
-    codex_runs,
     signal_candidates,
 )
 from investment_manager.platform.time import database_utc

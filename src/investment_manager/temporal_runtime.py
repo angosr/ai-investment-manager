@@ -19,13 +19,13 @@ from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.binance import assemble_binance_testnet
 from investment_manager.execution.contracts import ExecutionRequest
 from investment_manager.execution.mock_repository import SqlMockExchange
-from investment_manager.forecast.policy import AiMode
-from investment_manager.governance.policy import DeploymentStage
-from investment_manager.persistence import (
+from investment_manager.forecast.codex_repository import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
-    SqlFactLedger,
 )
+from investment_manager.forecast.policy import AiMode
+from investment_manager.governance.policy import DeploymentStage
+from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.platform.database import build_engine
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.policy import TemporalPolicy

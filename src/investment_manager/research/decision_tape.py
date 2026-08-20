@@ -15,6 +15,7 @@ from investment_manager.execution.models import (
     Side,
 )
 from investment_manager.forecast.models import DirectionalView
+from investment_manager.forecast.tables import codex_runs
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage
 from investment_manager.information.models import IntelligenceEvent
@@ -26,15 +27,14 @@ from investment_manager.legacy.models import (
     DirectionalForecast,
     SignalCandidate,
 )
+from investment_manager.legacy.repository import (
+    analysis_cycles,
+    analysis_proposals,
+    market_snapshots,
+)
 from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
-)
-from investment_manager.persistence import (
-    analysis_cycles,
-    analysis_proposals,
-    codex_runs,
-    market_snapshots,
 )
 from investment_manager.platform.time import database_utc
 from investment_manager.research.backtest import (

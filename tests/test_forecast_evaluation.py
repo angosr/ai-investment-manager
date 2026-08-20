@@ -14,6 +14,7 @@ from investment_manager.entrypoints.cli.commands import register_ai_forecast_pla
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.policy import AiMode
+from investment_manager.forecast.tables import codex_runs
 from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
@@ -31,14 +32,13 @@ from investment_manager.legacy.models import (
     AnalysisProposal,
     DirectionalForecast,
 )
-from investment_manager.market.models import MarketTrade
-from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     analysis_cycles,
     analysis_forecast_outcomes,
-    codex_runs,
 )
+from investment_manager.market.models import MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema

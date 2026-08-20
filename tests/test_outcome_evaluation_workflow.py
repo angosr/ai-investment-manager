@@ -21,11 +21,11 @@ from investment_manager.governance.outcome_runtime import (
     build_outcome_evaluation_workflow_request,
 )
 from investment_manager.governance.performance import OutcomeWindowEvaluator, OutcomeWindowStatus
-from investment_manager.market.models import MarketSnapshot
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
 )
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
 

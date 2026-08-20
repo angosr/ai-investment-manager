@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -14,6 +15,47 @@ from sqlalchemy import (
 )
 
 from investment_manager.platform.database import metadata
+
+codex_runs = Table(
+    "codex_runs",
+    metadata,
+    Column("run_id", String(128), primary_key=True),
+    Column("cycle_id", String(128), nullable=False),
+    Column("account_id", String(64), nullable=True),
+    Column("attempt", Integer, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("error_class", String(64), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+Index("ix_codex_runs_cycle_status", codex_runs.c.cycle_id, codex_runs.c.status)
+
+codex_account_capacity = Table(
+    "codex_account_capacity",
+    metadata,
+    Column("account_id", String(64), primary_key=True),
+    Column("observed_at", DateTime(timezone=True), primary_key=True),
+    Column("effective_headroom", Numeric(8, 3), nullable=True),
+    Column("healthy", Boolean, nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+
+codex_account_leases = Table(
+    "codex_account_leases",
+    metadata,
+    Column("lease_id", String(128), primary_key=True),
+    Column("account_id", String(64), nullable=False),
+    Column("cycle_id", String(128), nullable=False),
+    Column("attempt_id", String(128), nullable=False, unique=True),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("status", String(32), nullable=False),
+)
+Index(
+    "uq_active_codex_account_lease",
+    codex_account_leases.c.account_id,
+    unique=True,
+    postgresql_where=codex_account_leases.c.status == "ACTIVE",
+    sqlite_where=codex_account_leases.c.status == "ACTIVE",
+)
 
 context_assessments = Table(
     "context_assessments",

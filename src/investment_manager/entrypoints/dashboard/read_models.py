@@ -18,6 +18,11 @@ from investment_manager.execution.lifecycle import OpenLifecycleRecord
 from investment_manager.execution.reconciliation import ReconciliationReport
 from investment_manager.execution.reconciliation_repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
+from investment_manager.forecast.tables import (
+    codex_account_capacity,
+    codex_account_leases,
+    codex_runs,
+)
 from investment_manager.governance.models import ReleaseManifest, validate_manifest_against_config
 from investment_manager.governance.performance import OutcomeMetrics, calculate_outcome_metrics
 from investment_manager.governance.tables import release_manifests
@@ -28,21 +33,18 @@ from investment_manager.legacy.models import (
     DecisionOutcome,
     TradeIntent,
 )
-from investment_manager.market.repository import market_quotes, market_trades
-from investment_manager.persistence import (
+from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlOpenLifecycleRepository,
     analysis_cycles,
     analysis_forecast_outcomes,
     analysis_proposals,
-    codex_account_capacity,
-    codex_account_leases,
-    codex_runs,
     decision_outcomes,
     market_snapshots,
     panel_snapshots,
     trade_intents,
 )
+from investment_manager.market.repository import market_quotes, market_trades
 from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
 from investment_manager.scheduling.tables import (
