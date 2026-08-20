@@ -42,3 +42,15 @@ def test_raw_payload_store_rejects_tampered_bytes() -> None:
 
     with pytest.raises(ValueError, match=r"byte_count|content_hash"):
         store.put(_payload(b"expected"), b"tampered")
+
+
+def test_raw_payload_store_rejects_metadata_alias_for_same_id() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlRawSourcePayloadStore(engine)
+    content = b"official source document"
+    payload = _payload(content)
+    store.put(payload, content)
+
+    with pytest.raises(ValueError, match="不同来源元数据"):
+        store.put(payload.model_copy(update={"media_type": "text/html"}), content)

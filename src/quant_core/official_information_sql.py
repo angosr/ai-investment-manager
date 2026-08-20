@@ -75,7 +75,16 @@ class SqlOfficialInformationStore:
             if latest_payload is not None:
                 latest = _record_from_payload(latest_payload)
                 if latest.observation.payload_hash == observation.payload_hash:
-                    return OfficialRecordWrite(record=latest, inserted=False)
+                    revision = (
+                        self._calendar_revision_for_observation(connection, latest)
+                        if isinstance(latest, FomcMeetingRecord)
+                        else None
+                    )
+                    return OfficialRecordWrite(
+                        record=latest,
+                        inserted=False,
+                        calendar_revision=revision,
+                    )
                 if latest.observation.observed_at >= observation.observed_at:
                     raise ValueError("官方记录修订 observed_at 必须严格递增")
 
@@ -182,6 +191,19 @@ class SqlOfficialInformationStore:
                 key=lambda item: (item.scheduled_release_at, item.event_id),
             )
         )
+
+    @staticmethod
+    def _calendar_revision_for_observation(
+        connection: Connection,
+        record: FomcMeetingRecord,
+    ) -> MarketCalendarEventRevision:
+        payload = connection.execute(
+            select(market_calendar_event_revisions.c.payload).where(
+                market_calendar_event_revisions.c.source_observation_id
+                == record.observation.observation_id
+            )
+        ).scalar_one()
+        return MarketCalendarEventRevision.model_validate(payload)
 
     @staticmethod
     def _append_calendar_revision(

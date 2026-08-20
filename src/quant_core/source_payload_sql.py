@@ -29,7 +29,9 @@ class SqlRawSourcePayloadStore:
                     )
                 ).scalar_one_or_none()
                 if existing_payload is not None:
-                    return RawSourcePayload.model_validate(existing_payload)
+                    existing = RawSourcePayload.model_validate(existing_payload)
+                    _require_same_content_identity(existing, payload)
+                    return existing
                 connection.execute(
                     insert(raw_source_payloads).values(
                         payload_id=payload.payload_id,
@@ -47,6 +49,7 @@ class SqlRawSourcePayloadStore:
             raced = self.get(payload.payload_id)
             if raced is None or raced[1] != content:
                 raise
+            _require_same_content_identity(raced[0], payload)
             return raced[0]
         return payload
 
@@ -60,3 +63,23 @@ class SqlRawSourcePayloadStore:
         if row is None:
             return None
         return RawSourcePayload.model_validate(row.payload), row.content
+
+
+def _require_same_content_identity(
+    existing: RawSourcePayload,
+    candidate: RawSourcePayload,
+) -> None:
+    if (
+        existing.source_id,
+        existing.source_url,
+        existing.media_type,
+        existing.content_hash,
+        existing.byte_count,
+    ) != (
+        candidate.source_id,
+        candidate.source_url,
+        candidate.media_type,
+        candidate.content_hash,
+        candidate.byte_count,
+    ):
+        raise ValueError("同一 RawSourcePayload payload_id 对应不同来源元数据")

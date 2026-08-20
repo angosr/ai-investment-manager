@@ -90,6 +90,16 @@ class SqlFactStateStore:
             ).scalar_one_or_none()
         return None if payload is None else CanonicalFactRevision.model_validate(payload)
 
+    def latest_fact(self, fact_id: str) -> CanonicalFactRevision | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(canonical_fact_revisions.c.payload)
+                .where(canonical_fact_revisions.c.fact_id == fact_id)
+                .order_by(canonical_fact_revisions.c.observed_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+        return None if payload is None else CanonicalFactRevision.model_validate(payload)
+
     def facts_as_of(self, *, as_of: datetime) -> tuple[CanonicalFactRevision, ...]:
         as_of = _require_utc(as_of)
         with self._engine.connect() as connection:
