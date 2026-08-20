@@ -107,6 +107,7 @@ temporal:
   address: 127.0.0.1:7233
   namespace: default
   task_queue: quant-core-analysis-v1
+  assessment_task_queue: investment-manager-assessment-v1
   lifecycle_task_queue: quant-core-lifecycle-v1
   reconciliation_task_queue: quant-core-reconciliation-v1
   outcome_evaluation_task_queue: quant-core-outcome-evaluation-v1

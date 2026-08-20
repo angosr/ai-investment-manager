@@ -29,6 +29,7 @@ class TemporalPolicy(StrictConfig):
     address: str = "127.0.0.1:7233"
     namespace: str = "default"
     task_queue: str = "quant-core-analysis-v1"
+    assessment_task_queue: str = "investment-manager-assessment-v1"
     lifecycle_task_queue: str = "quant-core-lifecycle-v1"
     reconciliation_task_queue: str = "quant-core-reconciliation-v1"
     outcome_evaluation_task_queue: str = "quant-core-outcome-evaluation-v1"
@@ -56,6 +57,7 @@ class TemporalPolicy(StrictConfig):
                 self.address,
                 self.namespace,
                 self.task_queue,
+                self.assessment_task_queue,
                 self.lifecycle_task_queue,
                 self.reconciliation_task_queue,
                 self.outcome_evaluation_task_queue,

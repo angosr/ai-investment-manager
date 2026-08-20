@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -21,6 +21,14 @@ from investment_manager.execution.lifecycle_runtime import (
     assemble_lifecycle_supervisor,
 )
 from investment_manager.execution.reconciliation_runtime import assemble_reconciliation
+from investment_manager.forecast.analyst import assess_behavior_hash
+from investment_manager.forecast.application import AssessmentCommand
+from investment_manager.forecast.runtime import (
+    AssessmentTemporalCoordinator,
+    assemble_assessment_application,
+    run_assessment_worker_process,
+)
+from investment_manager.forecast.workflows import AssessmentWorkflowRequest
 from investment_manager.governance.outcome_runtime import assemble_outcome_evaluation
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.governance.runtime import assemble_governance
@@ -44,9 +52,11 @@ from investment_manager.legacy.runtime import (
 from investment_manager.legacy.trigger_runtime import run_trigger_service
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.application import trigger_now as apply_trigger_now
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
+from investment_manager.state.decision_packet import DecisionPacket
 
 
 @app.command("temporal-worker")
@@ -73,6 +83,29 @@ def temporal_worker(
     run_worker_process(loaded.temporal, cycle)
 
 
+@app.command("assessment-worker")
+def assessment_worker(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
+) -> None:
+    """运行无交易权限的 ContextAssessment Worker。"""
+
+    loaded, manifest = load_runtime_release(config, release_manifest)
+    application = assemble_assessment_application(
+        loaded,
+        database_url,
+        code_version=manifest.code_version,
+    )
+    run_assessment_worker_process(config=loaded, application=application)
+
+
 @app.command("submit-analysis")
 def submit_analysis(
     input_path: Annotated[Path, typer.Option("--input", exists=True, dir_okay=False)],
@@ -93,6 +126,35 @@ def submit_analysis(
         )
     )
     typer.echo(result.model_dump_json(indent=2))
+
+
+@app.command("submit-context-assessment")
+def submit_context_assessment(
+    input_path: Annotated[Path, typer.Option("--input", exists=True, dir_okay=False)],
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    deadline_minutes: Annotated[int, typer.Option(min=1, max=30)] = 5,
+) -> None:
+    """诊断性提交一个已冻结 DecisionPacket，不产生交易动作。"""
+
+    loaded = load_config(config)
+    packet = DecisionPacket.model_validate_json(input_path.read_text(encoding="utf-8"))
+    command = AssessmentCommand.create(
+        packet=packet,
+        analysis_behavior_hash=assess_behavior_hash(loaded.codex_runtime, packet),
+    )
+    created_at = datetime.now(UTC)
+    request = AssessmentWorkflowRequest.create(
+        command=command,
+        orchestration=OrchestrationPolicySnapshot.from_config(loaded.temporal),
+        created_at=created_at,
+        deadline=created_at + timedelta(minutes=deadline_minutes),
+    )
+
+    async def execute():
+        coordinator = await AssessmentTemporalCoordinator.connect(loaded.temporal)
+        return await coordinator.execute(request)
+
+    typer.echo(asyncio.run(execute()).model_dump_json(indent=2))
 
 
 @app.command("market-stream")

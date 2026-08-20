@@ -1,9 +1,18 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
+from temporalio.testing import WorkflowEnvironment
 
+from investment_manager.forecast.application import (
+    AssessmentApplication,
+    AssessmentCommand,
+    AssessmentWorkflowStatus,
+)
 from investment_manager.forecast.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
@@ -34,10 +43,16 @@ from investment_manager.forecast.projection import (
     build_assessment_view_calibration,
 )
 from investment_manager.forecast.repository import SqlContextAssessmentStore
+from investment_manager.forecast.runtime import (
+    AssessmentTemporalCoordinator,
+    AssessmentTemporalWorker,
+)
 from investment_manager.forecast.tables import assessment_view_outcomes
+from investment_manager.forecast.workflows import AssessmentWorkflowRequest
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.schema import create_schema
 from investment_manager.state.decision_packet import (
     DecisionPacket,
@@ -520,6 +535,22 @@ class _CountingContextAnalyst:
         )
 
 
+class _FailingContextAnalyst:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def behavior_hash(self, packet: DecisionPacket) -> str:
+        return "b" * 64
+
+    def assess(self, packet: DecisionPacket) -> AnalystResult:
+        self.calls += 1
+        return AnalystResult(
+            success=False,
+            output=None,
+            reason_code="CODEX_ACCOUNTS_UNAVAILABLE",
+        )
+
+
 def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
@@ -539,3 +570,122 @@ def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     assert replayed.reused_authoritative is True
     assert replayed.assessment == first.assessment
     assert analyst.calls == 1
+
+
+def test_assessment_command_identity_covers_packet_and_behavior() -> None:
+    command = AssessmentCommand.create(
+        packet=_packet(),
+        analysis_behavior_hash="b" * 64,
+    )
+    tampered = command.model_dump(mode="json")
+    tampered["analysis_behavior_hash"] = "c" * 64
+
+    with pytest.raises(ValidationError, match="command_hash"):
+        AssessmentCommand.model_validate(tampered)
+
+
+def test_assessment_application_rejects_runtime_behavior_drift() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    analyst = _CountingContextAnalyst(_assessment())
+    application = AssessmentApplication(
+        ContextAssessmentExecutor(SqlContextAssessmentStore(engine), analyst)
+    )
+    command = AssessmentCommand.create(
+        packet=_packet(),
+        analysis_behavior_hash="c" * 64,
+    )
+
+    with pytest.raises(ValueError, match="行为身份"):
+        application.execute(command)
+    assert analyst.calls == 0
+
+
+def test_assessment_temporal_replay_reuses_authoritative_result(app_config) -> None:
+    async def scenario() -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        create_schema(engine)
+        analyst = _CountingContextAnalyst(_assessment())
+        application = AssessmentApplication(
+            ContextAssessmentExecutor(SqlContextAssessmentStore(engine), analyst)
+        )
+        policy = app_config.temporal.model_copy(
+            update={"assessment_task_queue": "assessment-workflow-test"}
+        )
+        command = AssessmentCommand.create(
+            packet=_packet(),
+            analysis_behavior_hash="b" * 64,
+        )
+        created_at = datetime.now(UTC)
+        request = AssessmentWorkflowRequest.create(
+            command=command,
+            orchestration=OrchestrationPolicySnapshot.from_config(policy),
+            created_at=created_at,
+            deadline=created_at + timedelta(minutes=5),
+        )
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            coordinator = AssessmentTemporalCoordinator(env.client, policy)
+            async with AssessmentTemporalWorker(
+                env.client,
+                policy,
+                application,
+                worker_threads=1,
+            ):
+                first = await coordinator.execute(request)
+                replayed = await coordinator.execute(request)
+
+        assert first.status == AssessmentWorkflowStatus.SUCCEEDED
+        assert replayed == first
+        assert first.execution is not None
+        assert first.execution.reused_authoritative is False
+        assert analyst.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_assessment_business_failure_is_not_blindly_retried(app_config) -> None:
+    async def scenario() -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        create_schema(engine)
+        analyst = _FailingContextAnalyst()
+        application = AssessmentApplication(
+            ContextAssessmentExecutor(SqlContextAssessmentStore(engine), analyst)
+        )
+        policy = app_config.temporal.model_copy(
+            update={"assessment_task_queue": "assessment-no-result-test"}
+        )
+        command = AssessmentCommand.create(
+            packet=_packet(),
+            analysis_behavior_hash="b" * 64,
+        )
+        created_at = datetime.now(UTC)
+        request = AssessmentWorkflowRequest.create(
+            command=command,
+            orchestration=OrchestrationPolicySnapshot.from_config(policy),
+            created_at=created_at,
+            deadline=created_at + timedelta(minutes=5),
+        )
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            coordinator = AssessmentTemporalCoordinator(env.client, policy)
+            async with AssessmentTemporalWorker(
+                env.client,
+                policy,
+                application,
+                worker_threads=1,
+            ):
+                result = await coordinator.execute(request)
+
+        assert result.status == AssessmentWorkflowStatus.NO_ASSESSMENT
+        assert result.attempt == 1
+        assert result.reason_code == "CODEX_ACCOUNTS_UNAVAILABLE"
+        assert analyst.calls == 1
+
+    asyncio.run(scenario())

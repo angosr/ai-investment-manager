@@ -50,7 +50,7 @@ from investment_manager.legacy.repository import (
 )
 from investment_manager.market.models import MarketSnapshot, MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.platform.database import build_engine, metadata
+from investment_manager.platform.database import build_engine
 from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
@@ -65,6 +65,7 @@ from investment_manager.scheduling.repository import (
     PostgresTriggerLeadership,
     SqlTriggerRepository,
 )
+from investment_manager.schema import compose_metadata
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
@@ -100,7 +101,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
     request.addfinalizer(engine.dispose)
     if engine.dialect.name != "postgresql":
         raise RuntimeError("该契约测试必须使用 PostgreSQL")
-    metadata.drop_all(engine)
+    compose_metadata().drop_all(engine)
     with engine.begin() as connection:
         connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     migration_config = Config(str(ROOT / "alembic.ini"))

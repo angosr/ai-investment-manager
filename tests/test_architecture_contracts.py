@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "src" / "investment_manager"
 
 CLI_CONTRACT = {
+    "assessment-worker": "config,database_url,release_manifest",
     "binance-testnet-audit": "config",
     "binance-testnet-order-test": "symbol,config",
     "blind-evaluate": (
@@ -87,6 +88,7 @@ CLI_CONTRACT = {
     ),
     "shadow-audit": "config,project_root",
     "submit-analysis": "input_path,config,deadline_minutes",
+    "submit-context-assessment": "input_path,config,deadline_minutes",
     "temporal-worker": "config,database_url,release_manifest",
     "trigger-now": "symbol,request_id,reason,config,database_url,release_manifest",
     "trigger-service": "config,database_url,release_manifest",
@@ -230,8 +232,10 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "binance-testnet-order-test",
         },
         "entrypoints/cli/service_commands.py": {
+            "assessment-worker",
             "temporal-worker",
             "submit-analysis",
+            "submit-context-assessment",
             "market-stream",
             "trigger-service",
             "trigger-now",

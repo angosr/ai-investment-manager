@@ -33,9 +33,12 @@ class SingleActivityWorker:
         workflows: list[Any],
         activities: list[Any],
         thread_name_prefix: str,
+        max_concurrent_activities: int = 1,
     ) -> None:
+        if max_concurrent_activities < 1:
+            raise ValueError("Activity 并发数必须为正数")
         self._executor = ThreadPoolExecutor(
-            max_workers=1,
+            max_workers=max_concurrent_activities,
             thread_name_prefix=thread_name_prefix,
         )
         self._worker = Worker(
@@ -44,7 +47,7 @@ class SingleActivityWorker:
             workflows=workflows,
             activities=activities,
             activity_executor=self._executor,
-            max_concurrent_activities=1,
+            max_concurrent_activities=max_concurrent_activities,
         )
 
     async def __aenter__(self) -> Self:
