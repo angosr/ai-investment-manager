@@ -302,7 +302,7 @@ def test_information_facts_are_imported_from_their_domain_owner() -> None:
     moved_models = {"IntelligenceEvent", "SourceObservation", "SourceTier"}
     old_modules = {
         "investment_manager.domain",
-        "investment_manager.asset_management",
+        "investment_manager.portfolio.models",
     }
 
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
@@ -374,7 +374,7 @@ def test_state_models_and_tables_have_one_domain_owner() -> None:
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.ImportFrom)
-                and node.module == "investment_manager.asset_management"
+                and node.module == "investment_manager.portfolio.models"
             ):
                 assert not moved_models.intersection(
                     alias.name for alias in node.names
@@ -462,7 +462,7 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.ImportFrom)
-                and node.module == "investment_manager.asset_management"
+                and node.module == "investment_manager.portfolio.models"
             ):
                 assert not moved_models.intersection(
                     alias.name for alias in node.names
@@ -491,6 +491,15 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "assessment_outcome.py",
         "context_analyst.py",
         "context_assessment_sql.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
+def test_portfolio_target_chain_has_one_domain_owner() -> None:
+    for filename in (
+        "asset_management.py",
+        "portfolio_decision.py",
+        "portfolio_pipeline.py",
     ):
         assert not (PACKAGE_ROOT / filename).exists()
 

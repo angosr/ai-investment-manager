@@ -4,10 +4,6 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.asset_management import (
-    AssetTarget,
-    PortfolioTarget,
-)
 from investment_manager.domain import DirectionalView
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
@@ -21,6 +17,10 @@ from investment_manager.forecast.models import (
 from investment_manager.information.models import (
     SourceObservation,
     SourceTier,
+)
+from investment_manager.portfolio.models import (
+    AssetTarget,
+    PortfolioTarget,
 )
 from investment_manager.state.models import (
     CanonicalFactRevision,

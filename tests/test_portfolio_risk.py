@@ -4,8 +4,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.asset_management import AssetTarget, PortfolioTarget
 from investment_manager.domain import AccountSnapshot, Position, RiskOutcome
+from investment_manager.portfolio.models import AssetTarget, PortfolioTarget
 from investment_manager.portfolio_risk import (
     ApprovedAssetTarget,
     PortfolioRiskEngine,

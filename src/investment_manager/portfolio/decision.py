@@ -5,10 +5,6 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 
-from investment_manager.asset_management import (
-    AssetTarget,
-    PortfolioTarget,
-)
 from investment_manager.domain import DirectionalView
 from investment_manager.forecast.models import (
     CalibratedForecast,
@@ -21,6 +17,10 @@ from investment_manager.kernel.types import (
     Money,
     PositiveDecimal,
     UnitInterval,
+)
+from investment_manager.portfolio.models import (
+    AssetTarget,
+    PortfolioTarget,
 )
 
 

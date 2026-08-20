@@ -8,12 +8,12 @@ from investment_manager.forecast.models import (
     CalibratedForecast,
     ForecastRole,
 )
-from investment_manager.portfolio_decision import (
+from investment_manager.portfolio.decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
 )
-from investment_manager.portfolio_pipeline import (
+from investment_manager.portfolio.pipeline import (
     PortfolioDecisionPipeline,
     PortfolioPipelineOutcome,
 )
