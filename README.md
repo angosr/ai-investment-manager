@@ -49,7 +49,7 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成真实 Governor 冒烟，以及由独立可信环境提供的校准制品与各阶段评估器。私有 Challenger 正在运行真实 Codex Analyst、双账号独占租约和严格失败关闭；每个成功 Proposal 即使 `NO_ACTION` 也在同一次调用中冻结 60 与 240 分钟两项不可交易方向预测，预测起点和参考价以 Codex 完成时已经可见的成交为准，各自独立到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选，盲测尾段没有因失败候选而查询。当前 TriggerPlan 将无事件兜底调整为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束。数据库 Champion 仍保持旧版本，Challenger 只能经独立评估和人工发布；Spot Testnet 订单 Worker 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成真实 Governor 冒烟，以及由独立可信环境提供的校准制品与各阶段评估器。私有 Challenger 正在运行真实 Codex Analyst、多账号独占租约和严格失败关闭；每个成功 Proposal 即使 `NO_ACTION` 也在同一次调用中冻结 60 与 240 分钟两项不可交易方向预测，预测起点和参考价以 Codex 完成时已经可见的成交为准，各自独立到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选，盲测尾段没有因失败候选而查询。当前 TriggerPlan 将无事件兜底调整为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束。数据库 Champion 仍保持旧版本，Challenger 只能经独立评估和人工发布；Spot Testnet 订单 Worker 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
