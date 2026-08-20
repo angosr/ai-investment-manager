@@ -1,12 +1,16 @@
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, insert, select
 
 from quant_core.fact_pipeline import build_state_snapshot
 from quant_core.fact_state_sql import SqlFactStateStore
 from quant_core.features import FeatureEngine
-from quant_core.persistence import create_schema, state_evidence_snapshots
+from quant_core.persistence import (
+    create_schema,
+    state_evidence_snapshots,
+    state_snapshots,
+)
 from quant_core.state_evidence_sql import SqlStateEvidenceStore, StateEvidenceKind
 
 
@@ -72,3 +76,31 @@ def test_state_rejects_missing_or_future_evidence(app_config, replay_input) -> N
 
     with pytest.raises(ValueError, match="evidence"):
         states.put_state(state)
+
+
+def test_idempotent_state_replay_audits_pre_evidence_rows(replay_input) -> None:
+    engine, _, states = _stores()
+    market_ref = "a" * 64
+    legacy_state = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-portfolio",
+        as_of=replay_input.market.as_of,
+        built_at=replay_input.market.as_of,
+        facts=(),
+        market_snapshot_refs=(market_ref,),
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            insert(state_snapshots).values(
+                state_id=legacy_state.state_id,
+                projection_version=legacy_state.projection_version,
+                analysis_scope=legacy_state.analysis_scope,
+                as_of=legacy_state.as_of,
+                built_at=legacy_state.built_at,
+                content_hash=legacy_state.content_hash,
+                payload=legacy_state.model_dump(mode="json"),
+            )
+        )
+
+    with pytest.raises(ValueError, match=market_ref):
+        states.put_state(legacy_state)

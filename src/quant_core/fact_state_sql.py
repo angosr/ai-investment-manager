@@ -165,6 +165,7 @@ class SqlFactStateStore:
                 replayed_state = StateSnapshot.model_validate(replayed_state_payload)
                 if replayed_state.content_hash != state.content_hash:
                     raise ValueError("StateSnapshot 幂等重放身份对应不同内容")
+                self._require_state_dependencies(connection, replayed_state)
                 return replayed_state, replayed_delta
             latest_state_id = connection.execute(
                 select(state_snapshots.c.state_id)
@@ -258,8 +259,28 @@ class SqlFactStateStore:
             existing = StateSnapshot.model_validate(existing_payload)
             if existing.state_id != state.state_id:
                 raise ValueError("同一 scope/projection/as_of 已存在不同 StateSnapshot")
+            SqlFactStateStore._require_state_dependencies(connection, existing)
             return existing
 
+        SqlFactStateStore._require_state_dependencies(connection, state)
+        connection.execute(
+            insert(state_snapshots).values(
+                state_id=state.state_id,
+                projection_version=state.projection_version,
+                analysis_scope=state.analysis_scope,
+                as_of=state.as_of,
+                built_at=state.built_at,
+                content_hash=state.content_hash,
+                payload=state.model_dump(mode="json"),
+            )
+        )
+        return state
+
+    @staticmethod
+    def _require_state_dependencies(
+        connection: Connection,
+        state: StateSnapshot,
+    ) -> None:
         if state.fact_revision_ids:
             visible_rows = connection.execute(
                 select(
@@ -310,19 +331,6 @@ class SqlFactStateStore:
                 )
 
         SqlFactStateStore._require_state_evidence(connection, state)
-
-        connection.execute(
-            insert(state_snapshots).values(
-                state_id=state.state_id,
-                projection_version=state.projection_version,
-                analysis_scope=state.analysis_scope,
-                as_of=state.as_of,
-                built_at=state.built_at,
-                content_hash=state.content_hash,
-                payload=state.model_dump(mode="json"),
-            )
-        )
-        return state
 
     @staticmethod
     def _require_state_evidence(
