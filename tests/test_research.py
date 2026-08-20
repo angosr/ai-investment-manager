@@ -102,8 +102,10 @@ def test_history_command_overrides_production_symbol_and_interval(
     monkeypatch,
     capsys,
 ) -> None:
+    from investment_manager.entrypoints.cli.research_commands import (
+        fetch_binance_history_command,
+    )
     from investment_manager.research import dataset as dataset_module
-    from investment_manager.research.cli import fetch_binance_history_command
 
     instrument = _instrument().model_copy(
         update={"symbol": "BNBUSDT", "base_asset": "BNB"}

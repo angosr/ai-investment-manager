@@ -246,7 +246,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "information-collector",
             "dashboard-service",
         },
-        "research/cli.py": {
+        "entrypoints/cli/research_commands.py": {
             "fetch-binance-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
@@ -425,6 +425,21 @@ def test_platform_does_not_import_business_modules() -> None:
         assert not (PACKAGE_ROOT / filename).exists()
 
 
+def test_research_is_called_by_entrypoints_without_importing_them() -> None:
+    graph = _internal_import_graph()
+
+    for module, dependencies in graph.items():
+        if module.startswith("investment_manager.research"):
+            assert not {
+                dependency
+                for dependency in dependencies
+                if dependency.startswith("investment_manager.entrypoints")
+            }, module
+
+    assert not (PACKAGE_ROOT / "research" / "cli.py").exists()
+    assert (PACKAGE_ROOT / "entrypoints" / "cli" / "research_commands.py").exists()
+
+
 def test_kernel_does_not_import_platform_or_business_modules() -> None:
     graph = _internal_import_graph()
 
@@ -547,6 +562,19 @@ def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
                 assert not node.module.startswith("investment_manager.legacy"), path
 
     assert definitions == {name: [owner] for name, owner in owners.items()}
+
+    for path in (PACKAGE_ROOT / "risk").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("investment_manager.legacy"), path
+            if isinstance(node, ast.Import):
+                assert not any(
+                    alias.name.startswith("investment_manager.legacy")
+                    for alias in node.names
+                ), path
+
+    assert not (PACKAGE_ROOT / "risk" / "legacy.py").exists()
+    assert (PACKAGE_ROOT / "legacy" / "risk.py").exists()
     for filename in (
         "analyst.py",
         "calibration.py",

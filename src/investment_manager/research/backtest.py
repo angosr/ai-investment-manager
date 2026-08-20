@@ -28,6 +28,7 @@ from investment_manager.legacy.models import (
     SignalCandidate,
     TradeIntent,
 )
+from investment_manager.legacy.risk import RiskEngine
 from investment_manager.legacy.strategy import PriceTrendStrategy, Strategy
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import (
@@ -40,7 +41,6 @@ from investment_manager.research.dataset import (
     HistoricalFundingDataset,
     InstrumentSpec,
 )
-from investment_manager.risk.legacy import RiskEngine
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.settings import AppConfig
 

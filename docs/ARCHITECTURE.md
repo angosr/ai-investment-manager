@@ -131,7 +131,7 @@ src/investment_manager/
 
   research/                   # 隔离的离线研究与不可变评价制品
   entrypoints/
-    cli/                      # 薄命令适配器
+    cli/                      # 薄命令适配器；research_commands.py 只注册研究命令
     dashboard/                # 纯读投影和 Web 静态资源
   platform/                   # 数据库、Temporal、时钟等无投资语义设施
 ```
@@ -228,6 +228,8 @@ dashboard 只读，不能导入任何写用例或控制入口
 6. 生产不得导入 `research`；Research 必须复用生产的时间、成本、取整和风控语义。
 7. 禁止循环依赖、旧路径 re-export、兼容别名和两个机制同时拥有同一裁决。
 8. 业务领域不得导入 `decision_cycle`；`decision_cycle` 不得声明领域模型、Policy、表或 Repository。
+9. `research` 不得导入 `entrypoints`；研究命令只允许由
+   `entrypoints/cli/research_commands.py` 调用研究用例，避免领域代码反向注册 CLI。
 
 迁移期 `legacy` 可以依赖目标领域以复用已经归位的事实、风控和执行语义；目标领域不得
 反向导入 `legacy`。它不是长期兼容层，只在第 9 节阶段 D 的生产接线、恢复和回放证据
@@ -262,6 +264,11 @@ Codex 账号选择、调用审计和行为隔离属于 Forecast/Governance 共�
 - 不在这一步改变领域行为、表结构或 CLI 子命令语义。
 
 数据库名称与用户、`QUANT_CORE_*` 环境变量、Temporal task queue、历史评价版本和制品 ID 是已持久化的外部运行身份，本阶段保持不变。它们不构成旧 Python 包或命令兼容层；只有在独立预登记迁移能够同时覆盖部署、恢复和历史读取时才允许更名。
+
+冻结 v51 checkout 和它正在使用的共享虚拟环境中仍可观察到旧 `quant_core` 包元数据；这是
+受保护的在运行发布，不是主线目录。后续发布只从自己的冻结 checkout 加载
+`investment_manager`，不得重新安装或复用旧包入口；v51 完整退役并验证不可恢复需求后，才删除
+共享环境中的旧 editable 安装。不得为了目录观感修改在线冻结代码或破坏其恢复入口。
 
 先更名再分包，避免每个模块经历两次路径迁移，也避免两个顶层包长期共存。
 

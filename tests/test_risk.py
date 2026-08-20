@@ -14,9 +14,9 @@ from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.models import CycleOutcome
 from investment_manager.legacy.repository import SqlFactLedger
+from investment_manager.legacy.risk import RiskEngine
 from investment_manager.legacy.shadow import SqlShadowStateReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.risk.legacy import RiskEngine
 from investment_manager.risk.models import (
     GuardState,
     RiskOutcome,
