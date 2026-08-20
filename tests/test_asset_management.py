@@ -79,6 +79,7 @@ def test_fact_revision_requires_sorted_unique_risk_identity() -> None:
         CanonicalFactRevision(
             fact_id="fact-1",
             revision_id="revision-1",
+            projection_version="fact-projection-v1",
             fact_type="REGULATORY_EVENT",
             status=FactRevisionStatus.ACTIVE,
             event_time=NOW + timedelta(hours=1),
@@ -96,6 +97,7 @@ def test_state_snapshot_rejects_non_deterministic_reference_order() -> None:
     with pytest.raises(ValidationError, match="fact_revision_ids 必须唯一且排序"):
         StateSnapshot(
             state_id="state-1",
+            projection_version="state-projection-v1",
             analysis_scope="crypto-risk",
             as_of=NOW,
             built_at=NOW,
@@ -108,6 +110,7 @@ def test_material_delta_requires_real_referenced_change() -> None:
     with pytest.raises(ValidationError, match="必须引用事实或特征变化"):
         MaterialDelta(
             delta_id="delta-1",
+            policy_version="delta-policy-v1",
             analysis_scope="crypto-risk",
             previous_state_id="state-0",
             current_state_id="state-1",
@@ -117,6 +120,7 @@ def test_material_delta_requires_real_referenced_change() -> None:
             materiality=Materiality.HIGH,
             affected_assets=("BTC", "ETH"),
             risk_factors=("REGULATION",),
+            horizons_minutes=(60, 240),
             reason_codes=("OFFICIAL_REVISION",),
             content_hash=HASH,
         )

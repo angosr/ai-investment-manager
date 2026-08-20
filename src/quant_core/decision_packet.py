@@ -125,12 +125,14 @@ class PacketAssetState(FrozenModel):
 
 class PacketDelta(FrozenModel):
     delta_id: str
+    policy_version: str
     category: DeltaCategory
     materiality: Materiality
     observed_at: datetime
     expires_at: datetime
     affected_assets: tuple[str, ...]
     risk_factors: tuple[str, ...]
+    horizons_minutes: tuple[int, ...]
     fact_revision_ids: tuple[str, ...]
     feature_snapshot_refs: tuple[str, ...]
     reason_codes: tuple[str, ...]
@@ -479,12 +481,14 @@ class DecisionPacketBuilder:
     def _delta(delta: MaterialDelta) -> PacketDelta:
         return PacketDelta(
             delta_id=delta.delta_id,
+            policy_version=delta.policy_version,
             category=delta.category,
             materiality=delta.materiality,
             observed_at=delta.observed_at,
             expires_at=delta.expires_at,
             affected_assets=delta.affected_assets,
             risk_factors=delta.risk_factors,
+            horizons_minutes=delta.horizons_minutes,
             fact_revision_ids=delta.fact_revision_ids,
             feature_snapshot_refs=delta.feature_snapshot_refs,
             reason_codes=delta.reason_codes,

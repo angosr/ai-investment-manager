@@ -65,6 +65,7 @@ def _fact(as_of, *, revision_id: str = "revision-1") -> VisibleFact:
         fact=CanonicalFactRevision(
             fact_id="fact-1",
             revision_id=revision_id,
+            projection_version="fact-projection-v1",
             fact_type="REGULATORY_EVENT",
             status=FactRevisionStatus.ACTIVE,
             event_time=as_of + timedelta(hours=1),
@@ -84,6 +85,7 @@ def _fact(as_of, *, revision_id: str = "revision-1") -> VisibleFact:
 def _state(as_of) -> StateSnapshot:
     return StateSnapshot(
         state_id="state-1",
+        projection_version="state-projection-v1",
         analysis_scope="crypto-risk",
         as_of=as_of,
         built_at=as_of,
@@ -99,6 +101,7 @@ def _delta(as_of, *, delta_id: str = "delta-1", seconds: int = 0) -> MaterialDel
     observed_at = as_of - timedelta(seconds=seconds)
     return MaterialDelta(
         delta_id=delta_id,
+        policy_version="delta-policy-v1",
         analysis_scope="crypto-risk",
         previous_state_id="state-0",
         current_state_id="state-1",
@@ -108,6 +111,7 @@ def _delta(as_of, *, delta_id: str = "delta-1", seconds: int = 0) -> MaterialDel
         materiality=Materiality.HIGH,
         affected_assets=("BTC", "ETH"),
         risk_factors=("REGULATION",),
+        horizons_minutes=(60, 240),
         fact_revision_ids=("revision-1",),
         feature_snapshot_refs=("feature-btc", "feature-eth"),
         reason_codes=("OFFICIAL_REVISION",),

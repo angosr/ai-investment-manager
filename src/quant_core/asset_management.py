@@ -94,6 +94,7 @@ class CanonicalFactRevision(FrozenModel):
     fact_id: str = Field(min_length=1)
     revision_id: str = Field(min_length=1)
     previous_revision_id: str | None = Field(default=None, min_length=1)
+    projection_version: str = Field(min_length=1)
     fact_type: str = Field(min_length=1, max_length=80)
     status: FactRevisionStatus
     event_time: datetime | None = None
@@ -123,6 +124,7 @@ class CanonicalFactRevision(FrozenModel):
 
 class StateSnapshot(FrozenModel):
     state_id: str = Field(min_length=1)
+    projection_version: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     as_of: datetime
     built_at: datetime
@@ -156,6 +158,7 @@ class StateSnapshot(FrozenModel):
 
 class MaterialDelta(FrozenModel):
     delta_id: str = Field(min_length=1)
+    policy_version: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     previous_state_id: str | None = Field(default=None, min_length=1)
     current_state_id: str = Field(min_length=1)
@@ -165,6 +168,7 @@ class MaterialDelta(FrozenModel):
     materiality: Materiality
     affected_assets: tuple[str, ...] = ()
     risk_factors: tuple[str, ...] = Field(min_length=1)
+    horizons_minutes: tuple[int, ...] = Field(min_length=1)
     fact_revision_ids: tuple[str, ...] = ()
     feature_snapshot_refs: tuple[str, ...] = ()
     reason_codes: tuple[str, ...] = Field(min_length=1)
@@ -182,6 +186,7 @@ class MaterialDelta(FrozenModel):
         for name in (
             "affected_assets",
             "risk_factors",
+            "horizons_minutes",
             "fact_revision_ids",
             "feature_snapshot_refs",
             "reason_codes",
@@ -189,6 +194,8 @@ class MaterialDelta(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"{name} 必须唯一且排序")
+        if any(value <= 0 for value in self.horizons_minutes):
+            raise ValueError("horizons_minutes 必须全部为正数")
         if not self.fact_revision_ids and not self.feature_snapshot_refs:
             raise ValueError("MaterialDelta 必须引用事实或特征变化")
         return self
