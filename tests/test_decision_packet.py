@@ -471,13 +471,13 @@ def test_assessment_output_rejects_smuggled_order(replay_input) -> None:
 
 
 class _StaticRouter:
-    def __init__(self, result: AnalystResult) -> None:
-        self.result = result
+    def __init__(self, result: AnalystResult | tuple[AnalystResult, ...]) -> None:
+        self.results = list(result if isinstance(result, tuple) else (result,))
         self.bundles = []
 
     def run(self, bundle):
         self.bundles.append(bundle)
-        return self.result
+        return self.results.pop(0)
 
 
 def _assess_bundle_builder(app_config) -> AssessRunBundleBuilder:
@@ -502,6 +502,24 @@ def test_assess_bundle_reuses_generic_locked_runner_contract(
     schema = (bundle.path / "output.schema.json").read_text(encoding="utf-8")
     assert "suggested_action" not in schema
     assert "target_notional" not in schema
+
+
+def test_assessment_behavior_hash_includes_schema_retry_contract(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    one_attempt = app_config.codex_runtime.model_copy(update={"max_account_switches": 0})
+    three_attempts = app_config.codex_runtime.model_copy(update={"max_account_switches": 2})
+
+    assert AssessRunBundleBuilder(
+        one_attempt,
+        code_version="test-code",
+        configuration_hash=HASH,
+    ).behavior_hash(packet) != AssessRunBundleBuilder(
+        three_attempts,
+        code_version="test-code",
+        configuration_hash=HASH,
+    ).behavior_hash(packet)
 
 
 def test_context_analyst_finalizes_assessment_without_trade_authority(
@@ -561,6 +579,96 @@ def test_context_analyst_fails_closed_on_semantically_invalid_output(
     assert not result.success
     assert result.output is None
     assert result.reason_code == "CODEX_SCHEMA_INVALID"
+
+
+def test_context_analyst_retries_same_frozen_bundle_after_semantic_schema_failure(
+    app_config, replay_input, tmp_path
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    invalid_payload = _assessment_output().model_dump()
+    invalid_payload["assessment"]["views"][0]["evidence_ids"] = ("not-visible",)
+    router = _StaticRouter(
+        (
+            AnalystResult(
+                True,
+                AssessStructuredOutput.model_validate(invalid_payload),
+                "CODEX_ANALYSIS_SUCCEEDED",
+                ".codex",
+                1,
+                {"total_tokens": 100},
+                packet.as_of + timedelta(seconds=20),
+                "run-invalid",
+            ),
+            AnalystResult(
+                True,
+                _assessment_output(),
+                "CODEX_ANALYSIS_SUCCEEDED",
+                ".codex2",
+                1,
+                {"total_tokens": 120},
+                packet.as_of + timedelta(seconds=30),
+                "run-valid",
+            ),
+        )
+    )
+    analyst = CodexContextAnalyst(
+        tmp_path,
+        _assess_bundle_builder(app_config),
+        router,
+        maximum_schema_attempts=2,
+    )
+
+    result = analyst.assess(packet)
+
+    assert result.success
+    assert result.account_id == ".codex2"
+    assert result.run_id == "run-valid"
+    assert result.attempts == 2
+    assert result.usage == {"total_tokens": 220}
+    assert len(router.bundles) == 2
+    assert router.bundles[0] == router.bundles[1]
+
+
+def test_context_analyst_stops_after_bounded_schema_attempts(
+    app_config, replay_input, tmp_path
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    invalid_payload = _assessment_output().model_dump()
+    invalid_payload["assessment"]["views"] = invalid_payload["assessment"]["views"][:-1]
+    invalid = AssessStructuredOutput.model_validate(invalid_payload)
+    router = _StaticRouter(
+        tuple(
+            AnalystResult(
+                True,
+                invalid,
+                "CODEX_ANALYSIS_SUCCEEDED",
+                account,
+                1,
+                {"total_tokens": tokens},
+                packet.as_of + timedelta(seconds=offset),
+                run_id,
+            )
+            for account, tokens, offset, run_id in (
+                (".codex", 100, 20, "run-invalid-1"),
+                (".codex2", 120, 30, "run-invalid-2"),
+            )
+        )
+    )
+    analyst = CodexContextAnalyst(
+        tmp_path,
+        _assess_bundle_builder(app_config),
+        router,
+        maximum_schema_attempts=2,
+    )
+
+    result = analyst.assess(packet)
+
+    assert not result.success
+    assert result.reason_code == "CODEX_SCHEMA_INVALID"
+    assert result.run_id == "run-invalid-2"
+    assert result.attempts == 2
+    assert result.usage == {"total_tokens": 220}
+    assert len(router.bundles) == 2
 
 
 def test_context_assessment_store_is_immutable_and_idempotent(

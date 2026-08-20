@@ -92,32 +92,6 @@ class TriggerDispatchBuilder:
 
     def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
-        cycle_id = stable_id("triggered_cycle", batch.batch_id)
-        market = self._market_store.snapshot(
-            cycle_id=cycle_id,
-            symbol=batch.symbol,
-            interval=self._config.market_data.interval,
-            as_of=as_of,
-            bar_window=self._config.market_data.bar_window,
-            source=self._config.market_data.version,
-        )
-        self._features.compute(market)
-        account = self._state.account_for_cycle(
-            cycle_id=cycle_id,
-            as_of=as_of,
-            initial_quote_balance=self._config.shadow.initial_quote_balance,
-        )
-        marks = {market.symbol: market.last}
-        for position in account.positions:
-            if position.symbol in marks:
-                continue
-            trade = self._market_store.latest_trade(symbol=position.symbol, as_of=as_of)
-            age_seconds = (as_of - trade.observed_at).total_seconds()
-            if age_seconds > self._config.risk.maximum_market_age_seconds:
-                raise ValueError(f"{position.symbol} 持仓盯市成交已过期")
-            marks[position.symbol] = trade.price
-        account = self._protection.observe(account, marks=marks, as_of=as_of)
-        events = self._event_store.visible(symbol=batch.symbol, as_of=as_of)
         trigger_types = {item.trigger_type for item in batch.triggers}
         if AnalysisTriggerType.AGENT_WAKEUP in trigger_types:
             reason = TriggerReason.AGENT_WAKEUP
@@ -145,34 +119,65 @@ class TriggerDispatchBuilder:
             if AnalysisTriggerType.MARKET_SHOCK in trigger_types
             else ()
         )
-        cycle_input = CycleInput(
-            market=market,
-            account=account,
-            events=events,
-            frequency_orders_today=self._state.entry_orders_today(as_of=as_of),
-            frequency_last_entry_order_at=self._state.last_entry_order_at(
-                symbol=batch.symbol, as_of=as_of
-            ),
-        )
-        legacy_request = build_workflow_request(
-            cycle_input=cycle_input,
-            trigger=TriggerDecision(
-                should_run=True,
-                reason=reason,
-                evidence_ids=evidence_ids,
-            ),
-            temporal_policy=self._config.temporal,
-            created_at=as_of,
-            deadline=batch.deadline,
-        )
-        dispatches = [
-            AnalysisDispatchRequest(
-                workflow_name=ANALYSIS_CYCLE_WORKFLOW_NAME,
-                workflow_id=legacy_request.workflow_id,
-                task_queue=self._config.temporal.task_queue,
-                payload=legacy_request.model_dump(mode="json"),
+        dispatches: list[AnalysisDispatchRequest] = []
+        if self._config.strategy.enabled:
+            cycle_id = stable_id("triggered_cycle", batch.batch_id)
+            market = self._market_store.snapshot(
+                cycle_id=cycle_id,
+                symbol=batch.symbol,
+                interval=self._config.market_data.interval,
+                as_of=as_of,
+                bar_window=self._config.market_data.bar_window,
+                source=self._config.market_data.version,
             )
-        ]
+            self._features.compute(market)
+            account = self._state.account_for_cycle(
+                cycle_id=cycle_id,
+                as_of=as_of,
+                initial_quote_balance=self._config.shadow.initial_quote_balance,
+            )
+            marks = {market.symbol: market.last}
+            for position in account.positions:
+                if position.symbol in marks:
+                    continue
+                trade = self._market_store.latest_trade(
+                    symbol=position.symbol,
+                    as_of=as_of,
+                )
+                age_seconds = (as_of - trade.observed_at).total_seconds()
+                if age_seconds > self._config.risk.maximum_market_age_seconds:
+                    raise ValueError(f"{position.symbol} 持仓盯市成交已过期")
+                marks[position.symbol] = trade.price
+            account = self._protection.observe(account, marks=marks, as_of=as_of)
+            cycle_input = CycleInput(
+                market=market,
+                account=account,
+                events=self._event_store.visible(symbol=batch.symbol, as_of=as_of),
+                frequency_orders_today=self._state.entry_orders_today(as_of=as_of),
+                frequency_last_entry_order_at=self._state.last_entry_order_at(
+                    symbol=batch.symbol,
+                    as_of=as_of,
+                ),
+            )
+            legacy_request = build_workflow_request(
+                cycle_input=cycle_input,
+                trigger=TriggerDecision(
+                    should_run=True,
+                    reason=reason,
+                    evidence_ids=evidence_ids,
+                ),
+                temporal_policy=self._config.temporal,
+                created_at=as_of,
+                deadline=batch.deadline,
+            )
+            dispatches.append(
+                AnalysisDispatchRequest(
+                    workflow_name=ANALYSIS_CYCLE_WORKFLOW_NAME,
+                    workflow_id=legacy_request.workflow_id,
+                    task_queue=self._config.temporal.task_queue,
+                    payload=legacy_request.model_dump(mode="json"),
+                )
+            )
         if self._config.assessment.enabled:
             assert self._packet_preparation is not None
             prepared = self._packet_preparation.prepare(

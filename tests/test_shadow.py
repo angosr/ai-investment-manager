@@ -242,6 +242,53 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
     assert preparation.market_shock_symbols == ("BTCUSDT",)
 
 
+def test_disabled_program_strategy_skips_legacy_cycle_projection(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "strategy": app_config.strategy.model_copy(update={"enabled": False}),
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=3600,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=90,
+        dedup_key="intel-disabled-strategy",
+        evidence_ids=("intel-evidence-1",),
+    )
+    preparation = RecordingPacketPreparation()
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        market_store=object(),
+        event_store=object(),
+        state=object(),
+        protection=object(),
+        packet_preparation=preparation,
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert dispatches == ()
+    assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
+
+
 def test_sql_shadow_account_is_projected_from_latest_business_fact(
     app_config, replay_input
 ) -> None:

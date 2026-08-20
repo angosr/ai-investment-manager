@@ -48,6 +48,7 @@ def assess_behavior_hash(
             "execution_contract": codex_execution_contract(),
             "model": runtime.model,
             "reasoning_effort": runtime.reasoning_effort,
+            "maximum_schema_attempts": 1 + runtime.max_account_switches,
         }
     )
 
@@ -109,10 +110,15 @@ class CodexContextAnalyst:
         bundle_root: Path,
         bundle_builder: AssessRunBundleBuilder,
         router: CodexAccountRouter,
+        *,
+        maximum_schema_attempts: int = 1,
     ) -> None:
+        if not 1 <= maximum_schema_attempts <= 3:
+            raise ValueError("ContextAssessment Schema 尝试次数必须在 1..3")
         self._bundle_root = bundle_root
         self._bundle_builder = bundle_builder
         self._router = router
+        self._maximum_schema_attempts = maximum_schema_attempts
 
     def behavior_hash(self, packet: DecisionPacket) -> str:
         return self._bundle_builder.behavior_hash(packet)
@@ -140,52 +146,70 @@ class CodexContextAnalyst:
                 bundle = self._bundle_builder.build(packet, target)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return AnalystResult(False, None, "CODEX_BUNDLE_INVALID")
-        result = self._router.run(bundle)
-        if not result.success:
-            return result
-        if (
-            not isinstance(result.output, AssessStructuredOutput)
-            or result.completed_at is None
-            or bundle.analysis_behavior_hash is None
-        ):
+        attempts = 0
+        usage: dict[str, int] = {}
+        last_result: AnalystResult | None = None
+        for _schema_attempt in range(self._maximum_schema_attempts):
+            result = self._router.run(bundle)
+            last_result = result
+            attempts += result.attempts
+            usage = _merge_usage(usage, result.usage)
+            if not result.success:
+                if result.reason_code == "CODEX_SCHEMA_INVALID":
+                    continue
+                return AnalystResult(
+                    False,
+                    None,
+                    result.reason_code,
+                    result.account_id,
+                    attempts,
+                    usage,
+                    result.completed_at,
+                    result.run_id,
+                )
+            if (
+                not isinstance(result.output, AssessStructuredOutput)
+                or result.completed_at is None
+                or bundle.analysis_behavior_hash is None
+            ):
+                continue
+            try:
+                assessment = finalize_context_assessment(
+                    output=result.output,
+                    packet=packet,
+                    analysis_behavior_hash=bundle.analysis_behavior_hash,
+                    available_at=result.completed_at,
+                )
+            except ValueError:
+                continue
             return AnalystResult(
-                False,
-                None,
-                "CODEX_SCHEMA_INVALID",
+                True,
+                assessment,
+                result.reason_code,
                 result.account_id,
-                result.attempts,
-                result.usage,
+                attempts,
+                usage,
                 result.completed_at,
                 result.run_id,
             )
-        try:
-            assessment = finalize_context_assessment(
-                output=result.output,
-                packet=packet,
-                analysis_behavior_hash=bundle.analysis_behavior_hash,
-                available_at=result.completed_at,
-            )
-        except ValueError:
-            return AnalystResult(
-                False,
-                None,
-                "CODEX_SCHEMA_INVALID",
-                result.account_id,
-                result.attempts,
-                result.usage,
-                result.completed_at,
-                result.run_id,
-            )
+        assert last_result is not None
         return AnalystResult(
-            True,
-            assessment,
-            result.reason_code,
-            result.account_id,
-            result.attempts,
-            result.usage,
-            result.completed_at,
-            result.run_id,
+            False,
+            None,
+            "CODEX_SCHEMA_INVALID",
+            last_result.account_id,
+            attempts,
+            usage,
+            last_result.completed_at,
+            last_result.run_id,
         )
+
+
+def _merge_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    return {
+        key: left.get(key, 0) + right.get(key, 0)
+        for key in left.keys() | right.keys()
+    }
 
 def assemble_codex_context_analyst(
     config: AppConfig,
@@ -209,4 +233,5 @@ def assemble_codex_context_analyst(
             configuration_hash=content_hash(config),
         ),
         router,
+        maximum_schema_attempts=1 + config.codex_runtime.max_account_switches,
     )
