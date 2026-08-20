@@ -16,7 +16,6 @@ from investment_manager.asset_management import (
     PricedState,
 )
 from investment_manager.candidate_evaluation import trade_at_or_before
-from investment_manager.decision_packet import DecisionPacket
 from investment_manager.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
@@ -33,8 +32,9 @@ from investment_manager.kernel.types import (
 from investment_manager.persistence import (
     assessment_view_outcomes,
     context_assessments,
-    decision_packets,
 )
+from investment_manager.state.decision_packet import DecisionPacket
+from investment_manager.state.tables import decision_packets
 
 
 class AssessmentViewOutcome(FrozenModel):

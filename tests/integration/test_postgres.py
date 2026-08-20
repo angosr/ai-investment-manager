@@ -13,23 +13,12 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from investment_manager.asset_management import CanonicalFactRevision, Materiality
 from investment_manager.candidate_evaluation import (
     CandidateOutcomeSettler,
     SqlCandidateOutcomeStore,
 )
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution import MockExchange
-from investment_manager.fact_pipeline import (
-    FOMC_MEETING_FACT_TYPE,
-    FactDeltaPolicy,
-    FactDeltaRule,
-    OfficialFactProjectionPolicy,
-    build_fact_material_delta,
-    build_state_snapshot,
-    project_fomc_calendar_fact,
-)
-from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.governance import ReleaseManifest
 from investment_manager.governance_context import GovernanceSnapshotAssembler
 from investment_manager.information.official import (
@@ -56,7 +45,6 @@ from investment_manager.persistence import (
     SqlOpenLifecycleRepository,
     account_snapshots,
     candidate_outcomes,
-    canonical_fact_revisions,
     decision_outcomes,
     metric_observations,
     orders,
@@ -64,6 +52,21 @@ from investment_manager.persistence import (
 from investment_manager.platform.database import build_engine, metadata
 from investment_manager.reconciliation import MockReconciler
 from investment_manager.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
+from investment_manager.state.facts import (
+    FOMC_MEETING_FACT_TYPE,
+    FactDeltaPolicy,
+    FactDeltaRule,
+    OfficialFactProjectionPolicy,
+    build_fact_material_delta,
+    build_state_snapshot,
+    project_fomc_calendar_fact,
+)
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    Materiality,
+)
+from investment_manager.state.repository import SqlFactStateStore
+from investment_manager.state.tables import canonical_fact_revisions
 from investment_manager.trigger import (
     AnalysisTriggerType,
     TriggerNow,

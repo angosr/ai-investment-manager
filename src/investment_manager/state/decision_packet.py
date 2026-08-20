@@ -6,14 +6,8 @@ from decimal import Decimal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.asset_management import (
-    CanonicalFactRevision,
     ContextAssessment,
     ContextView,
-    DeltaCategory,
-    FactRevisionStatus,
-    MaterialDelta,
-    Materiality,
-    StateSnapshot,
 )
 from investment_manager.domain import AccountSnapshot
 from investment_manager.information.models import SourceTier
@@ -37,6 +31,14 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.panel import sanitize_external_text
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    DeltaCategory,
+    FactRevisionStatus,
+    MaterialDelta,
+    Materiality,
+    StateSnapshot,
+)
 
 
 class DecisionPacketCapacityError(ValueError):

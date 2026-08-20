@@ -9,22 +9,24 @@ from investment_manager.asset_management import (
     AssetTarget,
     BaseForecast,
     CalibratedForecast,
-    CanonicalFactRevision,
     ContextAssessment,
     ContextView,
-    DeltaCategory,
-    FactRevisionStatus,
     ForecastRole,
-    MaterialDelta,
-    Materiality,
     PortfolioTarget,
     PricedState,
-    StateSnapshot,
 )
 from investment_manager.domain import DirectionalView
 from investment_manager.information.models import (
     SourceObservation,
     SourceTier,
+)
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    DeltaCategory,
+    FactRevisionStatus,
+    MaterialDelta,
+    Materiality,
+    StateSnapshot,
 )
 
 NOW = datetime(2026, 8, 20, 10, 30, tzinfo=UTC)

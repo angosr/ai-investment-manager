@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from investment_manager.asset_management import Materiality
-from investment_manager.fact_pipeline import (
+from investment_manager.information.official import parse_fomc_calendar
+from investment_manager.information.official_repository import SqlFedOfficialInformationIngestor
+from investment_manager.schema import create_schema
+from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
     FactDeltaRule,
@@ -13,16 +15,14 @@ from investment_manager.fact_pipeline import (
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
-from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.information.official import parse_fomc_calendar
-from investment_manager.information.official_repository import SqlFedOfficialInformationIngestor
-from investment_manager.persistence import (
+from investment_manager.state.models import Materiality
+from investment_manager.state.repository import SqlFactStateStore
+from investment_manager.state.tables import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
     material_deltas,
     state_snapshots,
 )
-from investment_manager.schema import create_schema
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(

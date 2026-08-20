@@ -8,8 +8,8 @@ from pydantic import Field, model_validator
 from investment_manager.analyst import AnalystResult
 from investment_manager.asset_management import ContextAssessment
 from investment_manager.context_assessment_sql import SqlContextAssessmentStore
-from investment_manager.decision_packet import DecisionPacket
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.state.decision_packet import DecisionPacket
 
 
 class ContextAnalyst(Protocol):

@@ -3,15 +3,15 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
-from investment_manager.fact_pipeline import build_state_snapshot
-from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.market.features import FeatureEngine
-from investment_manager.persistence import (
+from investment_manager.schema import create_schema
+from investment_manager.state.evidence_repository import SqlStateEvidenceStore, StateEvidenceKind
+from investment_manager.state.facts import build_state_snapshot
+from investment_manager.state.repository import SqlFactStateStore
+from investment_manager.state.tables import (
     state_evidence_snapshots,
     state_snapshots,
 )
-from investment_manager.schema import create_schema
-from investment_manager.state_evidence_sql import SqlStateEvidenceStore, StateEvidenceKind
 
 
 def _stores():

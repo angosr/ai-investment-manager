@@ -3,36 +3,36 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
-from investment_manager.asset_management import (
-    CanonicalFactRevision,
-    MaterialDelta,
-    StateSnapshot,
-)
-from investment_manager.decision_packet import (
-    AnalysisMandate,
-    DecisionPacket,
-    DecisionPacketBuilder,
-    DecisionPacketPolicy,
-    VisibleFact,
-)
 from investment_manager.domain import AccountSnapshot
-from investment_manager.fact_pipeline import (
-    validate_fact_revision_identity,
-    validate_material_delta_identity,
-    validate_state_snapshot_identity,
-)
-from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.information.models import SourceTier
 from investment_manager.information.tables import source_observations
 from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
-from investment_manager.persistence import (
+from investment_manager.state.decision_packet import (
+    AnalysisMandate,
+    DecisionPacket,
+    DecisionPacketBuilder,
+    DecisionPacketPolicy,
+    VisibleFact,
+)
+from investment_manager.state.evidence_repository import SqlStateEvidenceStore, StateEvidenceKind
+from investment_manager.state.facts import (
+    validate_fact_revision_identity,
+    validate_material_delta_identity,
+    validate_state_snapshot_identity,
+)
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    MaterialDelta,
+    StateSnapshot,
+)
+from investment_manager.state.repository import SqlFactStateStore
+from investment_manager.state.tables import (
     canonical_fact_revisions,
     material_deltas,
 )
-from investment_manager.state_evidence_sql import SqlStateEvidenceStore, StateEvidenceKind
 
 _SOURCE_RANK = {
     SourceTier.FIRST_PARTY: 0,

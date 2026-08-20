@@ -2,8 +2,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from investment_manager.asset_management import Materiality
-from investment_manager.fact_pipeline import (
+from investment_manager.information.official import (
+    build_fomc_calendar_revision,
+    parse_fed_monetary_rss,
+    parse_fomc_calendar,
+)
+from investment_manager.state.facts import (
     FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
@@ -14,11 +18,7 @@ from investment_manager.fact_pipeline import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
-from investment_manager.information.official import (
-    build_fomc_calendar_revision,
-    parse_fed_monetary_rss,
-    parse_fomc_calendar,
-)
+from investment_manager.state.models import Materiality
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(

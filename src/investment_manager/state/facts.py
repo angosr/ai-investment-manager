@@ -4,14 +4,6 @@ from datetime import datetime, timedelta
 
 from pydantic import Field, model_validator
 
-from investment_manager.asset_management import (
-    CanonicalFactRevision,
-    DeltaCategory,
-    FactRevisionStatus,
-    MaterialDelta,
-    Materiality,
-    StateSnapshot,
-)
 from investment_manager.information.official import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
@@ -20,6 +12,14 @@ from investment_manager.information.official import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    DeltaCategory,
+    FactRevisionStatus,
+    MaterialDelta,
+    Materiality,
+    StateSnapshot,
+)
 
 FOMC_MEETING_FACT_TYPE = "FOMC_MEETING_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"

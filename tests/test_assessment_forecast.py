@@ -32,19 +32,19 @@ from investment_manager.asset_management import (
     PricedState,
 )
 from investment_manager.context_assessment_sql import SqlContextAssessmentStore
-from investment_manager.decision_packet import (
-    DecisionPacket,
-    PacketAssetState,
-    PacketDelta,
-    PacketPortfolioState,
-    RequiredView,
-)
 from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.persistence import assessment_view_outcomes
 from investment_manager.schema import create_schema
+from investment_manager.state.decision_packet import (
+    DecisionPacket,
+    PacketAssetState,
+    PacketDelta,
+    PacketPortfolioState,
+    RequiredView,
+)
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 HASH = "a" * 64

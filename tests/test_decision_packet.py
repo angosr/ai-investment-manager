@@ -7,18 +7,17 @@ from sqlalchemy import create_engine
 from investment_manager.analyst import AnalystResult, verify_bundle
 from investment_manager.asset_management import (
     AssessmentUncertainty,
-    CanonicalFactRevision,
     ContextView,
-    DeltaCategory,
-    FactRevisionStatus,
-    MaterialDelta,
-    Materiality,
     PricedState,
-    StateSnapshot,
 )
 from investment_manager.context_analyst import AssessRunBundleBuilder, CodexContextAnalyst
 from investment_manager.context_assessment_sql import SqlContextAssessmentStore
-from investment_manager.decision_packet import (
+from investment_manager.domain import DirectionalView
+from investment_manager.information.models import SourceTier
+from investment_manager.kernel.identity import canonical_json, content_hash
+from investment_manager.market.features import FeatureEngine
+from investment_manager.platform.database import metadata
+from investment_manager.state.decision_packet import (
     AnalysisMandate,
     AssessStructuredOutput,
     ContextAssessmentDraft,
@@ -31,11 +30,14 @@ from investment_manager.decision_packet import (
     build_assess_prompt,
     finalize_context_assessment,
 )
-from investment_manager.domain import DirectionalView
-from investment_manager.information.models import SourceTier
-from investment_manager.kernel.identity import canonical_json, content_hash
-from investment_manager.market.features import FeatureEngine
-from investment_manager.platform.database import metadata
+from investment_manager.state.models import (
+    CanonicalFactRevision,
+    DeltaCategory,
+    FactRevisionStatus,
+    MaterialDelta,
+    Materiality,
+    StateSnapshot,
+)
 
 HASH = "a" * 64
 

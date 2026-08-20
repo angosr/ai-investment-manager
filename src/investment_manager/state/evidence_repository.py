@@ -12,7 +12,7 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
-from investment_manager.persistence import state_evidence_snapshots
+from investment_manager.state.tables import state_evidence_snapshots
 
 
 class StateEvidenceKind(StrEnum):

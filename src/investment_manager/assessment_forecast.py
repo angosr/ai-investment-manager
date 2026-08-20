@@ -14,7 +14,6 @@ from investment_manager.asset_management import (
     ForecastRole,
     PricedState,
 )
-from investment_manager.decision_packet import DecisionPacket
 from investment_manager.domain import DirectionalView
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -23,6 +22,7 @@ from investment_manager.kernel.types import (
     Money,
 )
 from investment_manager.market.models import MarketTrade
+from investment_manager.state.decision_packet import DecisionPacket
 
 
 class AssessmentForecastPolicy(FrozenModel):

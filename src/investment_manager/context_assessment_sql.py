@@ -5,8 +5,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.asset_management import ContextAssessment
-from investment_manager.decision_packet import DecisionPacket
-from investment_manager.persistence import context_assessments, decision_packets
+from investment_manager.persistence import context_assessments
+from investment_manager.state.decision_packet import DecisionPacket
+from investment_manager.state.tables import decision_packets
 
 
 class SqlContextAssessmentStore:
