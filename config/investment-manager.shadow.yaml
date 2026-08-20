@@ -1,6 +1,9 @@
 extends: investment-manager.yaml
 
-# 仅覆盖部署环境；策略、风控、版本和账号门禁全部继承同一基线。
+# 仅覆盖 Shadow 运行差异；研究基线仍可回放，未通过盲测的策略不进入前瞻运行。
+strategy:
+  enabled: false
+
 temporal:
   # Shadow 与 Mock/测试隔离，避免相同稳定 Workflow ID 绑定到另一套事实库。
   namespace: shadow-20260818

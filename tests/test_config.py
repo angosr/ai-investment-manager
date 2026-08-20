@@ -22,6 +22,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert not config.deployment.testnet_order_submission_enabled
     assert not config.deployment.live_order_submission_enabled
     assert config.deployment.credential_profile is None
+    assert not config.strategy.enabled
     assert not config.codex_runtime.enabled
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000

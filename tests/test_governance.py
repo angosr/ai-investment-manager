@@ -134,15 +134,16 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
         validate_manifest_code_version(manifest, repository_root=tmp_path)
 
 
-def test_runtime_release_binds_complete_configuration_content() -> None:
+def test_historical_runtime_release_rejects_changed_configuration() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
     manifest = load_release_manifest("config/release-manifest.testnet.yaml")
 
-    validate_manifest_against_config(
-        manifest,
-        config,
-        require_configuration_hash=True,
-    )
+    with pytest.raises(ValueError, match="完整配置内容不一致"):
+        validate_manifest_against_config(
+            manifest,
+            config,
+            require_configuration_hash=True,
+        )
     changed = config.model_copy(
         update={
             "frequency": config.frequency.model_copy(
