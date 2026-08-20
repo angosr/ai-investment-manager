@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from quant_core.asset_management import CalibratedForecast, ForecastRole
-from quant_core.domain import DirectionalView
+from quant_core.domain import DirectionalView, Position
 from quant_core.portfolio_decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
@@ -158,3 +160,37 @@ def test_single_pipeline_clamps_then_plans_without_second_economic_vote(
     )
     assert result.trade_plan is not None
     assert result.trade_plan.trades[0].quote_notional == Decimal("1000")
+
+
+def test_pipeline_rejects_caller_supplied_position_notional_drift(
+    replay_input,
+) -> None:
+    inputs = _inputs(replay_input)
+    inputs["assets"] = (
+        inputs["assets"][0].model_copy(
+            update={"current_quote_notional": Decimal("1000")}
+        ),
+    )
+
+    with pytest.raises(ValueError, match="current_quote_notional"):
+        _pipeline(enabled=True).run(**inputs)
+
+
+def test_pipeline_rejects_account_position_missing_from_asset_inputs(
+    replay_input,
+) -> None:
+    inputs = _inputs(replay_input)
+    inputs["account"] = inputs["account"].model_copy(
+        update={
+            "positions": (
+                Position(
+                    symbol="ETHUSDT",
+                    quantity=Decimal("1"),
+                    average_price=Decimal("100"),
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="当前持仓缺少资产输入: ETHUSDT"):
+        _pipeline(enabled=True).run(**inputs)

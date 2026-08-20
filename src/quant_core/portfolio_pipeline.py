@@ -7,7 +7,13 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from quant_core.asset_management import PortfolioTarget
-from quant_core.domain import AccountSnapshot, FrozenModel, MarketSnapshot, RiskOutcome
+from quant_core.domain import (
+    AccountSnapshot,
+    FrozenModel,
+    MarketSnapshot,
+    RiskOutcome,
+    _require_utc,
+)
 from quant_core.portfolio_decision import PortfolioAssetInput, PortfolioDecisionEngine
 from quant_core.portfolio_risk import (
     PortfolioRiskDecision,
@@ -72,12 +78,19 @@ class PortfolioDecisionPipeline:
         protective_stops: tuple[ProtectiveStop, ...],
         execution_specs: tuple[MarketExecutionSpec, ...],
     ) -> PortfolioPipelineResult:
+        as_of = _require_utc(as_of)
         if reference_equity <= 0:
             raise ValueError("PortfolioPipeline reference_equity 必须为正数")
         if account.cycle_id != cycle_id or any(
             item.cycle_id != cycle_id for item in markets
         ):
             raise ValueError("PortfolioPipeline 冻结输入 cycle_id 不一致")
+        self._require_frozen_inputs(
+            assets=assets,
+            account=account,
+            markets=markets,
+            as_of=as_of,
+        )
         target = self._decision.decide(
             cycle_id=cycle_id,
             as_of=as_of,
@@ -120,3 +133,50 @@ class PortfolioDecisionPipeline:
             risk_decision=risk_decision,
             trade_plan=trade_plan,
         )
+
+    @staticmethod
+    def _require_frozen_inputs(
+        *,
+        assets: tuple[PortfolioAssetInput, ...],
+        account: AccountSnapshot,
+        markets: tuple[MarketSnapshot, ...],
+        as_of: datetime,
+    ) -> None:
+        if account.as_of != as_of or any(item.as_of != as_of for item in markets):
+            raise ValueError("PortfolioPipeline 冻结输入 as_of 不一致")
+        market_by_symbol = {item.symbol: item for item in markets}
+        if len(market_by_symbol) != len(markets):
+            raise ValueError("PortfolioPipeline MarketSnapshot symbol 必须唯一")
+        position_by_symbol = {item.symbol: item for item in account.positions}
+        if len(position_by_symbol) != len(account.positions):
+            raise ValueError("PortfolioPipeline Account position symbol 必须唯一")
+        asset_symbols = tuple(item.symbol for item in assets)
+        if tuple(sorted(set(asset_symbols))) != asset_symbols:
+            raise ValueError("PortfolioAssetInput 必须按 symbol 唯一且排序")
+        missing_positions = tuple(sorted(set(position_by_symbol) - set(asset_symbols)))
+        if missing_positions:
+            raise ValueError(
+                "PortfolioPipeline 当前持仓缺少资产输入: "
+                + ", ".join(missing_positions)
+            )
+        for asset in assets:
+            market = market_by_symbol.get(asset.symbol)
+            if market is None:
+                raise ValueError(
+                    f"PortfolioPipeline 资产缺少冻结行情: {asset.symbol}"
+                )
+            position = position_by_symbol.get(asset.symbol)
+            expected_notional = (
+                position.quantity * market.bid
+                if position is not None
+                else Decimal("0")
+            )
+            if asset.current_price != market.last:
+                raise ValueError(
+                    f"PortfolioPipeline current_price 与冻结行情不一致: {asset.symbol}"
+                )
+            if asset.current_quote_notional != expected_notional:
+                raise ValueError(
+                    "PortfolioPipeline current_quote_notional 与冻结账户不一致: "
+                    + asset.symbol
+                )
