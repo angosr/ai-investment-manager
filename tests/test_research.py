@@ -27,6 +27,29 @@ from quant_core.domain import (
 )
 from quant_core.ids import content_hash, stable_id
 from quant_core.market_data import ClosedMarketBar
+from quant_core.research.carry import (
+    CarryFundingSettlement,
+    CarryInstrumentSpec,
+    CarryMarketDay,
+    HistoricalCarryDataset,
+    HistoricalCarryDatasetCatalog,
+    HistoricalCarryDatasetManifest,
+    _days_hash,
+    _settlements_hash,
+    fetch_binance_carry_history,
+)
+from quant_core.research.carry_evaluation import (
+    CarryBlindCatalog,
+    CarryEvaluationCatalog,
+    CarryEvaluationSpec,
+    CarryPolicy,
+    CarryWalkForwardPlan,
+    build_carry_evaluation_plan,
+    run_carry_backtest,
+    run_carry_blind_evaluation,
+    run_carry_walk_forward,
+    validate_carry_evaluation_plan,
+)
 from quant_core.research.dataset import (
     HistoricalDataset,
     HistoricalDatasetCatalog,
@@ -497,6 +520,342 @@ def test_funding_history_rejects_untrusted_source_and_checksum() -> None:
                 transport=httpx.MockTransport(handler),
             )
         )
+
+
+def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    spot_dataset = _dataset(
+        count=2,
+        interval="1d",
+        bar_delta=timedelta(days=1),
+        initial_price=Decimal("100"),
+    )
+    end = spot_dataset.manifest.requested_end
+    first_ms = int(start.timestamp() * 1000)
+    filename = "BTCUSDT-fundingRate-2026-01.zip"
+    funding_rows = tuple(
+        (
+            str(first_ms + index * 8 * 60 * 60 * 1000),
+            "8",
+            "0.0001",
+        )
+        for index in range(6)
+    )
+    archive = _funding_archive(filename, funding_rows)
+    checksum = hashlib.sha256(archive).hexdigest()
+
+    def funding_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{checksum}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    funding_dataset = asyncio.run(
+        fetch_binance_funding_history(
+            base_url="https://data.binance.vision",
+            symbol="BTCUSDT",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: end + timedelta(days=1),
+            transport=httpx.MockTransport(funding_handler),
+        )
+    )
+
+    def carry_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v1/exchangeInfo":
+            return httpx.Response(
+                200,
+                json={
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "pair": "BTCUSDT",
+                            "contractType": "PERPETUAL",
+                            "status": "TRADING",
+                            "baseAsset": "BTC",
+                            "quoteAsset": "USDT",
+                            "marginAsset": "USDT",
+                            "onboardDate": first_ms - 86_400_000,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5"},
+                            ],
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/fapi/v1/fundingRate":
+            cursor = int(request.url.params["startTime"])
+            rows = [
+                {
+                    "symbol": "BTCUSDT",
+                    "fundingTime": int(timestamp) + index % 2,
+                    "fundingRate": rate,
+                    "markPrice": str(Decimal("100") + index),
+                }
+                for index, (timestamp, _, rate) in enumerate(funding_rows)
+                if int(timestamp) >= cursor
+            ]
+            return httpx.Response(200, json=rows)
+        if (
+            request.url.path == "/fapi/v1/markPriceKlines"
+            and request.url.params["interval"] == "8h"
+        ):
+            rows = []
+            for index in range(7):
+                open_ms = first_ms - 8 * 60 * 60 * 1000 + index * 8 * 60 * 60 * 1000
+                rows.append(
+                    [
+                        open_ms,
+                        "100",
+                        "102",
+                        "99",
+                        str(Decimal("100") + index),
+                        "0",
+                        open_ms + 8 * 60 * 60 * 1000 - 1,
+                    ]
+                )
+            return httpx.Response(200, json=rows)
+        rows = [
+            [first_ms, "100", "102", "99", "101", "0", first_ms + 86_399_999],
+            [
+                first_ms + 86_400_000,
+                "101",
+                "103",
+                "100",
+                "102",
+                "0",
+                first_ms + 2 * 86_400_000 - 1,
+            ],
+        ]
+        if request.url.path == "/fapi/v1/premiumIndexKlines":
+            rows = [
+                [row[0], "-0.001", "0.002", "-0.003", "0.001", "0", row[6]]
+                for row in rows
+            ]
+        return httpx.Response(200, json=rows)
+
+    dataset = asyncio.run(
+        fetch_binance_carry_history(
+            base_url="https://fapi.binance.com",
+            spot_dataset=spot_dataset,
+            funding_dataset=funding_dataset,
+            timeout_seconds=1,
+            clock=lambda: end + timedelta(days=1),
+            transport=httpx.MockTransport(carry_handler),
+        )
+    )
+
+    assert dataset.manifest.day_count == 2
+    assert dataset.manifest.settlement_count == 6
+    assert dataset.settlements[1].mark_price == Decimal("101")
+    assert dataset.days[0].premium_low == Decimal("-0.003")
+    catalog = HistoricalCarryDatasetCatalog(tmp_path)
+    target = catalog.store(dataset)
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
+
+    rows = json.loads((target / "settlements.json").read_text())
+    rows[0][4] = "999"
+    (target / "settlements.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="内容哈希"):
+        catalog.load(dataset.manifest.dataset_id)
+
+
+def test_carry_history_rejects_untrusted_source() -> None:
+    spot_dataset = _dataset(count=2, interval="1d", bar_delta=timedelta(days=1))
+    with pytest.raises(ValueError, match="官方 REST"):
+        asyncio.run(
+            fetch_binance_carry_history(
+                base_url="https://example.com",
+                spot_dataset=spot_dataset,
+                funding_dataset=None,  # type: ignore[arg-type]
+                timeout_seconds=1,
+            )
+        )
+
+
+def _carry_dataset(
+    *, count: int = 200, mark_high: Decimal = Decimal("101")
+) -> tuple[HistoricalDataset, HistoricalCarryDataset]:
+    spot = _dataset(
+        count=count,
+        interval="1d",
+        bar_delta=timedelta(days=1),
+        initial_price=Decimal("100"),
+        price_step=Decimal("1"),
+    )
+    days = tuple(
+        CarryMarketDay(
+            symbol="BTCUSDT",
+            open_time=bar.open_time,
+            close_time=bar.close_time,
+            contract_open=Decimal("100"),
+            contract_high=Decimal("101"),
+            contract_low=Decimal("99"),
+            contract_close=Decimal("100"),
+            mark_open=Decimal("100"),
+            mark_high=mark_high,
+            mark_low=Decimal("99"),
+            mark_close=Decimal("100"),
+            index_open=Decimal("100"),
+            index_high=Decimal("101"),
+            index_low=Decimal("99"),
+            index_close=Decimal("100"),
+            premium_open=Decimal("0"),
+            premium_high=Decimal("0.001"),
+            premium_low=Decimal("-0.001"),
+            premium_close=Decimal("0"),
+        )
+        for bar in spot.bars
+    )
+    settlements = tuple(
+        CarryFundingSettlement(
+            symbol="BTCUSDT",
+            funding_time=bar.open_time,
+            available_at=bar.open_time + timedelta(minutes=1),
+            funding_interval_hours=24,
+            funding_rate=Decimal("0.0002"),
+            mark_price=Decimal("100"),
+        )
+        for bar in spot.bars
+    )
+    instrument = CarryInstrumentSpec(
+        symbol="BTCUSDT",
+        pair="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        margin_asset="USDT",
+        onboarded_at=spot.manifest.requested_start - timedelta(days=1),
+        price_increment=Decimal("0.1"),
+        quantity_increment=Decimal("0.001"),
+        minimum_quantity=Decimal("0.001"),
+        maximum_quantity=Decimal("1000"),
+        minimum_notional=Decimal("5"),
+    )
+    days_hash = _days_hash(days)
+    settlements_hash = _settlements_hash(settlements)
+    identity = (
+        "historical-binance-carry-v1",
+        "binance-usdm-rest-carry",
+        "BTCUSDT",
+        "1d",
+        spot.manifest.requested_start,
+        spot.manifest.requested_end,
+        spot.manifest.dataset_id,
+        "test-funding-dataset",
+        days_hash,
+        settlements_hash,
+        "MARK_8H_PRE_SETTLEMENT_CLOSE",
+        instrument,
+    )
+    manifest = HistoricalCarryDatasetManifest(
+        dataset_id=stable_id("historical_carry_dataset", *identity),
+        symbol="BTCUSDT",
+        collected_at=spot.manifest.requested_end,
+        requested_start=spot.manifest.requested_start,
+        requested_end=spot.manifest.requested_end,
+        spot_dataset_id=spot.manifest.dataset_id,
+        funding_dataset_id="test-funding-dataset",
+        first_open_time=days[0].open_time,
+        last_close_time=days[-1].close_time,
+        first_funding_time=settlements[0].funding_time,
+        last_funding_time=settlements[-1].funding_time,
+        day_count=len(days),
+        settlement_count=len(settlements),
+        days_hash=days_hash,
+        settlements_hash=settlements_hash,
+        instrument=instrument,
+    )
+    return spot, HistoricalCarryDataset(
+        manifest=manifest,
+        days=days,
+        settlements=settlements,
+    )
+
+
+def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
+    tmp_path,
+) -> None:
+    spot, carry = _carry_dataset()
+    policy = CarryPolicy()
+    run = run_carry_backtest(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=policy,
+        starting_equity=Decimal("10000"),
+        start=carry.days[0].open_time,
+        end=carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+    assert run.completed
+    assert run.metrics.funding_pnl > run.metrics.modeled_cost
+    assert run.metrics.net_pnl > 0
+    assert run.metrics.maximum_one_leg_failure_loss_fraction < Decimal("0.01")
+
+    plan = CarryWalkForwardPlan(
+        plan_id="test-carry-v1", fold_count=3, blind_days=30
+    )
+    spec = CarryEvaluationSpec.freeze(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=policy,
+        plan=plan,
+    )
+    registered = build_carry_evaluation_plan(
+        spec=spec,
+        base_manifest_id="test-champion",
+        registered_at=carry.days[-1].close_time + timedelta(seconds=1),
+    )
+    validate_carry_evaluation_plan(
+        spec=spec,
+        plan=registered,
+        champion_manifest_id="test-champion",
+        evaluated_at=registered.registered_at,
+    )
+    result = run_carry_walk_forward(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=policy,
+        plan=plan,
+        evaluation_spec_hash=content_hash(spec),
+    )
+    assert result.passed
+    assert result.metrics.positive_fold_fraction == Decimal("1")
+    assert result.blind_start == carry.days[-30].open_time
+    evaluation_catalog = CarryEvaluationCatalog(tmp_path / "evaluations")
+    evaluation_catalog.store(result)
+    assert evaluation_catalog.load(result.evaluation_id) == result
+    blind = run_carry_blind_evaluation(
+        source=result,
+        query_id="test-query",
+        carry_dataset=carry,
+        spot_dataset=spot,
+    )
+    assert blind.passed
+    assert blind.run.start == result.blind_start
+    blind_catalog = CarryBlindCatalog(tmp_path / "blind")
+    blind_catalog.store(blind)
+    assert blind_catalog.load(blind.result_id) == blind
+
+
+def test_carry_backtest_fails_closed_on_liquidation_bound() -> None:
+    spot, carry = _carry_dataset(count=40, mark_high=Decimal("200"))
+    run = run_carry_backtest(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=CarryPolicy(),
+        starting_equity=Decimal("10000"),
+        start=carry.days[0].open_time,
+        end=carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+    assert not run.completed
+    assert run.metrics.liquidated
+    assert run.reason_codes == ("LIQUIDATION_BOUND_BREACHED",)
 
 
 def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(

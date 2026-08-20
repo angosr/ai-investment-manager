@@ -435,6 +435,317 @@ def fetch_binance_funding_history_command(
     )
 
 
+@app.command("fetch-binance-carry-history")
+def fetch_binance_carry_history_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    spot_dataset_id: Annotated[str, typer.Option()],
+    funding_dataset_id: Annotated[str, typer.Option()],
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    funding_catalog: Annotated[
+        Path, typer.Option(exists=True, file_okay=False)
+    ] = Path(".runtime/funding-datasets"),
+    carry_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+) -> None:
+    """冻结 carry 所需 USD-M 价格与逐次结算标记价；不创建交易适配器。"""
+
+    from quant_core.research.carry import (
+        HistoricalCarryDatasetCatalog,
+        fetch_binance_carry_history,
+    )
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        HistoricalFundingDatasetCatalog,
+    )
+
+    loaded = load_config(config)
+    spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(spot_dataset_id)
+    funding_dataset = HistoricalFundingDatasetCatalog(funding_catalog).load(
+        funding_dataset_id
+    )
+    if spot_dataset.manifest.symbol not in loaded.market_data.symbols:
+        raise typer.BadParameter(
+            "现货数据品种必须在当前 MarketDataPolicy 中显式登记",
+            param_hint="spot-dataset-id",
+        )
+    try:
+        dataset = asyncio.run(
+            fetch_binance_carry_history(
+                base_url="https://fapi.binance.com",
+                spot_dataset=spot_dataset,
+                funding_dataset=funding_dataset,
+                timeout_seconds=loaded.market_data.rest_timeout_seconds,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="spot-dataset-id") from exc
+    target = HistoricalCarryDatasetCatalog(carry_catalog).store(dataset)
+    typer.echo(
+        json.dumps(
+            {
+                "carry_dataset_id": dataset.manifest.dataset_id,
+                "symbol": dataset.manifest.symbol,
+                "day_count": dataset.manifest.day_count,
+                "settlement_count": dataset.manifest.settlement_count,
+                "days_hash": dataset.manifest.days_hash,
+                "settlements_hash": dataset.manifest.settlements_hash,
+                "rule_snapshot_as_of": dataset.manifest.collected_at.isoformat(),
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("carry-walk-forward")
+def carry_walk_forward_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    plan_id: Annotated[str, typer.Option()],
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/carry-evaluations"
+    ),
+    register_only: Annotated[
+        bool, typer.Option(help="只预登记固定 carry 策略、数据与门禁")
+    ] = False,
+) -> None:
+    """预登记或评价固定现货/永续 carry；不调用模型或生产执行。"""
+
+    from quant_core.persistence import SqlGovernanceRepository
+    from quant_core.research.carry import HistoricalCarryDatasetCatalog
+    from quant_core.research.carry_evaluation import (
+        CarryEvaluationCatalog,
+        CarryEvaluationSpec,
+        CarryPolicy,
+        CarryWalkForwardPlan,
+        build_carry_evaluation_plan,
+        failed_carry_walk_forward_experiment,
+        run_carry_walk_forward,
+        validate_carry_evaluation_plan,
+    )
+    from quant_core.research.dataset import HistoricalDatasetCatalog
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    champion = governance.get_champion()
+    registered = governance.get_plan(plan_id)
+    if register_only:
+        carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
+            carry_dataset_id
+        )
+        spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(
+            carry_dataset.manifest.spot_dataset_id
+        )
+        spec = CarryEvaluationSpec.freeze(
+            carry_dataset=carry_dataset,
+            spot_dataset=spot_dataset,
+            policy=CarryPolicy(),
+            plan=CarryWalkForwardPlan(plan_id=plan_id),
+        )
+        registered = build_carry_evaluation_plan(
+            spec=spec,
+            base_manifest_id=champion.manifest_id,
+            registered_at=datetime.now(UTC),
+        )
+        governance.register_plan(registered)
+        typer.echo(
+            json.dumps(
+                {
+                    "evaluation_plan": registered.model_dump(mode="json"),
+                    "carry_spec": spec.model_dump(mode="json"),
+                    "carry_spec_hash": content_hash(spec),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if registered is None or registered.candidate_spec_snapshot is None:
+        raise typer.BadParameter(
+            "carry EvaluationPlan 尚未预登记；先以相同参数执行 --register-only",
+            param_hint="plan-id",
+        )
+    try:
+        spec = CarryEvaluationSpec.model_validate(
+            registered.candidate_spec_snapshot
+        )
+        if spec.carry_dataset_id != carry_dataset_id:
+            raise ValueError("调用方 carry 数据集与预登记规格不一致")
+        carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
+            spec.carry_dataset_id
+        )
+        spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(
+            spec.spot_dataset_id
+        )
+        validate_carry_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id=champion.manifest_id,
+            evaluated_at=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    result = run_carry_walk_forward(
+        carry_dataset=carry_dataset,
+        spot_dataset=spot_dataset,
+        policy=spec.policy,
+        plan=spec.plan,
+        evaluation_spec_hash=content_hash(spec),
+    )
+    result_path = CarryEvaluationCatalog(evaluation_catalog).store(result)
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_carry_walk_forward_experiment(
+                result,
+                rejected_at=datetime.now(UTC),
+            )
+        )
+    payload = result.model_dump(mode="json", exclude={"folds": {"__all__": {"run"}}})
+    payload["result_path"] = str(result_path)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("carry-blind-evaluate")
+def carry_blind_evaluate_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="一次性盲测事实库"),
+    ],
+    source_evaluation_id: Annotated[str, typer.Option()],
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    evaluation_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-evaluations"
+    ),
+    blind_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/carry-blind-evaluations"
+    ),
+) -> None:
+    """原子消费固定 carry 策略的唯一尾窗；失败或重叠时不读取标签。"""
+
+    from quant_core.governance import BlindEvaluationClaim
+    from quant_core.persistence import SqlGovernanceRepository
+    from quant_core.research.carry import HistoricalCarryDatasetCatalog
+    from quant_core.research.carry_evaluation import (
+        CarryBlindCatalog,
+        CarryEvaluationCatalog,
+        CarryEvaluationSpec,
+        failed_carry_blind_experiment,
+        run_carry_blind_evaluation,
+        validate_carry_evaluation_plan,
+    )
+    from quant_core.research.dataset import HistoricalDatasetCatalog
+
+    source = CarryEvaluationCatalog(evaluation_catalog).load(source_evaluation_id)
+    if not source.passed or source.evaluation_spec_hash is None:
+        raise typer.BadParameter(
+            "源 carry walk-forward 尚未通过完整门禁",
+            param_hint="source-evaluation-id",
+        )
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    registered = governance.get_plan(source.plan.plan_id)
+    if registered is None or registered.candidate_spec_snapshot is None:
+        raise typer.BadParameter("源 carry 评价没有预登记规格")
+    try:
+        spec = CarryEvaluationSpec.model_validate(registered.candidate_spec_snapshot)
+        if (
+            source.dataset_id != spec.carry_dataset_id
+            or source.spot_dataset_id != spec.spot_dataset_id
+            or source.funding_dataset_id != spec.funding_dataset_id
+            or source.policy != spec.policy
+            or source.plan != spec.plan
+            or source.evaluation_spec_hash != content_hash(spec)
+        ):
+            raise ValueError("源 carry 结果与预登记规格不一致")
+        validate_carry_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id=governance.get_champion().manifest_id,
+            evaluated_at=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
+    symbol = HistoricalCarryDatasetCatalog(carry_catalog).load_manifest(
+        spec.carry_dataset_id
+    ).symbol
+    scope_id = stable_id(
+        "blind_evaluation_scope", symbol, source.blind_start, source.blind_end
+    )
+    query_id = stable_id(
+        "carry_blind_query",
+        source.plan.plan_id,
+        source.evaluation_id,
+        source.evaluation_spec_hash,
+    )
+    try:
+        claim = governance.claim_blind_evaluation(
+            BlindEvaluationClaim(
+                query_id=query_id,
+                blind_scope_id=scope_id,
+                blind_symbol=symbol,
+                blind_start=source.blind_start,
+                blind_end=source.blind_end,
+                plan_id=source.plan.plan_id,
+                source_evaluation_id=source.evaluation_id,
+                claimed_at=datetime.now(UTC),
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
+    catalog = CarryBlindCatalog(blind_catalog)
+    if claim.completed_at is not None:
+        assert claim.result_id is not None
+        result = catalog.load(claim.result_id)
+        result_path = blind_catalog / f"{claim.result_id}.json"
+    else:
+        carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
+            spec.carry_dataset_id
+        )
+        spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(spec.spot_dataset_id)
+        result = run_carry_blind_evaluation(
+            source=source,
+            query_id=query_id,
+            carry_dataset=carry_dataset,
+            spot_dataset=spot_dataset,
+        )
+        result_path = catalog.store(result)
+        governance.complete_blind_evaluation(
+            claim.model_copy(
+                update={
+                    "completed_at": datetime.now(UTC),
+                    "result_id": result.result_id,
+                    "result_hash": content_hash(result),
+                }
+            )
+        )
+        if not result.passed:
+            governance.record_failed_experiment(
+                failed_carry_blind_experiment(
+                    result,
+                    rejected_at=datetime.now(UTC),
+                )
+            )
+    payload = result.model_dump(mode="json")
+    payload["result_path"] = str(result_path)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @app.command("walk-forward")
 def walk_forward_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
