@@ -43,7 +43,7 @@ from quant_core.domain import (
 from quant_core.ids import canonical_json, content_hash, stable_id
 from quant_core.trigger import TriggerDecision
 
-ANALYST_INPUT_VERSION = "analyst-input-v3"
+ANALYST_INPUT_VERSION = "analyst-input-v4"
 
 
 def analysis_behavior_hash(config: AppConfig) -> str:
@@ -438,6 +438,16 @@ class RunBundleBuilder:
         analyst_input["market"] = {
             key: value for key, value in analyst_input["market"].items() if key != "bars"
         }
+        # 顶层已冻结周期与时点；嵌套完全相同的字段不再重复消耗模型注意力。
+        for section_name in ("account", "market", "features"):
+            section = analyst_input[section_name]
+            for key in ("cycle_id", "as_of"):
+                if section.get(key) == analyst_input.get(key):
+                    section.pop(key)
+        # 新闻标题本身就是完整正文时只保留一份；原始 Panel 仍完整写入 panel.json。
+        for evidence in analyst_input["evidence"]:
+            if evidence.get("excerpt") == evidence.get("title"):
+                evidence.pop("excerpt")
         analyst_input["analyst_input_version"] = ANALYST_INPUT_VERSION
         selected_evidence_ids = {item.evidence_id for item in panel.evidence}
         analyst_input["trigger"] = (
@@ -466,6 +476,7 @@ class RunBundleBuilder:
             "必须按周期升序且不得遗漏或增加周期。"
             "panel_view_json.trigger 标记本轮触发原因及直接触发证据；若其中存在"
             "missing_evidence_ids，必须将其视为数据不完整，不得猜测其内容。"
+            "证据省略 excerpt 时，title 即其完整正文。"
             f"最小置信度为 {self._proposal.minimum_confidence}，最大周期为 "
             f"{self._proposal.maximum_horizon_minutes} 分钟；方向预测周期只能是 "
             f"{list(self._proposal.forecast_horizons_minutes)}。\n\n"

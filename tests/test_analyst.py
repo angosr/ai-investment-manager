@@ -232,11 +232,14 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     from quant_core.features import FeatureEngine
     from quant_core.panel import PanelBuilder
 
+    duplicate_body = replay_input.events[0].model_copy(
+        update={"body": replay_input.events[0].title}
+    )
     panel = PanelBuilder(app_config.panel).build(
         market=replay_input.market,
         account=replay_input.account,
         features=FeatureEngine(app_config.feature).compute(replay_input.market),
-        events=replay_input.events,
+        events=(duplicate_body, *replay_input.events[1:]),
     )
     target = tmp_path / "bundle"
     trigger = TriggerDecision(
@@ -282,9 +285,24 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     ]
     prompt_payload = json.loads(prompt_view)
     assert "bars" not in prompt_payload["market"]
+    assert "cycle_id" not in prompt_payload["market"]
+    assert "as_of" not in prompt_payload["market"]
+    assert "cycle_id" not in prompt_payload["account"]
+    assert "as_of" not in prompt_payload["account"]
     assert prompt_payload["market"]["last"] == str(panel.market.last)
-    assert prompt_payload["features"] == panel.features.model_dump(mode="json")
-    assert prompt_payload["evidence"] == [item.model_dump(mode="json") for item in panel.evidence]
+    expected_features = panel.features.model_dump(mode="json")
+    expected_features.pop("cycle_id")
+    expected_features.pop("as_of")
+    assert prompt_payload["features"] == expected_features
+    expected_evidence = [item.model_dump(mode="json") for item in panel.evidence]
+    for item in expected_evidence:
+        if item["excerpt"] == item["title"]:
+            item.pop("excerpt")
+    assert prompt_payload["evidence"] == expected_evidence
+    assert "excerpt" not in prompt_payload["evidence"][0]
+    assert json.loads((target / "panel.json").read_text())["evidence"] == [
+        item.model_dump(mode="json") for item in panel.evidence
+    ]
     assert prompt_payload["trigger"] == {
         "reason": "EVENT_BATCH",
         "evidence_ids": [panel.evidence[0].evidence_id, "evidence-not-selected"],
