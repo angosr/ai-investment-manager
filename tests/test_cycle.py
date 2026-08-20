@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from quant_core.analyst import AnalystResult
+from quant_core.config import AiMode
 from quant_core.cycle import AnalysisCycle, CycleInput
 from quant_core.decision import (
     FrequencyController,
@@ -53,7 +54,10 @@ def _propose_config(app_config):
     return app_config.model_copy(
         update={
             "pipeline": app_config.pipeline.model_copy(
-                update={"version": "propose-pipeline-v1", "ai_mode": "PROPOSE"}
+                update={
+                    "version": "propose-pipeline-v1",
+                    "ai_mode": AiMode.PROPOSE,
+                }
             )
         }
     )
