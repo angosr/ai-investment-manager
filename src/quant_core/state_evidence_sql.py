@@ -39,17 +39,29 @@ class SqlStateEvidenceStore:
         self,
         evidence_ref: str,
     ) -> tuple[StateEvidenceKind, StateEvidence] | None:
+        return self.get_many((evidence_ref,)).get(evidence_ref)
+
+    def get_many(
+        self,
+        evidence_refs: tuple[str, ...],
+    ) -> dict[str, tuple[StateEvidenceKind, StateEvidence]]:
+        if len(set(evidence_refs)) != len(evidence_refs):
+            raise ValueError("State evidence refs 不得重复")
+        if not evidence_refs:
+            return {}
         with self._engine.connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 select(
+                    state_evidence_snapshots.c.evidence_ref,
                     state_evidence_snapshots.c.evidence_kind,
                     state_evidence_snapshots.c.payload,
-                ).where(state_evidence_snapshots.c.evidence_ref == evidence_ref)
-            ).one_or_none()
-        if row is None:
-            return None
-        kind = StateEvidenceKind(row.evidence_kind)
-        return kind, _parse_evidence(kind, row.payload)
+                ).where(state_evidence_snapshots.c.evidence_ref.in_(evidence_refs))
+            ).all()
+        result: dict[str, tuple[StateEvidenceKind, StateEvidence]] = {}
+        for row in rows:
+            kind = StateEvidenceKind(row.evidence_kind)
+            result[row.evidence_ref] = (kind, _parse_evidence(kind, row.payload))
+        return result
 
     def _put(self, kind: StateEvidenceKind, snapshot: StateEvidence) -> str:
         evidence_ref = content_hash(snapshot)

@@ -3,6 +3,12 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import create_engine, func, select
 
 from quant_core.asset_management import Materiality
+from quant_core.decision_packet import (
+    AnalysisMandate,
+    DecisionPacketPolicy,
+    MandateAsset,
+)
+from quant_core.decision_packet_sql import SqlDecisionPacketAssembler
 from quant_core.fact_pipeline import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
@@ -155,6 +161,35 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
     assert revised.delta is not None
     assert replayed.state == revised.state
     assert replayed.delta == revised.delta
+    packet = SqlDecisionPacketAssembler(
+        engine,
+        DecisionPacketPolicy(
+            version="packet-policy-v1",
+            schema_version="decision-packet-v1",
+        ),
+    ).assemble(
+        mandate=AnalysisMandate(
+            version="crypto-mandate-v1",
+            analysis_scope="crypto-portfolio",
+            question="Assess the material Fed revision across the portfolio.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60, 240),
+                ),
+            ),
+            required_risk_factors=("US_MONETARY_POLICY",),
+        ),
+        state_id=revised.state.state_id,
+        delta_ids=(revised.delta.delta_id,),
+    )
+
+    assert packet.state_id == revised.state.state_id
+    assert packet.trigger_ids == (revised.delta.delta_id,)
+    assert packet.asset_states[0].market_symbol == "BTCUSDT"
+    assert packet.facts[0].highest_source_tier == "FIRST_PARTY"
+    assert packet.facts[0].independent_source_count == 1
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(state_snapshots)) == 2
         assert connection.scalar(select(func.count()).select_from(material_deltas)) == 1
