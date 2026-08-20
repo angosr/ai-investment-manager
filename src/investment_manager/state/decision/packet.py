@@ -328,6 +328,7 @@ class DecisionPacketBuilder:
             mandate=mandate,
             facts=facts,
             direct_fact_ids=frozenset(direct_fact_ids),
+            as_of=state.as_of,
         )
         direct_event_refs = frozenset(
             event_ref
@@ -354,7 +355,7 @@ class DecisionPacketBuilder:
             for horizon in item.horizons_minutes
         )
         trigger_ids = tuple(delta.delta_id for delta in ordered_deltas)
-        payload = {
+        payload: dict[str, object] = {
             "schema_version": self._policy.schema_version,
             "policy_version": self._policy.version,
             "mandate_version": mandate.version,
@@ -377,13 +378,48 @@ class DecisionPacketBuilder:
             "omitted_fact_revision_ids": omitted,
             "omitted_intelligence_event_refs": omitted_events,
         }
-        packet = DecisionPacket.create(**payload)
-        packet_characters = len(canonical_json(packet))
-        if packet_characters > self._policy.maximum_packet_characters:
-            raise DecisionPacketCapacityError(
-                "DecisionPacket mandatory content exceeds maximum_packet_characters"
+        selected_facts = list(selected)
+        selected_intelligence = list(selected_events)
+        omitted_facts = set(omitted)
+        omitted_intelligence = set(omitted_events)
+        while True:
+            payload["facts"] = tuple(selected_facts)
+            payload["intelligence_events"] = tuple(selected_intelligence)
+            payload["omitted_fact_revision_ids"] = tuple(sorted(omitted_facts))
+            payload["omitted_intelligence_event_refs"] = tuple(
+                sorted(omitted_intelligence)
             )
-        return packet
+            packet = DecisionPacket.create(**payload)
+            if len(canonical_json(packet)) <= self._policy.maximum_packet_characters:
+                return packet
+            removable_fact = next(
+                (
+                    index
+                    for index in range(len(selected_facts) - 1, -1, -1)
+                    if not selected_facts[index].directly_triggered
+                ),
+                None,
+            )
+            if removable_fact is not None:
+                removed = selected_facts.pop(removable_fact)
+                omitted_facts.add(removed.revision_id)
+                continue
+            removable_event = next(
+                (
+                    index
+                    for index in range(len(selected_intelligence) - 1, -1, -1)
+                    if not selected_intelligence[index].directly_triggered
+                ),
+                None,
+            )
+            if removable_event is not None:
+                removed = selected_intelligence.pop(removable_event)
+                omitted_intelligence.add(removed.evidence_ref)
+                continue
+            raise DecisionPacketCapacityError(
+                "DecisionPacket directly triggered mandatory content exceeds "
+                "maximum_packet_characters"
+            )
 
     def _validate_inputs(
         self,
@@ -522,6 +558,7 @@ class DecisionPacketBuilder:
         mandate: AnalysisMandate,
         facts: tuple[VisibleFact, ...],
         direct_fact_ids: frozenset[str],
+        as_of: datetime,
     ) -> tuple[tuple[PacketFact, ...], tuple[str, ...]]:
         relevant_assets = {item.asset for item in mandate.assets}
         relevant_risk = set(mandate.required_risk_factors)
@@ -537,6 +574,12 @@ class DecisionPacketBuilder:
                 item.fact.revision_id not in direct_fact_ids,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
+                abs(
+                    (
+                        (item.fact.event_time or item.fact.observed_at)
+                        - as_of
+                    ).total_seconds()
+                ),
                 -item.fact.observed_at.timestamp(),
                 item.fact.revision_id,
             )

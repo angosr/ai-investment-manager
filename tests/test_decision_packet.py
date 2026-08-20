@@ -22,7 +22,7 @@ from investment_manager.forecast.models import (
 from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.market.features import FeatureEngine
-from investment_manager.platform.database import metadata
+from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
@@ -323,6 +323,81 @@ def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> N
         )
 
 
+def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+    facts = tuple(
+        _fact(market.as_of, revision_id=f"revision-{index}").model_copy(
+            update={
+                "fact": _fact(
+                    market.as_of,
+                    revision_id=f"revision-{index}",
+                ).fact.model_copy(
+                    update={
+                        "fact_id": f"fact-{index}",
+                        "claim": f"background-{index}-" + "x" * 500,
+                        "event_time": market.as_of + timedelta(hours=index),
+                        "source_observation_ids": (f"obs-{index}",),
+                    }
+                )
+            }
+        )
+        for index in range(1, 11)
+    )
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(
+        update={
+            "fact_revision_ids": tuple(
+                item.fact.revision_id for item in facts
+            )
+        }
+    )
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-v1",
+            schema_version="decision-packet-v1",
+            maximum_fact_characters=10_000,
+            maximum_characters_per_fact=600,
+            maximum_packet_characters=6_000,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess the event.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=("REGULATION",),
+        ),
+        state=state,
+        deltas=(_delta(market.as_of),),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert len(canonical_json(packet)) <= 6_000
+    assert packet.facts[0].revision_id == "revision-1"
+    assert packet.facts[0].directly_triggered is True
+    assert packet.omitted_fact_revision_ids
+    assert set(packet.omitted_fact_revision_ids).isdisjoint(
+        item.revision_id for item in packet.facts
+    )
+
+
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     schema = canonical_json(AssessStructuredOutput.model_json_schema())
@@ -499,7 +574,7 @@ def test_context_assessment_store_is_immutable_and_idempotent(
         available_at=packet.as_of + timedelta(seconds=20),
     )
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    metadata.create_all(engine)
+    create_schema(engine)
     store = SqlContextAssessmentStore(engine)
 
     assert store.record_packet(packet) == packet
@@ -531,7 +606,7 @@ def test_context_assessment_store_rejects_second_output_for_same_behavior(
         available_at=packet.as_of + timedelta(seconds=30),
     )
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    metadata.create_all(engine)
+    create_schema(engine)
     store = SqlContextAssessmentStore(engine)
     store.record_packet(packet)
     store.record_assessment(packet.packet_id, first)
@@ -556,7 +631,7 @@ def test_context_assessment_store_rejects_packet_mismatch(
         available_at=packet.as_of + timedelta(seconds=20),
     ).model_copy(update={"decision_packet_hash": "b" * 64})
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    metadata.create_all(engine)
+    create_schema(engine)
     store = SqlContextAssessmentStore(engine)
     store.record_packet(packet)
 

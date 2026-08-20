@@ -42,7 +42,7 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v3
+    version: decision-packet-policy-v4
     schema_version: decision-packet-v3
     maximum_facts: 12
     maximum_fact_characters: 4000
