@@ -23,6 +23,7 @@ from quant_core.decision_packet import (
     AnalysisMandate,
     AssessStructuredOutput,
     ContextAssessmentDraft,
+    DecisionPacket,
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
     DecisionPacketPolicy,
@@ -217,6 +218,28 @@ def test_packet_hash_is_independent_of_input_collection_order(
 
     assert second.content_hash == first.content_hash
     assert second.packet_id == first.packet_id
+
+
+def test_packet_rejects_content_tampering_during_recovery(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    payload = packet.model_dump(mode="json")
+    payload["question"] = "tampered after persistence"
+
+    with pytest.raises(ValueError, match="content_hash"):
+        DecisionPacket.model_validate(payload)
+
+
+def test_packet_rejects_trigger_refs_that_do_not_match_deltas(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    payload = packet.model_dump(mode="json")
+    payload["trigger_ids"] = ["different-delta"]
+
+    with pytest.raises(ValueError, match="trigger_ids 与 deltas"):
+        DecisionPacket.model_validate(payload)
 
 
 def test_packet_rejects_market_replacement_for_frozen_state(

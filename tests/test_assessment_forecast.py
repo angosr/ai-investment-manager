@@ -50,8 +50,7 @@ HASH = "a" * 64
 
 
 def _packet() -> DecisionPacket:
-    return DecisionPacket(
-        packet_id="packet-1",
+    return DecisionPacket.create(
         schema_version="packet-v1",
         policy_version="packet-policy-v1",
         mandate_version="mandate-v1",
@@ -112,7 +111,6 @@ def _packet() -> DecisionPacket:
         missing_fact_revision_ids=(),
         omitted_fact_revision_ids=(),
         rules_digest=("rule-v1",),
-        content_hash=HASH,
     )
 
 
@@ -124,7 +122,7 @@ def _assessment() -> ContextAssessment:
         as_of=NOW,
         available_at=NOW + timedelta(seconds=20),
         analysis_behavior_hash="b" * 64,
-        decision_packet_hash=HASH,
+        decision_packet_hash=_packet().content_hash,
         trigger_ids=("delta-1",),
         market_mechanism="A policy revision changes the discount-rate path.",
         views=(

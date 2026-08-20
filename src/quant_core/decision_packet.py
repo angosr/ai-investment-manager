@@ -192,6 +192,60 @@ class DecisionPacket(FrozenModel):
 
     _utc_as_of = field_validator("as_of")(_require_utc)
 
+    @classmethod
+    def create(cls, **content: object) -> DecisionPacket:
+        draft = cls.model_construct(
+            packet_id="pending",
+            content_hash="0" * 64,
+            **content,
+        )
+        packet_hash = content_hash(
+            draft.model_dump(mode="json", exclude={"packet_id", "content_hash"})
+        )
+        return cls(
+            packet_id=stable_id("decision_packet", packet_hash),
+            content_hash=packet_hash,
+            **content,
+        )
+
+    @model_validator(mode="after")
+    def identity_and_refs_must_be_consistent(self):
+        if self.trigger_ids != tuple(item.delta_id for item in self.deltas):
+            raise ValueError("DecisionPacket trigger_ids 与 deltas 不一致")
+        if len(set(self.trigger_ids)) != len(self.trigger_ids):
+            raise ValueError("DecisionPacket trigger_ids 不得重复")
+        required_view_keys = tuple(
+            (item.asset, item.horizon_minutes) for item in self.required_views
+        )
+        if tuple(sorted(set(required_view_keys))) != required_view_keys:
+            raise ValueError("DecisionPacket required_views 必须唯一且排序")
+        asset_keys = tuple(item.asset for item in self.asset_states)
+        if tuple(sorted(set(asset_keys))) != asset_keys:
+            raise ValueError("DecisionPacket asset_states 必须按资产唯一且排序")
+        if set(asset_keys) != {item.asset for item in self.required_views}:
+            raise ValueError("DecisionPacket asset_states 与 required_views 不一致")
+        revision_ids = tuple(item.revision_id for item in self.facts)
+        if len(set(revision_ids)) != len(revision_ids):
+            raise ValueError("DecisionPacket facts revision_id 不得重复")
+        for name in (
+            "previous_assessment_refs",
+            "data_quality_codes",
+            "coverage_gap_codes",
+            "missing_fact_revision_ids",
+            "omitted_fact_revision_ids",
+        ):
+            values = getattr(self, name)
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
+        expected_hash = content_hash(
+            self.model_dump(mode="json", exclude={"packet_id", "content_hash"})
+        )
+        if self.content_hash != expected_hash:
+            raise ValueError("DecisionPacket content_hash 与内容不一致")
+        if self.packet_id != stable_id("decision_packet", expected_hash):
+            raise ValueError("DecisionPacket packet_id 与内容身份不一致")
+        return self
+
 
 _SOURCE_RANK = {
     SourceTier.FIRST_PARTY: 0,
@@ -269,17 +323,15 @@ class DecisionPacketBuilder:
             "policy_version": self._policy.version,
             "mandate_version": mandate.version,
             "analysis_scope": mandate.analysis_scope,
-            "as_of": state.as_of.isoformat(),
+            "as_of": state.as_of,
             "state_id": state.state_id,
             "question": mandate.question,
             "trigger_ids": trigger_ids,
-            "required_views": [item.model_dump(mode="json") for item in required_views],
-            "portfolio": self._portfolio_state(account).model_dump(mode="json"),
-            "asset_states": [item.model_dump(mode="json") for item in asset_states],
-            "deltas": [
-                self._delta(item).model_dump(mode="json") for item in ordered_deltas
-            ],
-            "facts": [item.model_dump(mode="json") for item in selected],
+            "required_views": required_views,
+            "portfolio": self._portfolio_state(account),
+            "asset_states": asset_states,
+            "deltas": tuple(self._delta(item) for item in ordered_deltas),
+            "facts": selected,
             "active_hypotheses": active_hypotheses,
             "previous_assessment_refs": previous_assessment_refs,
             "data_quality_codes": state.data_quality_codes,
@@ -294,12 +346,7 @@ class DecisionPacketBuilder:
                 "数据不足时明确输出 UNKNOWN/UNCERTAIN 和 data_gaps",
             ),
         }
-        packet_hash = content_hash(payload)
-        packet = DecisionPacket(
-            packet_id=stable_id("decision_packet", packet_hash),
-            content_hash=packet_hash,
-            **payload,
-        )
+        packet = DecisionPacket.create(**payload)
         packet_characters = len(canonical_json(packet))
         if packet_characters > self._policy.maximum_packet_characters:
             raise DecisionPacketCapacityError(
