@@ -2,7 +2,7 @@ manifest_id: release-testnet-forecast-baseline-v1
 created_at: 2026-08-19T20:37:00Z
 status: CHALLENGER
 code_version: cd0fb5c95c0e95c032bb05df63836813a4719d79
-configuration_hash: 1e7ebcba98e20faef691cf97c116ebe307ee739676372abb5ac895e7e49d557a
+configuration_hash: 41f3cf9af212ac49970e9b7b9c795649784247b6f4df5c7b9e1409f27b98481c
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-event-continuity-v1
 complexity_score: 2

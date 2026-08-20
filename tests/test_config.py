@@ -81,3 +81,15 @@ def test_ai_input_budgets_cannot_regress_to_unbounded_raw_context() -> None:
             reasoning_effort="low",
             maximum_prompt_characters=16_001,
         )
+
+
+def test_enabled_codex_runtime_requires_frozen_binary_digest() -> None:
+    with pytest.raises(ValidationError, match="SHA-256"):
+        CodexRuntimePolicy(
+            version="missing-binary-digest",
+            enabled=True,
+            isolation_verified=True,
+            expected_cli_version="codex-cli test",
+            model="test-model",
+            reasoning_effort="low",
+        )

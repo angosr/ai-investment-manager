@@ -1508,6 +1508,15 @@ class SqlGovernanceRepository:
                     f"治理事实 {failed.experiment_id} 已存在且内容不同"
                 ) from None
 
+    def get_failed_experiment(self, experiment_id: str) -> FailedExperiment | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(failed_experiment_records.c.payload).where(
+                    failed_experiment_records.c.experiment_id == experiment_id
+                )
+            ).scalar_one_or_none()
+        return FailedExperiment.model_validate(payload) if payload else None
+
     def _record(self, table, key_column, key: str, values: dict) -> None:
         payload = values["payload"]
         try:

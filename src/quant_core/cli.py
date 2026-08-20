@@ -12,6 +12,7 @@ from typing import Annotated
 import typer
 
 from quant_core.acceptance import AuditProfile, PhaseAAuditor
+from quant_core.analyst import analysis_behavior_hash as configured_analysis_behavior_hash
 from quant_core.analyst import audit_codex_isolation
 from quant_core.binance_testnet import (
     BinanceApiError,
@@ -30,6 +31,9 @@ from quant_core.cycle import AnalysisCycle, CycleInput
 from quant_core.domain import Side
 from quant_core.governance import (
     ReleaseManifest,
+    build_evaluation_plan_invalidation,
+    current_clean_code_version,
+    evaluation_plan_invalidation_id,
     load_release_manifest,
     validate_manifest_against_config,
     validate_manifest_code_version,
@@ -99,6 +103,19 @@ def _runtime_engine(database_url: str):
     engine = build_engine(database_url)
     require_current_schema(engine)
     return engine
+
+
+def _reject_invalidated_evaluation_plan(
+    governance: SqlGovernanceRepository,
+    plan_id: str,
+    *,
+    param_hint: str = "plan-id",
+) -> None:
+    if governance.get_failed_experiment(evaluation_plan_invalidation_id(plan_id)):
+        raise typer.BadParameter(
+            "EvaluationPlan 已被不可变事实判定失效",
+            param_hint=param_hint,
+        )
 
 
 def _require_runtime_database(database_url: str) -> None:
@@ -339,9 +356,9 @@ def register_ai_forecast_plan(
         typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
-    analysis_behavior_hash: Annotated[str, typer.Option()],
     signal_window_start: Annotated[str, typer.Option()],
     signal_window_end: Annotated[str, typer.Option()],
+    analysis_behavior_hash: Annotated[str | None, typer.Option()] = None,
     minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
 ) -> None:
     """在首个结果发生前冻结 AI 预测的 signal-time 前向评价窗口。"""
@@ -352,11 +369,20 @@ def register_ai_forecast_plan(
     )
 
     loaded = load_config(config)
+    expected_behavior_hash = configured_analysis_behavior_hash(loaded)
+    if (
+        analysis_behavior_hash is not None
+        and analysis_behavior_hash != expected_behavior_hash
+    ):
+        raise typer.BadParameter(
+            "analysis-behavior-hash 与所加载配置的实际行为哈希不一致",
+            param_hint="analysis-behavior-hash",
+        )
     registered_at = datetime.now(UTC)
     try:
         spec = ForwardForecastEvaluationSpec(
             plan_id=plan_id,
-            analysis_behavior_hash=analysis_behavior_hash,
+            analysis_behavior_hash=expected_behavior_hash,
             outcome_evaluation_version=loaded.outcome_evaluation.forecast_version,
             signal_window_start=_parse_utc_option(
                 signal_window_start, name="signal-window-start"
@@ -402,13 +428,18 @@ def evaluate_ai_forecast_plan(
     ],
     plan_id: Annotated[str, typer.Option()],
     published_at: Annotated[str, typer.Option()],
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/forecast-forward-evaluations"
+    ),
 ) -> None:
     """只按预登记 signal-time 窗口评价行为等价的前向 AI 预测。"""
 
     from quant_core.forecast_evaluation import (
+        ForwardForecastEvaluationCatalog,
         ForwardForecastEvaluationSpec,
         SqlAnalysisForecastOutcomeStore,
         evaluate_forward_forecast_plan,
+        failed_forward_forecast_experiment,
         pending_forecast_matches_forward_spec,
         validate_forward_forecast_evaluation_plan,
     )
@@ -422,6 +453,7 @@ def evaluate_ai_forecast_plan(
     plan = governance.get_plan(plan_id)
     if plan is None or plan.candidate_spec_snapshot is None:
         raise typer.BadParameter("前向预测 EvaluationPlan 不存在", param_hint="plan-id")
+    _reject_invalidated_evaluation_plan(governance, plan_id)
     try:
         spec = ForwardForecastEvaluationSpec.model_validate(
             plan.candidate_spec_snapshot
@@ -460,14 +492,53 @@ def evaluate_ai_forecast_plan(
         outcomes=outcomes,
         published_at=publication,
     )
+    result_path = ForwardForecastEvaluationCatalog(evaluation_catalog).store(result)
+    if not result.passed_incremental_gate:
+        governance.record_failed_experiment(
+            failed_forward_forecast_experiment(result, rejected_at=publication)
+        )
+    payload = result.model_dump(mode="json")
+    payload["result_path"] = str(result_path)
     typer.echo(
         json.dumps(
-            result.model_dump(mode="json"),
+            payload,
             ensure_ascii=False,
             sort_keys=True,
             indent=2,
         )
     )
+
+
+@app.command("invalidate-evaluation-plan")
+def invalidate_evaluation_plan(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    reason_code: Annotated[str, typer.Option()],
+    evidence_id: Annotated[list[str], typer.Option()],
+) -> None:
+    """以不可变负面事实使受污染或有缺陷的评价计划永久失效。"""
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    if governance.get_plan(plan_id) is None:
+        raise typer.BadParameter("EvaluationPlan 不存在", param_hint="plan-id")
+    canonical_reason = reason_code.strip().upper()
+    if not canonical_reason or any(
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+        for character in canonical_reason
+    ):
+        raise typer.BadParameter("reason-code 必须是大写字母、数字或下划线")
+    evidence = tuple(dict.fromkeys(item.strip() for item in evidence_id if item.strip()))
+    invalidation = build_evaluation_plan_invalidation(
+        plan_id=plan_id,
+        invalidated_at=datetime.now(UTC),
+        reason_codes=(canonical_reason,),
+        evidence_ids=evidence,
+    )
+    governance.record_failed_experiment(invalidation)
+    typer.echo(invalidation.model_dump_json(indent=2))
 
 
 @app.command("validate-config")
@@ -766,6 +837,7 @@ def carry_walk_forward_command(
             "carry EvaluationPlan 尚未预登记；先以相同参数执行 --register-only",
             param_hint="plan-id",
         )
+    _reject_invalidated_evaluation_plan(governance, plan_id)
     try:
         spec = CarryEvaluationSpec.model_validate(
             registered.candidate_spec_snapshot
@@ -851,6 +923,11 @@ def carry_blind_evaluate_command(
     registered = governance.get_plan(source.plan.plan_id)
     if registered is None or registered.candidate_spec_snapshot is None:
         raise typer.BadParameter("源 carry 评价没有预登记规格")
+    _reject_invalidated_evaluation_plan(
+        governance,
+        source.plan.plan_id,
+        param_hint="source-evaluation-id",
+    )
     try:
         spec = CarryEvaluationSpec.model_validate(registered.candidate_spec_snapshot)
         if (
@@ -931,6 +1008,150 @@ def carry_blind_evaluate_command(
                 )
             )
     payload = result.model_dump(mode="json")
+    payload["result_path"] = str(result_path)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("register-carry-forward-plan")
+def register_carry_forward_plan_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    symbol: Annotated[str, typer.Option()],
+    observation_start: Annotated[str, typer.Option()],
+    observation_end: Annotated[str, typer.Option()],
+) -> None:
+    """在未来数据产生前冻结 carry forward 窗口、策略与全部门禁。"""
+
+    from quant_core.research.carry_forward import (
+        CarryForwardEvaluationSpec,
+        build_carry_forward_evaluation_plan,
+        current_carry_evaluator_environment,
+    )
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    base_manifest_id = governance.get_champion().manifest_id
+    registered_at = datetime.now(UTC)
+    try:
+        spec = CarryForwardEvaluationSpec(
+            plan_id=plan_id,
+            base_manifest_id=base_manifest_id,
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_carry_evaluator_environment(),
+            symbol=_parse_research_symbol(symbol),
+            observation_start=_parse_utc_option(
+                observation_start, name="observation-start"
+            ),
+            observation_end=_parse_utc_option(
+                observation_end, name="observation-end"
+            ),
+        )
+        plan = build_carry_forward_evaluation_plan(
+            spec=spec,
+            base_manifest_id=base_manifest_id,
+            registered_at=registered_at,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    governance.register_plan(plan)
+    typer.echo(
+        json.dumps(
+            {
+                "evaluation_plan": plan.model_dump(mode="json"),
+                "carry_forward_spec": spec.model_dump(mode="json"),
+                "carry_forward_spec_hash": content_hash(spec),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("evaluate-carry-forward-plan")
+def evaluate_carry_forward_plan_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    funding_catalog: Annotated[
+        Path, typer.Option(exists=True, file_okay=False)
+    ] = Path(".runtime/funding-datasets"),
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/carry-forward-evaluations"
+    ),
+) -> None:
+    """窗口成熟后按预登记合同评价精确同窗口 carry 数据。"""
+
+    from quant_core.research.carry import HistoricalCarryDatasetCatalog
+    from quant_core.research.carry_forward import (
+        CarryForwardCatalog,
+        CarryForwardEvaluationSpec,
+        current_carry_evaluator_environment,
+        failed_carry_forward_experiment,
+        run_carry_forward_evaluation,
+        validate_carry_forward_evaluation_plan,
+    )
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        HistoricalFundingDatasetCatalog,
+    )
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    registered = governance.get_plan(plan_id)
+    if registered is None or registered.candidate_spec_snapshot is None:
+        raise typer.BadParameter(
+            "carry forward EvaluationPlan 不存在", param_hint="plan-id"
+        )
+    _reject_invalidated_evaluation_plan(governance, plan_id)
+    evaluated_at = datetime.now(UTC)
+    try:
+        spec = CarryForwardEvaluationSpec.model_validate(
+            registered.candidate_spec_snapshot
+        )
+        # 必须先证明窗口成熟，再允许调用方指定的数据 ID 触及标签。
+        validate_carry_forward_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            evaluated_at=evaluated_at,
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_carry_evaluator_environment(),
+        )
+        carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
+            carry_dataset_id
+        )
+        spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(
+            carry_dataset.manifest.spot_dataset_id
+        )
+        funding_dataset = HistoricalFundingDatasetCatalog(funding_catalog).load(
+            carry_dataset.manifest.funding_dataset_id
+        )
+        result = run_carry_forward_evaluation(
+            spec=spec,
+            carry_dataset=carry_dataset,
+            spot_dataset=spot_dataset,
+            funding_dataset=funding_dataset,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    result_path = CarryForwardCatalog(evaluation_catalog).store(result)
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_carry_forward_experiment(result, rejected_at=evaluated_at)
+        )
+    payload = result.model_dump(
+        mode="json",
+        exclude={"months": {"__all__": {"run"}}},
+    )
     payload["result_path"] = str(result_path)
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -1092,6 +1313,9 @@ def walk_forward_command(
         or not Decimal("0") < parsed_positive_folds <= Decimal("1")
     ):
         raise typer.BadParameter("盈利因子必须为正，回撤与正收益窗口比例必须在 (0,1] 内")
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    if not register_only:
+        _reject_invalidated_evaluation_plan(governance, plan_id)
     loaded_config = load_config(config)
     funding_dataset = (
         HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
@@ -1134,7 +1358,6 @@ def walk_forward_command(
         strategy=research_strategy,
         plan=walk_forward_plan,
     )
-    governance = SqlGovernanceRepository(_runtime_engine(database_url))
     champion = governance.get_champion()
     if register_only:
         registered = build_walk_forward_evaluation_plan(
@@ -1257,6 +1480,11 @@ def blind_evaluate_command(
             "源 walk-forward 没有完整的预登记规格",
             param_hint="source-evaluation-id",
         )
+    _reject_invalidated_evaluation_plan(
+        governance,
+        source.plan.plan_id,
+        param_hint="source-evaluation-id",
+    )
     try:
         spec = WalkForwardEvaluationSpec.model_validate(
             registered.candidate_spec_snapshot
@@ -1675,6 +1903,7 @@ def paired_decision_tape_command(
     elif plan is None:
         raise typer.BadParameter("评价计划未在治理事实库预登记", param_hint="plan-id")
     else:
+        _reject_invalidated_evaluation_plan(governance, plan_id)
         registered_at = plan.registered_at
     source_id = source_blind_evaluation_id
     if not register_only and plan is not None:

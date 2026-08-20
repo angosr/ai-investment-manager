@@ -373,6 +373,10 @@ class CodexRuntimePolicy(StrictConfig):
     binary: Path = Path("/usr/bin/codex")
     bundle_root: Path = Path("/var/lib/quant-core/codex-runs")
     expected_cli_version: str
+    expected_binary_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     model: str
     reasoning_effort: str = Field(pattern=r"^(low|medium|high|xhigh|max|ultra)$")
     maximum_prompt_characters: int = Field(default=16_000, ge=8_000, le=16_000)
@@ -401,6 +405,8 @@ class CodexRuntimePolicy(StrictConfig):
     def production_requires_verified_isolation(self):
         if self.enabled and not self.isolation_verified:
             raise ValueError("启用真实 Codex 前必须完成 OS/Profile 隔离验证")
+        if self.enabled and self.expected_binary_sha256 is None:
+            raise ValueError("启用真实 Codex 前必须冻结可执行文件 SHA-256")
         return self
 
 

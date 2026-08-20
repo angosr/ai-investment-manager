@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from quant_core.analyst import codex_runtime_integrity_matches
 from quant_core.config import AiMode, AppConfig, DeploymentStage
 from quant_core.domain import FrozenModel
 from quant_core.governance import (
@@ -128,23 +129,33 @@ class PhaseAAuditor:
     def _locked_cli_matches(self) -> AuditCheck:
         runtime = self._config.codex_runtime
         try:
-            completed = subprocess.run(
-                [str(runtime.binary), "--version"],
-                text=True,
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
-            matches = (
-                completed.returncode == 0
-                and completed.stdout.strip() == runtime.expected_cli_version
-            )
+            if runtime.enabled:
+                matches = codex_runtime_integrity_matches(runtime)
+            else:
+                completed = subprocess.run(
+                    [str(runtime.binary), "--version"],
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+                matches = (
+                    completed.returncode == 0
+                    and completed.stdout.strip() == runtime.expected_cli_version
+                )
         except (OSError, subprocess.TimeoutExpired):
             matches = False
         return AuditCheck(
             check_id="LOCKED_CODEX_CLI_VERSION",
             status=CheckStatus.PASS if matches else CheckStatus.FAIL,
-            detail=f"期望 {runtime.expected_cli_version}",
+            detail=(
+                f"期望 {runtime.expected_cli_version}"
+                + (
+                    f" / sha256:{runtime.expected_binary_sha256[:12]}"
+                    if runtime.expected_binary_sha256 is not None
+                    else ""
+                )
+            ),
         )
 
     def _governance_assets_exist(self) -> AuditCheck:

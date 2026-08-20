@@ -19,7 +19,9 @@ from quant_core.governance import (
     ReleaseManifest,
     StageOutcome,
     StageResult,
+    build_evaluation_plan_invalidation,
     build_governance_snapshot,
+    evaluation_plan_invalidation_id,
     load_constitution,
     load_regression_suite,
     load_release_manifest,
@@ -321,6 +323,36 @@ def test_governance_repository_restores_long_term_state_without_chat_history() -
         assert connection.scalar(select(func.count()).select_from(evaluation_plans)) == 1
         assert connection.scalar(select(func.count()).select_from(change_proposals)) == 1
         assert connection.scalar(select(func.count()).select_from(failed_experiment_records)) == 1
+
+
+def test_evaluation_plan_invalidation_is_durable_and_idempotent() -> None:
+    now = datetime(2026, 8, 20, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    repository = SqlGovernanceRepository(engine)
+    plan = _plan(now)
+    repository.register_plan(plan)
+    invalidation = build_evaluation_plan_invalidation(
+        plan_id=plan.plan_id,
+        invalidated_at=now,
+        reason_codes=("CODEX_RUNTIME_ARTIFACT_DRIFT",),
+        evidence_ids=("cycle:contaminated", "binary:sha256:changed"),
+    )
+
+    repository.record_failed_experiment(invalidation)
+    repository.record_failed_experiment(
+        invalidation.model_copy(update={"rejected_at": now + timedelta(minutes=1)})
+    )
+
+    assert invalidation.experiment_id == evaluation_plan_invalidation_id(plan.plan_id)
+    assert repository.get_failed_experiment(invalidation.experiment_id) == invalidation
+    with pytest.raises(ValueError, match="原因码和证据"):
+        build_evaluation_plan_invalidation(
+            plan_id=plan.plan_id,
+            invalidated_at=now,
+            reason_codes=(),
+            evidence_ids=("cycle:contaminated",),
+        )
 
 
 def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent() -> None:

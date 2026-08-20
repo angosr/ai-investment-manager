@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+import typer
 from sqlalchemy import create_engine, insert, select, update
 
 from quant_core.analyst import AnalystResult, analysis_behavior_hash
+from quant_core.cli import register_ai_forecast_plan
 from quant_core.config import AiMode
 from quant_core.cycle import AnalysisCycle
 from quant_core.domain import (
@@ -20,10 +23,12 @@ from quant_core.domain import (
 from quant_core.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
+    ForwardForecastEvaluationCatalog,
     ForwardForecastEvaluationSpec,
     SqlAnalysisForecastOutcomeStore,
     build_forward_forecast_evaluation_plan,
     evaluate_forward_forecast_plan,
+    failed_forward_forecast_experiment,
     validate_forward_forecast_evaluation_plan,
 )
 from quant_core.market_data import MarketTrade
@@ -142,6 +147,19 @@ def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
             )
         ).scalar_one()
     return AnalysisForecastOutcome.model_validate(payload)
+
+
+def test_forward_plan_registration_rejects_caller_supplied_behavior_hash() -> None:
+    with pytest.raises(typer.BadParameter, match="实际行为哈希不一致"):
+        register_ai_forecast_plan(
+            config=Path("config/quant-core.yaml"),
+            database_url="postgresql://unused",
+            plan_id="wrong-behavior-plan",
+            analysis_behavior_hash="0" * 64,
+            signal_window_start=datetime(2026, 9, 1, tzinfo=UTC).isoformat(),
+            signal_window_end=datetime(2026, 10, 1, tzinfo=UTC).isoformat(),
+            minimum_non_overlapping_samples=30,
+        )
 
 
 def test_legacy_single_forecast_payload_is_read_without_retaining_aliases(
@@ -517,6 +535,7 @@ def test_forward_forecast_evaluation_uses_signal_window_and_paired_gate(
 
 def test_forward_forecast_evaluation_fails_when_registered_scope_is_missing(
     replay_input,
+    tmp_path,
 ) -> None:
     start = replay_input.market.as_of
     spec = _forward_spec(start, symbols=("BTCUSDT", "ETHUSDT"))
@@ -538,6 +557,17 @@ def test_forward_forecast_evaluation_fails_when_registered_scope_is_missing(
 
     assert not result.passed_incremental_gate
     assert "EXPECTED_SCOPE_MISSING" in result.reason_codes
+    catalog = ForwardForecastEvaluationCatalog(tmp_path / "forecast-forward")
+    catalog.store(result)
+    assert catalog.load(result.result_id) == result
+    failed = failed_forward_forecast_experiment(
+        result,
+        rejected_at=spec.signal_window_end + timedelta(minutes=70),
+    )
+    assert failed.reason_codes == (
+        "FORWARD_FORECAST_FAILED",
+        *result.reason_codes,
+    )
 
 
 def test_forward_forecast_store_selects_exact_signal_times(replay_input) -> None:

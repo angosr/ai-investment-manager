@@ -76,6 +76,10 @@ def test_private_challenger_audit_accepts_exact_runtime_release(
         "quant_core.acceptance.validate_manifest_code_version",
         lambda manifest, *, repository_root: repository_root,
     )
+    monkeypatch.setattr(
+        "quant_core.acceptance.codex_runtime_integrity_matches",
+        lambda runtime: True,
+    )
 
     report = PhaseAAuditor(
         loaded,

@@ -116,13 +116,26 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/quant-core register-ai-forecast-plan \
   --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
-  --analysis-behavior-hash '<64 位行为哈希>' \
   --signal-window-start '<未来 UTC 起点>' \
   --signal-window-end '<固定 UTC 终点>' \
   --minimum-non-overlapping-samples 30
 ```
 
-只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-ai-forecast-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算预测、独立样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。
+登记命令从冻结配置和语义行为制品自行计算 `analysis_behavior_hash`；调用方不需要也不能替换该身份。兼容参数只用于核对，传入值不一致会失败关闭。
+
+只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-ai-forecast-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算预测、独立样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。结果始终写入内容寻址制品；失败同时登记稳定的负面治理事实，通过结果仍需由后续显式变更提案引用，不能自行晋级。
+
+BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未来数据产生前登记：
+
+```bash
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+  .venv/bin/quant-core register-carry-forward-plan \
+  --plan-id '<唯一计划 ID>' --symbol BTCUSDT \
+  --observation-start '<未来月初 UTC>' \
+  --observation-end '<至少十二个完整日历月后的月初 UTC>'
+```
+
+窗口结束并经过七天结算宽限后，先用现有冻结命令生成精确同窗口的现货、资金费率和 carry 内容寻址数据，再从预登记的精确 Git 提交及 Python/Pydantic 环境运行 `evaluate-carry-forward-plan --plan-id ... --carry-dataset-id ...`。评价命令在读取调用方指定的数据制品前先校验成熟时间、代码版本和最小依赖环境，随后按 carry 引用加载现货与官方资金费率制品并逐条复核结算；数据窗口、来源、采集时间、资金费率身份或预登记规格任一不符都会失败关闭。连续账本费用后净收益不为正，或采用固定三个月滞后的保守 Newey-West 月度收益下界不为正，均不能通过。它只产生研究结果和失败实验事实，不创建永续适配器、订单或权限。
 
 部署私有配置必须满足：
 
@@ -162,7 +175,7 @@ set -a; . ./.env; set +a
 
 1. 每个配置项只能人工映射有权用于本系统的 Codex 账号目录，且 `account_id` 必须等于目录名；主机上未登记的已登录目录不得自动纳入。
 2. 至少启用一个已分别完成官方登录、`account/rateLimits/read` 和隔离验收的账号；故障账号保持禁用。
-3. 确认所有已启用账号使用同一锁定 Codex 二进制、模型、reasoning、工具禁用集、输出 Schema 和运行包。
+3. 将验收版本的原生 Codex 可执行文件复制到 Release 专用、非符号链接的只读路径，在 `codex_runtime.binary` 与 `expected_binary_sha256` 中冻结绝对路径和 SHA-256；确认所有已启用账号使用这一制品及同一模型、reasoning、工具禁用集、输出 Schema 和运行包。不得指向 `/usr/bin/codex` 等可被全局包管理器替换的入口。
 4. 配置每账号单并发，并使用 PostgreSQL `SqlAccountLeaseStore` 和 `SqlCodexAuditStore`。
 5. 完成下述隔离验收后，才可同时设置 `isolation_verified: true` 与 `enabled: true`。
 
@@ -173,7 +186,7 @@ set -a; . ./.env; set +a
   --config /etc/quant-core/quant-core.shadow.yaml
 ```
 
-该命令直接复用生产 Runner 的模型、reasoning、完整工具禁用集、严格 App Server 事件解析器和额度探测器；输出只包含匿名账号 ID、有效余量、通过状态和原因码，不输出账号路径、哨兵、Token 或模型原文。没有启用槽位，或任一已启用槽位出现额度契约失败、CLI 版本不符、stderr、工具/错误事件、Schema 异常或哨兵可读，都会以非零状态退出。通过后仍需由部署审批显式修改配置，命令自身不启用 Codex、不改发布清单。
+该命令直接复用生产 Runner 的模型、reasoning、完整工具禁用集、严格 App Server 事件解析器和额度探测器；输出只包含匿名账号 ID、有效余量、通过状态和原因码，不输出账号路径、哨兵、Token 或模型原文。容量探测和每次推理前都会重新核对制品摘要与版本，不缓存 Worker 启动时的结果。没有启用槽位，或任一已启用槽位出现摘要/版本漂移、额度契约失败、stderr、工具/错误事件、Schema 异常或哨兵可读，都会以非零状态退出。通过后仍需由部署审批显式修改配置，命令自身不启用 Codex、不改发布清单。
 
 Router 不扫描主目录，也不由 Python 读取或复制 `auth.json`。额度探测和分析调用都创建一次性权限目录，只把获准账号的 `auth.json` 软链接进去，不继承原目录的配置、MCP、插件、Skill 或会话。Codex App Server 不挂载本地执行环境，启动环境按允许列表重建，明确不继承 `OPENAI_API_KEY`、`CODEX_API_KEY` 和 `CODEX_ACCESS_TOKEN`。
 

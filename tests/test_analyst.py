@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass, field
@@ -69,11 +70,18 @@ def _account_registry(tmp_path: Path) -> CodexAccountRegistry:
 
 def _runtime(app_config):
     return app_config.codex_runtime.model_copy(
-        update={"enabled": True, "isolation_verified": True, "timeout_seconds": 10}
+        update={
+            "enabled": True,
+            "isolation_verified": True,
+            "timeout_seconds": 10,
+            "expected_binary_sha256": "0" * 64,
+        }
     )
 
 
-def test_analysis_behavior_identity_ignores_only_pipeline_generation(app_config) -> None:
+def test_analysis_behavior_identity_ignores_only_pipeline_generation(
+    app_config, monkeypatch
+) -> None:
     baseline = analysis_behavior_hash(app_config)
     redeployed = app_config.model_copy(
         update={
@@ -92,6 +100,11 @@ def test_analysis_behavior_identity_ignores_only_pipeline_generation(app_config)
 
     assert analysis_behavior_hash(redeployed) == baseline
     assert analysis_behavior_hash(changed_behavior) != baseline
+    monkeypatch.setattr(
+        "quant_core.analyst._ANALYST_PROMPT_INSTRUCTIONS",
+        "different semantic prompt contract",
+    )
+    assert analysis_behavior_hash(app_config) != baseline
 
 
 def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal:
@@ -492,6 +505,10 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr("quant_core.analyst.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr(
+        "quant_core.analyst.codex_runtime_integrity_matches",
+        lambda policy, codex_home=None: True,
+    )
 
     snapshot = AppServerCapacityProbe(_runtime(app_config)).read(registry.accounts[0])
 
@@ -856,7 +873,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     captured = {}
 
     def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, "codex-cli 0.147.0\n", "")
+        return subprocess.CompletedProcess(command, 0, "codex-cli 0.148.0\n", "")
 
     class FakeStream:
         def __init__(self, lines=()):
@@ -961,8 +978,14 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakeProcess)
     monkeypatch.setattr("quant_core.analyst.selectors.DefaultSelector", FakeSelector)
+    checks = iter((True, False))
+    monkeypatch.setattr(
+        "quant_core.analyst.codex_runtime_integrity_matches",
+        lambda policy, codex_home=None: next(checks),
+    )
 
-    result = SubprocessCodexExecutor(_runtime(app_config)).execute(registry.accounts[1], bundle)
+    executor = SubprocessCodexExecutor(_runtime(app_config))
+    result = executor.execute(registry.accounts[1], bundle)
 
     assert result.success
     assert captured["auth_target"] == registry.accounts[1].codex_home / "auth.json"
@@ -992,6 +1015,38 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     assert thread["params"]["sandbox"] == "read-only"
     assert "environments" not in thread["params"]
     assert result.usage == {"input_tokens": 10}
+    assert result.diagnostics["codex_cli_version"] == "codex-cli 0.148.0"
+    assert result.diagnostics["codex_binary_sha256"] == "0" * 64
+    drifted = executor.execute(registry.accounts[1], bundle)
+    assert not drifted.success
+    assert drifted.failure == FailureClass.UNAVAILABLE
+
+
+def test_codex_runtime_integrity_rejects_binary_drift(
+    app_config, tmp_path, monkeypatch
+) -> None:
+    from quant_core.analyst import codex_runtime_integrity_matches
+
+    binary = tmp_path / "codex-0.148.0"
+    binary.write_bytes(b"frozen-codex-binary")
+    binary.chmod(0o500)
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    runtime = _runtime(app_config).model_copy(
+        update={"binary": binary, "expected_binary_sha256": digest}
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, "codex-cli 0.148.0\n", ""
+        ),
+    )
+
+    assert codex_runtime_integrity_matches(runtime)
+    binary.chmod(0o700)
+    binary.write_bytes(b"silently-replaced-codex-binary")
+    binary.chmod(0o500)
+    assert not codex_runtime_integrity_matches(runtime)
 
 
 @pytest.mark.parametrize(

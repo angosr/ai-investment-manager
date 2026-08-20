@@ -106,6 +106,30 @@ class FailedExperiment(FrozenModel):
     _utc_rejected_at = field_validator("rejected_at")(_require_utc)
 
 
+def evaluation_plan_invalidation_id(plan_id: str) -> str:
+    return stable_id("invalidated_evaluation_plan", plan_id)
+
+
+def build_evaluation_plan_invalidation(
+    *,
+    plan_id: str,
+    invalidated_at: datetime,
+    reason_codes: tuple[str, ...],
+    evidence_ids: tuple[str, ...],
+) -> FailedExperiment:
+    if not reason_codes or not evidence_ids:
+        raise ValueError("EvaluationPlan 失效必须包含原因码和证据")
+    return FailedExperiment(
+        experiment_id=evaluation_plan_invalidation_id(plan_id),
+        hypothesis_fingerprint=content_hash(
+            {"invalidated_evaluation_plan": plan_id}
+        ),
+        evidence_ids=(f"evaluation_plan:{plan_id}", *evidence_ids),
+        rejected_at=_require_utc(invalidated_at),
+        reason_codes=("EVALUATION_PLAN_INVALIDATED", *reason_codes),
+    )
+
+
 class GovernanceSnapshot(FrozenModel):
     snapshot_id: str
     as_of: datetime
@@ -634,11 +658,26 @@ def validate_manifest_code_version(
     """Fail closed unless runtime imports come from the exact clean release commit."""
 
     root = (repository_root or _source_repository_root()).resolve()
+    current_clean_code_version(
+        repository_root=root,
+        expected_version=manifest.code_version,
+    )
+    return root
+
+
+def current_clean_code_version(
+    *,
+    repository_root: Path | None = None,
+    expected_version: str | None = None,
+) -> str:
+    """Return the exact commit only when all runtime-bearing paths are clean."""
+
+    root = (repository_root or _source_repository_root()).resolve()
     head = _git_output(root, "rev-parse", "HEAD")
-    if head != manifest.code_version:
+    if expected_version is not None and head != expected_version:
         raise ValueError(
             "ReleaseManifest 代码版本与实际运行源码不一致："
-            f"expected={manifest.code_version}, observed={head}"
+            f"expected={expected_version}, observed={head}"
         )
     dirty = _git_output(
         root,
@@ -656,7 +695,7 @@ def validate_manifest_code_version(
     )
     if dirty:
         raise ValueError("ReleaseManifest 对应的运行源码存在未提交变更")
-    return root
+    return head
 
 
 def _source_repository_root() -> Path:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -20,8 +23,8 @@ from quant_core.domain import (
     FrozenModel,
     _require_utc,
 )
-from quant_core.governance import EvaluationPlan, EvaluationStage
-from quant_core.ids import content_hash, stable_id
+from quant_core.governance import EvaluationPlan, EvaluationStage, FailedExperiment
+from quant_core.ids import canonical_json, content_hash, stable_id
 from quant_core.persistence import (
     analysis_cycles,
     analysis_forecast_outcomes,
@@ -200,6 +203,83 @@ class ForwardForecastEvaluationResult(FrozenModel):
         if self.result_id != expected:
             raise ValueError("前向预测评价结果身份不一致")
         return self
+
+
+class _ForwardForecastEvaluationEnvelope(FrozenModel):
+    result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    result: ForwardForecastEvaluationResult
+
+
+class ForwardForecastEvaluationCatalog:
+    """Content-addressed, immutable storage for one matured forward result."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    def store(self, result: ForwardForecastEvaluationResult) -> Path:
+        target = self._root / f"{result.result_id}.json"
+        if target.exists():
+            if self.load(result.result_id) != result:
+                raise ValueError("同一前向预测结果 ID 的内容不一致")
+            return target
+        envelope = _ForwardForecastEvaluationEnvelope(
+            result_hash=content_hash(result),
+            result=result,
+        )
+        self._root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=".forward-forecast-",
+            suffix=".json",
+            dir=self._root,
+            delete=False,
+        ) as temporary:
+            temporary.write(canonical_json(envelope))
+            temporary.flush()
+            temporary_path = Path(temporary.name)
+        try:
+            temporary_path.replace(target)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return target
+
+    def load(self, result_id: str) -> ForwardForecastEvaluationResult:
+        raw = json.loads(
+            (self._root / f"{result_id}.json").read_text(encoding="utf-8")
+        )
+        if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(
+            raw.get("result")
+        ):
+            raise ValueError("前向预测评价制品内容哈希不匹配")
+        envelope = _ForwardForecastEvaluationEnvelope.model_validate(raw)
+        if envelope.result.result_id != result_id:
+            raise ValueError("前向预测评价文件名与结果 ID 不一致")
+        return envelope.result
+
+
+def failed_forward_forecast_experiment(
+    result: ForwardForecastEvaluationResult,
+    *,
+    rejected_at: datetime,
+) -> FailedExperiment:
+    if result.passed_incremental_gate:
+        raise ValueError("通过的前向预测评价不能登记为失败实验")
+    hypothesis = (
+        f"AI 行为 {result.report.analysis_behavior_hash} 在预登记计划 "
+        f"{result.plan_id} 的全部品种与周期上，相对 always-UP 的配对收益增量"
+        "保守下界为正且每个作用域样本充分"
+    )
+    return FailedExperiment(
+        experiment_id=stable_id("failed_forward_forecast", result.result_id),
+        hypothesis_fingerprint=content_hash(
+            {"hypothesis": hypothesis.strip().lower()}
+        ),
+        evidence_ids=(f"hypothesis:{hypothesis}", result.result_id),
+        rejected_at=_require_utc(rejected_at),
+        reason_codes=("FORWARD_FORECAST_FAILED", *result.reason_codes),
+    )
 
 
 def build_forward_forecast_evaluation_plan(

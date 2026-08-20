@@ -53,14 +53,28 @@ from quant_core.research.carry_evaluation import (
     run_carry_walk_forward,
     validate_carry_evaluation_plan,
 )
+from quant_core.research.carry_forward import (
+    CarryForwardCatalog,
+    CarryForwardEvaluationSpec,
+    build_carry_forward_evaluation_plan,
+    current_carry_evaluator_environment,
+    run_carry_forward_evaluation,
+    validate_carry_forward_evaluation_plan,
+)
 from quant_core.research.dataset import (
+    FundingRateObservation,
+    FundingSourceArtifact,
     HistoricalDataset,
     HistoricalDatasetCatalog,
     HistoricalDatasetManifest,
     HistoricalEventDatasetCatalog,
+    HistoricalFundingDataset,
     HistoricalFundingDatasetCatalog,
+    HistoricalFundingDatasetManifest,
     InstrumentSpec,
     _bars_hash,
+    _funding_observations_hash,
+    _months_covering,
     fetch_binance_funding_history,
     fetch_binance_history,
     freeze_historical_events,
@@ -219,6 +233,7 @@ def _dataset(
     bar_delta: timedelta = timedelta(minutes=5),
     initial_price: Decimal = Decimal("10000"),
     instrument: InstrumentSpec | None = None,
+    source: str = "test-history",
 ) -> HistoricalDataset:
     if price_steps is not None and len(price_steps) != count:
         raise ValueError("price_steps 必须与 count 一致")
@@ -254,7 +269,7 @@ def _dataset(
     dataset_id = stable_id(
         "historical_dataset",
         "historical-bars-v1",
-        "test-history",
+        source,
         spec.symbol,
         interval,
         start,
@@ -266,7 +281,7 @@ def _dataset(
         dataset_id=dataset_id,
         symbol=spec.symbol,
         interval=interval,
-        source="test-history",
+        source=source,
         collected_at=end,
         requested_start=start,
         requested_end=end,
@@ -842,14 +857,19 @@ def test_carry_history_rejects_untrusted_source() -> None:
 
 
 def _carry_dataset(
-    *, count: int = 200, mark_high: Decimal = Decimal("101")
-) -> tuple[HistoricalDataset, HistoricalCarryDataset]:
+    *,
+    count: int = 200,
+    mark_high: Decimal = Decimal("101"),
+    spot_source: str = "test-history",
+    funding_rate: Decimal = Decimal("0.0002"),
+) -> tuple[HistoricalDataset, HistoricalFundingDataset, HistoricalCarryDataset]:
     spot = _dataset(
         count=count,
         interval="1d",
         bar_delta=timedelta(days=1),
         initial_price=Decimal("100"),
         price_step=Decimal("1"),
+        source=spot_source,
     )
     days = tuple(
         CarryMarketDay(
@@ -881,10 +901,62 @@ def _carry_dataset(
             funding_time=bar.open_time,
             available_at=bar.open_time + timedelta(minutes=1),
             funding_interval_hours=24,
-            funding_rate=Decimal("0.0002"),
+            funding_rate=funding_rate,
             mark_price=Decimal("100"),
         )
         for bar in spot.bars
+    )
+    funding_observations = tuple(
+        FundingRateObservation(
+            symbol=item.symbol,
+            funding_time=item.funding_time,
+            available_at=item.available_at,
+            funding_interval_hours=item.funding_interval_hours,
+            funding_rate=item.funding_rate,
+        )
+        for item in settlements
+    )
+    funding_artifacts = tuple(
+        FundingSourceArtifact(
+            archive_key=(
+                "data/futures/um/monthly/fundingRate/BTCUSDT/"
+                f"BTCUSDT-fundingRate-{year:04d}-{month:02d}.zip"
+            ),
+            sha256=f"{index + 1:064x}",
+        )
+        for index, (year, month) in enumerate(
+            _months_covering(
+                spot.manifest.requested_start,
+                spot.manifest.requested_end,
+            )
+        )
+    )
+    observations_hash = _funding_observations_hash(funding_observations)
+    funding_identity = (
+        "historical-funding-rates-v1",
+        "binance-public-data-usdm-funding-rate",
+        "BTCUSDT",
+        "BINANCE_USDM",
+        60,
+        spot.manifest.requested_start,
+        spot.manifest.requested_end,
+        observations_hash,
+        funding_artifacts,
+    )
+    funding = HistoricalFundingDataset(
+        manifest=HistoricalFundingDatasetManifest(
+            dataset_id=stable_id("historical_funding_dataset", *funding_identity),
+            symbol="BTCUSDT",
+            collected_at=spot.manifest.requested_end,
+            requested_start=spot.manifest.requested_start,
+            requested_end=spot.manifest.requested_end,
+            first_available_at=funding_observations[0].available_at,
+            last_available_at=funding_observations[-1].available_at,
+            observation_count=len(funding_observations),
+            observations_hash=observations_hash,
+            source_artifacts=funding_artifacts,
+        ),
+        observations=funding_observations,
     )
     instrument = CarryInstrumentSpec(
         symbol="BTCUSDT",
@@ -909,7 +981,7 @@ def _carry_dataset(
         spot.manifest.requested_start,
         spot.manifest.requested_end,
         spot.manifest.dataset_id,
-        "test-funding-dataset",
+        funding.manifest.dataset_id,
         days_hash,
         settlements_hash,
         "MARK_8H_PRE_SETTLEMENT_CLOSE",
@@ -922,7 +994,7 @@ def _carry_dataset(
         requested_start=spot.manifest.requested_start,
         requested_end=spot.manifest.requested_end,
         spot_dataset_id=spot.manifest.dataset_id,
-        funding_dataset_id="test-funding-dataset",
+        funding_dataset_id=funding.manifest.dataset_id,
         first_open_time=days[0].open_time,
         last_close_time=days[-1].close_time,
         first_funding_time=settlements[0].funding_time,
@@ -933,17 +1005,21 @@ def _carry_dataset(
         settlements_hash=settlements_hash,
         instrument=instrument,
     )
-    return spot, HistoricalCarryDataset(
-        manifest=manifest,
-        days=days,
-        settlements=settlements,
+    return (
+        spot,
+        funding,
+        HistoricalCarryDataset(
+            manifest=manifest,
+            days=days,
+            settlements=settlements,
+        ),
     )
 
 
 def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
     tmp_path,
 ) -> None:
-    spot, carry = _carry_dataset()
+    spot, _, carry = _carry_dataset()
     policy = CarryPolicy()
     run = run_carry_backtest(
         carry_dataset=carry,
@@ -1005,7 +1081,7 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
 
 
 def test_carry_backtest_fails_closed_on_liquidation_bound() -> None:
-    spot, carry = _carry_dataset(count=40, mark_high=Decimal("200"))
+    spot, _, carry = _carry_dataset(count=40, mark_high=Decimal("200"))
     run = run_carry_backtest(
         carry_dataset=carry,
         spot_dataset=spot,
@@ -1017,6 +1093,119 @@ def test_carry_backtest_fails_closed_on_liquidation_bound() -> None:
     assert not run.completed
     assert run.metrics.liquidated
     assert run.reason_codes == ("LIQUIDATION_BOUND_BREACHED",)
+
+
+def test_carry_forward_requires_preregistration_maturity_and_exact_future_data(
+    tmp_path,
+) -> None:
+    spot, funding, carry = _carry_dataset(
+        count=365,
+        spot_source="binance-rest-historical",
+    )
+    spec = CarryForwardEvaluationSpec(
+        plan_id="btc-carry-forward-2026-v1",
+        base_manifest_id="test-champion",
+        evaluator_code_version="a" * 40,
+        evaluator_environment=current_carry_evaluator_environment(),
+        symbol="BTCUSDT",
+        observation_start=datetime(2026, 1, 1, tzinfo=UTC),
+        observation_end=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+    registered = build_carry_forward_evaluation_plan(
+        spec=spec,
+        base_manifest_id="test-champion",
+        registered_at=datetime(2025, 12, 31, tzinfo=UTC),
+    )
+    with pytest.raises(ValueError, match="宽限期尚未成熟"):
+        validate_carry_forward_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            evaluated_at=spec.observation_end + timedelta(days=6),
+            evaluator_code_version="a" * 40,
+            evaluator_environment=spec.evaluator_environment,
+        )
+    validate_carry_forward_evaluation_plan(
+        spec=spec,
+        plan=registered,
+        evaluated_at=spec.observation_end + timedelta(days=7),
+        evaluator_code_version="a" * 40,
+        evaluator_environment=spec.evaluator_environment,
+    )
+    with pytest.raises(ValueError, match="完整预登记合同"):
+        validate_carry_forward_evaluation_plan(
+            spec=spec,
+            plan=registered.model_copy(update={"blind_query_budget": 1}),
+            evaluated_at=spec.observation_end + timedelta(days=7),
+            evaluator_code_version="a" * 40,
+            evaluator_environment=spec.evaluator_environment,
+        )
+    with pytest.raises(ValueError, match="精确评价依赖环境"):
+        validate_carry_forward_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            evaluated_at=spec.observation_end + timedelta(days=7),
+            evaluator_code_version="a" * 40,
+            evaluator_environment=(("pydantic", "different"), ("python", "different")),
+        )
+    with pytest.raises(ValueError, match="精确评价代码版本"):
+        validate_carry_forward_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            evaluated_at=spec.observation_end + timedelta(days=7),
+            evaluator_code_version="b" * 40,
+            evaluator_environment=spec.evaluator_environment,
+        )
+    result = run_carry_forward_evaluation(
+        spec=spec,
+        carry_dataset=carry,
+        spot_dataset=spot,
+        funding_dataset=funding,
+    )
+    assert result.passed
+    assert len(result.months) == 12
+    assert result.metrics.annualized_return_lower_bound > 0
+    assert result.metrics.continuous_net_pnl > 0
+    catalog = CarryForwardCatalog(tmp_path / "carry-forward")
+    catalog.store(result)
+    assert catalog.load(result.result_id) == result
+
+    wrong_window = spec.model_copy(
+        update={"observation_end": datetime(2028, 1, 1, tzinfo=UTC)}
+    )
+    with pytest.raises(ValueError, match="精确窗口"):
+        run_carry_forward_evaluation(
+            spec=wrong_window,
+            carry_dataset=carry,
+            spot_dataset=spot,
+            funding_dataset=funding,
+        )
+
+    _, wrong_funding, _ = _carry_dataset(
+        count=365,
+        spot_source="binance-rest-historical",
+        funding_rate=Decimal("0.0003"),
+    )
+    with pytest.raises(ValueError, match="数据源、作用域或精确窗口"):
+        run_carry_forward_evaluation(
+            spec=spec,
+            carry_dataset=carry,
+            spot_dataset=spot,
+            funding_dataset=wrong_funding,
+        )
+
+    loss_spot, loss_funding, loss_carry = _carry_dataset(
+        count=365,
+        spot_source="binance-rest-historical",
+        funding_rate=Decimal("-0.0002"),
+    )
+    loss = run_carry_forward_evaluation(
+        spec=spec,
+        carry_dataset=loss_carry,
+        spot_dataset=loss_spot,
+        funding_dataset=loss_funding,
+    )
+    assert loss.metrics.continuous_net_pnl < 0
+    assert "CONTINUOUS_NET_PNL_NOT_POSITIVE" in loss.reason_codes
 
 
 def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
