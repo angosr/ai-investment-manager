@@ -22,7 +22,8 @@ from quant_core.governance_runtime import (
     GovernanceWorkflowStatus,
     build_governance_workflow_request,
 )
-from quant_core.persistence import SqlGovernanceRepository, create_schema, governance_decisions
+from quant_core.persistence import SqlGovernanceRepository, governance_decisions
+from quant_core.schema import create_schema
 
 
 class UnusedRouter:

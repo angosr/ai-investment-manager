@@ -15,9 +15,10 @@ from quant_core.domain import (
     Side,
 )
 from quant_core.execution import MockExchange
-from quant_core.persistence import SqlFactLedger, create_schema
+from quant_core.persistence import SqlFactLedger
 from quant_core.risk import RiskEngine
 from quant_core.risk_budget import SqlRiskBudgetStore
+from quant_core.schema import create_schema
 from quant_core.shadow import SqlShadowStateReader
 
 

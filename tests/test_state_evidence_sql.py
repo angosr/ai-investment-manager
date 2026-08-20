@@ -7,10 +7,10 @@ from quant_core.fact_pipeline import build_state_snapshot
 from quant_core.fact_state_sql import SqlFactStateStore
 from quant_core.features import FeatureEngine
 from quant_core.persistence import (
-    create_schema,
     state_evidence_snapshots,
     state_snapshots,
 )
+from quant_core.schema import create_schema
 from quant_core.state_evidence_sql import SqlStateEvidenceStore, StateEvidenceKind
 
 

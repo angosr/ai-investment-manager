@@ -39,10 +39,10 @@ from quant_core.persistence import (
     analysis_cycles,
     analysis_forecast_outcomes,
     codex_runs,
-    create_schema,
 )
 from quant_core.research.decision_tape import SqlForecastDecisionTapeReader
 from quant_core.risk_budget import SqlRiskBudgetStore
+from quant_core.schema import create_schema
 
 
 class StaticAnalyst:

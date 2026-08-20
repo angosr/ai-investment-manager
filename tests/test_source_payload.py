@@ -3,7 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from quant_core.persistence import create_schema, raw_source_payloads
+from quant_core.persistence import raw_source_payloads
+from quant_core.schema import create_schema
 from quant_core.source_payload import build_raw_source_payload
 from quant_core.source_payload_sql import SqlRawSourcePayloadStore
 

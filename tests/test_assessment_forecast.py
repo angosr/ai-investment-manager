@@ -43,7 +43,8 @@ from quant_core.domain import DirectionalView, ForecastOutcomeStatus
 from quant_core.ids import stable_id
 from quant_core.market_data import MarketTrade
 from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
-from quant_core.persistence import assessment_view_outcomes, create_schema
+from quant_core.persistence import assessment_view_outcomes
+from quant_core.schema import create_schema
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 HASH = "a" * 64

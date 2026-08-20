@@ -15,9 +15,10 @@ from quant_core.market_data import (
     MarketQuote,
     MarketTrade,
 )
-from quant_core.persistence import SqlFactLedger, create_schema
+from quant_core.persistence import SqlFactLedger
 from quant_core.portfolio_protection import InMemoryPortfolioProtectionStore
 from quant_core.risk_budget import SqlRiskBudgetStore
+from quant_core.schema import create_schema
 from quant_core.shadow import SqlShadowStateReader
 from quant_core.trigger import (
     AnalysisTriggerType,

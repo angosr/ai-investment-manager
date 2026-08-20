@@ -10,11 +10,11 @@ from quant_core.official_information_sql import (
     SqlOfficialInformationStore,
 )
 from quant_core.persistence import (
-    create_schema,
     market_calendar_event_revisions,
     raw_source_payloads,
     source_observations,
 )
+from quant_core.schema import create_schema
 
 
 def _calendar(date_text: str) -> str:

@@ -68,11 +68,7 @@ from quant_core.ids import content_hash, stable_id
 from quant_core.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
 from quant_core.lifecycle import OpenLifecycleRecord
 from quant_core.platform.database import metadata
-from quant_core.portfolio_protection import (
-    bootstrap_portfolio_protection,
-)
 from quant_core.risk_budget import (
-    bootstrap_risk_budget,
     portfolio_risk_budgets,
     risk_reservations,
 )
@@ -1022,14 +1018,6 @@ def latest_account_snapshot_payload(connection: Connection, *, as_of: datetime):
         )
         .limit(1)
     ).scalar_one_or_none()
-
-
-def create_schema(engine: Engine) -> None:
-    from quant_core.schema import compose_metadata
-
-    compose_metadata().create_all(engine)
-    bootstrap_risk_budget(engine)
-    bootstrap_portfolio_protection(engine)
 
 
 class SqlAccountLeaseStore:

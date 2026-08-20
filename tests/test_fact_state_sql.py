@@ -19,10 +19,10 @@ from quant_core.official_information_sql import SqlFedOfficialInformationIngesto
 from quant_core.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
-    create_schema,
     material_deltas,
     state_snapshots,
 )
+from quant_core.schema import create_schema
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(

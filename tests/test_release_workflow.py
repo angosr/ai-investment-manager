@@ -24,7 +24,6 @@ from quant_core.governance import (
 from quant_core.governance_agent import SqlGovernorDecisionStore
 from quant_core.persistence import (
     SqlGovernanceRepository,
-    create_schema,
     release_approval_requests,
     release_manifests,
 )
@@ -35,6 +34,7 @@ from quant_core.release_runtime import (
     ReleaseWorkflowStatus,
     build_release_workflow_request,
 )
+from quant_core.schema import create_schema
 
 
 def _case(now: datetime):

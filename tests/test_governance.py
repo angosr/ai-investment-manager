@@ -33,12 +33,12 @@ from quant_core.persistence import (
     SqlGovernanceRepository,
     blind_evaluation_claims,
     change_proposals,
-    create_schema,
     evaluation_plans,
     failed_experiment_records,
     governance_snapshots,
     release_manifests,
 )
+from quant_core.schema import create_schema
 
 
 def _manifest(now: datetime) -> ReleaseManifest:

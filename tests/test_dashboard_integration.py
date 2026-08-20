@@ -20,10 +20,10 @@ from quant_core.persistence import (
     SqlEventStore,
     SqlFactLedger,
     analysis_call_admissions,
-    create_schema,
     decision_outcomes,
 )
 from quant_core.risk_budget import SqlRiskBudgetStore
+from quant_core.schema import create_schema
 from quant_core.trigger import AnalysisTriggerType, build_trigger_event
 from quant_core.trigger_sql import SqlTriggerRepository
 

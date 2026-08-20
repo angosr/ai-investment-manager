@@ -10,10 +10,10 @@ from quant_core.persistence import (
     analysis_trigger_batches,
     analysis_trigger_events,
     analysis_trigger_plans,
-    create_schema,
     normalized_events,
     trigger_outbox,
 )
+from quant_core.schema import create_schema
 from quant_core.trigger import (
     AddWakeup,
     AnalysisTriggerType,

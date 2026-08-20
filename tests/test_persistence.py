@@ -22,7 +22,6 @@ from quant_core.persistence import (
     analysis_cycles,
     codex_account_capacity,
     codex_runs,
-    create_schema,
     fills,
     metric_observations,
     orders,
@@ -32,6 +31,7 @@ from quant_core.risk_budget import (
     portfolio_risk_budgets,
     risk_reservations,
 )
+from quant_core.schema import create_schema
 
 
 @pytest.fixture

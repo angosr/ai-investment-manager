@@ -21,9 +21,9 @@ from quant_core.ingestion import (
 from quant_core.persistence import (
     SqlEventStore,
     analysis_trigger_events,
-    create_schema,
     normalized_events,
 )
+from quant_core.schema import create_schema
 
 
 @dataclass

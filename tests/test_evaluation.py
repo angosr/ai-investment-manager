@@ -13,7 +13,8 @@ from quant_core.evaluation import (
     ReplayEvaluator,
     without_information_events,
 )
-from quant_core.persistence import SqlEvaluationRepository, create_schema
+from quant_core.persistence import SqlEvaluationRepository
+from quant_core.schema import create_schema
 
 
 def _case(replay_input) -> ReplayCase:

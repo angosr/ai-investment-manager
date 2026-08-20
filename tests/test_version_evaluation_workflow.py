@@ -22,9 +22,9 @@ from quant_core.governance import (
 from quant_core.governance_agent import SqlGovernorDecisionStore
 from quant_core.persistence import (
     SqlGovernanceRepository,
-    create_schema,
     evaluation_results,
 )
+from quant_core.schema import create_schema
 from quant_core.version_evaluation_runtime import (
     VersionEvaluationActivities,
     VersionEvaluationTemporalCoordinator,

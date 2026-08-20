@@ -35,12 +35,12 @@ from quant_core.persistence import (
     analysis_trigger_batches,
     change_proposals,
     codex_runs,
-    create_schema,
     governance_decisions,
     normalized_events,
     signal_candidates,
 )
 from quant_core.risk_budget import SqlRiskBudgetStore
+from quant_core.schema import create_schema
 from quant_core.trigger import (
     AnalysisTriggerType,
     TriggerNow,
