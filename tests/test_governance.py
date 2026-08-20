@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from investment_manager.config import load_config
 from investment_manager.governance.models import (
     BlindEvaluationClaim,
     ChangeProposal,
@@ -39,6 +38,7 @@ from investment_manager.governance.tables import (
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.schema import create_schema
+from investment_manager.settings import load_config
 
 
 def _manifest(now: datetime) -> ReleaseManifest:

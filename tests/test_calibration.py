@@ -15,7 +15,6 @@ from investment_manager.calibration import (
     EdgeCalibrationBuilder,
     uncalibrated_ref,
 )
-from investment_manager.config import CalibrationPolicy
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.decision import HighestNetEdgeComposer
 from investment_manager.domain import (
@@ -24,6 +23,7 @@ from investment_manager.domain import (
     EdgeCalibration,
 )
 from investment_manager.execution.models import Side
+from investment_manager.forecast.policy import CalibrationPolicy
 from investment_manager.kernel.identity import content_hash
 
 

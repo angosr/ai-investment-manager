@@ -4,14 +4,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.config import (
-    CodexRuntimePolicy,
-    DeploymentStage,
-    ExecutionPolicy,
-    FrequencyPolicy,
-    PanelPolicy,
-    load_config,
-)
+from investment_manager.execution.policy import ExecutionPolicy
+from investment_manager.forecast.policy import CodexRuntimePolicy
+from investment_manager.governance.policy import DeploymentStage
+from investment_manager.portfolio.policy import FrequencyPolicy
+from investment_manager.settings import load_config
+from investment_manager.state.policy import PanelPolicy
 
 
 def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> None:

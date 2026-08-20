@@ -9,7 +9,6 @@ from typing import Literal
 import yaml
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.config import AppConfig
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import (
     optional_utc,
@@ -17,6 +16,7 @@ from investment_manager.kernel.time import (
 )
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.scheduling.models import AnalysisTriggerPlan
+from investment_manager.settings import AppConfig
 
 
 class ChangeType(StrEnum):

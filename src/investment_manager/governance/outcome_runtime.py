@@ -19,7 +19,6 @@ from investment_manager.candidate_evaluation import (
     CandidateOutcomeSettler,
     SqlCandidateOutcomeStore,
 )
-from investment_manager.config import AppConfig, OutcomeEvaluationPolicy, TemporalPolicy
 from investment_manager.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
@@ -30,11 +29,14 @@ from investment_manager.governance.outcome_workflows import (
     OutcomeEvaluationWorkflow,
 )
 from investment_manager.governance.performance import OutcomeWindowEvaluator, OutcomeWindowReport
+from investment_manager.governance.policy import OutcomeEvaluationPolicy
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.temporal import SingleActivityWorker
+from investment_manager.scheduling.policy import TemporalPolicy
+from investment_manager.settings import AppConfig
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)

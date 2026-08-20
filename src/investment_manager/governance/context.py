@@ -9,7 +9,6 @@ from pathlib import Path
 from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.config import AppConfig
 from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
@@ -55,6 +54,7 @@ from investment_manager.scheduling.tables import (
     analysis_trigger_plans,
     trigger_outbox,
 )
+from investment_manager.settings import AppConfig
 
 
 @dataclass(slots=True)

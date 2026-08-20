@@ -7,7 +7,6 @@ from typing import Protocol
 
 from pydantic import field_validator, model_validator
 
-from investment_manager.config import ReconciliationPolicy
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
@@ -15,6 +14,7 @@ from investment_manager.execution.models import (
     Position,
     Side,
 )
+from investment_manager.execution.policy import ReconciliationPolicy
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

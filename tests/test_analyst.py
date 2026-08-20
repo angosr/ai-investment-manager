@@ -38,7 +38,6 @@ from investment_manager.analyst import (
     strict_output_schema,
     verify_bundle,
 )
-from investment_manager.config import AppConfig, CodexAccount, CodexAccountRegistry
 from investment_manager.domain import (
     Action,
     AnalysisProposal,
@@ -50,7 +49,9 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
+from investment_manager.settings import AppConfig
 
 
 def _account_registry(tmp_path: Path) -> CodexAccountRegistry:

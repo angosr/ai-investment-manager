@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Protocol
 
-from investment_manager.config import ExecutionPolicy
 from investment_manager.domain import TradeIntent
 from investment_manager.execution.models import (
     ExitReason,
@@ -14,6 +13,7 @@ from investment_manager.execution.models import (
     PositionLifecycle,
     Side,
 )
+from investment_manager.execution.policy import ExecutionPolicy
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.models import (

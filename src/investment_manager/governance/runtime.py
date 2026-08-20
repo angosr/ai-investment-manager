@@ -17,7 +17,6 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.analyst import assemble_codex_router
-from investment_manager.config import AppConfig, TemporalPolicy
 from investment_manager.governance.agent import (
     GOVERNOR_OUTPUT_ADAPTER,
     CodexGovernor,
@@ -44,7 +43,9 @@ from investment_manager.persistence import (
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.temporal import SingleActivityWorker
 from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch
+from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.settings import AppConfig
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)

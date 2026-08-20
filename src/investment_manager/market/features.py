@@ -4,8 +4,8 @@ import math
 from decimal import Decimal
 from itertools import pairwise
 
-from investment_manager.config import FeaturePolicy
 from investment_manager.market.models import FeatureSnapshot, MarketSnapshot
+from investment_manager.market.policy import FeaturePolicy
 
 
 class FeatureEngine:

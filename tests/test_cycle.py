@@ -6,7 +6,6 @@ from decimal import Decimal
 import pytest
 
 from investment_manager.analyst import AnalystResult
-from investment_manager.config import AiMode
 from investment_manager.cycle import AnalysisCycle, CycleInput
 from investment_manager.decision import (
     FrequencyController,
@@ -27,6 +26,7 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.policy import AiMode
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 

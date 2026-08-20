@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import httpx
 from websockets.asyncio.client import connect
 
-from investment_manager.config import AppConfig, DeploymentStage, MarketDataPolicy
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
@@ -23,8 +23,10 @@ from investment_manager.market.models import (
     MarketQuote,
     MarketTrade,
 )
+from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
+from investment_manager.settings import AppConfig
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,6 @@ from sqlalchemy import func, insert, select, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.config import TriggerPolicy
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -23,6 +22,7 @@ from investment_manager.scheduling.models import (
     TriggerPlanPatch,
     decide_analysis_call_admission,
 )
+from investment_manager.scheduling.policy import TriggerPolicy
 from investment_manager.scheduling.tables import (
     analysis_call_admissions,
     analysis_scheduled_wakeups,

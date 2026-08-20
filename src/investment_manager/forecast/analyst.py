@@ -17,8 +17,9 @@ from investment_manager.analyst import (
     strict_output_schema,
     write_run_bundle,
 )
-from investment_manager.config import AppConfig, CodexRuntimePolicy
+from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.settings import AppConfig
 from investment_manager.state.decision_packet import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,

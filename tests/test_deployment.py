@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.config import DeploymentPolicy, DeploymentStage
+from investment_manager.governance.policy import DeploymentPolicy, DeploymentStage
 from investment_manager.governance.stage_gate import StageEvidence, StagePromotionGate
 
 

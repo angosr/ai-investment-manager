@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from investment_manager.config import CalibrationPolicy
 from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
@@ -13,6 +12,7 @@ from investment_manager.domain import (
     SignalCandidate,
 )
 from investment_manager.execution.models import Side
+from investment_manager.forecast.policy import CalibrationPolicy
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 

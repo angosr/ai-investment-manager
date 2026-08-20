@@ -17,7 +17,6 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
-from investment_manager.config import AppConfig
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
@@ -28,6 +27,7 @@ from investment_manager.entrypoints.dashboard.resources import (
 from investment_manager.entrypoints.dashboard.stream import refresh_events
 from investment_manager.platform.database import build_engine
 from investment_manager.scheduling.workflows import coordinator_workflow_id
+from investment_manager.settings import AppConfig
 from investment_manager.temporal_runtime import TemporalAnalysisCoordinator
 
 _DEFAULT_LIMIT = 30

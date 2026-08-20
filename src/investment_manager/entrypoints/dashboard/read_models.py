@@ -13,7 +13,6 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.config import AppConfig
 from investment_manager.domain import (
     AnalysisProposal,
     DecisionOutcome,
@@ -53,6 +52,7 @@ from investment_manager.scheduling.tables import (
     analysis_trigger_plans,
     trigger_outbox,
 )
+from investment_manager.settings import AppConfig
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500

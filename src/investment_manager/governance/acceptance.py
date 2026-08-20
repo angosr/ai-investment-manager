@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from investment_manager.analyst import codex_runtime_integrity_matches
-from investment_manager.config import AiMode, AppConfig, DeploymentStage
+from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.models import (
     load_constitution,
     load_regression_suite,
@@ -15,8 +15,10 @@ from investment_manager.governance.models import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.schema import compose_metadata
+from investment_manager.settings import AppConfig
 
 
 class CheckStatus(StrEnum):

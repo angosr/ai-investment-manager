@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.config import AppConfig
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -22,6 +21,7 @@ from investment_manager.scheduling.models import (
     trigger_plan_accepts,
     trigger_reconsideration,
 )
+from investment_manager.settings import AppConfig
 
 TRIGGER_REPLAY_VERSION = "portfolio-trigger-replay-v3"
 

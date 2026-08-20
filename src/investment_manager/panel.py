@@ -6,7 +6,6 @@ from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
 
-from investment_manager.config import PanelPolicy
 from investment_manager.domain import (
     PanelEvidence,
     PanelSnapshot,
@@ -21,6 +20,7 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.state.policy import PanelPolicy
 
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAGS = re.compile(r"<[^>]+>")

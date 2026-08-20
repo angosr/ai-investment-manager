@@ -19,7 +19,6 @@ from investment_manager.calibration import (
     uncalibrated_ref,
 )
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
-from investment_manager.config import AppConfig, DeploymentStage, load_config
 from investment_manager.cycle import AnalysisCycle, CycleInput
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.execution.binance import (
@@ -46,6 +45,7 @@ from investment_manager.governance.models import (
     validate_manifest_code_version,
 )
 from investment_manager.governance.outcome_runtime import assemble_outcome_evaluation
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.runtime import assemble_governance
 from investment_manager.information.collector import (
@@ -86,6 +86,7 @@ from investment_manager.scheduling.runtime import (
     TriggerTemporalWorker,
     terminate_superseded_trigger_coordinators,
 )
+from investment_manager.settings import AppConfig, load_config
 from investment_manager.shadow import SqlShadowStateReader
 from investment_manager.temporal_runtime import (
     TemporalAnalysisCoordinator,

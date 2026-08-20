@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.config import AppConfig
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
@@ -26,6 +25,7 @@ from investment_manager.scheduling.models import (
 )
 from investment_manager.scheduling.runtime import TriggerAnalysisRequestBuilder
 from investment_manager.schema import create_schema
+from investment_manager.settings import AppConfig
 from investment_manager.shadow import SqlShadowStateReader
 
 NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)

@@ -17,8 +17,8 @@ from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import Worker
 
-from investment_manager.config import AppConfig, DeploymentStage, TemporalPolicy
 from investment_manager.cycle import CycleInput
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.information.collector import EventStore
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -33,6 +33,7 @@ from investment_manager.scheduling.models import (
     TriggerDecision,
     TriggerReason,
 )
+from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.scheduling.repository import SqlTriggerRepository, TriggerOutboxMessage
 from investment_manager.scheduling.workflows import (
     BUILD_TRIGGER_REQUEST_ACTIVITY,
@@ -40,6 +41,7 @@ from investment_manager.scheduling.workflows import (
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
 )
+from investment_manager.settings import AppConfig
 from investment_manager.shadow import ShadowStateReader
 from investment_manager.workflow import WorkflowRequest, build_workflow_request
 

@@ -266,6 +266,63 @@ def test_kernel_does_not_import_platform_or_business_modules() -> None:
             }
 
 
+def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
+    owners = {
+        "StrictConfig": "kernel/configuration.py",
+        "FeaturePolicy": "market/policy.py",
+        "MarketDataPolicy": "market/policy.py",
+        "PanelPolicy": "state/policy.py",
+        "StrategyPolicy": "forecast/policy.py",
+        "CalibrationPolicy": "forecast/policy.py",
+        "AiMode": "forecast/policy.py",
+        "PipelinePolicy": "forecast/policy.py",
+        "ProposalPolicy": "forecast/policy.py",
+        "CodexAccount": "forecast/policy.py",
+        "CodexAccountRegistry": "forecast/policy.py",
+        "CodexRuntimePolicy": "forecast/policy.py",
+        "CompositionPolicy": "portfolio/policy.py",
+        "FrequencyPolicy": "portfolio/policy.py",
+        "RiskPolicy": "risk/policy.py",
+        "ExecutionPolicy": "execution/policy.py",
+        "ReconciliationPolicy": "execution/policy.py",
+        "ShadowSimulationPolicy": "execution/policy.py",
+        "BinanceTestnetPolicy": "execution/policy.py",
+        "OutcomeEvaluationPolicy": "governance/policy.py",
+        "GovernancePolicy": "governance/policy.py",
+        "DeploymentStage": "governance/policy.py",
+        "DeploymentPolicy": "governance/policy.py",
+        "TriggerPolicy": "scheduling/policy.py",
+        "TemporalPolicy": "scheduling/policy.py",
+        "InformationPolicy": "information/policy.py",
+    }
+    definitions: dict[str, list[str]] = {name: [] for name in owners}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        relative = path.relative_to(PACKAGE_ROOT).as_posix()
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name in definitions:
+                definitions[node.name].append(relative)
+        if path.name == "settings.py":
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == (
+                "investment_manager.settings"
+            ):
+                assert {alias.name for alias in node.names}.issubset(
+                    {"AppConfig", "load_config"}
+                ), path
+
+    assert definitions == {name: [owner] for name, owner in owners.items()}
+    assert not (PACKAGE_ROOT / "config.py").exists()
+    settings_classes = {
+        node.name
+        for node in ast.parse((PACKAGE_ROOT / "settings.py").read_text()).body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert settings_classes == {"AppConfig"}
+
+
 def test_shared_kernel_primitives_are_not_imported_from_domain() -> None:
     kernel_primitives = {
         "FrozenModel",

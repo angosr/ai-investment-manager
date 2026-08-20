@@ -16,7 +16,7 @@ from investment_manager.analyst import (
     verify_bundle,
     write_run_bundle,
 )
-from investment_manager.config import CodexRuntimePolicy
+from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.models import (
     ChangeProposal,
     GovernanceGate,

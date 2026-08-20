@@ -6,7 +6,6 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from investment_manager.config import AppConfig
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -25,6 +24,7 @@ from investment_manager.research.dataset import (
     HistoricalEventDataset,
     HistoricalFundingDataset,
 )
+from investment_manager.settings import AppConfig
 from investment_manager.strategy import PriceTrendStrategy
 
 WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v2"

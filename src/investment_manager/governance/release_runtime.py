@@ -11,7 +11,6 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
-from investment_manager.config import TemporalPolicy
 from investment_manager.governance.models import (
     EvaluationResult,
     EvaluationTarget,
@@ -29,6 +28,7 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.temporal import SingleActivityWorker
+from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 

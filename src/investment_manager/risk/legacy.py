@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from investment_manager.config import RiskPolicy
 from investment_manager.domain import TradeIntent
 from investment_manager.execution.models import (
     SUPPORTED_OPEN_SIDES,
@@ -20,6 +19,7 @@ from investment_manager.risk.models import (
     RiskReservation,
     RuleResult,
 )
+from investment_manager.risk.policy import RiskPolicy
 
 
 class RiskEngine:

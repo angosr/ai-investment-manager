@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
 from investment_manager.analyst import ANALYST_INPUT_VERSION
-from investment_manager.config import AppConfig
 from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
@@ -46,6 +45,7 @@ from investment_manager.research.backtest import (
 )
 from investment_manager.research.dataset import HistoricalDataset
 from investment_manager.research.walk_forward import BlindEvaluationResult
+from investment_manager.settings import AppConfig
 
 FORECAST_DECISION_TAPE_VERSION = "forecast-decision-tape-v1"
 PAIRED_DECISION_TAPE_EVALUATION_VERSION = "paired-decision-tape-evaluation-v4"

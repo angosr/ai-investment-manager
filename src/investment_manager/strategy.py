@@ -5,7 +5,6 @@ from decimal import Decimal
 from typing import Protocol
 
 from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
-from investment_manager.config import StrategyPolicy
 from investment_manager.domain import (
     Action,
     PriceCondition,
@@ -16,6 +15,7 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.policy import StrategyPolicy
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import (

@@ -2,9 +2,10 @@ from pathlib import Path
 
 import yaml
 
-from investment_manager.config import AiMode, DeploymentStage
+from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
 from investment_manager.governance.models import load_release_manifest
+from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash
 
 

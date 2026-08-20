@@ -4,7 +4,6 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.config import ExecutionPolicy
 from investment_manager.domain import TradeIntent
 from investment_manager.execution.legacy_exchange import (
     MockExchange,
@@ -17,6 +16,7 @@ from investment_manager.execution.models import (
     OrderStatus,
     PositionLifecycle,
 )
+from investment_manager.execution.policy import ExecutionPolicy
 from investment_manager.execution.tables import (
     mock_exchange_orders,
     mock_exchange_protections,

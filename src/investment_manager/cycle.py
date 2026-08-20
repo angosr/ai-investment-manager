@@ -8,7 +8,6 @@ from pydantic import Field, field_validator
 
 from investment_manager.analyst import Analyst, ProposalNormalizer, analysis_behavior_hash
 from investment_manager.calibration import EdgeCalibrationBook
-from investment_manager.config import AiMode, AppConfig
 from investment_manager.decision import (
     FrequencyController,
     FrequencyState,
@@ -49,6 +48,7 @@ from investment_manager.execution.models import (
     PositionLifecycle,
 )
 from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.forecast.policy import AiMode
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -64,6 +64,7 @@ from investment_manager.risk.models import (
     RiskOutcome,
 )
 from investment_manager.scheduling.models import TriggerDecision
+from investment_manager.settings import AppConfig
 from investment_manager.strategy import PriceTrendStrategy, Strategy
 
 
