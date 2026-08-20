@@ -58,6 +58,25 @@ def test_reconciliation_schedule_tracks_absolute_boundaries() -> None:
     assert _seconds_until_next_bucket(after_slow_run, bucket_seconds=60) == 53
 
 
+def test_reconciliation_workflow_identity_covers_orchestration_version(app_config) -> None:
+    as_of = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    original = build_reconciliation_workflow_request(
+        as_of=as_of,
+        reconciliation_policy=app_config.reconciliation,
+        temporal_policy=app_config.temporal,
+    )
+    revised = build_reconciliation_workflow_request(
+        as_of=as_of,
+        reconciliation_policy=app_config.reconciliation,
+        temporal_policy=app_config.temporal.model_copy(
+            update={"version": "temporal-analysis-next"}
+        ),
+    )
+
+    assert revised.workflow_id != original.workflow_id
+    assert revised.input_hash != original.input_hash
+
+
 def test_reconciliation_matches_independent_mock_exchange_journal(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)

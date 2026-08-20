@@ -61,7 +61,12 @@ class ReconciliationWorkflowRequest(FrozenModel):
         expected_hash = content_hash(_request_identity(self))
         if self.input_hash != expected_hash:
             raise ValueError("Reconciliation Workflow input_hash 不一致")
-        expected_id = stable_id("reconciliation_workflow", as_of.isoformat(), self.policy.version)
+        expected_id = stable_id(
+            "reconciliation_workflow",
+            as_of.isoformat(),
+            self.policy.version,
+            self.orchestration.version,
+        )
         if self.workflow_id != expected_id:
             raise ValueError("Reconciliation Workflow workflow_id 不一致")
         return self
@@ -103,7 +108,10 @@ def build_reconciliation_workflow_request(
     }
     return ReconciliationWorkflowRequest(
         workflow_id=stable_id(
-            "reconciliation_workflow", as_of.isoformat(), reconciliation_policy.version
+            "reconciliation_workflow",
+            as_of.isoformat(),
+            reconciliation_policy.version,
+            orchestration.version,
         ),
         as_of=as_of,
         policy=reconciliation_policy,
