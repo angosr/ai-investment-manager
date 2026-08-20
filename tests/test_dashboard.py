@@ -43,7 +43,6 @@ def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
         "pending_outbox_count": 0,
         "oldest_pending_outbox_at": None,
         "release_aligned": True,
-        "calls_last_hour": 1,
         "overdue_forecast_count": 0,
         "oldest_overdue_analysis_at": None,
         "scopes": (
@@ -125,7 +124,6 @@ def _health_policy_extras() -> dict:
         "trigger": SimpleNamespace(
             heartbeat_minutes=15,
             outbox_fallback_poll_seconds=1,
-            maximum_ai_calls_per_hour=6,
         ),
         "shadow": SimpleNamespace(analysis_deadline_seconds=300),
     }
@@ -332,7 +330,7 @@ def test_health_reads_persisted_portfolio_kill_switch() -> None:
     assert result["overall"] == "bad"
 
 
-def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> None:
+def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
     report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
     reader = SimpleNamespace(
@@ -344,7 +342,6 @@ def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> Non
             pending_outbox_count=3,
             oldest_pending_outbox_at=now - timedelta(seconds=10),
             release_aligned=False,
-            calls_last_hour=6,
             overdue_forecast_count=2,
             oldest_overdue_analysis_at=now - timedelta(hours=5),
         ),
@@ -365,7 +362,6 @@ def test_health_surfaces_control_plane_backlog_budget_and_release_drift() -> Non
     assert checks["trigger_delivery"]["state"] == "bad"
     assert checks["forecast_settlement"]["state"] == "bad"
     assert checks["release_alignment"]["state"] == "bad"
-    assert checks["ai_call_budget"]["state"] == "warn"
     assert result["overall"] == "bad"
 
 

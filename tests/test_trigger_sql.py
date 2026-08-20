@@ -116,12 +116,12 @@ def test_plan_patch_plan_wakeups_and_trigger_now_commit_atomically(
     assert batch_count == 1
 
 
-def test_analysis_call_admission_is_global_idempotent_and_rolling(app_config, replay_input) -> None:
+def test_analysis_call_admission_is_global_idempotent_and_interval_only(
+    app_config, replay_input
+) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    policy = app_config.trigger.model_copy(
-        update={"maximum_ai_calls_per_hour": 2, "minimum_call_interval_seconds": 15}
-    )
+    policy = app_config.trigger.model_copy(update={"minimum_call_interval_seconds": 15})
     repository = SqlTriggerRepository(engine, policy)
     now = replay_input.market.as_of
 
@@ -161,15 +161,15 @@ def test_analysis_call_admission_is_global_idempotent_and_rolling(app_config, re
     admitted_second = repository.admit_analysis_call(
         second, requested_at=now + timedelta(seconds=15)
     )
-    hourly_limited = repository.admit_analysis_call(third, requested_at=now + timedelta(seconds=30))
-    admitted_third = repository.admit_analysis_call(third, requested_at=now + timedelta(hours=1))
+    admitted_third = repository.admit_analysis_call(
+        third, requested_at=now + timedelta(seconds=30)
+    )
 
     assert admitted.admitted_at == now
     assert replayed.admitted_at == now
     assert interval_limited.retry_at == now + timedelta(seconds=15)
     assert admitted_second.admitted_at == now + timedelta(seconds=15)
-    assert hourly_limited.retry_at == now + timedelta(hours=1)
-    assert admitted_third.admitted_at == now + timedelta(hours=1)
+    assert admitted_third.admitted_at == now + timedelta(seconds=30)
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(analysis_call_admissions)) == 3
 

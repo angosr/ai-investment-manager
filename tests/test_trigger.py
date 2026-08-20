@@ -138,10 +138,7 @@ def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(
         pending=(ordinary,),
         now=now,
         last_analysis_at=now - timedelta(minutes=5),
-        call_times=(),
         input_retry_not_before=None,
-        minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
         wake_at_expiry=True,
     )
     assert timing.reconsider_at == now + timedelta(minutes=10)
@@ -152,57 +149,39 @@ def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(
         pending=(expiring,),
         now=now,
         last_analysis_at=now,
-        call_times=(),
         input_retry_not_before=None,
-        minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
         wake_at_expiry=True,
     )
     assert expiry_wakeup.reconsider_at == now + timedelta(seconds=30)
 
 
-def test_shared_global_admission_uses_rolling_budget_and_minimum_interval(
-    replay_input,
-) -> None:
+def test_shared_global_admission_only_enforces_minimum_interval(replay_input) -> None:
     now = replay_input.market.as_of
-    calls = tuple(now - timedelta(minutes=50 - index * 5) for index in range(6))
-
-    hourly = decide_analysis_call_admission(
-        requested_at=now,
-        admitted_times=calls,
-        minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
-    )
-    assert not hourly.admitted
-    assert hourly.retry_at == calls[0] + timedelta(hours=1)
 
     interval = decide_analysis_call_admission(
         requested_at=now,
-        admitted_times=(now - timedelta(seconds=5),),
+        last_admitted_at=now - timedelta(seconds=5),
         minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
     )
     assert not interval.admitted
     assert interval.retry_at == now + timedelta(seconds=10)
 
     admitted = decide_analysis_call_admission(
         requested_at=now,
-        admitted_times=(now - timedelta(hours=1),),
+        last_admitted_at=now - timedelta(seconds=15),
         minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
     )
     assert admitted.admitted_at == now
 
-    contracted = decide_analysis_call_admission(
+    no_history = decide_analysis_call_admission(
         requested_at=now,
-        admitted_times=tuple(now - timedelta(minutes=55 - index * 5) for index in range(10)),
+        last_admitted_at=None,
         minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
     )
-    assert contracted.retry_at == now + timedelta(minutes=25)
+    assert no_history.admitted_at == now
 
 
-def test_shared_trigger_timing_enforces_hourly_budget(app_config, replay_input) -> None:
+def test_shared_trigger_timing_has_no_hourly_budget(app_config, replay_input) -> None:
     now = replay_input.market.as_of
     plan = build_initial_trigger_plan(
         symbol="BTCUSDT",
@@ -224,25 +203,19 @@ def test_shared_trigger_timing_enforces_hourly_budget(app_config, replay_input) 
         occurred_at=now,
         observed_at=now,
         priority=100,
-        dedup_key="budgeted",
+        dedup_key="urgent-event",
         expires_at=now + timedelta(hours=2),
     ).model_dump(mode="json")
-    calls = tuple(now - timedelta(minutes=50 - index * 5) for index in range(6))
-
     timing = trigger_reconsideration(
         plan=plan.model_dump(mode="json"),
         pending=(event,),
         now=now,
-        last_analysis_at=now - timedelta(minutes=5),
-        call_times=calls,
+        last_analysis_at=now,
         input_retry_not_before=None,
-        minimum_call_interval_seconds=15,
-        maximum_ai_calls_per_hour=6,
         wake_at_expiry=True,
     )
 
-    assert timing.reconsider_at == calls[0] + timedelta(hours=1)
-    assert timing.retained_call_times == calls
+    assert timing.reconsider_at == now
 
 
 def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, replay_input) -> None:

@@ -87,14 +87,13 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v6
+  version: analysis-trigger-v7
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
   volatility_jump_threshold: "0.02"
   volatility_window_seconds: 600
   minimum_call_interval_seconds: 15
-  maximum_ai_calls_per_hour: 12
   maximum_scheduled_wakeups: 64
   maximum_event_rules: 32
   maximum_batch_size: 100

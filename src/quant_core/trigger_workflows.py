@@ -40,7 +40,6 @@ class TriggerCoordinatorWorkflow:
         self._consumed_wakeups: set[str] = set()
         self._signal_sequence = 0
         self._last_analysis_at: datetime | None = None
-        self._call_times: list[datetime] = []
         self._completed_batches = 0
         self._failed_batches = 0
         self._stopping = False
@@ -115,7 +114,6 @@ class TriggerCoordinatorWorkflow:
         self._plan = request["plan"]
         state = request.get("runtime_state") or {}
         self._last_analysis_at = _parse_optional_time(state.get("last_analysis_at"))
-        self._call_times = [_parse_time(item) for item in state.get("call_times", [])]
         self._consumed_wakeups = set(state.get("consumed_wakeups", []))
         self._seen_order = list(state.get("seen_trigger_ids", []))
         self._seen = set(self._seen_order)
@@ -178,7 +176,6 @@ class TriggerCoordinatorWorkflow:
                     self._active_batch_id = None
                 completed_at = workflow.now()
                 self._last_analysis_at = completed_at
-                self._call_times.append(completed_at)
                 self._completed_batches += 1
                 if self._completed_batches % 500 == 0 and not self._pending:
                     workflow.continue_as_new(self._continued_request(request))
@@ -255,15 +252,9 @@ class TriggerCoordinatorWorkflow:
             pending=pending,
             now=now,
             last_analysis_at=self._last_analysis_at,
-            call_times=self._call_times,
             input_retry_not_before=self._input_retry_not_before,
-            minimum_call_interval_seconds=int(
-                self._settings["minimum_call_interval_seconds"]
-            ),
-            maximum_ai_calls_per_hour=int(self._settings["maximum_ai_calls_per_hour"]),
             wake_at_expiry=workflow.patched("pending-expiry-wakeup-v1"),
         )
-        self._call_times = list(timing.retained_call_times)
         return timing.reconsider_at - now
 
     def _rule_value(self, trigger: dict[str, Any], field: str) -> int:
@@ -371,7 +362,6 @@ class TriggerCoordinatorWorkflow:
                 "last_analysis_at": (
                     self._last_analysis_at.isoformat() if self._last_analysis_at else None
                 ),
-                "call_times": [item.isoformat() for item in self._call_times],
                 "consumed_wakeups": sorted(self._consumed_wakeups),
                 "seen_trigger_ids": self._seen_order,
                 "completed_batches": self._completed_batches,

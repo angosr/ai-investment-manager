@@ -180,7 +180,7 @@ export interface AccountStatus {
 
 export interface Accounts {
   accounts: AccountStatus[];
-  hourly_budget: { used: number; cap: number; minimum_interval_seconds: number };
+  call_activity: { last_hour: number; minimum_interval_seconds: number };
 }
 
 export interface Resources {

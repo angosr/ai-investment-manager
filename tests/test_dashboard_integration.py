@@ -171,7 +171,7 @@ def test_equity_is_account_wide_and_uses_actual_close_time(app_config, replay_in
     assert result["summary"]["total_fees"] == "0.4"
 
 
-def test_dashboard_call_budget_reads_global_admissions(app_config, replay_input) -> None:
+def test_dashboard_call_activity_reads_global_admissions(app_config, replay_input) -> None:
     engine, _ = _seed_cycle(app_config, replay_input)
     now = replay_input.market.as_of
     with engine.begin() as connection:

@@ -225,9 +225,9 @@ def test_external_trigger_replay_enforces_global_cross_symbol_admission(
     assert "SIMULTANEOUS_ADMISSION_ORDER_ASSUMPTION" in replay.limitations
 
 
-def test_external_trigger_replay_carries_budget_used_before_window(app_config) -> None:
+def test_external_trigger_replay_carries_last_global_admission(app_config) -> None:
     start = datetime(2026, 8, 19, 12, tzinfo=UTC)
-    end = start + timedelta(minutes=20)
+    end = start + timedelta(minutes=1)
     dataset = freeze_historical_events(
         events=(
             _event(
@@ -242,10 +242,7 @@ def test_external_trigger_replay_carries_budget_used_before_window(app_config) -
         requested_end=end,
         collected_at=end,
     )
-    prior_calls = tuple(
-        start - timedelta(minutes=55) + index * timedelta(minutes=4)
-        for index in range(app_config.trigger.maximum_ai_calls_per_hour)
-    )
+    prior_call = start - timedelta(seconds=5)
     spec = ExternalTriggerReplaySpec.freeze(
         plans=(
             _plan(app_config, start, symbol="BTCUSDT"),
@@ -253,7 +250,7 @@ def test_external_trigger_replay_carries_budget_used_before_window(app_config) -
         ),
         config=app_config,
         analysis_duration_seconds=10,
-        initial_global_admitted_times=prior_calls,
+        initial_global_last_admitted_at=prior_call,
         initial_state_source="EXACT",
     )
 
@@ -265,5 +262,5 @@ def test_external_trigger_replay_carries_budget_used_before_window(app_config) -
     )
 
     assert len(replay.batches) == 2
-    assert replay.batches[0].batch.created_at == prior_calls[0] + timedelta(hours=1)
-    assert replay.batches[1].batch.created_at == prior_calls[1] + timedelta(hours=1)
+    assert replay.batches[0].batch.created_at == start + timedelta(seconds=10)
+    assert replay.batches[1].batch.created_at == start + timedelta(seconds=25)

@@ -145,7 +145,6 @@ class TriggerPolicy(StrictConfig):
     volatility_jump_threshold: Decimal = Field(default=Decimal("0.02"), gt=0)
     volatility_window_seconds: int = Field(default=600, ge=60, le=86_400)
     minimum_call_interval_seconds: int = Field(default=15, ge=1, le=3600)
-    maximum_ai_calls_per_hour: int = Field(default=12, ge=1, le=120)
     maximum_scheduled_wakeups: int = Field(default=64, ge=1, le=500)
     maximum_event_rules: int = Field(default=32, ge=1, le=200)
     maximum_batch_size: int = Field(default=100, ge=1, le=1000)

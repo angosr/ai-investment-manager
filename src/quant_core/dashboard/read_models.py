@@ -117,7 +117,6 @@ class AnalysisRuntimeStatus:
     pending_outbox_count: int
     oldest_pending_outbox_at: datetime | None
     release_aligned: bool | None
-    calls_last_hour: int
     overdue_forecast_count: int
     oldest_overdue_analysis_at: datetime | None
     scopes: tuple[AnalysisScopeRuntimeStatus, ...]
@@ -429,8 +428,7 @@ class DashboardReader:
         return statuses
 
     def ai_calls_last_hour(self, *, now: datetime) -> int:
-        # 预算按跨品种原子准入事实消耗；不能用事后 Codex 完成记录近似，否则失败关闭
-        # 或并发中的批次会让 UI 显示的“剩余额度”与实际门禁分裂。
+        # 观测跨品种原子准入事实；失败关闭或仍在执行的批次也属于真实启动活动。
         query = (
             select(func.count())
             .select_from(analysis_call_admissions)
@@ -603,7 +601,6 @@ class DashboardReader:
                 _database_utc(oldest_pending) if oldest_pending is not None else None
             ),
             release_aligned=release_aligned,
-            calls_last_hour=self.ai_calls_last_hour(now=now),
             overdue_forecast_count=int(overdue_count),
             oldest_overdue_analysis_at=(
                 _database_utc(oldest_overdue) if oldest_overdue is not None else None

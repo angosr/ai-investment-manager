@@ -162,9 +162,8 @@ def create_app(
         return _json(
             {
                 "accounts": [ser.account_status(status) for status in statuses],
-                "hourly_budget": {
-                    "used": calls,
-                    "cap": config.trigger.maximum_ai_calls_per_hour,
+                "call_activity": {
+                    "last_hour": calls,
                     "minimum_interval_seconds": config.trigger.minimum_call_interval_seconds,
                 },
             }

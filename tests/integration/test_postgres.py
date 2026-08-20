@@ -128,11 +128,9 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
         assert raw_connection.driver_connection.autocommit is False
     finally:
         raw_connection.close()
-    budget_repository = SqlTriggerRepository(
+    admission_repository = SqlTriggerRepository(
         engine,
-        app_config.trigger.model_copy(
-            update={"maximum_ai_calls_per_hour": 1, "minimum_call_interval_seconds": 15}
-        ),
+        app_config.trigger.model_copy(update={"minimum_call_interval_seconds": 15}),
     )
 
     def admission_batch(symbol: str):
@@ -162,7 +160,7 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
     with ThreadPoolExecutor(max_workers=2) as pool:
         admissions = tuple(
             pool.map(
-                lambda batch: budget_repository.admit_analysis_call(
+                lambda batch: admission_repository.admit_analysis_call(
                     batch,
                     requested_at=replay_input.market.as_of,
                 ),

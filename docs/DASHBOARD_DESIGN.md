@@ -14,7 +14,7 @@
 - 时间线：按周期（cycle）倒序展开的运行过程，每条含 AI 分析摘要（可展开）与最终动作。
 - 盈利曲线：扣费后净收益的权益曲线与窗口指标。
 - 持仓：当前未平仓生命周期、保护状态、最长持有倒计时。
-- 显式白名单中 Codex 账号的用量/余量、状态、冷却与每小时调用预算。
+- 显式白名单中 Codex 账号的用量/余量、状态、冷却与近期调用活动。
 - 主机 CPU / 内存 / 磁盘使用情况。
 
 ### 1.2 非目标（明确排除）
@@ -112,7 +112,7 @@ Panel  Propose Cand  Compose Freq  Risk  Exec  Pos   Outcome
 
 ### 5.1 顶栏 · 单一健康状态（异常驱动）
 
-顶栏只显示**一个**健康 pill：全部正常时显示「运行正常」（绿）；任一检查异常时 pill 变琥珀/红并点名最严重项。点开 pill 才展开检查明细，正常时不占版面。运行阶段与 UTC 时钟常驻。预算恰好耗尽、存在协调器等待等可恢复容量状态为琥珀色 `warn`，不得伪装成全绿，也不得误报为红色故障。
+顶栏只显示**一个**健康 pill：全部正常时显示「运行正常」（绿）；任一检查异常时 pill 变琥珀/红并点名最严重项。点开 pill 才展开检查明细，正常时不占版面。运行阶段与 UTC 时钟常驻。存在协调器积压时按等待时长判定 `warn/bad`，不得伪装成全绿。
 
 | 检查项（pill 内） | 值/状态来源 |
 |---|---|
@@ -125,7 +125,6 @@ Panel  Propose Cand  Compose Freq  Risk  Exec  Pos   Outcome
 | 触发投递 | 当前 Pipeline 已到期但仍未投递的 Outbox 数量与最老年龄 |
 | 触发协调器 | 只读查询当前 Temporal Coordinator 的 pending/active 状态；查询失败按故障展示 |
 | 版本一致性 | 当前 TriggerPlan 引用的 ReleaseManifest 必须与全部类型化运行配置一致 |
-| AI 调用预算 | 近一小时原子准入事实 / `maximum_ai_calls_per_hour` |
 | 主机磁盘 | 根文件系统占用；90% 告警、95% 故障 |
 
 对账报告超过 `ReconciliationPolicy.maximum_report_age_seconds` 后按异常展示；数据新鲜度会把最新周期中记录的行情/账户年龄继续按墙钟累加，不能让一条旧周期指标永久显示为新鲜。
@@ -166,7 +165,7 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 - 近期失败：`codex_runs` 近窗口按 `status/error_class` 计数（`FailureClass`）。
 - 账号身份与开关：配置 `CodexAccountRegistry`（目录同名 `account_id`、`enabled`）；默认白名单全部禁用并如实显示 `DISABLED`。
 - 展示状态与路由新鲜度分离：容量 TTL 只约束真实调用前能否依赖该快照，不把已启用但快照过期的账号误报为 `UNKNOWN`；观测台继续显示“已启用”、最近一次探测余量及探测时间。从未取得额度快照时显示“已启用 / 尚无额度探测”，配置关闭始终显示“未启用”。
-- 每小时调用预算：配置 `TriggerPolicy.maximum_ai_calls_per_hour`（默认 12）与 `minimum_call_interval_seconds`（默认 15）；已用次数由近 1 小时跨品种原子 `analysis_call_admissions` 计数，与实际门禁保持同口径。`codex_runs` 单独表达真实 Codex 尝试及结果。
+- 调用活动：不设小时配额；`analysis_call_admissions` 保留跨品种原子防重复和批次幂等事实，页面显示近一小时启动次数与 `minimum_call_interval_seconds`（默认 15）。`codex_runs` 单独表达真实 Codex 尝试及结果。
 - 说明：余量是**百分比余量（headroom%）**，非绝对 token 数——如实以百分比与重置时间呈现。
 
 ### 5.6 主机资源（净新增，极简）
@@ -252,7 +251,7 @@ quant-core dashboard-service \
 | `/api/events?before=&limit=` | 世界事件时间线（§5.8，新闻 + 触发事件合并） |
 | `/api/equity?window=` | 权益曲线序列 + 窗口指标（§5.2） |
 | `/api/positions` | 未平仓 + 盯市估算（§5.4） |
-| `/api/accounts` | 白名单账号余量/状态/预算（§5.5） |
+| `/api/accounts` | 白名单账号余量/状态/调用活动（§5.5） |
 | `/api/resources` | 主机 CPU/内存/磁盘（§5.6） |
 | `/api/reconciliation` | 最新对账（§5.7） |
 | `/api/stream` | SSE 变更信号（§6） |

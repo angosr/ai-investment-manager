@@ -71,9 +71,9 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 资讯标准化器保留直接资产事件，并用版本化有限词表路由跨资产宏观事件。关键跨资产事件可越过高优先级阈值，但同一波事件先按品种合并；一般跨资产事件只进入下一次面板。资讯触发具有固定有效期，过期触发丢弃但原始标准事件事实不删除。
 
-同类事件规则按 `minimum_priority` 分层，事件命中多个层级时采用最高已满足门槛的合并和冷却参数；重复启用的同门槛层级会被配置契约拒绝。当前 Shadow 的高影响资讯首次合并等待为 15 秒、普通冷却仍为 120 秒，硬最小调用间隔和每小时预算不变。
+同类事件规则按 `minimum_priority` 分层，事件命中多个层级时采用最高已满足门槛的合并和冷却参数；重复启用的同门槛层级会被配置契约拒绝。当前 Shadow 的高影响资讯首次合并等待为 15 秒、普通冷却仍为 120 秒，并保留 15 秒跨品种防重复间隔；不设 AI 小时调用配额。
 
-硬调用间隔和滚动每小时预算以 `analysis_call_admissions` 为权威事实，在构建分析周期后、提交周期前跨 BTC/ETH 原子准入；同一批次 Activity 重试复用原准入，不重复计数。预算暂不可用时 Coordinator 保留原 pending 批次并等到 `retry_at`，到期事件仍按原有效期丢弃。升级迁移会从既有 TriggerBatch 回填准入历史，避免重启后把最近一小时预算错误清零。观测台的预算已用量读取同一张事实表；`codex_runs` 继续只用于真实执行成功率、失败类型、token 与延迟审计。
+`analysis_call_admissions` 是跨品种最小调用间隔与同批次幂等的权威事实，在构建分析周期后、提交周期前原子准入。若距最近一次准入不足 15 秒，Coordinator 保留 pending 到 `retry_at`；除此之外不存在小时额度阻塞。事件去重、合并、冷却、single-flight、有界 pending 和异常熔断负责控制重复与风暴。观测台从该表显示近一小时真实启动活动；`codex_runs` 继续用于成功率、失败类型、token 与延迟审计。
 
 新 pipeline 首次创建 TriggerPlan 时，从同品种 `updated_at` 最新的前代当前计划继承主 Agent 动态状态，并用新 pipeline/Manifest 重建 revision 1；仅丢弃已经过期的计划唤醒点，旧 `applied_patch_id` 不跨代复用。若该品种没有任何前代计划，才使用发布配置中的静态默认。切换后应核对新计划的暂停态、Heartbeat、事件规则与未来唤醒，再确认旧 Coordinator 已终止。
 
@@ -90,14 +90,14 @@ PYTHONPATH='<冻结 checkout>/src' .venv/bin/quant-core challenger-audit \
   --project-root '<冻结 checkout>'
 ```
 
-该命令要求真实 Codex `PROPOSE`、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex，也不消耗 AI 调用预算。
+该命令要求真实 Codex `PROPOSE`、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex。
 
 Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角色协作，不使用仓库脚本承载状态：
 
 - `information-collector`：只调用本机 TrendRadar MCP 固定读工具和 NewsNow 类型化白名单源，将标准事件去重写入事实库。
 - `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
 - `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；Dispatcher 不实现业务防抖或批处理。
-- Heartbeat 在 Coordinator 内保持耐久 pending，直到全局调用预算允许；它不按普通事件有效期过期。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。
+- Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `temporal-worker`：执行程序策略、信息面板、频率、风控和模拟撮合；不持有 Binance Secret。
 - `lifecycle-service`：发现未关闭持仓，运行生命周期 Workflow 和模拟退出 Activity。
@@ -215,7 +215,7 @@ AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。�
 
 `outcome-window-v8` 以分析完成后首个点时可见成交作为反事实入场，并在到期前优先结算首次止损成交；只有未触发止损时才使用到期成交。入场、退出的事件时间与观测时间全部固化在 CandidateOutcome 中，防止用分析前参考价或忽略途中止损的到期收益夸大可交易边际。该轨道仍不创建订单、持仓或账户 PnL，只为后续校准提供隔离标签。
 
-`analysis-trigger-v6` 使用配置化滚动窗口累计行情冲击，窗口按秒聚合且内存有界；触发后以同一窗口冷却并从当前价格重新定基。它用于异常行情复核，不承担入场择时，且仍受 TriggerPlan、合并、最小调用间隔与小时预算约束。
+`analysis-trigger-v7` 使用配置化滚动窗口累计行情冲击，窗口按秒聚合且内存有界；触发后以同一窗口冷却并从当前价格重新定基。它用于异常行情复核，不承担入场择时，且仍受 TriggerPlan、合并与最小调用间隔约束，不受小时配额阻塞。
 
 候选内冻结的 `estimated_cost_bps` 只表示该候选可归因的完整往返交易成本：手续费、点差、预期滑点、持有期资金成本，以及延迟、逆向选择和估计不确定性缓冲。模型订阅、机器、存储和人员等固定或周期运营成本不得按拍脑袋常量硬摊到每笔候选；它们在 Pipeline/组合评价窗口按真实账单来源单独扣除。真实来源尚未接入时必须明确报告运营成本缺失，不能把交易成本后的收益命名为“全部成本后收益”。
 

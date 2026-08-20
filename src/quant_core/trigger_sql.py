@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from pydantic import field_validator
 from sqlalchemy import func, insert, select, update
@@ -117,7 +117,7 @@ class SqlTriggerRepository:
         *,
         requested_at: datetime,
     ) -> AnalysisCallAdmission:
-        """跨品种原子占用滚动调用预算；同一批次重试不重复计数。"""
+        """跨品种原子防重复；同一批次重试不重复计数。"""
 
         requested_at = _require_utc(requested_at)
         with self._engine.begin() as connection:
@@ -139,23 +139,15 @@ class SqlTriggerRepository:
                     admitted_at=_database_utc(existing),
                 )
 
-            one_hour_ago = requested_at - timedelta(hours=1)
-            admitted_times = tuple(
-                _database_utc(item)
-                for item in connection.execute(
-                    select(analysis_call_admissions.c.admitted_at)
-                    .where(
-                        analysis_call_admissions.c.admitted_at > one_hour_ago,
-                        analysis_call_admissions.c.admitted_at <= requested_at,
-                    )
-                    .order_by(analysis_call_admissions.c.admitted_at)
-                ).scalars()
-            )
+            latest = connection.execute(
+                select(func.max(analysis_call_admissions.c.admitted_at)).where(
+                    analysis_call_admissions.c.admitted_at <= requested_at
+                )
+            ).scalar_one()
             admission = decide_analysis_call_admission(
                 requested_at=requested_at,
-                admitted_times=admitted_times,
+                last_admitted_at=_database_utc(latest) if latest is not None else None,
                 minimum_call_interval_seconds=self._policy.minimum_call_interval_seconds,
-                maximum_ai_calls_per_hour=self._policy.maximum_ai_calls_per_hour,
             )
             if not admission.admitted:
                 return admission

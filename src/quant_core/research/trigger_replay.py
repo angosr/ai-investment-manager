@@ -22,50 +22,35 @@ from quant_core.trigger import (
     trigger_reconsideration,
 )
 
-TRIGGER_REPLAY_VERSION = "portfolio-trigger-replay-v2"
+TRIGGER_REPLAY_VERSION = "portfolio-trigger-replay-v3"
 
 
 class TriggerReplayInitialScopeState(FrozenModel):
     symbol: str
     last_analysis_at: datetime | None = None
-    call_times: tuple[datetime, ...] = ()
 
     _utc_last_analysis = field_validator("last_analysis_at")(
         lambda value: _require_utc(value) if value is not None else None
     )
-    _utc_call_times = field_validator("call_times")(
-        lambda values: tuple(_require_utc(item) for item in values)
-    )
-
-    @model_validator(mode="after")
-    def calls_are_ordered(self):
-        if self.call_times != tuple(sorted(self.call_times)):
-            raise ValueError("初始品种调用完成时间必须有序")
-        if self.call_times and self.last_analysis_at != self.call_times[-1]:
-            raise ValueError("初始最后分析时间必须等于最后调用完成时间")
-        return self
-
-
 class ExternalTriggerReplaySpec(FrozenModel):
-    """冻结生产触发规则及跨品种共享调用预算。"""
+    """冻结生产触发规则及跨品种最小调用间隔。"""
 
     version: str = TRIGGER_REPLAY_VERSION
     plans: tuple[AnalysisTriggerPlan, ...] = Field(min_length=1)
     trigger_policy_version: str
     minimum_call_interval_seconds: int = Field(ge=0)
-    maximum_ai_calls_per_hour: int = Field(gt=0)
     maximum_batch_size: int = Field(gt=0)
     maximum_pending_triggers: int = Field(gt=0)
     trigger_expiry_seconds: int = Field(gt=0)
     analysis_deadline_seconds: int = Field(gt=0)
     analysis_duration_seconds: int = Field(ge=0)
     admission_order: tuple[str, ...] = Field(min_length=1)
-    initial_global_admitted_times: tuple[datetime, ...] = ()
+    initial_global_last_admitted_at: datetime | None = None
     initial_scopes: tuple[TriggerReplayInitialScopeState, ...] = ()
     initial_state_source: Literal["EMPTY", "CYCLE_PERSISTENCE_PROXY", "EXACT"] = "EMPTY"
 
-    _utc_initial_global = field_validator("initial_global_admitted_times")(
-        lambda values: tuple(_require_utc(item) for item in values)
+    _utc_initial_global = field_validator("initial_global_last_admitted_at")(
+        lambda value: _require_utc(value) if value is not None else None
     )
 
     @model_validator(mode="after")
@@ -85,10 +70,8 @@ class ExternalTriggerReplaySpec(FrozenModel):
             raise ValueError("触发回放初始品种状态不得重复")
         if not set(initial_symbols).issubset(symbols):
             raise ValueError("触发回放初始状态不得超出冻结计划")
-        if self.initial_global_admitted_times != tuple(sorted(self.initial_global_admitted_times)):
-            raise ValueError("初始全局准入时间必须有序")
         if self.initial_state_source == "EMPTY" and (
-            self.initial_global_admitted_times or self.initial_scopes
+            self.initial_global_last_admitted_at is not None or self.initial_scopes
         ):
             raise ValueError("非空初始状态必须声明来源")
         return self
@@ -100,7 +83,7 @@ class ExternalTriggerReplaySpec(FrozenModel):
         plans: tuple[AnalysisTriggerPlan, ...],
         config: AppConfig,
         analysis_duration_seconds: int,
-        initial_global_admitted_times: tuple[datetime, ...] = (),
+        initial_global_last_admitted_at: datetime | None = None,
         initial_scopes: tuple[TriggerReplayInitialScopeState, ...] = (),
         initial_state_source: Literal["EMPTY", "CYCLE_PERSISTENCE_PROXY", "EXACT"] = "EMPTY",
         admission_order: tuple[str, ...] | None = None,
@@ -115,14 +98,13 @@ class ExternalTriggerReplaySpec(FrozenModel):
             plans=tuple(by_symbol[symbol] for symbol in order),
             trigger_policy_version=config.trigger.version,
             minimum_call_interval_seconds=config.trigger.minimum_call_interval_seconds,
-            maximum_ai_calls_per_hour=config.trigger.maximum_ai_calls_per_hour,
             maximum_batch_size=config.trigger.maximum_batch_size,
             maximum_pending_triggers=config.trigger.maximum_pending_triggers,
             trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
             analysis_deadline_seconds=config.shadow.analysis_deadline_seconds,
             analysis_duration_seconds=analysis_duration_seconds,
             admission_order=order,
-            initial_global_admitted_times=initial_global_admitted_times,
+            initial_global_last_admitted_at=initial_global_last_admitted_at,
             initial_scopes=initial_scopes,
             initial_state_source=initial_state_source,
         )
@@ -237,7 +219,6 @@ class _ReplayState:
     cursor: int = 0
     pending: dict[str, dict] = field(default_factory=dict)
     last_analysis_at: datetime | None = None
-    call_times: list[datetime] = field(default_factory=list)
     input_retry_not_before: datetime | None = None
     busy_until: datetime | None = None
     accepted: int = 0
@@ -253,7 +234,7 @@ def run_external_trigger_replay(
     replay_start: datetime,
     replay_end: datetime,
 ) -> ExternalTriggerReplay:
-    """在一个离散时钟中回放所有品种协调器及其共享调用预算。"""
+    """在一个离散时钟中回放所有品种协调器及其共享防重复间隔。"""
 
     start = _require_utc(replay_start)
     end = _require_utc(replay_end)
@@ -262,17 +243,11 @@ def run_external_trigger_replay(
     if event_dataset.manifest.requested_start > start or event_dataset.manifest.requested_end < end:
         raise ValueError("历史事件数据集必须覆盖完整触发回放窗口")
     initial_by_symbol = {item.symbol: item for item in spec.initial_scopes}
-    if any(
-        item >= start or item <= start - timedelta(hours=1)
-        for item in spec.initial_global_admitted_times
+    if (
+        spec.initial_global_last_admitted_at is not None
+        and spec.initial_global_last_admitted_at >= start
     ):
-        raise ValueError("初始全局准入必须严格位于回放前一小时")
-    if any(
-        call >= start or call <= start - timedelta(hours=1)
-        for item in spec.initial_scopes
-        for call in item.call_times
-    ):
-        raise ValueError("初始品种调用必须严格位于回放前一小时")
+        raise ValueError("初始全局准入必须早于回放起点")
     if any(
         item.last_analysis_at is not None and item.last_analysis_at >= start
         for item in spec.initial_scopes
@@ -303,15 +278,10 @@ def run_external_trigger_replay(
                 if plan.symbol in initial_by_symbol
                 else None
             ),
-            call_times=(
-                list(initial_by_symbol[plan.symbol].call_times)
-                if plan.symbol in initial_by_symbol
-                else []
-            ),
         )
         for plan in spec.plans
     }
-    global_admitted_times = list(spec.initial_global_admitted_times)
+    global_last_admitted_at = spec.initial_global_last_admitted_at
     batches: list[ReplayedTriggerBatch] = []
     now = start
 
@@ -326,7 +296,6 @@ def run_external_trigger_replay(
                 state = states[symbol]
                 if state.busy_until is not None and state.busy_until <= now:
                     state.last_analysis_at = state.busy_until
-                    state.call_times.append(state.busy_until)
                     state.busy_until = None
                     progressed = True
                 if state.busy_until is None:
@@ -342,25 +311,15 @@ def run_external_trigger_replay(
                     pending=eligible,
                     now=now,
                     last_analysis_at=state.last_analysis_at,
-                    call_times=state.call_times,
                     input_retry_not_before=state.input_retry_not_before,
-                    minimum_call_interval_seconds=spec.minimum_call_interval_seconds,
-                    maximum_ai_calls_per_hour=spec.maximum_ai_calls_per_hour,
                     wake_at_expiry=True,
                 )
-                state.call_times = list(timing.retained_call_times)
                 if timing.reconsider_at > now:
                     continue
-                global_admitted_times = [
-                    item
-                    for item in global_admitted_times
-                    if item > now - timedelta(hours=1)
-                ]
                 admission = decide_analysis_call_admission(
                     requested_at=now,
-                    admitted_times=global_admitted_times,
+                    last_admitted_at=global_last_admitted_at,
                     minimum_call_interval_seconds=spec.minimum_call_interval_seconds,
-                    maximum_ai_calls_per_hour=spec.maximum_ai_calls_per_hour,
                 )
                 if not admission.admitted:
                     state.input_retry_not_before = admission.retry_at
@@ -380,7 +339,7 @@ def run_external_trigger_replay(
                     state.pending.pop(str(item["trigger_id"]), None)
                 state.input_retry_not_before = None
                 state.busy_until = now + timedelta(seconds=spec.analysis_duration_seconds)
-                global_admitted_times.append(now)
+                global_last_admitted_at = now
                 batches.append(
                     ReplayedTriggerBatch(
                         batch=batch,
@@ -401,13 +360,9 @@ def run_external_trigger_replay(
                     pending=_eligible(tuple(state.pending.values())),
                     now=now,
                     last_analysis_at=state.last_analysis_at,
-                    call_times=state.call_times,
                     input_retry_not_before=state.input_retry_not_before,
-                    minimum_call_interval_seconds=spec.minimum_call_interval_seconds,
-                    maximum_ai_calls_per_hour=spec.maximum_ai_calls_per_hour,
                     wake_at_expiry=True,
                 )
-                state.call_times = list(timing.retained_call_times)
                 next_times.append(timing.reconsider_at)
         future = [item for item in next_times if item > now]
         if not future:

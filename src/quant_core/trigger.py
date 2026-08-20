@@ -51,31 +51,22 @@ class AnalysisCallAdmission(FrozenModel):
 def decide_analysis_call_admission(
     *,
     requested_at: datetime,
-    admitted_times: Sequence[datetime],
+    last_admitted_at: datetime | None,
     minimum_call_interval_seconds: int,
-    maximum_ai_calls_per_hour: int,
 ) -> AnalysisCallAdmission:
-    """Pure rolling-budget decision shared by production and historical replay."""
+    """Pure global de-duplication interval shared by production and replay."""
 
     requested_at = _require_utc(requested_at)
     if minimum_call_interval_seconds < 0:
         raise ValueError("minimum_call_interval_seconds 不能为负数")
-    if maximum_ai_calls_per_hour < 1:
-        raise ValueError("maximum_ai_calls_per_hour 必须大于零")
-
-    one_hour_ago = requested_at - timedelta(hours=1)
-    normalized = tuple(_require_utc(item) for item in admitted_times)
-    recent = tuple(
-        sorted(item for item in normalized if one_hour_ago < item <= requested_at)
+    last = _require_utc(last_admitted_at) if last_admitted_at is not None else None
+    if last is not None and last > requested_at:
+        raise ValueError("last_admitted_at 不能晚于 requested_at")
+    retry_at = (
+        max(requested_at, last + timedelta(seconds=minimum_call_interval_seconds))
+        if last is not None
+        else requested_at
     )
-    retry_at = requested_at
-    if len(recent) >= maximum_ai_calls_per_hour:
-        retry_at = max(retry_at, recent[-maximum_ai_calls_per_hour] + timedelta(hours=1))
-    if recent:
-        retry_at = max(
-            retry_at,
-            recent[-1] + timedelta(seconds=minimum_call_interval_seconds),
-        )
     if retry_at > requested_at:
         return AnalysisCallAdmission(admitted=False, retry_at=retry_at)
     return AnalysisCallAdmission(admitted=True, admitted_at=requested_at)
@@ -445,7 +436,6 @@ class TriggerTiming:
     """Pure scheduler result shared by Temporal and historical replay."""
 
     reconsider_at: datetime
-    retained_call_times: tuple[datetime, ...]
 
 
 def trigger_plan_accepts(
@@ -491,10 +481,7 @@ def trigger_reconsideration(
     pending: Sequence[Mapping[str, Any]],
     now: datetime,
     last_analysis_at: datetime | None,
-    call_times: Sequence[datetime],
     input_retry_not_before: datetime | None,
-    minimum_call_interval_seconds: int,
-    maximum_ai_calls_per_hour: int,
     wake_at_expiry: bool,
 ) -> TriggerTiming:
     """Return the next wake time; reaching an expiry means discard, not execute."""
@@ -502,31 +489,15 @@ def trigger_reconsideration(
     current = _require_utc(now)
     if not pending:
         raise ValueError("触发重算至少需要一个待处理事件")
-    if minimum_call_interval_seconds < 0 or maximum_ai_calls_per_hour < 1:
-        raise ValueError("触发调用间隔与小时预算非法")
     last = _require_utc(last_analysis_at) if last_analysis_at is not None else None
     retry_at = (
         _require_utc(input_retry_not_before)
         if input_retry_not_before is not None
         else None
     )
-    retained = tuple(
-        sorted(
-            _require_utc(item)
-            for item in call_times
-            if _require_utc(item) > current - timedelta(hours=1)
-        )
-    )
     earliest = current
     if retry_at is not None:
         earliest = max(earliest, retry_at)
-    if last is not None:
-        earliest = max(
-            earliest,
-            last + timedelta(seconds=minimum_call_interval_seconds),
-        )
-    if len(retained) >= maximum_ai_calls_per_hour:
-        earliest = max(earliest, retained[0] + timedelta(hours=1))
     if int(pending[0].get("priority", 0)) < 100:
         first_seen = min(_trigger_payload_time(item["observed_at"]) for item in pending)
         coalesce = max(
@@ -547,10 +518,7 @@ def trigger_reconsideration(
         ]
         if expiries:
             earliest = min(earliest, min(expiries))
-    return TriggerTiming(
-        reconsider_at=max(earliest, current),
-        retained_call_times=retained,
-    )
+    return TriggerTiming(reconsider_at=max(earliest, current))
 
 
 def _trigger_payload_time(value: str | datetime) -> datetime:
@@ -669,13 +637,6 @@ class TriggerPlanGate:
         for left, right in pairwise(planned_calls):
             if (right - left).total_seconds() < self._policy.minimum_call_interval_seconds:
                 raise ValueError("计划调用点短于硬最小调用间隔")
-        left = 0
-        for right, at in enumerate(planned_calls):
-            while at - planned_calls[left] >= timedelta(hours=1):
-                left += 1
-            if right - left + 1 > self._policy.maximum_ai_calls_per_hour:
-                raise ValueError("计划调用密度超过滚动每小时硬上限")
-
         revised = AnalysisTriggerPlan(
             plan_id=current.plan_id,
             revision=current.revision + 1,

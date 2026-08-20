@@ -18,7 +18,7 @@ const STATE_LABEL: Record<string, string> = {
 export function Accounts() {
   const data = useLive(() => api.accounts(), "accounts");
   const accounts = data?.accounts ?? [];
-  const budget = data?.hourly_budget;
+  const activity = data?.call_activity;
   const allDisabled = accounts.length > 0 && accounts.every((account) => !account.enabled);
 
   return (
@@ -30,11 +30,11 @@ export function Accounts() {
       {accounts.map((account) => (
         <AccountLine key={account.account_id} account={account} />
       ))}
-      {budget ? (
-        <div className={styles.budget}>
-          <span>本小时 AI 调用</span>
+      {activity ? (
+        <div className={styles.activity}>
+          <span>近一小时 AI 启动</span>
           <b>
-            {budget.used} / {budget.cap} 次 · 最小间隔 {budget.minimum_interval_seconds}s
+            {activity.last_hour} 次 · 防重复间隔 {activity.minimum_interval_seconds}s
           </b>
         </div>
       ) : null}

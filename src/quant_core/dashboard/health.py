@@ -35,7 +35,6 @@ def assemble_health(
         _forecast_settlement_check(analysis, now),
         _trigger_delivery_check(analysis, config, now),
         _release_alignment_check(analysis),
-        _call_budget_check(analysis, config),
     ]
     if coordinator_statuses is not None:
         checks.append(_trigger_coordinator_check(coordinator_statuses))
@@ -246,23 +245,6 @@ def _trigger_coordinator_check(statuses: tuple[dict, ...]) -> dict:
         "触发协调器",
         "ok",
         f"无积压 · 执行中 {active} 批",
-    )
-
-
-def _call_budget_check(status: AnalysisRuntimeStatus, config) -> dict:
-    used = status.calls_last_hour
-    cap = config.trigger.maximum_ai_calls_per_hour
-    if used > cap:
-        state = "bad"
-    elif used == cap:
-        state = "warn"
-    else:
-        state = "ok"
-    return _check(
-        "ai_call_budget",
-        "AI 调用预算",
-        state,
-        f"{used}/{cap}" + ("，等待滚动释放" if used == cap else ""),
     )
 
 

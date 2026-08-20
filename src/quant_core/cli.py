@@ -1680,7 +1680,7 @@ def replay_event_triggers_command(
     analysis_duration_seconds: Annotated[int, typer.Option(min=0)],
     admission_order: Annotated[
         str | None,
-        typer.Option(help="同刻争用全局预算的品种顺序，逗号分隔；默认配置顺序"),
+        typer.Option(help="同刻争用全局防重复间隔的品种顺序，逗号分隔；默认配置顺序"),
     ] = None,
     event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/event-datasets"
@@ -1738,41 +1738,33 @@ def replay_event_triggers_command(
             f"当前 Pipeline 缺少冻结 TriggerPlan: {error.args[0]}"
         ) from None
     with engine.connect() as connection:
-        initial_global_admitted_times = tuple(
-            connection.execute(
-                select(analysis_call_admissions.c.admitted_at)
-                .where(
-                    analysis_call_admissions.c.admitted_at
-                    > window_start - timedelta(hours=1),
-                    analysis_call_admissions.c.admitted_at < window_start,
-                )
-                .order_by(analysis_call_admissions.c.admitted_at)
-            ).scalars()
-        )
+        initial_global_last_admitted_at = connection.execute(
+            select(analysis_call_admissions.c.admitted_at)
+            .where(analysis_call_admissions.c.admitted_at < window_start)
+            .order_by(analysis_call_admissions.c.admitted_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
         initial_scope_items = []
         for symbol in loaded.market_data.symbols:
-            completed = tuple(
-                connection.execute(
-                    select(analysis_cycles.c.created_at)
-                    .join(
-                        market_snapshots,
-                        market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
-                    )
-                    .where(
-                        analysis_cycles.c.pipeline_version == loaded.pipeline.version,
-                        market_snapshots.c.symbol == symbol,
-                        analysis_cycles.c.created_at > window_start - timedelta(hours=1),
-                        analysis_cycles.c.created_at < window_start,
-                    )
-                    .order_by(analysis_cycles.c.created_at)
-                ).scalars()
-            )
-            if completed:
+            completed = connection.execute(
+                select(analysis_cycles.c.created_at)
+                .join(
+                    market_snapshots,
+                    market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
+                )
+                .where(
+                    analysis_cycles.c.pipeline_version == loaded.pipeline.version,
+                    market_snapshots.c.symbol == symbol,
+                    analysis_cycles.c.created_at < window_start,
+                )
+                .order_by(analysis_cycles.c.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if completed is not None:
                 initial_scope_items.append(
                     TriggerReplayInitialScopeState(
                         symbol=symbol,
-                        last_analysis_at=completed[-1],
-                        call_times=completed,
+                        last_analysis_at=completed,
                     )
                 )
         initial_scopes = tuple(initial_scope_items)
@@ -1784,7 +1776,7 @@ def replay_event_triggers_command(
             plans=plans,
             config=loaded,
             analysis_duration_seconds=analysis_duration_seconds,
-            initial_global_admitted_times=initial_global_admitted_times,
+            initial_global_last_admitted_at=initial_global_last_admitted_at,
             initial_scopes=initial_scopes,
             initial_state_source="CYCLE_PERSISTENCE_PROXY",
             admission_order=parsed_admission_order,

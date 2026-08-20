@@ -304,7 +304,7 @@ class EventNormalizer:
         "霍尔木兹",
     )
     # v6 只让可辨识的宏观冲击跨越高影响触发门槛。“美联储”或“制裁”
-    # 单独出现仍作为低优先级背景保留，避免例行操作和非加密地缘快讯消耗 AI 预算。
+    # 单独出现仍作为低优先级背景保留，避免例行操作和非加密地缘快讯制造无效调用。
     _refined_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
         "cpi",
         "consumer price index",

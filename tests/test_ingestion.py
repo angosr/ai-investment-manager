@@ -513,7 +513,7 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
     assert direct.relevance == Decimal("1")
 
 
-def test_v6_keeps_broad_macro_context_without_spending_high_impact_budget() -> None:
+def test_v6_keeps_broad_macro_context_without_high_impact_trigger() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     legacy = EventNormalizer(
         version="trendradar-collector-v5",

@@ -197,8 +197,6 @@ def build_trigger_coordinator_input(plan: AnalysisTriggerPlan, config: AppConfig
         "plan": plan.model_dump(mode="json"),
         "settings": {
             "trigger_policy_version": config.trigger.version,
-            "minimum_call_interval_seconds": config.trigger.minimum_call_interval_seconds,
-            "maximum_ai_calls_per_hour": config.trigger.maximum_ai_calls_per_hour,
             "maximum_batch_size": config.trigger.maximum_batch_size,
             "maximum_pending_triggers": config.trigger.maximum_pending_triggers,
             "trigger_expiry_seconds": config.trigger.trigger_expiry_seconds,
