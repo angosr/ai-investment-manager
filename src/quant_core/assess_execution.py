@@ -56,19 +56,9 @@ class ContextAssessmentExecutor:
         self._store = store
         self._analyst = analyst
 
-    def execute(
-        self,
-        packet: DecisionPacket,
-        *,
-        expected_analysis_behavior_hash: str | None = None,
-    ) -> AssessmentExecution:
+    def execute(self, packet: DecisionPacket) -> AssessmentExecution:
         authoritative_packet = self._store.record_packet(packet)
         behavior_hash = self._analyst.behavior_hash(authoritative_packet)
-        if (
-            expected_analysis_behavior_hash is not None
-            and behavior_hash != expected_analysis_behavior_hash
-        ):
-            raise ValueError("当前 Codex 分析行为与冻结 Workflow 输入不一致")
         existing = self._store.assessment_for(
             packet_id=authoritative_packet.packet_id,
             analysis_behavior_hash=behavior_hash,
