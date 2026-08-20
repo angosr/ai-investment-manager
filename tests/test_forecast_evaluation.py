@@ -20,7 +20,11 @@ from quant_core.domain import (
 from quant_core.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
+    ForwardForecastEvaluationSpec,
     SqlAnalysisForecastOutcomeStore,
+    build_forward_forecast_evaluation_plan,
+    evaluate_forward_forecast_plan,
+    validate_forward_forecast_evaluation_plan,
 )
 from quant_core.market_data import MarketTrade
 from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
@@ -427,6 +431,144 @@ def _scored_outcome(
         direction_correct=directional_return > 0,
         reason_code="DIRECTIONAL_RETURN_AVAILABLE",
     )
+
+
+def _forward_spec(start, **updates) -> ForwardForecastEvaluationSpec:
+    values = {
+        "plan_id": "forward-forecast-plan-v1",
+        "analysis_behavior_hash": "a" * 64,
+        "outcome_evaluation_version": "analysis-forecast-v2",
+        "signal_window_start": start,
+        "signal_window_end": start + timedelta(hours=4),
+        "symbols": ("BTCUSDT",),
+        "horizons_minutes": (60,),
+        "minimum_non_overlapping_samples": 2,
+        "settlement_grace_minutes": 10,
+    }
+    values.update(updates)
+    return ForwardForecastEvaluationSpec(**values)
+
+
+def test_forward_forecast_plan_must_precede_feasible_signal_window(
+    replay_input,
+) -> None:
+    start = replay_input.market.as_of + timedelta(hours=1)
+    spec = _forward_spec(start)
+    plan = build_forward_forecast_evaluation_plan(
+        spec=spec,
+        base_manifest_id="champion-v1",
+        registered_at=start - timedelta(seconds=1),
+    )
+    publication = spec.signal_window_end + timedelta(minutes=70)
+
+    validate_forward_forecast_evaluation_plan(
+        spec=spec,
+        plan=plan,
+        champion_manifest_id="champion-v1",
+        published_at=publication,
+    )
+    assert plan.minimum_sample_size == 2
+    with pytest.raises(ValueError, match="首个信号生成前"):
+        build_forward_forecast_evaluation_plan(
+            spec=spec,
+            base_manifest_id="champion-v1",
+            registered_at=start,
+        )
+    with pytest.raises(ValueError, match="完整到期"):
+        validate_forward_forecast_evaluation_plan(
+            spec=spec,
+            plan=plan,
+            champion_manifest_id="champion-v1",
+            published_at=publication - timedelta(seconds=1),
+        )
+
+
+def test_forward_forecast_evaluation_uses_signal_window_and_paired_gate(
+    replay_input,
+) -> None:
+    start = replay_input.market.as_of
+    spec = _forward_spec(start)
+    outcomes = tuple(
+        _scored_outcome(
+            index,
+            signal_at=start + timedelta(minutes=60 * index),
+            return_bps="10",
+            directional_view=DirectionalView.DOWN,
+        ).model_copy(update={"analysis_behavior_hash": spec.analysis_behavior_hash})
+        for index in range(2)
+    )
+    publication = spec.signal_window_end + timedelta(minutes=70)
+
+    result = evaluate_forward_forecast_plan(
+        spec=spec,
+        outcomes=outcomes,
+        published_at=publication,
+    )
+
+    assert result.passed_incremental_gate
+    assert result.reason_codes == ()
+    scope = result.report.scopes[0]
+    assert scope.non_overlapping_scored_count == 2
+    assert scope.average_directional_return_bps_delta_vs_always_up == Decimal("20")
+    assert scope.average_directional_return_bps_delta_lower_bound_vs_always_up == Decimal(
+        "20"
+    )
+
+
+def test_forward_forecast_evaluation_fails_when_registered_scope_is_missing(
+    replay_input,
+) -> None:
+    start = replay_input.market.as_of
+    spec = _forward_spec(start, symbols=("BTCUSDT", "ETHUSDT"))
+    outcomes = tuple(
+        _scored_outcome(
+            index,
+            signal_at=start + timedelta(minutes=60 * index),
+            return_bps="10",
+            directional_view=DirectionalView.DOWN,
+        ).model_copy(update={"analysis_behavior_hash": spec.analysis_behavior_hash})
+        for index in range(2)
+    )
+
+    result = evaluate_forward_forecast_plan(
+        spec=spec,
+        outcomes=outcomes,
+        published_at=spec.signal_window_end + timedelta(minutes=70),
+    )
+
+    assert not result.passed_incremental_gate
+    assert "EXPECTED_SCOPE_MISSING" in result.reason_codes
+
+
+def test_forward_forecast_store_selects_exact_signal_times(replay_input) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlAnalysisForecastOutcomeStore(engine)
+    start = replay_input.market.as_of
+    spec = _forward_spec(start)
+    inside = _scored_outcome(91, signal_at=start, return_bps="10").model_copy(
+        update={"analysis_behavior_hash": spec.analysis_behavior_hash}
+    )
+    before = _scored_outcome(
+        92,
+        signal_at=start - timedelta(microseconds=1),
+        return_bps="10",
+    ).model_copy(update={"analysis_behavior_hash": spec.analysis_behavior_hash})
+    after = _scored_outcome(
+        93,
+        signal_at=spec.signal_window_end,
+        return_bps="10",
+    ).model_copy(update={"analysis_behavior_hash": spec.analysis_behavior_hash})
+    assert store.record(inside)
+    assert store.record(before)
+    assert store.record(after)
+
+    selected = store.visible_outcomes_for_signal_window(
+        spec=spec,
+        published_at=spec.signal_window_end + timedelta(minutes=70),
+    )
+
+    assert selected == (inside,)
 
 
 def test_forecast_report_uses_non_overlapping_samples_and_scope_gate(

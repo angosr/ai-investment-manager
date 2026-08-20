@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
-from sqlalchemy import func, insert, select
+from sqlalchemy import and_, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -19,6 +20,7 @@ from quant_core.domain import (
     FrozenModel,
     _require_utc,
 )
+from quant_core.governance import EvaluationPlan, EvaluationStage
 from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import (
     analysis_cycles,
@@ -126,6 +128,143 @@ class ForecastEvaluationReport(FrozenModel):
         if self.report_id != expected_id:
             raise ValueError("预测评价 report_id 不一致")
         return self
+
+
+class ForwardForecastEvaluationSpec(FrozenModel):
+    """Result-before-known contract for one behavior-equivalent forecast cohort."""
+
+    version: Literal["forward-forecast-evaluation-spec-v1"] = (
+        "forward-forecast-evaluation-spec-v1"
+    )
+    plan_id: str
+    analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    outcome_evaluation_version: str
+    signal_window_start: datetime
+    signal_window_end: datetime
+    symbols: tuple[str, ...] = Field(min_length=1)
+    horizons_minutes: tuple[int, ...] = Field(min_length=1)
+    minimum_non_overlapping_samples: int = Field(default=30, ge=2)
+    settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
+    report_version: Literal["analysis-forecast-report-v3"] = (
+        "analysis-forecast-report-v3"
+    )
+    lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
+    baseline_id: Literal["always-up-on-ai-scored-timestamps-v1"] = (
+        "always-up-on-ai-scored-timestamps-v1"
+    )
+
+    _utc_signal_start = field_validator("signal_window_start")(_require_utc)
+    _utc_signal_end = field_validator("signal_window_end")(_require_utc)
+
+    @model_validator(mode="after")
+    def scope_is_canonical_and_feasible(self):
+        if not self.signal_window_start < self.signal_window_end:
+            raise ValueError("前向预测信号窗口起点必须早于终点")
+        if self.symbols != tuple(sorted(set(self.symbols))):
+            raise ValueError("前向预测品种必须唯一且有序")
+        if self.horizons_minutes != tuple(sorted(set(self.horizons_minutes))) or any(
+            item <= 0 for item in self.horizons_minutes
+        ):
+            raise ValueError("前向预测周期必须为唯一、升序正整数")
+        required_span = timedelta(
+            minutes=max(self.horizons_minutes)
+            * self.minimum_non_overlapping_samples
+        )
+        if self.signal_window_end - self.signal_window_start < required_span:
+            raise ValueError("前向预测窗口不足以形成预登记非重叠样本")
+        return self
+
+
+class ForwardForecastEvaluationResult(FrozenModel):
+    version: Literal["forward-forecast-evaluation-result-v1"] = (
+        "forward-forecast-evaluation-result-v1"
+    )
+    result_id: str
+    evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plan_id: str
+    expected_scopes: tuple[tuple[str, int], ...] = Field(min_length=1)
+    report: ForecastEvaluationReport
+    passed_incremental_gate: bool
+    reason_codes: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def identity_matches_payload(self):
+        expected = stable_id(
+            "forward_forecast_evaluation",
+            self.evaluation_spec_hash,
+            self.report.report_id,
+            self.expected_scopes,
+            self.passed_incremental_gate,
+            self.reason_codes,
+        )
+        if self.result_id != expected:
+            raise ValueError("前向预测评价结果身份不一致")
+        return self
+
+
+def build_forward_forecast_evaluation_plan(
+    *,
+    spec: ForwardForecastEvaluationSpec,
+    base_manifest_id: str,
+    registered_at: datetime,
+) -> EvaluationPlan:
+    registered = _require_utc(registered_at)
+    if registered >= spec.signal_window_start:
+        raise ValueError("前向预测计划必须在首个信号生成前登记")
+    return EvaluationPlan(
+        plan_id=spec.plan_id,
+        registered_at=registered,
+        base_manifest_id=base_manifest_id,
+        primary_metric=(
+            "average_directional_return_bps_delta_lower_bound_vs_always_up"
+        ),
+        minimum_sample_size=(
+            spec.minimum_non_overlapping_samples
+            * len(spec.symbols)
+            * len(spec.horizons_minutes)
+        ),
+        hard_guardrails=(
+            "NON_OVERLAPPING_SAMPLE_SUFFICIENT_EACH_SCOPE",
+            "PAIRED_RETURN_DELTA_LOWER_BOUND_POSITIVE_EACH_SCOPE",
+            "NO_OVERDUE_FORECAST_IN_SIGNAL_WINDOW",
+        ),
+        required_stages=(EvaluationStage.SHADOW,),
+        fixed_regression_suite_version="analysis-forecast-evaluation-regression-v1",
+        candidate_spec_hash=content_hash(spec),
+        candidate_spec_snapshot=spec.model_dump(mode="json"),
+    )
+
+
+def validate_forward_forecast_evaluation_plan(
+    *,
+    spec: ForwardForecastEvaluationSpec,
+    plan: EvaluationPlan,
+    champion_manifest_id: str,
+    published_at: datetime,
+) -> None:
+    published = _require_utc(published_at)
+    if plan.plan_id != spec.plan_id or plan.base_manifest_id != champion_manifest_id:
+        raise ValueError("前向预测计划身份或治理基线不一致")
+    if plan.registered_at >= spec.signal_window_start:
+        raise ValueError("前向预测计划未在首个信号前登记")
+    if plan.candidate_spec_hash != content_hash(spec):
+        raise ValueError("前向预测行为、窗口、作用域或门槛与预登记规格不一致")
+    expected_size = (
+        spec.minimum_non_overlapping_samples
+        * len(spec.symbols)
+        * len(spec.horizons_minutes)
+    )
+    if (
+        plan.minimum_sample_size != expected_size
+        or plan.required_stages != (EvaluationStage.SHADOW,)
+        or plan.blind_query_budget != 0
+    ):
+        raise ValueError("前向预测计划阶段或样本门槛不一致")
+    complete_after = spec.signal_window_end + timedelta(
+        minutes=max(spec.horizons_minutes) + spec.settlement_grace_minutes
+    )
+    if published < complete_after:
+        raise ValueError("前向预测窗口尚未完整到期并经过结算宽限")
 
 
 class SqlAnalysisForecastOutcomeStore:
@@ -330,6 +469,56 @@ class SqlAnalysisForecastOutcomeStore:
                 AnalysisForecastOutcome.model_validate(payload) for payload in payloads
             )
 
+    def visible_outcomes_for_signal_window(
+        self,
+        *,
+        spec: ForwardForecastEvaluationSpec,
+        published_at: datetime,
+    ) -> tuple[AnalysisForecastOutcome, ...]:
+        """Select exact Codex-completion times without widening horizon boundaries."""
+
+        published = _require_utc(published_at)
+        horizon_ranges = tuple(
+            and_(
+                analysis_forecast_outcomes.c.view_horizon_minutes == horizon,
+                analysis_forecast_outcomes.c.evaluation_at
+                >= spec.signal_window_start + timedelta(minutes=horizon),
+                analysis_forecast_outcomes.c.evaluation_at
+                < spec.signal_window_end + timedelta(minutes=horizon),
+            )
+            for horizon in spec.horizons_minutes
+        )
+        with self._engine.connect() as connection:
+            payloads = tuple(
+                connection.execute(
+                    select(analysis_forecast_outcomes.c.payload)
+                    .where(
+                        analysis_forecast_outcomes.c.analysis_behavior_hash
+                        == spec.analysis_behavior_hash,
+                        or_(*horizon_ranges),
+                        analysis_forecast_outcomes.c.settled_at <= published,
+                    )
+                    .order_by(
+                        analysis_forecast_outcomes.c.evaluation_at,
+                        analysis_forecast_outcomes.c.outcome_id,
+                    )
+                ).scalars()
+            )
+        outcomes = tuple(
+            AnalysisForecastOutcome.model_validate(payload) for payload in payloads
+        )
+        if any(
+            item.symbol not in spec.symbols
+            or item.view_horizon_minutes not in spec.horizons_minutes
+            or item.analysis_behavior_hash != spec.analysis_behavior_hash
+            or not spec.signal_window_start
+            <= item.signal_observed_at
+            < spec.signal_window_end
+            for item in outcomes
+        ):
+            raise ValueError("前向预测查询混入预登记 signal-time 作用域外结果")
+        return outcomes
+
 
 @dataclass(frozen=True, slots=True)
 class AnalysisForecastEvaluator:
@@ -525,6 +714,95 @@ class AnalysisForecastEvaluator:
             limitations=tuple(limitations),
             outcome_ids=tuple(item.outcome_id for item in ordered),
         )
+
+
+def evaluate_forward_forecast_plan(
+    *,
+    spec: ForwardForecastEvaluationSpec,
+    outcomes: tuple[AnalysisForecastOutcome, ...],
+    published_at: datetime,
+) -> ForwardForecastEvaluationResult:
+    """Evaluate only the cohort frozen by a result-before-known signal window."""
+
+    published = _require_utc(published_at)
+    if any(
+        item.analysis_behavior_hash != spec.analysis_behavior_hash
+        or item.symbol not in spec.symbols
+        or item.view_horizon_minutes not in spec.horizons_minutes
+        or not spec.signal_window_start
+        <= item.signal_observed_at
+        < spec.signal_window_end
+        for item in outcomes
+    ):
+        raise ValueError("前向预测评价包含预登记 signal-time 作用域外结果")
+    report = AnalysisForecastEvaluator(
+        report_version=spec.report_version,
+        minimum_non_overlapping_samples=spec.minimum_non_overlapping_samples,
+        lower_confidence_z=spec.lower_confidence_z,
+    ).evaluate(
+        outcomes=outcomes,
+        outcome_evaluation_version=spec.outcome_evaluation_version,
+        analysis_behavior_hash=spec.analysis_behavior_hash,
+        window_start=spec.signal_window_start
+        + timedelta(minutes=min(spec.horizons_minutes)),
+        window_end=spec.signal_window_end
+        + timedelta(minutes=max(spec.horizons_minutes)),
+        published_at=published,
+    )
+    expected_scopes = tuple(
+        (symbol, horizon)
+        for symbol in spec.symbols
+        for horizon in spec.horizons_minutes
+    )
+    observed_scopes = tuple(
+        (scope.symbol, scope.view_horizon_minutes) for scope in report.scopes
+    )
+    reasons: list[str] = []
+    if observed_scopes != expected_scopes:
+        reasons.append("EXPECTED_SCOPE_MISSING")
+    if any(not scope.sample_sufficient for scope in report.scopes):
+        reasons.append("NON_OVERLAPPING_SAMPLE_TOO_SMALL")
+    if any(
+        scope.baseline_id != spec.baseline_id
+        or scope.average_directional_return_bps_delta_lower_bound_vs_always_up
+        is None
+        or scope.average_directional_return_bps_delta_lower_bound_vs_always_up <= 0
+        for scope in report.scopes
+    ):
+        reasons.append("PAIRED_RETURN_DELTA_LOWER_BOUND_NOT_POSITIVE")
+    spec_hash = content_hash(spec)
+    reason_codes = tuple(reasons)
+    passed = not reasons
+    result_id = stable_id(
+        "forward_forecast_evaluation",
+        spec_hash,
+        report.report_id,
+        expected_scopes,
+        passed,
+        reason_codes,
+    )
+    return ForwardForecastEvaluationResult(
+        result_id=result_id,
+        evaluation_spec_hash=spec_hash,
+        plan_id=spec.plan_id,
+        expected_scopes=expected_scopes,
+        report=report,
+        passed_incremental_gate=passed,
+        reason_codes=reason_codes,
+    )
+
+
+def pending_forecast_matches_forward_spec(
+    pending: PendingAnalysisForecast,
+    spec: ForwardForecastEvaluationSpec,
+) -> bool:
+    return (
+        pending.available_at is not None
+        and pending.analysis_behavior_hash == spec.analysis_behavior_hash
+        and pending.proposal.symbol in spec.symbols
+        and pending.forecast.horizon_minutes in spec.horizons_minutes
+        and spec.signal_window_start <= pending.available_at < spec.signal_window_end
+    )
 
 
 @dataclass(slots=True)

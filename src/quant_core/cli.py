@@ -331,6 +331,145 @@ def evaluate_ai_forecasts(
     )
 
 
+@app.command("register-ai-forecast-plan")
+def register_ai_forecast_plan(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    analysis_behavior_hash: Annotated[str, typer.Option()],
+    signal_window_start: Annotated[str, typer.Option()],
+    signal_window_end: Annotated[str, typer.Option()],
+    minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
+) -> None:
+    """在首个结果发生前冻结 AI 预测的 signal-time 前向评价窗口。"""
+
+    from quant_core.forecast_evaluation import (
+        ForwardForecastEvaluationSpec,
+        build_forward_forecast_evaluation_plan,
+    )
+
+    loaded = load_config(config)
+    registered_at = datetime.now(UTC)
+    try:
+        spec = ForwardForecastEvaluationSpec(
+            plan_id=plan_id,
+            analysis_behavior_hash=analysis_behavior_hash,
+            outcome_evaluation_version=loaded.outcome_evaluation.forecast_version,
+            signal_window_start=_parse_utc_option(
+                signal_window_start, name="signal-window-start"
+            ),
+            signal_window_end=_parse_utc_option(
+                signal_window_end, name="signal-window-end"
+            ),
+            symbols=tuple(sorted(loaded.market_data.symbols)),
+            horizons_minutes=loaded.proposal.forecast_horizons_minutes,
+            minimum_non_overlapping_samples=minimum_non_overlapping_samples,
+            settlement_grace_minutes=(
+                loaded.outcome_evaluation.settlement_grace_minutes
+            ),
+        )
+        engine = _runtime_engine(database_url)
+        governance = SqlGovernanceRepository(engine)
+        plan = build_forward_forecast_evaluation_plan(
+            spec=spec,
+            base_manifest_id=governance.get_champion().manifest_id,
+            registered_at=registered_at,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    governance.register_plan(plan)
+    typer.echo(
+        json.dumps(
+            {
+                "evaluation_plan": plan.model_dump(mode="json"),
+                "forecast_spec": spec.model_dump(mode="json"),
+                "forecast_spec_hash": content_hash(spec),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("evaluate-ai-forecast-plan")
+def evaluate_ai_forecast_plan(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    published_at: Annotated[str, typer.Option()],
+) -> None:
+    """只按预登记 signal-time 窗口评价行为等价的前向 AI 预测。"""
+
+    from quant_core.forecast_evaluation import (
+        ForwardForecastEvaluationSpec,
+        SqlAnalysisForecastOutcomeStore,
+        evaluate_forward_forecast_plan,
+        pending_forecast_matches_forward_spec,
+        validate_forward_forecast_evaluation_plan,
+    )
+
+    publication = _parse_utc_option(published_at, name="published-at")
+    now = datetime.now(UTC)
+    if publication > now:
+        raise typer.BadParameter("published-at 不能晚于当前时间")
+    engine = _runtime_engine(database_url)
+    governance = SqlGovernanceRepository(engine)
+    plan = governance.get_plan(plan_id)
+    if plan is None or plan.candidate_spec_snapshot is None:
+        raise typer.BadParameter("前向预测 EvaluationPlan 不存在", param_hint="plan-id")
+    try:
+        spec = ForwardForecastEvaluationSpec.model_validate(
+            plan.candidate_spec_snapshot
+        )
+        validate_forward_forecast_evaluation_plan(
+            spec=spec,
+            plan=plan,
+            champion_manifest_id=governance.get_champion().manifest_id,
+            published_at=publication,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    store = SqlAnalysisForecastOutcomeStore(engine)
+    pending_scan = store.pending(limit=1000)
+    if len(pending_scan) == 1000:
+        raise typer.BadParameter(
+            "未结算预测扫描达到上限，无法证明前向窗口完整",
+            param_hint="plan-id",
+        )
+    pending = tuple(
+        item
+        for item in pending_scan
+        if pending_forecast_matches_forward_spec(item, spec)
+    )
+    if pending:
+        raise typer.BadParameter(
+            "预登记 signal-time 窗口仍有未结算预测",
+            param_hint="plan-id",
+        )
+    outcomes = store.visible_outcomes_for_signal_window(
+        spec=spec,
+        published_at=publication,
+    )
+    result = evaluate_forward_forecast_plan(
+        spec=spec,
+        outcomes=outcomes,
+        published_at=publication,
+    )
+    typer.echo(
+        json.dumps(
+            result.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+    )
+
+
 @app.command("validate-config")
 def validate_config(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],

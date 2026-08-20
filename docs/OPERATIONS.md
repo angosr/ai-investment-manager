@@ -110,6 +110,20 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
 - 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
 
+行为版本冻结后、首个计划内预测生成前登记方向评价窗口：
+
+```bash
+QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+  .venv/bin/quant-core register-ai-forecast-plan \
+  --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
+  --analysis-behavior-hash '<64 位行为哈希>' \
+  --signal-window-start '<未来 UTC 起点>' \
+  --signal-window-end '<固定 UTC 终点>' \
+  --minimum-non-overlapping-samples 30
+```
+
+只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-ai-forecast-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算预测、独立样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。
+
 部署私有配置必须满足：
 
 ```yaml
