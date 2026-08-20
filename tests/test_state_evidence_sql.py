@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, func, insert, select
 
 from investment_manager.fact_pipeline import build_state_snapshot
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.features import FeatureEngine
+from investment_manager.market.features import FeatureEngine
 from investment_manager.persistence import (
     state_evidence_snapshots,
     state_snapshots,

@@ -7,7 +7,6 @@ from investment_manager.config import ExecutionPolicy
 from investment_manager.domain import (
     ExitReason,
     Fill,
-    MarketSnapshot,
     Order,
     OrderStatus,
     OrderType,
@@ -18,6 +17,7 @@ from investment_manager.domain import (
     TradeIntent,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.market.models import MarketSnapshot
 
 
 def entry_client_order_id(intent: TradeIntent, risk: RiskDecision) -> str:

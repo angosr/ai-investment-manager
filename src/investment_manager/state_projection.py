@@ -10,11 +10,7 @@ from investment_manager.asset_management import (
     MaterialDelta,
     StateSnapshot,
 )
-from investment_manager.domain import (
-    AccountSnapshot,
-    FeatureSnapshot,
-    MarketSnapshot,
-)
+from investment_manager.domain import AccountSnapshot
 from investment_manager.fact_pipeline import (
     FactDeltaPolicy,
     build_fact_material_delta,
@@ -23,6 +19,10 @@ from investment_manager.fact_pipeline import (
 from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 from investment_manager.state_evidence_sql import SqlStateEvidenceStore
 
 

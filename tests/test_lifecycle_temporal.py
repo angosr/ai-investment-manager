@@ -18,12 +18,12 @@ from investment_manager.lifecycle_runtime import (
     PositionLifecycleActivities,
     build_lifecycle_workflow_request,
 )
-from investment_manager.market_data import (
+from investment_manager.market.models import (
     ClosedMarketBar,
-    InMemoryMarketDataStore,
     MarketQuote,
     MarketTrade,
 )
+from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.reconciliation import MockReconciler
 
 

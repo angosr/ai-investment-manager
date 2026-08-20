@@ -24,7 +24,7 @@ from investment_manager.evaluation import OutcomeMetrics, calculate_outcome_metr
 from investment_manager.governance import ReleaseManifest, validate_manifest_against_config
 from investment_manager.ledger import CycleFacts
 from investment_manager.lifecycle import OpenLifecycleRecord
-from investment_manager.market_data_sql import market_quotes, market_trades
+from investment_manager.market.repository import market_quotes, market_trades
 from investment_manager.panel import sanitize_external_text
 from investment_manager.persistence import (
     SqlFactLedger,

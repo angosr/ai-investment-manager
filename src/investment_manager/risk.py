@@ -7,7 +7,6 @@ from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
     GuardState,
-    MarketSnapshot,
     RiskDecision,
     RiskOutcome,
     RiskReservation,
@@ -18,6 +17,7 @@ from investment_manager.domain import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import floor_to_step
+from investment_manager.market.models import MarketSnapshot
 
 
 class RiskEngine:

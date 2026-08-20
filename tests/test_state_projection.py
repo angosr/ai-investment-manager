@@ -17,7 +17,7 @@ from investment_manager.fact_pipeline import (
     OfficialFactProjectionPolicy,
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.features import FeatureEngine
+from investment_manager.market.features import FeatureEngine
 from investment_manager.official_fact_pipeline import SqlFedFactIngestor
 from investment_manager.persistence import (
     material_deltas,

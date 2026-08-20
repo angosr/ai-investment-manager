@@ -10,13 +10,15 @@ from investment_manager.config import PanelPolicy
 from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
-    FeatureSnapshot,
     IntelligenceEvent,
-    MarketSnapshot,
     PanelEvidence,
     PanelSnapshot,
 )
 from investment_manager.kernel.identity import content_hash
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAGS = re.compile(r"<[^>]+>")

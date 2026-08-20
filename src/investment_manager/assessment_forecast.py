@@ -22,7 +22,7 @@ from investment_manager.kernel.types import (
     FrozenModel,
     Money,
 )
-from investment_manager.market_data import MarketTrade
+from investment_manager.market.models import MarketTrade
 
 
 class AssessmentForecastPolicy(FrozenModel):

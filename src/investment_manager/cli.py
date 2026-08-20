@@ -54,8 +54,8 @@ from investment_manager.lifecycle_runtime import (
     assemble_lifecycle_activities,
     assemble_lifecycle_supervisor,
 )
-from investment_manager.market_data import MarketShockDetector, assemble_shadow_market_stream
-from investment_manager.market_data_sql import SqlMarketDataStore
+from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.outcome_evaluation_runtime import assemble_outcome_evaluation
 from investment_manager.persistence import (
     SqlEventStore,

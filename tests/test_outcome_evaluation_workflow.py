@@ -8,9 +8,9 @@ from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import MarketSnapshot
 from investment_manager.evaluation import OutcomeWindowEvaluator, OutcomeWindowStatus
 from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.mock_exchange_sql import SqlMockExchange
 from investment_manager.outcome_evaluation_runtime import (
     OutcomeEvaluationActivities,

@@ -9,12 +9,12 @@ from investment_manager.config import AppConfig
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution import MockExchange
 from investment_manager.ingestion import InMemoryEventStore
-from investment_manager.market_data import (
+from investment_manager.market.models import (
     ClosedMarketBar,
-    InMemoryMarketDataStore,
     MarketQuote,
     MarketTrade,
 )
+from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.persistence import SqlFactLedger
 from investment_manager.portfolio_protection import InMemoryPortfolioProtectionStore
 from investment_manager.risk_budget import SqlRiskBudgetStore

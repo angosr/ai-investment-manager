@@ -19,11 +19,11 @@ from temporalio.worker import Worker
 
 from investment_manager.config import AppConfig, DeploymentStage, TemporalPolicy
 from investment_manager.cycle import CycleInput
-from investment_manager.features import FeatureEngine
 from investment_manager.ingestion import EventStore
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.market_data import MarketDataStore
+from investment_manager.market.features import FeatureEngine
+from investment_manager.market.repository import MarketDataStore
 from investment_manager.portfolio_protection import PortfolioProtectionStore
 from investment_manager.shadow import ShadowStateReader
 from investment_manager.trigger import (

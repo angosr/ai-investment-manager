@@ -21,7 +21,6 @@ from investment_manager.domain import (
     CycleOutcome,
     DecisionOutcome,
     IntelligenceEvent,
-    MarketSnapshot,
     MetricObservation,
     Order,
     OrderStatus,
@@ -39,7 +38,6 @@ from investment_manager.execution_contract import (
     build_execution_request,
     build_execution_result,
 )
-from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -50,6 +48,8 @@ from investment_manager.ledger import (
     RiskReservationRejected,
 )
 from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.market.features import FeatureEngine
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.metrics import observation
 from investment_manager.panel import PanelBuilder
 from investment_manager.reconciliation import MockReconciler

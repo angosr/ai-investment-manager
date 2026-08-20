@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from itertools import pairwise
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -15,6 +14,7 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     UnitInterval,
 )
+from investment_manager.market.models import FeatureSnapshot, MarketSnapshot
 
 
 class Action(StrEnum):
@@ -90,81 +90,6 @@ class ExitReason(StrEnum):
     PROTECTION_FAILURE = "PROTECTION_FAILURE"
 
 
-class MarketBar(FrozenModel):
-    event_time: datetime
-    observed_at: datetime
-    open: PositiveDecimal
-    high: PositiveDecimal
-    low: PositiveDecimal
-    close: PositiveDecimal
-    volume: Money
-
-    _utc_event_time = field_validator("event_time")(require_utc)
-    _utc_observed_at = field_validator("observed_at")(require_utc)
-
-    @field_validator("high")
-    @classmethod
-    def high_must_cover_prices(cls, value: Decimal, info):
-        values = info.data
-        if "open" in values and value < values["open"]:
-            raise ValueError("high 不能低于 open")
-        return value
-
-    @field_validator("close")
-    @classmethod
-    def close_must_be_in_range(cls, value: Decimal, info):
-        low = info.data.get("low")
-        high = info.data.get("high")
-        if low is not None and high is not None and not low <= value <= high:
-            raise ValueError("close 必须位于 low 与 high 之间")
-        return value
-
-
-class MarketSnapshot(FrozenModel):
-    cycle_id: str
-    symbol: str
-    as_of: datetime
-    observed_at: datetime
-    bid: PositiveDecimal
-    ask: PositiveDecimal
-    last: PositiveDecimal
-    bars: tuple[MarketBar, ...] = Field(min_length=2)
-    source: str
-
-    _utc_as_of = field_validator("as_of")(require_utc)
-    _utc_observed_at = field_validator("observed_at")(require_utc)
-
-    @field_validator("observed_at")
-    @classmethod
-    def observation_must_be_visible(cls, value: datetime, info):
-        as_of = info.data.get("as_of")
-        if as_of is not None and value > as_of:
-            raise ValueError("行情 observed_at 不能晚于 as_of")
-        return value
-
-    @field_validator("ask")
-    @classmethod
-    def ask_not_below_bid(cls, value: Decimal, info):
-        bid = info.data.get("bid")
-        if bid is not None and value < bid:
-            raise ValueError("ask 不能低于 bid")
-        return value
-
-    @field_validator("bars")
-    @classmethod
-    def bars_must_be_visible_and_sorted(
-        cls, bars: tuple[MarketBar, ...], info
-    ) -> tuple[MarketBar, ...]:
-        as_of = info.data.get("as_of")
-        if any(left.event_time >= right.event_time for left, right in pairwise(bars)):
-            raise ValueError("bars 必须按 event_time 严格递增")
-        if as_of is not None and any(
-            bar.observed_at > as_of or bar.event_time > as_of for bar in bars
-        ):
-            raise ValueError("快照不能包含 as_of 之后才观察到的行情")
-        return bars
-
-
 class Position(FrozenModel):
     symbol: str
     quantity: Decimal
@@ -206,22 +131,6 @@ class IntelligenceEvent(FrozenModel):
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
-
-
-class FeatureSnapshot(FrozenModel):
-    cycle_id: str
-    symbol: str
-    as_of: datetime
-    feature_set_version: str
-    return_fraction: Decimal
-    realized_volatility: Money
-    atr: Money
-    spread_bps: Money
-    volume_ratio: Money
-    regime: Literal["TRENDING_UP", "TRENDING_DOWN", "RANGING", "UNKNOWN"]
-    market_age_seconds: int = Field(ge=0)
-
-    _utc_as_of = field_validator("as_of")(require_utc)
 
 
 class PanelEvidence(FrozenModel):

@@ -22,7 +22,7 @@ from investment_manager.domain import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market_data import ClosedMarketBar
+from investment_manager.market.models import ClosedMarketBar
 
 _INTERVAL_MILLISECONDS = {
     "1m": 60_000,

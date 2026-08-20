@@ -18,9 +18,7 @@ from investment_manager.cli import _parse_research_symbol
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    FeatureSnapshot,
     IntelligenceEvent,
-    MarketSnapshot,
     OrderType,
     PriceCondition,
     ProgramExitCondition,
@@ -29,7 +27,11 @@ from investment_manager.domain import (
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market_data import ClosedMarketBar
+from investment_manager.market.models import (
+    ClosedMarketBar,
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 from investment_manager.research.carry import (
     CarryFundingSettlement,
     CarryInstrumentSpec,

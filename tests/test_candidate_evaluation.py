@@ -11,8 +11,8 @@ from investment_manager.candidate_evaluation import (
 )
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.domain import CandidateOutcome, CandidateOutcomeStatus
-from investment_manager.market_data import MarketTrade
-from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.market.models import MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.mock_exchange_sql import SqlMockExchange
 from investment_manager.persistence import (
     SqlFactLedger,

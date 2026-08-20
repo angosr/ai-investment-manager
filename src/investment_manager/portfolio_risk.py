@@ -9,7 +9,6 @@ from investment_manager.asset_management import PortfolioTarget
 from investment_manager.domain import (
     AccountSnapshot,
     GuardState,
-    MarketSnapshot,
     RiskOutcome,
     RuleResult,
 )
@@ -21,6 +20,7 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     UnitInterval,
 )
+from investment_manager.market.models import MarketSnapshot
 
 
 class PortfolioRiskPolicy(FrozenModel):

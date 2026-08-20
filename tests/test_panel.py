@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from investment_manager.domain import IntelligenceEvent
-from investment_manager.features import FeatureEngine
+from investment_manager.market.features import FeatureEngine
 from investment_manager.panel import PanelBuilder
 
 

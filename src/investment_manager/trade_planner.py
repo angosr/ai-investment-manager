@@ -7,7 +7,6 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.domain import (
     AccountSnapshot,
-    MarketSnapshot,
     OrderType,
     Side,
 )
@@ -19,6 +18,7 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     floor_to_step,
 )
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.portfolio_risk import ApprovedTarget
 
 

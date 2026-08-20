@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.config import ExecutionPolicy
 from investment_manager.domain import (
     ExitReason,
-    MarketSnapshot,
     Order,
     OrderStatus,
     PositionLifecycle,
@@ -20,6 +19,7 @@ from investment_manager.execution import (
     exit_client_order_id,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.persistence import mock_exchange_orders, mock_exchange_protections
 
 

@@ -4,7 +4,8 @@ from datetime import timedelta
 from decimal import Decimal
 from itertools import pairwise
 
-from investment_manager.domain import MarketSnapshot, ProgramExitCondition
+from investment_manager.domain import ProgramExitCondition
+from investment_manager.market.models import MarketSnapshot
 
 
 def program_exit_triggered(

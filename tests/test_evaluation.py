@@ -6,13 +6,13 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import MarketSnapshot
 from investment_manager.evaluation import (
     EvaluationVariant,
     ReplayCase,
     ReplayEvaluator,
     without_information_events,
 )
+from investment_manager.market.models import MarketSnapshot
 from investment_manager.persistence import SqlEvaluationRepository
 from investment_manager.schema import create_schema
 

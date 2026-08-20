@@ -14,8 +14,6 @@ from investment_manager.domain import (
     AccountSnapshot,
     Action,
     IntelligenceEvent,
-    MarketBar,
-    MarketSnapshot,
     OrderType,
     Position,
     RiskOutcome,
@@ -24,12 +22,16 @@ from investment_manager.domain import (
     TradeIntent,
 )
 from investment_manager.exit_policy import program_exit_triggered
-from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
     floor_to_step,
+)
+from investment_manager.market.features import FeatureEngine
+from investment_manager.market.models import (
+    MarketBar,
+    MarketSnapshot,
 )
 from investment_manager.research.dataset import (
     HistoricalDataset,

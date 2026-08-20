@@ -17,11 +17,7 @@ from investment_manager.asset_management import (
     SourceTier,
     StateSnapshot,
 )
-from investment_manager.domain import (
-    AccountSnapshot,
-    FeatureSnapshot,
-    MarketSnapshot,
-)
+from investment_manager.domain import AccountSnapshot
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import (
     optional_utc,
@@ -31,6 +27,10 @@ from investment_manager.kernel.types import (
     FrozenModel,
     Money,
     PositiveDecimal,
+)
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
 )
 from investment_manager.panel import sanitize_external_text
 

@@ -31,8 +31,8 @@ from investment_manager.forecast_evaluation import (
     failed_forward_forecast_experiment,
     validate_forward_forecast_evaluation_plan,
 )
-from investment_manager.market_data import MarketTrade
-from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.market.models import MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.mock_exchange_sql import SqlMockExchange
 from investment_manager.persistence import (
     SqlFactLedger,

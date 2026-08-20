@@ -246,7 +246,7 @@ def test_analysis_proposal_is_strict_and_cannot_smuggle_position_fields(replay_i
 def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     app_config, replay_input, tmp_path
 ) -> None:
-    from investment_manager.features import FeatureEngine
+    from investment_manager.market.features import FeatureEngine
     from investment_manager.panel import PanelBuilder
 
     duplicate_body = replay_input.events[0].model_copy(
@@ -336,7 +336,7 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
 def test_analyst_bundle_rejects_prompt_above_explicit_limit(
     app_config, replay_input, tmp_path
 ) -> None:
-    from investment_manager.features import FeatureEngine
+    from investment_manager.market.features import FeatureEngine
     from investment_manager.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(
@@ -860,7 +860,7 @@ def test_initial_probe_outage_fails_closed_without_guessing_account_health(
 def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     app_config, replay_input, tmp_path, monkeypatch
 ) -> None:
-    from investment_manager.features import FeatureEngine
+    from investment_manager.market.features import FeatureEngine
     from investment_manager.panel import PanelBuilder
 
     registry = _account_registry(tmp_path)
@@ -1394,7 +1394,7 @@ def test_isolation_audit_does_not_invoke_codex_when_capacity_probe_fails(
 def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
     app_config, replay_input
 ) -> None:
-    from investment_manager.features import FeatureEngine
+    from investment_manager.market.features import FeatureEngine
     from investment_manager.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(

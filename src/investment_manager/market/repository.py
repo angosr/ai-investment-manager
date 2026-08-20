@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Protocol
 
 from sqlalchemy import (
     JSON,
@@ -17,20 +20,181 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.domain import MarketSnapshot
 from investment_manager.kernel.time import require_utc
-from investment_manager.market_data import (
+from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,
+    MarketSnapshot,
     MarketTrade,
-    _bar_market_facts,
-    _bar_revision_only_changes_volume,
-    _quote_market_facts,
-    _trade_market_facts,
 )
 from investment_manager.platform.database import metadata
 
 logger = logging.getLogger(__name__)
+
+
+class MarketDataStore(Protocol):
+    def put_quote(self, quote: MarketQuote) -> bool: ...
+
+    def put_trade(self, trade: MarketTrade) -> bool: ...
+
+    def put_bar(self, bar: ClosedMarketBar) -> bool: ...
+
+    def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade: ...
+
+    def snapshot(
+        self,
+        *,
+        cycle_id: str,
+        symbol: str,
+        interval: str,
+        as_of: datetime,
+        bar_window: int,
+        source: str,
+    ) -> MarketSnapshot: ...
+
+
+def _bar_market_facts(bar: ClosedMarketBar) -> dict[str, Any]:
+    return bar.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
+def _bar_revision_only_changes_volume(
+    existing: ClosedMarketBar,
+    incoming: ClosedMarketBar,
+) -> bool:
+    """Recognize a provider's late volume finalization without rewriting history."""
+
+    old = existing.model_dump(
+        exclude={"observed_at", "source", "volume"},
+        mode="json",
+    )
+    new = incoming.model_dump(
+        exclude={"observed_at", "source", "volume"},
+        mode="json",
+    )
+    return old == new and existing.volume != incoming.volume
+
+
+def _quote_market_facts(quote: MarketQuote) -> dict[str, Any]:
+    return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
+def _trade_market_facts(trade: MarketTrade) -> dict[str, Any]:
+    return trade.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
+@dataclass(slots=True)
+class InMemoryMarketDataStore:
+    _quotes: dict[str, MarketQuote] = field(default_factory=dict)
+    _trades: dict[tuple[str, int], MarketTrade] = field(default_factory=dict)
+    _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def put_quote(self, quote: MarketQuote) -> bool:
+        with self._lock:
+            existing = self._quotes.get(quote.quote_id)
+            if existing is not None:
+                if _quote_market_facts(existing) != _quote_market_facts(quote):
+                    raise ValueError("quote_id 冲突且事实不一致")
+                return False
+            self._quotes[quote.quote_id] = quote
+            return True
+
+    def put_trade(self, trade: MarketTrade) -> bool:
+        key = (trade.symbol, trade.aggregate_trade_id)
+        with self._lock:
+            existing = self._trades.get(key)
+            if existing is not None:
+                if _trade_market_facts(existing) != _trade_market_facts(trade):
+                    raise ValueError("aggregate_trade_id 冲突且事实不一致")
+                return False
+            self._trades[key] = trade
+            return True
+
+    def put_bar(self, bar: ClosedMarketBar) -> bool:
+        key = (bar.symbol, bar.interval, bar.open_time)
+        with self._lock:
+            existing = self._bars.get(key)
+            if existing is not None:
+                if _bar_market_facts(existing) != _bar_market_facts(bar):
+                    if _bar_revision_only_changes_volume(existing, bar):
+                        logger.warning(
+                            "late closed-bar volume revision ignored; preserving first-seen fact",
+                            extra={
+                                "symbol": bar.symbol,
+                                "interval": bar.interval,
+                                "open_time": bar.open_time.isoformat(),
+                            },
+                        )
+                        return False
+                    raise ValueError("已收盘 K 线唯一键冲突且事实不一致")
+                return False
+            self._bars[key] = bar
+            return True
+
+    def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
+        as_of = require_utc(as_of)
+        with self._lock:
+            visible = [
+                item
+                for item in self._trades.values()
+                if item.symbol == symbol and item.observed_at <= as_of and item.event_time <= as_of
+            ]
+        if not visible:
+            raise ValueError(f"{symbol} 缺少可见成交，无法计算组合权益")
+        return max(
+            visible,
+            key=lambda item: (item.event_time, item.observed_at, item.aggregate_trade_id),
+        )
+
+    def snapshot(
+        self,
+        *,
+        cycle_id: str,
+        symbol: str,
+        interval: str,
+        as_of: datetime,
+        bar_window: int,
+        source: str,
+    ) -> MarketSnapshot:
+        as_of = require_utc(as_of)
+        with self._lock:
+            quotes = [
+                item
+                for item in self._quotes.values()
+                if item.symbol == symbol and item.observed_at <= as_of
+            ]
+            trades = [
+                item
+                for item in self._trades.values()
+                if item.symbol == symbol and item.observed_at <= as_of and item.event_time <= as_of
+            ]
+            bars = [
+                item
+                for item in self._bars.values()
+                if item.symbol == symbol and item.interval == interval and item.observed_at <= as_of
+            ]
+        if not quotes or not trades:
+            raise ValueError("行情快照缺少可见的报价或成交")
+        quote = max(quotes, key=lambda item: (item.observed_at, item.quote_id))
+        trade = max(
+            trades,
+            key=lambda item: (item.event_time, item.observed_at, item.aggregate_trade_id),
+        )
+        selected_bars = sorted(bars, key=lambda item: item.open_time)[-bar_window:]
+        if len(selected_bars) < 2:
+            raise ValueError("行情快照至少需要两根已收盘 K 线")
+        return MarketSnapshot(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            as_of=as_of,
+            observed_at=min(quote.observed_at, trade.observed_at),
+            bid=quote.bid,
+            ask=quote.ask,
+            last=trade.price,
+            bars=tuple(item.to_market_bar() for item in selected_bars),
+            source=source,
+        )
+
 
 market_quotes = Table(
     "market_quotes",

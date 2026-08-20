@@ -9,15 +9,17 @@ from investment_manager.config import StrategyPolicy
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    FeatureSnapshot,
     IntelligenceEvent,
-    MarketSnapshot,
     OrderType,
     PriceCondition,
     Side,
     SignalCandidate,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 
 
 class Strategy(Protocol):

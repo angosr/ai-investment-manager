@@ -16,9 +16,7 @@ from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    FeatureSnapshot,
     IntelligenceEvent,
-    MarketSnapshot,
     Side,
     SignalCandidate,
 )
@@ -27,6 +25,10 @@ from investment_manager.governance import EvaluationPlan, EvaluationStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 from investment_manager.persistence import (
     analysis_cycles,
     analysis_proposals,

@@ -32,8 +32,7 @@ from investment_manager.lifecycle_workflows import (
     LIFECYCLE_ACTIVITY_NAME,
     PositionLifecycleWorkflow,
 )
-from investment_manager.market_data import MarketDataStore
-from investment_manager.market_data_sql import SqlMarketDataStore
+from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.mock_exchange_sql import SqlMockExchange
 from investment_manager.persistence import (
     SqlLifecycleLedger,

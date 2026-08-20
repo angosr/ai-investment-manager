@@ -19,7 +19,6 @@ from investment_manager.candidate_evaluation import (
     SqlCandidateOutcomeStore,
 )
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import MarketSnapshot
 from investment_manager.execution import MockExchange
 from investment_manager.fact_pipeline import (
     FOMC_MEETING_FACT_TYPE,
@@ -34,8 +33,8 @@ from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.governance import ReleaseManifest
 from investment_manager.governance_context import GovernanceSnapshotAssembler
 from investment_manager.lifecycle import PositionLifecycleManager
-from investment_manager.market_data import MarketTrade
-from investment_manager.market_data_sql import SqlMarketDataStore
+from investment_manager.market.models import MarketSnapshot, MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.official_information import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,

@@ -14,15 +14,17 @@ from investment_manager.domain import (
     AccountSnapshot,
     Action,
     IntelligenceEvent,
-    MarketBar,
-    MarketSnapshot,
     OrderType,
     Side,
 )
-from investment_manager.features import FeatureEngine
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.market.features import FeatureEngine
+from investment_manager.market.models import (
+    MarketBar,
+    MarketSnapshot,
+)
 from investment_manager.research.dataset import (
     HistoricalBarWindow,
     HistoricalDataset,

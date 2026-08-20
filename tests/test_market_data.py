@@ -9,20 +9,25 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine
 
-from investment_manager.market_data import (
+from investment_manager.market.models import (
+    ClosedMarketBar,
+    MarketQuote,
+    MarketTrade,
+)
+from investment_manager.market.repository import (
+    InMemoryMarketDataStore,
+    SqlMarketDataStore,
+    create_market_schema,
+)
+from investment_manager.market.runtime import (
     BinanceMarketStreamService,
     BinanceMessageParser,
     BinancePublicRestClient,
     BinanceWebSocketConnector,
-    ClosedMarketBar,
-    InMemoryMarketDataStore,
     MarketBootstrapper,
-    MarketQuote,
     MarketShockDetector,
-    MarketTrade,
     assemble_shadow_market_stream,
 )
-from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
 
 NOW = datetime(2026, 8, 18, 12, 10, tzinfo=UTC)
 

@@ -16,13 +16,17 @@ from investment_manager.decision_packet import (
     DecisionPacketPolicy,
     VisibleFact,
 )
-from investment_manager.domain import AccountSnapshot, FeatureSnapshot, MarketSnapshot
+from investment_manager.domain import AccountSnapshot
 from investment_manager.fact_pipeline import (
     validate_fact_revision_identity,
     validate_material_delta_identity,
     validate_state_snapshot_identity,
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
+from investment_manager.market.models import (
+    FeatureSnapshot,
+    MarketSnapshot,
+)
 from investment_manager.persistence import (
     canonical_fact_revisions,
     material_deltas,
