@@ -6,7 +6,8 @@ import io
 import json
 import tempfile
 import zipfile
-from collections.abc import Callable, Iterable
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -112,6 +113,32 @@ class HistoricalDataset:
         _validate_bars(self.bars, self.manifest)
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalBarWindow:
+    """A verified slice of one immutable dataset for rejection-only research."""
+
+    manifest: HistoricalDatasetManifest
+    bars: tuple[ClosedMarketBar, ...]
+
+    def __post_init__(self) -> None:
+        if not self.bars:
+            raise ValueError("历史 K 线窗口不能为空")
+        interval_ms = _INTERVAL_MILLISECONDS.get(self.manifest.interval)
+        if interval_ms is None:
+            raise ValueError(f"不支持的历史 K 线周期: {self.manifest.interval}")
+        previous: ClosedMarketBar | None = None
+        for bar in self.bars:
+            if bar.symbol != self.manifest.symbol or bar.interval != self.manifest.interval:
+                raise ValueError("历史 K 线窗口作用域与 Manifest 不一致")
+            if bar.observed_at != bar.close_time:
+                raise ValueError("历史 K 线只能在收盘时刻之后可见")
+            if previous is not None and int(
+                (bar.open_time - previous.open_time).total_seconds() * 1000
+            ) != interval_ms:
+                raise ValueError("历史 K 线窗口存在缺口")
+            previous = bar
+
+
 class HistoricalDatasetCatalog:
     """内容寻址的离线数据目录；同一 ID 的数据绝不原地覆盖。"""
 
@@ -153,6 +180,70 @@ class HistoricalDatasetCatalog:
             raise ValueError("历史 bars.json 根节点必须是数组")
         bars = tuple(_bar_from_compact(row, manifest) for row in rows)
         return HistoricalDataset(manifest=manifest, bars=bars)
+
+    def load_window(
+        self,
+        dataset_id: str,
+        *,
+        start: datetime,
+        end: datetime,
+        warmup_bars: int,
+    ) -> HistoricalBarWindow:
+        """Verify the complete artifact while materializing only a bounded window."""
+
+        start = _require_utc(start)
+        end = _require_utc(end)
+        if start >= end:
+            raise ValueError("历史 K 线窗口起点必须早于终点")
+        if warmup_bars < 0:
+            raise ValueError("历史 K 线预热数量不能为负")
+        target = self._root / dataset_id
+        manifest = HistoricalDatasetManifest.model_validate(
+            json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        )
+        if start < manifest.first_open_time or end > manifest.requested_end:
+            raise ValueError("历史 K 线窗口超出数据集范围")
+
+        digest = hashlib.sha256()
+        preceding: deque[list[Any]] = deque(maxlen=warmup_bars)
+        selected_rows: list[list[Any]] = []
+        row_count = 0
+        first_open_time: datetime | None = None
+        last_close_time: datetime | None = None
+        selected_started = False
+        for raw in _iter_json_array(target / "bars.json"):
+            if not isinstance(raw, list) or len(raw) != 7:
+                raise ValueError("历史 K 线条目必须包含 7 个字段")
+            digest.update(
+                json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode()
+            )
+            digest.update(b"\n")
+            row_count += 1
+            open_time = datetime.fromtimestamp(int(raw[0]) / 1000, tz=UTC)
+            close_time = datetime.fromtimestamp(int(raw[6]) / 1000, tz=UTC)
+            first_open_time = first_open_time or open_time
+            last_close_time = close_time
+            if close_time < start:
+                preceding.append(raw)
+                continue
+            if open_time >= end:
+                continue
+            if not selected_started:
+                selected_rows.extend(preceding)
+                selected_started = True
+            selected_rows.append(raw)
+
+        if (
+            row_count != manifest.bar_count
+            or first_open_time != manifest.first_open_time
+            or last_close_time != manifest.last_close_time
+            or digest.hexdigest() != manifest.bars_hash
+        ):
+            raise ValueError("历史 K 线制品与 Manifest 数量、边界或哈希不一致")
+        return HistoricalBarWindow(
+            manifest=manifest,
+            bars=tuple(_bar_from_compact(row, manifest) for row in selected_rows),
+        )
 
 
 class HistoricalEventDatasetManifest(FrozenModel):
@@ -987,6 +1078,59 @@ def _bar_from_row(row: list[Any], *, symbol: str, interval: str, source: str) ->
         volume=Decimal(str(row[5])),
         source=source,
     )
+
+
+def _iter_json_array(path: Path, *, chunk_size: int = 1 << 20) -> Iterator[Any]:
+    """Stream the owned compact JSON-array format without trusting partial data."""
+
+    decoder = json.JSONDecoder()
+    buffer = ""
+    position = 0
+    started = False
+    ended = False
+    with path.open(encoding="utf-8") as source:
+        while True:
+            chunk = source.read(chunk_size)
+            eof = chunk == ""
+            buffer += chunk
+            while True:
+                while position < len(buffer) and buffer[position].isspace():
+                    position += 1
+                if not started:
+                    if position >= len(buffer):
+                        break
+                    if buffer[position] != "[":
+                        raise ValueError("历史 bars.json 根节点必须是数组")
+                    started = True
+                    position += 1
+                    continue
+                while position < len(buffer) and (
+                    buffer[position].isspace() or buffer[position] == ","
+                ):
+                    position += 1
+                if position >= len(buffer):
+                    break
+                if buffer[position] == "]":
+                    ended = True
+                    position += 1
+                    break
+                try:
+                    value, position = decoder.raw_decode(buffer, position)
+                except json.JSONDecodeError as exc:
+                    if eof:
+                        raise ValueError("历史 bars.json 包含不完整或非法 JSON") from exc
+                    break
+                yield value
+            if position:
+                buffer = buffer[position:]
+                position = 0
+            if ended:
+                if buffer.strip() or source.read(1):
+                    raise ValueError("历史 bars.json 数组后包含多余内容")
+                return
+            if eof:
+                break
+    raise ValueError("历史 bars.json 数组未正确结束")
 
 
 def _write_json(path: Path, payload: Any) -> None:

@@ -65,6 +65,7 @@ from quant_core.research.dataset import (
     fetch_binance_history,
     freeze_historical_events,
 )
+from quant_core.research.screening import run_raw_signal_screen
 
 
 def test_public_data_research_symbol_is_independent_of_production_allowlist(
@@ -278,17 +279,125 @@ def _dataset(
     return HistoricalDataset(manifest=manifest, bars=tuple(bars))
 
 
-def test_historical_catalog_round_trip_and_rejects_tampering(tmp_path) -> None:
+def test_raw_signal_screen_is_a_costed_rejection_gate_not_a_backtest(
+    base_app_config,
+) -> None:
+    dataset = _dataset(count=500, price_step=Decimal("1.002"))
+    strategy = _TestLongStrategy(
+        _TestResearchSpec(
+            horizon_minutes=15,
+            signal_validity_minutes=10,
+        )
+    )
+    result = run_raw_signal_screen(
+        dataset=dataset,
+        config=base_app_config,
+        strategy=strategy,
+        signal_start=dataset.bars[64].close_time,
+        signal_end=dataset.bars[-1].close_time + timedelta(milliseconds=1),
+        spread_bps=Decimal("1"),
+        minimum_non_overlapping_samples=30,
+    )
+
+    assert result.raw_signal_count > result.non_overlapping_signal_count >= 30
+    assert result.signal_statistics.mean_gross_return_bps is not None
+    assert result.signal_statistics.mean_modeled_cost_bps is not None
+    assert result.signal_statistics.mean_net_return_bps == (
+        result.signal_statistics.mean_gross_return_bps
+        - result.signal_statistics.mean_modeled_cost_bps
+    )
+    assert result.signal_statistics.mean_net_return_bps > 0
+    assert not result.promising_for_exact_backtest
+    assert "INCREMENTAL_RETURN_LOWER_BOUND_NOT_ABOVE_GATE" in result.reason_codes
+    assert "MAY_REJECT_OR_PRIORITIZE_BUT_CANNOT_GRANT_TRADING_ELIGIBILITY" in (
+        result.limitations
+    )
+    assert all(item.exit_at < result.signal_end for item in result.examples)
+    assert run_raw_signal_screen(
+        dataset=dataset,
+        config=base_app_config,
+        strategy=strategy,
+        signal_start=dataset.bars[64].close_time,
+        signal_end=dataset.bars[-1].close_time + timedelta(milliseconds=1),
+        spread_bps=Decimal("1"),
+        minimum_non_overlapping_samples=30,
+    ) == result
+
+
+def test_raw_signal_screen_never_reads_labels_past_development_end(
+    base_app_config,
+) -> None:
+    prefix = (Decimal("1.001"),) * 400
+    first = _dataset(
+        count=500,
+        price_steps=prefix + (Decimal("1.10"),) * 100,
+    )
+    second = _dataset(
+        count=500,
+        price_steps=prefix + (Decimal("0.90"),) * 100,
+    )
+    strategy = _TestLongStrategy(
+        _TestResearchSpec(
+            horizon_minutes=15,
+            signal_validity_minutes=10,
+        )
+    )
+    development_end = first.bars[380].open_time
+    common = {
+        "config": base_app_config,
+        "strategy": strategy,
+        "signal_start": first.bars[64].close_time,
+        "signal_end": development_end,
+        "spread_bps": Decimal("1"),
+        "minimum_non_overlapping_samples": 2,
+    }
+
+    first_result = run_raw_signal_screen(dataset=first, **common)
+    second_result = run_raw_signal_screen(dataset=second, **common)
+
+    assert first_result.dataset_id != second_result.dataset_id
+    assert first_result.opportunity_hash == second_result.opportunity_hash
+    assert first_result.signal_statistics == second_result.signal_statistics
+    assert first_result.unconditional_statistics == second_result.unconditional_statistics
+
+
+def test_historical_catalog_round_trip_and_rejects_tampering(
+    tmp_path,
+    base_app_config,
+) -> None:
+    from quant_core.research.backtest import run_bar_backtest
+
     dataset = _dataset(count=10)
     catalog = HistoricalDatasetCatalog(tmp_path)
     target = catalog.store(dataset)
     assert catalog.load(dataset.manifest.dataset_id) == dataset
+    window = catalog.load_window(
+        dataset.manifest.dataset_id,
+        start=dataset.bars[5].close_time,
+        end=dataset.manifest.requested_end,
+        warmup_bars=2,
+    )
+    assert window.bars == dataset.bars[3:]
+    with pytest.raises(TypeError, match="全量验证"):
+        run_bar_backtest(
+            dataset=window,
+            config=base_app_config,
+            signal_start=dataset.bars[5].close_time,
+            signal_end=dataset.bars[8].close_time,
+        )
 
     rows = json.loads((target / "bars.json").read_text())
     rows[0][4] = "9999"
     (target / "bars.json").write_text(json.dumps(rows))
     with pytest.raises(ValueError, match="内容哈希"):
         catalog.load(dataset.manifest.dataset_id)
+    with pytest.raises(ValueError, match="哈希"):
+        catalog.load_window(
+            dataset.manifest.dataset_id,
+            start=dataset.bars[5].close_time,
+            end=dataset.manifest.requested_end,
+            warmup_bars=2,
+        )
 
 
 def test_historical_dataset_rejects_bar_gap() -> None:

@@ -163,6 +163,9 @@ def run_bar_backtest(
 ) -> BacktestRun:
     """用 NautilusTrader 撮合冻结的 quant-core 程序策略；不调用 Codex。"""
 
+    if not isinstance(dataset, HistoricalDataset):
+        raise TypeError("精确回测只能使用完成全量验证的 HistoricalDataset")
+
     try:
         import nautilus_trader
         from nautilus_trader.backtest.config import BacktestEngineConfig

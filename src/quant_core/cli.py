@@ -731,6 +731,83 @@ def carry_blind_evaluate_command(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+@app.command("screen-signals")
+def screen_signals_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    dataset_id: Annotated[str, typer.Option()],
+    signal_start: Annotated[str, typer.Option(help="开发窗口起点，必须包含时区")],
+    signal_end: Annotated[
+        str,
+        typer.Option(help="开发标签终点，任何样本不得跨越该边界"),
+    ],
+    candidate: Annotated[str, typer.Option()] = "configured",
+    event_dataset_id: Annotated[str | None, typer.Option()] = None,
+    catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    event_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/event-datasets"
+    ),
+    spread_bps: Annotated[str, typer.Option()] = "1",
+    minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
+    minimum_net_return_bps_lower_bound: Annotated[str, typer.Option()] = "0",
+    minimum_incremental_return_bps_lower_bound: Annotated[str, typer.Option()] = "0",
+) -> None:
+    """用轻量原始信号机会筛选淘汰弱假设；不能授予交易资格。"""
+
+    from quant_core.research.candidates import resolve_research_candidate
+    from quant_core.research.dataset import (
+        HistoricalDatasetCatalog,
+        HistoricalEventDatasetCatalog,
+    )
+    from quant_core.research.screening import run_raw_signal_screen
+
+    try:
+        parsed_spread = Decimal(spread_bps)
+        parsed_net_gate = Decimal(minimum_net_return_bps_lower_bound)
+        parsed_incremental_gate = Decimal(
+            minimum_incremental_return_bps_lower_bound
+        )
+    except InvalidOperation as exc:
+        raise typer.BadParameter("快速筛选成本和门槛必须是十进制数") from exc
+    if parsed_spread < 0:
+        raise typer.BadParameter("spread-bps 不能为负", param_hint="spread-bps")
+    loaded_config = load_config(config)
+    try:
+        effective_config, research_strategy = resolve_research_candidate(
+            candidate,
+            loaded_config,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="candidate") from exc
+    event_dataset = (
+        HistoricalEventDatasetCatalog(event_catalog).load(event_dataset_id)
+        if event_dataset_id is not None
+        else None
+    )
+    parsed_start = _parse_utc_option(signal_start, name="signal-start")
+    parsed_end = _parse_utc_option(signal_end, name="signal-end")
+    dataset = HistoricalDatasetCatalog(catalog).load_window(
+        dataset_id,
+        start=parsed_start,
+        end=parsed_end,
+        warmup_bars=effective_config.market_data.bar_window - 1,
+    )
+    result = run_raw_signal_screen(
+        dataset=dataset,
+        event_dataset=event_dataset,
+        config=effective_config,
+        strategy=research_strategy,
+        signal_start=parsed_start,
+        signal_end=parsed_end,
+        spread_bps=parsed_spread,
+        minimum_non_overlapping_samples=minimum_non_overlapping_samples,
+        minimum_net_return_bps_lower_bound=parsed_net_gate,
+        minimum_incremental_return_bps_lower_bound=parsed_incremental_gate,
+    )
+    typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+
 @app.command("walk-forward")
 def walk_forward_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
