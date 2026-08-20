@@ -20,7 +20,9 @@ def _forecast(
     forecast_id: str,
     gross_bps: str = "20",
     direction: DirectionalView = DirectionalView.UP,
-    available_at: datetime = NOW - timedelta(minutes=1),
+    reference_price: str = "100",
+    half_life_seconds: int = 3_600,
+    available_at: datetime = NOW,
     valid_until: datetime = NOW + timedelta(hours=1),
 ) -> CalibratedForecast:
     return CalibratedForecast(
@@ -32,6 +34,8 @@ def _forecast(
         symbol=symbol,
         horizon_minutes=240,
         direction=direction,
+        reference_price=Decimal(reference_price),
+        expected_edge_half_life_seconds=half_life_seconds,
         available_at=available_at,
         valid_until=valid_until,
         base_forecast_id=f"base-{forecast_id}",
@@ -49,12 +53,14 @@ def _asset(
     symbol: str,
     *,
     current: str = "0",
+    current_price: str = "100",
     cost_bps: str = "5",
     forecast: CalibratedForecast | None = None,
 ) -> PortfolioAssetInput:
     return PortfolioAssetInput(
         symbol=symbol,
         current_quote_notional=Decimal(current),
+        current_price=Decimal(current_price),
         estimated_variable_cost_bps=Decimal(cost_bps),
         forecast=forecast,
     )
@@ -180,6 +186,45 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
     assert result is None
 
 
+def test_engine_does_not_chase_edge_already_consumed_by_price() -> None:
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        reference_equity=Decimal("10000"),
+        assets=(
+            _asset(
+                "BTCUSDT",
+                current_price="100.20",
+                forecast=_forecast(
+                    "BTCUSDT",
+                    forecast_id="btc-1",
+                    gross_bps="20",
+                ),
+            ),
+        ),
+    )
+
+    assert result is None
+
+
+def test_engine_applies_alpha_time_decay_before_cost() -> None:
+    forecast = _forecast(
+        "BTCUSDT",
+        forecast_id="btc-1",
+        gross_bps="20",
+        half_life_seconds=60,
+        available_at=NOW - timedelta(seconds=60),
+    )
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        reference_equity=Decimal("10000"),
+        assets=(_asset("BTCUSDT", cost_bps="6", forecast=forecast),),
+    )
+
+    assert result is None
+
+
 @pytest.mark.parametrize(
     "forecast",
     [
@@ -191,6 +236,7 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
         _forecast(
             "BTCUSDT",
             forecast_id="expired",
+            available_at=NOW - timedelta(seconds=1),
             valid_until=NOW,
         ),
     ],

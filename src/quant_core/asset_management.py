@@ -280,6 +280,8 @@ class CalibratedForecast(FrozenModel):
     symbol: str = Field(min_length=1)
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
+    reference_price: PositiveDecimal
+    expected_edge_half_life_seconds: int = Field(gt=0, le=604_800)
     available_at: datetime
     valid_until: datetime
     base_forecast_id: str | None = Field(default=None, min_length=1)

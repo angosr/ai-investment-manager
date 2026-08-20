@@ -48,6 +48,7 @@ class PortfolioDecisionPolicy(FrozenModel):
 class PortfolioAssetInput(FrozenModel):
     symbol: str = Field(min_length=1)
     current_quote_notional: Money
+    current_price: PositiveDecimal
     estimated_variable_cost_bps: Money
     forecast: CalibratedForecast | None = None
 
@@ -87,7 +88,7 @@ class PortfolioDecisionEngine:
                     if self._is_eligible(item, as_of=as_of)
                 ),
                 key=lambda item: (
-                    -self._net_edge(item),
+                    -self._net_edge(item, as_of=as_of),
                     item.forecast.dispersion_bps,
                     item.symbol,
                 ),
@@ -107,7 +108,11 @@ class PortfolioDecisionEngine:
         targets = tuple(
             sorted(
                 (
-                    self._target(item, desired_notional=desired_notional)
+                    self._target(
+                        item,
+                        desired_notional=desired_notional,
+                        as_of=as_of,
+                    )
                     for item in eligible
                 ),
                 key=lambda item: item.symbol,
@@ -160,17 +165,50 @@ class PortfolioDecisionEngine:
             and forecast.available_at <= as_of < forecast.valid_until
             and forecast.direction == DirectionalView.UP
             and forecast.role in self._policy.eligible_forecast_roles
-            and self._net_edge(item)
+            and self._net_edge(item, as_of=as_of)
             >= self._policy.minimum_conservative_net_bps
         )
 
-    @staticmethod
-    def _net_edge(item: PortfolioAssetInput) -> Decimal:
-        assert item.forecast is not None
-        return (
-            item.forecast.conservative_gross_bps
-            - item.estimated_variable_cost_bps
+    @classmethod
+    def _net_edge(
+        cls,
+        item: PortfolioAssetInput,
+        *,
+        as_of: datetime,
+    ) -> Decimal:
+        return cls._remaining_gross_edge(item, as_of=as_of) - (
+            item.estimated_variable_cost_bps
         )
+
+    @staticmethod
+    def _remaining_gross_edge(
+        item: PortfolioAssetInput,
+        *,
+        as_of: datetime,
+    ) -> Decimal:
+        assert item.forecast is not None
+        age_seconds = Decimal(
+            str(max(0, (as_of - item.forecast.available_at).total_seconds()))
+        )
+        decay = max(
+            Decimal("0"),
+            Decimal("1")
+            - age_seconds
+            / (Decimal("2") * item.forecast.expected_edge_half_life_seconds),
+        )
+        consumed_bps = (
+            max(
+                Decimal("0"),
+                (
+                    item.current_price / item.forecast.reference_price
+                    - Decimal("1")
+                )
+                * Decimal("10000"),
+            )
+            if item.forecast.direction == DirectionalView.UP
+            else Decimal("0")
+        )
+        return item.forecast.conservative_gross_bps * decay - consumed_bps
 
     @classmethod
     def _target(
@@ -178,14 +216,16 @@ class PortfolioDecisionEngine:
         item: PortfolioAssetInput,
         *,
         desired_notional: Decimal,
+        as_of: datetime,
     ) -> AssetTarget:
         assert item.forecast is not None
-        net_edge = cls._net_edge(item)
+        remaining_gross = cls._remaining_gross_edge(item, as_of=as_of)
+        net_edge = cls._net_edge(item, as_of=as_of)
         return AssetTarget(
             symbol=item.symbol,
             desired_quote_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
-            conservative_gross_bps=item.forecast.conservative_gross_bps,
+            conservative_gross_bps=remaining_gross,
             estimated_variable_cost_bps=item.estimated_variable_cost_bps,
             conservative_net_bps=net_edge,
             reason_codes=(
