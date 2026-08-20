@@ -75,13 +75,13 @@ _ANALYST_PROMPT_INSTRUCTIONS = (
 def analysis_behavior_hash(config: AppConfig) -> str:
     """Identify analyst behavior independently from the runtime generation ID."""
 
-    normalized = config.model_copy(
-        update={
-            "pipeline": config.pipeline.model_copy(
-                update={"version": "analysis-behavior"}
-            )
-        }
-    )
+    # Calibration is a downstream consumer of Analyst candidates.  Including its
+    # published artifacts here would rotate the source cohort at the exact moment
+    # an artifact is released, so the artifact could never match a new candidate.
+    # Keep every actual Analyst input/contract setting in the identity, but omit
+    # the downstream calibration component and the runtime pipeline generation.
+    normalized = config.model_dump(mode="json", exclude={"calibration"})
+    normalized["pipeline"]["version"] = "analysis-behavior"
     return content_hash(
         {
             "analyst_input_version": ANALYST_INPUT_VERSION,

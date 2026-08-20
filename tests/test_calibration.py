@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from quant_core.analyst import analysis_behavior_hash
 from quant_core.calibration import (
     EDGE_CALIBRATION_MISSING,
     CalibrationBuildSpec,
@@ -100,6 +101,49 @@ def test_calibration_isolates_analysis_behavior_cohorts(
     assert calibrated.calibration_ref == scoped.calibration_id
     assert unresolved.calibration_ref.endswith("b" * 64)
     assert unresolved.unknowns == (EDGE_CALIBRATION_MISSING,)
+
+
+def test_publishing_calibration_does_not_rotate_and_self_lock_source_cohort(
+    app_config, base_app_config, replay_input
+) -> None:
+    behavior_hash = analysis_behavior_hash(base_app_config)
+    source_ref = uncalibrated_ref(base_app_config.proposal.version, behavior_hash)
+    program_candidate = AnalysisCycle.create(base_app_config).run(replay_input).candidates[0]
+    ai_candidate = program_candidate.model_copy(
+        update={
+            "producer_id": base_app_config.proposal.producer_id,
+            "producer_version": base_app_config.proposal.version,
+            "strategy_family": base_app_config.proposal.strategy_family,
+            "calibration_ref": source_ref,
+        }
+    )
+    template = app_config.calibration.artifacts[0]
+    payload = template.model_dump(mode="python", exclude={"artifact_hash"})
+    payload.update(
+        {
+            "calibration_id": "test-codex-calibration-v1",
+            "producer_id": ai_candidate.producer_id,
+            "producer_version": ai_candidate.producer_version,
+            "horizon_minutes": ai_candidate.horizon_minutes,
+            "source_calibration_ref": source_ref,
+        }
+    )
+    artifact = EdgeCalibration(**payload, artifact_hash=content_hash(payload))
+    published = base_app_config.model_copy(
+        update={
+            "calibration": base_app_config.calibration.model_copy(
+                update={
+                    "version": "published-codex-calibration-v1",
+                    "artifacts": (artifact,),
+                }
+            )
+        }
+    )
+
+    assert analysis_behavior_hash(published) == behavior_hash
+    calibrated = EdgeCalibrationBook(published.calibration).apply(ai_candidate)
+    assert calibrated.calibration_ref == artifact.calibration_id
+    assert calibrated.expected_gross_bps == artifact.conservative_gross_bps
 
 
 def test_calibration_rejects_malformed_behavior_cohort(

@@ -79,15 +79,18 @@ def _runtime(app_config):
     )
 
 
-def test_analysis_behavior_identity_ignores_only_pipeline_generation(
-    app_config, monkeypatch
+def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_calibration(
+    app_config, base_app_config, monkeypatch
 ) -> None:
-    baseline = analysis_behavior_hash(app_config)
+    baseline = analysis_behavior_hash(base_app_config)
     redeployed = app_config.model_copy(
         update={
             "pipeline": app_config.pipeline.model_copy(
                 update={"version": "another-runtime-generation"}
-            )
+            ),
+            "calibration": app_config.calibration.model_copy(
+                update={"version": "published-calibration-v2"}
+            ),
         }
     )
     changed_behavior = app_config.model_copy(
@@ -98,6 +101,7 @@ def test_analysis_behavior_identity_ignores_only_pipeline_generation(
         }
     )
 
+    assert app_config.calibration.artifacts
     assert analysis_behavior_hash(redeployed) == baseline
     assert analysis_behavior_hash(changed_behavior) != baseline
     monkeypatch.setattr(
