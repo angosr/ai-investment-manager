@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文定义一套以 Codex 进行高维信息研判、以确定性程序负责风控和交易执行的量化交易系统。设计目标不是让大模型直接控制账户，而是建立一个可复现、可评估、可回滚、故障时默认不交易的工程系统。
+本文定义一套由程序持续感知事实、由 Codex 进行高维研判、由确定性程序完成收益预测组合、风险授权和交易执行的资产管理系统。设计目标不是让大模型直接控制账户，也不是把新闻摘要包装成量化交易，而是建立一个可复现、可评估、可回滚、故障时默认不增加风险的盈利实验与交易系统。
 
 系统的经济目标是在硬性安全和回撤约束内，提高扣除手续费、点差、滑点、资金成本、模型调用和运维成本后的长期净收益。交易次数、模型置信度和短期毛收益都不是独立目标；任何复杂度只有在样本外表现中证明边际经济价值后才允许长期保留。
 
@@ -12,14 +12,14 @@
 
 ## 2. 核心决策
 
-采用“确定性常驻系统 + 临时分析 Agent + 周期性治理 Agent”的组合架构：
+采用“确定性常驻系统 + 无状态临时 Analyst + 周期性主 Agent”的组合架构：
 
 - 24 小时常驻的是工作流引擎和业务服务，不是持续对话的 Codex。
 - 每个分析周期启动一个全新、无会话记忆、只读的 Codex Analyst。
 - 所有有效上下文由版本化的“信息面板快照”提供，不依赖模型记忆。
-- Codex 只生成结构化分析提案，不拥有最终交易意图，不管理仓位，不接触交易密钥，不直接下单。
-- 风控、仓位计算、订单执行、状态对账和熔断全部由确定性代码完成。
-- 主 Agent 可以直接管理有硬边界的 AI 分析 TriggerPlan；除此之外，治理和维护 Agent 只能产生候选版本或隔离代码分支，不能直接修改生产配置、风控、执行权限或自行发布。
+- 临时 Codex Analyst 只生成结构化 `ContextAssessment`，不产生订单、目标仓位或最终交易意图，不接触交易密钥。
+- 唯一的 `PortfolioDecisionEngine` 将已校准的程序预测和可选 AI 增量合成为目标暴露；风控只能拒绝或收紧目标，执行只能翻译和完成订单。
+- 主 Agent 负责长期信息覆盖、分析问题、触发计划、研究假设和版本演进，不与临时 Analyst 重复判断本轮市场，也不直接修改生产版本、风控、执行权限或自行发布。
 
 系统遵循以下原则：
 
@@ -31,38 +31,66 @@
 6. **外部内容均不可信**：新闻、网页和 MCP 返回值只能作为数据，不能成为指令或改变系统权限。
 7. **让延迟匹配信号寿命**：每条策略必须声明最大源延迟、最大决策延迟、最大入场延迟和有效期；基础设施的实测 p99 无法满足时，该策略不得进入生产。
 8. **频率是结果而非目标**：系统按扣除全部成本后的组合净收益和回撤分配风险，不因策略更快、交易更多或使用 AI 就给予更高权重。
+9. **一个问题只有一个所有者**：事实、预测、组合、风险、订单和版本分别只有一个权威生产者；下游不能重新解释上游职责。
+10. **AI 必须证明增量**：简单程序/现金基线必须始终可独立评价；AI 只有在相同机会的前瞻配对证据证明费用后增量时，才可影响生产风险。
+
+### 2.1 唯一决策所有权
+
+“谁决定下单”必须能得到唯一答案，不能由多个 Agent、规则和合成器共同投票后再靠代码细节决定：
+
+| 问题 | 唯一所有者 | 输出 | 明确禁止 |
+|---|---|---|---|
+| 现实世界发生了什么 | Fact Pipeline | `CanonicalFactRevision`、`StateSnapshot`、`MaterialDelta` | 新闻源或 Codex 直接改写事实 |
+| 基础统计优势是什么 | Forecast Engine | 带校准和不确定性的 `BaseForecast` | 用 AI 自报置信度冒充收益 |
+| 复杂事件如何影响不同资产和时域 | 临时 Codex Analyst | `ContextAssessment` | 输出订单、数量、杠杆或最终仓位 |
+| 扣除成本后应持有什么 | `PortfolioDecisionEngine` | `PortfolioTarget` 或 `NO_CHANGE` | 风控、执行器或 Agent 再做第二次收益选择 |
+| 该目标是否安全 | Risk Engine | 仅可收紧的 `ApprovedTarget` 或拒绝 | 增加、反转目标或放宽账户上限 |
+| 如何成交 | Trade Planner + Execution | `TradeIntent`、订单和成交事实 | 重新判断方向或扩大数量 |
+| 系统下一版本如何改进 | 主 Agent + 评估/发布门禁 | 候选变更、实验计划、TriggerPlanPatch | 依据短期盈亏直接改生产或自我批准 |
+
+因此，订单是以下链条的确定性结果，而不是任何 Agent 的自由决定：
+
+```text
+已发布预测 + 当前组合 -> PortfolioTarget -> 风控收紧 -> TargetDelta
+                       -> TradeIntent -> Execution
+```
+
+临时 Analyst 与主 Agent 不构成两层市场投票。临时 Analyst 处理“此刻的复杂上下文”；主 Agent 处理“长期应该观察什么、何时分析、什么机制值得保留”。两者通过版本化事实和评价账本协作，不共享聊天记忆，也不互相转交自由文本。
 
 ## 3. 系统边界与总体流程
 
 ```text
-Binance 行情流 ───────────────> 连续特征 / MarketShockDetector ─┐
-推送、流式或轮询信息源 ─> 标准化与去重 ─> Trigger Outbox ──────┼─> TriggerCoordinator
-主 Agent 调度操作 ─────> TriggerPlan / TriggerPlanPatch ───────┘          │
-                                                                            v
-                                                           按信号寿命选择决策通道
-                                                       ┌──────────┴──────────┐
-                                                实时确定性通道        AI/常规分析通道
-                                                程序策略且无 Codex     冻结 PanelSnapshot
-                                                       └──────────┬──────────┘
-                                                                  v
-                                                       标准 SignalCandidate
-                                                                  │
-                                      EdgeCalibration 精确解析与成本依据冻结
-                                                                  │
-                                             确定性合成、剩余优势与频率检查
-                                                                  │
-                                                              TradeIntent
-                                                                  │
-                                           组合风控、风险预算与统一执行网关
-                                                   │                         │
-                                                 拒绝              Mock/Testnet/Live
-                                                                            │
-                                                               订单状态机、对账和归因
-                                                                            │
-                                                          分时域评估、资本分配与治理
+第一方源 / 市场流 / 聚合线索
+          │
+          v
+SourceObservation -> CanonicalFactRevision -> StateSnapshot -> MaterialDelta
+                                              │                 │
+                                              │                 └-> TriggerCoordinator
+                                              │                            │
+                                              │                     冻结 DecisionPacket
+                                              │                            │
+                                              │                     临时 Codex Analyst
+                                              │                            │
+                                              ├-> Forecast Engine <─ ContextAssessment
+                                              │          │
+                                              │     CalibratedForecast
+                                              │          │
+账户/持仓/成本事实 ──────────────────────────────> PortfolioDecisionEngine
+                                                         │
+                                                   PortfolioTarget
+                                                         │
+                                             Risk Engine（只收紧/拒绝）
+                                                         │
+                                                Trade Planner / Execution
+                                                         │
+                                           对账、结果、配对反事实与归因
+                                                         │
+                                       主 Agent 研究治理 -> 候选版本/TriggerPlan
 ```
 
-Codex 不构成交易系统的交易控制平面。工作流引擎拥有流程状态，PostgreSQL 拥有业务状态，执行模块拥有交易权限。临时 Analyst 是可替换、可超时、可降级的分析组件；主 Agent 只对“何时再次调用 Analyst”拥有第 7.1.1 节定义的调度权，计划仍由确定性 TriggerCoordinator 执行。
+这是一条主链，不是可任意拼装的 DAG。原始内容只能向事实层流动；AI 输出只能向预测层流动；订单只能从已批准目标产生；运行结果只能经评价账本进入主 Agent。任何模块若绕过相邻契约读取其他层的私有数据，或者产生已有模块的同义输出，即视为架构缺陷。
+
+Codex 不构成交易控制平面。工作流引擎拥有流程状态，PostgreSQL 拥有点时业务事实，`PortfolioDecisionEngine` 拥有经济目标，Risk Engine 拥有安全授权，Execution 拥有交易权限。临时 Analyst 是可替换、可超时、可降级的上下文推理组件；主 Agent 对第 9 节定义的治理面拥有长期演进权，并对第 7.1.1 节定义的 AI 调度面拥有直接操作权。
 
 每次真实 Codex 尝试必须记录运行时策略版本、开始/完成时间、实际耗时、匿名账号槽位、结果类别和 token usage；不得用 AnalysisCycle 的落库时间反推模型耗时，因为重放和幂等返回会让两者失去时间对应。治理面板只按 `completed_at <= as_of` 的尝试事实计算版本级成功/失败、失败类别和延迟分位数，避免未来运行污染历史快照。
 
@@ -73,46 +101,77 @@ Codex 不构成交易系统的交易控制平面。工作流引擎拥有流程�
 唯一的核心业务应用，采用 Python 模块化单体。不同进程可以使用同一个镜像启动，但共享领域模型和数据访问层。内部模块包括：
 
 - `market_data`：接收公开行情、恢复已收盘 K 线并形成可见快照。
-- `ingestion`：接入 NewsNow、TrendRadar 及后续信息源。
-- `trigger`：持久化触发事实、合并事件簇、管理计划唤醒和单飞分析。
-- `features`：计算波动率、趋势、流动性、资金费率和事件特征。
-- `strategy`：运行程序化策略并生成标准信号候选。
-- `calibration`：从点时可见的反事实标签构建不可变校准制品，并按精确作用域解析保守毛优势。
-- `panel`：构建并冻结信息面板。
+- `information`：接入第一方事实、官方日历、市场状态和聚合线索，保留来源观测及修订。
+- `state`：把点时可见事实投影为统一状态，计算有经济含义的变化；它是触发和面板的共同上游。
+- `trigger`：只持久化变化/计划触发事实、合并风险因子事件簇、管理计划唤醒和单飞分析。
+- `features`：计算波动率、趋势、流动性、衍生品和跨资产特征。
+- `forecast`：运行程序因子，并把已发布校准范围内的 AI 研判转换为可比较的收益分布。
+- `calibration`：从点时 `ForecastOutcome` 和配对差构建不可变程序/AI 校准制品，并按精确作用域解析保守收益分布。
+- `panel`：从统一状态和变化构建并冻结高密度 `DecisionPacket`；不做事实判断或交易判断。
 - `analyst`：路由本地 Codex 账号、隔离启动分析进程、收集工具事件并校验输出。
-- `decision`：按版本化管线融合程序信号与 Codex 提案。
+- `portfolio`：唯一地决定扣除成本后目标暴露、迟滞区间和再平衡需求。
 - `risk_budget`：原子占用和释放组合级风险预算；多袖套只在证据要求时扩展。
-- `risk`：确定性风控和仓位计算。
+- `risk`：确定性组合约束和风险收紧；不能增加或反转 `PortfolioTarget`。
+- `trade_planner`：把已批准目标与当前持仓之差转换为 `TradeIntent`，不判断 Alpha。
 - `execution`：Mock、Testnet 和实盘适配器。
 - `reconciliation`：订单、成交、余额和仓位对账。
 - `metrics`：统一计算交易、风险、模型和运行指标。
 - `evaluation`：历史回放、Shadow 评估和版本比较。
-- `candidate_evaluation`：结算包括被拒绝候选在内的固定时域反事实结果。
+- `forecast_evaluation`：结算包括未形成目标的预测在内的固定时域反事实结果。
 - `governance`：构建治理面板、管理变更提案和版本晋级。
 
 ### 4.2 Temporal
 
-负责持久化事件协调、计划唤醒、超时、重试、任务恢复和单品种单飞。`TriggerCoordinatorWorkflow` 每个品种/管线只有一个逻辑实例，通过 Signal 接收已持久化的触发事实 ID，并用 durable timer 管理主 Agent 计划时间和兜底心跳；历史达到上限时 Continue-As-New。业务流程不使用分散的 cron 或第二套调度状态机。所有可能重试的活动必须幂等，尤其是下单、撤单和结果入库。逐笔行情和盘口更新不经过 Temporal，只有经过程序阈值过滤的市场冲击事实才成为 Signal，避免用工作流历史承担高频消息传输。
+负责持久化事件协调、计划唤醒、超时、重试、任务恢复和分析范围单飞。每个 Pipeline/`AnalysisScope` 只有一个 `TriggerCoordinatorWorkflow`，通过 Signal 接收已持久化触发 ID，并用 durable timer 执行有效 TriggerPlan；Heartbeat 只检查健康。历史达到上限时 Continue-As-New。业务流程不使用分散 cron 或第二套调度状态机。逐笔行情和盘口不经过 Temporal，只有 `MaterialDelta` 成为 Signal。
 
-Pipeline version 同时是运行代际边界。新 release 启动时必须终止同一交易范围内旧 pipeline 的 durable coordinator，并确认但不投递其历史 Outbox；否则旧 Heartbeat 会跨部署继续竞争 Codex 账号和全局预算。同一 pipeline 不允许绑定不同 Manifest，变更必须以新版本切换，不能原地漂移。代际切换不能把主 Agent 的动态 TriggerPlan 静默重置为静态默认：每个品种从最近更新的前代计划继承暂停态、Heartbeat、事件规则和仍未过期的计划唤醒点，再以 revision 1 重新绑定新 pipeline/Manifest；已经过期的唤醒和旧 patch 身份不继承。
+Pipeline version 同时是运行代际边界。新 release 启动时必须终止同一交易范围内旧 coordinator，并确认但不投递其历史 Outbox；否则旧计划会跨部署继续竞争 Codex 账号。同一 Pipeline 不允许绑定不同 Manifest。代际切换不能静默重置动态计划：ScheduleProjector 从最新日历修订、有效 override/suppression 和仍未过期的前代点生成新代 revision 1；过期点和已消费身份不继承。
 
 同任务队列的 Activity 使用当前默认 Worker 路由，而不固定到调度它的 Workflow build ID；冻结输入契约和版本化 Activity 名称承担兼容边界。该路由变更必须经 Temporal Patch 引入，保证旧历史仍可确定性重放，也使已调度但未开始的 Activity 能在 Worker 升级或重启后由新进程接手。
 
-行情流的处理精度与事实库存储精度分离：每条报价和成交都可以经过常驻的确定性检测器，但当前事件分析管线只按品种每秒持久化一条报价和一条成交，收盘 K 线全部保留。市场冲击检测在配置的滚动秒级窗口内维护有界采样，按 `O(window)` 重算高低极值，覆盖跨 UTC/K 线边界的累计移动与快速反转；越过阈值后从当前价格重新定基，并在同一窗口长度内冷却，收盘 K 线只作为流上漏检的恢复兜底。600 秒默认窗口使该成本有界，尚无证据需要更复杂的单调队列。该采样间隔属于版本化 `MarketDataPolicy`；若未来实时确定性策略确需更高精度，应先用延迟和净收益证据证明，再引入独立逐笔存储，而不是默认把交易所全部盘口更新写入业务库。
+行情处理精度与事实库存储精度分离：报价和成交可经过常驻有界检测器，但只按版本化 `MarketDataPolicy` 保存当前策略、回放和故障调查实际需要的精度。市场冲击检测覆盖滚动累计移动和快速反转，输出统一 MaterialDelta；收盘 K 线只作恢复兜底。若实时策略确需更高精度，先以延迟和净收益证据证明，再扩展存储，不能默认把全部盘口写入业务库。
 
 ### 4.3 PostgreSQL
 
-保存事实数据、流程产物和版本信息。标准事件与 `TriggerOutbox` 在同一事务提交；PostgreSQL `NOTIFY` 只作为低延迟唤醒提示，Outbox 才是可恢复事实，通知丢失由单一 Dispatcher 补扫。初期不引入 Kafka、Redis、独立向量数据库或数据湖；只有吞吐、保留期或故障隔离的实测瓶颈证明 PostgreSQL 不足时才替换该适配器，领域触发契约不随基础设施改变。
+保存事实数据、流程产物和版本信息。`MaterialDelta`/计划触发与 `TriggerOutbox` 在同一事务提交；普通 SourceObservation 不直接发 AI 触发。PostgreSQL `NOTIFY` 只作低延迟提示，Outbox 才是可恢复事实。初期不引入 Kafka、Redis、独立向量库或数据湖；只有实测瓶颈证明必要时才替换适配器。
 
 每套事实库必须绑定独立 Temporal namespace；仅换数据库而复用 namespace 会让稳定 Workflow ID 指向另一环境的历史，属于部署错误。namespace 是环境隔离边界，不进入策略版本比较。
 
-### 4.4 信息采集层
+### 4.4 第一方事实与状态层
 
-复用现有 NewsNow、TrendRadar 和只读 MCP 服务。它们负责采集和查询，不承担交易判断。统一适配器显式声明 `PUSH`、`STREAM` 或 `POLL` 交付能力，并记录来源发布时间、系统首次接收时间和入库时间；轮询聚合器不能被标记成低延迟来源。后续数据源不能让 Codex 直接面对多个不一致的外部接口。新事件成功入库即产生触发事实，但是否值得启动 Codex 仍由确定性资格、去重、优先级、调用预算和事件合并规则决定。
+系统感知的是影响现有持仓、候选资产、活跃假设和账户安全的事实，而不是无限抓取“所有新闻”。唯一的 `InformationCoveragePolicy` 从交易 universe、持仓、风险因子和活跃假设生成必需数据清单；缺失或过期的必需项显式进入 `DataQualityState`。主 Agent可以提议调整覆盖范围，但不能用一次偶发新闻绕过来源合同和版本评估。
 
-每条标准事件还必须显式保存 `normalizer_version`。相关性、影响力、路由或去重口径变化后，新旧事件只能按版本分别统计；旧记录缺少版本时标为 `legacy-unknown`，不得根据结果事后猜测或回填版本。Governor 只接收按版本和来源聚合的事件数、高影响比例等结构化摘要，不读取原始新闻全文。
+来源优先级固定为：
 
-事件路由区分直接资产、关键跨资产和一般跨资产三类。直接资产事件具有完整相关性；美联储决策、通胀、制裁和关键能源通道等有限的关键宏观主题可以关联到整个交易 universe 并触发合并分析；一般原油、利率、监管等主题只以较低相关性进入后续面板，默认不单独越过高优先级触发阈值。榜单排名只表示来源内热度，标准事件的潜在影响取“热度 × 品种相关性”，触发优先级直接使用该结果，不能把任意热门新闻标成高影响。路由词表必须版本化、可回放并用误报样本调整，不能让模型自行决定是否调用自己。标准事件事实不删除，但新面板只允许读取 `PanelPolicy.maximum_evidence_age_seconds` 窗口内的证据，防止低资讯期由陈旧新闻填满注意力预算；跨来源的规范化标题与正文完全一致时只保留最高排序项，语义近似但内容不同的事件不在首版模糊合并。
+1. 交易所、监管机构、央行、统计机构、发行方等第一方结构化接口、公告和日历。
+2. 在第一方没有可靠结构化交付时使用、且有明确时间与修订合同的数据供应商。
+3. NewsNow、TrendRadar、新闻和社交聚合器，只用于发现线索、补充市场叙事和交叉验证。
+
+高影响判断不能只由第三层线索成立。聚合器热度不等于影响力，转载数量不等于独立证据。每个适配器显式声明 `PUSH`、`STREAM` 或 `POLL` 能力、来源身份、时间语义、修订语义和新鲜度 SLA；轮询来源不能伪装成实时来源。Codex 不直接访问任何外部接口。
+
+统一数据链只有五种对象：
+
+```text
+SourceObservation -> CanonicalFactRevision -> StateSnapshot
+                                      -> MaterialDelta -> DecisionPacket
+```
+
+- `SourceObservation` 原样保存系统实际看到的内容、来源时间、接收时间和哈希。
+- `CanonicalFactRevision` 表示可引用事实。更正、推迟、取消和来源冲突都追加修订，不覆盖历史。
+- `StateSnapshot` 是指定 `as_of` 下市场、宏观、衍生品、组合和数据质量的确定性投影。
+- `MaterialDelta` 只描述相对上一可比状态的有意义变化，并绑定受影响的风险因子、资产、时域和物质性。
+- `DecisionPacket` 是给 Codex 的有界高密度投影，不是新的事实源。
+
+只有 `MaterialDelta`、已登记日历时间或主 Agent 的显式操作可以请求 AI 分析；普通新闻入库本身不触发 Codex。行情冲击、官方公告、宏观意外、资金费率/基差/OI 变化、跨资产异常和组合风险变化都先走同一状态差分合同，避免每类数据各建一套触发器。
+
+官方日历属于事实层而不是主 Agent 的手工备忘录。日历事件使用稳定逻辑 ID 和不可变修订，至少保存来源、原始事件 ID、开始/结束时间、状态、受影响风险因子和观察时间。实际公告先到时，新的 `MaterialDelta` 可以立即唤醒同一分析范围。日历不建立第二套 cron、队列或调度服务。
+
+日历适配器和主 Agent 都不能直接成为有效 Wakeup 的并行所有者。唯一 `ScheduleProjector` 在一个事务中把日历修订与 `TriggerPlanPatch` 中的 schedule override 合成为当前 TriggerPlan revision：自动点使用 `event_revision + phase + analysis_scope` 稳定身份；主 Agent 新增/改期形成 override，删除自动点形成绑定该日历修订的 suppression。相同修订不会被下次轮询重新加入，官方新修订则生成新的可审查点。Projector 是唯一有效计划写入者，Temporal 仍是唯一计时执行者。
+
+每个已启用风险因子必须在 `InformationCoveragePolicy` 中声明“预定事件发现、实际发布/修订、连续市场状态”三类合同中哪些是必需的，并绑定至少一个权威来源或显式 `UNAVAILABLE`。同一状态投影中的 Coverage Auditor 只检查合同覆盖、新鲜度和冲突，不抓取数据也不另发触发；缺口进入 DataQualityState 和治理面板。这样 CFTC、FOMC、CPI 等事件由来源注册表自动覆盖，而不是依赖人记住事件名称，同时也不声称系统能无边界感知整个世界。
+
+信息采集仍位于模块化单体内，按来源原生节拍运行。只有实测延迟、吞吐或故障隔离证明必要时才拆服务。原始证据、事实、状态、变化和面板分别只有一个权威存储/生成器，禁止新闻适配器自行算交易相关性、面板自行补事实或触发器再次解释正文。
+
+`State Projector` 与 `Feature Engine` 的边界固定：前者只投影可观察值、来源修订、数据质量和对已发布 FeatureSnapshot 的引用；后者只计算窗口化数值变换，不判断事件重要性、是否触发或是否交易。`MaterialDelta` 比较两者的已发布输出并应用唯一物质性策略，不能在行情、日历和新闻适配器里各复制一套阈值。
 
 ### 4.5 Codex Runner
 
@@ -172,7 +231,7 @@ account_score = capacity_weight × effective_headroom
 
 选择账号和创建 `CodexAccountLease` 必须在一个数据库事务中完成。租约记录 account ID、cycle ID、attempt ID、预计截止时间和状态；MVP 每账号最多一个运行任务，避免多个 Worker 同时依据同一额度快照选中同一账号。
 
-`PROPOSE` 分析 Worker 的进程内并发不得超过当前显式启用的账号槽位数。数据库租约仍是跨进程最终互斥边界，但不能把正常排队交给“抢租约失败”处理：否则已通过全局调用准入的批次会被记成账号不可用并浪费一次额度事实。账号减少时配置校验必须拒绝仍保留更高 Worker 并发的发布。
+`ASSESS` Worker 的进程内并发不得超过当前显式启用的账号槽位数。数据库租约仍是跨进程最终互斥边界，但不能把正常排队交给“抢租约失败”处理：否则已提交批次会被误记成账号不可用。账号减少时配置校验必须拒绝仍保留更高 Worker 并发的发布。
 
 一次 AnalysisCycle 可以有多个顺序执行的 Attempt，但只能接受一个最终结果：
 
@@ -180,7 +239,7 @@ account_score = capacity_weight × effective_headroom
 2. 成功后保存 App Server usage、重新探测额度并释放租约。
 3. 额度耗尽、账号认证失效或明确的上游瞬时错误时，标记账号状态并选择下一账号。
 4. 切换账号后从头运行，不跨账号恢复会话，不拼接两个账号的上下文。
-5. 到达分析截止时间、候选有效期不足或所有账号不可用时结束为 `NO_TRADE`。
+5. 到达分析截止时间、Packet 时效不足或所有账号不可用时结束为 `ASSESSMENT_UNAVAILABLE`；已发布 Pipeline 再按其固定降级合同处理。
 
 超时或进程崩溃不在同一批次轮换，以免一个事件连续烧掉多个账号；但该账号会在后续批次前进入配置化短冷却。冷却到期只表示允许重新探测，必须成功取得官方容量快照后才能恢复 `HEALTHY`，探测失败不能猜测恢复。以下错误也不能通过轮换账号掩盖：输出 Schema 错误、提示词或策略错误、MCP 故障、运行包损坏、工具权限错误和确定性校验失败。它们属于系统问题，按各自策略最多重试一次或直接失败，禁止依次消耗所有账号。
 
@@ -200,16 +259,17 @@ UNKNOWN -> HEALTHY -> LEASED -> HEALTHY
 
 | 数据类别 | 主要表 | 用途 |
 |---|---|---|
-| 原始信息 | `raw_events` | 保存来源、采集时间、原文引用和内容哈希 |
-| 标准事件 | `normalized_events` | 统一时间、品种、事件类型、来源和可信度 |
-| 触发事实 | `analysis_trigger_events`、`trigger_outbox` | 保存触发原因、事件引用、交付状态和幂等身份 |
+| 来源观测与事实修订 | `source_observations`、`canonical_fact_revisions` | 保存原始可见内容、第一方身份、时间语义、冲突和不可变修订 |
+| 点时状态与变化 | `state_snapshots`、`material_deltas` | 保存统一市场/宏观/组合状态及触发所依据的物质变化 |
+| 官方日历 | `market_calendar_event_revisions` | 保存事件新增、改期、取消及来源修订，不建立独立调度器 |
+| 触发事实 | `analysis_trigger_events`、`trigger_outbox` | 保存变化或计划触发、事实引用、交付状态和幂等身份 |
 | AI 触发计划 | `analysis_trigger_plans`、`analysis_scheduled_wakeups` | 保存主 Agent 对事件规则、多个未来时间点和立即触发的版本化调整 |
 | 市场特征 | `market_bars`、`market_features` | 保存价格、成交、盘口及衍生特征 |
-| 策略候选 | `signal_candidates`、`decision_compositions` | 保存程序策略、AI 提案及融合过程 |
-| 分析输入 | `panel_snapshots` | 保存不可变信息面板及其版本和哈希 |
+| 预测与目标 | `base_forecasts`、`context_assessments`、`portfolio_targets` | 保存程序基线、AI 研判、校准融合和唯一组合目标 |
+| 分析输入 | `panel_snapshots` | 保存不可变 `DecisionPacket` 及其版本和哈希 |
 | 模型运行 | `codex_runs`、`tool_events` | 保存运行参数、工具调用、耗时和错误 |
 | Codex 容量 | `codex_account_capacity`、`codex_account_leases` | 保存匿名账号额度快照、冷却状态和并发租约 |
-| 交易决策 | `trade_intents`、`risk_decisions`、`risk_reservations` | 保存合成交易意图、风控结论和原子风险占用 |
+| 交易决策 | `approved_targets`、`trade_intents`、`risk_decisions`、`risk_reservations` | 保存风险收紧后的目标、交易意图和原子风险占用 |
 | 策略分配 | `strategy_sleeves`、`risk_envelopes` | 保存按策略/时域隔离的资本归因和风险上限；未启用多策略时不建虚拟复杂度 |
 | 执行事实 | `orders`、`fills`、`account_snapshots` | 保存订单状态、成交和账户状态 |
 | 结果归因 | `decision_outcomes` | 保存收益、最大有利/不利波动和经验标签 |
@@ -217,7 +277,7 @@ UNKNOWN -> HEALTHY -> LEASED -> HEALTHY
 | 版本治理 | `release_manifests`、`pipeline_versions`、`prompt_versions`、`panel_policy_versions`、`risk_policy_versions` | 保存可启用和可回滚版本 |
 | 演进记录 | `change_proposals`、`experiments`、`architecture_decisions` | 保存变更假设、实验结论和架构取舍 |
 
-单次交易分析和执行事实使用 `cycle_id` 关联；跨周期的事件、TriggerPlan、策略 Sleeve 和版本对象使用各自稳定 ID，并在触发 Batch、候选或 Intent 中显式引用，不能为了统一字段伪造 cycle。时间必须区分：
+单次交易分析和执行事实使用 `cycle_id` 关联；跨周期的事实、TriggerPlan、Forecast、PortfolioTarget、策略 Sleeve 和版本对象使用各自稳定 ID，并在 Batch、目标或 Intent 中显式引用，不能为了统一字段伪造 cycle。时间必须区分：
 
 - `event_time`：事件实际发生时间。
 - `source_published_at`：来源声称的发布时间；缺失或不可信时必须为空，不能用抓取时间伪造。
@@ -234,44 +294,32 @@ UNKNOWN -> HEALTHY -> LEASED -> HEALTHY
 
 ### 6.1 面板形态
 
-信息面板不是一份无限增长的新闻摘要，而是一个不可变的 `PanelSnapshot`：
+信息面板不是一份无限增长的新闻摘要。`PanelSnapshot` 只是指定 `StateSnapshot` 和 `MaterialDelta` 的不可变分析投影，给 Codex 的紧凑部分称为 `DecisionPacket`：
 
-- `panel.json` 是规范事实源，供程序校验和回放。
-- `analyst_prompt.md` 内嵌按当前 AI 模式生成的版本化紧凑投影；不再额外生成与它重复的 `panel.md`。
+- `panel.json` 保存规范投影和全部引用，供程序校验和回放；事实权威仍是上游事实与状态层。
+- `analyst_prompt.md` 只内嵌版本化 `DecisionPacket`；不再生成同内容的 Markdown 镜像。
 - 每个快照记录 `cycle_id`、`as_of`、Schema 版本、内容策略版本、数据新鲜度和内容哈希。
 - 快照创建后不得修改；补充数据产生新快照。
 
-当前 `PROPOSE` 必读投影保留完整 Panel 哈希、账户、当前 bid/ask/last、确定性 `FeatureSnapshot`、筛选后证据、数据质量和规则，但不内嵌原始 K 线数组。它还携带冻结的触发原因、直接触发证据 ID，以及因容量或资格未进入视图的触发证据 ID；模型不能把普通 Heartbeat、资讯事件和主 Agent 唤醒混为一类，也不能猜测缺失证据内容。直接触发且在点时窗口内可见的证据先占用有限面板配额，再由普通价值排序补足；总条数和字符上限不变，非触发证据仍执行同源与同内容去重。这样触发事件不会被旧高分转载挤出，真正过期、不可见或超出总容量的触发证据仍明确列为缺失。完整 K 线仍保存在规范 `panel.json` 和行情事实库，并由 FeatureEngine 与程序策略消费；语言模型不得重复承担可确定计算的时间序列压缩。投影自身携带输入契约版本并进入运行包哈希，任何字段增删都必须作为新 Challenger 比较 token、延迟、可用性和决策结果。
+`DecisionPacket` 不按品种复制。同一宏观或监管变化形成一个组合级分析范围，一次 Codex 调用同时输出受影响资产和多个预登记时域的研判；程序策略再按资产消费同一不可变结果。只有资产特有事实和问题确实不同，才拆成独立分析范围。这消除了 BTC、ETH 对同一事件重复读取相同上下文和重复调用模型的问题。
 
-基础 PanelSnapshot 不因 AI 模式改变；不同模式只生成带独立哈希的 `PanelView`。`PROPOSE` 视图不包含程序策略候选，以保持独立性；`REVIEW` 视图显式包含待审查候选；`CONTEXT` 视图只要求 Codex 输出受限上下文特征。这样不同模式能在相同事实快照上公平比较，也不会发生输入内容的隐式泄漏。
-
-事件触发不等于每次重建一份冗长全量报告。PanelSnapshot 仍是完整规范事实，`EVENT_ANALYSIS` 的 PanelView 采用增量视图：TriggerBatch、新增/变化的事件簇、事件前基准行情、触发后的价格与流动性反应、相关资产、当前持仓风险、上次相关假设及反证。未变化的历史只以稳定引用或短摘要出现；Codex 需要时再从证据层按 ID 查询。`SCHEDULED_ANALYSIS` 可以使用较完整的环境视图，但受同一容量上限约束。
+每个 Packet 以“从上次可比状态改变了什么”为主体：触发变化、变化前基准、变化后的市场反应、受影响风险因子、当前组合暴露、活跃假设及反证、即将到来的官方事件和数据质量。未变化历史只保留稳定摘要或引用。原始 K 线、逐条新闻、整份历史报告和程序可直接计算的指标不进入 Codex；16K 字符是失败上限而不是填满目标。字段增删或压缩逻辑变化都进入 Analyst 行为哈希，并以延迟、稳定性和配对增量收益做 Challenger 评价。
 
 ### 6.2 必读层
 
 Codex 首先获得一份有固定字段和容量预算的必读面板：
 
-1. **账户与风险状态**：余额、仓位、未成交订单、已用风险预算、当日盈亏和回撤。
-2. **市场状态**：价格变化、成交量、实现波动率、ATR、点差、盘口失衡、资金费率、持仓量、基差和清算数据。
-3. **市场环境分类**：趋势、震荡、波动率、流动性和风险事件阶段。
-4. **高价值事件簇**：去重后的事件，而不是逐条转载新闻。
-5. **相似历史决策**：当前品种、环境和事件类型最相近的少量决策及真实结果。
-6. **数据质量**：过期、缺失、相互冲突或可信度不足的数据。
-7. **分析规则摘要**：允许提出的行为、禁止条件和输出要求。
+1. **本轮问题与触发变化**：为什么现在分析、相对哪个状态、哪些风险因子发生实质改变。
+2. **账户与组合暴露**：权益、持仓、未成交订单、风险预算、回撤和本轮最需要解释的暴露。
+3. **程序状态摘要**：价格/流动性/波动率、衍生品、跨资产、宏观状态及其变化，不提供程序策略的最终方向以避免锚定。
+4. **第一方事实与事件簇**：事实、修订、来源冲突、市场已发生的反应和未来官方日程，不是逐条转载。
+5. **活跃假设与反证**：上次研判、已实现/未实现的验证条件、少量同类历史结果。
+6. **数据质量与未知项**：缺失、过期、冲突、覆盖盲区及其对可判断性的影响。
+7. **固定输出契约**：按资产和时域给出方向倾向、影响机制、是否已定价、不确定性、证据与失效条件；不输出交易动作。
 
 每条证据至少包含 `evidence_id`、事件时间、观察时间、来源、时效、可信度和与当前品种的相关性。
 
-`PanelPolicy.max_characters` 限制入选证据的原始内容预算，最终内嵌 Prompt 另受 `codex_runtime.maximum_prompt_characters` 硬限制；任何一层超限都失败关闭。必读层容量分配由回放实验调整：
-
-| 分区 | 容量占比 |
-|---|---:|
-| 账户、仓位和风险 | 15% |
-| 市场状态和环境分类 | 30% |
-| 高价值事件簇 | 30% |
-| 相似历史决策 | 15% |
-| 规则摘要和数据质量 | 10% |
-
-面板构建器必须先保留账户、风险和数据质量等强制分区，再在剩余额度内排序信息；不能因为某一时段新闻密集而截断强制内容。
+`PanelPolicy.max_characters` 和 `codex_runtime.maximum_prompt_characters` 都是硬上限，超限失败关闭。面板先保证本轮问题、账户风险、触发变化和数据质量完整，再按来源等级、物质性、时效和独立性做确定性字典序筛选；不使用未经证据支持的固定百分比或加权总分把硬质量问题平均掉。各分区的实际字符、删减原因和边际使用率进入评价，容量只在消融证明增量价值后调整。
 
 ### 6.3 证据层
 
@@ -279,14 +327,7 @@ Codex 首先获得一份有固定字段和容量预算的必读面板：
 
 ### 6.4 内容筛选
 
-候选信息先经过相关性、时效和来源完整性硬过滤，再由确定性程序排序。各因子归一化到相同区间，初始形式为：
-
-```text
-信息价值 = 0.25×相关性 + 0.20×潜在影响 + 0.20×来源可靠性
-         + 0.20×新颖性 + 0.15×时效性 - 重复度惩罚
-```
-
-权重属于 `PanelPolicy`，只能通过回放和 Shadow 评估调整。硬过滤与排序分离，避免单个评分因子掩盖数据过期或来源缺失。
+候选信息先执行来源合同、相关性、时效和可见性硬过滤，再按“触发直接证据 > 第一方修订 > 独立交叉证据 > 市场反应 > 聚合线索”的稳定顺序筛选。同一层内再比较物质性、新颖性和时效。只有实验表明字典序无法表达已验证价值时才引入可校准评分，避免把随意权重固化成伪精确度。
 
 评分之外还要执行：
 
@@ -308,28 +349,26 @@ Codex 首先获得一份有固定字段和容量预算的必读面板：
 
 ### 7.1 统一事件驱动与计划唤醒
 
-固定间隔不再是分析的主驱动力。信息采集、市场冲击检测、持仓再评估、主 Agent 计划时间和兜底心跳统一产生不可变 `AnalysisTriggerEvent`：
+固定间隔不再是分析的主驱动力。所有 AI 请求收敛成三类不可变 `AnalysisTriggerEvent`：
 
 | 类型 | 生产者 | 典型用途 | 是否逐条启动 AI |
 |---|---|---|---|
-| `INTELLIGENCE_INSERTED` | 信息适配器事务 | 新的标准事件或事件簇 | 否，先过滤和合并 |
-| `MARKET_SHOCK` | 常驻确定性检测器 | 波动、成交、盘口或跨资产异常 | 仅 AI 管线需要时 |
-| `POSITION_RECHECK` | 生命周期/风险监控 | 假设复核；安全退出不等待 AI | 否，安全动作直接执行 |
-| `AGENT_WAKEUP` | 主 Agent TriggerPlan | 已知事件时间、未决假设或立即复核 | 每个计划点最多一次 |
-| `HEARTBEAT` | TriggerCoordinator durable timer | 数据健康和低活跃期兜底 | 按管线策略 |
+| `MATERIAL_DELTA` | State Projector | 官方事实、市场、衍生品、跨资产或组合状态发生物质变化 | 同一变化簇最多一次 |
+| `SCHEDULED_REVIEW` | 官方日历投影或 TriggerPlan | 事件前准备、公布后复核、假设到期和低活跃期定期复核 | 每个计划点最多一次 |
+| `AGENT_OVERRIDE` | 主 Agent TriggerPlan | 立即分析或调整后的明确观察点 | 幂等且优先合并 |
 
-信息入库和 Outbox 写入必须同事务；Dispatcher 只把已提交触发 ID 发送给每品种/管线唯一的 `TriggerCoordinatorWorkflow`。协调器不保存完整新闻，只维护待处理 ID、当前分析、最近完成时间、当前 TriggerPlan revision、多个未来唤醒点和调用预算。它按以下规则形成不可变 TriggerBatch：
+`MaterialDelta`/日历投影和 Outbox 写入必须同事务；Dispatcher 只把已提交触发 ID 发送给每个 `AnalysisScope` 唯一的 `TriggerCoordinatorWorkflow`。`AnalysisScope` 默认是组合加一组共同风险因子，不按 BTC/ETH 机械复制；同一事件只有在问题、证据或时效合同确实不同才拆分。协调器不保存正文，只维护待处理 ID、当前分析、最近完成状态、当前 TriggerPlan revision 和未来唤醒点。它按以下规则形成不可变 TriggerBatch：
 
-1. 先做事件 ID 去重、品种资格、来源最低质量和数据可见性检查；热榜排名不能直接等同于市场影响。
-2. 同一事实的转载和短时间内连续更新合并为事件簇；合并窗口属于 `TriggerPolicy`，不能散落在采集器中。
-3. 每个品种只运行一个新增风险分析。分析期间到达的事件进入 pending batch；关键新事实可在当前周期结束后立即形成后继周期，普通更新等待下一计划时间。
-4. 高优先级事件可以越过普通防抖，但不能越过硬最小调用间隔、账号预算、数据资格和组合风险互斥。每品种 Coordinator 的计数只作无需访问数据库的预筛；真正的硬最小间隔与滚动每小时上限在提交周期前通过 PostgreSQL 准入事实跨品种原子占用。未获准的批次保留在原 Coordinator 等待，不能伪装成账号不可用或静默消费触发。普通事件按批次合并，不能让每条新闻消耗一次 Codex。
+1. State Projector 已完成来源资格、去重和物质性判断；Coordinator 不重新读取正文或再做一套相关性评分。
+2. 共享事实、风险因子和短时间连续修订合并为一个变化簇；合并窗口属于唯一 `TriggerPolicy`。
+3. 每个分析范围只运行一个 Codex。分析期间到达的变化进入 pending；改变核心事实或风险状态的变化在本轮结束后立即分析，非物质更新等待下一复核点。
+4. 不设置系统自定义的小时/日 AI 调用预算，紧急变化不能因本地额度门禁被丢弃。效率由物质性阈值、跨资产合并、单飞、相同输入哈希复用和 `NO_MATERIAL_CHANGE` 抑制保证；并发上限只保护一致性与账号租约，不是经济事件的静默丢弃理由。全部账号客观不可用时保留未过期高价值批次并告警，风险保护不等待 AI。
 5. Workflow ID 由 TriggerBatch ID 派生；Batch ID 绑定有序触发 ID、管线版本和截止时间，不使用分钟时间桶代替事件身份。
 6. `NOTIFY`、Dispatcher 或 Worker 重启后从 Outbox 和 Workflow 历史恢复；重复投递得到同一 Batch，不重复启动分析。
 
-Heartbeat 是在预算允许时读取最新面板的耐久兜底，不继承普通事件的过期时间；每个锚点最多保留一个 pending。真实资讯和计划 Wakeup 仍按各自 `expires_at` 丢弃，避免过期事实驱动新判断。预算等待超过普通触发有效期时，Heartbeat 不能因去重 ID 已见而永久消失，也不能让下一计时点停在过去形成空转。
+Heartbeat 只检查服务、数据和计划是否健康，不默认调用 Codex。低活跃期需要 AI 复核时，必须以 TriggerPlan 中可见的 `SCHEDULED_REVIEW` 表达；每个锚点最多一个 pending。过期事实不驱动新判断，计划时间也不能停在过去形成空转。
 
-触发优先级只决定何时分析，不决定是否交易。所有通道仍经过候选校验、剩余优势、组合风控和统一执行。人工发布的 `TriggerPolicy` 只定义合法操作范围、硬最小间隔、最大并发、计划大小和账户调用预算；范围内的事件规则、合并、普通冷却、Heartbeat 和多个时间点由当前 `AnalysisTriggerPlan` 决定。
+触发优先级只决定何时重建 `ContextAssessment`，不决定是否交易。人工发布的 `TriggerPolicy` 只定义合法范围、物质性规则边界、单飞、最大并发和计划大小；范围内的变化订阅、合并、普通冷却、定期复核和多个时间点由当前 `AnalysisTriggerPlan` 决定。
 
 同一事件类型可以按 `minimum_priority` 配置多个层级；运行时只采用该事件已满足的最高门槛层级，使高优先级事件可以使用更短的合并等待。相同类型和门槛不得同时存在两条启用规则，避免规则顺序暗中改变调度语义。
 
@@ -339,16 +378,16 @@ Heartbeat 是在预算允许时读取最新面板的耐久兜底，不继承普�
 
 - 新增、修改或删除多个明确的未来 UTC 触发点。
 - `TRIGGER_NOW`，立即请求一次新的 AI 分析。
-- 新增、修改或删除信息事件订阅、优先级、合并窗口、普通冷却和跟进条件。
-- 暂停或恢复某个品种/Pipeline 的可选 AI 分析，并重新安排尚未消费的时间点。
+- 新增、修改或删除风险因子/物质变化订阅、优先级、合并窗口、普通冷却和跟进条件。
+- 暂停或恢复某个分析范围的可选 AI 分析，并重新安排尚未消费的时间点。
 
 这里的“完整权限”严格限定为决定 AI 何时以及因何被调用。主 Agent 不能借此直接生成订单、绕过候选校验与风控、改变 Kill Switch、提高账户级风险或并发运行互相冲突的分析。为避免任意脚本和不可维护的调度 DSL，Patch 只允许固定操作集合，不接受 cron 表达式或可执行代码。
 
-`AnalysisTriggerPlan` 至少包含 `plan_id`、递增 revision、作用域、当前 Champion Manifest ID、事件规则和有界的 `ScheduledWakeup` 列表。每个 Wakeup 包含稳定 ID、`wake_at`、`expires_at`、原因、Evidence ID、希望复核的假设和所需数据新鲜度。`TRIGGER_NOW` 不是特殊旁路，而是在同一事务中产生带稳定 ID 的最高调度优先级触发事实；重复提交不会重复调用。若当前分析正在运行，它进入 pending batch 并在当前周期完成后优先执行，而不是并发争夺账户状态。
+`AnalysisTriggerPlan` 是 `ScheduleProjector` 的有效投影，至少包含 `plan_id`、递增 revision、作用域、当前 Champion Manifest ID、事件规则和有界 `ScheduledWakeup` 列表；每个 Wakeup 保存稳定 ID、来源身份、`wake_at`、`expires_at`、原因、事实 ID、希望复核的假设和所需数据新鲜度。主 Agent 的 Patch 与日历修订按第 4.4 节合成，不使用最后写入覆盖。`TRIGGER_NOW` 在同一事务中产生稳定最高调度优先级触发事实；重复提交不会重复调用。若当前分析运行中，它进入 pending 而不并发争夺状态。
 
-确定性 `TriggerPlanGate` 只检查契约和系统宪法级资源边界：基于最新 revision、目标属于当前 Manifest、时间合法、引用 Evidence 可见、计划大小和调用量不超过人工设定的硬上限。它不替主 Agent 判断某个合法时间点是否“值得”。通过后，计划、Patch、删除项和 Outbox 在一个事务中提交；任何部分失败则整次修改不生效。旧 revision 永久保留供回放，运行时只读取当前 revision。
+确定性 `TriggerPlanGate` 只检查契约和系统宪法级边界：基于最新 revision、范围属于当前 Manifest、时间合法、引用事实可见、计划有界且不制造并发冲突。它不设置 AI 预算，也不替主 Agent 判断某个合法时间点是否值得。通过后，Patch/suppression、有效计划 revision 和必要 Outbox 在一个事务中提交；任何部分失败则整次修改不生效。旧 revision 永久保留供回放，运行时只读取当前 revision。
 
-主 Agent 可以减少到零个未来时间点，也可以调整普通事件机制；但交易所保护、持仓安全监控和确定性实时策略不是 AI 调度平面，不能被暂停。没有计划时间时，是否仍由外部事件或 Heartbeat 触发 AI 取决于当前 TriggerPlan，而不是隐藏默认值。人工硬上限只用于防止失控资源消耗和并发破坏，修改它需要人工配置发布。
+主 Agent 可以减少到零个未来时间点，也可以调整普通变化机制；但交易所保护、持仓安全监控和确定性实时策略不是 AI 调度平面，不能被暂停。没有计划时间时，是否仍由物质变化触发 AI 取决于当前 TriggerPlan，而不是隐藏默认值。
 
 ### 7.2 运行包
 
@@ -393,136 +432,131 @@ Runner 通过 JSON-RPC 的 `thread/start` 与 `turn/start` 提交冻结 Prompt�
 | `MarketSnapshot` | Market Data | 冻结的行情与市场状态 | 否 |
 | `AccountSnapshot` | Reconciliation | 与交易所对账后的账户事实 | 否 |
 | `FeatureSnapshot` | Feature Engine | 截至指定时间的程序化特征 | 否 |
+| `CanonicalFactRevision` / `StateSnapshot` | Fact Pipeline | 点时可见事实及统一状态 | 否 |
+| `MaterialDelta` | State Projector | 相对上一可比状态的物质变化 | 否 |
 | `AnalysisTriggerEvent` / `TriggerBatch` | Trigger Coordinator | 为什么、何时以及基于哪些新事实分析 | 否 |
 | `AnalysisTriggerPlan` / `TriggerPlanPatch` | Governor + TriggerPlanGate | 主 Agent 对 AI 调度平面的版本化控制 | 否 |
-| `PanelSnapshot` / `PanelView` | Panel Builder | 规范信息快照及特定 AI 视图 | 否 |
-| `AnalysisProposal` | Codex Analyst | AI 的上下文判断、独立候选或审查意见 | 否 |
-| `SignalCandidate` | Strategy 或 Proposal Normalizer | 统一格式的候选信号 | 否 |
-| `TradeIntent` | Decision Composer | 经融合后准备进入风控的组合动作 | 否 |
-| `RiskDecision` | Risk Engine | 对确切 Intent 和账户状态的批准或拒绝 | 仅批准结果可进入执行 |
+| `PanelSnapshot` / `DecisionPacket` | Panel Builder | 规范分析投影及高密度 Codex 输入 | 否 |
+| `ContextAssessment` | Codex Analyst | 多资产、多时域上下文研判与反证 | 否 |
+| `BaseForecast` / `CalibratedForecast` | Forecast Engine | 程序基线及已校准的 AI 增量收益分布 | 否 |
+| `PortfolioTarget` | Portfolio Decision Engine | 扣除成本后希望持有的唯一目标暴露 | 否 |
+| `ApprovedTarget` / `RiskDecision` | Risk Engine | 对目标的收紧或拒绝 | 仅批准目标可进入交易规划 |
+| `TradeIntent` | Trade Planner | 已批准目标相对当前持仓的可执行差额 | 否 |
 | `RiskReservation` | Risk Engine | 原子占用的风险预算 | 否 |
-| `RiskEnvelope` | Capital Allocator + Risk Engine | 某策略袖套预先获准的风险上限 | 否 |
+| `RiskEnvelope` | Release Policy + Risk Engine | 某生产 Sleeve 预先获准的风险上限 | 否 |
 | `Order` / `Fill` | Execution 与 Reconciliation | 交易所订单和成交事实 | 已执行事实 |
 
-对象创建后不能被下游原地修改；修正必须产生新版本并引用上一个对象。这样每次交易都能准确回答“哪个策略或 AI 提出了什么、合成器为何采用、哪些规则通过、最终按什么账户状态批准”。
+对象创建后不能被下游原地修改；修正必须产生新版本并引用上一个对象。这样每次交易都能准确回答“哪些事实改变、程序基线是什么、AI 增加了什么信息、组合为何形成该目标、风控收紧了什么、最终如何成交”。
 
-`AnalysisProposal` 是带 `proposal_type` 判别字段的联合契约：`CONTEXT` 输出受限上下文特征，`ACTION` 可以建议 `NO_ACTION`、`OPEN`、`REDUCE`、`CLOSE` 或 `CANCEL_PENDING`，`REVIEW` 输出对指定候选的支持、反证和否决理由。所有类型都只是分析结果。当前 `PROPOSE` 的 Codex Structured Output 使用根对象 `proposal` 包裹内部 `OPEN | NO_ACTION` 两个互斥分支：`OPEN` 的交易字段全部必填，`NO_ACTION` 的 Schema 根本不包含这些字段，非法组合在生成边界不可表达。以下为当前 `OPEN` 输出的简化示例：
+`ContextAssessment` 是 Codex 唯一的交易期输出契约。它同时覆盖一个分析范围中的多个资产和预登记时域，但不包含 `OPEN`、`BUY`、数量、目标权重、订单类型或止损价格等交易动作：
 
 ```json
 {
-  "proposal": {
-    "proposal_id": "ai_20260818_001",
-    "proposal_type": "ACTION",
-    "suggested_action": "OPEN",
-    "symbol": "BTCUSDT",
-    "side": "BUY",
-    "horizon_minutes": 60,
-    "thesis": "可证伪的交易假设",
-    "evidence_ids": ["evt_123"],
-    "entry_condition": {"order_type": "LIMIT", "price": 100000.0},
-    "invalidation_price": 98500.0,
-    "valid_until": "2026-08-18T12:05:00Z",
-    "confidence": 0.63,
-    "unknowns": []
+  "assessment": {
+    "assessment_id": "ctx_20260818_001",
+    "as_of": "2026-08-18T12:00:00Z",
+    "market_mechanism": "监管路径变化可能先影响风险溢价，再影响资金流",
+    "views": [{
+      "asset": "BTC",
+      "horizon_minutes": 240,
+      "direction": "UP",
+      "already_priced": "PARTIAL",
+      "evidence_ids": ["fact_123"],
+      "invalidation_conditions": ["官方文件否定该监管路径"],
+      "uncertainty": "HIGH"
+    }],
+    "contradictions": [],
+    "data_gaps": []
   }
 }
 ```
 
-自然语言只用于解释；驱动后续程序判断的方向、价格、时间和引用必须是类型明确的字段。Codex 不输出最终仓位、杠杆、风险金额或订单 ID。合法的 `NO_ACTION` 是主动判断；AI 失败或数据不完整会使对应结果无效，依赖它的管线记为 `NO_TRADE`，评估时不得混为一类。
+方向、时域、证据、是否已定价、不确定性和失效条件必须是类型明确的字段。自然语言只解释影响机制，不能被下游解析成隐含动作。AI 失败、过期或数据不足会使本次研判无效；程序基线是否允许独立继续运行由已发布 Pipeline 明确声明并单独评价，运行时不得临时决定降级。
 
-### 7.4 程序化策略模块
+### 7.4 程序化预测模块
 
-程序策略实现统一的 `Strategy` 契约：接收本轮冻结的 `MarketSnapshot`、`AccountSnapshot` 和 `FeatureSnapshot`，返回零个或多个 `SignalCandidate`。首版不再包装一层内容相同的 `StrategyContext`；以后只有策略状态或 `CONTEXT` 模式已经通过评估、确实需要扩展输入契约时，才以新版本加入类型化字段。策略不能自行查询数据库、调用 Codex、访问网络或下单。
+程序因子实现统一的 `ForecastModel` 契约：接收冻结的 `MarketSnapshot`、`FeatureSnapshot` 和可见事实状态，返回零个或多个 `BaseForecast`。它不能查询数据库、调用 Codex、访问网络、读取账户私有状态或下单。账户和成本只在组合决策阶段进入，避免因子为了适配持仓而混入第二套组合逻辑。
 
-每条 Pipeline 在装配时显式注入一个类型化 `Strategy`，并在 Manifest 中冻结实现版本。首阶段不实现 `StrategyRegistry`、动态插件或同 Pipeline 多策略列表；若多策略产生可比分数、资本归因和冲突处理的需求尚未被证明，它们必须使用独立 Pipeline 并行 Shadow。策略的冻结契约包含：
+每条 Pipeline 在装配时显式注入一个类型化 `ForecastModel`，并在 Manifest 中冻结实现版本。首阶段不实现动态插件或任意模型图；不同候选模型在 Shadow 中独立评价，只有需要共同构成一个已证明的组合预测时才进入同一生产版本。冻结契约包含：
 
-- `strategy_id` 和版本。
+- `forecast_id` 和版本。
 - 支持的品种、周期和市场环境。
 - 所需 FeatureSet 及最小数据新鲜度。
-- 触发方式和候选有效期。
+- 触发方式和预测有效期。
 - `DecisionLane`、预期信号半衰期、最大来源年龄、最大决策延迟和最大入场延迟。
-- 状态 Schema 与校准版本。
-- 所属策略家族，用于识别相关信号和避免重复计算风险。
+- 状态 Schema、训练截止和校准版本。
+- 所属因子家族，用于识别相关预测和避免把同源信号当成独立证据。
 - 当前状态：`SHADOW`、`CANDIDATE`、`CHAMPION` 或 `RETIRED`。
 
-`SignalCandidate` 的强制字段包括候选 ID、生产者及版本、策略家族、品种、建议动作与方向、周期、Feature/Evidence 引用、类型化入场与失效条件、有效期、原始分数、校准器引用和未知项。Producer 只能写入零毛优势和绑定自身版本的 `uncalibrated` 引用；随后唯一的 `EdgeCalibrationBook` 按生产者、版本、品种、方向、周期和信号时点做精确解析，找不到已发布制品就追加 `EDGE_CALIBRATION_MISSING` 并失败关闭。进入事实账本前，系统再统一冻结执行策略版本、频率策略版本和完整往返成本 bps；候选生产者不得自行填写毛优势或系统成本依据。不同策略不能通过新增私有字段要求下游特殊处理；策略特有诊断只能放入不参与决策的 metadata。
+`BaseForecast` 强制包含生产者/版本、因子家族、资产、时域、特征/事实引用、有效期、原始分数、训练截止、校准引用、预期毛收益分布和未知项。未发布校准制品时仍可在 Shadow 形成结果标签，但不能进入生产 `PortfolioDecisionEngine`。模型不得自行填写交易成本、目标仓位或订单字段；完整成本由组合决策在真实决策时点统一冻结。
 
-策略可以是趋势、均值回归、突破、波动率、事件过滤或其他程序模型，但都只能产生候选信号。状态型策略的状态由仓储层按版本持久化，并作为下一次输入显式传入，不能隐藏在进程内存中。
+预测可以来自趋势、均值回归、突破、波动率、carry、跨资产或可审计的统计模型，但都只能产生收益分布。状态型模型的状态按版本持久化并显式传入，不能隐藏在进程内存中。
 
-长期新增风险的盈利主线必须先有可独立评估的程序化基线：因子、组合或事件规则产生候选，不依赖 Codex 自报置信度或自行填写毛优势。`CONTEXT` 输出的事件类别、方向倾向、持续性和不确定性只是结构化特征，必须经过按时域和市场状态冻结的 `EdgeCalibration` 才能转成预期收益分布；`REVIEW` 只能否决、降低风险或缩短有效期，不能提高毛优势或扩大仓位。没有费用后正的程序基线时，`PROPOSE` 只能保留在 Shadow 用于诊断，不得以“AI 倾向”代替收益地基。
+`ContextAssessment` 的方向、持续性和不确定性只是结构化上下文；只有结果发生前冻结的样本证明其增量，且 `AssessmentCalibration` 在精确资产、时域和环境范围内有效时，Forecast Engine 才能形成与程序预测同口径的 `CalibratedForecast`。AI 原始置信度永远不直接进入仓位。
 
-首版使用代码内显式装配和类型化配置，不实现动态加载插件。MVP 同一品种只允许一个生产策略管线拥有新增风险仓位；其他策略使用独立 Pipeline 并行 Shadow。只有确实需要多个生产策略共同持仓时，才设计可比校准、虚拟子账本和净头寸归因，避免提前引入难以对账的复杂度。
+`AssessmentCalibration` 只允许两种有明确基线的冻结语义：`adjust(base_forecast, assessment_features)` 评价同一程序机会的 `Q`/`Q+AI` 配对增量；`forecast(event_opportunity, assessment_features)` 评价同一物质事件机会相对现金和简单方向基线的独立增量。后者允许 AI 发现传统因子没有覆盖的事件优势，但必须依赖真实前瞻决策带、实际 Codex 完成时间、非重叠样本和完整成本，不能用事后历史重跑取得资格。两者最终都只产生标准 `CalibratedForecast`，共用 Portfolio/Risk/Execution，不形成 AI 专用交易路径。首个可晋级版本只允许预登记的有限调整/映射桶，不在线拟合、解析自由文本或依据近期盈亏改参数。
+
+首版使用代码内显式装配和类型化配置，不实现动态加载插件。MVP 同一品种只允许一个生产 Forecast/Pipeline 影响目标；其他模型独立 Shadow。只有第二个预测证明组合增量且无法由现有模型表达时，才设计多模型融合和净头寸归因。
 
 #### 7.4.1 按信号寿命选择决策通道
 
-系统不为“高频”“中频”“低频”复制三套策略、风控和执行模块。`DecisionLane` 只是同一 StrategyPipeline 的延迟与权限 Profile：
+系统不为“高频”“中频”“低频”复制三套预测、风控和执行模块。`DecisionLane` 只是同一 Pipeline 的延迟与权限 Profile：
 
 | 通道 | 适用信号 | 运行形态 | AI 权限 |
 |---|---|---|---|
 | `REALTIME_DETERMINISTIC` | 经证明寿命短于常规 Workflow 延迟的盘口、成交或结构化事件信号 | 常驻进程内执行已发布策略和纯函数规则 | 强制 `OFF` |
 | `EVENT_ANALYSIS` | 秒至小时级事件、跨来源确认、二阶影响和过度反应 | TriggerBatch 立即启动 AnalysisCycleWorkflow | 可使用一个已批准 AI 模式 |
-| `SCHEDULED_ANALYSIS` | 趋势、均值回归、环境判断和较长假设 | TriggerPlan 或 Heartbeat 启动同一 Workflow | 可选 AI |
+| `SCHEDULED_ANALYSIS` | 趋势、均值回归、环境判断和较长假设 | 官方日历或 TriggerPlan 启动同一 Workflow | 可选 AI |
 
-策略的交易次数不决定所属通道；归属只由样本外 Alpha 衰减曲线和基础设施延迟预算决定。每次评估都必须验证：
+预测的交易机会次数不决定所属通道；归属只由样本外 Alpha 衰减曲线和基础设施延迟预算决定。每次评估都必须验证：
 
 ```text
 基础设施 p99 总延迟 < 最大允许入场延迟 < 已验证信号有效期
 ```
 
-若不成立，策略只能降到 Shadow、转向更长持有期或退役，不能忽略来源延迟和滑点。`REALTIME_DETERMINISTIC` 默认关闭；启用前必须证明常规通道确因延迟损失了可重复净优势，并完成逐笔回放、延迟注入、Testnet 和故障演练。
+若不成立，预测只能降到 Shadow、转向更长持有期或退役，不能忽略来源延迟和滑点。`REALTIME_DETERMINISTIC` 默认关闭；启用前必须证明常规通道确因延迟损失了可重复净优势，并完成逐笔回放、延迟注入、Testnet 和故障演练。
 
-所有通道共享相同的 `SignalCandidate`、`TradeIntent`、规则注册、组合风险、订单状态机、对账、生命周期和 Outcome 契约。实时通道只缩短传输路径，不能拥有私有风控语义。Codex CLI、信息面板、MCP 查询和 Temporal 调度永远不进入实时热路径。
+所有通道共享相同的 `BaseForecast`、`PortfolioTarget`、`ApprovedTarget`、`TradeIntent`、组合风险、订单状态机、对账、生命周期和 Outcome 契约。实时通道只缩短传输路径，不能拥有私有组合或风控语义。Codex CLI、信息面板和 Temporal 调度永远不进入实时热路径。
 
 ### 7.5 AI 参与模式
 
-`StrategyPipeline` 使用固定主干和有限模式，不允许配置任意有向图：
+生产管线只保留两个模式，禁止配置任意 Agent 图：
+
+| 模式 | 行为 |
+|---|---|
+| `OFF` | 只使用已发布程序预测，Codex 不参与本轮经济决策 |
+| `ASSESS` | 一次 Codex 调用生成组合级 `ContextAssessment`；仅已发布的校准器可以把它转换为预测增量 |
 
 ```text
-数据资格检查 -> 程序化特征 -> [OFF: 程序策略]
-                           -> [CONTEXT: AI上下文 -> 程序策略]
-                           -> [PROPOSE: AI与程序策略独立产候选]
-                           -> [REVIEW: 程序策略 -> AI审查]
-                           -> 候选校验 -> 决策合成
-                           -> 频率与经济性检查 -> 组合风控 -> 执行
+程序特征 -> BaseForecast ──────────────────────┐
+MaterialDelta -> DecisionPacket -> ASSESS ─> AssessmentCalibration
+                                               └-> CalibratedForecast
+账户/成本/持仓 ───────────────────────────────────> PortfolioDecisionEngine
 ```
 
-每条管线只能选择一种 AI 模式：
+不再提供生产 `PROPOSE` 和候选级 `REVIEW` 两条平行路径：前者让 AI 与程序重复决定方向，后者又在组合决策前增加一次含义重叠的否决，造成责任不清、免费忽略延迟和评价样本碎片化。现有 `PROPOSE` 仅作为迁移期 Shadow 证据，不能取得交易权限；迁移完成后删除其领域契约和配置。若未来消融实验能证明某种独立角色相对 `ASSESS` 有稳定费用后增量，必须以新的完整架构决策替换模式，而不是在主链上叠加第三次判断。
 
-| 模式 | Codex 位置 | 用途 |
-|---|---|---|
-| `OFF` | 不调用 | 完全程序化策略 |
-| `CONTEXT` | 策略之前 | 将复杂事件归纳为受限的结构化上下文特征 |
-| `PROPOSE` | 与程序策略并行 | AI 独立产生候选，避免被程序信号锚定 |
-| `REVIEW` | 程序候选之后 | 检查事件背景、反方证据和假设失效条件 |
+一份 Pipeline 只冻结分析范围、DecisionLane、TriggerPolicy、FeatureSet、ForecastModel、AI 模式、PanelPolicy、PromptPack、ForecastCalibration、PortfolioPolicy、RiskPolicy、ExecutionPolicy 和 MetricDefinition。TriggerPlan 只能改变调用时机，不能改变任何预测、组合、风险或交易规则。Codex 不可用时是否回退到 `OFF` 由 Pipeline 事前固定并独立评价；运行时不得临时选择表现看起来更好的路径。
 
-一份 `StrategyPipeline` 只引用已注册组件及其确切版本：交易品种、DecisionLane、TimingProfile、TriggerPolicy、FeatureSet、Strategy 列表、AI 模式、PanelPolicy、PromptPack、CompositionPolicy、FrequencyPolicy、RiskPolicy、ExecutionPolicy 和 MetricDefinition。它是发布清单的一部分，不包含可执行脚本。运行时 TriggerPlan 只能在 TriggerPolicy 允许范围内改变 AI 调用时机，不能改变 Pipeline 的策略、通道或交易规则。
+`REALTIME_DETERMINISTIC` 强制使用 `OFF`。Codex 的价值是解释复杂事件、跨资产传播、持续性、已定价程度和反证，不与确定性程序争夺毫秒延迟，也不重复计算技术指标。
 
-模式是稳定边界，不代表首版全部实现。MVP 只实现 `OFF` 和 `PROPOSE`，分别建立程序基线和 AI 独立候选；`REVIEW` 与 `CONTEXT` 只有在明确实验需要时再实现，避免为了理论灵活性提前增加两套生产路径。
+### 7.6 组合决策与交易规划
 
-Codex 失败只使依赖该结果的候选无效；同一 `PROPOSE` 周期内已经独立产生且单独获准的程序候选继续通过校准、合成、频率和风控。未来候选级 `REVIEW` 若被选为执行版本，失败、`UNKNOWN` 或过期意味着该联合版本不交易，但基础 Q 仍保留独立反事实，不能被改写成 AI 成功。无论模式如何，Codex 都不能绕过候选校验、频率控制、风险和执行。不同模式可以在相同快照上并行 Shadow，但同一生产管线不同时叠加多个 AI 角色，除非实验已证明额外调用带来扣除成本后的稳定增量。
+`PortfolioDecisionEngine` 是唯一经济决策组件。它输入可比较的 `CalibratedForecast`、当前持仓、现金、可归因交易成本和版本化 `PortfolioPolicy`，输出一个 `PortfolioTarget` 或 `NO_CHANGE`。它负责且只负责：
 
-候选级 Q/Q+AI 实验只有在基础 Q、Review Prompt、数据边界和配对评价计划全部预登记后才实现。MVP 中基础 `candidate_id` 已唯一标识一次 Q 机会，联合候选保存 `base_candidate_id` 即可配对；除非出现多个基础候选需要归并为同一经济机会的真实需求，不再增加与它同义的 `opportunity_id`。Q+AI 的 `KEEP` 不能直接复用 Q 的收益：它必须以 Review 实际完成后的首个可执行时点重新冻结参考价格、剩余有效期和交易成本，限价已错过、信号已过期或价格已消耗优势时记为不交易。Q 与 Q+AI 使用同一个版本化执行模拟器，但各自遵循真实决策就绪时间、成交/未成交、止损和退出路径；固定时域 `CandidateOutcome` 只用于毛优势校准，不能冒充这种配对策略 PnL。否则系统会给 Codex 免费消除分析延迟并高估 AI 增量。
+- 拒绝过期、不可校准、同源重复或数据质量不合格的预测。
+- 在真实账户净头寸上处理方向冲突、相关暴露和共享风险因子。
+- 以保守预期毛收益减去手续费、点差、滑点、资金成本、延迟/逆向选择和估计不确定性。
+- 在同一个目标函数中处理最小净优势、换手成本、迟滞区间、最短持有和反向交易冷却，避免另设 `DecisionComposer` 与 `FrequencyController` 重复判断经济性。
+- 产生目标暴露、有效期、来源预测、预期净边际和可程序执行的退出条件；不产生订单。
 
-`REALTIME_DETERMINISTIC` 管线的 `ai_mode` 必须为 `OFF`。Codex 的价值集中在解释复杂事件、识别跨资产与持续性影响、查找反方证据和改进候选版本，而不是与确定性程序争夺首个毫秒。
+首版只实现一个显式、可回放的单 Sleeve 目标规则：在所有合格预测中选择保守净优势最高者；只有它超过冻结阈值且目标变化越过成本迟滞区间时才调整，否则 `NO_CHANGE`。不预建求解器、策略注册中心、动态权重脚本或虚拟子账户。第二个生产 Sleeve 只有在独立增量价值无法由单 Sleeve 表达时才引入。
 
-### 7.6 决策合成器
+Risk Engine 接收目标后只能把绝对风险向零收紧或拒绝，不能增加数量、改变方向或挑选另一预测。`TradePlanner` 随后用 `ApprovedTarget - CurrentPosition` 生成 `TradeIntent`，并处理交易所精度、最小名义金额、未成交订单和执行节奏；它不能重新判断收益。由此经济选择、风险授权和订单翻译各只有一次。
 
-Decision Composer 是确定性组件，输入所有 `SignalCandidate`、可选 Review 结果、当前组合状态和版本化 `CompositionPolicy`，输出 `TradeIntent` 或明确拒绝原因。它不调用模型，负责：
+程序预测的主动失效条件必须随 `PortfolioTarget -> TradeIntent -> PositionLifecycle` 冻结传递，生产生命周期与历史回放调用同一个纯评价函数，禁止回测适配器另写退出逻辑。当前只实现基于指定已收盘 K 线周期的移动平均失效退出；条件明确记录版本、周期和窗口，行情周期不匹配或历史不足时保持保护单而不猜测。退出优先级固定为交易所/本地止损、程序失效、最长持有时间；程序失效只能降低已有风险，不能反手或放宽止损。新增退出类型必须作为新的领域联合类型和完整 Manifest 变更验收，不能在配置中藏任意表达式。
 
-- 去除重复、过期和依赖相同底层证据的候选。
-- 检查方向冲突、持仓冲突和候选的适用市场环境。
-- 在策略袖套之间按实际账户净头寸处理相反方向、共享证据和相关敞口，不能把虚拟分配误当成多份真实资本。
-- 根据策略的样本外校准结果读取预期收益分布，而不是直接使用 AI 置信度。
-
-是否下单不归任何单个 Agent 或模型决定：`Strategy` 只负责产生候选，校准器写入有制品依据的保守毛优势，Composer 只按保守毛优势扣除冻结的可归因交易成本后选优，Portfolio/Risk 才计算目标暴露并授权有限风险，Execution 最后在幂等、可对账的订单状态机中创建订单。Codex 只能影响已声明的上下文或审查字段，不能跨过任何一层成为“总决策者”。
-- 按预先定义的合成方式处理独立候选，例如单候选阈值、独立信号共识或 AI Review 否决。
-- 生成带候选引用、CompositionPolicy 版本和预计组合变化的 TradeIntent。
-
-TradeIntent 至少包含 Intent ID、cycle ID、Pipeline 与 CompositionPolicy 版本、动作、品种、候选引用、持仓/订单引用、类型化入场与退出条件、有效期和预计组合变化；不包含最终订单数量。下游只能接受完整契约，不能回读策略私有 metadata 猜测意图。
-
-程序策略的主动退出条件必须和入场候选一起冻结并随 `TradeIntent -> PositionLifecycle` 传递，生产生命周期与历史回放调用同一个纯评价函数，禁止回测适配器另写退出逻辑。当前只实现基于指定已收盘 K 线周期的移动平均失效退出；条件明确记录版本、周期和窗口，行情周期不匹配或历史不足时保持保护单而不猜测。退出优先级固定为交易所/本地止损、程序失效、最长持有时间；程序失效只能降低已有风险，不能开仓、反手或改变止损。新增退出类型必须作为新的领域联合类型和完整 Manifest 变更验收，不能在配置中藏任意表达式。
-
-合成方式来自少量代码内实现，不提供任意公式脚本。MVP 只实现 `HighestNetEdgeComposer`：先拒绝未知、过期或缺少冻结成本的候选，再按“已发布保守毛优势 − 完整往返成本”排序并最多选择一个；它不比较不同 Producer 不可比的 `raw_score`，经济性阈值仍由唯一 `FrequencyController` 执行，避免两层重复门禁。共识或 Review 否决等合成器在有对应实验时再增加。新增合成器必须先证明现有实现无法表达真实需求。MVP 每个周期最多产生一个新增风险动作，但可以同时产生必要的减仓、平仓和撤单；降风险动作优先，新增风险必须基于执行降风险动作后的预计组合重新计算。无法形成唯一执行顺序时，全部新增风险动作拒绝。
+MVP 每个周期最多产生一个新增风险方向，但可以同时执行必要的减仓、平仓和撤单；降风险优先，新增风险必须基于降风险后的预计组合重新计算。无法形成唯一执行顺序时，拒绝全部新增风险。
 
 ### 7.7 程序化规则链
 
@@ -532,21 +566,21 @@ TradeIntent 至少包含 Intent ID、cycle ID、Pipeline 与 CompositionPolicy �
 - `Guard` 返回 `PASS`、`FAIL` 或 `UNKNOWN`，并记录规则 ID、版本、观测值、限制值和原因代码。
 - 对新增风险，任何硬性 Guard 的 `FAIL` 或 `UNKNOWN` 都拒绝；对降风险动作可以使用单独的明确规则集。
 
-规则按固定阶段执行：数据资格、候选合法性、组合风控、执行保护和持仓保护。每阶段使用静态 `RuleRegistry` 与类型化 `RuleSetPolicy`，不执行数据库中的任意表达式或 Agent 生成代码。新增规则必须说明它阻止的具体失败、与已有规则的差异、测试样本和删除条件，避免规则不断重叠。
+规则按固定阶段执行：事实/预测资格、组合目标、风险授权、执行保护和持仓保护。每阶段使用静态 `RuleRegistry` 与类型化 `RuleSetPolicy`，不执行数据库中的任意表达式或 Agent 生成代码。新增规则必须说明它阻止的具体失败、与已有规则的差异、测试样本和删除条件，避免规则不断重叠。
 
-### 7.8 交易频率与经济性控制
+### 7.8 交易频率与经济性约束
 
-交易频率不是越高越好，也不设“必须产生多少交易”的目标。`FrequencyController` 是进入组合风控前的确定性门禁，综合检查：
+交易频率不是独立控制器，也不设“必须产生多少交易”的目标。以下经济约束由 `PortfolioDecisionEngine` 在一次目标计算中统一处理：
 
 - 每品种和每策略的最短冷却时间。
 - 同一事件簇或同一交易假设的重复触发。
-- 每小时/每日订单数、成交数和换手预算。
-- 最短持仓时间、反向开仓间隔和连续亏损降频。
+- 目标变化是否越过费用与不确定性形成的 no-trade band。
+- 最短持仓时间和反向开仓间隔。
 - 未成交订单、当前持仓和市场流动性。
 - 信号有效期是否足以覆盖模型与执行延迟。
 - 当前端到端延迟下还剩多少可交易价格空间，而不是只判断事件原始方向是否正确。
 
-每个候选的预期收益必须来自该策略的样本外校准器。没有达到预登记最小样本量、没有前推校准结果或校准已经过期的策略只能运行 Shadow，不能以主观置信度替代。为使未校准策略能够在不取得交易资格的情况下积累后验标签，Shadow 允许它生成带 `EDGE_CALIBRATION_MISSING` 的标准候选；候选照常进入 `CandidateOutcome`，但合成器必须程序化拒绝，直到 `calibration_ref` 指向通过门禁的版本化制品。系统计算：
+每个预测的预期收益必须来自样本外校准器。没有达到预登记最小样本量、没有前推结果或校准过期的模型只能运行 Shadow；Shadow 仍形成到期标签，但不能进入生产目标。系统计算：
 
 ```text
 剩余预期净边际 = 条件于当前价格的剩余预期毛收益
@@ -554,9 +588,9 @@ TradeIntent 至少包含 Intent ID、cycle ID、Pipeline 与 CompositionPolicy �
            - 延迟与逆向选择缓冲 - 估计不确定性缓冲
 ```
 
-系统按事件首次可交易时的基准价格、当前价格、历史 Alpha 衰减曲线和实时流动性重算“剩余”优势。方向判断正确但价格已经走完预期空间、点差扩大或事件过期时必须拒绝追单。剩余预期净边际未超过版本化最低阈值时不交易。AI `confidence` 只能作为校准输入之一，不能替代预期收益。频率参数属于策略控制配置，可以由主 Agent 提案和实验，但账户级最大订单数、最大换手和熔断阈值属于 RiskPolicy，不能自动放宽。
+系统按事件首次可交易基准、当前价格、Alpha 衰减曲线和实时流动性重算剩余优势。方向正确但价格已走完、点差扩大或事实过期时不追单。AI 不确定性只能进入发布校准器，不能替代收益。经济性和迟滞参数属于 `PortfolioPolicy`；账户级最大订单数、最大换手和熔断阈值属于 RiskPolicy，只能收紧。
 
-逐候选门禁只扣能够随该交易发生或暴露变化的成本。模型订阅、机器、存储、数据源和人员等固定/周期成本属于 Pipeline 与组合层经济性：从真实账单或明确合同进入固定评价窗口，再与同窗口实际收益和反事实增量比较。禁止为了让逐笔公式看似“完整”而把未知运营成本硬编码成 bps，也禁止因逐笔交易成本后为正就宣称已经实现全部成本后盈利。
+逐目标计算只扣会随该交易或暴露变化的成本。模型订阅、机器、存储、数据源和人员等固定/周期成本属于 Pipeline 与组合层经济性：从真实账单或明确合同进入固定评价窗口，再与同窗口实际收益和反事实增量比较。禁止把未知运营成本硬编码成 bps，也禁止因单笔可变成本后为正就宣称已经实现全部成本后盈利。
 
 ### 7.9 指标体系与归因
 
@@ -566,9 +600,9 @@ TradeIntent 至少包含 Intent ID、cycle ID、Pipeline 与 CompositionPolicy �
 |---|---|---|---|
 | 盈利 | 净 PnL、每笔期望、Profit Factor、风险调整收益、相对基线增量 | 每笔/每日 | 判断是否存在经济优势 |
 | 风险 | 敞口、风险预算、回撤、连续亏损、止损覆盖、组合集中度 | 实时/每笔 | 限制损失和触发熔断 |
-| 频率与成本 | 信号数、动作率、交易数、换手、手续费、滑点、撤单成交比、持有时间 | 每周期/每日 | 识别过度交易和成本侵蚀 |
-| 策略 | 候选通过率、按环境胜率、MFE/MAE、净边际校准、失效原因 | 每笔/滚动窗口 | 策略晋级、降级和退役 |
-| AI | `NO_ACTION` 率、Schema/工具失败、证据多样性、与程序信号分歧、调用成本与延迟 | 每周期/每日 | 判断 AI 的边际价值与稳定性 |
+| 频率与成本 | 预测数、目标变化率、交易数、换手、手续费、滑点、撤单成交比、持有时间 | 每周期/每日 | 识别过度交易和成本侵蚀 |
+| 预测 | 校准覆盖率、按环境误差、MFE/MAE、净边际、失效原因 | 每个到期点/滚动窗口 | 预测晋级、降级和退役 |
+| AI | 可用率、Schema/能力失败、证据多样性、与程序基线分歧、配对净增量、调用成本与延迟 | 每周期/每日 | 判断 AI 的边际价值与稳定性 |
 | Codex 容量 | 各匿名账号有效余量、额度探测新鲜度、租约占用、路由命中、限流和故障切换 | 每次探测/每日 | 保障分析容量并发现账号或路由退化 |
 | 运行 | 数据新鲜度、对账偏差、订单 `UNKNOWN` 时长、工作流重试和积压 | 实时 | 故障降级和运维告警 |
 | 触发与延迟 | 来源、入库、合并、Trigger-to-Decision、Codex、Intent-to-Send、Send-to-Ack 的 p50/p95/p99，延迟分桶净收益 | 每事件/滚动窗口 | 判断通道选择和剩余优势是否可信 |
@@ -583,28 +617,20 @@ Risk Engine 不包含某个策略的专用分支，而是按固定顺序运行�
 
 | 风控层 | 责任 | 典型检查 |
 |---|---|---|
-| 数据资格 | 确认决策依据可用 | 行情、账户、面板新鲜度，候选有效期，对账状态 |
-| 订单风险 | 限制单次动作 | 品种白名单、最小/最大金额、价格偏离、点差、深度、滑点 |
-| 策略风险 | 限制单条管线 | 单笔风险、策略风险预算、连续亏损、冷却期、换手上限 |
+| 数据资格 | 确认决策依据可用 | 行情、账户、事实/预测新鲜度，目标有效期，对账状态 |
+| 订单风险 | 限制单次动作 | 品种白名单、最大金额、价格偏离、点差、深度、滑点 |
+| Pipeline 风险 | 限制单条生产路径 | RiskEnvelope、连续亏损、账户级硬订单数和硬换手上限 |
 | 组合风险 | 评估执行后组合 | 总敞口、方向敞口、集中度、相关风险和未成交订单冲突 |
 | 账户熔断 | 限制全局损失 | 当日亏损、最大回撤、异常仓位和 Kill Switch |
 | 执行就绪 | 确认动作可安全提交 | 入场/失效条件可执行、保护动作可建立、交易所状态确定 |
 
-#### 8.1.1 多策略资本与风险分配
+#### 8.1.1 资本边界
 
-系统追求组合层扣除全部成本后的长期净收益，不让某个频率或策略无限争夺账户。`CapitalAllocator` 是确定性组件，根据已通过独立评估的净期望、下行风险、相关性、容量、回撤和估计不确定性，为生产策略创建 `StrategySleeve` 与 `RiskEnvelope`。Sleeve 是归因与预算边界，不是虚构的独立交易账户；实际余额、净仓位、未成交订单和组合风险始终按交易所账户统一计算。
+MVP 只有一个生产 Sleeve 和一份人工批准的 `RiskEnvelope`，不运行第二个 Capital Allocator。PortfolioDecisionEngine 在该边界内选择经济目标，Risk Engine 负责强制边界，实际余额、净仓位和未成交订单始终按交易所账户统一计算。
 
-分配遵循以下约束：
+只有第二个独立 Pipeline 已证明费用后组合增量且单 Sleeve 无法表达时，才引入版本化的多 Sleeve `CapitalAllocationPolicy`。它在发布时依据预登记的净期望、下行风险、相关性、容量和估计不确定性冻结各 Sleeve 上限，不按日内随机盈亏在线追涨分配，也不创建虚构的独立资金账户。所有上限之和仍受人工账户级风险约束；主 Agent只能提出候选，不能直接放宽。
 
-- 未达到最低样本量或只在单一市场环境有效的策略只能 Shadow，不能因近期盈利获得生产风险。
-- 所有 Sleeve 风险上限之和不超过人工批准的账户级风险，相关策略还要共享更严格的家族上限。
-- 分配评价使用费用后净收益、回撤和容量，不使用交易频率、毛收益或 AI 置信度作为替代目标。
-- 日内随机盈亏不触发追涨式重新分配；变更按预登记窗口评估并以完整版本发布。Kill Switch、账户上限和 RiskPolicy 仍只能人工放宽。
-- 主 Agent 可以提出策略加入、退出和分配策略候选，但生产权重必须经过相同的 Champion/Challenger 评估与发布门禁。
-
-MVP 保持单一生产 Sleeve。只有第二个策略通过独立增量评估且现有单管线无法表达其真实组合价值时，才启用多 Sleeve，避免为了“支持多频率”提前建立复杂虚拟账本。
-
-每个规则只返回标准 RuleResult，不自行修改 TradeIntent。Risk Engine 先构造执行后的预计组合，再运行组合规则；之后由唯一的 Position Sizer 根据止损距离、波动率、流动性和剩余风险预算计算数量，并使用最终数量再次校验。MVP 只实现一个经过测试的仓位算法，不预建仓位算法插件体系。AI 置信度不直接影响仓位。
+每个规则只返回标准 `RuleResult`，不自行重写 `PortfolioTarget`。Risk Engine 根据止损距离、波动率、流动性和剩余风险预算计算最大安全暴露，然后对目标逐项取更保守值并再次校验；它不能增加绝对风险、反转方向或换成另一资产。MVP 只实现这一种收紧语义，不再保留独立 Position Sizer 插件体系。AI 原始输出不直接影响安全上限。
 
 每个新增风险 Intent 都必须具有可由程序执行的价格保护和最长持有时间。策略假设的文字失效条件可以辅助后续分析，但不能替代保护性止损；如果无法构造满足交易所精度、最小金额和风险上限的保护方案，该 Intent 必须拒绝。
 
@@ -618,7 +644,7 @@ MVP 保持单一生产 Sleeve。只有第二个策略通过独立增量评估且
 
 #### 8.1.2 可选实时确定性通道
 
-常规 `EVENT_ANALYSIS` 和 `SCHEDULED_ANALYSIS` 继续使用数据库 RiskReservation 与 Temporal ExecutionWorkflow。若评估证明某个已发布 `OFF` 策略的信号寿命短于这条路径的 p99，才可启用常驻 `RealtimeDecisionService`：它直接消费内存中的连续特征，产生相同的 SignalCandidate 和 TradeIntent，并调用同一个 ExecutionGateway。
+常规 `EVENT_ANALYSIS` 和 `SCHEDULED_ANALYSIS` 继续使用数据库 RiskReservation 与 Temporal ExecutionWorkflow。若评估证明某个已发布 `OFF` 预测的信号寿命短于这条路径的 p99，才可启用常驻 `RealtimeDecisionService`：它直接消费内存中的连续特征，产生相同的 `BaseForecast -> PortfolioTarget -> ApprovedTarget -> TradeIntent`，并调用同一个 ExecutionGateway。
 
 实时服务不能临时取得全账户风险。中央 Risk Engine 事先创建已经计入组合占用的有限 `RiskEnvelope`，并把它租给唯一 ExecutionGateway 实例；Gateway 只能在 Envelope 的品种、策略、数量、损失和有效期内原子消费。若标准数据库事务的实测延迟仍可满足预算，继续使用标准 Reservation，不引入额外机制；只有它被证明是瓶颈时，才允许使用预留 Envelope 加本地同步追加日志的实现。该实现必须在发单前持久化确定性请求，崩溃后把所有未确认额度视为已消耗，直到交易所主动对账完成。
 
@@ -662,11 +688,11 @@ PROPOSED -> RISK_REJECTED
 - 风控引擎根据已批准的失效条件生成保护性退出，并验证交易所是否成功接受。
 - 生命周期在每个新鲜已收盘行情快照上评价随持仓冻结的程序退出条件；触发后复用同一幂等平仓、对账、费用归因和风险释放路径，Codex 不参与该路径。
 - 价格止损、最大持有时间、账户熔断和风险降级由确定性监控执行。
-- 后续 Codex 周期可以提出减仓、平仓或取消挂单，但不能自动放宽现有止损、延长最大持有时间或扩大风险。
+- 后续 `ContextAssessment` 只有经过已发布校准并使 `PortfolioDecisionEngine` 形成更低目标时，才间接导致减仓；Codex 不能直接修改挂单、止损或持有期限。
 - Codex、新闻源或工作流暂时不可用时，已有保护规则继续运行；系统只停止增加风险。
 - 交易所不支持原子保护单时，执行模块必须显式管理“入场已成交但保护单未确认”的高危状态，并优先平仓或触发熔断。
 
-这样模型负责判断交易假设是否仍成立，持仓安全不依赖模型持续在线。
+这样 Codex 负责研判假设背景，确定性目标与生命周期负责动作，持仓安全不依赖模型持续在线。
 
 ## 9. 三闭环演进与版本治理
 
@@ -686,18 +712,45 @@ Governor 与 Analyst 一样是无工具角色：本次完整、规范化的 `Gov
 
 版本演进链路固定为：`运行遥测 -> GovernanceSnapshot -> 主 Agent 提案 -> 提案登记与权限校验 -> 隔离实现 -> 独立评估 -> 发布器晋级 -> 线上监测或自动回滚`。TriggerPlanPatch 走独立的运行调度链：`GovernanceSnapshot -> Governor Patch -> TriggerPlanGate -> 原子计划修订 -> TriggerCoordinator`，它不修改生产 Champion。任何非调度变更都不能借该短链绕过版本链路。
 
+### 9.1.1 主 Agent 与临时 Analyst 的协作协议
+
+两者不以对话串联，也不同时分析同一个市场问题：
+
+| 协作物 | 主 Agent 责任 | 临时 Analyst 责任 |
+|---|---|---|
+| `InformationCoveragePolicy` | 根据持仓、风险因子、失败归因和新假设提议增删数据合同 | 不选择或访问数据源 |
+| `AnalysisMandate` | 定义当前要回答的问题、资产/时域、必需证据、未知项和输出 Schema | 只依据 Packet 回答，不改问题 |
+| `TriggerPlan` | 调整物质变化规则、未来复核点或立即触发一次 | 可输出失效条件与建议观察窗口，但不能自行调用下一次 |
+| `DecisionPacket` | 通过版本提案优化内容和压缩策略 | 读取本轮冻结输入，不请求任意检索 |
+| `ContextAssessment` | 评价稳定性、信息增量和后续校准，不重写本轮答案 | 提供多资产/时域研判、证据、反证和未知项 |
+| `OutcomeLedger` | 用配对结果决定保留、简化或退役数据/提示/触发机制 | 不读取未来结果，不在线学习或改提示词 |
+
+运行路径固定为：
+
+```text
+主 Agent 发布 AnalysisMandate/TriggerPlan 候选
+                │（经门禁成为版本）
+MaterialDelta ─> DecisionPacket ─> 临时 Analyst ─> ContextAssessment
+                                                        │
+                         配对预测与真实结果 ───────────────> OutcomeLedger
+                                                        │
+                                      下一治理周期的主 Agent
+```
+
+主 Agent 不把自己的临时市场观点塞进 Packet，临时 Analyst 不把建议变成 TriggerPlanPatch。若 Analyst 指出一个新的事实缺口，先记入 `data_gap`；主 Agent 只有在多次缺口或明确高风险事件证明其经济价值后，才提议新的来源合同。这样反馈能长期积累，又不会因一次模型回答持续扩张系统。
+
 ### 9.2 治理面板与分层记忆
 
 主 Agent 使用独立于交易面板的 `GovernanceSnapshot`，只包含完成治理任务所需的信息：
 
 - 不可违反的系统宪法：安全边界、权限边界、核心目标和人工保留权。
-- 当前生产 Champion 的 ReleaseManifest，以及其中固定的代码、模型、FeatureSet、StrategyPipeline、CompositionPolicy、FrequencyPolicy、PromptPack、PanelPolicy、MetricDefinition、RiskPolicy 和 ExecutionPolicy 版本。
+- 当前生产 Champion 的 ReleaseManifest，以及其中固定的代码、模型、InformationCoveragePolicy、FeatureSet、ForecastModel、AssessmentCalibration、PortfolioPolicy、PromptPack、PanelPolicy、MetricDefinition、RiskPolicy 和 ExecutionPolicy 版本。
 - 按市场环境分层的近期表现、长期表现、置信度校准和运行稳定性。
 - 当前候选、待验证假设、实验预算、失败实验和明确的否决原因。
 - 数据源漂移、特征漂移、动作频率漂移和信息源贡献变化。
 - 事故记录、已知缺陷、技术债、复杂度预算和回滚状态。
 - 架构决策记录及仍然有效的约束。
-- 当前 AI TriggerPlan、未来触发点、最近触发结果、调用预算、积压事件和不同触发原因的费用后贡献。
+- 当前 AI TriggerPlan、未来触发点、最近触发结果、积压变化和不同触发原因的费用后增量；不包含本地小时/日调用预算。
 
 长期记忆分为三层：
 
@@ -734,7 +787,7 @@ Governor 与 Analyst 一样是无工具角色：本次完整、规范化的 `Gov
 
 证据不足时，主 Agent 应输出 `NO_CHANGE` 和继续观察条件。治理系统不以变更数量评价 Agent，也不要求每个周期都产生候选；无效迭代本身属于成本。
 
-每个提案默认只修改一个层次：PromptPack、PanelPolicy、FeatureSet、StrategyPipeline、CompositionPolicy、FrequencyPolicy、MetricDefinition、代码或依赖。跨层变更必须拆分，除非单独修改无法形成可运行版本，并且提案中明确说明不可拆分原因。主 Agent 可以提出单独标记为 `MANUAL_ONLY` 的 RiskPolicy 候选，但不能实现、批准或启用；执行权限、Kill Switch 权限和系统宪法不接受 Agent 修改。
+每个提案默认只修改一个层次：InformationCoveragePolicy、AnalysisMandate、PromptPack、PanelPolicy、FeatureSet、ForecastModel、AssessmentCalibration、PortfolioPolicy、MetricDefinition、代码或依赖。跨层变更必须拆分，除非单独修改无法形成可运行版本，并且提案中明确说明不可拆分原因。主 Agent 可以提出单独标记为 `MANUAL_ONLY` 的 RiskPolicy 候选，但不能实现、批准或启用；执行权限、Kill Switch 权限和系统宪法不接受 Agent 修改。
 
 代码类提案可以由维护 Agent 在隔离分支实现并运行测试，但实现者不能修改验收条件，评估器不能修改候选实现，发布器只接受已签名的评估结果。由此避免同一个 Agent 同时出题、答题和判分。
 
@@ -772,9 +825,9 @@ Governor 与 Analyst 一样是无工具角色：本次完整、规范化的 `Gov
 
 逐笔 `DecisionOutcome` 由持仓关闭事务一次性生成，是成交价、费用、MFE/MAE 和退出原因的唯一权威，不由评估 Workflow 重算。`OutcomeEvaluationWorkflow` 只在预先固定的时间窗口结束并经过结算宽限期后，读取该窗口的分析周期和逐笔结果，生成不可变 `OutcomeWindowReport`：动作/拒绝原因分布、已执行与已关闭数量、未决持仓、毛收益、费用、净收益、胜率、Profit Factor、最大回撤和相对永不交易基线的增量。窗口内仍有未关闭持仓或事实不完整时报告必须标记 `INCOMPLETE`，不能进入治理或晋级证据。
 
-Shadow 还必须为每个已经生成的 `SignalCandidate` 建立到期后的不可变 `CandidateOutcome`，包括冻结的候选/策略版本、参考价格、固定评价时点、当时可见的退出价格、毛收益 bps、候选产生周期已经冻结的完整往返交易成本 bps 和反事实净收益 bps。结算器只能读取候选内的成本依据，不能用结算时的当前配置重算旧候选；历史候选若缺少冻结依据必须标记 `UNSCORABLE`，不能猜测或回填。它覆盖后来被合成、频率或风控拒绝的候选，以便不放松门禁也能积累校准样本；不把没有候选的周期伪造成零收益样本。`CandidateOutcome` 只能进入校准和版本评估，不能计入账户权益、实际 PnL、风险预算、固定运营成本或订单状态。实际成交仍只认 `DecisionOutcome`。行情新鲜度只判断评价点附近的价格是否有效，结算宽限期只等待该价格的迟到到达，两者不能混用；宽限期内缺少到期行情时保持待结算，超过宽限期则明确标记 `UNSCORABLE`。任何情况都不能用未来首次恢复后的价格替代预定评价点。
+Shadow 还必须为每个 `BaseForecast` 和 `ContextAssessment.views[]` 建立到期后的不可变 `ForecastOutcome`，包括冻结的生产者/版本、参考价格、固定评价时点、当时可见价格、毛收益 bps 和可选反事实净收益 bps。结算器只能读取预测时冻结的口径，不能用当前配置重算旧预测；缺少依据时标记 `UNSCORABLE`。它覆盖后来未形成目标或被风控拒绝的预测，以便不放松门禁也能积累校准样本；没有预测的周期不能伪造成零收益样本。`ForecastOutcome` 只能进入校准和版本评估，不能计入账户权益、实际 PnL、风险预算或订单状态。实际成交仍只认 `DecisionOutcome`。评价点缺价时在宽限期内等待，超期后明确不可评分，绝不用未来首次恢复价格替代。
 
-校准器只能读取达到预登记最小样本量的成熟 `CandidateOutcome`，按时间顺序做 walk-forward，并输出带数据窗口、原始/非重叠样本数、来源校准/评价/执行/频率版本、统计方法、数据集哈希和内容哈希的版本化校准制品。构建器只纳入 `settled_at <= published_at` 的标签，按 `[signal_observed_at, evaluation_at]` 贪心去重，使用非重叠样本计算毛收益均值及预先冻结的均值保守下界；它只输出候选制品，不写配置、不改库、不自行发布。任何历史 `as_of` 快照只能看见当时已经结算的标签，不能因事后重建而泄漏未来结果。治理面板必须同时报告原始结算数与 `non_overlapping_settled`；交易成本后统计和非重叠计数必须至少按 Producer ID、Producer 版本、品种、方向、周期、校准引用、评价版本、执行版本和频率版本隔离，禁止混合不兼容口径。触发间隔短于评价周期时，不能把高度重叠的原始结果冒充同等数量的独立证据。运行配置中的制品由 Manifest 的 `calibration` 组件版本冻结；解析器按精确作用域和有效期匹配并校验内容哈希。启动期常量只能标记为 Shadow 假设，不能获得交易资格，也不能由运行服务根据近期盈亏在线改写。
+校准器只能读取达到预登记最小样本量的成熟 `ForecastOutcome`，按时间顺序做 walk-forward，并输出带数据窗口、原始/非重叠样本数、生产者/评价版本、统计方法、数据集哈希和内容哈希的版本化制品。构建器只纳入 `settled_at <= published_at` 的标签，按预测覆盖区间去重并计算预先冻结的保守下界；它只输出候选制品，不写配置、不改库、不自行发布。历史 `as_of` 只能看到当时已结算标签。程序基线校准与 AI 增量校准分开：后者必须基于同一时点 `Q` 与 `Q+AI` 的配对差，而不能把 AI 方向正确率直接当收益。运行配置由 Manifest 冻结并按生产者、行为哈希、资产、时域、环境和有效期精确匹配；启动常量只能用于 Shadow。
 
 同一窗口、Pipeline 版本和评估策略版本固定映射到同一报告与 Workflow ID。报告聚合源 `outcome_id` 和周期范围哈希，以便回放验证；它不能覆盖逐笔结果、不能事后更换窗口边界，也不能把未成交或 `NO_TRADE` 伪装为零收益成交。价格策略和 Codex 消融的因果比较仍由固定快照 Replay/Shadow 变体评估完成，窗口报告只描述实际运行版本，避免用未经控制的线上样本做主观归因。
 
@@ -791,40 +844,26 @@ Shadow 还必须为每个已经生成的 `SignalCandidate` 建立到期后的不
 
 Codex 在这条漏斗中默认是研究者而不是不可回测的交易核心：它读取失败目录、分市场环境指标和少量反例，提出一个具有明确数据来源、计算公式、持有期、成本假设和失效条件的最小因子假设；该假设必须先落成确定性候选，或落成训练截止可审计的冻结模型制品，再走同一条历史门禁。只有程序基线 `Q` 已经独立通过，才允许消耗前瞻决策带评价 `Q+AI` 的增量。未通过历史门禁的候选不得靠延长模拟盘“继续观察”，Codex 也不得把旧新闻的事后方向判断写成历史标签。这样大部分研究可以按机器速度批量证伪，日历时间只留给无法诚实压缩的托管模型泛化证据。
 
-正式预登记之前允许一个单向的原始信号机会筛选器，专门节省明显弱假设的 Nautilus 撮合成本。它只复用生产特征、候选接口和往返成本模型，以信号后下一根开盘至固定周期的收益评价非重叠机会，并对照采用相同成本的无条件周期性现货多头；完整数据制品仍须流式通过数量、边界和内容哈希校验，而内存只物化开发窗口与预热。开发标签不得跨过显式终点，终点必须早于任何计划保留的盲区。筛选器不实现止损、程序退出、频率、仓位、风控、回撤或撮合状态机，负结果只能用于淘汰/降优先级，正结果也只获得进入正式预登记 walk-forward 的资格；它不写 EvaluationPlan、不消费盲测预算、不能发布校准或获得交易权限。这样避免出现第二套貌似精确却长期漂移的回测引擎。
-
 新闻因子也遵守相同边界。历史回测只能使用当时真实到达的事件事实，以及不读取未来收益、版本完全冻结的确定性转换器或训练截止可审计的模型；Codex 可以设计事件分类、交互项和反例，但今天的托管 Codex 不能事后为历史新闻补情绪分数并把它当作盈利证据。若没有合格的点时事件档案，相关假设直接标记为不可历史评价，不用模拟成交掩盖数据缺口。
 
-交易所衍生状态属于独立的点时数值事实，不伪装成新闻事件或现货 K 线。首个受支持类型仅为 Binance USD-M 已结算资金费率：每个月归档及官方 SHA-256、规范化观察值、请求窗口、冻结时间和固定 60 秒结算后可见延迟共同进入内容寻址 Manifest；回测只能读取 `available_at <= signal_at` 的值。归档后来被更换会产生新数据集身份，禁止覆盖旧制品。首个最小候选把当时可见的 7 日平均资金费率相对前一年点时分布的第 90 百分位作为既有长周期趋势入场的拥挤否决条件；ETH 未通过 walk-forward，BTC 未通过一次性盲测，候选已经退役且没有接入生产。失败事实不授权搜索阈值或继续堆叠过滤器。premium/basis、持仓量和任意第三方指标只有在结构不同、可预登记的假设出现后才进入契约；在新候选通过全部历史门禁前，不增加生产热路径采集器。
-
 - 历史行情和事件进入内容寻址的数据目录，记录来源、交易所、品种、粒度、起止时间、抓取时间和内容哈希。原始文件不可原地修补；清洗或补洞产生新数据集版本。
-- 行情与事件分别冻结、通过 ID 组合，避免事件补充迫使大体量行情制品重写。事件窗口允许显式为空，以证明该时段没有已观测事实；只接受采集时真实记录的 `observed_at`，不得用发布时间或事后抓取时间倒推。回放策略与生产策略共用事件输入契约，并复现生产最新 100 条的有界可见性。当前低中频实现只在下一根已收盘 K 线评价新事件，回测制品必须记录这项延迟；没有证据表明需要更细粒度前，不增加第二套逐事件撮合路径。
-- 程序策略、特征、成本和风控继续以 `quant-core` 的纯领域契约为唯一实现。回测适配器只负责把历史事件翻译给撮合引擎，再把订单、成交和账户结果翻译回统一评价事实，禁止在适配器内复制一套信号规则。
-- 历史执行使用单一离线事件回放后端 NautilusTrader，并锁定经过验收的版本。它只作为开发/评估依赖，不进入线上分析、风控或下单服务，也不成为第二控制平面。若它与生产 Mock/Shadow 对同一固定回归样本产生不一致，候选失败并先修复口径差异。
-- K 线策略必须在一根 K 线真正收盘且可见后才产生信号，最早在下一可成交事件执行。逐笔和盘口策略按来源时间顺序回放。费用、买卖价差、滑点、资金费率、最小下单量、延迟和容量约束均来自冻结的评价计划；缺少关键成本时结果标为不完整。
-- 每个样本外窗口的 purge/embargo 覆盖下一次可成交事件、信号持有和结果标签跨度，禁止一个交易或标签跨越训练与评价边界。特征回看只可读取信号时点以前的事实并作为预热数据，不因使用训练期末尾的已知历史而被误判为泄漏；任何拟合标签仍必须在训练截止前完成结算。参数和阈值只能在开发/训练窗口确定；walk-forward 开始后候选制品保持冻结，尾部盲测区间在计划中显式预留且不参与 walk-forward。
-- 盲测数据只能由评估器查询一次汇总结果。评估器在读取预留标签前以数据库事实原子消费该计划唯一的查询预算；崩溃后只能按相同计划、源评价和规格身份幂等恢复，不能换参数再次揭盲。失败后该窗口转为普通开发证据，新的未来区间成为盲测；不得反复读取同一留出集并继续声称样本外。
-- 回测结果以结构化制品进入事实账本，至少包含数据集哈希、候选制品哈希、切分边界、假设、成交事实、成本分解、基线、分市场环境指标和失败原因。未通过的 walk-forward 或一次性盲测同时以确定性实验 ID、可读的规范假设、阶段、原因码和制品 ID 登记到 Governor 既有 `failed_experiments` 负面知识，不另建报告系统；重试保留首次拒绝时间。Codex 读取的是该制品的高密度摘要及少量反例引用，不读取整段原始 K 线，也不生成需要长期维护的 Markdown 回测报告。
+- 行情、事件和衍生状态分别按 `observed_at/available_at` 内容寻址冻结并通过 ID 组合；原始制品不覆盖，回放看不到事后补充。
+- 线上与回放共用 Feature、Forecast、Portfolio、Risk、成本、退出和 Outcome 领域实现；离线引擎只负责时间推进与撮合，差异回归失败时先修口径，不评价盈利。
+- walk-forward 使用覆盖特征、持有和标签跨度的 purge/embargo；参数只在开发窗口确定，盲测只读一次汇总，不能换参数重揭。
+- 结果以结构化制品进入事实账本，包含数据/候选哈希、切分、成本、基线、分环境指标和失败原因；不生成长期维护的自由文本回测报告。
 
 Codex 的历史评价与程序因子不同。系统不在每根历史 K 线上重新调用模型；只有具备当时 `observed_at` 的历史事件窗口才能重建信息面板。仅有时间正确的面板仍不够：今天的托管模型可能已经从训练数据或世界知识中知道历史事件的后续结果。事后用当前 Codex 分析旧面板只能用于提示契约、触发器和信息压缩的行为回归，不能证明 AI Alpha，也不能进入盈利门禁。
 
-可用于收益评价的 AI 决策带必须在结果发生前冻结。当前托管 Codex 没有可独立验证的逐样本知识边界，因此有效证据只接受实时生成并在未来到期结算的 Proposal；只有将来采用训练语料截止早于全部评价样本、制品完全冻结且截止边界可审计的本地模型，才允许把其首次历史推理作为样本外证据。每次有效输出以 `panel_hash + PromptPack + 模型 + 推理配置 + 工具契约` 为键冻结，记录生成时间并禁止事后覆盖；积累足够前瞻样本后，组合回放只能读取这些当时已经存在的输出，不得重新调用模型补洞。
+可用于收益评价的 AI 决策带必须在结果发生前冻结。每个 `ContextAssessment.views[]` 无论是否形成目标，都以 Codex 权威完成时间开始评价，参考价只能取当时已观测的新鲜成交；缺失完成时间、输入身份冲突或缺价时不可评价。方向、时域、`UNCERTAIN` 和后续价格只追加不改写，组合回放不得重调模型补洞。
 
-实时 Shadow 中每个成功 Proposal 无论是否交易，都必须另存 `UP/DOWN/UNCERTAIN`、冻结预测周期和置信度；它不进入 Composer、Risk 或 Execution。预测可用时刻取权威 Codex Attempt 的完成时间，参考价只能取该时刻已经观测到的最新成交，预测周期也从完成时间开始；不得用分析开始前的冻结价格把模型耗时伪装成可交易收益。完成时间缺失、存在多个成功 Attempt 或当时没有新鲜成交时明确标记不可评价。评价器在到期后按真实成交结算方向收益，`UNCERTAIN` 只计弃权率和同期市场幅度，不得伪造成正确预测。这样 `NO_ACTION` 也形成可校准的前瞻样本，同时保持“倾向研究”和“交易授权”物理分离。模拟成交只验证执行、成本和运行偏差；程序 Alpha 发现依靠历史 walk-forward，AI 增量价值依靠结果发生前冻结的高密度预测带，两者都通过后才做组合回放。
+晋级计划在首个 Assessment 前冻结行为哈希、资产/时域、非重叠样本下限、结算宽限、现金/简单方向/程序基线、统计下界和评价器版本。只有窗口和最长时域全部成熟且配对费用后增量保守下界为正，AI 才能影响生产目标；未预登记报告只用于诊断。
 
-用于晋级证据的方向评价必须在首个预测生成前登记 `signal_observed_at` 窗口，不得用到期时间窗口替代。计划同时冻结完整 AI 行为哈希、品种与周期笛卡尔积、每格最小非重叠样本、结算宽限、always-UP 同时点配对基线、统计下界参数和评价器版本；窗口长度必须足以让最长周期形成既定样本数。只有窗口结束、最长预测到期、结算宽限已过且窗口内没有未结算预测时才能评价。缺少任一预登记品种/周期、任一格样本不足或相对 always-UP 的配对收益增量保守下界不为正，整体均失败。未预登记的 `evaluation_at` 任意窗口报告只用于诊断，不能进入发布或交易门禁。
+Pipeline version 是运行代际；`analysis_behavior_hash` 是 Analyst 样本边界。它包含所有实际输入、投影、Prompt、模型、CLI 语义、Schema 和能力边界，排除仅消费输出的下游校准及运行代号。任何 Analyst 语义变化自动切断样本，纯运维或发布下游校准不重置同一行为证据；旧结果不得事后补写哈希。
 
-Pipeline 版本仍是 Temporal 与运行状态的代次边界，每次代码发布可以递增；前瞻方向评价另以 `analysis_behavior_hash` 标识可合并的 Analyst 行为。该哈希归一化 Pipeline 运行代号，并排除只消费候选、不会进入 Analyst 输入或输出契约的下游校准配置；否则发布校准制品会旋转来源哈希，使制品永久无法匹配新候选。其余 Analyst 输入与契约配置、版本化 CLI 摘要、Analyst 输入投影版本、实际固定提示与 App Server 指令、严格输出 Schema 和完整工具禁用集共同组成内容寻址的语义行为制品，并同时冻结在运行包、唯一 Codex Attempt 和到期结果中。校准证据继续由候选来源哈希、评价/执行/频率版本、训练窗口与有效期精确隔离。因此纯运维或下游校准发布不会把同一 Analyst 样本统计归零，模型、提示输入、面板、预测或任何其他 Analyst 语义变化会自动切断证据；旧结果不允许事后推断或补写该哈希。
+一次 Codex 调用同时冻结预登记的多资产、多时域预测头；相关标签不能冒充独立样本。`DecisionTapeEntry` 保存原始输出、完成时间、当时行情和输入哈希，到期只追加标签。相同决策带可以喂给预登记的 `Q`、`Q+AI` 或 AI 事件预测变体，但都必须复用生产 Portfolio/Risk/成本/撮合/退出语义和各自真实就绪时间。
 
-AI 证据不能只靠“一次 Proposal 对应一笔模拟交易”串行积累。系统采用一份前瞻决策带、多种离线用途的证据工厂，但不复制生产决策实现：
-
-1. 每次 Codex 调用在同一品种上同时冻结预先登记的多个预测周期；预测头与交易动作分离，即使最终 `NO_ACTION` 或被风控拒绝也产生标签。增加周期只能增加结构化输出，不能重复调用模型，也不能把同一时点的相关标签冒充独立样本。
-2. 原始输出、权威完成时间、当时可见行情和输入制品哈希组成不可覆盖的 `DecisionTapeEntry`。到期行情只追加标签，不修改原输出。没有该时点首次生成的条目时禁止事后调用 Codex 补洞。
-3. 同一条已冻结决策带可以喂给多个**预登记**的确定性 Shadow 变体，例如价格基线、价格基线加 AI 否决、AI 倾向加不同但已冻结的经济性门槛。对于独立定时产生、在程序候选出现前已经可用的上下文预测，`Q` 与 `Q+AI` 在同一程序信号时点开始；对于候选出现后才启动的 AI Review，联合版本必须等到 Codex 实际完成。两类实验不得混用免费延迟。各变体复用生产的候选、Frequency、Risk、成本、撮合和退出语义，并使用隔离虚拟账户。模型只运行一次，交易规则可以高速离线回放多次。
-
-当前配对回放只实现前一种 `INDEPENDENT_CONTEXT + BAR_CLOSE` 实验，并在规格与结果中明确标记尚未重放生产 TriggerPlan。候选级 Review 必须先实现候选出现、Codex 完成及两条路径各自首个可成交时点的联合事实带；在此之前不能复用当前门控器冒充 Review。
-4. 变体规格及哈希必须在对应结果成熟前登记，并同时绑定已通过的一次性盲测结果、基础量化策略制品与 AI 门控参数；盲测品种、周期、策略规格、代码、成本或风控口径有任何不一致都失败关闭。只冻结门控而允许事后更换 Q 同样属于挑选结果。开发窗口可以筛选，评价窗口和一次性盲测只运行冻结规格。禁止看到标签后不断生成候选或门槛并把最佳结果称为样本外。
-5. 评价使用同一机会的配对差值，而不是比较两段不同市场：报告 `Q` 与 `Q+AI` 的费用后净收益差、AI 避免的亏损、AI 错过的盈利、额外延迟损失、换手和回撤。只有配对保守下界为正且跨市场环境稳定，AI 才能从研究特征晋级为交易门禁。
+当前配对回放的 `INDEPENDENT_CONTEXT + BAR_CLOSE` 只属于迁移证据，并明确尚未重放生产 TriggerPlan；它必须迁移到 `ASSESS + PortfolioDecisionEngine` 的同一语义后，才能支持新架构晋级。
+变体必须在标签成熟前登记完整规格，评价同一机会的费用后配对差、延迟损失、换手和回撤，禁止看到标签后搜索门槛或替换基础 Q。
 
 因此回放能力严格分为三类，报告和发布门禁不得混称“回测”：
 
@@ -838,19 +877,15 @@ AI 证据不能只靠“一次 Proposal 对应一笔模拟交易”串行积累�
 
 当前系统只覆盖中低频现货多头，先用 K 线/逐笔回放验证这一真实范围。只有候选已经证明需要盘口精度时才接入 L2 数据；不能因为回放引擎支持更多市场、期货或高频能力就提前扩张生产边界。
 
-目标权重、波动率目标和定期再平衡策略不属于现有单笔 `SignalCandidate -> TradeIntent -> PositionLifecycle` 的参数变体。它们需要显式的组合目标、增减仓、部分成交、风险预算迁移、逐腿成本与再平衡结果语义；禁止把目标权重塞进 `raw_score`、借止损距离间接控制仓位，或另写一个只在研究中成立的组合模拟器。只有一项具备点时数据、预登记评价计划且无法由现有语义忠实表达的具体候选先提供足够的可行性证据，才允许以完整领域变更扩展；此前不创建配置空壳、适配器或抽象层。
+当前 `PortfolioTarget` 只表达单 Sleeve、有限品种的目标暴露，并不预建通用资产配置求解器。波动率目标、多 Sleeve、周期再平衡和多腿策略只有在具体候选具备点时数据、预登记评价且单 Sleeve 无法忠实表达时，才扩展目标、部分成交、风险迁移和逐腿成本语义；禁止把复杂目标塞进 raw score，也禁止另写只在研究中成立的组合模拟器。
 
-期货基差或资金费率 carry 若进入研究，仍属于 `SCHEDULED_ANALYSIS + AI OFF`，不新增 DecisionLane，也不得复用单腿现货结果冒充证据。研究阶段只允许增加一个内容寻址的 `CarryDataset` 和一个确定性双腿评价器，不创建生产期货适配器、配置空壳或第二控制平面。数据束引用已冻结现货与资金费率制品，并在同一请求窗口冻结 USD-M 合约成交价、标记价、指数价、溢价指数、每次结算标记价和合约规则；资金费率结算时间与数值必须同官方校验月档逐条一致，任一序列缺口或身份冲突都使整个数据束失败。
-
-首个候选只评价“相同数量的现货多头 + 永续空头、月度恢复固定腿权益比例”，不搜索入场阈值，也不调用 Codex。唯一评价器必须同时结算双腿独立费用/点差/滑点、资金费、基差变化、数量精度、月度换手、逐日组合权益、标记价保证金与强平边界，并把冻结的单腿成交失败价格冲击作为压力损失计入门禁；缺少历史规则时只能使用事前登记且更保守的规则上界，并在结果中标明限制，不能猜测历史值。walk-forward 按完整日历窗口分折，尾部保留一次性盲区，至少要求费用后收益保守下界为正、正收益窗口比例达标、最大回撤和最小保证金缓冲达标，且压力损失不突破单次风险预算。只有该完整语义通过预登记 walk-forward 与一次性盲测，才允许扩展领域层的多腿 Intent、组合风险和执行 Saga；Codex 可以研究异常来源和退出风险，但基础 carry 收益必须由确定性规则独立成立。
-
-历史开发区通过但尾部盲区已经被其他候选消费时，只能登记新的 carry forward 观察，不能重新切割、延长旧数据或改参数再揭盲。Forward 规格必须在窗口开始前冻结品种、完整 UTC 窗口、起始权益、上述唯一策略、全部成本/保证金/单腿压力假设、官方数据合同、日历月分折、晋级门禁、精确 Git 提交以及评价器实际依赖的 Python/Pydantic 版本；正式晋级窗口至少覆盖十二个完整日历月，中途结果只能作为无晋级效力的运行诊断。未来数据尚不存在，因此规格不伪造数据集 ID；窗口结束且官方结算资料可用后，评价器才允许冻结精确同窗口的内容寻址数据束，并强制验证 `collected_at >= window_end`、日线和逐次资金结算无缺口、官方月档与 REST 逐条一致。评价同时报告一条连续双腿账本和逐月同规则分折，对现金基线计算费用后收益及保守下界；提前查询、代码或依赖环境不符、窗口不符、数据修订冲突或任一门禁失败都不得创建执行适配器。这样 forward 证据只新增一个预登记规格和复用现有数据/评价边界，不引入常驻采集微服务或第二套研究框架。
+carry、多腿或新市场等具体研究规格属于实验账本，不写入长期架构。它们先使用点时数据和确定性离线评价证明费用后可行性；只有通过预登记 walk-forward、盲测和前瞻验证，且现有 `PortfolioTarget/TradeIntent` 无法忠实表达时，才扩展领域、风控和执行。研究失败不留下生产适配器、配置空壳或第二控制平面。
 
 不同 DecisionLane 共享晋级流程，但使用与其时效匹配的数据精度：实时确定性策略使用逐笔/盘口回放、网络与撮合延迟注入和容量压力测试；事件分析策略使用当时真实可见的来源时间、事件聚类和 Codex 延迟；计划分析策略使用时间前推和环境分层。所有策略都必须报告从来源接收开始的 Alpha 衰减曲线、基础设施延迟分布和不同入场延迟分桶的费用后净收益。若优势只存在于系统实际无法达到的延迟区间，评估结果为失败。
 
 TriggerPlan 也作为可归因运行事实评估：记录每种规则或主 Agent 操作触发的调用数、合并率、无新增信息率、动作率、调用成本、迟到拒绝和后续净收益。它不把某次盈利简单归因给触发器，但可以通过同一事件流上的固定计划、Agent 计划和消融计划比较“额外调用是否带来净增量”。持续增加调用而没有增量价值的计划应被主 Agent 主动简化。
 
-离线外部事件触发带必须调用线上协调器相同的纯时间规则，并冻结 TriggerPlan、TriggerPolicy、事件数据集、窗口前一小时的调用状态和分析耗时假设。所有品种协调器与跨品种原子调用准入必须在同一个离散事件时钟中推进；窗口起点不得把已用预算清零。同刻争用的实际顺序不能由事后武断固定，必须冻结顺序并交换顺序做敏感性测试；结果若随顺序改变，就不能直接生成盈利证据。heartbeat、Agent wakeup、初始完成状态代理、固定分析耗时、计划生效时间晚于回放窗口等缺口必须作为结构化限制输出，不能藏在说明文字之外。
+离线外部事件触发带必须调用线上协调器相同的纯时间规则，并冻结 TriggerPlan、TriggerPolicy、事件数据集、窗口前状态和分析耗时假设。所有 `AnalysisScope` 在同一个离散事件时钟中推进；同刻争用的实际顺序不能由事后武断固定，必须冻结顺序并做敏感性测试。日历复核、Agent override、初始状态代理、固定分析耗时和计划生效晚于回放窗口等限制必须结构化输出，不能藏在说明文字中。
 
 候选版本必须在相同快照和执行假设下与以下基线比较：
 
@@ -865,12 +900,12 @@ TriggerPlan 也作为可归因运行事实评估：记录每种规则或主 Agen
 
 ## 10. 工作流定义
 
-持续连接由 `quant-core` 的受监督服务承担：Market Stream 接收行情，User Data Stream 接收账户与订单事件，Feature Projector 更新可回放特征，MarketShockDetector 只输出阈值越界事实，TriggerOutbox Dispatcher 可靠投递协调 Signal，Risk Monitor 监测持仓保护和熔断。服务重连后从交易所、Outbox、Temporal 和业务账本恢复，不把关键状态只放在进程内存中。
+持续连接由 `quant-core` 的受监督服务承担：Information Collector 接收第一方事实、官方日历和聚合线索，Market Stream 接收行情，User Data Stream 接收账户与订单事件，State/Feature Projector 更新点时状态并只输出 `MaterialDelta`，TriggerOutbox Dispatcher 可靠投递事实 ID，Risk Monitor 监测持仓保护和熔断。服务重连后从来源、交易所、Outbox、Temporal 和业务账本恢复，不把关键状态只放在进程内存中。
 
 Temporal 只运行需要持久化编排的有限工作流：
 
 1. **TriggerCoordinatorWorkflow**：接收触发事实与 TriggerPlan revision，合并、单飞、管理多个 durable timer，并以稳定 Batch ID 启动分析；不承载新闻正文或逐笔行情。
-2. **AnalysisCycleWorkflow**：冻结快照，运行策略管线；需要 AI 时获取账号租约，以同一运行包执行有界 Codex Attempt 和允许的故障切换，再进行决策合成、频率检查和风控。
+2. **AnalysisCycleWorkflow**：冻结状态和 Packet；需要 AI 时获取账号租约并生成一次 `ContextAssessment`，随后按固定顺序运行 Forecast、Portfolio、Risk 和 Trade Planner。
 3. **ExecutionWorkflow**：执行标准通道的幂等下单、撤单和保护动作。
 4. **ReconciliationWorkflow**：定期或在状态不确定时校正订单、成交、余额和仓位。
 5. **PositionLifecycleWorkflow**：编排每个持仓的超时、退出和异常恢复；实时价格保护仍由交易所订单和 Risk Monitor 执行。
@@ -885,7 +920,7 @@ Temporal 只运行需要持久化编排的有限工作流：
 
 标准通道的 `AnalysisCycleWorkflow` 不能在一个大 Activity 中同时完成分析、风险占用、下单和对账。实现按以下状态交接，避免“已经占用风险但不知道是否下单”的恢复空洞：
 
-1. Decision Activity 对冻结输入计算面板、候选、合成、频率和风控。无交易、频率拒绝或风控拒绝时，原子写入终态事实并结束。
+1. Decision Activity 对冻结输入依次计算 Packet、ContextAssessment、Forecast、PortfolioTarget、ApprovedTarget 和 TradeIntent。`NO_CHANGE` 或风控拒绝时原子写入终态事实并结束。
 2. 风控批准时，Decision Activity 在同一数据库事务中写入不可变 `ExecutionRequest`、`EXECUTION_PENDING` 周期状态和风险占用；`execution_id` 由 `intent_id + risk_decision_id + execution_policy_version` 确定生成。
 3. `AnalysisCycleWorkflow` 以 `execution_id` 启动并等待 `ExecutionWorkflow`。Workflow 重放只能再次取得同一个子 Workflow，不能生成新的订单身份。
 4. Execution Activity 先按确定性 `client_order_id` 查询/提交，再对账订单和成交；网络结果不确定时写 `UNKNOWN` 并进入查询确认，禁止直接换一个 ID 重下。
@@ -896,7 +931,7 @@ Mock/Shadow 与 Testnet/实盘共享上述状态机和幂等身份，只替换�
 
 ## 11. 安全、可观测性与故障策略
 
-每个周期使用统一 `cycle_id` 贯穿日志、快照、候选、合成、Codex 运行、风险判断和订单。第 7.9 节的 MetricDefinition 是监控唯一口径；告警规则只引用这些指标并明确响应动作，避免仪表盘、风控和治理各自计算不同版本。实时告警覆盖数据新鲜度、风险预算、止损覆盖、订单未知状态和对账偏差；周期告警覆盖策略退化、交易成本、AI 稳定性和版本漂移。
+每个周期使用统一 `cycle_id` 贯穿事实变化、Packet、Assessment、Forecast、PortfolioTarget、Risk、Intent 和订单。第 7.9 节的 MetricDefinition 是监控唯一口径；告警规则只引用这些指标并明确响应动作，避免仪表盘、风控和治理各自计算不同版本。
 
 关键故障按以下方式处理：
 
@@ -907,7 +942,7 @@ Mock/Shadow 与 Testnet/实盘共享上述状态机和幂等身份，只替换�
 | Codex 超时或进程崩溃 | 不在同一批次轮换消耗其他账号；当前 AI 结果无效，账号进入短冷却，期满且容量复探成功后才恢复候选资格 |
 | Codex 输出非法或确定性校验失败 | 不轮换账号也不归罪于账号；当前 AI 结果无效，AI 依赖型管线 `NO_TRADE` |
 | 额度探测不可用或过期 | 先使用仍新鲜的缓存；无有效缓存时按健康账号保守单并发轮转并告警 |
-| MCP 查询失败 | 依赖该证据的候选失效；无独立有效候选则 `NO_TRADE` |
+| 必需第一方数据缺失、过期或来源冲突 | 相关预测无效；无独立有效基线则不增加风险 |
 | PostgreSQL 或工作流状态不可用 | 禁止下单，恢复后先对账 |
 | Binance 返回状态不确定 | 标记 `UNKNOWN`，查询确认，不盲目重试 |
 | 本地与交易所仓位不一致 | 触发熔断和人工告警 |
@@ -927,10 +962,10 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 
 配置按作用域分组并独立版本化：
 
-- 分析配置：`FeatureSet`、`PanelPolicy` 和 `PromptPack`。
+- 信息与分析配置：`InformationCoveragePolicy`、`AnalysisMandate`、`FeatureSet`、`PanelPolicy` 和 `PromptPack`。
 - Codex 运行配置：`CodexRuntimePolicy` 固定二进制版本、模型、reasoning、命令参数、截止时间和最大切换次数；`CodexAccountRegistry` 使用 1–16 个有界白名单项显式映射获准账号的目录同名 ID、绝对目录和容量权重。
-- 决策配置：`StrategyPipeline`、`CompositionPolicy` 和 `FrequencyPolicy`。
-- 调度配置：`TriggerPolicy` 定义人工批准的硬资源上限和合法操作范围；`AnalysisTriggerPlan` 是主 Agent 可以直接修订的运行状态，引用当前 Manifest 但不改变任何交易规则。
+- 决策配置：`ForecastModel`、`AssessmentCalibration` 和唯一 `PortfolioPolicy`。
+- 调度配置：`TriggerPolicy` 定义合法范围、物质性边界、单飞/并发和计划大小；`AnalysisTriggerPlan` 是日历修订与主 Agent Patch 的有效投影，引用当前 Manifest 但不改变交易规则。
 - 控制配置：`RiskPolicy` 与 `ExecutionPolicy`，其中风险边界只能人工批准。
 - 评价配置：`MetricDefinition` 与 `EvaluationPlan`。
 
@@ -961,17 +996,19 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 - 临时例外必须包含负责人、过期时间和删除条件；过期后默认失效，不能永久沉积。
 - 未被生产路径引用的提示词、特征、数据源和兼容代码应在确认无回滚需求后删除。
 
-测试按风险组织，而不是追求表面覆盖率：领域计算使用单元和性质测试；数据库、MCP 与 Binance 使用契约测试；订单和风险使用状态机与并发测试；完整周期使用冻结快照回放；发布前执行断网、超时、重复事件、乱序事件和进程重启等故障注入。风险不变量和执行幂等性属于不可跳过的发布门禁。
+测试按风险组织，而不是追求表面覆盖率：领域计算使用单元和性质测试；数据库、第一方来源与 Binance 使用契约测试；订单和风险使用状态机与并发测试；完整周期使用冻结快照回放；发布前执行断网、超时、来源修订/冲突、重复/乱序事件和进程重启等故障注入。风险不变量和执行幂等性属于不可跳过的发布门禁。
 
 ## 13. 分阶段交付
+
+现有 Shadow 的 `PROPOSE -> SignalCandidate -> Composer -> FrequencyController` 只能作为迁移期证据，不能与新主链同时拥有生产交易资格。迁移按以下顺序进行：先在新 Pipeline 代际实现事实/状态/组合级 `ASSESS` 决策带；再以 `OFF` 验证 `BaseForecast -> PortfolioTarget -> Risk -> Execution` 单一路径；随后用前瞻配对证据决定是否启用 AssessmentCalibration；最后删除旧 Proposal、Composer、FrequencyController 及其无人消费的配置。每一步都要求冻结回放、Shadow 对账和明确删除清单，不写双向适配层让两套领域对象长期共存。
 
 ### 阶段 A：可回放的 Mock 闭环
 
 - 固定单个 Binance Mock 账户、现货、无杠杆和两个品种的 MVP 范围。
 - 建立领域模型、数据库和信息面板 Schema。
-- 接入现有信息聚合与 Binance Mock 行情/账户。
+- 建立第一方事实/官方日历/聚合线索的来源层级、统一状态和 MaterialDelta；接入 Binance Mock 行情/账户。
 - 固定本地 Codex CLI 版本，配置目录同名的显式账号白名单；完成额度接口契约测试、容量选择、数据库租约和有界故障切换，Mock 覆盖额度耗尽、认证失败、探测失败和并发竞争。
-- 完成一个程序化基线策略、`OFF`/`PROPOSE` 两种首发管线、单一阈值合成器、频率控制、原子风险占用、持仓生命周期、Mock 撮合和指标账本。
+- 完成一个程序化 `BaseForecast`、`OFF`/`ASSESS` 两种管线、单一 `PortfolioDecisionEngine`、原子风险占用、持仓生命周期、Mock 撮合和指标账本；迁移期 `PROPOSE` 保持 Shadow 且不交易。
 - 建立系统宪法、变更提案、实验账本、稳定基线和固定回归集。
 - 能够用冻结面板完整重放单个周期。
 
@@ -981,7 +1018,7 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 - 用 PostgreSQL 事务 Outbox、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 替换轮询式 Shadow Scheduler；验证通知丢失、重复投递、乱序、进程重启和 Continue-As-New。
 - 实现主 Agent 版本化 TriggerPlan：多未来时间点、增删改、事件规则调整、暂停/恢复和幂等 `TRIGGER_NOW`，验证 stale revision 与调用风暴均失败关闭。
 - 连续运行数周，验证数据新鲜度、Codex 稳定性、风控覆盖和模拟成交偏差。
-- 在同一快照上并行运行程序基线与 AI 模式，固定第一版 Pipeline、PromptPack 和 PanelPolicy，建立基准指标。
+- 在同一状态快照上配对运行 `Q` 与 `Q+AI`，固定第一版 Pipeline、AnalysisMandate、PromptPack 和 PanelPolicy，建立增量指标。
 - 建立来源到成交的分段延迟和 Alpha 衰减基线，先证明标准 `EVENT_ANALYSIS`/`SCHEDULED_ANALYSIS` 的净优势；不因架构已经预留实时通道就启用它。
 - 至少完成一次主 Agent 提案、离线评估、Shadow 淘汰或晋级的完整治理演练。
 
@@ -1005,16 +1042,16 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 
 核心闭环完成不以短期盈利作为唯一标准，而以系统是否具备可信实验能力判断：
 
-- 任意交易都能追溯到唯一快照、SignalCandidate、TradeIntent、策略管线、证据、提示词、模型配置和风控版本。
+- 任意交易都能追溯到唯一事实修订、状态变化、Packet、ContextAssessment、Forecast、PortfolioTarget、ApprovedTarget、TradeIntent、提示词、模型配置和风控版本。
 - 相同输入可以回放，版本间可以在同一数据集上公平比较。
-- Codex、MCP、行情或数据库异常时不会产生未经风控的订单。
+- Codex、第一方数据、行情或数据库异常时不会产生未经风控的订单。
 - 重试和进程重启不会导致重复订单或重复记账。
 - 模拟成交包含手续费、点差、延迟和滑点。
 - Codex 无法读取交易密钥或调用执行接口。
 - Router 只会使用有界白名单中显式启用且通过验收的账号目录；主机上存在但未登记的已登录目录不能被自动发现或调用。
 - 有新鲜额度数据时选择有效余量最大的可用账号，并在并发下遵守租约和每账号并发上限。
 - 账号切换前后运行包、模型、reasoning、MCP、Schema 和命令策略完全一致，只有匿名账号和 Attempt 元数据变化。
-- 额度、认证或明确的账号上游故障可以在配置上限内切换；Schema、提示词、MCP、权限或运行包错误不会遍历消耗白名单账号。
+- 额度、认证或明确的账号上游故障可以在配置上限内切换；Schema、提示词、权限或运行包错误不会遍历消耗白名单账号。
 - 所有已启用账号不可用或分析截止时间不足时结果为 `NO_TRADE`；分析通过没有本地执行环境的 Codex App Server 会话运行，一次性 `CODEX_HOME` 仅链接获准账号的认证文件且不继承其配置、插件、Skill 或 MCP。恶意证据触发的读取尝试无法访问账号认证目录、环境或 `/proc`，认证 Token、账号路径和完整账户响应不会出现在日志、信息面板、工具环境或模型上下文中。
 - 信息面板具有容量边界，且能说明内容入选和淘汰原因。
 - 风控规则不存在模型可绕过的路径。
@@ -1022,7 +1059,7 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 - Codex 离线时，已有持仓的保护性退出仍然有效。
 - 新闻正文中的提示注入不能改变工具权限、输出契约或执行路径。
 - 评估报告能够说明 Codex 相对价格策略和消融版本是否产生净增量价值。
-- `OFF` 程序策略在 Codex 不可用时仍能按自身批准边界独立运行。
+- `OFF` 程序基线在 Codex 不可用时仍能按自身批准边界独立运行；`ASSESS` 的降级行为与其评价版本一致。
 - 交易频率、成本、盈利、风险和 AI 指标均来自同一版本化指标定义，没有第二套仪表盘口径。
 - 主 Agent 在无历史对话的全新会话中，能够仅凭治理面板继续未完成的实验和维护任务。
 - 主 Agent 不能更改评估集、验收条件、风险策略或自己的发布权限。
@@ -1030,19 +1067,20 @@ Kill Switch 位于执行模块，优先级高于所有模型和策略结论。�
 
 ### 14.2 事件驱动与多时域 Shadow 验收
 
-- 新标准事件与 TriggerOutbox 同事务提交；通知丢失、重复和重启均不会漏掉或重复消费一次触发事实。
-- 同一品种/Pipeline 只有一个 TriggerCoordinator；事件密集或分析未结束时只形成有界 pending batch，不为每条新闻启动 Codex。
-- 主 Agent 可以原子增删改多个未来 AI 触发点、调整合法事件规则并立即触发一次；stale revision、重复 `TRIGGER_NOW` 和越过人工硬资源上限均不能产生额外调用。
+- `MaterialDelta`/日历修订与 TriggerOutbox 同事务提交；通知丢失、重复和重启均不会漏掉或重复消费一次触发事实。
+- 同一 `AnalysisScope` 只有一个 TriggerCoordinator；事件密集或分析未结束时只形成有界 pending batch，同一跨资产事实不会按品种重复调用 Codex。
+- 主 Agent 可以原子增删改多个未来 AI 触发点、调整合法物质变化规则并立即触发一次；stale revision 和重复 `TRIGGER_NOW` 不会产生额外调用。
 - TriggerPlan 只能控制 AI 分析调度，不能直接下单、改变风险/执行权限或暂停确定性持仓保护。
-- 每个策略都有经评估的信号寿命和端到端 p99 延迟预算；无法在剩余有效期内覆盖成本的候选被程序拒绝。
-- 不同 DecisionLane 共用候选、风控、执行、对账和归因契约；未启用实时通道时不存在第二套空壳执行路径。
+- 每个 Forecast 都有经评估的信号寿命和端到端 p99 延迟预算；无法在剩余有效期内覆盖成本的预测不能改变目标。
+- 不同 DecisionLane 共用 Forecast、PortfolioTarget、Risk、Execution、Reconciliation 和 Outcome 契约；未启用实时通道时不存在第二套空壳路径。
+- 程序基线与 `ASSESS` 版本在相同机会、真实完成时点和成本口径下配对，能明确回答 Codex 是否带来费用后增量。
 
 ### 14.3 条件式实时通道验收
 
 该通道只有在标准通道的实测延迟持续吞噬可重复净优势时才进入验收，不是基础交付的必选项：
 
 - Tick/盘口回放、延迟注入、Testnet 和故障注入均证明扣除全部成本后仍有样本外净优势。
-- 实时决策路径不调用 Codex、Panel、MCP 或 Temporal，且复用同一候选、风险、执行、对账和归因契约。
+- 实时决策路径不调用 Codex、Panel 或 Temporal，且复用同一 Forecast、PortfolioTarget、Risk、Execution、Reconciliation 和 Outcome 契约。
 - 预留 RiskEnvelope 有确定上限；进程失联、状态不确定或本地日志损坏时按预算已占用处理，直到交易所对账解除。
 - 启用实时通道不会削弱账户级总风险、Kill Switch、幂等下单和统一资本分配。
 
