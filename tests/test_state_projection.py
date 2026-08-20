@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, func, select
+import pytest
+from sqlalchemy import create_engine, func, select, update
 
 from quant_core.asset_management import Materiality
 from quant_core.decision_packet import (
@@ -161,26 +162,28 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
     assert revised.delta is not None
     assert replayed.state == revised.state
     assert replayed.delta == revised.delta
-    packet = SqlDecisionPacketAssembler(
+    assembler = SqlDecisionPacketAssembler(
         engine,
         DecisionPacketPolicy(
             version="packet-policy-v1",
             schema_version="decision-packet-v1",
         ),
-    ).assemble(
-        mandate=AnalysisMandate(
-            version="crypto-mandate-v1",
-            analysis_scope="crypto-portfolio",
-            question="Assess the material Fed revision across the portfolio.",
-            assets=(
-                MandateAsset(
-                    asset="BTC",
-                    market_symbol="BTCUSDT",
-                    horizons_minutes=(60, 240),
-                ),
+    )
+    mandate = AnalysisMandate(
+        version="crypto-mandate-v1",
+        analysis_scope="crypto-portfolio",
+        question="Assess the material Fed revision across the portfolio.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
             ),
-            required_risk_factors=("US_MONETARY_POLICY",),
         ),
+        required_risk_factors=("US_MONETARY_POLICY",),
+    )
+    packet = assembler.assemble(
+        mandate=mandate,
         state_id=revised.state.state_id,
         delta_ids=(revised.delta.delta_id,),
     )
@@ -196,3 +199,21 @@ def test_fact_state_projector_bootstraps_deduplicates_and_records_revision(
         assert connection.scalar(
             select(func.count()).select_from(state_evidence_snapshots)
         ) == 6
+
+    with engine.begin() as connection:
+        payload = connection.scalar(
+            select(state_snapshots.c.payload).where(
+                state_snapshots.c.state_id == revised.state.state_id
+            )
+        )
+        connection.execute(
+            update(state_snapshots)
+            .where(state_snapshots.c.state_id == revised.state.state_id)
+            .values(payload={**payload, "coverage_gap_codes": ["TAMPERED"]})
+        )
+    with pytest.raises(ValueError, match="StateSnapshot content_hash"):
+        assembler.assemble(
+            mandate=mandate,
+            state_id=revised.state.state_id,
+            delta_ids=(revised.delta.delta_id,),
+        )

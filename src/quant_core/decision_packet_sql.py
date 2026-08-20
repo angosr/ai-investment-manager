@@ -7,6 +7,7 @@ from quant_core.asset_management import (
     CanonicalFactRevision,
     MaterialDelta,
     SourceTier,
+    StateSnapshot,
 )
 from quant_core.decision_packet import (
     AnalysisMandate,
@@ -169,7 +170,7 @@ class SqlDecisionPacketAssembler:
 
     def _load_state_evidence(
         self,
-        state,
+        state: StateSnapshot,
     ) -> tuple[
         tuple[MarketSnapshot, ...],
         tuple[FeatureSnapshot, ...],
