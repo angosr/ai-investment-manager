@@ -437,6 +437,41 @@ def test_context_assessment_store_is_immutable_and_idempotent(
     assert store.record_assessment(packet.packet_id, assessment) == assessment
     assert store.packet(packet.packet_id) == packet
     assert store.assessment(assessment.assessment_id) == assessment
+    assert store.assessment_for(
+        packet_id=packet.packet_id,
+        analysis_behavior_hash=assessment.analysis_behavior_hash,
+    ) == assessment
+
+
+def test_context_assessment_store_rejects_second_output_for_same_behavior(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    first = finalize_context_assessment(
+        output=_assessment_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+    retry = finalize_context_assessment(
+        output=_assessment_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=30),
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    store = SqlContextAssessmentStore(engine)
+    store.record_packet(packet)
+    store.record_assessment(packet.packet_id, first)
+
+    with pytest.raises(ValueError, match="已有不同的权威"):
+        store.record_assessment(packet.packet_id, retry)
+
+    assert store.assessment_for(
+        packet_id=packet.packet_id,
+        analysis_behavior_hash=HASH,
+    ) == first
 
 
 def test_context_assessment_store_rejects_packet_mismatch(

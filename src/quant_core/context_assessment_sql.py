@@ -48,6 +48,14 @@ class SqlContextAssessmentStore:
             or assessment.decision_packet_hash != packet.content_hash
         ):
             raise ValueError("ContextAssessment 与 DecisionPacket 身份不一致")
+        existing = self.assessment_for(
+            packet_id=packet_id,
+            analysis_behavior_hash=assessment.analysis_behavior_hash,
+        )
+        if existing is not None:
+            if existing != assessment:
+                raise ValueError("该 DecisionPacket/Behavior 已有不同的权威 Assessment")
+            return existing
         try:
             with self._engine.begin() as connection:
                 connection.execute(
@@ -60,11 +68,18 @@ class SqlContextAssessmentStore:
                         payload=assessment.model_dump(mode="json"),
                     )
                 )
-        except IntegrityError:
-            existing = self.assessment(assessment.assessment_id)
-            if existing != assessment:
+        except IntegrityError as exc:
+            raced = self.assessment_for(
+                packet_id=packet_id,
+                analysis_behavior_hash=assessment.analysis_behavior_hash,
+            )
+            if raced is None:
                 raise
-            return existing
+            if raced != assessment:
+                raise ValueError(
+                    "该 DecisionPacket/Behavior 已并发写入不同的权威 Assessment"
+                ) from exc
+            return raced
         return assessment
 
     def packet(self, packet_id: str) -> DecisionPacket | None:
@@ -81,6 +96,22 @@ class SqlContextAssessmentStore:
             payload = connection.execute(
                 select(context_assessments.c.payload).where(
                     context_assessments.c.assessment_id == assessment_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else ContextAssessment.model_validate(payload)
+
+    def assessment_for(
+        self,
+        *,
+        packet_id: str,
+        analysis_behavior_hash: str,
+    ) -> ContextAssessment | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(context_assessments.c.payload).where(
+                    context_assessments.c.packet_id == packet_id,
+                    context_assessments.c.analysis_behavior_hash
+                    == analysis_behavior_hash,
                 )
             ).scalar_one_or_none()
         return None if payload is None else ContextAssessment.model_validate(payload)
