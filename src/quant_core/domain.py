@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from enum import StrEnum
 from itertools import pairwise
 from typing import Annotated, Literal
@@ -11,6 +11,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 Money = Annotated[Decimal, Field(ge=0)]
 PositiveDecimal = Annotated[Decimal, Field(gt=0)]
 UnitInterval = Annotated[Decimal, Field(ge=0, le=1)]
+
+
+def floor_to_step(value: Decimal, step: Decimal) -> Decimal:
+    """Quantize ``value`` down to the nearest multiple of ``step``.
+
+    Shared by risk sizing, trade planning, the venue lot-size floor and
+    research backtests so every sizing path rounds identically. Divergence
+    here lets an order pass internal checks yet be re-rounded or rejected at
+    the exchange, so this is the single owner of quantity/price flooring.
+    """
+    if step <= 0:
+        raise ValueError("步长必须大于零")
+    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
 
 
 class FrozenModel(BaseModel):

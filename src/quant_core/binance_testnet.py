@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
@@ -29,6 +29,7 @@ from quant_core.domain import (
     RiskOutcome,
     Side,
     TradeIntent,
+    floor_to_step,
 )
 from quant_core.execution import entry_client_order_id, exit_client_order_id
 from quant_core.ids import content_hash, stable_id
@@ -706,9 +707,7 @@ def _encode(parameters: Mapping[str, Any]) -> str:
 
 
 def _floor_step(value: Decimal, step: Decimal) -> Decimal:
-    if step <= 0:
-        raise ValueError("Binance 规则步长必须大于零")
-    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+    return floor_to_step(value, step)
 
 
 def _decimal_text(value: Decimal) -> str:

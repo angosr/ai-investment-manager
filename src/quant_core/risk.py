@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from decimal import ROUND_DOWN
 
 from quant_core.config import RiskPolicy
 from quant_core.domain import (
@@ -16,6 +15,7 @@ from quant_core.domain import (
     Side,
     TradeIntent,
     _require_utc,
+    floor_to_step,
 )
 from quant_core.ids import content_hash, stable_id
 
@@ -173,9 +173,7 @@ class RiskEngine:
         risk_quantity = risk_budget / stop_distance
         notional_quantity = self._policy.maximum_position_notional / entry_price
         quantity = min(risk_quantity, notional_quantity)
-        quantity = (quantity / self._policy.quantity_step).to_integral_value(
-            rounding=ROUND_DOWN
-        ) * self._policy.quantity_step
+        quantity = floor_to_step(quantity, self._policy.quantity_step)
         notional = quantity * entry_price
         if quantity <= 0 or notional < self._policy.minimum_order_notional:
             rules.append(

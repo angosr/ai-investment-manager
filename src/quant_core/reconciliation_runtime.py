@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,7 +14,6 @@ from temporalio import activity
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from quant_core.binance_testnet import BinanceTradingStateSource, assemble_binance_testnet
 from quant_core.config import AppConfig, DeploymentStage, ReconciliationPolicy, TemporalPolicy
@@ -37,6 +35,7 @@ from quant_core.reconciliation_workflows import (
     RECONCILIATION_ACTIVITY_NAME,
     ReconciliationWorkflow,
 )
+from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)
@@ -167,35 +166,20 @@ class ReconciliationTemporalCoordinator:
         return ReconciliationWorkflowExecution.model_validate(raw)
 
 
-class ReconciliationTemporalWorker:
+class ReconciliationTemporalWorker(SingleActivityWorker):
     def __init__(
         self,
         client: Client,
         policy: TemporalPolicy,
         activities: ReconciliationActivities,
     ) -> None:
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="reconciliation-activity",
-        )
-        self._worker = Worker(
+        super().__init__(
             client,
             task_queue=policy.reconciliation_task_queue,
             workflows=[ReconciliationWorkflow],
             activities=[activities.reconcile],
-            activity_executor=self._executor,
-            max_concurrent_activities=1,
+            thread_name_prefix="reconciliation-activity",
         )
-
-    async def __aenter__(self) -> ReconciliationTemporalWorker:
-        await self._worker.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        try:
-            await self._worker.__aexit__(exc_type, exc, tb)
-        finally:
-            self._executor.shutdown(wait=True, cancel_futures=True)
 
 
 @dataclass(slots=True)

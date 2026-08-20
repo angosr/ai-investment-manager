@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -16,7 +15,7 @@ from quant_core.analyst import (
 from quant_core.config import AppConfig
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.governance import ReleaseManifest, validate_manifest_against_config
-from quant_core.ids import canonical_json, content_hash, stable_id
+from quant_core.ids import content_hash, stable_id, write_json_artifact
 
 
 class CodexIsolationAuditArtifact(FrozenModel):
@@ -81,24 +80,9 @@ class CodexIsolationAuditCatalog:
             artifact_hash=content_hash(artifact),
             artifact=artifact,
         )
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".codex-isolation-audit-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".codex-isolation-audit-", payload=envelope
+        )
 
     def load(self, artifact_id: str) -> CodexIsolationAuditArtifact:
         raw = json.loads(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -14,6 +14,7 @@ from quant_core.domain import (
     PositiveDecimal,
     Side,
     _require_utc,
+    floor_to_step,
 )
 from quant_core.ids import content_hash, stable_id
 from quant_core.portfolio_risk import ApprovedTarget
@@ -262,9 +263,7 @@ class TradePlanner:
         )
         if reducing:
             raw_quantity = min(raw_quantity, current_quantity)
-        quantity = (raw_quantity / spec.quantity_step).to_integral_value(
-            rounding=ROUND_DOWN
-        ) * spec.quantity_step
+        quantity = floor_to_step(raw_quantity, spec.quantity_step)
         quote_notional = quantity * price
         if quantity <= 0 or quote_notional < spec.minimum_order_notional:
             return None

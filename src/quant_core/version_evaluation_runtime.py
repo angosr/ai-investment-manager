@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -11,7 +10,6 @@ from temporalio import activity
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from quant_core.config import TemporalPolicy
 from quant_core.domain import FrozenModel, _require_utc
@@ -24,6 +22,7 @@ from quant_core.governance import (
 )
 from quant_core.ids import content_hash, stable_id
 from quant_core.persistence import SqlGovernanceRepository
+from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.version_evaluation_workflows import (
     FINALIZE_EVALUATION_ACTIVITY,
     RUN_EVALUATION_STAGE_ACTIVITY,
@@ -203,32 +202,17 @@ class VersionEvaluationTemporalCoordinator:
         return VersionEvaluationWorkflowExecution.model_validate(raw)
 
 
-class VersionEvaluationTemporalWorker:
+class VersionEvaluationTemporalWorker(SingleActivityWorker):
     def __init__(
         self,
         client: Client,
         policy: TemporalPolicy,
         activities: VersionEvaluationActivities,
     ) -> None:
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="version-evaluation-activity",
-        )
-        self._worker = Worker(
+        super().__init__(
             client,
             task_queue=policy.version_evaluation_task_queue,
             workflows=[VersionEvaluationWorkflow],
             activities=[activities.run_stage, activities.finalize],
-            activity_executor=self._executor,
-            max_concurrent_activities=1,
+            thread_name_prefix="version-evaluation-activity",
         )
-
-    async def __aenter__(self) -> VersionEvaluationTemporalWorker:
-        await self._worker.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        try:
-            await self._worker.__aexit__(exc_type, exc, tb)
-        finally:
-            self._executor.shutdown(wait=True, cancel_futures=True)

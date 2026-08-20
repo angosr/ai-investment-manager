@@ -46,7 +46,7 @@ from quant_core.persistence import (
     trigger_outbox,
 )
 from quant_core.sql_time import database_utc
-from quant_core.trigger import AnalysisTriggerPlan, TriggerBatch
+from quant_core.trigger import AnalysisTriggerPlan, AnalysisTriggerType, TriggerBatch
 
 
 @dataclass(slots=True)
@@ -458,10 +458,18 @@ def _trigger_latency_summaries(
         cycle_created_at = (
             database_utc(raw_cycle_created_at) if raw_cycle_created_at is not None else None
         )
-        for trigger_type in sorted({item.trigger_type for item in batch.triggers}):
-            matching = tuple(item for item in batch.triggers if item.trigger_type == trigger_type)
-            occurred_at = min(item.occurred_at for item in matching)
-            observed_at = min(item.observed_at for item in matching)
+        earliest_by_type: dict[AnalysisTriggerType, tuple[datetime, datetime]] = {}
+        for item in batch.triggers:
+            current = earliest_by_type.get(item.trigger_type)
+            if current is None:
+                earliest_by_type[item.trigger_type] = (item.occurred_at, item.observed_at)
+            else:
+                earliest_by_type[item.trigger_type] = (
+                    min(current[0], item.occurred_at),
+                    min(current[1], item.observed_at),
+                )
+        for trigger_type in sorted(earliest_by_type):
+            occurred_at, observed_at = earliest_by_type[trigger_type]
             key = (batch.pipeline_id, batch.symbol, trigger_type.value)
             values = segments.setdefault(
                 key,

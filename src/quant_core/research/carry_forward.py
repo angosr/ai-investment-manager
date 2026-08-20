@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import platform
-import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version as distribution_version
@@ -13,7 +12,7 @@ from pydantic import Field, field_validator, model_validator
 
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.governance import EvaluationPlan, EvaluationStage, FailedExperiment
-from quant_core.ids import canonical_json, content_hash, stable_id
+from quant_core.ids import content_hash, stable_id, write_json_artifact
 from quant_core.research.carry import HistoricalCarryDataset
 from quant_core.research.carry_evaluation import (
     CarryBacktestRun,
@@ -135,24 +134,9 @@ class CarryForwardCatalog:
         envelope = _CarryForwardEnvelope(
             result_hash=content_hash(result), result=result
         )
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".carry-forward-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".carry-forward-", payload=envelope
+        )
 
     def load(self, result_id: str) -> CarryForwardResult:
         raw = json.loads(

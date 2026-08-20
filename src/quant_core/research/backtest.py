@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections import deque
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from pydantic import Field, field_validator, model_validator
@@ -24,6 +24,7 @@ from quant_core.domain import (
     SignalCandidate,
     TradeIntent,
     _require_utc,
+    floor_to_step,
 )
 from quant_core.exit_policy import program_exit_triggered
 from quant_core.features import FeatureEngine
@@ -802,9 +803,7 @@ class _QuantCoreBarStrategy(NautilusStrategy):
             return
         instrument = self.cache.instrument(self.config.instrument_id)
         step = instrument.size_increment.as_decimal()
-        executable_quantity = (risk.quantity / step).to_integral_value(
-            rounding=ROUND_DOWN
-        ) * step
+        executable_quantity = floor_to_step(risk.quantity, step)
         minimum_notional = max(
             self._app.risk.minimum_order_notional,
             instrument.min_notional.as_decimal(),

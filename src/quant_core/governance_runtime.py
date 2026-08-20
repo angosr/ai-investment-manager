@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,7 +15,6 @@ from temporalio import activity
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from quant_core.analyst import assemble_codex_router
 from quant_core.config import AppConfig, TemporalPolicy
@@ -43,6 +41,7 @@ from quant_core.persistence import (
     SqlGovernanceRepository,
     build_engine,
 )
+from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.trigger import AnalysisTriggerPlan, TriggerPlanPatch
 from quant_core.trigger_sql import SqlTriggerRepository
 from quant_core.workflow import OrchestrationPolicySnapshot
@@ -208,35 +207,20 @@ class GovernanceTemporalCoordinator:
         return GovernanceWorkflowExecution.model_validate(raw)
 
 
-class GovernanceTemporalWorker:
+class GovernanceTemporalWorker(SingleActivityWorker):
     def __init__(
         self,
         client: Client,
         policy: TemporalPolicy,
         activities: GovernanceActivities,
     ) -> None:
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="governance-activity",
-        )
-        self._worker = Worker(
+        super().__init__(
             client,
             task_queue=policy.governance_task_queue,
             workflows=[GovernanceCycleWorkflow],
             activities=[activities.build_snapshot, activities.run_governor],
-            activity_executor=self._executor,
-            max_concurrent_activities=1,
+            thread_name_prefix="governance-activity",
         )
-
-    async def __aenter__(self) -> GovernanceTemporalWorker:
-        await self._worker.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        try:
-            await self._worker.__aexit__(exc_type, exc, tb)
-        finally:
-            self._executor.shutdown(wait=True, cancel_futures=True)
 
 
 @dataclass(slots=True)

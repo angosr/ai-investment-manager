@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
 from collections import defaultdict
 from pathlib import Path
 
 from pydantic import Field
 
 from quant_core.domain import FrozenModel
-from quant_core.ids import canonical_json, content_hash, stable_id
+from quant_core.ids import content_hash, stable_id, write_json_artifact
 from quant_core.research.walk_forward import BlindEvaluationResult, WalkForwardResult
 
 
@@ -54,24 +53,9 @@ class HistoricalEvaluationCatalog:
                 raise ValueError("同一历史评价 ID 的内容不一致")
             return target
 
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".evaluation-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".evaluation-", payload=envelope
+        )
 
     def load(self, evaluation_id: str) -> WalkForwardResult:
         target = self._root / f"{evaluation_id}.json"
@@ -178,24 +162,9 @@ class BlindEvaluationCatalog:
             if self.load(result.result_id) != result:
                 raise ValueError("同一盲测结果 ID 的内容不一致")
             return target
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".blind-evaluation-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".blind-evaluation-", payload=envelope
+        )
 
     def load(self, result_id: str) -> BlindEvaluationResult:
         target = self._root / f"{result_id}.json"

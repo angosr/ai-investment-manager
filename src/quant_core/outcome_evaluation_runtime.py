@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -15,7 +14,6 @@ from temporalio import activity
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
 from quant_core.config import AppConfig, OutcomeEvaluationPolicy, TemporalPolicy
@@ -32,6 +30,7 @@ from quant_core.outcome_evaluation_workflows import (
     OutcomeEvaluationWorkflow,
 )
 from quant_core.persistence import build_engine
+from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)
@@ -193,35 +192,20 @@ class OutcomeEvaluationTemporalCoordinator:
         return OutcomeEvaluationWorkflowExecution.model_validate(raw)
 
 
-class OutcomeEvaluationTemporalWorker:
+class OutcomeEvaluationTemporalWorker(SingleActivityWorker):
     def __init__(
         self,
         client: Client,
         policy: TemporalPolicy,
         activities: OutcomeEvaluationActivities,
     ) -> None:
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="outcome-evaluation-activity",
-        )
-        self._worker = Worker(
+        super().__init__(
             client,
             task_queue=policy.outcome_evaluation_task_queue,
             workflows=[OutcomeEvaluationWorkflow],
             activities=[activities.evaluate],
-            activity_executor=self._executor,
-            max_concurrent_activities=1,
+            thread_name_prefix="outcome-evaluation-activity",
         )
-
-    async def __aenter__(self) -> OutcomeEvaluationTemporalWorker:
-        await self._worker.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        try:
-            await self._worker.__aexit__(exc_type, exc, tb)
-        finally:
-            self._executor.shutdown(wait=True, cancel_futures=True)
 
 
 @dataclass(slots=True)

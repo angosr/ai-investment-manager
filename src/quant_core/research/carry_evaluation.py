@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import datetime, timedelta
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from quant_core.domain import FrozenModel, _require_utc
+from quant_core.domain import FrozenModel, _require_utc, floor_to_step
 from quant_core.governance import EvaluationPlan, EvaluationStage, FailedExperiment
-from quant_core.ids import canonical_json, content_hash, stable_id
+from quant_core.ids import content_hash, stable_id, write_json_artifact
 from quant_core.research.carry import (
     CarryFundingSettlement,
     HistoricalCarryDataset,
@@ -206,24 +205,9 @@ class CarryEvaluationCatalog:
         envelope = CarryEvaluationEnvelope(
             result_hash=content_hash(result), result=result
         )
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".carry-evaluation-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".carry-evaluation-", payload=envelope
+        )
 
     def load(self, evaluation_id: str) -> CarryWalkForwardResult:
         raw = json.loads(
@@ -250,24 +234,9 @@ class CarryBlindCatalog:
                 raise ValueError("同一 carry 盲测 ID 的内容不一致")
             return target
         envelope = CarryBlindEnvelope(result_hash=content_hash(result), result=result)
-        self._root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".carry-blind-",
-            suffix=".json",
-            dir=self._root,
-            delete=False,
-        ) as temporary:
-            temporary.write(canonical_json(envelope))
-            temporary.flush()
-            temporary_path = Path(temporary.name)
-        try:
-            temporary_path.replace(target)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return target
+        return write_json_artifact(
+            root=self._root, target=target, prefix=".carry-blind-", payload=envelope
+        )
 
     def load(self, result_id: str) -> CarryBlindResult:
         raw = json.loads(
@@ -446,9 +415,7 @@ def run_carry_backtest(
         if month != previous_month:
             target_notional = equity * policy.leg_equity_fraction
             raw_quantity = target_notional / max(spot.open, day.contract_open)
-            target_quantity = (
-                raw_quantity / quantity_step
-            ).to_integral_value(rounding=ROUND_DOWN) * quantity_step
+            target_quantity = floor_to_step(raw_quantity, quantity_step)
             if (
                 target_quantity < spot_dataset.manifest.instrument.minimum_quantity
                 or target_quantity < carry_dataset.manifest.instrument.minimum_quantity
