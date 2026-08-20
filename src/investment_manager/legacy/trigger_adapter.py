@@ -139,6 +139,11 @@ class TriggerDispatchBuilder:
                 }
             )
         )
+        market_shock_symbols = (
+            (batch.symbol,)
+            if AnalysisTriggerType.MARKET_SHOCK in trigger_types
+            else ()
+        )
         cycle_input = CycleInput(
             market=market,
             account=account,
@@ -174,6 +179,7 @@ class TriggerDispatchBuilder:
                 as_of=as_of,
                 mandate=self._config.assessment.mandate,
                 intelligence_evidence_ids=intelligence_evidence_ids,
+                market_shock_symbols=market_shock_symbols,
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None

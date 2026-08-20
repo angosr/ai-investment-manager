@@ -67,6 +67,8 @@ class SqlStateProjector:
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
         intelligence_affected_assets: tuple[str, ...] = (),
+        market_shock_symbols: tuple[str, ...] = (),
+        market_affected_assets: tuple[str, ...] = (),
         data_quality_codes: tuple[str, ...] = (),
         coverage_gap_codes: tuple[str, ...] = (),
     ) -> StateProjectionResult:
@@ -94,6 +96,20 @@ class SqlStateProjector:
             data_quality_codes=data_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
         )
+        feature_ref_by_symbol = {
+            item.symbol: content_hash(item)
+            for item in features
+        }
+        if tuple(sorted(set(market_shock_symbols))) != market_shock_symbols:
+            raise ValueError("market_shock_symbols 必须唯一且排序")
+        missing_market_symbols = tuple(
+            item for item in market_shock_symbols if item not in feature_ref_by_symbol
+        )
+        if missing_market_symbols:
+            raise ValueError(
+                "Market shock 缺少 Feature evidence: "
+                + ", ".join(missing_market_symbols)
+            )
         existing = self._states.latest_state(
             analysis_scope=analysis_scope,
             projection_version=self._projection_version,
@@ -134,6 +150,10 @@ class SqlStateProjector:
             current_facts=facts,
             current_events=intelligence_events,
             intelligence_affected_assets=intelligence_affected_assets,
+            market_feature_refs=tuple(
+                sorted(feature_ref_by_symbol[item] for item in market_shock_symbols)
+            ),
+            market_affected_assets=market_affected_assets,
             policy=self._delta_policy,
         )
         if delta is None:

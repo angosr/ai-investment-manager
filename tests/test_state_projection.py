@@ -439,3 +439,76 @@ def test_packet_preparation_uses_only_exact_triggered_intelligence_event(
     assert packet_event.prompt_injection_suspected is True
     assert len(packet_event.title) <= 240
     assert replayed.status == PacketPreparationStatus.NO_MATERIAL_DELTA
+
+
+def test_packet_preparation_promotes_only_explicit_market_shock(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    facts = SqlFactStateStore(engine)
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        account_reader=_PointInTimeAccountReader(replay_input.account),
+        event_reader=InMemoryEventStore(),
+        facts=facts,
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-market-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-market-v1",
+                schema_version="decision-packet-market-v1",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        clock=lambda: OBSERVED_AT + timedelta(minutes=3),
+    )
+    mandate = AnalysisMandate(
+        version="crypto-market-mandate-v1",
+        analysis_scope="crypto-portfolio",
+        question="Assess an explicitly detected market shock.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("MARKET_VOLATILITY",),
+    )
+
+    baseline = preparation.prepare(
+        analysis_id="market-baseline",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+    )
+    shock = preparation.prepare(
+        analysis_id="market-shock",
+        as_of=OBSERVED_AT + timedelta(minutes=1),
+        mandate=mandate,
+        market_shock_symbols=("BTCUSDT",),
+    )
+    heartbeat = preparation.prepare(
+        analysis_id="market-heartbeat",
+        as_of=OBSERVED_AT + timedelta(minutes=2),
+        mandate=mandate,
+    )
+
+    assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
+    assert shock.status == PacketPreparationStatus.READY
+    assert shock.packet is not None
+    assert shock.packet.deltas[0].category == "MARKET"
+    assert shock.packet.deltas[0].affected_assets == ("BTC",)
+    assert len(shock.packet.deltas[0].feature_snapshot_refs) == 1
+    assert shock.packet.intelligence_events == ()
+    assert heartbeat.status == PacketPreparationStatus.NO_MATERIAL_DELTA

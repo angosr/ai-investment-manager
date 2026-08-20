@@ -57,6 +57,16 @@ class StateDeltaPolicy(FrozenModel):
     intelligence_materiality: Materiality = Materiality.NORMAL
     intelligence_risk_factors: tuple[str, ...] = Field(min_length=1)
     intelligence_reason_code: str = Field(min_length=1, max_length=128)
+    market_materiality: Materiality = Materiality.HIGH
+    market_risk_factors: tuple[str, ...] = Field(
+        default=("MARKET_VOLATILITY",),
+        min_length=1,
+    )
+    market_reason_code: str = Field(
+        default="MARKET_SHOCK_TRIGGERED",
+        min_length=1,
+        max_length=128,
+    )
 
     @model_validator(mode="after")
     def policy_must_be_unambiguous(self):
@@ -68,10 +78,10 @@ class StateDeltaPolicy(FrozenModel):
         fact_types = tuple(rule.fact_type for rule in self.rules)
         if tuple(sorted(set(fact_types))) != fact_types:
             raise ValueError("FactDeltaRule 必须按 fact_type 唯一且排序")
-        if tuple(sorted(set(self.intelligence_risk_factors))) != (
-            self.intelligence_risk_factors
-        ):
-            raise ValueError("intelligence_risk_factors 必须唯一且排序")
+        for name in ("intelligence_risk_factors", "market_risk_factors"):
+            values = getattr(self, name)
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"{name} 必须唯一且排序")
         return self
 
 
@@ -205,6 +215,8 @@ def build_state_material_delta(
     current_facts: tuple[CanonicalFactRevision, ...],
     current_events: tuple[IntelligenceEvent, ...] = (),
     intelligence_affected_assets: tuple[str, ...] = (),
+    market_feature_refs: tuple[str, ...] = (),
+    market_affected_assets: tuple[str, ...] = (),
     policy: StateDeltaPolicy,
 ) -> MaterialDelta | None:
     if previous is None:
@@ -235,7 +247,13 @@ def build_state_material_delta(
             - set(previous.intelligence_event_refs)
         )
     )
-    if not changed_ids and not changed_event_refs:
+    market_refs = _unique_sorted(market_feature_refs, name="market_feature_refs")
+    if not set(market_refs).issubset(current.feature_snapshot_refs):
+        raise ValueError("market_feature_refs 必须属于 current StateSnapshot")
+    changed_market_refs = tuple(
+        item for item in market_refs if item not in previous.feature_snapshot_refs
+    )
+    if not changed_ids and not changed_event_refs and not changed_market_refs:
         return None
 
     changed_facts = tuple(facts_by_revision[item] for item in changed_ids)
@@ -247,10 +265,12 @@ def build_state_material_delta(
     if missing_rules:
         raise ValueError(f"StateDeltaPolicy 缺少规则: {', '.join(missing_rules)}")
     rules = tuple(rules_by_type[item.fact_type] for item in changed_facts)
-    observed_at = max(
+    evidence_times = (
         tuple(item.observed_at for item in changed_facts)
         + tuple(item.observed_at for item in changed_events)
+        + ((current.as_of,) if changed_market_refs else ())
     )
+    observed_at = max(evidence_times)
     if observed_at > current.as_of:
         raise ValueError("MaterialDelta 不能引用 current as_of 之后的证据")
     materiality = max(
@@ -261,6 +281,7 @@ def build_state_material_delta(
                 if changed_event_refs
                 else ()
             ),
+            *((policy.market_materiality,) if changed_market_refs else ()),
         ),
         key=_materiality_rank,
     )
@@ -274,6 +295,13 @@ def build_state_material_delta(
     )
     if changed_event_refs and not event_assets:
         raise ValueError("IntelligenceEvent MaterialDelta 缺少受影响资产")
+    market_assets = (
+        _unique_sorted(market_affected_assets, name="market_affected_assets")
+        if changed_market_refs
+        else ()
+    )
+    if changed_market_refs and not market_assets:
+        raise ValueError("Market MaterialDelta 缺少受影响资产")
     payload = {
         "policy_version": policy.version,
         "analysis_scope": current.analysis_scope,
@@ -284,7 +312,11 @@ def build_state_material_delta(
         "category": (
             DeltaCategory.FIRST_PARTY_FACT.value
             if changed_ids
-            else DeltaCategory.INTELLIGENCE_EVENT.value
+            else (
+                DeltaCategory.INTELLIGENCE_EVENT.value
+                if changed_event_refs
+                else DeltaCategory.MARKET.value
+            )
         ),
         "materiality": materiality.value,
         "affected_assets": tuple(
@@ -292,6 +324,7 @@ def build_state_material_delta(
                 {
                     *(asset for item in changed_facts for asset in item.affected_assets),
                     *event_assets,
+                    *market_assets,
                 }
             )
         ),
@@ -304,12 +337,13 @@ def build_state_material_delta(
                         if changed_event_refs
                         else ()
                     ),
+                    *(policy.market_risk_factors if changed_market_refs else ()),
                 }
             )
         ),
         "horizons_minutes": policy.horizons_minutes,
         "fact_revision_ids": changed_ids,
-        "feature_snapshot_refs": (),
+        "feature_snapshot_refs": changed_market_refs,
         "reason_codes": tuple(
             sorted(
                 {
@@ -319,6 +353,7 @@ def build_state_material_delta(
                         if changed_event_refs
                         else ()
                     ),
+                    *((policy.market_reason_code,) if changed_market_refs else ()),
                 }
             )
         ),

@@ -128,9 +128,11 @@ class EmptyShadowState:
 class RecordingPacketPreparation:
     def __init__(self) -> None:
         self.intelligence_evidence_ids: tuple[str, ...] | None = None
+        self.market_shock_symbols: tuple[str, ...] | None = None
 
     def prepare(self, **kwargs):
         self.intelligence_evidence_ids = kwargs["intelligence_evidence_ids"]
+        self.market_shock_symbols = kwargs["market_shock_symbols"]
         return DecisionPacketPreparationResult(
             status=PacketPreparationStatus.NO_MATERIAL_DELTA,
             reason_code="NO_MATERIAL_STATE_CHANGE",
@@ -237,6 +239,7 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
     )
 
     assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
+    assert preparation.market_shock_symbols == ("BTCUSDT",)
 
 
 def test_sql_shadow_account_is_projected_from_latest_business_fact(

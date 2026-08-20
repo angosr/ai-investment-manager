@@ -76,6 +76,18 @@ AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 
 同一事件跨品种产生的触发仍只形成一个 portfolio scope 的新状态变化；稳定 Evidence ref、
 State 内容身份和 Assessment 权威复用共同抑制重复 Codex 调用。
 
+### 3.2 市场冲击证据边界
+
+连续行情始终由程序化特征、策略、组合和风控消费；特征随行情更新本身不构成 AI 调用理由。
+只有 `TriggerBatch` 明确包含 `MARKET_SHOCK` 时，State 才把该批次 symbol 对应的当前
+`FeatureSnapshot` 内容引用写入 `MARKET` 类别的 `MaterialDelta`，再进入同一
+`DecisionPacket → ContextAssessment` 链。普通 heartbeat 即使产生了新行情和新特征，也只更新
+点时 State，不产生市场 Delta。
+
+这条边界保证触发器只负责判断“异常是否值得复核”，State 冻结“当时看到了什么”，AI 只评估
+风险、倾向和不确定性；任何一层都不能借市场冲击直接决定仓位或下单。重复交付使用稳定批次、
+State 和 Delta 身份幂等处理，不另建第二条市场分析链。
+
 ## 4. 目标目录
 
 ```text

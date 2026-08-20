@@ -20,12 +20,15 @@ decision_state:
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
-    version: state-delta-v2
+    version: state-delta-v3
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
     intelligence_risk_factors: [EXTERNAL_INFORMATION]
     intelligence_reason_code: INTELLIGENCE_EVENT_INSERTED
+    market_materiality: HIGH
+    market_risk_factors: [MARKET_VOLATILITY]
+    market_reason_code: MARKET_SHOCK_TRIGGERED
     rules:
       - fact_type: FED_MONETARY_RELEASE
         materiality: HIGH
@@ -240,7 +243,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [EXTERNAL_INFORMATION, US_MONETARY_POLICY]
+    required_risk_factors: [EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

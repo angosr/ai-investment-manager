@@ -105,6 +105,7 @@ class DecisionPacketPreparation:
         as_of: datetime,
         mandate: AnalysisMandate,
         intelligence_evidence_ids: tuple[str, ...] = (),
+        market_shock_symbols: tuple[str, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
     ) -> DecisionPacketPreparationResult:
@@ -113,6 +114,8 @@ class DecisionPacketPreparation:
         as_of = require_utc(as_of)
         if tuple(sorted(set(intelligence_evidence_ids))) != intelligence_evidence_ids:
             raise ValueError("intelligence_evidence_ids 必须唯一且排序")
+        if tuple(sorted(set(market_shock_symbols))) != market_shock_symbols:
+            raise ValueError("market_shock_symbols 必须唯一且排序")
         intelligence_events = self._event_reader.exact(
             evidence_ids=intelligence_evidence_ids,
             as_of=as_of,
@@ -121,6 +124,14 @@ class DecisionPacketPreparation:
             item.market_symbol: item.asset
             for item in mandate.assets
         }
+        missing_market_symbols = tuple(
+            item for item in market_shock_symbols if item not in symbol_to_asset
+        )
+        if missing_market_symbols:
+            raise ValueError(
+                "Market shock 未命中 Mandate assets: "
+                + ", ".join(missing_market_symbols)
+            )
         intelligence_affected_assets = tuple(
             sorted(
                 {
@@ -133,6 +144,9 @@ class DecisionPacketPreparation:
         )
         if intelligence_events and not intelligence_affected_assets:
             raise ValueError("IntelligenceEvent 未命中 Mandate assets")
+        market_affected_assets = tuple(
+            sorted(symbol_to_asset[item] for item in market_shock_symbols)
+        )
         markets = tuple(
             self._market_store.snapshot(
                 cycle_id=analysis_id,
@@ -169,6 +183,8 @@ class DecisionPacketPreparation:
             account=account,
             intelligence_events=intelligence_events,
             intelligence_affected_assets=intelligence_affected_assets,
+            market_shock_symbols=market_shock_symbols,
+            market_affected_assets=market_affected_assets,
             data_quality_codes=data_quality_codes,
         )
         if projection.delta is None:

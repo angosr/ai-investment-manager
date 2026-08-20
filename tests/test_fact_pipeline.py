@@ -18,7 +18,7 @@ from investment_manager.state.facts import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
-from investment_manager.state.models import Materiality
+from investment_manager.state.models import DeltaCategory, Materiality
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(
@@ -245,3 +245,53 @@ def test_fact_delta_fails_closed_when_policy_does_not_classify_fact() -> None:
             current_facts=(fact,),
             policy=incomplete_policy,
         )
+
+
+def test_market_delta_requires_explicit_trigger_scoped_feature_evidence() -> None:
+    previous_ref = "a" * 64
+    current_ref = "b" * 64
+    previous = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-portfolio",
+        as_of=OBSERVED_AT,
+        built_at=OBSERVED_AT,
+        facts=(),
+        feature_snapshot_refs=(previous_ref,),
+    )
+    current_at = OBSERVED_AT + timedelta(minutes=1)
+    current = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-portfolio",
+        as_of=current_at,
+        built_at=current_at,
+        facts=(),
+        feature_snapshot_refs=(current_ref,),
+    )
+
+    assert (
+        build_state_material_delta(
+            previous=previous,
+            current=current,
+            current_facts=(),
+            policy=DELTA_POLICY,
+        )
+        is None
+    )
+
+    delta = build_state_material_delta(
+        previous=previous,
+        current=current,
+        current_facts=(),
+        market_feature_refs=(current_ref,),
+        market_affected_assets=("BTC",),
+        policy=DELTA_POLICY,
+    )
+
+    assert delta is not None
+    assert delta.category == DeltaCategory.MARKET
+    assert delta.materiality == Materiality.HIGH
+    assert delta.feature_snapshot_refs == (current_ref,)
+    assert delta.affected_assets == ("BTC",)
+    assert delta.risk_factors == ("MARKET_VOLATILITY",)
+    assert delta.reason_codes == ("MARKET_SHOCK_TRIGGERED",)
+    assert delta.observed_at == current_at

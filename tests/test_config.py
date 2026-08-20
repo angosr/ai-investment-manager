@@ -32,6 +32,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTC",
         "ETH",
     )
+    assert config.assessment.mandate.required_risk_factors == (
+        "EXTERNAL_INFORMATION",
+        "MARKET_VOLATILITY",
+        "US_MONETARY_POLICY",
+    )
 
 
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
