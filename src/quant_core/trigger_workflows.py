@@ -46,6 +46,7 @@ class TriggerCoordinatorWorkflow:
         self._last_batch_id: str | None = None
         self._active_batch_id: str | None = None
         self._input_retry_not_before: datetime | None = None
+        self._next_reconsider_at: datetime | None = None
 
     @workflow.query
     def status(self) -> dict[str, Any]:
@@ -56,6 +57,11 @@ class TriggerCoordinatorWorkflow:
             "failed_batches": self._failed_batches,
             "last_batch_id": self._last_batch_id,
             "active_batch_id": self._active_batch_id,
+            "next_reconsider_at": (
+                self._next_reconsider_at.isoformat()
+                if self._next_reconsider_at is not None
+                else None
+            ),
             "last_analysis_at": (
                 self._last_analysis_at.isoformat() if self._last_analysis_at else None
             ),
@@ -128,9 +134,11 @@ class TriggerCoordinatorWorkflow:
             eligible = self._eligible_pending()
             if eligible:
                 delay = self._required_delay(eligible, now)
+                self._next_reconsider_at = now + delay
                 if delay > timedelta(0):
                     await self._wait_for_change(delay)
                     continue
+                self._next_reconsider_at = None
                 maximum = int(self._settings["maximum_batch_size"])
                 selected = tuple(eligible[:maximum])
                 plan = AnalysisTriggerPlan.model_validate(self._plan)
@@ -145,10 +153,12 @@ class TriggerCoordinatorWorkflow:
                     deadline=now
                     + timedelta(seconds=int(self._settings["analysis_deadline_seconds"])),
                 )
+                self._active_batch_id = batch.batch_id
                 request_payload, deferred_until = await self._build_request(
                     batch.model_dump(mode="json")
                 )
                 if request_payload is None:
+                    self._active_batch_id = None
                     self._input_retry_not_before = deferred_until or (
                         workflow.now()
                         + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
@@ -158,7 +168,6 @@ class TriggerCoordinatorWorkflow:
                 for item in selected:
                     self._pending.pop(str(item["trigger_id"]), None)
                 self._last_batch_id = batch.batch_id
-                self._active_batch_id = batch.batch_id
                 try:
                     try:
                         await workflow.execute_child_workflow(
@@ -181,6 +190,7 @@ class TriggerCoordinatorWorkflow:
                     workflow.continue_as_new(self._continued_request(request))
                 continue
 
+            self._next_reconsider_at = None
             await self._wait_for_change(self._next_timer_delay(now, started_at))
 
         return {

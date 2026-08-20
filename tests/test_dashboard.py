@@ -396,8 +396,57 @@ def test_health_reads_temporal_coordinator_pending_state() -> None:
 
     check = next(item for item in result["checks"] if item["key"] == "trigger_coordinator")
     assert check["state"] == "warn"
-    assert "等待 4 条" in check["detail"]
+    assert "状态不明 4 条" in check["detail"]
     assert result["overall"] == "warn"
+
+
+def test_health_treats_policy_deferred_triggers_as_healthy() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        coordinator_statuses=(
+            {
+                "symbol": "BTCUSDT",
+                "pending_count": 2,
+                "active_batch_id": None,
+                "next_reconsider_at": (now + timedelta(minutes=5)).isoformat(),
+            },
+            {
+                "symbol": "ETHUSDT",
+                "pending_count": 3,
+                "active_batch_id": "batch-active",
+                "next_reconsider_at": None,
+            },
+        ),
+    )
+
+    check = next(item for item in result["checks"] if item["key"] == "trigger_coordinator")
+    assert check == {
+        "key": "trigger_coordinator",
+        "name": "触发协调器",
+        "state": "ok",
+        "detail": "正常等待 5 条 · 执行中 1 批",
+    }
+    assert result["overall"] == "ok"
 
 
 @pytest.mark.parametrize(

@@ -37,7 +37,7 @@ def assemble_health(
         _release_alignment_check(analysis),
     ]
     if coordinator_statuses is not None:
-        checks.append(_trigger_coordinator_check(coordinator_statuses))
+        checks.append(_trigger_coordinator_check(coordinator_statuses, now))
     if host_resources is not None:
         checks.append(_disk_check(host_resources))
     worst = max(checks, key=lambda check: _SEVERITY[check["state"]])
@@ -223,7 +223,7 @@ def _release_alignment_check(status: AnalysisRuntimeStatus) -> dict:
     )
 
 
-def _trigger_coordinator_check(statuses: tuple[dict, ...]) -> dict:
+def _trigger_coordinator_check(statuses: tuple[dict, ...], now: datetime) -> dict:
     if not statuses or any("error" in item for item in statuses):
         return _check(
             "trigger_coordinator",
@@ -233,12 +233,35 @@ def _trigger_coordinator_check(statuses: tuple[dict, ...]) -> dict:
         )
     pending = sum(int(item.get("pending_count", 0)) for item in statuses)
     active = sum(item.get("active_batch_id") is not None for item in statuses)
-    if pending:
+    overdue_or_unknown = 0
+    for item in statuses:
+        count = int(item.get("pending_count", 0))
+        if count <= 0 or item.get("active_batch_id") is not None:
+            continue
+        raw_reconsider_at = item.get("next_reconsider_at")
+        try:
+            reconsider_at = (
+                datetime.fromisoformat(raw_reconsider_at)
+                if isinstance(raw_reconsider_at, str)
+                else None
+            )
+        except ValueError:
+            reconsider_at = None
+        if reconsider_at is None or reconsider_at.tzinfo is None or reconsider_at <= now:
+            overdue_or_unknown += count
+    if overdue_or_unknown:
         return _check(
             "trigger_coordinator",
             "触发协调器",
             "warn",
-            f"等待 {pending} 条 · 执行中 {active} 批",
+            f"到期未执行或状态不明 {overdue_or_unknown} 条 · 执行中 {active} 批",
+        )
+    if pending:
+        return _check(
+            "trigger_coordinator",
+            "触发协调器",
+            "ok",
+            f"正常等待 {pending} 条 · 执行中 {active} 批",
         )
     return _check(
         "trigger_coordinator",
