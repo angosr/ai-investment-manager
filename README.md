@@ -4,7 +4,7 @@
 
 投资与工程原则见 [AGENTS.md](./AGENTS.md)，权威结构和迁移方案见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。设计与代码出现冲突时必须先修正文档或实现，不能形成第二套隐含架构。
 
-架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；两条路径复用同一平台事实身份和数据库唯一约束，避免重复证据。它仍是轮询而非 PUSH/STREAM。新事实一旦入库便通过 Outbox + PostgreSQL NOTIFY 立即唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
+架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；Fed 固定官方日历与货币政策 RSS 则独立保留原始响应、投影 CanonicalFact，并将近期修订和未来正式发布时间分别同步为即时 Trigger 与持久 Wakeup。新闻路径复用同一平台事实身份和数据库唯一约束，避免重复证据。所有来源仍是明确轮询而非伪装成 PUSH/STREAM；新触发通过 Outbox + PostgreSQL NOTIFY 唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
 
 ## 当前实现状态
 
@@ -33,7 +33,7 @@
 - 版本化 `AnalysisTriggerPlan` 与完整 `TriggerPlanPatch`：增删改时间点和事件规则、暂停/恢复、幂等 `TRIGGER_NOW`；revision、Manifest 和硬资源上限由确定性 Gate 校验。
 - Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
-- 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP 与本机 NewsNow，并持续标准化到 PostgreSQL；失败不会污染已有事实。
+- 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
 - Temporal 父 `AnalysisCycleWorkflow` 与稳定 ID 子 `ExecutionWorkflow`：决策事务原子写入风险占用、不可变 `ExecutionRequest` 和 `EXECUTION_PENDING`，执行事务原子写入订单、成交、账户、风险终态和持仓；时间跳跃、崩溃重试及真实本地服务端均已验证。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
@@ -127,7 +127,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 `walk-forward` 首次必须以完全相同参数增加 `--register-only`，把数据集、事件集、候选制品、成本/风控版本、窗口和全部门槛原子登记到治理事实库；随后移除该选项才能运行。任一参数变化都会因规格哈希不一致而失败，结果也携带该哈希。公开历史数据抓取允许研究尚未进入生产白名单的合法品种，但不会修改 `MarketDataPolicy`、`RiskPolicy` 或下单权限；所有一次性盲测仍必须在同一权威治理事实库认领全局窗口锁。它复用生产特征、程序策略、成本与风控口径，以 K 线收盘生成信号、下一根开盘撮合，并自动使用覆盖成交、持有期与标签跨度的 embargo/purge；特征预热只能读取信号前已知事实。`freeze-event-history` 只冻结事实库里真实记录的 `observed_at`，不会给事后抓取的新闻猜测到达时间；通过 `walk-forward --event-dataset-id ...` 可将独立事件制品与行情制品组合，策略只看见当时已到达且与生产读取上限一致的事件。当前事件在下一根已收盘 K 线评价，属于明确的保守延迟假设；这一入口尚未回放 TriggerPlan，也尚未有通过预登记历史门禁的事件因子。费用、滑点和价差按开仓与平仓各自名义金额计算，回撤按每根已收盘 K 线盯市；程序退出由生产与回测共用的纯规则评价器执行。`--blind-bars` 显式保留从未参与 walk-forward 的尾部区间；只有 walk-forward 全部门禁通过后，`blind-evaluate` 才会在读取预留标签前原子消费一次查询预算。同一进程崩溃只能恢复同一查询；同一品种已揭示或与其重叠的盲测时间窗不能由另一候选、计划或数据副本再次查询，后续盲测必须使用不重叠的未来窗口。结果进入独立不可变目录。默认高密度摘要直接分解毛收益、模型化交易成本、净收益及对应平均 bps；`--include-trades` 才展开逐笔事实，不创建长期 Markdown 报告。`research-catalog` 从不可变结果派生实验累计次数、家族累计次数、被替代版本和唯一最高回测语义；若同一最高语义存在多个结果或策略身份冲突，则不提供 canonical，避免挑选旧结果。Codex 的盈利证据只接受在结果发生前冻结的前瞻决策带；即使旧事件具有真实 `observed_at`，今天的模型也可能已经知道历史后果，事后调用只能做行为回归，不能冒充 AI Alpha。
 
-`replay-event-triggers` 与线上 Temporal 协调器复用同一套规则匹配、合并、冷却、到期及全局防重复间隔函数，在一个离散时钟中同时推进全部品种，并从事实库冻结窗口前最近一次全局准入和各品种完成状态。分析耗时必须显式冻结；同刻争用顺序可用 `--admission-order` 做敏感性测试。它目前不回放 heartbeat、Agent wakeup，历史初始完成状态也只是数据库持久化时刻的代理；这些限制及计划晚于回放起点都会进入结构化结果。存在这些限制或准入顺序敏感时，触发带不能直接冒充盈利证据。`trendradar-collector-v6` 保留宽泛美联储/制裁快讯作为面板背景，但只让明确加密语境或 CPI、利率决议、非农、霍尔木兹中断等可辨识冲击跨越高影响自动触发门槛；旧版事件仍以原 normalizer version 回放，不重写历史事实。Pipeline 只隔离触发和调用状态；在同一事实库已观测到且当时已路由给该品种的事件，发布新 Pipeline 后仍可作为有时点的面板背景，但不会复活旧触发。
+`replay-event-triggers` 与线上 Temporal 协调器复用同一套规则匹配、合并、冷却、到期及全局防重复间隔函数，在一个离散时钟中同时推进全部品种，并从事实库冻结窗口前最近一次全局准入和各品种完成状态。分析耗时必须显式冻结；同刻争用顺序可用 `--admission-order` 做敏感性测试。它目前不回放 heartbeat、Agent wakeup，历史初始完成状态也只是数据库持久化时刻的代理；这些限制及计划晚于回放起点都会进入结构化结果。存在这些限制或准入顺序敏感时，触发带不能直接冒充盈利证据。`information-intake-v7` 保留 `trendradar-collector-v6` 的新闻规范化语义，并新增 Fed 固定一手端点采集；旧版事件仍以原 normalizer version 回放，不重写历史事实。Pipeline 只隔离触发和调用状态；在同一事实库已观测到且当时已路由给该品种的事件，发布新 Pipeline 后仍可作为有时点的面板背景，但不会复活旧触发。
 
 完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 

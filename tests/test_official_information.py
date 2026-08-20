@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
 from investment_manager.information.official import (
@@ -7,8 +8,33 @@ from investment_manager.information.official import (
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
+from investment_manager.information.official_source import HttpFedOfficialSource
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
+
+
+def test_fed_official_source_uses_conditional_request_without_redirects() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                200,
+                text="<html>calendar</html>",
+                headers={"etag": '"revision-1"'},
+            )
+        assert request.headers["if-none-match"] == '"revision-1"'
+        return httpx.Response(304)
+
+    source = HttpFedOfficialSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert source.fetch_calendar() == "<html>calendar</html>"
+    assert source.fetch_calendar() is None
+    assert len(requests) == 2
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:
@@ -50,6 +76,26 @@ def test_fomc_calendar_parses_cross_month_meeting() -> None:
 
     assert meeting.meeting_start.isoformat() == "2027-01-31"
     assert meeting.meeting_end.isoformat() == "2027-02-01"
+
+
+def test_fomc_calendar_excludes_special_notation_vote_from_regular_schedule() -> None:
+    html = """
+    <h4>2025 FOMC Meetings</h4>
+    <div class="row fomc-meeting">
+      <div class="fomc-meeting__month"><strong>August</strong></div>
+      <div class="fomc-meeting__date">22 (notation vote)</div>
+    </div>
+    <h4>2026 FOMC Meetings</h4>
+    <div class="row fomc-meeting">
+      <div class="fomc-meeting__month"><strong>September</strong></div>
+      <div class="fomc-meeting__date">15-16*</div>
+    </div>
+    """
+
+    meetings = parse_fomc_calendar(html, observed_at=OBSERVED_AT)
+
+    assert len(meetings) == 1
+    assert meetings[0].meeting_start.isoformat() == "2026-09-15"
 
 
 def test_fomc_calendar_revision_changes_payload_identity_not_logical_record() -> None:

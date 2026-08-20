@@ -109,6 +109,8 @@ src/investment_manager/
 
 拥有 TriggerEvent、TriggerPlan、合并/冷却/优先级和动态 wakeup。主 Agent 可以立即触发、增加或删除未来触发点，但所有修改都是持久、版本化和可重放的 TriggerPlanPatch。Scheduling 只决定“何时重新分析”，不决定“买什么”。
 
+官方日历是这个边界的结构化输入：事实修订产生即时 `CANONICAL_FACT_REVISED`，未来正式发布时间以稳定事实身份同步为 `ScheduledWakeup`。同步器只管理自己拥有的官方 wakeup，不覆盖主 Agent 的计划；到点后的有效窗口仍由 TriggerCoordinator 负责交付。
+
 ### Forecast
 
 拥有 BaseForecast、ContextAssessment、CalibratedForecast、校准制品和预测结果。程序、AI 或混合预测者通过明确 producer identity 注册；行为、输入投影、工具或提示词实质变化即产生新版本。未校准或无权限的预测只能进入影子结算。

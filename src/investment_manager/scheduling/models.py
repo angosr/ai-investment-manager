@@ -89,6 +89,7 @@ def decide_analysis_call_admission(
 
 
 class AnalysisTriggerType(StrEnum):
+    CANONICAL_FACT_REVISED = "CANONICAL_FACT_REVISED"
     INTELLIGENCE_INSERTED = "INTELLIGENCE_INSERTED"
     MARKET_SHOCK = "MARKET_SHOCK"
     POSITION_RECHECK = "POSITION_RECHECK"
@@ -599,10 +600,14 @@ class TriggerPlanGate:
         emitted: list[AnalysisTriggerEvent] = []
         for operation in patch.operations:
             if isinstance(operation, AddWakeup):
+                if operation.wakeup.wake_at <= now:
+                    raise ValueError("ADD_WAKEUP 目标必须位于未来")
                 if operation.wakeup.wakeup_id in wakeups:
                     raise ValueError("ADD_WAKEUP 目标已经存在")
                 wakeups[operation.wakeup.wakeup_id] = operation.wakeup
             elif isinstance(operation, UpdateWakeup):
+                if operation.wakeup.wake_at <= now:
+                    raise ValueError("UPDATE_WAKEUP 目标必须位于未来")
                 if operation.wakeup.wakeup_id not in wakeups:
                     raise ValueError("UPDATE_WAKEUP 目标不存在")
                 wakeups[operation.wakeup.wakeup_id] = operation.wakeup
@@ -634,12 +639,13 @@ class TriggerPlanGate:
             elif isinstance(operation, SetHeartbeat):
                 heartbeat = operation.heartbeat_seconds
 
-        future_wakeups = tuple(
-            sorted(wakeups.values(), key=lambda item: (item.wake_at, item.wakeup_id))
+        retained_wakeups = tuple(
+            sorted(
+                (item for item in wakeups.values() if item.expires_at > now),
+                key=lambda item: (item.wake_at, item.wakeup_id),
+            )
         )
-        if any(item.wake_at <= now for item in future_wakeups):
-            raise ValueError("计划唤醒点必须位于未来")
-        if len(future_wakeups) > self._policy.maximum_scheduled_wakeups:
+        if len(retained_wakeups) > self._policy.maximum_scheduled_wakeups:
             raise ValueError("计划唤醒点超过硬上限")
         if len(rules) > self._policy.maximum_event_rules:
             raise ValueError("事件规则超过硬上限")
@@ -648,7 +654,8 @@ class TriggerPlanGate:
         if len({item.trigger_id for item in emitted}) != len(emitted):
             raise ValueError("同一 Patch 的 TRIGGER_NOW request_id 不得重复")
         planned_calls = sorted(
-            [item.wake_at for item in future_wakeups] + [now for _item in emitted]
+            [item.wake_at for item in retained_wakeups if item.wake_at > now]
+            + [now for _item in emitted]
         )
         for left, right in pairwise(planned_calls):
             if (right - left).total_seconds() < self._policy.minimum_call_interval_seconds:
@@ -662,7 +669,7 @@ class TriggerPlanGate:
             ai_paused=paused,
             heartbeat_seconds=heartbeat,
             event_rules=tuple(sorted(rules.values(), key=lambda item: item.rule_id)),
-            scheduled_wakeups=future_wakeups,
+            scheduled_wakeups=retained_wakeups,
             updated_at=now,
             applied_patch_id=patch.patch_id,
         )

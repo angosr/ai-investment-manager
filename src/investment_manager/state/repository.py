@@ -122,6 +122,32 @@ class SqlFactStateStore:
                 latest.setdefault(fact.fact_id, fact)
         return tuple(sorted(latest.values(), key=lambda item: item.fact_id))
 
+    def fact_revisions_observed_since(
+        self,
+        *,
+        observed_since: datetime,
+        as_of: datetime,
+    ) -> tuple[CanonicalFactRevision, ...]:
+        observed_since = require_utc(observed_since)
+        as_of = require_utc(as_of)
+        if observed_since > as_of:
+            raise ValueError("CanonicalFact revision 查询起点不能晚于 as_of")
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(canonical_fact_revisions.c.payload)
+                .where(
+                    canonical_fact_revisions.c.observed_at >= observed_since,
+                    canonical_fact_revisions.c.observed_at <= as_of,
+                )
+                .order_by(
+                    canonical_fact_revisions.c.observed_at,
+                    canonical_fact_revisions.c.revision_id,
+                )
+            ).scalars()
+            return tuple(
+                CanonicalFactRevision.model_validate(payload) for payload in payloads
+            )
+
     def record_state(
         self,
         *,

@@ -56,6 +56,11 @@ def ensure_trigger_plans(
                     heartbeat_seconds=heartbeat_seconds,
                     event_rules=(
                         AnalysisEventRule(
+                            rule_id="canonical-fact-default",
+                            trigger_type=AnalysisTriggerType.CANONICAL_FACT_REVISED,
+                            minimum_priority=0,
+                        ),
+                        AnalysisEventRule(
                             rule_id="intelligence-default",
                             trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
                             minimum_priority=int(high_impact_threshold * 100),

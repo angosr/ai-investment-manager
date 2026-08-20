@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from sqlalchemy.engine import Engine
 
@@ -10,6 +15,7 @@ from investment_manager.information.official_repository import (
     OfficialRecordWrite,
     SqlFedOfficialInformationIngestor,
 )
+from investment_manager.kernel.time import require_utc
 from investment_manager.state.facts import (
     OfficialFactProjectionPolicy,
     project_fed_monetary_release_fact,
@@ -17,6 +23,14 @@ from investment_manager.state.facts import (
 )
 from investment_manager.state.models import CanonicalFactRevision
 from investment_manager.state.repository import SqlFactStateStore
+
+logger = logging.getLogger(__name__)
+
+
+class FedOfficialSource(Protocol):
+    def fetch_calendar(self) -> str | None: ...
+
+    def fetch_monetary_rss(self) -> str | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,3 +122,122 @@ class SqlFedFactIngestor:
                 previous=previous,
             )
         raise TypeError(f"不支持的 Fed 官方记录类型: {type(record).__name__}")
+
+
+@dataclass(slots=True)
+class FedOfficialCollectorHealth:
+    calendar_poll_count: int = 0
+    monetary_poll_count: int = 0
+    new_fact_revision_count: int = 0
+    publication_count: int = 0
+    last_calendar_success_at: datetime | None = None
+    last_monetary_success_at: datetime | None = None
+    calendar_error_class: str | None = None
+    monetary_error_class: str | None = None
+    publication_error_class: str | None = None
+
+
+class FedOfficialCollectorService:
+    """Poll pinned first-party feeds and project them into canonical facts."""
+
+    def __init__(
+        self,
+        *,
+        source: FedOfficialSource,
+        ingestor: SqlFedFactIngestor,
+        publish_recent: Callable[[datetime], None],
+        monetary_poll_seconds: int,
+        calendar_poll_seconds: int,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if monetary_poll_seconds < 1 or calendar_poll_seconds < 1:
+            raise ValueError("Fed official polling interval 必须为正数")
+        self._source = source
+        self._ingestor = ingestor
+        self._publish_recent = publish_recent
+        self._monetary_poll_seconds = monetary_poll_seconds
+        self._calendar_poll_seconds = calendar_poll_seconds
+        self._clock = clock
+        self.health = FedOfficialCollectorHealth()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        next_calendar_at: datetime | None = None
+        next_monetary_at: datetime | None = None
+        while not stop.is_set():
+            now = require_utc(self._clock())
+            if next_calendar_at is None or now >= next_calendar_at:
+                next_calendar_at = now + timedelta(seconds=self._calendar_poll_seconds)
+                await self._poll("calendar")
+            if next_monetary_at is None or now >= next_monetary_at:
+                next_monetary_at = now + timedelta(seconds=self._monetary_poll_seconds)
+                await self._poll("monetary")
+            try:
+                await asyncio.to_thread(
+                    self._publish_recent,
+                    require_utc(self._clock()),
+                )
+                self.health.publication_count += 1
+                self.health.publication_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._record_error(exc, "publication")
+            now = require_utc(self._clock())
+            delay = max(
+                0.1,
+                min(
+                    (next_calendar_at - now).total_seconds(),
+                    (next_monetary_at - now).total_seconds(),
+                ),
+            )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+
+    async def _poll(self, kind: str) -> None:
+        if kind == "calendar":
+            self.health.calendar_poll_count += 1
+        else:
+            self.health.monetary_poll_count += 1
+        try:
+            result = await asyncio.to_thread(self._collect, kind)
+            if kind == "calendar":
+                self.health.last_calendar_success_at = require_utc(self._clock())
+                self.health.calendar_error_class = None
+            else:
+                self.health.last_monetary_success_at = require_utc(self._clock())
+                self.health.monetary_error_class = None
+            self.health.new_fact_revision_count += len(result.new_fact_revisions)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._record_error(exc, kind)
+
+    def _collect(self, kind: str) -> OfficialFactIngestionResult:
+        if kind == "calendar":
+            content = self._source.fetch_calendar()
+            if content is None:
+                return OfficialFactIngestionResult(records=(), new_fact_revisions=())
+            observed_at = require_utc(self._clock())
+            result = self._ingestor.ingest_calendar(
+                content,
+                observed_at=observed_at,
+                years=(observed_at.year, observed_at.year + 1),
+            )
+        else:
+            content = self._source.fetch_monetary_rss()
+            if content is None:
+                return OfficialFactIngestionResult(records=(), new_fact_revisions=())
+            result = self._ingestor.ingest_monetary_rss(
+                content,
+                observed_at=require_utc(self._clock()),
+            )
+        if not result.records:
+            raise ValueError(f"Fed official {kind} 响应没有可解析记录")
+        return result
+
+    def _record_error(self, exc: Exception, component: str) -> None:
+        field = f"{component}_error_class"
+        previous = getattr(self.health, field)
+        if previous != type(exc).__name__:
+            logger.exception("Fed official collector %s failed", component)
+        setattr(self.health, field, type(exc).__name__)

@@ -9,6 +9,7 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 
 from investment_manager.scheduling.application import ensure_trigger_plans, trigger_now
+from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisEventRule,
@@ -38,8 +39,76 @@ from investment_manager.scheduling.runtime import (
     terminate_superseded_trigger_coordinators,
 )
 from investment_manager.scheduling.workflows import coordinator_workflow_id
+from investment_manager.state.models import CanonicalFactRevision, FactRevisionStatus
 
 trigger_runtime = import_module("investment_manager.legacy.trigger_runtime")
+
+
+def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
+    app_config,
+    replay_input,
+) -> None:
+    now = replay_input.market.as_of
+    fact = CanonicalFactRevision(
+        fact_id="fed-release-1",
+        revision_id="fed-release-revision-1",
+        projection_version=app_config.decision_state.official_fact_policy.version,
+        fact_type="FED_MONETARY_RELEASE",
+        status=FactRevisionStatus.ACTIVE,
+        event_time=now + timedelta(minutes=5),
+        observed_at=now,
+        headline="Federal Reserve monetary policy release",
+        claim="Official statement published.",
+        affected_assets=("BTC", "ETH"),
+        risk_factors=("US_MONETARY_POLICY",),
+        source_observation_ids=("fed-observation-1",),
+        revision_hash="a" * 64,
+    )
+
+    class Facts:
+        def fact_revisions_observed_since(self, *, observed_since, as_of):
+            assert observed_since < as_of
+            return (fact,)
+
+        def facts_as_of(self, *, as_of):
+            return (fact,)
+
+    class Triggers:
+        def __init__(self):
+            self.items = {}
+
+        def record_trigger(self, trigger):
+            inserted = trigger.trigger_id not in self.items
+            self.items[trigger.trigger_id] = trigger
+            return inserted
+
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            raise KeyError((symbol, pipeline_id))
+
+    triggers = Triggers()
+    publisher = CanonicalFactTriggerPublisher(
+        facts=Facts(),
+        triggers=triggers,
+        mandate=app_config.assessment.mandate,
+        delta_policy=app_config.decision_state.delta_policy,
+        pipeline_id=app_config.pipeline.version,
+        trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
+        required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
+    )
+
+    publisher.publish_recent(now)
+    publisher.publish_recent(now)
+    assert len(triggers.items) == 2
+    assert {item.symbol for item in triggers.items.values()} == {
+        "BTCUSDT",
+        "ETHUSDT",
+    }
+    assert all(
+        item.trigger_type == AnalysisTriggerType.CANONICAL_FACT_REVISED
+        and item.occurred_at == now
+        and item.evidence_ids == (fact.revision_id,)
+        for item in triggers.items.values()
+    )
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(
@@ -120,11 +189,13 @@ def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
     assert len(created) == 1
     assert created[0].heartbeat_seconds == 900
     assert tuple(rule.rule_id for rule in created[0].event_rules) == (
+        "canonical-fact-default",
         "intelligence-default",
         "market-shock-default",
         "position-recheck-default",
     )
-    assert created[0].event_rules[0].minimum_priority == 80
+    assert created[0].event_rules[0].minimum_priority == 0
+    assert created[0].event_rules[1].minimum_priority == 80
 
 
 def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(
@@ -359,6 +430,46 @@ def test_trigger_plan_patch_has_full_bounded_scheduling_authority(app_config, re
             now=now,
             current_manifest_id="manifest-v1",
         )
+
+
+def test_plan_patch_prunes_expired_wakeup_without_blocking_future_changes(
+    app_config,
+    replay_input,
+) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=app_config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=now - timedelta(hours=1),
+        heartbeat_seconds=900,
+    ).model_copy(
+        update={
+            "scheduled_wakeups": (
+                ScheduledWakeup(
+                    wakeup_id="expired-official-event",
+                    wake_at=now - timedelta(minutes=10),
+                    expires_at=now - timedelta(minutes=5),
+                    reason="already expired",
+                ),
+            )
+        }
+    )
+    patch = build_trigger_plan_patch(
+        plan=plan,
+        submitted_at=now,
+        operations=(SetHeartbeat(heartbeat_seconds=None),),
+    )
+
+    revised = TriggerPlanGate(app_config.trigger).apply(
+        plan,
+        patch,
+        now=now,
+        current_manifest_id=plan.manifest_id,
+    )
+
+    assert revised.plan.scheduled_wakeups == ()
+    assert revised.plan.heartbeat_seconds is None
 
 
 def test_release_cutover_carries_agent_plan_and_drops_expired_wakeups(replay_input) -> None:

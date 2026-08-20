@@ -7,6 +7,7 @@ from investment_manager.kernel.configuration import StrictConfig
 
 class InformationPolicy(StrictConfig):
     version: str
+    normalizer_version: str
     trendradar_mcp_url: str = "http://127.0.0.1:3333/mcp"
     newsnow_base_url: str = "http://127.0.0.1:4444"
     newsnow_sources: tuple[str, ...] = ()
@@ -15,6 +16,8 @@ class InformationPolicy(StrictConfig):
     read_limit: int = Field(default=100, ge=1, le=1000)
     request_timeout_seconds: int = Field(default=15, ge=1, le=60)
     collection_interval_seconds: int = Field(default=60, ge=10, le=600)
+    fed_monetary_poll_seconds: int = Field(default=15, ge=10, le=300)
+    fed_calendar_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
 
     @field_validator("trendradar_mcp_url")
     @classmethod

@@ -27,6 +27,7 @@ _EASTERN = ZoneInfo("America/New_York")
 _FOMC_STATEMENT_TIME = time(14)
 _YEAR_HEADING = re.compile(r"\b(20\d{2})\s+FOMC Meetings\b")
 _DATE_RANGE = re.compile(r"^(\d{1,2})(?:\s*-\s*(\d{1,2}))?\*?$", re.ASCII)
+_NOTATION_VOTE = re.compile(r"\(\s*notation\s+vote\s*\)", re.IGNORECASE)
 _MONTHS = {
     name: number
     for number, name in enumerate(
@@ -245,6 +246,10 @@ def parse_fomc_calendar(
     for raw in parser.meetings:
         year = raw.year
         if allowed_years is not None and year not in allowed_years:
+            continue
+        # A notation-vote row documents a special release, not a regular
+        # meeting governed by the 14:00 Eastern statement-time contract.
+        if _NOTATION_VOTE.search(raw.date_text):
             continue
         ordinal_by_year[year] = ordinal_by_year.get(year, 0) + 1
         ordinal = ordinal_by_year[year]

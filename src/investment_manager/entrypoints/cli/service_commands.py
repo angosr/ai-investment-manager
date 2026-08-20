@@ -41,6 +41,7 @@ from investment_manager.information.collector import (
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
+from investment_manager.information.official_source import HttpFedOfficialSource
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.application import submit_frozen_analysis
 from investment_manager.legacy.cycle import CycleInput
@@ -54,9 +55,15 @@ from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.application import trigger_now as apply_trigger_now
+from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
 from investment_manager.state.decision_packet import DecisionPacket
+from investment_manager.state.official_ingestion import (
+    FedOfficialCollectorService,
+    SqlFedFactIngestor,
+)
+from investment_manager.state.repository import SqlFactStateStore
 
 
 @app.command("temporal-worker")
@@ -399,7 +406,7 @@ def information_collector(
         typer.Option("--release-manifest", exists=True, dir_okay=False),
     ] = Path("config/release-manifest.yaml"),
 ) -> None:
-    """持续将 TrendRadar 只读 MCP 事件标准化后写入事实库。"""
+    """持续采集新闻聚合与 Fed 一手事实，并发布可靠分析触发。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
     policy = loaded.information
@@ -425,15 +432,16 @@ def information_collector(
                 maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
             )
         )
+    engine = runtime_engine(database_url)
     collector = InformationCollector(
         tuple(sources),
         EventNormalizer(
-            version=policy.version,
+            version=policy.normalizer_version,
             universe=loaded.market_data.symbols,
             quote_asset=loaded.binance_testnet.quote_asset,
         ),
         SqlEventStore(
-            runtime_engine(database_url),
+            engine,
             pipeline_id=loaded.pipeline.version,
             trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
             max_visible_events=policy.read_limit,
@@ -443,7 +451,34 @@ def information_collector(
         collector,
         interval_seconds=policy.collection_interval_seconds,
     )
-    asyncio.run(service.run(asyncio.Event()))
+    trigger_repository = SqlTriggerRepository(engine, loaded.trigger)
+    fact_trigger_publisher = CanonicalFactTriggerPublisher(
+        facts=SqlFactStateStore(engine),
+        triggers=trigger_repository,
+        mandate=loaded.assessment.mandate,
+        delta_policy=loaded.decision_state.delta_policy,
+        pipeline_id=loaded.pipeline.version,
+        trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
+        required_freshness_seconds=loaded.risk.maximum_market_age_seconds,
+    )
+    official_service = FedOfficialCollectorService(
+        source=HttpFedOfficialSource(
+            timeout_seconds=policy.request_timeout_seconds,
+        ),
+        ingestor=SqlFedFactIngestor(
+            engine,
+            loaded.decision_state.official_fact_policy,
+        ),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        monetary_poll_seconds=policy.fed_monetary_poll_seconds,
+        calendar_poll_seconds=policy.fed_calendar_poll_seconds,
+    )
+
+    async def run() -> None:
+        stop = asyncio.Event()
+        await asyncio.gather(service.run(stop), official_service.run(stop))
+
+    asyncio.run(run())
 
 
 @app.command("dashboard-service")

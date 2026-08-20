@@ -13,8 +13,12 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v1
+  version: portfolio-state-v2
   analysis_scope: primary-portfolio
+  official_fact_policy:
+    version: fed-official-fact-v1
+    affected_assets: [BTC, ETH]
+    release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
     version: first-party-fact-delta-v1
     validity_seconds: 3600
@@ -27,8 +31,8 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v1
-    schema_version: decision-packet-v1
+    version: decision-packet-policy-v2
+    schema_version: decision-packet-v2
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -110,7 +114,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v7
+  version: analysis-trigger-v8
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
@@ -168,7 +172,8 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: trendradar-collector-v6
+  version: information-intake-v7
+  normalizer_version: trendradar-collector-v6
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
@@ -178,6 +183,8 @@ information:
   read_limit: 100
   request_timeout_seconds: 15
   collection_interval_seconds: 60
+  fed_monetary_poll_seconds: 15
+  fed_calendar_poll_seconds: 21600
 
 pipeline:
   version: off-pipeline-v6

@@ -84,6 +84,13 @@ class AppConfig(StrictConfig):
         )
         if mandate_horizons != self.decision_state.delta_policy.horizons_minutes:
             raise ValueError("Assessment mandate 与 FactDelta 时域必须一致")
+        mandate_assets = tuple(item.asset for item in self.assessment.mandate.assets)
+        if mandate_assets != self.decision_state.official_fact_policy.affected_assets:
+            raise ValueError("OfficialFact projection 与 Assessment mandate 资产必须一致")
+        if not set(
+            self.decision_state.official_fact_policy.release_risk_factors
+        ).issubset(self.assessment.mandate.required_risk_factors):
+            raise ValueError("OfficialFact 风险因子必须属于 Assessment mandate")
         if self.assessment.enabled and not self.codex_runtime.enabled:
             raise ValueError("启用 ContextAssessment 前必须启用受控 Codex runtime")
         if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
