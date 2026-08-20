@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from quant_core.config import AppConfig, load_config
-from quant_core.cycle import CycleInput
-from quant_core.domain import EdgeCalibration, Side
-from quant_core.ids import content_hash
+from investment_manager.config import AppConfig, load_config
+from investment_manager.cycle import CycleInput
+from investment_manager.domain import EdgeCalibration, Side
+from investment_manager.ids import content_hash
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
 def base_app_config() -> AppConfig:
-    return load_config(ROOT / "config" / "quant-core.yaml")
+    return load_config(ROOT / "config" / "investment-manager.yaml")
 
 
 @pytest.fixture

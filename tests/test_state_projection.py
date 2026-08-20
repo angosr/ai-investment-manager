@@ -3,29 +3,29 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select, update
 
-from quant_core.asset_management import Materiality
-from quant_core.decision_packet import (
+from investment_manager.asset_management import Materiality
+from investment_manager.decision_packet import (
     AnalysisMandate,
     DecisionPacketPolicy,
     MandateAsset,
 )
-from quant_core.decision_packet_sql import SqlDecisionPacketAssembler
-from quant_core.fact_pipeline import (
+from investment_manager.decision_packet_sql import SqlDecisionPacketAssembler
+from investment_manager.fact_pipeline import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
     FactDeltaRule,
     OfficialFactProjectionPolicy,
 )
-from quant_core.fact_state_sql import SqlFactStateStore
-from quant_core.features import FeatureEngine
-from quant_core.official_fact_pipeline import SqlFedFactIngestor
-from quant_core.persistence import (
+from investment_manager.fact_state_sql import SqlFactStateStore
+from investment_manager.features import FeatureEngine
+from investment_manager.official_fact_pipeline import SqlFedFactIngestor
+from investment_manager.persistence import (
     material_deltas,
     state_evidence_snapshots,
     state_snapshots,
 )
-from quant_core.schema import create_schema
-from quant_core.state_projection import SqlFactStateProjector
+from investment_manager.schema import create_schema
+from investment_manager.state_projection import SqlFactStateProjector
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(

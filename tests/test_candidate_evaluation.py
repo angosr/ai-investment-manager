@@ -5,19 +5,22 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine, select, update
 
-from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import CandidateOutcome, CandidateOutcomeStatus
-from quant_core.market_data import MarketTrade
-from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
-from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.persistence import (
+from investment_manager.candidate_evaluation import (
+    CandidateOutcomeSettler,
+    SqlCandidateOutcomeStore,
+)
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import CandidateOutcome, CandidateOutcomeStatus
+from investment_manager.market_data import MarketTrade
+from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.mock_exchange_sql import SqlMockExchange
+from investment_manager.persistence import (
     SqlFactLedger,
     candidate_outcomes,
     signal_candidates,
 )
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
 
 
 def _seed_candidate(app_config, replay_input):

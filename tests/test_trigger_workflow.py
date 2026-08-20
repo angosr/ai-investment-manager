@@ -8,17 +8,17 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from quant_core.ids import stable_id
-from quant_core.temporal_workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
-from quant_core.trigger import (
+from investment_manager.ids import stable_id
+from investment_manager.temporal_workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
+from investment_manager.trigger import (
     AnalysisEventRule,
     AnalysisTriggerType,
     TriggerOutboxKind,
     build_initial_trigger_plan,
     build_trigger_event,
 )
-from quant_core.trigger_runtime import build_trigger_coordinator_input
-from quant_core.trigger_workflows import (
+from investment_manager.trigger_runtime import build_trigger_coordinator_input
+from investment_manager.trigger_workflows import (
     BUILD_TRIGGER_REQUEST_ACTIVITY,
     TRIGGER_SIGNAL,
     TriggerCoordinatorWorkflow,

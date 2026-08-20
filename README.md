@@ -1,8 +1,8 @@
-# Market Intel（NewsNow + TrendRadar + Codex）
+# Investment Manager（Binance + Codex）
 
-这是 Codex 量化交易系统的工程工作区。公开行情 + Mock 撮合的私有 Challenger Shadow 正在运行；仓库已实现 Binance Spot Testnet 的签名 REST、幂等订单、保护单和主动对账边界，但 LIVE 仍被配置层禁止。凭证只从本机环境读取，不进入信息面板、日志或版本库。
+这是 AI 投资管理系统的工程工作区。公开行情 + Mock 撮合的私有 Challenger Shadow 正在运行；仓库已实现 Binance Spot Testnet 的签名 REST、幂等订单、保护单和主动对账边界，但 LIVE 仍被配置层禁止。凭证只从本机环境读取，不进入信息面板、日志或版本库。
 
-完整工程方案见 [ARCHITECTURE.md](./ARCHITECTURE.md)。实现按该文档推进，设计与代码出现冲突时必须先明确并修正文档或实现，不能形成第二套隐含架构。
+投资与工程原则见 [AGENTS.md](./AGENTS.md)，权威结构和迁移方案见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。设计与代码出现冲突时必须先修正文档或实现，不能形成第二套隐含架构。
 
 架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；两条路径复用同一平台事实身份和数据库唯一约束，避免重复证据。它仍是轮询而非 PUSH/STREAM。新事实一旦入库便通过 Outbox + PostgreSQL NOTIFY 立即唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
 
@@ -11,7 +11,7 @@
 已经实现：
 
 - NewsNow、TrendRadar 与只读 MCP 信息采集层。
-- `quant_core` Python 模块化单体基础。
+- `investment_manager` Python 模块化单体基础。
 - 冻结行情/账户快照、未来数据隔离、特征计算和有容量边界的信息面板。
 - `OFF` 程序策略管线、按已校准保守净优势选优的单一合成器，以及唯一的频率/经济性门禁。
 - 确定性风控、仓位计算、下单前原子风险预算占用和 Kill Switch。
@@ -51,7 +51,7 @@
 
 尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成真实 Governor 冒烟，以及由独立可信环境提供的校准制品与各阶段评估器。私有 Challenger 正在运行真实 Codex Analyst、双账号独占租约和严格失败关闭；每个成功 Proposal 即使 `NO_ACTION` 也在同一次调用中冻结 60 与 240 分钟两项不可交易方向预测，预测起点和参考价以 Codex 完成时已经可见的成交为准，各自独立到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选，盲测尾段没有因失败候选而查询。当前 TriggerPlan 将无事件兜底调整为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束。数据库 Champion 仍保持旧版本，Challenger 只能经独立评估和人工发布；Spot Testnet 订单 Worker 与 LIVE 权限均未启用。
 
-`config/quant-core.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
+`config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
 ## 固定版本
 
@@ -70,8 +70,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/ruff check src tests migrations
 .venv/bin/pytest
-.venv/bin/quant-core run-mock \
-  --config config/quant-core.yaml \
+.venv/bin/investment-manager run-mock \
+  --config config/investment-manager.yaml \
   --input fixtures/replay/btc_uptrend.json
 ```
 
@@ -81,41 +81,41 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/pip install -e '.[research]'
-.venv/bin/quant-core fetch-binance-history \
-  --config config/quant-core.yaml --symbol BTCUSDT \
+.venv/bin/investment-manager fetch-binance-history \
+  --config config/investment-manager.yaml --symbol BTCUSDT \
   --interval 1d \
   --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core freeze-event-history \
+  .venv/bin/investment-manager freeze-event-history \
   --start 2026-08-01T00:00:00Z --end 2026-08-19T00:00:00Z
-.venv/bin/quant-core screen-signals \
-  --config config/quant-core.yaml --dataset-id '<历史行情制品>' \
+.venv/bin/investment-manager screen-signals \
+  --config config/investment-manager.yaml --dataset-id '<历史行情制品>' \
   --signal-start '<开发窗口起点>' --signal-end '<开发标签终点>' \
   --minimum-non-overlapping-samples 30
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core replay-event-triggers \
+  .venv/bin/investment-manager replay-event-triggers \
   --config '<冻结配置>' --event-dataset-id '<事件制品>' \
   --replay-start '<起点>' --replay-end '<终点>' \
   --analysis-duration-seconds '<冻结延迟假设>'
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core walk-forward \
-  --config config/quant-core.yaml --dataset-id '<上一步输出>' \
+  .venv/bin/investment-manager walk-forward \
+  --config config/investment-manager.yaml --dataset-id '<上一步输出>' \
   --candidate configured \
   --plan-id '<已预登记计划>' --training-bars 1095 --test-bars 365 \
   --blind-bars 365
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core blind-evaluate \
-  --config config/quant-core.yaml \
+  .venv/bin/investment-manager blind-evaluate \
+  --config config/investment-manager.yaml \
   --source-evaluation-id '<已通过的 walk-forward 结果 ID>'
-.venv/bin/quant-core research-catalog \
+.venv/bin/investment-manager research-catalog \
   --evaluation-catalog .runtime/evaluations
 ```
 
 结构独立的衍生状态研究先冻结 Binance 官方校验的 USD-M 资金费率；下载命令只生成内容寻址数据制品，不触发 Codex，也不改变生产采集器：
 
 ```bash
-.venv/bin/quant-core fetch-binance-funding-history \
-  --config config/quant-core.shadow.yaml --symbol BTCUSDT \
+.venv/bin/investment-manager fetch-binance-funding-history \
+  --config config/investment-manager.shadow.yaml --symbol BTCUSDT \
   --start '2020-01-01T00:00:00Z' --end '2026-08-01T00:00:00Z'
 ```
 
@@ -129,7 +129,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 `replay-event-triggers` 与线上 Temporal 协调器复用同一套规则匹配、合并、冷却、到期及全局防重复间隔函数，在一个离散时钟中同时推进全部品种，并从事实库冻结窗口前最近一次全局准入和各品种完成状态。分析耗时必须显式冻结；同刻争用顺序可用 `--admission-order` 做敏感性测试。它目前不回放 heartbeat、Agent wakeup，历史初始完成状态也只是数据库持久化时刻的代理；这些限制及计划晚于回放起点都会进入结构化结果。存在这些限制或准入顺序敏感时，触发带不能直接冒充盈利证据。`trendradar-collector-v6` 保留宽泛美联储/制裁快讯作为面板背景，但只让明确加密语境或 CPI、利率决议、非农、霍尔木兹中断等可辨识冲击跨越高影响自动触发门槛；旧版事件仍以原 normalizer version 回放，不重写历史事实。Pipeline 只隔离触发和调用状态；在同一事实库已观测到且当时已路由给该品种的事件，发布新 Pipeline 后仍可作为有时点的面板背景，但不会复活旧触发。
 
-完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，详见 `ARCHITECTURE.md` §9.5.1。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
+完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 
 纯方向增量证据使用 `register-ai-forecast-plan` 在首个 Codex 完成时刻前冻结 signal-time 窗口，窗口完全成熟后再由 `evaluate-ai-forecast-plan` 读取同一治理计划。普通 `evaluate-ai-forecasts` 允许事后选择窗口，只是诊断命令，不能作为晋级证据。
 
@@ -137,7 +137,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core evaluate-ai-forecasts \
+  .venv/bin/investment-manager evaluate-ai-forecasts \
   --config '<运行配置>' --pipeline-version '<冻结 Pipeline>' \
   --window-start '<含时区起点>' --window-end '<含时区终点>' \
   --published-at '<含时区发布时间>'
@@ -151,7 +151,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core paired-decision-tape \
+  .venv/bin/investment-manager paired-decision-tape \
   --config '<冻结配置>' \
   --pipeline-version '<冻结 Pipeline>' --symbol BTCUSDT \
   --candidate configured --plan-id '<预登记计划>' \
@@ -166,8 +166,8 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 检查当前 Phase A 门禁：
 
 ```bash
-.venv/bin/quant-core phase-a-audit \
-  --config config/quant-core.yaml \
+.venv/bin/investment-manager phase-a-audit \
+  --config config/investment-manager.yaml \
   --project-root .
 ```
 
@@ -199,14 +199,14 @@ docker compose --profile quant up -d postgres temporal
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
   .venv/bin/alembic upgrade head
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
-  .venv/bin/quant-core temporal-worker --config config/quant-core.yaml
+  .venv/bin/investment-manager temporal-worker --config config/investment-manager.yaml
 ```
 
 另一个终端可提交固定回放输入：
 
 ```bash
-.venv/bin/quant-core submit-analysis \
-  --config config/quant-core.yaml \
+.venv/bin/investment-manager submit-analysis \
+  --config config/investment-manager.yaml \
   --input fixtures/replay/btc_uptrend.json
 ```
 
@@ -214,11 +214,11 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 ### 运行实时 Shadow 角色
 
-不要修改或复制整份默认 Mock 配置。仓库的 `config/quant-core.shadow.yaml` 仅继承基线并覆盖 Shadow 环境字段；部署时可复制这份小型覆盖文件，并把 `temporal.namespace` 改为与该事实库一一绑定的独立 namespace。先执行安全审计：
+不要修改或复制整份默认 Mock 配置。仓库的 `config/investment-manager.shadow.yaml` 仅继承基线并覆盖 Shadow 环境字段；部署时可复制这份小型覆盖文件，并把 `temporal.namespace` 改为与该事实库一一绑定的独立 namespace。先执行安全审计：
 
 ```bash
-.venv/bin/quant-core shadow-audit \
-  --config config/quant-core.shadow.yaml \
+.venv/bin/investment-manager shadow-audit \
+  --config config/investment-manager.shadow.yaml \
   --project-root .
 ```
 
@@ -227,26 +227,26 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 私有 Codex Challenger 使用 `challenger-audit`，并必须显式绑定冻结运行配置、ReleaseManifest 与对应代码 checkout；完整命令和失败语义见 [docs/OPERATIONS.md](./docs/OPERATIONS.md)。公开 `shadow-audit` 不能替代这项验收。
 
 ```bash
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  information-collector --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  information-collector --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  market-stream --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  market-stream --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  temporal-worker --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  temporal-worker --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  trigger-service --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  trigger-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  lifecycle-service --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  lifecycle-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  reconciliation-service --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  reconciliation-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
-  outcome-evaluation-service --config config/quant-core.shadow.yaml \
+QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  outcome-evaluation-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 ```
 
@@ -254,15 +254,15 @@ QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/quant-core \
 
 ### 运行 Binance Spot Testnet
 
-`config/quant-core.testnet.yaml` 是小型环境覆盖：独立数据库/Temporal namespace、AI OFF、每仓最多 25 USDT、每天最多 2 单；`config/release-manifest.testnet.yaml` 与其行为版本严格绑定。先在本机 `.env` 填写由 `testnet.binance.vision` 创建的 Testnet Key/Secret，不要把密钥发到聊天或提交到 Git。验证顺序：
+`config/investment-manager.testnet.yaml` 是小型环境覆盖：独立数据库/Temporal namespace、AI OFF、每仓最多 25 USDT、每天最多 2 单；`config/release-manifest.testnet.yaml` 与其行为版本严格绑定。先在本机 `.env` 填写由 `testnet.binance.vision` 创建的 Testnet Key/Secret，不要把密钥发到聊天或提交到 Git。验证顺序：
 
 ```bash
 set -a; . ./.env; set +a
-.venv/bin/quant-core binance-testnet-audit \
-  --config config/quant-core.testnet.yaml
+.venv/bin/investment-manager binance-testnet-audit \
+  --config config/investment-manager.testnet.yaml
 # 只有 audit ready=true 后才把本机 ORDER_SUBMISSION_ENABLED 改为 true。
-.venv/bin/quant-core binance-testnet-order-test \
-  --symbol BTCUSDT --config config/quant-core.testnet.yaml
+.venv/bin/investment-manager binance-testnet-order-test \
+  --symbol BTCUSDT --config config/investment-manager.testnet.yaml
 ```
 
 `order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。它通过后，才由进程监督器用 Testnet 配置和 `release-manifest.testnet.yaml` 启动与 Shadow 相同的七个角色。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前本机 audit 返回 Binance `401/-2015`，所以提交环境门禁仍为 `false`，未启动 Testnet Worker。
@@ -281,7 +281,7 @@ cd web && npm install && npm run build && cd ..
 再启动只读服务（**单进程同时托管前端与 API**，无需另起前端；仅绑本机）：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/quant-core \
+QUANT_CORE_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/investment-manager \
   dashboard-service --config '<私有配置>' \
   --release-manifest '<同一运行 ReleaseManifest>' \
   --host 127.0.0.1 --port 8090

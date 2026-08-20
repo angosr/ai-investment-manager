@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import ast
+import tomllib
 from pathlib import Path
 
 from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
-from quant_core.cli import app
-from quant_core.ids import content_hash
-from quant_core.schema import compose_metadata
+from investment_manager.cli import app
+from investment_manager.ids import content_hash
+from investment_manager.schema import compose_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_ROOT = ROOT / "src" / "quant_core"
+PACKAGE_ROOT = ROOT / "src" / "investment_manager"
 
 CLI_CONTRACT = {
     "binance-testnet-audit": "config",
@@ -183,7 +184,7 @@ def _internal_import_graph() -> dict[str, set[str]]:
             elif isinstance(node, ast.Import):
                 names = tuple(alias.name for alias in node.names)
             for name in names:
-                if name.startswith("quant_core."):
+                if name.startswith("investment_manager."):
                     dependency = resolve(name)
                     if dependency is not None and dependency != module:
                         dependencies.add(dependency)
@@ -235,9 +236,19 @@ def test_platform_does_not_import_business_modules() -> None:
     graph = _internal_import_graph()
 
     for module, dependencies in graph.items():
-        if module.startswith("quant_core.platform"):
+        if module.startswith("investment_manager.platform"):
             assert not {
                 dependency
                 for dependency in dependencies
-                if not dependency.startswith("quant_core.platform")
+                if not dependency.startswith("investment_manager.platform")
             }
+
+
+def test_old_package_and_console_entry_are_removed() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+
+    assert not (ROOT / "src" / "quant_core").exists()
+    assert project["name"] == "investment-manager"
+    assert project["scripts"] == {
+        "investment-manager": "investment_manager.cli:app"
+    }

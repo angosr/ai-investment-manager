@@ -4,17 +4,17 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 
-from quant_core.official_information import parse_fomc_calendar
-from quant_core.official_information_sql import (
+from investment_manager.official_information import parse_fomc_calendar
+from investment_manager.official_information_sql import (
     SqlFedOfficialInformationIngestor,
     SqlOfficialInformationStore,
 )
-from quant_core.persistence import (
+from investment_manager.persistence import (
     market_calendar_event_revisions,
     raw_source_payloads,
     source_observations,
 )
-from quant_core.schema import create_schema
+from investment_manager.schema import create_schema
 
 
 def _calendar(date_text: str) -> str:

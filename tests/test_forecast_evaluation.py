@@ -8,11 +8,11 @@ import pytest
 import typer
 from sqlalchemy import create_engine, insert, select, update
 
-from quant_core.analyst import AnalystResult, analysis_behavior_hash
-from quant_core.cli import register_ai_forecast_plan
-from quant_core.config import AiMode
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import (
+from investment_manager.analyst import AnalystResult, analysis_behavior_hash
+from investment_manager.cli import register_ai_forecast_plan
+from investment_manager.config import AiMode
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import (
     Action,
     AnalysisForecastOutcome,
     AnalysisProposal,
@@ -20,7 +20,7 @@ from quant_core.domain import (
     DirectionalView,
     ForecastOutcomeStatus,
 )
-from quant_core.forecast_evaluation import (
+from investment_manager.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
     ForwardForecastEvaluationCatalog,
@@ -31,18 +31,18 @@ from quant_core.forecast_evaluation import (
     failed_forward_forecast_experiment,
     validate_forward_forecast_evaluation_plan,
 )
-from quant_core.market_data import MarketTrade
-from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
-from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.persistence import (
+from investment_manager.market_data import MarketTrade
+from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.mock_exchange_sql import SqlMockExchange
+from investment_manager.persistence import (
     SqlFactLedger,
     analysis_cycles,
     analysis_forecast_outcomes,
     codex_runs,
 )
-from quant_core.research.decision_tape import SqlForecastDecisionTapeReader
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
+from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
 
 
 class StaticAnalyst:
@@ -152,7 +152,7 @@ def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
 def test_forward_plan_registration_rejects_caller_supplied_behavior_hash() -> None:
     with pytest.raises(typer.BadParameter, match="实际行为哈希不一致"):
         register_ai_forecast_plan(
-            config=Path("config/quant-core.yaml"),
+            config=Path("config/investment-manager.yaml"),
             database_url="postgresql://unused",
             plan_id="wrong-behavior-plan",
             analysis_behavior_hash="0" * 64,

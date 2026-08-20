@@ -3,9 +3,9 @@ from decimal import Decimal
 
 import pytest
 
-from quant_core.asset_management import CalibratedForecast, ForecastRole
-from quant_core.domain import DirectionalView
-from quant_core.portfolio_decision import (
+from investment_manager.asset_management import CalibratedForecast, ForecastRole
+from investment_manager.domain import DirectionalView
+from investment_manager.portfolio_decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,

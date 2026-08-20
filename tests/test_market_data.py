@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine
 
-from quant_core.market_data import (
+from investment_manager.market_data import (
     BinanceMarketStreamService,
     BinanceMessageParser,
     BinancePublicRestClient,
@@ -22,7 +22,7 @@ from quant_core.market_data import (
     MarketTrade,
     assemble_shadow_market_stream,
 )
-from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
 
 NOW = datetime(2026, 8, 18, 12, 10, tzinfo=UTC)
 

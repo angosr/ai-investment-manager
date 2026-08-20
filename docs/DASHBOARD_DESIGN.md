@@ -21,7 +21,7 @@
 
 - **不是控制台**。页面只读，不提供任何下单、暂停、改配置、切 Champion、触发分析等写操作。Kill Switch 等控制权仍只在执行模块内，观测台只显示其状态，绝不提供按钮。
 - **不自算指标**。第 7.9 节的 `MetricDefinition` 与 `OutcomeWindowReport` 是监控唯一口径；观测台只投影既有事实，绝不在前端重算 PnL / 回撤 / 胜率，避免仪表盘与风控口径分裂。
-- **不引入新基础设施**。复用现有 PostgreSQL 与同一 `quant-core` 镜像；不引入 Kafka / Redis / Celery（遵守架构 §12.3）。
+- **不引入新基础设施**。复用现有 PostgreSQL 与同一 `investment-manager` 镜像；不引入 Kafka / Redis / Celery（遵守[权威架构](./ARCHITECTURE.md#2-名称与系统边界)）。
 
 ---
 
@@ -186,7 +186,7 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
   - 新闻/情报：`normalized_events`（`IntelligenceEvent`：`evidence_id, event_time, observed_at, source, title, body, symbols, relevance, impact, source_reliability, novelty`）。读 helper `SqlEventStore.visible(symbol, as_of)`，或自写按 `event_time desc` 的只读 `SELECT`。
   - 触发事件：`analysis_trigger_events`（`trigger_type` = INTELLIGENCE_INSERTED / MARKET_SHOCK / POSITION_RECHECK、`symbol, occurred_at, priority`）。
 - 每条展示：时间、类别徽章（新闻 / 市场冲击）、来源、标题、影响力（`impact`/`priority`），以及**是否真的进入过分析面板**。只有 `evidence_id` 出现在某个 `panel_snapshots.payload.evidence[]` 中，才标注「→ 喂给了 HH:MM 的分析」；不能用时间接近关系猜测。
-- **不可信内容如实标注**：`prompt_injection_suspected` 的条目打「注入嫌疑」标记并说明「仅作数据、不作指令」，呼应架构 §6.5。
+- **不可信内容如实标注**：`prompt_injection_suspected` 的条目打「注入嫌疑」标记并说明「仅作数据、不作指令」，遵守 [AGENTS.md](../AGENTS.md) 的外部内容隔离原则。
 - 与信息快照的关系：某周期快照「证据层」里的新闻，就是这条世界事件时间线里被选中喂给 AI 的子集——两者互为印证。
 
 ### 5.9 信息快照（每个周期一个按钮 → 右侧抽屉）
@@ -224,8 +224,8 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 新增 CLI 子命令（与现有七个角色同构）：
 
 ```bash
-quant-core dashboard-service \
-  --config config/quant-core.yaml \
+investment-manager dashboard-service \
+  --config config/investment-manager.yaml \
   --database-url "$QUANT_CORE_DATABASE_URL" \
   --host 127.0.0.1 --port 8090
 ```
@@ -329,7 +329,7 @@ quant-core dashboard-service \
 
 ## 12. 实施状态（首版已落地）
 
-后端（`src/quant_core/dashboard/`，只读）：`resources`(psutil 采样)、`read_models`(纯读取数)、`formatting`+`serializers`(措辞与 DTO)、`health`(单一健康)、`stream`(SSE)、`app`(Starlette 路由)。CLI 新增 `quant-core dashboard-service`（**单进程同时托管前端与 API**，默认自动挂载 `web/dist`）；可选依赖组 `[dashboard]`（starlette/uvicorn/psutil）。
+后端（`src/investment_manager/dashboard/`，只读）：`resources`(psutil 采样)、`read_models`(纯读取数)、`formatting`+`serializers`(措辞与 DTO)、`health`(单一健康)、`stream`(SSE)、`app`(Starlette 路由)。CLI 新增 `investment-manager dashboard-service`（**单进程同时托管前端与 API**，默认自动挂载 `web/dist`）；可选依赖组 `[dashboard]`（starlette/uvicorn/psutil）。
 
 SSE 是无限响应，但不能让发布重启无限等待浏览器。Dashboard 进程使用 5 秒优雅关闭上限；独立端口实测在真实 EventSource 仍连接时于 5 秒取消该只读任务并退出，交易服务和事实库不依赖这条连接。
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from quant_core.config import (
+from investment_manager.config import (
     CodexRuntimePolicy,
     DeploymentStage,
     ExecutionPolicy,
@@ -17,7 +17,7 @@ from quant_core.config import (
 def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    config = load_config(root / "config" / "quant-core.shadow.yaml")
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
 
     assert config.deployment.stage == DeploymentStage.SHADOW
     assert config.deployment.shadow_market_data_enabled
@@ -33,7 +33,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    config = load_config(root / "config" / "quant-core.testnet.yaml")
+    config = load_config(root / "config" / "investment-manager.testnet.yaml")
 
     assert config.deployment.stage == DeploymentStage.TESTNET
     assert config.market_data.rest_base_url == "https://testnet.binance.vision"

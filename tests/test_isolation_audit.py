@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from quant_core.analyst import IsolationAuditCheck
-from quant_core.governance import load_release_manifest
-from quant_core.ids import content_hash
-from quant_core.isolation_audit import (
+from investment_manager.analyst import IsolationAuditCheck
+from investment_manager.governance import load_release_manifest
+from investment_manager.ids import content_hash
+from investment_manager.isolation_audit import (
     CodexIsolationAuditCatalog,
     build_codex_isolation_audit_artifact,
 )
@@ -54,7 +54,7 @@ def test_isolation_audit_artifact_binds_release_and_rejects_tampering(
         if item.enabled
     )
     monkeypatch.setattr(
-        "quant_core.isolation_audit.codex_runtime_integrity_matches",
+        "investment_manager.isolation_audit.codex_runtime_integrity_matches",
         lambda runtime: True,
     )
 

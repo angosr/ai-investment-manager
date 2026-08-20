@@ -7,12 +7,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import MarketSnapshot
-from quant_core.evaluation import OutcomeWindowEvaluator, OutcomeWindowStatus
-from quant_core.lifecycle import PositionLifecycleManager
-from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.outcome_evaluation_runtime import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import MarketSnapshot
+from investment_manager.evaluation import OutcomeWindowEvaluator, OutcomeWindowStatus
+from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.mock_exchange_sql import SqlMockExchange
+from investment_manager.outcome_evaluation_runtime import (
     OutcomeEvaluationActivities,
     OutcomeEvaluationTemporalCoordinator,
     OutcomeEvaluationTemporalWorker,
@@ -20,14 +20,14 @@ from quant_core.outcome_evaluation_runtime import (
     _seconds_until_next_poll,
     build_outcome_evaluation_workflow_request,
 )
-from quant_core.outcome_evaluation_sql import SqlOutcomeWindowRepository
-from quant_core.persistence import (
+from investment_manager.outcome_evaluation_sql import SqlOutcomeWindowRepository
+from investment_manager.persistence import (
     SqlFactLedger,
     SqlLifecycleLedger,
 )
-from quant_core.reconciliation import MockReconciler
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
+from investment_manager.reconciliation import MockReconciler
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
 
 
 def _cycle(engine, config):

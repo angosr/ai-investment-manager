@@ -5,16 +5,16 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import MarketSnapshot
-from quant_core.evaluation import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import MarketSnapshot
+from investment_manager.evaluation import (
     EvaluationVariant,
     ReplayCase,
     ReplayEvaluator,
     without_information_events,
 )
-from quant_core.persistence import SqlEvaluationRepository
-from quant_core.schema import create_schema
+from investment_manager.persistence import SqlEvaluationRepository
+from investment_manager.schema import create_schema
 
 
 def _case(replay_input) -> ReplayCase:

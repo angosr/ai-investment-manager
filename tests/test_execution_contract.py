@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import CycleOutcome
-from quant_core.execution_contract import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import CycleOutcome
+from investment_manager.execution_contract import (
     ExecutionRequest,
     RiskTransition,
     build_execution_request,

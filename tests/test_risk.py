@@ -6,20 +6,20 @@ from datetime import timedelta
 
 from sqlalchemy import create_engine
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     CycleOutcome,
     GuardState,
     RiskOutcome,
     Side,
 )
-from quant_core.execution import MockExchange
-from quant_core.persistence import SqlFactLedger
-from quant_core.risk import RiskEngine
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
-from quant_core.shadow import SqlShadowStateReader
+from investment_manager.execution import MockExchange
+from investment_manager.persistence import SqlFactLedger
+from investment_manager.risk import RiskEngine
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
+from investment_manager.shadow import SqlShadowStateReader
 
 
 def _fresh_cycle(app_config):

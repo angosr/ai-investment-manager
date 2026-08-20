@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import (
     ExitReason,
     Fill,
     MarketSnapshot,
@@ -14,12 +14,12 @@ from quant_core.domain import (
     PositionLifecycleStatus,
     ProgramExitCondition,
 )
-from quant_core.execution import MockExchange
-from quant_core.exit_policy import program_exit_triggered
-from quant_core.ledger import InMemoryFactLedger
-from quant_core.lifecycle import PositionLifecycleManager
-from quant_core.reconciliation import MockReconciler
-from quant_core.risk_budget import InMemoryRiskBudgetStore
+from investment_manager.execution import MockExchange
+from investment_manager.exit_policy import program_exit_triggered
+from investment_manager.ledger import InMemoryFactLedger
+from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.reconciliation import MockReconciler
+from investment_manager.risk_budget import InMemoryRiskBudgetStore
 
 
 def _later_market(replay_input, *, last: Decimal, minutes: int) -> MarketSnapshot:

@@ -4,47 +4,47 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, select
 
-from quant_core.analyst import AnalystResult
-from quant_core.assess_execution import (
+from investment_manager.analyst import AnalystResult
+from investment_manager.assess_execution import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
 )
-from quant_core.assessment_calibration import (
+from investment_manager.assessment_calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
-from quant_core.assessment_forecast import (
+from investment_manager.assessment_forecast import (
     AssessmentForecastPolicy,
     AssessmentForecastProjector,
     AssessmentViewCalibration,
     build_assessment_view_calibration,
 )
-from quant_core.assessment_outcome import (
+from investment_manager.assessment_outcome import (
     AssessmentViewOutcome,
     AssessmentViewOutcomeSettler,
     SqlAssessmentViewOutcomeStore,
 )
-from quant_core.asset_management import (
+from investment_manager.asset_management import (
     AssessmentUncertainty,
     ContextAssessment,
     ContextView,
     ForecastRole,
     PricedState,
 )
-from quant_core.context_assessment_sql import SqlContextAssessmentStore
-from quant_core.decision_packet import (
+from investment_manager.context_assessment_sql import SqlContextAssessmentStore
+from investment_manager.decision_packet import (
     DecisionPacket,
     PacketAssetState,
     PacketDelta,
     PacketPortfolioState,
     RequiredView,
 )
-from quant_core.domain import DirectionalView, ForecastOutcomeStatus
-from quant_core.ids import stable_id
-from quant_core.market_data import MarketTrade
-from quant_core.market_data_sql import SqlMarketDataStore, create_market_schema
-from quant_core.persistence import assessment_view_outcomes
-from quant_core.schema import create_schema
+from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
+from investment_manager.ids import stable_id
+from investment_manager.market_data import MarketTrade
+from investment_manager.market_data_sql import SqlMarketDataStore, create_market_schema
+from investment_manager.persistence import assessment_view_outcomes
+from investment_manager.schema import create_schema
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 HASH = "a" * 64

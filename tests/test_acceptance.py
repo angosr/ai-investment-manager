@@ -2,10 +2,10 @@ from pathlib import Path
 
 import yaml
 
-from quant_core.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
-from quant_core.config import AiMode, DeploymentStage
-from quant_core.governance import load_release_manifest
-from quant_core.ids import content_hash
+from investment_manager.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
+from investment_manager.config import AiMode, DeploymentStage
+from investment_manager.governance import load_release_manifest
+from investment_manager.ids import content_hash
 
 
 def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
@@ -73,11 +73,11 @@ def test_private_challenger_audit_accepts_exact_runtime_release(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "quant_core.acceptance.validate_manifest_code_version",
+        "investment_manager.acceptance.validate_manifest_code_version",
         lambda manifest, *, repository_root: repository_root,
     )
     monkeypatch.setattr(
-        "quant_core.acceptance.codex_runtime_integrity_matches",
+        "investment_manager.acceptance.codex_runtime_integrity_matches",
         lambda runtime: True,
     )
 

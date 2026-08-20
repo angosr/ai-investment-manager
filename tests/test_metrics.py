@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from quant_core.metrics import METRIC_DEFINITIONS, observation
+from investment_manager.metrics import METRIC_DEFINITIONS, observation
 
 
 def test_metric_registry_is_the_only_way_to_create_observations() -> None:

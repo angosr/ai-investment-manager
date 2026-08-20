@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from quant_core.config import load_config
-from quant_core.governance import (
+from investment_manager.config import load_config
+from investment_manager.governance import (
     BlindEvaluationClaim,
     ChangeProposal,
     ChangeType,
@@ -28,8 +28,8 @@ from quant_core.governance import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
-from quant_core.ids import stable_id
-from quant_core.persistence import (
+from investment_manager.ids import stable_id
+from investment_manager.persistence import (
     SqlGovernanceRepository,
     blind_evaluation_claims,
     change_proposals,
@@ -38,7 +38,7 @@ from quant_core.persistence import (
     governance_snapshots,
     release_manifests,
 )
-from quant_core.schema import create_schema
+from investment_manager.schema import create_schema
 
 
 def _manifest(now: datetime) -> ReleaseManifest:
@@ -109,7 +109,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     manifest = _manifest(now)
     observations = iter((manifest.code_version, ""))
     monkeypatch.setattr(
-        "quant_core.governance._git_output",
+        "investment_manager.governance._git_output",
         lambda _root, *_arguments: next(observations),
     )
 
@@ -119,15 +119,15 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     ) == tmp_path.resolve()
 
     monkeypatch.setattr(
-        "quant_core.governance._git_output",
+        "investment_manager.governance._git_output",
         lambda _root, *_arguments: "different-commit",
     )
     with pytest.raises(ValueError, match="实际运行源码不一致"):
         validate_manifest_code_version(manifest, repository_root=tmp_path)
 
-    observations = iter((manifest.code_version, " M src/quant_core/risk.py"))
+    observations = iter((manifest.code_version, " M src/investment_manager/risk.py"))
     monkeypatch.setattr(
-        "quant_core.governance._git_output",
+        "investment_manager.governance._git_output",
         lambda _root, *_arguments: next(observations),
     )
     with pytest.raises(ValueError, match="未提交变更"):
@@ -135,7 +135,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
 
 
 def test_runtime_release_binds_complete_configuration_content() -> None:
-    config = load_config("config/quant-core.testnet.yaml")
+    config = load_config("config/investment-manager.testnet.yaml")
     manifest = load_release_manifest("config/release-manifest.testnet.yaml")
 
     validate_manifest_against_config(

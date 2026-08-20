@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from quant_core.domain import IntelligenceEvent
-from quant_core.features import FeatureEngine
-from quant_core.panel import PanelBuilder
+from investment_manager.domain import IntelligenceEvent
+from investment_manager.features import FeatureEngine
+from investment_manager.panel import PanelBuilder
 
 
 def test_panel_is_deterministic_and_marks_prompt_injection(app_config, replay_input) -> None:

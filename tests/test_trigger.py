@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from quant_core import cli
-from quant_core.trigger import (
+from investment_manager import cli
+from investment_manager.trigger import (
     AddWakeup,
     AnalysisEventRule,
     AnalysisTriggerType,
@@ -32,12 +32,12 @@ from quant_core.trigger import (
     trigger_reconsideration,
     trigger_rule_value,
 )
-from quant_core.trigger_runtime import (
+from investment_manager.trigger_runtime import (
     TemporalTriggerDispatcher,
     terminate_superseded_trigger_coordinators,
 )
-from quant_core.trigger_sql import TriggerOutboxMessage
-from quant_core.trigger_workflows import coordinator_workflow_id
+from investment_manager.trigger_sql import TriggerOutboxMessage
+from investment_manager.trigger_workflows import coordinator_workflow_id
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(

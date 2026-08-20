@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from quant_core.asset_management import Materiality
-from quant_core.fact_pipeline import (
+from investment_manager.asset_management import Materiality
+from investment_manager.fact_pipeline import (
     FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
@@ -14,7 +14,7 @@ from quant_core.fact_pipeline import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
-from quant_core.official_information import (
+from investment_manager.official_information import (
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,

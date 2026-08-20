@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from quant_core.dashboard.stream import FAST_TOPICS, SLOW_TOPICS, refresh_events
+from investment_manager.dashboard.stream import FAST_TOPICS, SLOW_TOPICS, refresh_events
 
 
 def test_refresh_stream_separates_fast_and_slow_topics() -> None:

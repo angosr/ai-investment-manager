@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from quant_core.asset_management import (
+from investment_manager.asset_management import (
     AssessmentUncertainty,
     AssetTarget,
     BaseForecast,
@@ -23,7 +23,7 @@ from quant_core.asset_management import (
     SourceTier,
     StateSnapshot,
 )
-from quant_core.domain import DirectionalView
+from investment_manager.domain import DirectionalView
 
 NOW = datetime(2026, 8, 20, 10, 30, tzinfo=UTC)
 HASH = "a" * 64

@@ -13,9 +13,9 @@ import httpx
 import pytest
 import typer
 
-from quant_core.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
-from quant_core.cli import _parse_research_symbol
-from quant_core.domain import (
+from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
+from investment_manager.cli import _parse_research_symbol
+from investment_manager.domain import (
     AccountSnapshot,
     Action,
     FeatureSnapshot,
@@ -28,9 +28,9 @@ from quant_core.domain import (
     Side,
     SignalCandidate,
 )
-from quant_core.ids import content_hash, stable_id
-from quant_core.market_data import ClosedMarketBar
-from quant_core.research.carry import (
+from investment_manager.ids import content_hash, stable_id
+from investment_manager.market_data import ClosedMarketBar
+from investment_manager.research.carry import (
     CarryFundingSettlement,
     CarryInstrumentSpec,
     CarryMarketDay,
@@ -41,7 +41,7 @@ from quant_core.research.carry import (
     _settlements_hash,
     fetch_binance_carry_history,
 )
-from quant_core.research.carry_evaluation import (
+from investment_manager.research.carry_evaluation import (
     CarryBlindCatalog,
     CarryEvaluationCatalog,
     CarryEvaluationSpec,
@@ -53,7 +53,7 @@ from quant_core.research.carry_evaluation import (
     run_carry_walk_forward,
     validate_carry_evaluation_plan,
 )
-from quant_core.research.carry_forward import (
+from investment_manager.research.carry_forward import (
     CarryForwardCatalog,
     CarryForwardEvaluationSpec,
     build_carry_forward_evaluation_plan,
@@ -61,7 +61,7 @@ from quant_core.research.carry_forward import (
     run_carry_forward_evaluation,
     validate_carry_forward_evaluation_plan,
 )
-from quant_core.research.dataset import (
+from investment_manager.research.dataset import (
     FundingRateObservation,
     FundingSourceArtifact,
     HistoricalDataset,
@@ -79,7 +79,7 @@ from quant_core.research.dataset import (
     fetch_binance_history,
     freeze_historical_events,
 )
-from quant_core.research.screening import run_raw_signal_screen
+from investment_manager.research.screening import run_raw_signal_screen
 
 
 def test_public_data_research_symbol_is_independent_of_production_allowlist(
@@ -98,8 +98,8 @@ def test_history_command_overrides_production_symbol_and_interval(
     monkeypatch,
     capsys,
 ) -> None:
-    from quant_core.cli import fetch_binance_history_command
-    from quant_core.research import dataset as dataset_module
+    from investment_manager.cli import fetch_binance_history_command
+    from investment_manager.research import dataset as dataset_module
 
     instrument = _instrument().model_copy(
         update={"symbol": "BNBUSDT", "base_asset": "BNB"}
@@ -118,7 +118,7 @@ def test_history_command_overrides_production_symbol_and_interval(
 
     monkeypatch.setattr(dataset_module, "fetch_binance_history", fake_fetch)
     fetch_binance_history_command(
-        config=Path("config/quant-core.yaml"),
+        config=Path("config/investment-manager.yaml"),
         symbol="bnbusdt",
         start="2026-01-01T00:00:00Z",
         end="2026-01-03T00:00:00Z",
@@ -380,7 +380,7 @@ def test_historical_catalog_round_trip_and_rejects_tampering(
     tmp_path,
     base_app_config,
 ) -> None:
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(count=10)
     catalog = HistoricalDatasetCatalog(tmp_path)
@@ -642,7 +642,7 @@ def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility
     catalog = HistoricalFundingDatasetCatalog(tmp_path)
     target = catalog.store(dataset)
     assert catalog.load(dataset.manifest.dataset_id) == dataset
-    from quant_core.research.candidates import resolve_research_candidate
+    from investment_manager.research.candidates import resolve_research_candidate
 
     with pytest.raises(ValueError, match="不接受未使用"):
         resolve_research_candidate(
@@ -1238,7 +1238,7 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(count=120)
     run = run_bar_backtest(
@@ -1273,7 +1273,7 @@ def test_nautilus_backtest_enters_only_after_signal_and_deducts_frozen_costs(
 
 def test_backtest_exposes_events_only_after_frozen_observed_at(app_config) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(count=100)
     early_at = dataset.bars[66].close_time
@@ -1340,7 +1340,7 @@ def test_backtest_exposes_events_only_after_frozen_observed_at(app_config) -> No
 
 def test_backtest_event_visibility_matches_production_latest_100_bound(app_config) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(count=80)
     observed_at = dataset.bars[63].close_time
@@ -1383,7 +1383,7 @@ def test_backtest_event_visibility_matches_production_latest_100_bound(app_confi
 
 
 def test_backtest_metrics_keep_legacy_artifacts_readable_and_validate_costs() -> None:
-    from quant_core.research.backtest import BacktestMetrics
+    from investment_manager.research.backtest import BacktestMetrics
 
     legacy = BacktestMetrics(
         starting_equity=Decimal("10000"),
@@ -1411,7 +1411,7 @@ def test_nautilus_backtest_protects_final_quantity_after_partial_entry_fill(
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     instrument = InstrumentSpec(
         symbol="ETHUSDT",
@@ -1455,14 +1455,14 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.domain import (
+    from investment_manager.domain import (
         Action,
         AnalysisProposal,
         DirectionalForecast,
         DirectionalView,
     )
-    from quant_core.ids import content_hash
-    from quant_core.research.decision_tape import (
+    from investment_manager.ids import content_hash
+    from investment_manager.research.decision_tape import (
         ForecastDecisionTape,
         ForecastGateEvaluationSpec,
         ForecastGatePolicy,
@@ -1471,7 +1471,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         run_paired_decision_tape_backtest,
         validate_forecast_gate_evaluation_plan,
     )
-    from quant_core.strategy import PriceTrendStrategy
+    from investment_manager.strategy import PriceTrendStrategy
 
     dataset = _dataset(count=140)
     signal_start = dataset.bars[63].close_time
@@ -1692,7 +1692,7 @@ def test_walk_forward_uses_non_overlapping_test_windows_with_automatic_separatio
     app_config,
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.walk_forward import (
+    from investment_manager.research.walk_forward import (
         WalkForwardPlan,
         failed_walk_forward_experiment,
         run_walk_forward,
@@ -1760,16 +1760,16 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     app_config, tmp_path
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.decision_tape import validate_forecast_gate_baseline
-    from quant_core.research.evaluation_catalog import BlindEvaluationCatalog
-    from quant_core.research.walk_forward import (
+    from investment_manager.research.decision_tape import validate_forecast_gate_baseline
+    from investment_manager.research.evaluation_catalog import BlindEvaluationCatalog
+    from investment_manager.research.walk_forward import (
         WalkForwardPlan,
         blind_evaluation_scope,
         failed_blind_experiment,
         run_blind_evaluation,
         run_walk_forward,
     )
-    from quant_core.strategy import PriceTrendStrategy
+    from investment_manager.strategy import PriceTrendStrategy
 
     dataset = _dataset()
     source = run_walk_forward(
@@ -1872,13 +1872,13 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
 
 
 def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> None:
-    from quant_core.research.walk_forward import (
+    from investment_manager.research.walk_forward import (
         WalkForwardEvaluationSpec,
         WalkForwardPlan,
         build_walk_forward_evaluation_plan,
         validate_walk_forward_evaluation_plan,
     )
-    from quant_core.strategy import PriceTrendStrategy
+    from investment_manager.strategy import PriceTrendStrategy
 
     registered_at = _dataset().manifest.first_open_time
     strategy = PriceTrendStrategy(app_config.strategy)
@@ -1936,7 +1936,7 @@ def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> N
 
 
 def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
-    from quant_core.research.backtest import artifact_hash
+    from investment_manager.research.backtest import artifact_hash
 
     first = _TestResearchSpec(version="test-long-v1")
     second = first.model_copy(update={"version": "test-long-v2"})
@@ -1947,7 +1947,7 @@ def test_custom_research_strategy_identity_changes_artifact(app_config) -> None:
 
 
 def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
-    from quant_core.research.candidates import resolve_research_candidate
+    from investment_manager.research.candidates import resolve_research_candidate
 
     effective, strategy = resolve_research_candidate("configured", app_config)
     assert effective is app_config
@@ -1981,7 +1981,7 @@ def test_candidate_registry_rejects_retired_research_code(app_config) -> None:
 
 def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(
         count=40,
@@ -2025,7 +2025,7 @@ def test_program_exit_uses_same_rule_in_nautilus_replay(app_config) -> None:
 
 def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(count=450, interval="1d", bar_delta=timedelta(days=1))
     effective = app_config.model_copy(
@@ -2052,7 +2052,7 @@ def test_daily_candidate_uses_native_daily_bar_type(app_config) -> None:
 
 def test_hourly_candidate_uses_native_hour_bar_type(app_config) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.backtest import run_bar_backtest
+    from investment_manager.research.backtest import run_bar_backtest
 
     dataset = _dataset(
         count=200,
@@ -2093,8 +2093,8 @@ def test_evaluation_catalog_round_trip_and_rejects_tampering(
     app_config, tmp_path
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
-    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+    from investment_manager.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from investment_manager.research.walk_forward import WalkForwardPlan, run_walk_forward
 
     result = run_walk_forward(
         dataset=_dataset(),
@@ -2121,8 +2121,8 @@ def test_evaluation_catalog_derives_canonical_semantics_and_rejects_ambiguity(
     app_config, tmp_path
 ) -> None:
     pytest.importorskip("nautilus_trader")
-    from quant_core.research.evaluation_catalog import HistoricalEvaluationCatalog
-    from quant_core.research.walk_forward import WalkForwardPlan, run_walk_forward
+    from investment_manager.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from investment_manager.research.walk_forward import WalkForwardPlan, run_walk_forward
 
     result = run_walk_forward(
         dataset=_dataset(),

@@ -12,19 +12,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from quant_core.cli import _default_web_dist
-from quant_core.dashboard import formatting as fmt
-from quant_core.dashboard import serializers as ser
-from quant_core.dashboard.health import assemble_health
-from quant_core.dashboard.read_models import (
+from investment_manager.cli import _default_web_dist
+from investment_manager.dashboard import formatting as fmt
+from investment_manager.dashboard import serializers as ser
+from investment_manager.dashboard.health import assemble_health
+from investment_manager.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
     AnalysisScopeRuntimeStatus,
     EquityWindow,
     WorldEvent,
 )
-from quant_core.dashboard.resources import sample_host_resources
-from quant_core.domain import Side
+from investment_manager.dashboard.resources import sample_host_resources
+from investment_manager.domain import Side
 
 
 def _intent(side: Side) -> SimpleNamespace:
@@ -503,8 +503,8 @@ def test_default_web_dist_does_not_depend_on_process_working_directory(
     runtime_directory.mkdir()
     monkeypatch.chdir(runtime_directory)
     monkeypatch.setattr(
-        "quant_core.cli.__file__",
-        str(repository / "src" / "quant_core" / "cli.py"),
+        "investment_manager.cli.__file__",
+        str(repository / "src" / "investment_manager" / "cli.py"),
     )
 
     assert _default_web_dist() == dist.resolve()

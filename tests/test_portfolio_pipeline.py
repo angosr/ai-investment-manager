@@ -3,23 +3,23 @@ from decimal import Decimal
 
 import pytest
 
-from quant_core.asset_management import CalibratedForecast, ForecastRole
-from quant_core.domain import DirectionalView, Position
-from quant_core.portfolio_decision import (
+from investment_manager.asset_management import CalibratedForecast, ForecastRole
+from investment_manager.domain import DirectionalView, Position
+from investment_manager.portfolio_decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
 )
-from quant_core.portfolio_pipeline import (
+from investment_manager.portfolio_pipeline import (
     PortfolioDecisionPipeline,
     PortfolioPipelineOutcome,
 )
-from quant_core.portfolio_risk import (
+from investment_manager.portfolio_risk import (
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
     ProtectiveStop,
 )
-from quant_core.trade_planner import (
+from investment_manager.trade_planner import (
     MarketExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,

@@ -4,9 +4,9 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from quant_core.asset_management import AssetTarget, PortfolioTarget
-from quant_core.domain import AccountSnapshot, Position, RiskOutcome
-from quant_core.portfolio_risk import (
+from investment_manager.asset_management import AssetTarget, PortfolioTarget
+from investment_manager.domain import AccountSnapshot, Position, RiskOutcome
+from investment_manager.portfolio_risk import (
     ApprovedAssetTarget,
     PortfolioRiskEngine,
     PortfolioRiskPolicy,

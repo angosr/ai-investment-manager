@@ -7,15 +7,15 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.persistence import SqlFactLedger
-from quant_core.reconciliation import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.mock_exchange_sql import SqlMockExchange
+from investment_manager.persistence import SqlFactLedger
+from investment_manager.reconciliation import (
     DifferenceKind,
     ReconciliationEngine,
     ReconciliationStatus,
 )
-from quant_core.reconciliation_runtime import (
+from investment_manager.reconciliation_runtime import (
     ReconciliationActivities,
     ReconciliationTemporalCoordinator,
     ReconciliationTemporalWorker,
@@ -23,14 +23,14 @@ from quant_core.reconciliation_runtime import (
     _seconds_until_next_bucket,
     build_reconciliation_workflow_request,
 )
-from quant_core.reconciliation_sql import (
+from investment_manager.reconciliation_sql import (
     SqlLocalTradingStateSource,
     SqlMockExchangeTruthSource,
     SqlReconciliationReportStore,
 )
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
-from quant_core.shadow import SqlShadowStateReader
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
+from investment_manager.shadow import SqlShadowStateReader
 
 
 def _sources(engine, app_config):

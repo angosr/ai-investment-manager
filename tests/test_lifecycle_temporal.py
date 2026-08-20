@@ -6,11 +6,11 @@ from decimal import Decimal
 
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import PositionLifecycleStatus
-from quant_core.ledger import InMemoryLifecycleLedger
-from quant_core.lifecycle import OpenLifecycleRecord, PositionLifecycleManager
-from quant_core.lifecycle_runtime import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import PositionLifecycleStatus
+from investment_manager.ledger import InMemoryLifecycleLedger
+from investment_manager.lifecycle import OpenLifecycleRecord, PositionLifecycleManager
+from investment_manager.lifecycle_runtime import (
     LifecycleTemporalCoordinator,
     LifecycleTemporalWorker,
     LifecycleWorkflowExecution,
@@ -18,13 +18,13 @@ from quant_core.lifecycle_runtime import (
     PositionLifecycleActivities,
     build_lifecycle_workflow_request,
 )
-from quant_core.market_data import (
+from investment_manager.market_data import (
     ClosedMarketBar,
     InMemoryMarketDataStore,
     MarketQuote,
     MarketTrade,
 )
-from quant_core.reconciliation import MockReconciler
+from investment_manager.reconciliation import MockReconciler
 
 
 def test_position_lifecycle_workflow_persists_progress_and_closes_after_timeout(

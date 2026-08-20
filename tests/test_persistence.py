@@ -6,16 +6,16 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from quant_core.analyst import (
+from investment_manager.analyst import (
     AttemptAudit,
     CapacityBucket,
     CapacitySnapshot,
     CapacityWindow,
     FailureClass,
 )
-from quant_core.cycle import AnalysisCycle
-from quant_core.execution import MockExchange
-from quant_core.persistence import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.execution import MockExchange
+from investment_manager.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
     SqlFactLedger,
@@ -26,12 +26,12 @@ from quant_core.persistence import (
     metric_observations,
     orders,
 )
-from quant_core.risk_budget import (
+from investment_manager.risk_budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,
 )
-from quant_core.schema import create_schema
+from investment_manager.schema import create_schema
 
 
 @pytest.fixture

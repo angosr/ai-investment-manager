@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from quant_core.binance_testnet import (
+from investment_manager.binance_testnet import (
     BinanceCredentials,
     BinanceManualIntervention,
     BinanceTestnetClient,
@@ -16,8 +16,8 @@ from quant_core.binance_testnet import (
     BinanceTradingStateSource,
     SymbolRules,
 )
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import (
     AccountSnapshot,
     ExitReason,
     OrderStatus,
@@ -25,8 +25,8 @@ from quant_core.domain import (
     PositionLifecycle,
     PositionLifecycleStatus,
 )
-from quant_core.ids import stable_id
-from quant_core.reconciliation import TradingStateSnapshot
+from investment_manager.ids import stable_id
+from investment_manager.reconciliation import TradingStateSnapshot
 
 
 def _exchange_info():

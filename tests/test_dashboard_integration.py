@@ -11,21 +11,21 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine, insert
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.dashboard import serializers as ser
-from quant_core.dashboard.read_models import DashboardReader
-from quant_core.domain import DecisionOutcome, ExitReason, IntelligenceEvent
-from quant_core.execution import MockExchange
-from quant_core.persistence import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.dashboard import serializers as ser
+from investment_manager.dashboard.read_models import DashboardReader
+from investment_manager.domain import DecisionOutcome, ExitReason, IntelligenceEvent
+from investment_manager.execution import MockExchange
+from investment_manager.persistence import (
     SqlEventStore,
     SqlFactLedger,
     analysis_call_admissions,
     decision_outcomes,
 )
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
-from quant_core.trigger import AnalysisTriggerType, build_trigger_event
-from quant_core.trigger_sql import SqlTriggerRepository
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
+from investment_manager.trigger import AnalysisTriggerType, build_trigger_event
+from investment_manager.trigger_sql import SqlTriggerRepository
 
 
 def _seed_cycle(app_config, replay_input):

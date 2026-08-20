@@ -8,22 +8,22 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.governance import NoChange, ReleaseManifest
-from quant_core.governance_agent import (
+from investment_manager.governance import NoChange, ReleaseManifest
+from investment_manager.governance_agent import (
     CodexGovernor,
     GovernorBundleBuilder,
     SqlGovernorDecisionStore,
 )
-from quant_core.governance_context import GovernanceSnapshotAssembler
-from quant_core.governance_runtime import (
+from investment_manager.governance_context import GovernanceSnapshotAssembler
+from investment_manager.governance_runtime import (
     GovernanceActivities,
     GovernanceTemporalCoordinator,
     GovernanceTemporalWorker,
     GovernanceWorkflowStatus,
     build_governance_workflow_request,
 )
-from quant_core.persistence import SqlGovernanceRepository, governance_decisions
-from quant_core.schema import create_schema
+from investment_manager.persistence import SqlGovernanceRepository, governance_decisions
+from investment_manager.schema import create_schema
 
 
 class UnusedRouter:

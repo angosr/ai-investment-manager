@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "quant-core"
+name = "investment-manager"
 version = "0.1.0"
-description = "可回放、确定性风控优先的量化交易核心"
+description = "可回放、证据与风险约束优先的 AI 投资管理系统"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -37,10 +37,10 @@ research = [
 ]
 
 [project.scripts]
-quant-core = "quant_core.cli:app"
+investment-manager = "investment_manager.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/quant_core"]
+packages = ["src/investment_manager"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

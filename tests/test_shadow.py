@@ -5,28 +5,28 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from quant_core.config import AppConfig
-from quant_core.cycle import AnalysisCycle
-from quant_core.execution import MockExchange
-from quant_core.ingestion import InMemoryEventStore
-from quant_core.market_data import (
+from investment_manager.config import AppConfig
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.execution import MockExchange
+from investment_manager.ingestion import InMemoryEventStore
+from investment_manager.market_data import (
     ClosedMarketBar,
     InMemoryMarketDataStore,
     MarketQuote,
     MarketTrade,
 )
-from quant_core.persistence import SqlFactLedger
-from quant_core.portfolio_protection import InMemoryPortfolioProtectionStore
-from quant_core.risk_budget import SqlRiskBudgetStore
-from quant_core.schema import create_schema
-from quant_core.shadow import SqlShadowStateReader
-from quant_core.trigger import (
+from investment_manager.persistence import SqlFactLedger
+from investment_manager.portfolio_protection import InMemoryPortfolioProtectionStore
+from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.schema import create_schema
+from investment_manager.shadow import SqlShadowStateReader
+from investment_manager.trigger import (
     AnalysisTriggerType,
     build_initial_trigger_plan,
     build_trigger_batch,
     build_trigger_event,
 )
-from quant_core.trigger_runtime import TriggerAnalysisRequestBuilder
+from investment_manager.trigger_runtime import TriggerAnalysisRequestBuilder
 
 NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 
@@ -96,7 +96,7 @@ def _market_store() -> InMemoryMarketDataStore:
 
 class EmptyShadowState:
     def account_for_cycle(self, *, cycle_id, as_of, initial_quote_balance):
-        from quant_core.domain import AccountSnapshot
+        from investment_manager.domain import AccountSnapshot
 
         return AccountSnapshot(
             cycle_id=cycle_id,

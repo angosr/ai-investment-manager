@@ -14,8 +14,8 @@ cd market-intel
 .venv/bin/pytest
 QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
   .venv/bin/pytest tests/integration/test_postgres.py
-.venv/bin/quant-core phase-a-audit \
-  --config config/quant-core.yaml \
+.venv/bin/investment-manager phase-a-audit \
+  --config config/investment-manager.yaml \
   --project-root .
 ```
 
@@ -39,8 +39,8 @@ PostgreSQL 的 `execution_requests` 是业务交接事实，不是第二套 Work
 ExecutionWorkflow 的主重试耗尽或交易截止已过后会自动进入终态恢复循环：已有订单则完成入账，无订单且信号过期才释放预留，查询不确定时继续持有预算。禁止另加基于 `expires_at` 的 SQL 清扫器。账户日亏/回撤触发的持久 Kill Switch 只能人工解除：
 
 ```bash
-.venv/bin/quant-core reset-portfolio-protection \
-  --config config/quant-core.yaml \
+.venv/bin/investment-manager reset-portfolio-protection \
+  --config config/investment-manager.yaml \
   --reason '人工复核、仓位与对账均已确认' \
   --acknowledge-risk
 ```
@@ -54,7 +54,7 @@ docker compose --profile quant up -d postgres temporal
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
   .venv/bin/alembic upgrade head
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
-  .venv/bin/quant-core temporal-worker --config config/quant-core.yaml
+  .venv/bin/investment-manager temporal-worker --config config/investment-manager.yaml
 ```
 
 必须由进程监督器运行 Worker；CLI 内没有自制无限循环、cron 或第二套租约恢复逻辑。Compose 的 `auto-setup` 与开发动态配置只用于本地，不是生产 Temporal 部署模板。生产环境应使用受维护的 Temporal 集群、独立凭据/TLS、备份和服务端升级流程。
@@ -79,12 +79,12 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 切换前必须查询旧 Coordinator，确认 `pending_count=0` 且 `active_batch_id=null`；否则等待其完成或由主 Agent 明确处理，不能把已绑定旧 pipeline 的触发/周期静默复制到新代际。本前提避免同一事件双跑和版本归因污染；当前没有运行证据支持引入跨代 pending 转移协议。
 
-使用 `config/quant-core.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前运行 `shadow-audit`。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
+使用 `config/investment-manager.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前运行 `shadow-audit`。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
 
 真实 Codex、Mock 交易的私有 Challenger 不能沿用公开 Shadow 的验收语义。冻结发布后必须从该提交的 checkout 执行专用验收，并显式传入同一运行配置、Manifest 和源码根：
 
 ```bash
-PYTHONPATH='<冻结 checkout>/src' .venv/bin/quant-core challenger-audit \
+PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager challenger-audit \
   --config '<运行覆盖配置>' \
   --release-manifest '<运行 ReleaseManifest>' \
   --project-root '<冻结 checkout>'
@@ -114,7 +114,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core register-ai-forecast-plan \
+  .venv/bin/investment-manager register-ai-forecast-plan \
   --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
   --signal-window-start '<未来 UTC 起点>' \
   --signal-window-end '<固定 UTC 终点>' \
@@ -129,7 +129,7 @@ BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未�
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/quant-core register-carry-forward-plan \
+  .venv/bin/investment-manager register-carry-forward-plan \
   --plan-id '<唯一计划 ID>' --symbol BTCUSDT \
   --observation-start '<未来月初 UTC>' \
   --observation-end '<至少十二个完整日历月后的月初 UTC>'
@@ -162,9 +162,9 @@ deployment:
 
 ```bash
 set -a; . ./.env; set +a
-.venv/bin/quant-core binance-testnet-audit --config config/quant-core.testnet.yaml
-.venv/bin/quant-core binance-testnet-order-test \
-  --symbol BTCUSDT --config config/quant-core.testnet.yaml
+.venv/bin/investment-manager binance-testnet-audit --config config/investment-manager.testnet.yaml
+.venv/bin/investment-manager binance-testnet-order-test \
+  --symbol BTCUSDT --config config/investment-manager.testnet.yaml
 ```
 
 第一条命令只读且脱敏；第二条调用 `/api/v3/order/test`，不会进入撮合。两者通过前保持订单环境门禁为 `false`，不得启动 Testnet Worker。正式 Testnet 仍使用原有 Temporal 决策/执行交接：提交前先查询稳定 `clientOrderId`；传输结果未知时再次查询，不盲重下；保护单部分成交时停止自动卖出并等待人工处理；主动对账非 `MATCHED` 时冻结新风险。Testnet 账户可能预置大量资产，对账只投影本系统已有策略仓位，并用真实余额验证其是否足额，避免把测试赠送资产误认为策略持仓。
@@ -182,7 +182,7 @@ set -a; . ./.env; set +a
 白名单中至少一个目录在部署配置中显式启用后，使用同一个正式入口对全部已启用账号执行额度和恶意读取验收：
 
 ```bash
-.venv/bin/quant-core codex-isolation-audit \
+.venv/bin/investment-manager codex-isolation-audit \
   --config '<冻结运行配置>' \
   --release-manifest '<冻结 ReleaseManifest>' \
   --project-root '<对应代码 checkout>'
@@ -240,7 +240,7 @@ AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。�
 额度探测和分析执行都使用一次性隔离 CODEX_HOME，只链接对应槽位的认证文件，不加载账号目录中的配置、插件、MCP、Skill 或历史会话。“已登录”不等于可轮换：槽位必须同时通过官方额度协议与 `codex-isolation-audit`；低余量、超时或协议不可用的槽位保持禁用。
 
 ```bash
-QUANT_CORE_DATABASE_URL='<治理数据库 URL>' .venv/bin/quant-core \
+QUANT_CORE_DATABASE_URL='<治理数据库 URL>' .venv/bin/investment-manager \
   governance-service --config '<私有配置>' --project-root .
 ```
 

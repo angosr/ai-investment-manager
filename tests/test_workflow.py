@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.temporal_runtime import AnalysisTemporalWorker, TemporalAnalysisCoordinator
-from quant_core.trigger import TriggerDecision, TriggerReason
-from quant_core.workflow import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.temporal_runtime import AnalysisTemporalWorker, TemporalAnalysisCoordinator
+from investment_manager.trigger import TriggerDecision, TriggerReason
+from investment_manager.workflow import (
     WorkflowExecutionStatus,
     WorkflowRequest,
     build_workflow_request,

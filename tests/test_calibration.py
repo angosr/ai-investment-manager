@@ -7,24 +7,24 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from quant_core.analyst import analysis_behavior_hash
-from quant_core.calibration import (
+from investment_manager.analyst import analysis_behavior_hash
+from investment_manager.calibration import (
     EDGE_CALIBRATION_MISSING,
     CalibrationBuildSpec,
     EdgeCalibrationBook,
     EdgeCalibrationBuilder,
     uncalibrated_ref,
 )
-from quant_core.config import CalibrationPolicy
-from quant_core.cycle import AnalysisCycle
-from quant_core.decision import HighestNetEdgeComposer
-from quant_core.domain import (
+from investment_manager.config import CalibrationPolicy
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.decision import HighestNetEdgeComposer
+from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
     EdgeCalibration,
     Side,
 )
-from quant_core.ids import content_hash
+from investment_manager.ids import content_hash
 
 
 def test_published_calibration_replaces_only_the_edge_fields(

@@ -5,16 +5,16 @@ from decimal import Decimal
 
 import pytest
 
-from quant_core.analyst import AnalystResult
-from quant_core.config import AiMode
-from quant_core.cycle import AnalysisCycle, CycleInput
-from quant_core.decision import (
+from investment_manager.analyst import AnalystResult
+from investment_manager.config import AiMode
+from investment_manager.cycle import AnalysisCycle, CycleInput
+from investment_manager.decision import (
     FrequencyController,
     FrequencyState,
     estimate_round_trip_cost_amount,
     estimate_round_trip_cost_bps,
 )
-from quant_core.domain import (
+from investment_manager.domain import (
     Action,
     AnalysisProposal,
     CycleOutcome,
@@ -26,7 +26,7 @@ from quant_core.domain import (
     RiskOutcome,
     Side,
 )
-from quant_core.trigger import TriggerDecision, TriggerReason
+from investment_manager.trigger import TriggerDecision, TriggerReason
 
 
 class StaticAnalyst:

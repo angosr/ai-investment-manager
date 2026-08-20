@@ -6,14 +6,14 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, event, func, select
 
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import CycleOutcome, MarketSnapshot, Order, OrderStatus
-from quant_core.execution import MockExchange
-from quant_core.ids import stable_id
-from quant_core.ledger import InMemoryFactLedger
-from quant_core.lifecycle import PositionLifecycleManager
-from quant_core.mock_exchange_sql import SqlMockExchange
-from quant_core.persistence import (
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import CycleOutcome, MarketSnapshot, Order, OrderStatus
+from investment_manager.execution import MockExchange
+from investment_manager.ids import stable_id
+from investment_manager.ledger import InMemoryFactLedger
+from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.mock_exchange_sql import SqlMockExchange
+from investment_manager.persistence import (
     SqlFactLedger,
     SqlLifecycleLedger,
     decision_outcomes,
@@ -22,13 +22,13 @@ from quant_core.persistence import (
     orders,
     position_lifecycles,
 )
-from quant_core.reconciliation import MockReconciler
-from quant_core.risk_budget import (
+from investment_manager.reconciliation import MockReconciler
+from investment_manager.risk_budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,
 )
-from quant_core.schema import create_schema
+from investment_manager.schema import create_schema
 
 
 class RejectingExchange(MockExchange):

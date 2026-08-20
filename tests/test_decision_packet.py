@@ -4,8 +4,8 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
-from quant_core.analyst import AnalystResult, verify_bundle
-from quant_core.asset_management import (
+from investment_manager.analyst import AnalystResult, verify_bundle
+from investment_manager.asset_management import (
     AssessmentUncertainty,
     CanonicalFactRevision,
     ContextView,
@@ -17,9 +17,9 @@ from quant_core.asset_management import (
     SourceTier,
     StateSnapshot,
 )
-from quant_core.context_analyst import AssessRunBundleBuilder, CodexContextAnalyst
-from quant_core.context_assessment_sql import SqlContextAssessmentStore
-from quant_core.decision_packet import (
+from investment_manager.context_analyst import AssessRunBundleBuilder, CodexContextAnalyst
+from investment_manager.context_assessment_sql import SqlContextAssessmentStore
+from investment_manager.decision_packet import (
     AnalysisMandate,
     AssessStructuredOutput,
     ContextAssessmentDraft,
@@ -32,10 +32,10 @@ from quant_core.decision_packet import (
     build_assess_prompt,
     finalize_context_assessment,
 )
-from quant_core.domain import DirectionalView
-from quant_core.features import FeatureEngine
-from quant_core.ids import canonical_json, content_hash
-from quant_core.platform.database import metadata
+from investment_manager.domain import DirectionalView
+from investment_manager.features import FeatureEngine
+from investment_manager.ids import canonical_json, content_hash
+from investment_manager.platform.database import metadata
 
 HASH = "a" * 64
 

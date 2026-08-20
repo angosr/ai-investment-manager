@@ -13,12 +13,15 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from quant_core.asset_management import CanonicalFactRevision, Materiality
-from quant_core.candidate_evaluation import CandidateOutcomeSettler, SqlCandidateOutcomeStore
-from quant_core.cycle import AnalysisCycle
-from quant_core.domain import MarketSnapshot
-from quant_core.execution import MockExchange
-from quant_core.fact_pipeline import (
+from investment_manager.asset_management import CanonicalFactRevision, Materiality
+from investment_manager.candidate_evaluation import (
+    CandidateOutcomeSettler,
+    SqlCandidateOutcomeStore,
+)
+from investment_manager.cycle import AnalysisCycle
+from investment_manager.domain import MarketSnapshot
+from investment_manager.execution import MockExchange
+from investment_manager.fact_pipeline import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
     FactDeltaRule,
@@ -27,20 +30,20 @@ from quant_core.fact_pipeline import (
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
-from quant_core.fact_state_sql import SqlFactStateStore
-from quant_core.governance import ReleaseManifest
-from quant_core.governance_context import GovernanceSnapshotAssembler
-from quant_core.lifecycle import PositionLifecycleManager
-from quant_core.market_data import MarketTrade
-from quant_core.market_data_sql import SqlMarketDataStore
-from quant_core.official_information import (
+from investment_manager.fact_state_sql import SqlFactStateStore
+from investment_manager.governance import ReleaseManifest
+from investment_manager.governance_context import GovernanceSnapshotAssembler
+from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.market_data import MarketTrade
+from investment_manager.market_data_sql import SqlMarketDataStore
+from investment_manager.official_information import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,
     MarketCalendarEventRevision,
     parse_fomc_calendar,
 )
-from quant_core.official_information_sql import SqlOfficialInformationStore
-from quant_core.persistence import (
+from investment_manager.official_information_sql import SqlOfficialInformationStore
+from investment_manager.persistence import (
     SqlEventStore,
     SqlFactLedger,
     SqlGovernanceRepository,
@@ -55,12 +58,12 @@ from quant_core.persistence import (
     orders,
     source_observations,
 )
-from quant_core.platform.database import build_engine, metadata
-from quant_core.reconciliation import MockReconciler
-from quant_core.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
-from quant_core.source_payload import build_raw_source_payload
-from quant_core.source_payload_sql import SqlRawSourcePayloadStore
-from quant_core.trigger import (
+from investment_manager.platform.database import build_engine, metadata
+from investment_manager.reconciliation import MockReconciler
+from investment_manager.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
+from investment_manager.source_payload import build_raw_source_payload
+from investment_manager.source_payload_sql import SqlRawSourcePayloadStore
+from investment_manager.trigger import (
     AnalysisTriggerType,
     TriggerNow,
     build_initial_trigger_plan,
@@ -68,7 +71,7 @@ from quant_core.trigger import (
     build_trigger_event,
     build_trigger_plan_patch,
 )
-from quant_core.trigger_sql import (
+from investment_manager.trigger_sql import (
     PostgresOutboxListener,
     PostgresTriggerLeadership,
     SqlTriggerRepository,

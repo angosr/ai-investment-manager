@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from quant_core.governance import (
+from investment_manager.governance import (
     ChangeProposal,
     ChangeType,
     EvaluationPlan,
@@ -19,13 +19,13 @@ from quant_core.governance import (
     SystemConstitution,
     build_governance_snapshot,
 )
-from quant_core.governance_agent import SqlGovernorDecisionStore
-from quant_core.persistence import (
+from investment_manager.governance_agent import SqlGovernorDecisionStore
+from investment_manager.persistence import (
     SqlGovernanceRepository,
     evaluation_results,
 )
-from quant_core.schema import create_schema
-from quant_core.version_evaluation_runtime import (
+from investment_manager.schema import create_schema
+from investment_manager.version_evaluation_runtime import (
     VersionEvaluationActivities,
     VersionEvaluationTemporalCoordinator,
     VersionEvaluationTemporalWorker,

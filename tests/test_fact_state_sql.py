@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from quant_core.asset_management import Materiality
-from quant_core.fact_pipeline import (
+from investment_manager.asset_management import Materiality
+from investment_manager.fact_pipeline import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaPolicy,
     FactDeltaRule,
@@ -13,16 +13,16 @@ from quant_core.fact_pipeline import (
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
-from quant_core.fact_state_sql import SqlFactStateStore
-from quant_core.official_information import parse_fomc_calendar
-from quant_core.official_information_sql import SqlFedOfficialInformationIngestor
-from quant_core.persistence import (
+from investment_manager.fact_state_sql import SqlFactStateStore
+from investment_manager.official_information import parse_fomc_calendar
+from investment_manager.official_information_sql import SqlFedOfficialInformationIngestor
+from investment_manager.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
     material_deltas,
     state_snapshots,
 )
-from quant_core.schema import create_schema
+from investment_manager.schema import create_schema
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(
@@ -97,7 +97,7 @@ def test_fact_requires_persisted_source_observation() -> None:
         _record("15-16", observed_at=OBSERVED_AT),
         observed_at=OBSERVED_AT,
     )[0]
-    from quant_core.official_information import build_fomc_calendar_revision
+    from investment_manager.official_information import build_fomc_calendar_revision
 
     fact = project_fomc_calendar_fact(
         build_fomc_calendar_revision(record),

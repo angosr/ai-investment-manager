@@ -3,10 +3,10 @@ from decimal import Decimal
 
 import pytest
 
-from quant_core.domain import AccountSnapshot, Position, Side
-from quant_core.ids import content_hash
-from quant_core.portfolio_risk import ApprovedAssetTarget, ApprovedTarget
-from quant_core.trade_planner import (
+from investment_manager.domain import AccountSnapshot, Position, Side
+from investment_manager.ids import content_hash
+from investment_manager.portfolio_risk import ApprovedAssetTarget, ApprovedTarget
+from investment_manager.trade_planner import (
     MarketExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,

@@ -3,13 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from quant_core.domain import IntelligenceEvent
-from quant_core.research.dataset import freeze_historical_events
-from quant_core.research.trigger_replay import (
+from investment_manager.domain import IntelligenceEvent
+from investment_manager.research.dataset import freeze_historical_events
+from investment_manager.research.trigger_replay import (
     ExternalTriggerReplaySpec,
     run_external_trigger_replay,
 )
-from quant_core.trigger import (
+from investment_manager.trigger import (
     AnalysisEventRule,
     AnalysisTriggerType,
     build_initial_trigger_plan,

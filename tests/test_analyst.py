@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from quant_core.analyst import (
+from investment_manager.analyst import (
     ANALYST_INPUT_VERSION,
     AccountState,
     AnalystResult,
@@ -38,8 +38,8 @@ from quant_core.analyst import (
     strict_output_schema,
     verify_bundle,
 )
-from quant_core.config import AppConfig, CodexAccount, CodexAccountRegistry
-from quant_core.domain import (
+from investment_manager.config import AppConfig, CodexAccount, CodexAccountRegistry
+from investment_manager.domain import (
     Action,
     AnalysisProposal,
     DirectionalForecast,
@@ -48,7 +48,7 @@ from quant_core.domain import (
     PriceCondition,
     Side,
 )
-from quant_core.trigger import TriggerDecision, TriggerReason
+from investment_manager.trigger import TriggerDecision, TriggerReason
 
 
 def _account_registry(tmp_path: Path) -> CodexAccountRegistry:
@@ -105,7 +105,7 @@ def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_ca
     assert analysis_behavior_hash(redeployed) == baseline
     assert analysis_behavior_hash(changed_behavior) != baseline
     monkeypatch.setattr(
-        "quant_core.analyst._ANALYST_PROMPT_INSTRUCTIONS",
+        "investment_manager.analyst._ANALYST_PROMPT_INSTRUCTIONS",
         "different semantic prompt contract",
     )
     assert analysis_behavior_hash(app_config) != baseline
@@ -246,8 +246,8 @@ def test_analysis_proposal_is_strict_and_cannot_smuggle_position_fields(replay_i
 def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     app_config, replay_input, tmp_path
 ) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.panel import PanelBuilder
+    from investment_manager.features import FeatureEngine
+    from investment_manager.panel import PanelBuilder
 
     duplicate_body = replay_input.events[0].model_copy(
         update={"body": replay_input.events[0].title}
@@ -336,8 +336,8 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
 def test_analyst_bundle_rejects_prompt_above_explicit_limit(
     app_config, replay_input, tmp_path
 ) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.panel import PanelBuilder
+    from investment_manager.features import FeatureEngine
+    from investment_manager.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(
         market=replay_input.market,
@@ -508,9 +508,9 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
         return process
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr("quant_core.analyst.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr("investment_manager.analyst.selectors.DefaultSelector", FakeSelector)
     monkeypatch.setattr(
-        "quant_core.analyst.codex_runtime_integrity_matches",
+        "investment_manager.analyst.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: True,
     )
 
@@ -860,8 +860,8 @@ def test_initial_probe_outage_fails_closed_without_guessing_account_health(
 def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     app_config, replay_input, tmp_path, monkeypatch
 ) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.panel import PanelBuilder
+    from investment_manager.features import FeatureEngine
+    from investment_manager.panel import PanelBuilder
 
     registry = _account_registry(tmp_path)
     panel = PanelBuilder(app_config.panel).build(
@@ -981,10 +981,10 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "must-not-leak")
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakeProcess)
-    monkeypatch.setattr("quant_core.analyst.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr("investment_manager.analyst.selectors.DefaultSelector", FakeSelector)
     checks = iter((True, False))
     monkeypatch.setattr(
-        "quant_core.analyst.codex_runtime_integrity_matches",
+        "investment_manager.analyst.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: next(checks),
     )
 
@@ -1029,7 +1029,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
 def test_codex_runtime_integrity_rejects_binary_drift(
     app_config, tmp_path, monkeypatch
 ) -> None:
-    from quant_core.analyst import codex_runtime_integrity_matches
+    from investment_manager.analyst import codex_runtime_integrity_matches
 
     binary = tmp_path / "codex-0.148.0"
     binary.write_bytes(b"frozen-codex-binary")
@@ -1186,14 +1186,14 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     }
 
     monkeypatch.setattr(
-        "quant_core.analyst._write_json_rpc", lambda _process, value: sent.append(value)
+        "investment_manager.analyst._write_json_rpc", lambda _process, value: sent.append(value)
     )
 
     def fake_read(*_args, **kwargs):
         kwargs["observed"].append(response)
         return response
 
-    monkeypatch.setattr("quant_core.analyst._read_json_rpc_until", fake_read)
+    monkeypatch.setattr("investment_manager.analyst._read_json_rpc_until", fake_read)
 
     assert _terminal_message_is_idle(events)
     assert _recover_completed_turn(object(), thread_id="thread-1", turn_id="turn-1", events=events)
@@ -1394,8 +1394,8 @@ def test_isolation_audit_does_not_invoke_codex_when_capacity_probe_fails(
 def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
     app_config, replay_input
 ) -> None:
-    from quant_core.features import FeatureEngine
-    from quant_core.panel import PanelBuilder
+    from investment_manager.features import FeatureEngine
+    from investment_manager.panel import PanelBuilder
 
     panel = PanelBuilder(app_config.panel).build(
         market=replay_input.market,
