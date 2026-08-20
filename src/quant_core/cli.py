@@ -115,6 +115,15 @@ def _parse_utc_option(value: str, *, name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _parse_research_symbol(value: str) -> str:
+    """Validate a public-data research symbol without expanding production scope."""
+
+    canonical = value.upper()
+    if not canonical.isalnum():
+        raise typer.BadParameter("研究品种只能包含字母和数字", param_hint="symbol")
+    return canonical
+
+
 def _load_runtime_release(config: Path, release_manifest: Path):
     loaded = load_config(config)
     manifest = load_release_manifest(release_manifest)
@@ -354,9 +363,7 @@ def fetch_binance_history_command(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
-    canonical_symbol = symbol.upper()
-    if canonical_symbol not in loaded.market_data.symbols:
-        raise typer.BadParameter("symbol 必须在当前 MarketDataPolicy 中显式登记")
+    canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_history(
             base_url=loaded.market_data.rest_base_url,
@@ -404,9 +411,7 @@ def fetch_binance_funding_history_command(
     )
 
     loaded = load_config(config)
-    canonical_symbol = symbol.upper()
-    if canonical_symbol not in loaded.market_data.symbols:
-        raise typer.BadParameter("symbol 必须在当前 MarketDataPolicy 中显式登记")
+    canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_funding_history(
             base_url="https://data.binance.vision",
@@ -466,11 +471,6 @@ def fetch_binance_carry_history_command(
     funding_dataset = HistoricalFundingDatasetCatalog(funding_catalog).load(
         funding_dataset_id
     )
-    if spot_dataset.manifest.symbol not in loaded.market_data.symbols:
-        raise typer.BadParameter(
-            "现货数据品种必须在当前 MarketDataPolicy 中显式登记",
-            param_hint="spot-dataset-id",
-        )
     try:
         dataset = asyncio.run(
             fetch_binance_carry_history(
