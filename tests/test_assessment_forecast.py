@@ -1,8 +1,14 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
+from temporalio import activity
+from temporalio.exceptions import ApplicationError
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Worker
 
 from quant_core.analyst import AnalystResult
 from quant_core.assess_execution import (
@@ -23,6 +29,11 @@ from quant_core.assessment_outcome import (
     AssessmentViewOutcome,
     AssessmentViewOutcomeSettler,
     SqlAssessmentViewOutcomeStore,
+)
+from quant_core.assessment_workflows import (
+    ASSESS_CONTEXT_ACTIVITY,
+    ContextAssessmentWorkflow,
+    build_assessment_workflow_request,
 )
 from quant_core.asset_management import (
     AssessmentUncertainty,
@@ -539,3 +550,75 @@ def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     assert replayed.reused_authoritative is True
     assert replayed.assessment == first.assessment
     assert analyst.calls == 1
+
+
+def test_assessment_workflow_recovers_committed_result_after_lost_ack(
+    app_config,
+) -> None:
+    async def scenario() -> None:
+        engine = create_engine(
+            "sqlite+pysqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        create_schema(engine)
+        analyst = _CountingContextAnalyst(_assessment())
+        executor = ContextAssessmentExecutor(
+            SqlContextAssessmentStore(engine),
+            analyst,
+        )
+        activity_attempts = 0
+
+        @activity.defn(name=ASSESS_CONTEXT_ACTIVITY)
+        async def assess_context(raw_request):
+            nonlocal activity_attempts
+            activity_attempts += 1
+            execution = executor.execute(
+                DecisionPacket.model_validate(raw_request["packet"]),
+                expected_analysis_behavior_hash=raw_request[
+                    "analysis_behavior_hash"
+                ],
+            )
+            if activity_attempts == 1:
+                raise ApplicationError("模拟提交成功后确认丢失")
+            return execution.model_dump(mode="json")
+
+        created_at = datetime.now(UTC)
+        temporal_policy = app_config.temporal.model_copy(
+            update={
+                "task_queue": "assessment-workflow-test",
+                "retry_initial_seconds": 1,
+                "retry_maximum_seconds": 1,
+            }
+        )
+        request = build_assessment_workflow_request(
+            packet=_packet(),
+            analysis_behavior_hash=analyst.assessment.analysis_behavior_hash,
+            temporal_policy=temporal_policy,
+            created_at=created_at,
+            deadline=created_at + timedelta(minutes=5),
+        )
+
+        async with await WorkflowEnvironment.start_time_skipping() as env, Worker(
+            env.client,
+            task_queue=temporal_policy.task_queue,
+            workflows=[ContextAssessmentWorkflow],
+            activities=[assess_context],
+        ):
+            raw_result = await env.client.execute_workflow(
+                ContextAssessmentWorkflow.run,
+                request.model_dump(mode="json"),
+                id=request.workflow_id,
+                task_queue=temporal_policy.task_queue,
+            )
+
+        result = executor.execute(
+            request.packet,
+            expected_analysis_behavior_hash=request.analysis_behavior_hash,
+        )
+        assert raw_result["status"] == AssessmentExecutionStatus.SUCCEEDED
+        assert result.reused_authoritative is True
+        assert activity_attempts == 2
+        assert analyst.calls == 1
+
+    asyncio.run(scenario())
