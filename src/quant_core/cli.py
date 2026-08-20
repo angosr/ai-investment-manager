@@ -2407,7 +2407,7 @@ def market_stream(
     detector = MarketShockDetector(
         pipeline_id=loaded.pipeline.version,
         relative_move_threshold=loaded.trigger.volatility_jump_threshold,
-        window_seconds=loaded.market_data.interval_seconds,
+        window_seconds=loaded.trigger.volatility_window_seconds,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         sink=triggers,
     )

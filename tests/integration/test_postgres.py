@@ -191,6 +191,20 @@ def test_postgres_cycle_transaction_and_risk_budget(app_config, replay_input) ->
     candidate_evaluation_at = candidate.signal_observed_at + timedelta(
         minutes=candidate.horizon_minutes
     )
+    candidate_entry_at = candidate.signal_observed_at + timedelta(seconds=1)
+    SqlMarketDataStore(engine).put_trade(
+        MarketTrade(
+            trade_id="postgres-candidate-entry",
+            symbol=candidate.symbol,
+            aggregate_trade_id=9_000_000_001,
+            event_time=candidate_entry_at,
+            observed_at=candidate_entry_at,
+            price=candidate.reference_price,
+            quantity=Decimal("1"),
+            buyer_is_maker=False,
+            source="postgres-contract",
+        )
+    )
     SqlMarketDataStore(engine).put_trade(
         MarketTrade(
             trade_id="postgres-candidate-exit",

@@ -2,7 +2,7 @@ manifest_id: release-testnet-forecast-baseline-v1
 created_at: 2026-08-19T20:37:00Z
 status: CHALLENGER
 code_version: cd0fb5c95c0e95c032bb05df63836813a4719d79
-configuration_hash: 41f3cf9af212ac49970e9b7b9c795649784247b6f4df5c7b9e1409f27b98481c
+configuration_hash: d7c4226997747c036172cd71d49f1c105613409fc23030499a4c6f938d265dbc
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-event-continuity-v1
 complexity_score: 2
@@ -16,8 +16,8 @@ component_versions:
   - [risk, testnet-risk-v1]
   - [execution, binance-spot-testnet-execution-v1]
   - [reconciliation, binance-spot-testnet-reconciliation-v1]
-  - [outcome_evaluation, outcome-window-v7]
-  - [trigger, analysis-trigger-v5]
+  - [outcome_evaluation, outcome-window-v8]
+  - [trigger, analysis-trigger-v6]
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-testnet-v1]
   - [shadow, shadow-simulation-v1]

@@ -258,7 +258,7 @@ def test_market_shock_detector_filters_ticks_before_creating_trigger(app_config)
     assert not detector.observe(same_window)
     assert len(sink.triggers) == 1
     assert sink.triggers[0].trigger_type.value == "MARKET_SHOCK"
-    assert sink.triggers[0].dedup_key.startswith("trade-window-v1:300:")
+    assert sink.triggers[0].dedup_key.startswith("rolling-trade-v2:300:")
 
 
 def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
@@ -351,6 +351,78 @@ def test_market_shock_detects_reversal_and_cross_window_gap(app_config) -> None:
     assert not gap.observe(before_boundary)
     assert gap.observe(after_boundary)
     assert len(gap_sink.triggers) == 1
+
+
+def test_market_shock_uses_rolling_window_across_fixed_boundaries(app_config) -> None:
+    class RecordingSink:
+        def __init__(self):
+            self.triggers = []
+
+        def record_trigger(self, trigger):
+            self.triggers.append(trigger)
+            return True
+
+    sink = RecordingSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.02"),
+        window_seconds=600,
+        trigger_expiry_seconds=900,
+        sink=sink,
+    )
+    prices = (
+        (NOW + timedelta(minutes=4, seconds=59), "100"),
+        (NOW + timedelta(minutes=5, seconds=1), "101.1"),
+        (NOW + timedelta(minutes=6, seconds=1), "102.1"),
+    )
+
+    results = [
+        detector.observe(
+            _trade(at, trade_id=index).model_copy(update={"price": Decimal(price)})
+        )
+        for index, (at, price) in enumerate(prices, start=1)
+    ]
+
+    assert results == [False, False, True]
+    assert len(sink.triggers) == 1
+
+
+def test_market_shock_rebases_and_cools_down_after_trigger(app_config) -> None:
+    class RecordingSink:
+        def __init__(self):
+            self.triggers = []
+
+        def record_trigger(self, trigger):
+            self.triggers.append(trigger)
+            return True
+
+    sink = RecordingSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.02"),
+        window_seconds=600,
+        trigger_expiry_seconds=900,
+        sink=sink,
+    )
+    samples = (
+        (NOW + timedelta(seconds=1), "100"),
+        (NOW + timedelta(seconds=2), "102.1"),
+        (NOW + timedelta(seconds=3), "102.2"),
+        (NOW + timedelta(seconds=4), "104.3"),
+        (NOW + timedelta(minutes=10, seconds=3), "104.3"),
+        (NOW + timedelta(minutes=10, seconds=4), "106.5"),
+    )
+    results = [
+        detector.observe(
+            _trade(at, trade_id=index).model_copy(
+                update={"price": Decimal(price)}
+            )
+        )
+        for index, (at, price) in enumerate(samples, start=1)
+    ]
+
+    assert results == [False, True, False, False, False, True]
+    assert len(sink.triggers) == 2
 
 
 @pytest.mark.parametrize("backend", ["memory", "sql"])

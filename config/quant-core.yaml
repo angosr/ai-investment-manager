@@ -70,7 +70,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v7
+  version: outcome-window-v8
   forecast_version: analysis-forecast-v3
   window_hours: 24
   settlement_grace_minutes: 120
@@ -87,11 +87,12 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v5
+  version: analysis-trigger-v6
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
   volatility_jump_threshold: "0.02"
+  volatility_window_seconds: 600
   minimum_call_interval_seconds: 15
   maximum_ai_calls_per_hour: 12
   maximum_scheduled_wakeups: 64

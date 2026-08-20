@@ -50,24 +50,49 @@ def _stored_outcome(engine) -> CandidateOutcome:
     return CandidateOutcome.model_validate(payload)
 
 
+def _put_trade(
+    engine,
+    candidate,
+    *,
+    trade_id: int,
+    at,
+    price: Decimal,
+) -> None:
+    SqlMarketDataStore(engine).put_trade(
+        MarketTrade(
+            trade_id=f"candidate-trade-{trade_id}",
+            symbol=candidate.symbol,
+            aggregate_trade_id=trade_id,
+            event_time=at,
+            observed_at=at,
+            price=price,
+            quantity=Decimal("1"),
+            buyer_is_maker=False,
+            source="test",
+        )
+    )
+
+
 def test_candidate_outcome_scores_rejected_or_executed_signal_without_touching_pnl(
     app_config, replay_input
 ) -> None:
     engine, candidate = _seed_candidate(app_config, replay_input)
     evaluation_at = candidate.signal_observed_at + timedelta(minutes=candidate.horizon_minutes)
     exit_price = candidate.reference_price * Decimal("1.01")
-    SqlMarketDataStore(engine).put_trade(
-        MarketTrade(
-            trade_id="candidate-exit-trade",
-            symbol=candidate.symbol,
-            aggregate_trade_id=9_000_000_001,
-            event_time=evaluation_at,
-            observed_at=evaluation_at,
-            price=exit_price,
-            quantity=Decimal("1"),
-            buyer_is_maker=False,
-            source="test",
-        )
+    entry_at = candidate.signal_observed_at + timedelta(seconds=1)
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_000,
+        at=entry_at,
+        price=candidate.reference_price,
+    )
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_001,
+        at=evaluation_at,
+        price=exit_price,
     )
 
     first = _settler(engine, app_config).settle(as_of=evaluation_at + timedelta(seconds=1))
@@ -78,6 +103,10 @@ def test_candidate_outcome_scores_rejected_or_executed_signal_without_touching_p
     assert replayed.settled == 0
     assert outcome.status == CandidateOutcomeStatus.SETTLED
     assert outcome.gross_return_bps == Decimal("100")
+    assert outcome.entry_price == candidate.reference_price
+    assert outcome.entry_event_time == entry_at
+    assert outcome.entry_observed_at == entry_at
+    assert outcome.exit_observed_at == evaluation_at
     assert outcome.estimated_cost_bps == candidate.estimated_cost_bps
     assert outcome.execution_policy_version == candidate.execution_policy_version
     assert outcome.frequency_policy_version == candidate.frequency_policy_version
@@ -104,6 +133,13 @@ def test_candidate_outcome_marks_missing_horizon_market_unscorable(
 ) -> None:
     engine, candidate = _seed_candidate(app_config, replay_input)
     evaluation_at = candidate.signal_observed_at + timedelta(minutes=candidate.horizon_minutes)
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_000,
+        at=candidate.signal_observed_at + timedelta(seconds=1),
+        price=candidate.reference_price,
+    )
 
     result = _settler(engine, app_config).settle(
         as_of=evaluation_at
@@ -159,3 +195,47 @@ def test_candidate_without_frozen_cost_basis_is_unscorable(app_config, replay_in
     assert outcome.reason_code == "COST_BASIS_NOT_FROZEN"
     assert outcome.execution_policy_version == "unfrozen-legacy"
     assert outcome.frequency_policy_version == "unfrozen-legacy"
+
+
+def test_candidate_outcome_uses_first_visible_entry_and_stop_before_horizon(
+    app_config, replay_input
+) -> None:
+    engine, candidate = _seed_candidate(app_config, replay_input)
+    entry_at = candidate.signal_observed_at + timedelta(seconds=1)
+    stop_at = entry_at + timedelta(minutes=5)
+    evaluation_at = candidate.signal_observed_at + timedelta(minutes=candidate.horizon_minutes)
+    entry_price = candidate.reference_price * Decimal("1.001")
+    stop_fill = candidate.stop_price * Decimal("0.999")
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_000,
+        at=entry_at,
+        price=entry_price,
+    )
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_001,
+        at=stop_at,
+        price=stop_fill,
+    )
+    _put_trade(
+        engine,
+        candidate,
+        trade_id=9_000_000_002,
+        at=evaluation_at,
+        price=candidate.reference_price * Decimal("1.02"),
+    )
+
+    result = _settler(engine, app_config).settle(as_of=evaluation_at + timedelta(seconds=1))
+    outcome = _stored_outcome(engine)
+
+    assert result.settled == 1
+    assert outcome.reason_code == "STOP_LOSS_TRIGGERED"
+    assert outcome.entry_price == entry_price
+    assert outcome.exit_price == stop_fill
+    assert outcome.exit_event_time == stop_at
+    assert outcome.gross_return_bps == (stop_fill / entry_price - Decimal("1")) * Decimal(
+        "10000"
+    )

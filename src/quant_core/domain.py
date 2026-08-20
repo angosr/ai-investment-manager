@@ -645,8 +645,12 @@ class CandidateOutcome(FrozenModel):
     evaluation_at: datetime
     settled_at: datetime
     reference_price: PositiveDecimal
+    entry_price: PositiveDecimal | None = None
+    entry_event_time: datetime | None = None
+    entry_observed_at: datetime | None = None
     exit_price: PositiveDecimal | None = None
     exit_event_time: datetime | None = None
+    exit_observed_at: datetime | None = None
     gross_return_bps: Decimal | None = None
     estimated_cost_bps: Decimal = Field(ge=0)
     net_return_bps: Decimal | None = None
@@ -655,26 +659,49 @@ class CandidateOutcome(FrozenModel):
     _utc_signal_observed_at = field_validator("signal_observed_at")(_require_utc)
     _utc_evaluation_at = field_validator("evaluation_at")(_require_utc)
     _utc_settled_at = field_validator("settled_at")(_require_utc)
+    _utc_entry_event_time = field_validator("entry_event_time")(_optional_utc)
+    _utc_entry_observed_at = field_validator("entry_observed_at")(_optional_utc)
     _utc_exit_event_time = field_validator("exit_event_time")(_optional_utc)
+    _utc_exit_observed_at = field_validator("exit_observed_at")(_optional_utc)
 
     @model_validator(mode="after")
     def settlement_fields_must_match_status(self):
-        values = (
+        outcome_values = (
             self.exit_price,
             self.exit_event_time,
             self.gross_return_bps,
             self.net_return_bps,
         )
-        if self.status == CandidateOutcomeStatus.SETTLED and any(item is None for item in values):
+        execution_values = (
+            self.entry_price,
+            self.entry_event_time,
+            self.entry_observed_at,
+            self.exit_observed_at,
+        )
+        if self.status == CandidateOutcomeStatus.SETTLED and any(
+            item is None for item in outcome_values
+        ):
             raise ValueError("SETTLED CandidateOutcome 必须包含完整收益事实")
         if self.status == CandidateOutcomeStatus.UNSCORABLE and any(
-            item is not None for item in values
+            item is not None for item in (*outcome_values, *execution_values)
         ):
-            raise ValueError("UNSCORABLE CandidateOutcome 不得伪造退出或收益")
+            raise ValueError("UNSCORABLE CandidateOutcome 不得伪造执行或收益")
+        if self.evaluation_version == "outcome-window-v8" and self.status == (
+            CandidateOutcomeStatus.SETTLED
+        ) and any(item is None for item in execution_values):
+            raise ValueError("outcome-window-v8 必须包含完整入场与可见性事实")
+        if any(item is None for item in execution_values) and any(
+            item is not None for item in execution_values
+        ):
+            raise ValueError("CandidateOutcome 执行事实必须完整或全部缺失")
         if self.evaluation_at <= self.signal_observed_at:
             raise ValueError("CandidateOutcome 评价时间必须晚于信号时间")
         if self.settled_at < self.evaluation_at:
             raise ValueError("CandidateOutcome 不能在评价时间前结算")
+        if self.entry_observed_at is not None and self.entry_observed_at < (
+            self.signal_observed_at
+        ):
+            raise ValueError("CandidateOutcome 入场不能早于信号完成")
         return self
 
 

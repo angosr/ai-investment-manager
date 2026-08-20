@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from quant_core.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
+    OrderType,
     Side,
     SignalCandidate,
     _require_utc,
@@ -118,19 +119,35 @@ class SqlCandidateOutcomeStore:
             )
         return tuple(CandidateOutcome.model_validate(payload) for payload in payloads)
 
-    def trade_at_or_before(
+    def visible_path_trades(
         self,
         *,
         symbol: str,
+        signal_observed_at: datetime,
         evaluation_at: datetime,
         visible_at: datetime,
-    ) -> MarketTrade | None:
-        return trade_at_or_before(
-            self._engine,
-            symbol=symbol,
-            evaluation_at=evaluation_at,
-            visible_at=visible_at,
-        )
+    ) -> tuple[MarketTrade, ...]:
+        signal_at = _require_utc(signal_observed_at)
+        evaluation = _require_utc(evaluation_at)
+        visible = min(_require_utc(visible_at), evaluation)
+        with self._engine.connect() as connection:
+            payloads = tuple(
+                connection.execute(
+                    select(market_trades.c.payload)
+                    .where(
+                        market_trades.c.symbol == symbol,
+                        market_trades.c.event_time >= signal_at,
+                        market_trades.c.event_time <= evaluation,
+                        market_trades.c.observed_at >= signal_at,
+                        market_trades.c.observed_at <= visible,
+                    )
+                    .order_by(
+                        market_trades.c.observed_at,
+                        market_trades.c.aggregate_trade_id,
+                    )
+                ).scalars()
+            )
+        return tuple(MarketTrade.model_validate(payload) for payload in payloads)
 
     def record(self, outcome: CandidateOutcome) -> bool:
         payload = outcome.model_dump(mode="json")
@@ -211,27 +228,53 @@ class CandidateOutcomeSettler:
                 )
                 unscorable += int(self.store.record(outcome))
                 continue
-            trade = self.store.trade_at_or_before(
+            trades = self.store.visible_path_trades(
                 symbol=candidate.symbol,
+                signal_observed_at=candidate.signal_observed_at,
                 evaluation_at=evaluation_at,
                 visible_at=as_of,
             )
-            fresh_trade = trade is not None and timedelta(
+            entry_trade = self._entry_trade(candidate, trades)
+            timely_entry = entry_trade is not None and (
+                candidate.entry.order_type == OrderType.LIMIT
+                or entry_trade.observed_at - candidate.signal_observed_at
+                <= timedelta(seconds=self.maximum_market_age_seconds)
+            )
+            horizon_trade = max(
+                trades,
+                key=lambda item: (item.event_time, item.aggregate_trade_id),
+                default=None,
+            )
+            fresh_horizon = horizon_trade is not None and timedelta(
                 0
-            ) <= evaluation_at - trade.event_time <= timedelta(
+            ) <= evaluation_at - horizon_trade.event_time <= timedelta(
                 seconds=self.maximum_market_age_seconds
             )
-            if fresh_trade:
-                assert trade is not None
-                gross = self._gross_return_bps(candidate, trade.price)
+            if timely_entry and fresh_horizon:
+                assert entry_trade is not None and horizon_trade is not None
+                stop_trade = self._stop_trade(candidate, entry_trade, trades)
+                exit_trade = stop_trade or horizon_trade
+                gross = self._gross_return_bps(
+                    candidate.side,
+                    entry_trade.price,
+                    exit_trade.price,
+                )
                 outcome = CandidateOutcome(
                     **common,
                     status=CandidateOutcomeStatus.SETTLED,
-                    exit_price=trade.price,
-                    exit_event_time=trade.event_time,
+                    entry_price=entry_trade.price,
+                    entry_event_time=entry_trade.event_time,
+                    entry_observed_at=entry_trade.observed_at,
+                    exit_price=exit_trade.price,
+                    exit_event_time=exit_trade.event_time,
+                    exit_observed_at=exit_trade.observed_at,
                     gross_return_bps=gross,
                     net_return_bps=gross - cost_bps,
-                    reason_code="HORIZON_RETURN_AVAILABLE",
+                    reason_code=(
+                        "STOP_LOSS_TRIGGERED"
+                        if stop_trade is not None
+                        else "HORIZON_RETURN_AVAILABLE"
+                    ),
                 )
                 settled += int(self.store.record(outcome))
                 continue
@@ -241,7 +284,11 @@ class CandidateOutcomeSettler:
             outcome = CandidateOutcome(
                 **common,
                 status=CandidateOutcomeStatus.UNSCORABLE,
-                reason_code="MARKET_DATA_MISSING_AT_HORIZON",
+                reason_code=(
+                    "ENTRY_NOT_FILLED_OR_STALE"
+                    if not timely_entry
+                    else "MARKET_DATA_MISSING_AT_HORIZON"
+                ),
             )
             unscorable += int(self.store.record(outcome))
         return CandidateSettlementResult(
@@ -251,9 +298,45 @@ class CandidateOutcomeSettler:
         )
 
     @staticmethod
-    def _gross_return_bps(candidate: SignalCandidate, exit_price: Decimal) -> Decimal:
-        if candidate.side == Side.BUY:
-            fraction = exit_price / candidate.reference_price - Decimal("1")
+    def _entry_trade(
+        candidate: SignalCandidate,
+        trades: tuple[MarketTrade, ...],
+    ) -> MarketTrade | None:
+        for trade in trades:
+            if trade.observed_at > candidate.valid_until:
+                return None
+            if candidate.entry.order_type == OrderType.MARKET:
+                return trade
+            assert candidate.entry.price is not None
+            if candidate.side == Side.BUY and trade.price <= candidate.entry.price:
+                return trade
+            if candidate.side == Side.SELL and trade.price >= candidate.entry.price:
+                return trade
+        return None
+
+    @staticmethod
+    def _stop_trade(
+        candidate: SignalCandidate,
+        entry_trade: MarketTrade,
+        trades: tuple[MarketTrade, ...],
+    ) -> MarketTrade | None:
+        for trade in trades:
+            if trade.observed_at < entry_trade.observed_at:
+                continue
+            if candidate.side == Side.BUY and trade.price <= candidate.stop_price:
+                return trade
+            if candidate.side == Side.SELL and trade.price >= candidate.stop_price:
+                return trade
+        return None
+
+    @staticmethod
+    def _gross_return_bps(
+        side: Side,
+        entry_price: Decimal,
+        exit_price: Decimal,
+    ) -> Decimal:
+        if side == Side.BUY:
+            fraction = exit_price / entry_price - Decimal("1")
         else:
-            fraction = Decimal("1") - exit_price / candidate.reference_price
+            fraction = Decimal("1") - exit_price / entry_price
         return fraction * Decimal("10000")

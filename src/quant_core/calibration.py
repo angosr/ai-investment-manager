@@ -209,7 +209,14 @@ class EdgeCalibrationBuilder:
             "signal_observed_at": outcome.signal_observed_at,
             "evaluation_at": outcome.evaluation_at,
             "settled_at": outcome.settled_at,
+            "entry_price": outcome.entry_price,
+            "entry_event_time": outcome.entry_event_time,
+            "entry_observed_at": outcome.entry_observed_at,
+            "exit_price": outcome.exit_price,
+            "exit_event_time": outcome.exit_event_time,
+            "exit_observed_at": outcome.exit_observed_at,
             "gross_return_bps": outcome.gross_return_bps,
+            "reason_code": outcome.reason_code,
         }
 
 
