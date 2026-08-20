@@ -13,7 +13,9 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v3
+  # State 组装/可见性算法未变；新增事实类型由下级投影与 Delta 版本表达，
+  # 保持 v2 才能与发布前点时 State 连续比较，而不是吞掉首个材料变化。
+  version: portfolio-state-v2
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: fed-official-fact-v2

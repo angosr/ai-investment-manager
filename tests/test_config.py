@@ -28,6 +28,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.ai_mode.value == "OFF"
     assert config.information.version == "information-intake-v10"
     assert config.information.normalizer_version == "trendradar-collector-v7"
+    assert config.decision_state.version == "portfolio-state-v2"
+    assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
+    assert config.decision_state.delta_policy.version == "state-delta-v4"
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",
