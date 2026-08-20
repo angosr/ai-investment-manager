@@ -19,7 +19,7 @@ from quant_core.binance_testnet import BinanceTradingStateSource, assemble_binan
 from quant_core.config import AppConfig, DeploymentStage, ReconciliationPolicy, TemporalPolicy
 from quant_core.domain import FrozenModel, _require_utc
 from quant_core.ids import content_hash, stable_id
-from quant_core.persistence import build_engine
+from quant_core.platform.database import build_engine
 from quant_core.reconciliation import (
     ReconciliationEngine,
     ReconciliationReport,

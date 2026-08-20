@@ -14,7 +14,6 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
-    MetaData,
     Numeric,
     PrimaryKeyConstraint,
     String,
@@ -22,7 +21,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     case,
-    create_engine,
     func,
     insert,
     select,
@@ -30,7 +28,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 
 from quant_core.analyst import AttemptAudit, CapacitySnapshot, CodexLease
 from quant_core.domain import (
@@ -69,6 +67,7 @@ from quant_core.governance import (
 from quant_core.ids import content_hash, stable_id
 from quant_core.ledger import CycleFacts, LifecycleFacts, RiskReservationRejected
 from quant_core.lifecycle import OpenLifecycleRecord
+from quant_core.platform.database import metadata
 from quant_core.risk_budget import ReservationClaim
 from quant_core.trigger import (
     AnalysisTriggerEvent,
@@ -76,9 +75,6 @@ from quant_core.trigger import (
     TriggerOutboxKind,
     build_trigger_event,
 )
-
-metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "d4b7e2c9a106"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -1057,29 +1053,10 @@ def latest_account_snapshot_payload(connection: Connection, *, as_of: datetime):
     ).scalar_one_or_none()
 
 
-def build_engine(database_url: str, *, echo: bool = False) -> Engine:
-    return create_engine(database_url, echo=echo, future=True)
-
-
-def require_current_schema(engine: Engine) -> None:
-    """Fail closed before a runtime service touches an absent or stale schema."""
-
-    try:
-        with engine.connect() as connection:
-            versions = tuple(
-                connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
-            )
-    except SQLAlchemyError as exc:
-        raise RuntimeError("数据库 Schema 版本不可读；拒绝启动运行服务") from exc
-    if versions != (DATABASE_SCHEMA_VERSION,):
-        observed = versions[0] if len(versions) == 1 else "MISSING_OR_MULTIPLE_HEADS"
-        raise RuntimeError(
-            f"数据库 Schema 版本不匹配：expected={DATABASE_SCHEMA_VERSION}, observed={observed}"
-        )
-
-
 def create_schema(engine: Engine) -> None:
-    metadata.create_all(engine)
+    from quant_core.schema import compose_metadata
+
+    compose_metadata().create_all(engine)
     with engine.begin() as connection:
         exists = connection.execute(
             select(portfolio_risk_budgets.c.portfolio_id).where(

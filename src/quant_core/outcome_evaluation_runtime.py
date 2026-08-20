@@ -29,7 +29,7 @@ from quant_core.outcome_evaluation_workflows import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
     OutcomeEvaluationWorkflow,
 )
-from quant_core.persistence import build_engine
+from quant_core.platform.database import build_engine
 from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.workflow import OrchestrationPolicySnapshot
 

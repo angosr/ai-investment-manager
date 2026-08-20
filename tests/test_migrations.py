@@ -5,12 +5,10 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select, text
 
-from quant_core.market_data_sql import market_metadata
-from quant_core.persistence import (
-    metadata,
-    portfolio_risk_budgets,
-    require_current_schema,
-)
+from quant_core.market_data_sql import market_quotes
+from quant_core.persistence import analysis_cycles, portfolio_risk_budgets
+from quant_core.platform.database import require_current_schema
+from quant_core.schema import compose_metadata
 
 
 def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
@@ -31,8 +29,7 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
 
     engine = create_engine(database_url)
     tables = set(inspect(engine).get_table_names())
-    assert set(metadata.tables).issubset(tables)
-    assert set(market_metadata.tables).issubset(tables)
+    assert set(compose_metadata().tables) <= tables
     assert "alembic_version" in tables
     assert "analysis_workflow_runs" not in tables
     with engine.connect() as connection:
@@ -48,3 +45,10 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
         connection.execute(text("UPDATE alembic_version SET version_num = 'stale-version'"))
     with pytest.raises(RuntimeError, match="数据库 Schema 版本不匹配"):
         require_current_schema(engine)
+
+
+def test_all_physical_database_tables_share_one_metadata_registry() -> None:
+    registry = compose_metadata()
+
+    assert analysis_cycles.metadata is registry
+    assert market_quotes.metadata is registry

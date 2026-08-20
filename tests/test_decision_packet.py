@@ -35,7 +35,7 @@ from quant_core.decision_packet import (
 from quant_core.domain import DirectionalView
 from quant_core.features import FeatureEngine
 from quant_core.ids import canonical_json, content_hash
-from quant_core.persistence import metadata
+from quant_core.platform.database import metadata
 
 HASH = "a" * 64
 

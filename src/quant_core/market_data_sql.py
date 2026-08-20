@@ -9,7 +9,6 @@ from sqlalchemy import (
     Column,
     DateTime,
     Index,
-    MetaData,
     String,
     Table,
     insert,
@@ -28,14 +27,13 @@ from quant_core.market_data import (
     _quote_market_facts,
     _trade_market_facts,
 )
+from quant_core.platform.database import metadata
 
 logger = logging.getLogger(__name__)
 
-market_metadata = MetaData()
-
 market_quotes = Table(
     "market_quotes",
-    market_metadata,
+    metadata,
     Column("quote_id", String(128), primary_key=True),
     Column("symbol", String(32), nullable=False),
     Column("observed_at", DateTime(timezone=True), nullable=False),
@@ -45,7 +43,7 @@ Index("ix_market_quotes_symbol_observed", market_quotes.c.symbol, market_quotes.
 
 market_trades = Table(
     "market_trades",
-    market_metadata,
+    metadata,
     Column("symbol", String(32), primary_key=True),
     Column("aggregate_trade_id", BigInteger, primary_key=True),
     Column("event_time", DateTime(timezone=True), nullable=False),
@@ -56,7 +54,7 @@ Index("ix_market_trades_symbol_event", market_trades.c.symbol, market_trades.c.e
 
 market_bars = Table(
     "market_bars",
-    market_metadata,
+    metadata,
     Column("symbol", String(32), primary_key=True),
     Column("interval", String(16), primary_key=True),
     Column("open_time", DateTime(timezone=True), primary_key=True),
@@ -71,8 +69,11 @@ Index(
 )
 
 
+market_tables = (market_quotes, market_trades, market_bars)
+
+
 def create_market_schema(engine: Engine) -> None:
-    market_metadata.create_all(engine)
+    metadata.create_all(engine, tables=market_tables)
 
 
 class SqlMarketDataStore:

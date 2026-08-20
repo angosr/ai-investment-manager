@@ -32,7 +32,7 @@ from quant_core.governance import ReleaseManifest
 from quant_core.governance_context import GovernanceSnapshotAssembler
 from quant_core.lifecycle import PositionLifecycleManager
 from quant_core.market_data import MarketTrade
-from quant_core.market_data_sql import SqlMarketDataStore, market_metadata
+from quant_core.market_data_sql import SqlMarketDataStore
 from quant_core.official_information import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,
@@ -48,17 +48,16 @@ from quant_core.persistence import (
     SqlOpenLifecycleRepository,
     SqlRiskBudgetStore,
     account_snapshots,
-    build_engine,
     candidate_outcomes,
     canonical_fact_revisions,
     decision_outcomes,
     market_calendar_event_revisions,
-    metadata,
     metric_observations,
     orders,
     portfolio_risk_budgets,
     source_observations,
 )
+from quant_core.platform.database import build_engine, metadata
 from quant_core.reconciliation import MockReconciler
 from quant_core.source_payload import build_raw_source_payload
 from quant_core.source_payload_sql import SqlRawSourcePayloadStore
@@ -95,7 +94,6 @@ def test_postgres_cycle_transaction_and_risk_budget(
     request.addfinalizer(engine.dispose)
     if engine.dialect.name != "postgresql":
         raise RuntimeError("该契约测试必须使用 PostgreSQL")
-    market_metadata.drop_all(engine)
     metadata.drop_all(engine)
     with engine.begin() as connection:
         connection.execute(text("DROP TABLE IF EXISTS alembic_version"))

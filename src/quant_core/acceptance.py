@@ -16,7 +16,7 @@ from quant_core.governance import (
     validate_manifest_against_config,
     validate_manifest_code_version,
 )
-from quant_core.persistence import metadata
+from quant_core.schema import compose_metadata
 
 
 class CheckStatus(StrEnum):
@@ -259,14 +259,15 @@ class PhaseAAuditor:
         )
 
     def _temporal_is_single_workflow_owner(self) -> AuditCheck:
+        tables = compose_metadata().tables
         safe = (
-            "analysis_workflow_runs" not in metadata.tables
-            and "execution_requests" in metadata.tables
-            and "reconciliation_reports" in metadata.tables
-            and "outcome_window_reports" in metadata.tables
-            and "governance_decisions" in metadata.tables
-            and "evaluation_results" in metadata.tables
-            and "release_approval_requests" in metadata.tables
+            "analysis_workflow_runs" not in tables
+            and "execution_requests" in tables
+            and "reconciliation_reports" in tables
+            and "outcome_window_reports" in tables
+            and "governance_decisions" in tables
+            and "evaluation_results" in tables
+            and "release_approval_requests" in tables
         )
         return AuditCheck(
             check_id="TEMPORAL_SINGLE_WORKFLOW_OWNER",

@@ -23,7 +23,7 @@ from quant_core.dashboard.health import assemble_health
 from quant_core.dashboard.read_models import DashboardReader
 from quant_core.dashboard.resources import prime_cpu_sampler, sample_host_resources
 from quant_core.dashboard.stream import refresh_events
-from quant_core.persistence import build_engine
+from quant_core.platform.database import build_engine
 from quant_core.temporal_runtime import TemporalAnalysisCoordinator
 from quant_core.trigger_workflows import coordinator_workflow_id
 

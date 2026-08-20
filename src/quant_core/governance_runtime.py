@@ -39,8 +39,8 @@ from quant_core.persistence import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
     SqlGovernanceRepository,
-    build_engine,
 )
+from quant_core.platform.database import build_engine
 from quant_core.temporal_worker import SingleActivityWorker
 from quant_core.trigger import AnalysisTriggerPlan, TriggerPlanPatch
 from quant_core.trigger_sql import SqlTriggerRepository

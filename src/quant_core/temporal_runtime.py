@@ -25,8 +25,8 @@ from quant_core.persistence import (
     SqlCodexAuditStore,
     SqlFactLedger,
     SqlRiskBudgetStore,
-    build_engine,
 )
+from quant_core.platform.database import build_engine
 from quant_core.temporal_workflows import (
     EXECUTION_ACTIVITY_NAME,
     PREPARE_ACTIVITY_NAME,

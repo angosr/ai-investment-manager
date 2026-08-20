@@ -60,9 +60,8 @@ from quant_core.outcome_evaluation_runtime import assemble_outcome_evaluation
 from quant_core.persistence import (
     SqlEventStore,
     SqlGovernanceRepository,
-    build_engine,
-    require_current_schema,
 )
+from quant_core.platform.database import build_engine, require_current_schema
 from quant_core.portfolio_protection import SqlPortfolioProtectionStore
 from quant_core.reconciliation_runtime import assemble_reconciliation
 from quant_core.shadow import SqlShadowStateReader

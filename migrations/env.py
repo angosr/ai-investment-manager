@@ -6,8 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from quant_core.market_data_sql import market_metadata
-from quant_core.persistence import metadata
+from quant_core.schema import compose_metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -19,7 +18,7 @@ database_url = config.attributes.get("database_url") or os.environ.get("QUANT_CO
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
-target_metadata = [metadata, market_metadata]
+target_metadata = compose_metadata()
 
 
 def run_migrations_offline() -> None:
