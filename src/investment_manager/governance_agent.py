@@ -26,7 +26,7 @@ from investment_manager.governance import (
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.persistence import change_proposals, governance_decisions
-from investment_manager.trigger import AnalysisTriggerPlan, TriggerPlanPatch
+from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch
 
 GovernorDecision = ChangeProposal | NoChange
 GOVERNOR_DECISION_ADAPTER = TypeAdapter(GovernorDecision)

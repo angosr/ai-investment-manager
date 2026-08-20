@@ -20,7 +20,7 @@ from investment_manager.information.collector import (
 )
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
-from investment_manager.persistence import analysis_trigger_events
+from investment_manager.scheduling.tables import analysis_trigger_events
 from investment_manager.schema import create_schema
 
 

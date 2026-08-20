@@ -10,11 +10,9 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
-    PrimaryKeyConstraint,
     String,
     Table,
     Text,
@@ -70,63 +68,6 @@ from investment_manager.risk_budget import (
     portfolio_risk_budgets,
     risk_reservations,
 )
-from investment_manager.trigger import (
-    AnalysisTriggerEvent,
-    TriggerOutboxKind,
-)
-
-
-def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
-    """PostgreSQL NOTIFY 只负责低延迟唤醒；Outbox 行仍是可靠事实。"""
-
-    if connection.dialect.name == "postgresql":
-        connection.execute(select(func.pg_notify("quant_trigger_outbox", aggregate_key)))
-
-
-def insert_trigger_with_outbox(
-    connection: Connection,
-    trigger: AnalysisTriggerEvent,
-) -> None:
-    """所有触发来源共享同一事务写路径和幂等身份。"""
-
-    trigger_payload = trigger.model_dump(mode="json")
-    connection.execute(
-        insert(analysis_trigger_events).values(
-            trigger_id=trigger.trigger_id,
-            trigger_type=trigger.trigger_type.value,
-            symbol=trigger.symbol,
-            pipeline_id=trigger.pipeline_id,
-            occurred_at=trigger.occurred_at,
-            observed_at=trigger.observed_at,
-            priority=trigger.priority,
-            dedup_key=trigger.dedup_key,
-            expires_at=trigger.expires_at,
-            payload=trigger_payload,
-        )
-    )
-    outbox_id = stable_id(
-        "trigger_outbox",
-        TriggerOutboxKind.TRIGGER_CREATED.value,
-        trigger.trigger_id,
-    )
-    connection.execute(
-        insert(trigger_outbox).values(
-            outbox_id=outbox_id,
-            aggregate_key=f"{trigger.symbol}:{trigger.pipeline_id}",
-            message_kind=TriggerOutboxKind.TRIGGER_CREATED.value,
-            status="PENDING",
-            created_at=trigger.observed_at,
-            available_at=trigger.observed_at,
-            delivered_at=None,
-            attempt_count=0,
-            payload={
-                "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
-                "trigger": trigger_payload,
-            },
-        )
-    )
-    notify_trigger_outbox(connection, f"{trigger.symbol}:{trigger.pipeline_id}")
-
 
 analysis_cycles = Table(
     "analysis_cycles",
@@ -451,137 +392,6 @@ metric_observations = Table(
     UniqueConstraint("cycle_id", "phase", "sequence", name="uq_metric_cycle_phase_sequence"),
 )
 Index("ix_metric_observations_cycle", metric_observations.c.cycle_id)
-
-analysis_trigger_events = Table(
-    "analysis_trigger_events",
-    metadata,
-    Column("trigger_id", String(128), primary_key=True),
-    Column("trigger_type", String(32), nullable=False),
-    Column("symbol", String(32), nullable=False),
-    Column("pipeline_id", String(128), nullable=False),
-    Column("occurred_at", DateTime(timezone=True), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("priority", Integer, nullable=False),
-    Column("dedup_key", String(256), nullable=False),
-    Column("expires_at", DateTime(timezone=True), nullable=True),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "trigger_type",
-        "symbol",
-        "pipeline_id",
-        "dedup_key",
-        name="uq_analysis_trigger_dedup",
-    ),
-)
-Index(
-    "ix_analysis_trigger_scope_time",
-    analysis_trigger_events.c.symbol,
-    analysis_trigger_events.c.pipeline_id,
-    analysis_trigger_events.c.observed_at,
-)
-
-analysis_trigger_batches = Table(
-    "analysis_trigger_batches",
-    metadata,
-    Column("batch_id", String(128), primary_key=True),
-    Column("symbol", String(32), nullable=False),
-    Column("pipeline_id", String(128), nullable=False),
-    Column("plan_revision", Integer, nullable=False),
-    Column("first_occurred_at", DateTime(timezone=True), nullable=False),
-    Column("first_observed_at", DateTime(timezone=True), nullable=False),
-    Column("batched_at", DateTime(timezone=True), nullable=False),
-    Column("analysis_submitted_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_analysis_trigger_batch_timing",
-    analysis_trigger_batches.c.pipeline_id,
-    analysis_trigger_batches.c.analysis_submitted_at,
-)
-
-analysis_call_admissions = Table(
-    "analysis_call_admissions",
-    metadata,
-    Column("batch_id", String(128), primary_key=True),
-    Column("pipeline_id", String(128), nullable=False),
-    Column("symbol", String(32), nullable=False),
-    Column("admitted_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_analysis_call_admissions_admitted_at", analysis_call_admissions.c.admitted_at)
-
-trigger_outbox = Table(
-    "trigger_outbox",
-    metadata,
-    Column("outbox_id", String(128), primary_key=True),
-    Column("aggregate_key", String(256), nullable=False),
-    Column("message_kind", String(32), nullable=False),
-    Column("status", String(16), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("available_at", DateTime(timezone=True), nullable=False),
-    Column("delivered_at", DateTime(timezone=True), nullable=True),
-    Column("attempt_count", Integer, nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_trigger_outbox_pending",
-    trigger_outbox.c.status,
-    trigger_outbox.c.available_at,
-    trigger_outbox.c.outbox_id,
-)
-
-analysis_trigger_plans = Table(
-    "analysis_trigger_plans",
-    metadata,
-    Column("plan_id", String(128), nullable=False),
-    Column("revision", Integer, nullable=False),
-    Column("symbol", String(32), nullable=False),
-    Column("pipeline_id", String(128), nullable=False),
-    Column("manifest_id", String(128), nullable=False),
-    Column("is_current", Boolean, nullable=False),
-    Column("applied_patch_id", String(128), nullable=True, unique=True),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-    PrimaryKeyConstraint("plan_id", "revision"),
-)
-Index(
-    "uq_analysis_trigger_plan_current",
-    analysis_trigger_plans.c.plan_id,
-    unique=True,
-    postgresql_where=analysis_trigger_plans.c.is_current.is_(True),
-    sqlite_where=analysis_trigger_plans.c.is_current.is_(True),
-)
-# plan_for_scope 每次投递都按 (symbol, pipeline_id, is_current) 取当前计划，是热路径；
-# 部分索引只覆盖当前行，避免随修订历史增长而退化为顺序扫描。
-Index(
-    "uq_analysis_trigger_plan_scope_current",
-    analysis_trigger_plans.c.symbol,
-    analysis_trigger_plans.c.pipeline_id,
-    unique=True,
-    postgresql_where=analysis_trigger_plans.c.is_current.is_(True),
-    sqlite_where=analysis_trigger_plans.c.is_current.is_(True),
-)
-
-analysis_scheduled_wakeups = Table(
-    "analysis_scheduled_wakeups",
-    metadata,
-    Column("plan_id", String(128), nullable=False),
-    Column("plan_revision", Integer, nullable=False),
-    Column("wakeup_id", String(128), nullable=False),
-    Column("wake_at", DateTime(timezone=True), nullable=False),
-    Column("expires_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-    PrimaryKeyConstraint("plan_id", "plan_revision", "wakeup_id"),
-    ForeignKeyConstraint(
-        ["plan_id", "plan_revision"],
-        ["analysis_trigger_plans.plan_id", "analysis_trigger_plans.revision"],
-    ),
-)
-Index(
-    "ix_analysis_scheduled_wakeup_due",
-    analysis_scheduled_wakeups.c.wake_at,
-    analysis_scheduled_wakeups.c.expires_at,
-)
 
 codex_runs = Table(
     "codex_runs",

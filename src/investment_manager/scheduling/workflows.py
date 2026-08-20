@@ -9,9 +9,7 @@ from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, ChildWorkflowError
 
 from investment_manager.kernel.identity import stable_id
-from investment_manager.temporal_compat import default_activity_versioning_intent
-from investment_manager.temporal_workflows import AnalysisCycleWorkflow
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisTriggerEvent,
     AnalysisTriggerPlan,
     AnalysisTriggerType,
@@ -22,6 +20,8 @@ from investment_manager.trigger import (
     trigger_reconsideration,
     trigger_rule_value,
 )
+from investment_manager.temporal_compat import default_activity_versioning_intent
+from investment_manager.temporal_workflows import AnalysisCycleWorkflow
 
 BUILD_TRIGGER_REQUEST_ACTIVITY = "build-trigger-analysis-request-v1"
 TRIGGER_SIGNAL = "deliver-trigger-outbox-v1"

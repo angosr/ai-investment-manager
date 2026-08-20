@@ -45,7 +45,7 @@ from investment_manager.kernel.types import (
     FrozenModel,
     PositiveDecimal,
 )
-from investment_manager.trigger import TriggerDecision
+from investment_manager.scheduling.models import TriggerDecision
 
 ANALYST_INPUT_VERSION = "analyst-input-v4"
 _ANALYST_BASE_INSTRUCTIONS = (

@@ -10,7 +10,7 @@ from investment_manager.cycle import CycleInput, CycleResult
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.trigger import TriggerDecision
+from investment_manager.scheduling.models import TriggerDecision
 
 
 class OrchestrationPolicySnapshot(FrozenModel):

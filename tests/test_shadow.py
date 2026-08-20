@@ -18,15 +18,15 @@ from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.persistence import SqlFactLedger
 from investment_manager.portfolio_protection import InMemoryPortfolioProtectionStore
 from investment_manager.risk_budget import SqlRiskBudgetStore
-from investment_manager.schema import create_schema
-from investment_manager.shadow import SqlShadowStateReader
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_initial_trigger_plan,
     build_trigger_batch,
     build_trigger_event,
 )
-from investment_manager.trigger_runtime import TriggerAnalysisRequestBuilder
+from investment_manager.scheduling.runtime import TriggerAnalysisRequestBuilder
+from investment_manager.schema import create_schema
+from investment_manager.shadow import SqlShadowStateReader
 
 NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 

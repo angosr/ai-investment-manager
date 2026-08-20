@@ -42,9 +42,9 @@ from investment_manager.persistence import (
     SqlGovernanceRepository,
 )
 from investment_manager.platform.database import build_engine
+from investment_manager.scheduling.models import AnalysisTriggerPlan, TriggerPlanPatch
+from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.temporal_worker import SingleActivityWorker
-from investment_manager.trigger import AnalysisTriggerPlan, TriggerPlanPatch
-from investment_manager.trigger_sql import SqlTriggerRepository
 from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)

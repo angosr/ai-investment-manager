@@ -26,7 +26,7 @@ from investment_manager.domain import (
     RiskOutcome,
     Side,
 )
-from investment_manager.trigger import TriggerDecision, TriggerReason
+from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 
 
 class StaticAnalyst:

@@ -16,7 +16,7 @@ from investment_manager.kernel.time import (
     require_utc,
 )
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.trigger import AnalysisTriggerPlan
+from investment_manager.scheduling.models import AnalysisTriggerPlan
 
 
 class ChangeType(StrEnum):

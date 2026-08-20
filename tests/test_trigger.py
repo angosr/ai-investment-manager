@@ -9,7 +9,7 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 
 from investment_manager import cli
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisEventRule,
     AnalysisTriggerType,
@@ -32,12 +32,12 @@ from investment_manager.trigger import (
     trigger_reconsideration,
     trigger_rule_value,
 )
-from investment_manager.trigger_runtime import (
+from investment_manager.scheduling.repository import TriggerOutboxMessage
+from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
     terminate_superseded_trigger_coordinators,
 )
-from investment_manager.trigger_sql import TriggerOutboxMessage
-from investment_manager.trigger_workflows import coordinator_workflow_id
+from investment_manager.scheduling.workflows import coordinator_workflow_id
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(

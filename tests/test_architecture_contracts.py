@@ -408,6 +408,42 @@ def test_state_models_and_tables_have_one_domain_owner() -> None:
         assert not (PACKAGE_ROOT / filename).exists()
 
 
+def test_scheduling_tables_and_entry_modules_have_one_owner() -> None:
+    owned_tables = {
+        "analysis_call_admissions",
+        "analysis_scheduled_wakeups",
+        "analysis_trigger_batches",
+        "analysis_trigger_events",
+        "analysis_trigger_plans",
+        "trigger_outbox",
+    }
+    owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        for node in ast.parse(path.read_text()).body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id in owned_tables
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners[target.id].append(path)
+
+    expected = PACKAGE_ROOT / "scheduling" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
+    for filename in (
+        "trigger.py",
+        "trigger_runtime.py",
+        "trigger_sql.py",
+        "trigger_workflows.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

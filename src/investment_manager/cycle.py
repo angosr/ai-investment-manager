@@ -55,8 +55,8 @@ from investment_manager.panel import PanelBuilder
 from investment_manager.reconciliation import MockReconciler
 from investment_manager.risk import RiskEngine
 from investment_manager.risk_budget import InMemoryRiskBudgetStore, RiskBudgetStore
+from investment_manager.scheduling.models import TriggerDecision
 from investment_manager.strategy import PriceTrendStrategy, Strategy
-from investment_manager.trigger import TriggerDecision
 
 
 class CycleInput(FrozenModel):

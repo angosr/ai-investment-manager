@@ -24,7 +24,7 @@ from investment_manager.market.models import (
     MarketTrade,
 )
 from investment_manager.market.repository import MarketDataStore
-from investment_manager.trigger import AnalysisTriggerType, build_trigger_event
+from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 
 logger = logging.getLogger(__name__)
 

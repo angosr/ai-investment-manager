@@ -6,15 +6,7 @@ from sqlalchemy import create_engine, func, select
 
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
-from investment_manager.persistence import (
-    analysis_call_admissions,
-    analysis_trigger_batches,
-    analysis_trigger_events,
-    analysis_trigger_plans,
-    trigger_outbox,
-)
-from investment_manager.schema import create_schema
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisTriggerType,
     ScheduledWakeup,
@@ -24,7 +16,15 @@ from investment_manager.trigger import (
     build_trigger_event,
     build_trigger_plan_patch,
 )
-from investment_manager.trigger_sql import SqlTriggerRepository
+from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.scheduling.tables import (
+    analysis_call_admissions,
+    analysis_trigger_batches,
+    analysis_trigger_events,
+    analysis_trigger_plans,
+    trigger_outbox,
+)
+from investment_manager.schema import create_schema
 
 
 def test_intelligence_insert_and_trigger_outbox_are_one_idempotent_fact(replay_input) -> None:

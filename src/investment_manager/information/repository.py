@@ -10,14 +10,12 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
-from investment_manager.persistence import (
-    analysis_trigger_events,
-    insert_trigger_with_outbox,
-)
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_trigger_event,
 )
+from investment_manager.scheduling.repository import insert_trigger_with_outbox
+from investment_manager.scheduling.tables import analysis_trigger_events
 
 
 class SqlEventStore:

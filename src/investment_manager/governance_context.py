@@ -31,8 +31,6 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     SqlGovernanceRepository,
     analysis_cycles,
-    analysis_trigger_batches,
-    analysis_trigger_plans,
     architecture_decisions,
     candidate_outcomes,
     change_proposals,
@@ -43,10 +41,18 @@ from investment_manager.persistence import (
     reconciliation_reports,
     release_manifests,
     signal_candidates,
+)
+from investment_manager.scheduling.models import (
+    AnalysisTriggerPlan,
+    AnalysisTriggerType,
+    TriggerBatch,
+)
+from investment_manager.scheduling.tables import (
+    analysis_trigger_batches,
+    analysis_trigger_plans,
     trigger_outbox,
 )
 from investment_manager.sql_time import database_utc
-from investment_manager.trigger import AnalysisTriggerPlan, AnalysisTriggerType, TriggerBatch
 
 
 @dataclass(slots=True)

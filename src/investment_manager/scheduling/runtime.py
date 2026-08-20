@@ -25,8 +25,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.portfolio_protection import PortfolioProtectionStore
-from investment_manager.shadow import ShadowStateReader
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisCallAdmission,
     AnalysisTriggerPlan,
     AnalysisTriggerType,
@@ -34,13 +33,14 @@ from investment_manager.trigger import (
     TriggerDecision,
     TriggerReason,
 )
-from investment_manager.trigger_sql import SqlTriggerRepository, TriggerOutboxMessage
-from investment_manager.trigger_workflows import (
+from investment_manager.scheduling.repository import SqlTriggerRepository, TriggerOutboxMessage
+from investment_manager.scheduling.workflows import (
     BUILD_TRIGGER_REQUEST_ACTIVITY,
     TRIGGER_SIGNAL,
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
 )
+from investment_manager.shadow import ShadowStateReader
 from investment_manager.workflow import WorkflowRequest, build_workflow_request
 
 logger = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ from investment_manager.research.trigger_replay import (
     ExternalTriggerReplaySpec,
     run_external_trigger_replay,
 )
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
     build_initial_trigger_plan,

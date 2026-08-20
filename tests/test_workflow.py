@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.cycle import AnalysisCycle
+from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 from investment_manager.temporal_runtime import AnalysisTemporalWorker, TemporalAnalysisCoordinator
-from investment_manager.trigger import TriggerDecision, TriggerReason
 from investment_manager.workflow import (
     WorkflowExecutionStatus,
     WorkflowRequest,

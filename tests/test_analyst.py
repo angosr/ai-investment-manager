@@ -48,7 +48,7 @@ from investment_manager.domain import (
     PriceCondition,
     Side,
 )
-from investment_manager.trigger import TriggerDecision, TriggerReason
+from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 
 
 def _account_registry(tmp_path: Path) -> CodexAccountRegistry:

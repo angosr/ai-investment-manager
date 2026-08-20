@@ -23,13 +23,13 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.persistence import (
     SqlFactLedger,
-    analysis_call_admissions,
     decision_outcomes,
 )
 from investment_manager.risk_budget import SqlRiskBudgetStore
+from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
+from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.scheduling.tables import analysis_call_admissions
 from investment_manager.schema import create_schema
-from investment_manager.trigger import AnalysisTriggerType, build_trigger_event
-from investment_manager.trigger_sql import SqlTriggerRepository
 
 
 def _seed_cycle(app_config, replay_input):

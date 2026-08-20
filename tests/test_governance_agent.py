@@ -37,15 +37,13 @@ from investment_manager.persistence import (
     SqlFactLedger,
     SqlGovernanceRepository,
     analysis_cycles,
-    analysis_trigger_batches,
     change_proposals,
     codex_runs,
     governance_decisions,
     signal_candidates,
 )
 from investment_manager.risk_budget import SqlRiskBudgetStore
-from investment_manager.schema import create_schema
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     TriggerNow,
     build_initial_trigger_plan,
@@ -53,7 +51,9 @@ from investment_manager.trigger import (
     build_trigger_event,
     build_trigger_plan_patch,
 )
-from investment_manager.trigger_sql import SqlTriggerRepository
+from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.scheduling.tables import analysis_trigger_batches
+from investment_manager.schema import create_schema
 
 
 class StaticRouter:

@@ -62,13 +62,7 @@ from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.portfolio_protection import SqlPortfolioProtectionStore
 from investment_manager.reconciliation_runtime import assemble_reconciliation
-from investment_manager.shadow import SqlShadowStateReader
-from investment_manager.temporal_runtime import (
-    TemporalAnalysisCoordinator,
-    assemble_analysis_cycle,
-    run_worker_process,
-)
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
     TriggerDecision,
@@ -78,7 +72,12 @@ from investment_manager.trigger import (
     build_trigger_plan_patch,
     carry_forward_trigger_plan,
 )
-from investment_manager.trigger_runtime import (
+from investment_manager.scheduling.repository import (
+    PostgresOutboxListener,
+    PostgresTriggerLeadership,
+    SqlTriggerRepository,
+)
+from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
     TriggerAnalysisRequestBuilder,
     TriggerCoordinatorActivities,
@@ -86,10 +85,11 @@ from investment_manager.trigger_runtime import (
     TriggerTemporalWorker,
     terminate_superseded_trigger_coordinators,
 )
-from investment_manager.trigger_sql import (
-    PostgresOutboxListener,
-    PostgresTriggerLeadership,
-    SqlTriggerRepository,
+from investment_manager.shadow import SqlShadowStateReader
+from investment_manager.temporal_runtime import (
+    TemporalAnalysisCoordinator,
+    assemble_analysis_cycle,
+    run_worker_process,
 )
 from investment_manager.workflow import build_workflow_request
 
@@ -1698,17 +1698,14 @@ def replay_event_triggers_command(
 
     from sqlalchemy import select
 
-    from investment_manager.persistence import (
-        analysis_call_admissions,
-        analysis_cycles,
-        market_snapshots,
-    )
+    from investment_manager.persistence import analysis_cycles, market_snapshots
     from investment_manager.research.dataset import HistoricalEventDatasetCatalog
     from investment_manager.research.trigger_replay import (
         ExternalTriggerReplaySpec,
         TriggerReplayInitialScopeState,
         run_external_trigger_replay,
     )
+    from investment_manager.scheduling.tables import analysis_call_admissions
 
     loaded = load_config(config)
     window_start = _parse_utc_option(replay_start, name="replay-start")

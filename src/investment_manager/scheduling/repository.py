@@ -11,18 +11,7 @@ from investment_manager.config import TriggerPolicy
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.persistence import (
-    analysis_call_admissions,
-    analysis_scheduled_wakeups,
-    analysis_trigger_batches,
-    analysis_trigger_events,
-    analysis_trigger_plans,
-    insert_trigger_with_outbox,
-    notify_trigger_outbox,
-    trigger_outbox,
-)
-from investment_manager.sql_time import database_utc
-from investment_manager.trigger import (
+from investment_manager.scheduling.models import (
     AnalysisCallAdmission,
     AnalysisTriggerEvent,
     AnalysisTriggerPlan,
@@ -33,6 +22,66 @@ from investment_manager.trigger import (
     TriggerPlanPatch,
     decide_analysis_call_admission,
 )
+from investment_manager.scheduling.tables import (
+    analysis_call_admissions,
+    analysis_scheduled_wakeups,
+    analysis_trigger_batches,
+    analysis_trigger_events,
+    analysis_trigger_plans,
+    trigger_outbox,
+)
+from investment_manager.sql_time import database_utc
+
+
+def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
+    """Wake dispatchers without treating PostgreSQL NOTIFY as durable state."""
+    if connection.dialect.name == "postgresql":
+        connection.execute(select(func.pg_notify("quant_trigger_outbox", aggregate_key)))
+
+
+def insert_trigger_with_outbox(
+    connection: Connection,
+    trigger: AnalysisTriggerEvent,
+) -> None:
+    """Atomically persist one trigger and its durable delivery message."""
+    trigger_payload = trigger.model_dump(mode="json")
+    connection.execute(
+        insert(analysis_trigger_events).values(
+            trigger_id=trigger.trigger_id,
+            trigger_type=trigger.trigger_type.value,
+            symbol=trigger.symbol,
+            pipeline_id=trigger.pipeline_id,
+            occurred_at=trigger.occurred_at,
+            observed_at=trigger.observed_at,
+            priority=trigger.priority,
+            dedup_key=trigger.dedup_key,
+            expires_at=trigger.expires_at,
+            payload=trigger_payload,
+        )
+    )
+    outbox_id = stable_id(
+        "trigger_outbox",
+        TriggerOutboxKind.TRIGGER_CREATED.value,
+        trigger.trigger_id,
+    )
+    aggregate_key = f"{trigger.symbol}:{trigger.pipeline_id}"
+    connection.execute(
+        insert(trigger_outbox).values(
+            outbox_id=outbox_id,
+            aggregate_key=aggregate_key,
+            message_kind=TriggerOutboxKind.TRIGGER_CREATED.value,
+            status="PENDING",
+            created_at=trigger.observed_at,
+            available_at=trigger.observed_at,
+            delivered_at=None,
+            attempt_count=0,
+            payload={
+                "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                "trigger": trigger_payload,
+            },
+        )
+    )
+    notify_trigger_outbox(connection, aggregate_key)
 
 
 class TriggerOutboxMessage(FrozenModel):

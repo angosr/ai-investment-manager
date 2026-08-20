@@ -24,8 +24,8 @@ from investment_manager.dashboard.read_models import DashboardReader
 from investment_manager.dashboard.resources import prime_cpu_sampler, sample_host_resources
 from investment_manager.dashboard.stream import refresh_events
 from investment_manager.platform.database import build_engine
+from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.temporal_runtime import TemporalAnalysisCoordinator
-from investment_manager.trigger_workflows import coordinator_workflow_id
 
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100
