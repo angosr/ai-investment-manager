@@ -32,8 +32,13 @@ class HttpFedOfficialSource:
         return self._fetch(FED_MONETARY_RSS_URL)
 
     def _fetch(self, url: str) -> str | None:
+        accept = (
+            "text/html, application/xhtml+xml;q=0.9"
+            if url == FED_FOMC_CALENDAR_URL
+            else "application/rss+xml, application/xml, text/xml;q=0.9"
+        )
         headers = {
-            "Accept": "text/html, application/rss+xml, application/xml;q=0.9",
+            "Accept": accept,
             "User-Agent": "investment-manager-official-source/1.0",
             **self._validators.get(url, {}),
         }
@@ -43,6 +48,14 @@ class HttpFedOfficialSource:
             transport=self._transport,
         ) as client:
             response = client.get(url, headers=headers)
+            if response.status_code == 406:
+                response = client.get(
+                    url,
+                    headers={
+                        **headers,
+                        "Accept": f"{accept}, */*;q=0.8",
+                    },
+                )
         if response.status_code == 304:
             return None
         response.raise_for_status()

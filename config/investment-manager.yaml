@@ -182,7 +182,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v8
+  version: information-intake-v9
   normalizer_version: trendradar-collector-v7
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

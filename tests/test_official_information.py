@@ -35,6 +35,45 @@ def test_fed_official_source_uses_conditional_request_without_redirects() -> Non
     assert source.fetch_calendar() == "<html>calendar</html>"
     assert source.fetch_calendar() is None
     assert len(requests) == 2
+    assert requests[0].headers["accept"].startswith("text/html")
+
+
+def test_fed_monetary_source_retries_406_once_with_broad_xml_accept() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            assert "text/xml" in request.headers["accept"]
+            assert "*/*" not in request.headers["accept"]
+            return httpx.Response(406)
+        assert request.headers["accept"].endswith("*/*;q=0.8")
+        return httpx.Response(200, text="<rss>monetary</rss>")
+
+    source = HttpFedOfficialSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert source.fetch_monetary_rss() == "<rss>monetary</rss>"
+    assert len(requests) == 2
+
+
+def test_fed_official_source_does_not_retry_other_http_errors() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(503)
+
+    source = HttpFedOfficialSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        source.fetch_monetary_rss()
+    assert len(requests) == 1
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:
