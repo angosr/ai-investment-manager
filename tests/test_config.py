@@ -37,6 +37,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "MARKET_VOLATILITY",
         "US_MONETARY_POLICY",
     )
+    assert config.trigger.volatility_jump_threshold == Decimal("0.01")
 
 
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:

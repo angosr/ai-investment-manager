@@ -124,11 +124,11 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v8
+  version: analysis-trigger-v10
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
-  volatility_jump_threshold: "0.02"
+  volatility_jump_threshold: "0.01"
   volatility_window_seconds: 600
   minimum_call_interval_seconds: 15
   maximum_scheduled_wakeups: 64
