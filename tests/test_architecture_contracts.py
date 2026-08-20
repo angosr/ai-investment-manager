@@ -354,7 +354,22 @@ def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
                 assert not node.module.startswith("investment_manager.legacy"), path
 
     assert definitions == {name: [owner] for name, owner in owners.items()}
-    for filename in ("domain.py", "metrics.py", "panel.py"):
+    for filename in (
+        "analyst.py",
+        "calibration.py",
+        "candidate_evaluation.py",
+        "cycle.py",
+        "decision.py",
+        "domain.py",
+        "forecast_evaluation.py",
+        "metrics.py",
+        "panel.py",
+        "shadow.py",
+        "strategy.py",
+        "temporal_runtime.py",
+        "temporal_workflows.py",
+        "workflow.py",
+    ):
         assert not (PACKAGE_ROOT / filename).exists()
 
 

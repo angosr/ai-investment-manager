@@ -8,7 +8,6 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from investment_manager.decision import estimate_round_trip_cost_amount
 from investment_manager.execution.models import (
     AccountSnapshot,
     OrderType,
@@ -18,7 +17,9 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.decision import estimate_round_trip_cost_amount
 from investment_manager.legacy.models import Action
+from investment_manager.legacy.strategy import Strategy
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import (
     MarketBar,
@@ -30,7 +31,6 @@ from investment_manager.research.dataset import (
     HistoricalEventDataset,
 )
 from investment_manager.settings import AppConfig
-from investment_manager.strategy import Strategy
 
 RAW_SIGNAL_SCREEN_VERSION = "raw-signal-opportunity-screen-v1"
 

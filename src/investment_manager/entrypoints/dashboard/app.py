@@ -25,10 +25,10 @@ from investment_manager.entrypoints.dashboard.resources import (
     sample_host_resources,
 )
 from investment_manager.entrypoints.dashboard.stream import refresh_events
+from investment_manager.legacy.runtime import TemporalAnalysisCoordinator
 from investment_manager.platform.database import build_engine
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.settings import AppConfig
-from investment_manager.temporal_runtime import TemporalAnalysisCoordinator
 
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100

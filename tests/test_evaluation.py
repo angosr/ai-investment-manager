@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.governance.performance import (
     EvaluationVariant,
     ReplayCase,
@@ -13,6 +12,7 @@ from investment_manager.governance.performance import (
     without_information_events,
 )
 from investment_manager.governance.repository import SqlEvaluationRepository
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.schema import create_schema
 

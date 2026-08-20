@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from investment_manager.legacy.strategy import PriceTrendStrategy
 from investment_manager.research.backtest import ResearchStrategy
 from investment_manager.research.dataset import HistoricalFundingDataset
 from investment_manager.settings import AppConfig
-from investment_manager.strategy import PriceTrendStrategy
 
 
 def resolve_research_candidate(

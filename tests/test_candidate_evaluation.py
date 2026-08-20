@@ -5,12 +5,12 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine, select, update
 
-from investment_manager.candidate_evaluation import (
+from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.legacy.candidate_evaluation import (
     CandidateOutcomeSettler,
     SqlCandidateOutcomeStore,
 )
-from investment_manager.cycle import AnalysisCycle
-from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.models import CandidateOutcome, CandidateOutcomeStatus
 from investment_manager.legacy.repository import (
     SqlFactLedger,

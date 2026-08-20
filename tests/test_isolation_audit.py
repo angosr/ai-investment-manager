@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from investment_manager.analyst import IsolationAuditCheck
+from investment_manager.forecast.codex import IsolationAuditCheck
 from investment_manager.governance.isolation import (
     CodexIsolationAuditCatalog,
     build_codex_isolation_audit_artifact,

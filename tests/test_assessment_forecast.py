@@ -4,11 +4,11 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, select
 
-from investment_manager.analyst import AnalystResult
 from investment_manager.forecast.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
+from investment_manager.forecast.codex import AnalystResult
 from investment_manager.forecast.execution import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,

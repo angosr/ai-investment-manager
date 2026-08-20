@@ -9,13 +9,15 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from investment_manager.analyst import (
-    ANALYST_INPUT_VERSION,
+from investment_manager.execution.models import (
+    OrderType,
+    Side,
+)
+from investment_manager.forecast.codex import (
     AccountState,
     AnalystResult,
-    AnalystStructuredOutput,
     AppServerCapacityProbe,
     CapacityBucket,
     CapacitySnapshot,
@@ -25,25 +27,25 @@ from investment_manager.analyst import (
     InMemoryAccountLeaseStore,
     InvocationResult,
     IsolationProbeOutput,
-    ProposalNormalizer,
     RunBundle,
-    RunBundleBuilder,
     SubprocessCodexExecutor,
     _capacity_snapshot,
     _recover_completed_turn,
     _terminal_message_is_idle,
-    analysis_behavior_hash,
     assemble_codex_router,
     audit_codex_isolation,
     strict_output_schema,
     verify_bundle,
 )
-from investment_manager.execution.models import (
-    OrderType,
-    Side,
-)
 from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
+from investment_manager.legacy.analyst import (
+    ANALYST_INPUT_VERSION,
+    AnalystStructuredOutput,
+    ProposalNormalizer,
+    RunBundleBuilder,
+    analysis_behavior_hash,
+)
 from investment_manager.legacy.models import (
     Action,
     AnalysisProposal,
@@ -82,6 +84,13 @@ def _runtime(app_config):
     )
 
 
+def _proposal_executor(app_config) -> SubprocessCodexExecutor:
+    return SubprocessCodexExecutor(
+        _runtime(app_config),
+        output_adapter=TypeAdapter(AnalystStructuredOutput),
+    )
+
+
 def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_calibration(
     app_config, base_app_config, monkeypatch
 ) -> None:
@@ -108,7 +117,7 @@ def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_ca
     assert analysis_behavior_hash(redeployed) == baseline
     assert analysis_behavior_hash(changed_behavior) != baseline
     monkeypatch.setattr(
-        "investment_manager.analyst._ANALYST_PROMPT_INSTRUCTIONS",
+        "investment_manager.legacy.analyst._ANALYST_PROMPT_INSTRUCTIONS",
         "different semantic prompt contract",
     )
     assert analysis_behavior_hash(app_config) != baseline
@@ -511,9 +520,9 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
         return process
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr("investment_manager.analyst.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr("investment_manager.forecast.codex.selectors.DefaultSelector", FakeSelector)
     monkeypatch.setattr(
-        "investment_manager.analyst.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: True,
     )
 
@@ -614,6 +623,7 @@ def test_production_router_allows_healthy_subset_of_fixed_three_slot_registry(
         config,
         leases=InMemoryAccountLeaseStore(),
         audit=None,
+        output_adapter=TypeAdapter(AnalystStructuredOutput),
     )
 
     assert len(router.account_states) == 3
@@ -984,14 +994,14 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "must-not-leak")
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakeProcess)
-    monkeypatch.setattr("investment_manager.analyst.selectors.DefaultSelector", FakeSelector)
+    monkeypatch.setattr("investment_manager.forecast.codex.selectors.DefaultSelector", FakeSelector)
     checks = iter((True, False))
     monkeypatch.setattr(
-        "investment_manager.analyst.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: next(checks),
     )
 
-    executor = SubprocessCodexExecutor(_runtime(app_config))
+    executor = _proposal_executor(app_config)
     result = executor.execute(registry.accounts[1], bundle)
 
     assert result.success
@@ -1032,7 +1042,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
 def test_codex_runtime_integrity_rejects_binary_drift(
     app_config, tmp_path, monkeypatch
 ) -> None:
-    from investment_manager.analyst import codex_runtime_integrity_matches
+    from investment_manager.forecast.codex import codex_runtime_integrity_matches
 
     binary = tmp_path / "codex-0.148.0"
     binary.write_bytes(b"frozen-codex-binary")
@@ -1083,7 +1093,7 @@ def test_codex_runtime_integrity_rejects_binary_drift(
 def test_subprocess_contract_rejects_errors_and_tool_activity(
     app_config, events: list[dict], stderr: str
 ) -> None:
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, stderr)
+    result = _proposal_executor(app_config)._parse_app_server_events(events, stderr)
 
     assert not result.success
     assert result.failure == FailureClass.TOOL_PERMISSION
@@ -1100,7 +1110,7 @@ def test_subprocess_diagnostics_never_persist_event_content(app_config) -> None:
         },
     ]
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, "")
+    result = _proposal_executor(app_config)._parse_app_server_events(events, "")
 
     serialized = json.dumps(result.diagnostics)
     assert result.diagnostics == {
@@ -1140,7 +1150,7 @@ def test_subprocess_diagnostics_expose_only_bounded_protocol_state(app_config) -
         },
     ]
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, "")
+    result = _proposal_executor(app_config)._parse_app_server_events(events, "")
 
     assert not result.success
     assert result.diagnostics["thread_status_change_count"] == 2
@@ -1189,14 +1199,15 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     }
 
     monkeypatch.setattr(
-        "investment_manager.analyst._write_json_rpc", lambda _process, value: sent.append(value)
+        "investment_manager.forecast.codex._write_json_rpc",
+        lambda _process, value: sent.append(value),
     )
 
     def fake_read(*_args, **kwargs):
         kwargs["observed"].append(response)
         return response
 
-    monkeypatch.setattr("investment_manager.analyst._read_json_rpc_until", fake_read)
+    monkeypatch.setattr("investment_manager.forecast.codex._read_json_rpc_until", fake_read)
 
     assert _terminal_message_is_idle(events)
     assert _recover_completed_turn(object(), thread_id="thread-1", turn_id="turn-1", events=events)
@@ -1207,7 +1218,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
             "params": {"threadId": "thread-1", "includeTurns": True},
         }
     ]
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(
+    result = _proposal_executor(app_config)._parse_app_server_events(
         events,
         "",
         recovered_completion=True,
@@ -1235,7 +1246,7 @@ def test_subprocess_ignores_only_failed_optional_read_after_normal_completion(
         },
     ]
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, "")
+    result = _proposal_executor(app_config)._parse_app_server_events(events, "")
 
     assert result.success
     assert result.diagnostics["non_null_rpc_error_count"] == 1
@@ -1252,7 +1263,7 @@ def test_subprocess_contract_requires_exactly_one_final_message(app_config) -> N
         "params": {"turn": {"status": "completed", "error": None}},
     }
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(
+    result = _proposal_executor(app_config)._parse_app_server_events(
         [message, message, completed], ""
     )
 
@@ -1282,7 +1293,7 @@ def test_subprocess_contract_classifies_payload_validation_without_persisting_co
         },
     ]
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, "")
+    result = _proposal_executor(app_config)._parse_app_server_events(events, "")
 
     assert not result.success
     assert result.failure == FailureClass.SCHEMA_INVALID
@@ -1301,7 +1312,7 @@ def test_subprocess_contract_preserves_explicit_account_failure(app_config) -> N
         }
     ]
 
-    result = SubprocessCodexExecutor(_runtime(app_config))._parse_app_server_events(events, "")
+    result = _proposal_executor(app_config)._parse_app_server_events(events, "")
 
     assert not result.success
     assert result.failure == FailureClass.AUTH

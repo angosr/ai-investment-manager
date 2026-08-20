@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.contracts import (
     ExecutionRequest,
     RiskTransition,
     build_execution_request,
     build_execution_result,
 )
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.models import CycleOutcome
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from investment_manager.analyst import codex_runtime_integrity_matches
+from investment_manager.forecast.codex import codex_runtime_integrity_matches
 from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.models import (
     load_constitution,

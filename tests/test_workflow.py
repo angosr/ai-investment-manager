@@ -6,14 +6,14 @@ from datetime import UTC, datetime, timedelta
 
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.cycle import AnalysisCycle
-from investment_manager.scheduling.models import TriggerDecision, TriggerReason
-from investment_manager.temporal_runtime import AnalysisTemporalWorker, TemporalAnalysisCoordinator
-from investment_manager.workflow import (
+from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.orchestration import (
     WorkflowExecutionStatus,
     WorkflowRequest,
     build_workflow_request,
 )
+from investment_manager.legacy.runtime import AnalysisTemporalWorker, TemporalAnalysisCoordinator
+from investment_manager.scheduling.models import TriggerDecision, TriggerReason
 
 
 def _request(app_config, replay_input, *, deadline_delta=timedelta(hours=1)):

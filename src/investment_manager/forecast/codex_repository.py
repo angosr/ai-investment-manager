@@ -4,7 +4,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.analyst import AttemptAudit, CapacitySnapshot, CodexLease
+from investment_manager.forecast.codex import AttemptAudit, CapacitySnapshot, CodexLease
 from investment_manager.forecast.tables import (
     codex_account_capacity,
     codex_account_leases,

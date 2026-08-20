@@ -13,11 +13,6 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from investment_manager.candidate_evaluation import (
-    CandidateOutcomeSettler,
-    SqlCandidateOutcomeStore,
-)
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.lifecycle import PositionLifecycleManager
 from investment_manager.execution.reconciliation import MockReconciler
@@ -39,6 +34,11 @@ from investment_manager.information.tables import (
     market_calendar_event_revisions,
     source_observations,
 )
+from investment_manager.legacy.candidate_evaluation import (
+    CandidateOutcomeSettler,
+    SqlCandidateOutcomeStore,
+)
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,

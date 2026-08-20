@@ -14,8 +14,6 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
-from investment_manager.analyst import assemble_codex_analyst
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.binance import assemble_binance_testnet
 from investment_manager.execution.contracts import ExecutionRequest
 from investment_manager.execution.mock_repository import SqlMockExchange
@@ -25,18 +23,20 @@ from investment_manager.forecast.codex_repository import (
 )
 from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.legacy.analyst import assemble_codex_analyst
+from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.orchestration import WorkflowExecution, WorkflowRequest
 from investment_manager.legacy.repository import SqlFactLedger
-from investment_manager.platform.database import build_engine
-from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.scheduling.policy import TemporalPolicy
-from investment_manager.settings import AppConfig
-from investment_manager.temporal_workflows import (
+from investment_manager.legacy.workflows import (
     EXECUTION_ACTIVITY_NAME,
     PREPARE_ACTIVITY_NAME,
     AnalysisCycleWorkflow,
     ExecutionWorkflow,
 )
-from investment_manager.workflow import WorkflowExecution, WorkflowRequest
+from investment_manager.platform.database import build_engine
+from investment_manager.risk.budget import SqlRiskBudgetStore
+from investment_manager.scheduling.policy import TemporalPolicy
+from investment_manager.settings import AppConfig
 
 
 @dataclass(slots=True)

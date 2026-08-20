@@ -7,15 +7,15 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.analyst import (
+from investment_manager.forecast.codex import (
     IsolationAuditCheck,
-    analysis_behavior_hash,
     codex_runtime_integrity_matches,
 )
 from investment_manager.governance.models import ReleaseManifest, validate_manifest_against_config
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.analyst import analysis_behavior_hash
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.settings import AppConfig
 

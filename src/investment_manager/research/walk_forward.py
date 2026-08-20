@@ -10,6 +10,7 @@ from investment_manager.governance.models import EvaluationPlan, EvaluationStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.strategy import PriceTrendStrategy
 from investment_manager.research.backtest import (
     BacktestMetrics,
     BacktestRun,
@@ -25,7 +26,6 @@ from investment_manager.research.dataset import (
     HistoricalFundingDataset,
 )
 from investment_manager.settings import AppConfig
-from investment_manager.strategy import PriceTrendStrategy
 
 WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v2"
 BLIND_EVALUATION_VERSION = "blind-evaluation-v1"

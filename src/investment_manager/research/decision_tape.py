@@ -9,19 +9,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
-from investment_manager.analyst import ANALYST_INPUT_VERSION
 from investment_manager.execution.models import (
     AccountSnapshot,
     Side,
 )
 from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.tables import codex_runs
-from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.analyst import ANALYST_INPUT_VERSION
+from investment_manager.legacy.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.legacy.models import (
     AnalysisProposal,
     DirectionalForecast,

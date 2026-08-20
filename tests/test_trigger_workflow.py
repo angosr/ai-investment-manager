@@ -9,6 +9,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from investment_manager.kernel.identity import stable_id
+from investment_manager.legacy.workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
 from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
@@ -23,7 +24,6 @@ from investment_manager.scheduling.workflows import (
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
 )
-from investment_manager.temporal_workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=UTC)
 

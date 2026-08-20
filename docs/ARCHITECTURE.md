@@ -78,6 +78,8 @@ src/investment_manager/
   execution/                  # 计划、订单、成交、持仓生命周期与对账
   governance/                 # 评估计划、盲测、发布、回滚和权限记录
 
+  legacy/                     # 迁移期隔离的 SignalCandidate/TradeIntent 旧链；只出不进
+
   research/                   # 隔离的离线研究与不可变评价制品
   entrypoints/
     cli/                      # 薄命令适配器
@@ -162,6 +164,10 @@ dashboard 只读，不能导入任何写用例或控制入口
 5. CLI 不直接拼 SQL、不构造评估规则、不启动隐含第二套 runtime。
 6. 生产不得导入 `research`；Research 必须复用生产的时间、成本、取整和风控语义。
 7. 禁止循环依赖、旧路径 re-export、兼容别名和两个机制同时拥有同一裁决。
+
+迁移期 `legacy` 可以依赖目标领域以复用已经归位的事实、风控和执行语义；目标领域不得
+反向导入 `legacy`。它不是长期兼容层，只在第 9 节阶段 D 的生产接线、恢复和回放证据
+完成前保留。
 
 这些规则由 AST/import 边界测试执行，不依赖人工记忆。
 

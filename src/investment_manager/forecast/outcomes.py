@@ -9,7 +9,6 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.candidate_evaluation import trade_at_or_before
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
@@ -31,6 +30,7 @@ from investment_manager.kernel.types import (
     FrozenModel,
     PositiveDecimal,
 )
+from investment_manager.market.repository import trade_at_or_before
 from investment_manager.state.decision_packet import DecisionPacket
 from investment_manager.state.tables import decision_packets
 

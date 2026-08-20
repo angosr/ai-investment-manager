@@ -38,13 +38,13 @@ from investment_manager.legacy.repository import (
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
 )
+from investment_manager.legacy.shadow import ShadowStateReader, SqlShadowStateReader
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.platform.database import build_engine
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.settings import AppConfig
-from investment_manager.shadow import ShadowStateReader, SqlShadowStateReader
-from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)
 

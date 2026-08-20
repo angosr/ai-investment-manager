@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from investment_manager.cycle import CycleInput
 from investment_manager.execution.models import Side
 from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.identity import content_hash
+from investment_manager.legacy.cycle import CycleInput
 from investment_manager.settings import AppConfig, load_config
 
 ROOT = Path(__file__).resolve().parents[1]

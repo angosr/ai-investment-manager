@@ -13,7 +13,6 @@ from sqlalchemy import and_, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.candidate_evaluation import trade_at_or_before
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
@@ -31,6 +30,7 @@ from investment_manager.legacy.repository import (
     analysis_proposals,
     market_snapshots,
 )
+from investment_manager.market.repository import trade_at_or_before
 from investment_manager.platform.time import database_utc
 
 

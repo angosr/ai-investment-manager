@@ -82,6 +82,32 @@ def _trade_market_facts(trade: MarketTrade) -> dict[str, Any]:
     return trade.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def trade_at_or_before(
+    engine: Engine,
+    *,
+    symbol: str,
+    evaluation_at: datetime,
+    visible_at: datetime,
+) -> MarketTrade | None:
+    """Read the latest trade that was knowable at a point-in-time horizon."""
+
+    with engine.connect() as connection:
+        payload = connection.execute(
+            select(market_trades.c.payload)
+            .where(
+                market_trades.c.symbol == symbol,
+                market_trades.c.event_time <= require_utc(evaluation_at),
+                market_trades.c.observed_at <= require_utc(visible_at),
+            )
+            .order_by(
+                market_trades.c.event_time.desc(),
+                market_trades.c.aggregate_trade_id.desc(),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+    return MarketTrade.model_validate(payload) if payload is not None else None
+
+
 @dataclass(slots=True)
 class InMemoryMarketDataStore:
     _quotes: dict[str, MarketQuote] = field(default_factory=dict)

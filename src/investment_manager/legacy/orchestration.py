@@ -5,48 +5,13 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.cycle import CycleInput, CycleResult
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.cycle import CycleInput, CycleResult
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.models import TriggerDecision
 from investment_manager.scheduling.policy import TemporalPolicy
-
-
-class OrchestrationPolicySnapshot(FrozenModel):
-    """随 Workflow 输入冻结，避免运行中配置漂移改变重放结果。"""
-
-    version: str
-    activity_start_to_close_seconds: int = Field(ge=10, le=900)
-    activity_schedule_to_close_seconds: int = Field(ge=10, le=1800)
-    retry_initial_seconds: int = Field(ge=1, le=60)
-    retry_maximum_seconds: int = Field(ge=1, le=300)
-    retry_backoff_coefficient: float = Field(ge=1, le=10)
-    retry_maximum_attempts: int = Field(ge=1, le=10)
-
-    @model_validator(mode="after")
-    def bounds_must_be_consistent(self):
-        if self.activity_schedule_to_close_seconds < self.activity_start_to_close_seconds:
-            raise ValueError("schedule-to-close 不得短于 start-to-close")
-        if self.retry_maximum_seconds < self.retry_initial_seconds:
-            raise ValueError("最大重试间隔不得短于初始间隔")
-        return self
-
-    @classmethod
-    def from_config(cls, policy: TemporalPolicy) -> OrchestrationPolicySnapshot:
-        return cls.model_validate(
-            policy.model_dump(
-                include={
-                    "version",
-                    "activity_start_to_close_seconds",
-                    "activity_schedule_to_close_seconds",
-                    "retry_initial_seconds",
-                    "retry_maximum_seconds",
-                    "retry_backoff_coefficient",
-                    "retry_maximum_attempts",
-                }
-            )
-        )
 
 
 class WorkflowRequest(FrozenModel):

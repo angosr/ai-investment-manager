@@ -5,10 +5,12 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.information.collector import InMemoryEventStore
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.repository import SqlFactLedger
+from investment_manager.legacy.shadow import SqlShadowStateReader
+from investment_manager.legacy.trigger_adapter import TriggerAnalysisRequestBuilder
 from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,
@@ -23,10 +25,8 @@ from investment_manager.scheduling.models import (
     build_trigger_batch,
     build_trigger_event,
 )
-from investment_manager.scheduling.runtime import TriggerAnalysisRequestBuilder
 from investment_manager.schema import create_schema
 from investment_manager.settings import AppConfig
-from investment_manager.shadow import SqlShadowStateReader
 
 NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 

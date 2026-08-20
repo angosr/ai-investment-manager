@@ -8,14 +8,15 @@ import pytest
 import typer
 from sqlalchemy import create_engine, insert, select, update
 
-from investment_manager.analyst import AnalystResult, analysis_behavior_hash
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.entrypoints.cli.commands import register_ai_forecast_plan
 from investment_manager.execution.mock_repository import SqlMockExchange
+from investment_manager.forecast.codex import AnalystResult
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
 from investment_manager.forecast.policy import AiMode
 from investment_manager.forecast.tables import codex_runs
-from investment_manager.forecast_evaluation import (
+from investment_manager.legacy.analyst import analysis_behavior_hash
+from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.forecast_evaluation import (
     AnalysisForecastEvaluator,
     AnalysisForecastOutcomeSettler,
     ForwardForecastEvaluationCatalog,

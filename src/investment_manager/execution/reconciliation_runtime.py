@@ -37,10 +37,10 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.database import build_engine
+from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.platform.temporal import SingleActivityWorker
 from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.settings import AppConfig
-from investment_manager.workflow import OrchestrationPolicySnapshot
 
 logger = logging.getLogger(__name__)
 

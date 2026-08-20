@@ -7,20 +7,20 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.analyst import analysis_behavior_hash
-from investment_manager.calibration import (
+from investment_manager.execution.models import Side
+from investment_manager.forecast.models import EdgeCalibration
+from investment_manager.forecast.policy import CalibrationPolicy
+from investment_manager.kernel.identity import content_hash
+from investment_manager.legacy.analyst import analysis_behavior_hash
+from investment_manager.legacy.calibration import (
     EDGE_CALIBRATION_MISSING,
     CalibrationBuildSpec,
     EdgeCalibrationBook,
     EdgeCalibrationBuilder,
     uncalibrated_ref,
 )
-from investment_manager.cycle import AnalysisCycle
-from investment_manager.decision import HighestNetEdgeComposer
-from investment_manager.execution.models import Side
-from investment_manager.forecast.models import EdgeCalibration
-from investment_manager.forecast.policy import CalibrationPolicy
-from investment_manager.kernel.identity import content_hash
+from investment_manager.legacy.cycle import AnalysisCycle
+from investment_manager.legacy.decision import HighestNetEdgeComposer
 from investment_manager.legacy.models import (
     CandidateOutcome,
     CandidateOutcomeStatus,

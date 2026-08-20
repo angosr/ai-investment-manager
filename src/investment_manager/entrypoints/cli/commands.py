@@ -11,15 +11,6 @@ from typing import Annotated
 
 import typer
 
-from investment_manager.analyst import analysis_behavior_hash as configured_analysis_behavior_hash
-from investment_manager.analyst import audit_codex_isolation
-from investment_manager.calibration import (
-    CalibrationBuildSpec,
-    EdgeCalibrationBuilder,
-    uncalibrated_ref,
-)
-from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
-from investment_manager.cycle import AnalysisCycle, CycleInput
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.execution.binance import (
     BinanceApiError,
@@ -34,6 +25,7 @@ from investment_manager.execution.lifecycle_runtime import (
 )
 from investment_manager.execution.models import Side
 from investment_manager.execution.reconciliation_runtime import assemble_reconciliation
+from investment_manager.forecast.codex import audit_codex_isolation
 from investment_manager.governance.acceptance import AuditProfile, PhaseAAuditor
 from investment_manager.governance.models import (
     ReleaseManifest,
@@ -59,6 +51,27 @@ from investment_manager.information.collector import (
 )
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.legacy.analyst import (
+    analysis_behavior_hash as configured_analysis_behavior_hash,
+)
+from investment_manager.legacy.calibration import (
+    CalibrationBuildSpec,
+    EdgeCalibrationBuilder,
+    uncalibrated_ref,
+)
+from investment_manager.legacy.candidate_evaluation import SqlCandidateOutcomeStore
+from investment_manager.legacy.cycle import AnalysisCycle, CycleInput
+from investment_manager.legacy.orchestration import build_workflow_request
+from investment_manager.legacy.runtime import (
+    TemporalAnalysisCoordinator,
+    assemble_analysis_cycle,
+    run_worker_process,
+)
+from investment_manager.legacy.shadow import SqlShadowStateReader
+from investment_manager.legacy.trigger_adapter import (
+    TriggerAnalysisRequestBuilder,
+    TriggerCoordinatorActivities,
+)
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -80,20 +93,11 @@ from investment_manager.scheduling.repository import (
 )
 from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
-    TriggerAnalysisRequestBuilder,
-    TriggerCoordinatorActivities,
     TriggerOutboxDispatcherService,
     TriggerTemporalWorker,
     terminate_superseded_trigger_coordinators,
 )
 from investment_manager.settings import AppConfig, load_config
-from investment_manager.shadow import SqlShadowStateReader
-from investment_manager.temporal_runtime import (
-    TemporalAnalysisCoordinator,
-    assemble_analysis_cycle,
-    run_worker_process,
-)
-from investment_manager.workflow import build_workflow_request
 
 
 def _runtime_engine(database_url: str):
@@ -300,7 +304,7 @@ def evaluate_ai_forecasts(
 ) -> None:
     """评价结果发生前冻结的 AI 方向预测；不把方向收益冒充可交易 PnL。"""
 
-    from investment_manager.forecast_evaluation import (
+    from investment_manager.legacy.forecast_evaluation import (
         AnalysisForecastEvaluator,
         SqlAnalysisForecastOutcomeStore,
     )
@@ -360,7 +364,7 @@ def register_ai_forecast_plan(
 ) -> None:
     """在首个结果发生前冻结 AI 预测的 signal-time 前向评价窗口。"""
 
-    from investment_manager.forecast_evaluation import (
+    from investment_manager.legacy.forecast_evaluation import (
         ForwardForecastEvaluationSpec,
         build_forward_forecast_evaluation_plan,
     )
@@ -431,7 +435,7 @@ def evaluate_ai_forecast_plan(
 ) -> None:
     """只按预登记 signal-time 窗口评价行为等价的前向 AI 预测。"""
 
-    from investment_manager.forecast_evaluation import (
+    from investment_manager.legacy.forecast_evaluation import (
         ForwardForecastEvaluationCatalog,
         ForwardForecastEvaluationSpec,
         SqlAnalysisForecastOutcomeStore,

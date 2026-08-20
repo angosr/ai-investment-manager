@@ -13,7 +13,6 @@ import httpx
 import pytest
 import typer
 
-from investment_manager.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
 from investment_manager.entrypoints.cli.commands import _parse_research_symbol
 from investment_manager.execution.models import (
     AccountSnapshot,
@@ -24,6 +23,7 @@ from investment_manager.execution.models import (
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.calibration import EDGE_CALIBRATION_MISSING, uncalibrated_ref
 from investment_manager.legacy.models import (
     Action,
     PriceCondition,
@@ -1466,6 +1466,7 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         AnalysisProposal,
         DirectionalForecast,
     )
+    from investment_manager.legacy.strategy import PriceTrendStrategy
     from investment_manager.research.decision_tape import (
         ForecastDecisionTape,
         ForecastGateEvaluationSpec,
@@ -1475,7 +1476,6 @@ def test_forward_decision_tape_replays_baseline_and_ai_gate_with_one_matcher(
         run_paired_decision_tape_backtest,
         validate_forecast_gate_evaluation_plan,
     )
-    from investment_manager.strategy import PriceTrendStrategy
 
     dataset = _dataset(count=140)
     signal_start = dataset.bars[63].close_time
@@ -1764,6 +1764,7 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     app_config, tmp_path
 ) -> None:
     pytest.importorskip("nautilus_trader")
+    from investment_manager.legacy.strategy import PriceTrendStrategy
     from investment_manager.research.decision_tape import validate_forecast_gate_baseline
     from investment_manager.research.evaluation_catalog import BlindEvaluationCatalog
     from investment_manager.research.walk_forward import (
@@ -1773,7 +1774,6 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
         run_blind_evaluation,
         run_walk_forward,
     )
-    from investment_manager.strategy import PriceTrendStrategy
 
     dataset = _dataset()
     source = run_walk_forward(
@@ -1876,13 +1876,13 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
 
 
 def test_walk_forward_requires_matching_preregistered_full_spec(app_config) -> None:
+    from investment_manager.legacy.strategy import PriceTrendStrategy
     from investment_manager.research.walk_forward import (
         WalkForwardEvaluationSpec,
         WalkForwardPlan,
         build_walk_forward_evaluation_plan,
         validate_walk_forward_evaluation_plan,
     )
-    from investment_manager.strategy import PriceTrendStrategy
 
     registered_at = _dataset().manifest.first_open_time
     strategy = PriceTrendStrategy(app_config.strategy)

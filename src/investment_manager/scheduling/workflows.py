@@ -21,10 +21,10 @@ from investment_manager.scheduling.models import (
     trigger_reconsideration,
     trigger_rule_value,
 )
-from investment_manager.temporal_workflows import AnalysisCycleWorkflow
 
 BUILD_TRIGGER_REQUEST_ACTIVITY = "build-trigger-analysis-request-v1"
 TRIGGER_SIGNAL = "deliver-trigger-outbox-v1"
+ANALYSIS_WORKFLOW_NAME = "AnalysisCycleWorkflow"
 
 
 @workflow.defn(name="TriggerCoordinatorWorkflow")
@@ -171,7 +171,7 @@ class TriggerCoordinatorWorkflow:
                 try:
                     try:
                         await workflow.execute_child_workflow(
-                            AnalysisCycleWorkflow.run,
+                            ANALYSIS_WORKFLOW_NAME,
                             request_payload,
                             id=str(request_payload["workflow_id"]),
                             task_queue=str(self._settings["analysis_task_queue"]),

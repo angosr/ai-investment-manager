@@ -7,7 +7,6 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.execution.reconciliation import (
     DifferenceKind,
@@ -27,10 +26,11 @@ from investment_manager.execution.reconciliation_runtime import (
     _seconds_until_next_bucket,
     build_reconciliation_workflow_request,
 )
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.repository import SqlFactLedger
+from investment_manager.legacy.shadow import SqlShadowStateReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
-from investment_manager.shadow import SqlShadowStateReader
 
 
 def _sources(engine, app_config):

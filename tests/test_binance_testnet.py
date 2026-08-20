@@ -8,7 +8,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.binance import (
     BinanceCredentials,
     BinanceManualIntervention,
@@ -27,6 +26,7 @@ from investment_manager.execution.models import (
 )
 from investment_manager.execution.reconciliation import TradingStateSnapshot
 from investment_manager.kernel.identity import stable_id
+from investment_manager.legacy.cycle import AnalysisCycle
 
 
 def _exchange_info():

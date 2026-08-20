@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from investment_manager.analyst import (
+from investment_manager.forecast.codex import (
     AccountLeaseStore,
     AnalystResult,
     CodexAccountRouter,

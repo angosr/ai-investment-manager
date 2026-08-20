@@ -7,10 +7,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
-from investment_manager.analyst import AnalystResult, canonical_json
-from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.legacy_exchange import MockExchange
+from investment_manager.forecast.codex import AnalystResult
 from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.agent import (
     CodexGovernor,
@@ -31,7 +29,9 @@ from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import change_proposals, governance_decisions
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
-from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.legacy.candidate_evaluation import SqlCandidateOutcomeStore
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.models import (
     CandidateOutcome,
     CandidateOutcomeStatus,

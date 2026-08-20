@@ -7,7 +7,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution.lifecycle import PositionLifecycleManager
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.execution.reconciliation import MockReconciler
@@ -21,6 +20,7 @@ from investment_manager.governance.outcome_runtime import (
     build_outcome_evaluation_workflow_request,
 )
 from investment_manager.governance.performance import OutcomeWindowEvaluator, OutcomeWindowStatus
+from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,

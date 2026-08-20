@@ -6,14 +6,6 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator
 
-from investment_manager.analyst import Analyst, ProposalNormalizer, analysis_behavior_hash
-from investment_manager.calibration import EdgeCalibrationBook
-from investment_manager.decision import (
-    FrequencyController,
-    FrequencyState,
-    HighestNetEdgeComposer,
-    freeze_candidate_cost_basis,
-)
 from investment_manager.execution.contracts import (
     ExecutionRequest,
     RiskTransition,
@@ -45,6 +37,14 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.legacy.analyst import Analyst, ProposalNormalizer, analysis_behavior_hash
+from investment_manager.legacy.calibration import EdgeCalibrationBook
+from investment_manager.legacy.decision import (
+    FrequencyController,
+    FrequencyState,
+    HighestNetEdgeComposer,
+    freeze_candidate_cost_basis,
+)
 from investment_manager.legacy.models import (
     AnalysisProposal,
     CycleOutcome,
@@ -52,6 +52,7 @@ from investment_manager.legacy.models import (
     SignalCandidate,
     TradeIntent,
 )
+from investment_manager.legacy.strategy import PriceTrendStrategy, Strategy
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.budget import InMemoryRiskBudgetStore, RiskBudgetStore
@@ -63,7 +64,6 @@ from investment_manager.risk.models import (
 from investment_manager.scheduling.models import TriggerDecision
 from investment_manager.settings import AppConfig
 from investment_manager.state.panel import PanelBuilder, PanelSnapshot
-from investment_manager.strategy import PriceTrendStrategy, Strategy
 
 
 class CycleInput(FrozenModel):
