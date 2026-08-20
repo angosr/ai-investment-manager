@@ -120,6 +120,35 @@ def test_engine_selects_positive_fee_adjusted_long_forecasts_only() -> None:
     assert result.targets[0].conservative_net_bps == Decimal("15")
 
 
+def test_engine_selects_only_highest_conservative_net_edge() -> None:
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        reference_equity=Decimal("10000"),
+        assets=(
+            _asset(
+                "BTCUSDT",
+                forecast=_forecast(
+                    "BTCUSDT",
+                    forecast_id="btc-1",
+                    gross_bps="20",
+                ),
+            ),
+            _asset(
+                "ETHUSDT",
+                forecast=_forecast(
+                    "ETHUSDT",
+                    forecast_id="eth-1",
+                    gross_bps="30",
+                ),
+            ),
+        ),
+    )
+
+    assert result is not None
+    assert tuple(item.symbol for item in result.targets) == ("ETHUSDT",)
+
+
 def test_engine_emits_all_cash_target_to_exit_when_edge_disappears() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",

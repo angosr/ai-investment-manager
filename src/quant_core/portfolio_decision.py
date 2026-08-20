@@ -30,7 +30,6 @@ class PortfolioDecisionPolicy(FrozenModel):
         ForecastRole.PROGRAM_BASE,
     )
     minimum_conservative_net_bps: Decimal = Field(default=Decimal("5"), ge=0)
-    maximum_assets: int = Field(default=2, ge=1, le=20)
     maximum_total_exposure_fraction: UnitInterval = Decimal("0.50")
     maximum_single_asset_fraction: UnitInterval = Decimal("0.30")
     minimum_rebalance_notional: Money = Decimal("25")
@@ -92,7 +91,7 @@ class PortfolioDecisionEngine:
                     item.forecast.dispersion_bps,
                     item.symbol,
                 ),
-            )[: self._policy.maximum_assets]
+            )[:1]
         )
         total_capacity = reference_equity * (
             self._policy.maximum_total_exposure_fraction
@@ -101,7 +100,7 @@ class PortfolioDecisionEngine:
             self._policy.maximum_single_asset_fraction
         )
         desired_notional = (
-            min(total_capacity / len(eligible), per_asset_capacity)
+            min(total_capacity, per_asset_capacity)
             if eligible
             else Decimal("0")
         )
