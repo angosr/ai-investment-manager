@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
 from quant_core.domain import _require_utc
@@ -133,27 +133,33 @@ class SqlOfficialInformationStore:
         conditions = [source_observations.c.observed_at <= as_of]
         if source_id is not None:
             conditions.append(source_observations.c.source_id == source_id)
+        ranked = (
+            select(
+                source_observations.c.payload.label("payload"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        source_observations.c.source_id,
+                        source_observations.c.source_record_id,
+                    ),
+                    order_by=(
+                        source_observations.c.observed_at.desc(),
+                        source_observations.c.observation_id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
         with self._engine.connect() as connection:
             payloads = connection.execute(
-                select(source_observations.c.payload)
-                .where(*conditions)
-                .order_by(
-                    source_observations.c.source_id,
-                    source_observations.c.source_record_id,
-                    source_observations.c.observed_at.desc(),
-                )
+                select(ranked.c.payload).where(ranked.c.revision_rank == 1)
             ).scalars()
-            latest: dict[tuple[str, str], OfficialRecord] = {}
-            for payload in payloads:
-                record = _record_from_payload(payload)
-                observation = record.observation
-                latest.setdefault(
-                    (observation.source_id, observation.source_record_id),
-                    record,
-                )
+            records = tuple(_record_from_payload(payload) for payload in payloads)
         return tuple(
             sorted(
-                latest.values(),
+                records,
                 key=lambda item: (
                     item.observation.observed_at,
                     item.observation.source_id,
@@ -172,22 +178,33 @@ class SqlOfficialInformationStore:
         conditions = [market_calendar_event_revisions.c.observed_at <= as_of]
         if source_id is not None:
             conditions.append(market_calendar_event_revisions.c.source_id == source_id)
+        ranked = (
+            select(
+                market_calendar_event_revisions.c.payload.label("payload"),
+                func.row_number()
+                .over(
+                    partition_by=market_calendar_event_revisions.c.event_id,
+                    order_by=(
+                        market_calendar_event_revisions.c.observed_at.desc(),
+                        market_calendar_event_revisions.c.revision_id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
         with self._engine.connect() as connection:
             payloads = connection.execute(
-                select(market_calendar_event_revisions.c.payload)
-                .where(*conditions)
-                .order_by(
-                    market_calendar_event_revisions.c.event_id,
-                    market_calendar_event_revisions.c.observed_at.desc(),
-                )
+                select(ranked.c.payload).where(ranked.c.revision_rank == 1)
             ).scalars()
-            latest_by_event: dict[str, MarketCalendarEventRevision] = {}
-            for payload in payloads:
-                revision = MarketCalendarEventRevision.model_validate(payload)
-                latest_by_event.setdefault(revision.event_id, revision)
+            revisions = tuple(
+                MarketCalendarEventRevision.model_validate(payload)
+                for payload in payloads
+            )
         return tuple(
             sorted(
-                latest_by_event.values(),
+                revisions,
                 key=lambda item: (item.scheduled_release_at, item.event_id),
             )
         )
