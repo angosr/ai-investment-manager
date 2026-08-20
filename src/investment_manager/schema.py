@@ -16,6 +16,7 @@ def compose_metadata() -> MetaData:
         "investment_manager.market.repository",
         "investment_manager.scheduling.tables",
         "investment_manager.state.tables",
+        "investment_manager.forecast.tables",
         "investment_manager.portfolio_protection",
         "investment_manager.risk_budget",
         "investment_manager.persistence",

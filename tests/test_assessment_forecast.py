@@ -5,38 +5,38 @@ import pytest
 from sqlalchemy import create_engine, select
 
 from investment_manager.analyst import AnalystResult
-from investment_manager.assess_execution import (
-    AssessmentExecutionStatus,
-    ContextAssessmentExecutor,
-)
-from investment_manager.assessment_calibration import (
+from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
-from investment_manager.assessment_forecast import (
-    AssessmentForecastPolicy,
-    AssessmentForecastProjector,
-    AssessmentViewCalibration,
-    build_assessment_view_calibration,
+from investment_manager.forecast.execution import (
+    AssessmentExecutionStatus,
+    ContextAssessmentExecutor,
 )
-from investment_manager.assessment_outcome import (
-    AssessmentViewOutcome,
-    AssessmentViewOutcomeSettler,
-    SqlAssessmentViewOutcomeStore,
-)
-from investment_manager.asset_management import (
+from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
     ContextView,
     ForecastRole,
     PricedState,
 )
-from investment_manager.context_assessment_sql import SqlContextAssessmentStore
-from investment_manager.domain import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.outcomes import (
+    AssessmentViewOutcome,
+    AssessmentViewOutcomeSettler,
+    SqlAssessmentViewOutcomeStore,
+)
+from investment_manager.forecast.projection import (
+    AssessmentForecastPolicy,
+    AssessmentForecastProjector,
+    AssessmentViewCalibration,
+    build_assessment_view_calibration,
+)
+from investment_manager.forecast.repository import SqlContextAssessmentStore
+from investment_manager.forecast.tables import assessment_view_outcomes
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
-from investment_manager.persistence import assessment_view_outcomes
 from investment_manager.schema import create_schema
 from investment_manager.state.decision_packet import (
     DecisionPacket,

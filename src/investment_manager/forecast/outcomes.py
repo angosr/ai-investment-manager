@@ -9,16 +9,20 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.asset_management import (
+from investment_manager.candidate_evaluation import trade_at_or_before
+from investment_manager.domain import (
+    DirectionalView,
+    ForecastOutcomeStatus,
+)
+from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
     ContextView,
     PricedState,
 )
-from investment_manager.candidate_evaluation import trade_at_or_before
-from investment_manager.domain import (
-    DirectionalView,
-    ForecastOutcomeStatus,
+from investment_manager.forecast.tables import (
+    assessment_view_outcomes,
+    context_assessments,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import (
@@ -28,10 +32,6 @@ from investment_manager.kernel.time import (
 from investment_manager.kernel.types import (
     FrozenModel,
     PositiveDecimal,
-)
-from investment_manager.persistence import (
-    assessment_view_outcomes,
-    context_assessments,
 )
 from investment_manager.state.decision_packet import DecisionPacket
 from investment_manager.state.tables import decision_packets

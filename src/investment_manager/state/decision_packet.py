@@ -5,11 +5,11 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.asset_management import (
+from investment_manager.domain import AccountSnapshot
+from investment_manager.forecast.models import (
     ContextAssessment,
     ContextView,
 )
-from investment_manager.domain import AccountSnapshot
 from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,

@@ -7,11 +7,13 @@ from pydantic import Field, model_validator
 
 from investment_manager.asset_management import (
     AssetTarget,
-    CalibratedForecast,
-    ForecastRole,
     PortfolioTarget,
 )
 from investment_manager.domain import DirectionalView
+from investment_manager.forecast.models import (
+    CalibratedForecast,
+    ForecastRole,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (

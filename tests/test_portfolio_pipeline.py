@@ -3,8 +3,11 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.asset_management import CalibratedForecast, ForecastRole
 from investment_manager.domain import DirectionalView, Position
+from investment_manager.forecast.models import (
+    CalibratedForecast,
+    ForecastRole,
+)
 from investment_manager.portfolio_decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,

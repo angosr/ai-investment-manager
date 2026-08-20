@@ -5,17 +5,19 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.asset_management import (
-    AssessmentUncertainty,
     AssetTarget,
+    PortfolioTarget,
+)
+from investment_manager.domain import DirectionalView
+from investment_manager.forecast.models import (
+    AssessmentUncertainty,
     BaseForecast,
     CalibratedForecast,
     ContextAssessment,
     ContextView,
     ForecastRole,
-    PortfolioTarget,
     PricedState,
 )
-from investment_manager.domain import DirectionalView
 from investment_manager.information.models import (
     SourceObservation,
     SourceTier,
