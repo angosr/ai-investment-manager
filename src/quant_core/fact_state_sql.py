@@ -17,6 +17,7 @@ from quant_core.persistence import (
     canonical_fact_revisions,
     material_deltas,
     source_observations,
+    state_evidence_snapshots,
     state_snapshots,
 )
 from quant_core.sql_locking import advisory_xact_lock
@@ -308,6 +309,8 @@ class SqlFactStateStore:
                     + ", ".join(stale)
                 )
 
+        SqlFactStateStore._require_state_evidence(connection, state)
+
         connection.execute(
             insert(state_snapshots).values(
                 state_id=state.state_id,
@@ -320,6 +323,43 @@ class SqlFactStateStore:
             )
         )
         return state
+
+    @staticmethod
+    def _require_state_evidence(
+        connection: Connection,
+        state: StateSnapshot,
+    ) -> None:
+        expected_kind = {
+            **{item: "MARKET" for item in state.market_snapshot_refs},
+            **{item: "FEATURE" for item in state.feature_snapshot_refs},
+        }
+        if state.account_snapshot_ref is not None:
+            expected_kind[state.account_snapshot_ref] = "ACCOUNT"
+        if not expected_kind:
+            return
+        rows = connection.execute(
+            select(
+                state_evidence_snapshots.c.evidence_ref,
+                state_evidence_snapshots.c.evidence_kind,
+            ).where(
+                state_evidence_snapshots.c.evidence_ref.in_(expected_kind),
+                state_evidence_snapshots.c.as_of <= state.as_of,
+                state_evidence_snapshots.c.observed_at <= state.as_of,
+            )
+        ).all()
+        visible = {row.evidence_ref: row.evidence_kind for row in rows}
+        invalid = tuple(
+            sorted(
+                evidence_ref
+                for evidence_ref, kind in expected_kind.items()
+                if visible.get(evidence_ref) != kind
+            )
+        )
+        if invalid:
+            raise ValueError(
+                "StateSnapshot 缺少截至 as_of 可见且类型匹配的 evidence: "
+                + ", ".join(invalid)
+            )
 
     @staticmethod
     def _put_delta(connection: Connection, delta: MaterialDelta) -> MaterialDelta:

@@ -78,7 +78,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "b6e2d8a4c913"
+DATABASE_SCHEMA_VERSION = "c7f4a1d9e205"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -261,6 +261,16 @@ Index(
     "ix_raw_source_payloads_source_observed",
     raw_source_payloads.c.source_id,
     raw_source_payloads.c.observed_at,
+)
+
+state_evidence_snapshots = Table(
+    "state_evidence_snapshots",
+    metadata,
+    Column("evidence_ref", String(64), primary_key=True),
+    Column("evidence_kind", String(32), nullable=False),
+    Column("as_of", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
 )
 
 market_calendar_event_revisions = Table(
