@@ -77,7 +77,7 @@ from quant_core.trigger import (
 )
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "c2a8f4d9e617"
+DATABASE_SCHEMA_VERSION = "f1c7a4d8e209"
 
 
 def notify_trigger_outbox(connection: Connection, aggregate_key: str) -> None:
@@ -185,6 +185,43 @@ panel_snapshots = Table(
     Column("payload", JSON, nullable=False),
 )
 Index("ix_panel_snapshots_as_of", panel_snapshots.c.as_of)
+
+decision_packets = Table(
+    "decision_packets",
+    metadata,
+    Column("packet_id", String(128), primary_key=True),
+    Column("analysis_scope", String(128), nullable=False),
+    Column("as_of", DateTime(timezone=True), nullable=False),
+    Column("policy_version", String(128), nullable=False),
+    Column("content_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_decision_packets_scope_as_of",
+    decision_packets.c.analysis_scope,
+    decision_packets.c.as_of,
+)
+
+context_assessments = Table(
+    "context_assessments",
+    metadata,
+    Column("assessment_id", String(128), primary_key=True),
+    Column("packet_id", ForeignKey("decision_packets.packet_id"), nullable=False),
+    Column("analysis_scope", String(128), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "packet_id",
+        "analysis_behavior_hash",
+        name="uq_context_assessment_packet_behavior",
+    ),
+)
+Index(
+    "ix_context_assessments_behavior_available",
+    context_assessments.c.analysis_behavior_hash,
+    context_assessments.c.available_at,
+)
 
 analysis_proposals = Table(
     "analysis_proposals",

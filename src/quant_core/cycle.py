@@ -254,8 +254,8 @@ class AnalysisCycle:
                         dimensions={"reason": analyst_result.reason_code},
                     )
                 )
-                if analyst_result.success and analyst_result.proposal is not None:
-                    raw_proposal = analyst_result.proposal
+                if analyst_result.success and analyst_result.output is not None:
+                    raw_proposal = analyst_result.output
                     proposal = raw_proposal.model_copy(
                         update={
                             "proposal_id": stable_id(

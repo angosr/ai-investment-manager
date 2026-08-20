@@ -220,7 +220,7 @@ class CodexGovernor:
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return GovernorRunResult(False, "GOVERNOR_BUNDLE_INVALID")
         routed = self._router.run(bundle)
-        if not routed.success or routed.proposal is None:
+        if not routed.success or routed.output is None:
             return GovernorRunResult(
                 False,
                 routed.reason_code,
@@ -228,7 +228,7 @@ class CodexGovernor:
                 attempts=routed.attempts,
             )
         try:
-            raw_output = GOVERNOR_OUTPUT_ADAPTER.validate_python(routed.proposal)
+            raw_output = GOVERNOR_OUTPUT_ADAPTER.validate_python(routed.output)
             decision = self._normalize(snapshot, raw_output.decision)
             self._validate(snapshot, decision)
             applied_plan = self._apply_trigger_patch(snapshot, raw_output.trigger_plan_patch)

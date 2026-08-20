@@ -538,7 +538,7 @@ def test_router_chooses_most_headroom_without_discovering_fourth_directory(
     now = datetime(2026, 8, 18, tzinfo=UTC)
     proposal = _proposal(replay_input)
     executor = FakeExecutor(
-        {item.account_id: [InvocationResult(True, proposal=proposal)] for item in registry.accounts}
+        {item.account_id: [InvocationResult(True, output=proposal)] for item in registry.accounts}
     )
     router = CodexAccountRouter(
         registry,
@@ -571,8 +571,8 @@ def test_router_reuses_capacity_snapshot_within_ttl(app_config, replay_input, tm
     executor = FakeExecutor(
         {
             item.account_id: [
-                InvocationResult(True, proposal=_proposal(replay_input)),
-                InvocationResult(True, proposal=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
             ]
             for item in registry.accounts
         }
@@ -625,8 +625,8 @@ def test_rate_limit_failover_restarts_same_immutable_bundle(
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.RATE_LIMIT)],
-            "codex_b": [InvocationResult(True, proposal=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, proposal=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
         }
     )
     router = CodexAccountRouter(
@@ -661,8 +661,8 @@ def test_auth_failure_disables_account_for_current_router_and_fails_over(
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.AUTH)],
-            "codex_b": [InvocationResult(True, proposal=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, proposal=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
         }
     )
     router = CodexAccountRouter(
@@ -720,10 +720,10 @@ def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_bat
         {
             "codex_a": [
                 InvocationResult(False, failure=FailureClass.TIMEOUT),
-                InvocationResult(True, proposal=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
             ],
-            "codex_b": [InvocationResult(True, proposal=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, proposal=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
         }
     )
     probe = FakeProbe(
@@ -789,8 +789,8 @@ def test_expired_cooldown_requires_successful_capacity_reprobe(
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.TIMEOUT)],
-            "codex_b": [InvocationResult(True, proposal=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, proposal=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
         }
     )
     runtime = _runtime(app_config)
@@ -820,8 +820,8 @@ def test_probe_outage_uses_only_previously_healthy_accounts_in_conservative_roun
     executor = FakeExecutor(
         {
             item.account_id: [
-                InvocationResult(True, proposal=_proposal(replay_input)),
-                InvocationResult(True, proposal=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_proposal(replay_input)),
             ]
             for item in registry.accounts
         }
@@ -1314,7 +1314,7 @@ def test_isolation_audit_uses_production_executor_contract_without_leaking_senti
             account.account_id: [
                 InvocationResult(
                     True,
-                    proposal=IsolationProbeOutput(
+                    output=IsolationProbeOutput(
                         can_read=False,
                         value=None,
                         reason="no file tool",
@@ -1356,7 +1356,7 @@ def test_isolation_audit_fails_if_model_reports_readable_sentinel(app_config, tm
                 account.account_id: [
                     InvocationResult(
                         True,
-                        proposal=IsolationProbeOutput(
+                        output=IsolationProbeOutput(
                             can_read=True,
                             value="secret-sentinel",
                             reason="read succeeded",

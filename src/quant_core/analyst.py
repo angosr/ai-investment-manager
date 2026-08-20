@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -70,6 +71,16 @@ _ANALYST_PROMPT_INSTRUCTIONS = (
     "missing_evidence_ids，必须将其视为数据不完整，不得猜测其内容。"
     "证据省略 excerpt 时，title 即其完整正文。"
 )
+
+
+def codex_execution_contract() -> dict[str, object]:
+    """Stable tool-less execution boundary shared by every Codex analysis role."""
+
+    return {
+        "base_instructions": _ANALYST_BASE_INSTRUCTIONS,
+        "developer_instructions": _ANALYST_DEVELOPER_INSTRUCTIONS,
+        "disabled_features": _DISABLED_ANALYST_FEATURES,
+    }
 
 
 def analysis_behavior_hash(config: AppConfig) -> str:
@@ -589,10 +600,37 @@ def verify_bundle(bundle: RunBundle) -> bool:
         return False
 
 
+def load_existing_bundle(
+    *,
+    cycle_id: str,
+    target: Path,
+    expected_manifest: Mapping[str, object] | None = None,
+) -> RunBundle | None:
+    if not target.exists():
+        return None
+    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    if expected_manifest is not None and any(
+        manifest.get(key) != value for key, value in expected_manifest.items()
+    ):
+        raise ValueError("已有运行包身份不匹配")
+    bundle = RunBundle(
+        cycle_id=cycle_id,
+        path=target,
+        bundle_hash=content_hash({"manifest": manifest}),
+        prompt=(target / "analyst_prompt.md").read_text(encoding="utf-8").strip(),
+        analysis_behavior_hash=_validated_behavior_hash(
+            manifest.get("analysis_behavior_hash")
+        ),
+    )
+    if not verify_bundle(bundle):
+        raise ValueError("已有运行包校验失败")
+    return bundle
+
+
 @dataclass(frozen=True, slots=True)
 class InvocationResult:
     success: bool
-    proposal: BaseModel | None = None
+    output: BaseModel | None = None
     failure: FailureClass | None = None
     usage: dict[str, int] = field(default_factory=dict)
     diagnostics: dict[str, int | str | bool] = field(default_factory=dict)
@@ -734,7 +772,7 @@ class SubprocessCodexExecutor:
         )
         return InvocationResult(
             success=parsed.success,
-            proposal=parsed.proposal,
+            output=parsed.output,
             failure=parsed.failure,
             usage=parsed.usage,
             diagnostics={
@@ -946,9 +984,9 @@ class SubprocessCodexExecutor:
                 },
             )
         try:
-            proposal = self._output_adapter.validate_json(messages[0])
-            if isinstance(proposal, AnalystStructuredOutput):
-                proposal = proposal.to_domain()
+            output = self._output_adapter.validate_json(messages[0])
+            if isinstance(output, AnalystStructuredOutput):
+                output = output.to_domain()
         except (ValidationError, ValueError):
             return InvocationResult(
                 False,
@@ -960,7 +998,7 @@ class SubprocessCodexExecutor:
             )
         return InvocationResult(
             True,
-            proposal=proposal,
+            output=output,
             usage=usage,
             diagnostics=diagnostics,
         )
@@ -1247,7 +1285,7 @@ def audit_codex_isolation(
         )
     ).execute(account, bundle)
     try:
-        if not invocation.success or not isinstance(invocation.proposal, IsolationProbeOutput):
+        if not invocation.success or not isinstance(invocation.output, IsolationProbeOutput):
             return IsolationAuditCheck(
                 account_id=account.account_id,
                 ready=False,
@@ -1258,7 +1296,7 @@ def audit_codex_isolation(
                     else "ISOLATION_OUTPUT_INVALID"
                 ),
             )
-        output = invocation.proposal
+        output = invocation.output
         if output.can_read or output.value is not None:
             return IsolationAuditCheck(
                 account_id=account.account_id,
@@ -1379,7 +1417,7 @@ class _AccountRuntime:
 @dataclass(frozen=True, slots=True)
 class AnalystResult:
     success: bool
-    proposal: BaseModel | None
+    output: BaseModel | None
     reason_code: str
     account_id: str | None = None
     attempts: int = 0
@@ -1495,7 +1533,7 @@ class CodexAccountRouter:
                 runtime.recent_failures = 0
                 return AnalystResult(
                     True,
-                    result.proposal,
+                    result.output,
                     "CODEX_ANALYSIS_SUCCEEDED",
                     account.account_id,
                     attempt_number,
@@ -1645,31 +1683,12 @@ class CodexAnalyst:
             content_hash({"trigger": trigger_identity}),
         )
         try:
-            bundle = self._load_existing(panel.cycle_id, target)
+            bundle = load_existing_bundle(cycle_id=panel.cycle_id, target=target)
             if bundle is None:
                 bundle = self._bundle_builder.build(panel, target, trigger=trigger)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return AnalystResult(False, None, "CODEX_BUNDLE_INVALID")
         return self._router.run(bundle)
-
-    @staticmethod
-    def _load_existing(cycle_id: str, target: Path) -> RunBundle | None:
-        if not target.exists():
-            return None
-        manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-        bundle = RunBundle(
-            cycle_id=cycle_id,
-            path=target,
-            bundle_hash=content_hash({"manifest": manifest}),
-            prompt=(target / "analyst_prompt.md").read_text(encoding="utf-8").strip(),
-            analysis_behavior_hash=_validated_behavior_hash(
-                manifest.get("analysis_behavior_hash")
-            ),
-        )
-        if not verify_bundle(bundle):
-            raise ValueError("已有运行包校验失败")
-        return bundle
-
 
 def assemble_codex_analyst(
     config: AppConfig,

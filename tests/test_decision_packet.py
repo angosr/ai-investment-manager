@@ -2,7 +2,9 @@ from datetime import timedelta
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine
 
+from quant_core.analyst import AnalystResult, verify_bundle
 from quant_core.asset_management import (
     AssessmentUncertainty,
     CanonicalFactRevision,
@@ -15,6 +17,8 @@ from quant_core.asset_management import (
     SourceTier,
     StateSnapshot,
 )
+from quant_core.context_analyst import AssessRunBundleBuilder, CodexContextAnalyst
+from quant_core.context_assessment_sql import SqlContextAssessmentStore
 from quant_core.decision_packet import (
     AnalysisMandate,
     AssessStructuredOutput,
@@ -30,6 +34,7 @@ from quant_core.decision_packet import (
 from quant_core.domain import DirectionalView
 from quant_core.features import FeatureEngine
 from quant_core.ids import canonical_json
+from quant_core.persistence import metadata
 
 HASH = "a" * 64
 
@@ -313,3 +318,137 @@ def test_assessment_output_rejects_smuggled_order(replay_input) -> None:
 
     with pytest.raises(ValidationError, match="extra_forbidden"):
         AssessStructuredOutput.model_validate(payload)
+
+
+class _StaticRouter:
+    def __init__(self, result: AnalystResult) -> None:
+        self.result = result
+        self.bundles = []
+
+    def run(self, bundle):
+        self.bundles.append(bundle)
+        return self.result
+
+
+def _assess_bundle_builder(app_config) -> AssessRunBundleBuilder:
+    return AssessRunBundleBuilder(
+        app_config.codex_runtime,
+        code_version="test-code",
+        configuration_hash=HASH,
+    )
+
+
+def test_assess_bundle_reuses_generic_locked_runner_contract(
+    app_config, replay_input, tmp_path
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    bundle = _assess_bundle_builder(app_config).build(packet, tmp_path / "bundle")
+
+    assert verify_bundle(bundle)
+    assert bundle.cycle_id == packet.packet_id
+    assert bundle.analysis_behavior_hash == _assess_bundle_builder(
+        app_config
+    ).behavior_hash(packet)
+    schema = (bundle.path / "output.schema.json").read_text(encoding="utf-8")
+    assert "suggested_action" not in schema
+    assert "target_notional" not in schema
+
+
+def test_context_analyst_finalizes_assessment_without_trade_authority(
+    app_config, replay_input, tmp_path
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    completed_at = packet.as_of + timedelta(seconds=20)
+    router = _StaticRouter(
+        AnalystResult(
+            True,
+            _assessment_output(),
+            "CODEX_ANALYSIS_SUCCEEDED",
+            ".codex",
+            1,
+            {"total_tokens": 100},
+            completed_at,
+            "run-1",
+        )
+    )
+    analyst = CodexContextAnalyst(
+        tmp_path,
+        _assess_bundle_builder(app_config),
+        router,
+    )
+
+    result = analyst.assess(packet)
+
+    assert result.success
+    assert result.output is not None
+    assert result.output.available_at == completed_at
+    assert result.output.decision_packet_hash == packet.content_hash
+    assert len(router.bundles) == 1
+
+
+def test_context_analyst_fails_closed_on_semantically_invalid_output(
+    app_config, replay_input, tmp_path
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    payload = _assessment_output().model_dump()
+    payload["assessment"]["views"][0]["evidence_ids"] = ("not-visible",)
+    router = _StaticRouter(
+        AnalystResult(
+            True,
+            AssessStructuredOutput.model_validate(payload),
+            "CODEX_ANALYSIS_SUCCEEDED",
+            completed_at=packet.as_of + timedelta(seconds=20),
+        )
+    )
+    analyst = CodexContextAnalyst(
+        tmp_path,
+        _assess_bundle_builder(app_config),
+        router,
+    )
+
+    result = analyst.assess(packet)
+
+    assert not result.success
+    assert result.output is None
+    assert result.reason_code == "CODEX_SCHEMA_INVALID"
+
+
+def test_context_assessment_store_is_immutable_and_idempotent(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    assessment = finalize_context_assessment(
+        output=_assessment_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    store = SqlContextAssessmentStore(engine)
+
+    assert store.record_packet(packet) == packet
+    assert store.record_packet(packet) == packet
+    assert store.record_assessment(packet.packet_id, assessment) == assessment
+    assert store.record_assessment(packet.packet_id, assessment) == assessment
+    assert store.packet(packet.packet_id) == packet
+    assert store.assessment(assessment.assessment_id) == assessment
+
+
+def test_context_assessment_store_rejects_packet_mismatch(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    assessment = finalize_context_assessment(
+        output=_assessment_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    ).model_copy(update={"decision_packet_hash": "b" * 64})
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    store = SqlContextAssessmentStore(engine)
+    store.record_packet(packet)
+
+    with pytest.raises(ValueError, match="身份不一致"):
+        store.record_assessment(packet.packet_id, assessment)
