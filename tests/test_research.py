@@ -1040,6 +1040,8 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
     spec = CarryEvaluationSpec.freeze(
         carry_dataset=carry,
         spot_dataset=spot,
+        evaluator_code_version="a" * 40,
+        evaluator_environment=current_carry_evaluator_environment(),
         policy=policy,
         plan=plan,
     )
@@ -1053,7 +1055,31 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
         plan=registered,
         champion_manifest_id="test-champion",
         evaluated_at=registered.registered_at,
+        evaluator_code_version="a" * 40,
+        evaluator_environment=spec.evaluator_environment,
     )
+    with pytest.raises(ValueError, match="精确评价代码版本"):
+        validate_carry_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id="test-champion",
+            evaluated_at=registered.registered_at,
+            evaluator_code_version="b" * 40,
+            evaluator_environment=spec.evaluator_environment,
+        )
+    with pytest.raises(ValueError, match="精确评价依赖环境"):
+        validate_carry_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id="test-champion",
+            evaluated_at=registered.registered_at,
+            evaluator_code_version="a" * 40,
+            evaluator_environment=(("pydantic", "different"), ("python", "different")),
+        )
+    legacy_payload = spec.model_dump(mode="json")
+    legacy_payload["version"] = "carry-evaluation-spec-v1"
+    with pytest.raises(ValueError):
+        CarryEvaluationSpec.model_validate(legacy_payload)
     result = run_carry_walk_forward(
         carry_dataset=carry,
         spot_dataset=spot,

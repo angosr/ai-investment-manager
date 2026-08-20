@@ -796,6 +796,7 @@ def carry_walk_forward_command(
         run_carry_walk_forward,
         validate_carry_evaluation_plan,
     )
+    from quant_core.research.carry_forward import current_carry_evaluator_environment
     from quant_core.research.dataset import HistoricalDatasetCatalog
 
     governance = SqlGovernanceRepository(_runtime_engine(database_url))
@@ -811,6 +812,8 @@ def carry_walk_forward_command(
         spec = CarryEvaluationSpec.freeze(
             carry_dataset=carry_dataset,
             spot_dataset=spot_dataset,
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_carry_evaluator_environment(),
             policy=CarryPolicy(),
             plan=CarryWalkForwardPlan(plan_id=plan_id),
         )
@@ -855,6 +858,8 @@ def carry_walk_forward_command(
             plan=registered,
             champion_manifest_id=champion.manifest_id,
             evaluated_at=datetime.now(UTC),
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_carry_evaluator_environment(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
@@ -911,6 +916,7 @@ def carry_blind_evaluate_command(
         run_carry_blind_evaluation,
         validate_carry_evaluation_plan,
     )
+    from quant_core.research.carry_forward import current_carry_evaluator_environment
     from quant_core.research.dataset import HistoricalDatasetCatalog
 
     source = CarryEvaluationCatalog(evaluation_catalog).load(source_evaluation_id)
@@ -944,6 +950,8 @@ def carry_blind_evaluate_command(
             plan=registered,
             champion_manifest_id=governance.get_champion().manifest_id,
             evaluated_at=datetime.now(UTC),
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_carry_evaluator_environment(),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
@@ -976,9 +984,11 @@ def carry_blind_evaluate_command(
         raise typer.BadParameter(str(exc), param_hint="source-evaluation-id") from exc
     catalog = CarryBlindCatalog(blind_catalog)
     if claim.completed_at is not None:
-        assert claim.result_id is not None
+        assert claim.result_id is not None and claim.result_hash is not None
         result = catalog.load(claim.result_id)
-        result_path = blind_catalog / f"{claim.result_id}.json"
+        if content_hash(result) != claim.result_hash:
+            raise RuntimeError("已完成 carry 盲测的事实库哈希与结果制品不一致")
+        result_path = blind_catalog.resolve() / f"{claim.result_id}.json"
     else:
         carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(
             spec.carry_dataset_id
@@ -1000,13 +1010,13 @@ def carry_blind_evaluate_command(
                 }
             )
         )
-        if not result.passed:
-            governance.record_failed_experiment(
-                failed_carry_blind_experiment(
-                    result,
-                    rejected_at=datetime.now(UTC),
-                )
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_carry_blind_experiment(
+                result,
+                rejected_at=datetime.now(UTC),
             )
+        )
     payload = result.model_dump(mode="json")
     payload["result_path"] = str(result_path)
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))

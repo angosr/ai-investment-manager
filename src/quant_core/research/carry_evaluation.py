@@ -156,12 +156,20 @@ class CarryBlindResult(FrozenModel):
 
 
 class CarryEvaluationSpec(FrozenModel):
-    version: Literal["carry-evaluation-spec-v1"] = "carry-evaluation-spec-v1"
+    version: Literal["carry-evaluation-spec-v2"] = "carry-evaluation-spec-v2"
     carry_dataset_id: str
     spot_dataset_id: str
     funding_dataset_id: str
+    evaluator_code_version: str = Field(pattern=r"^[0-9a-f]{40}$")
+    evaluator_environment: tuple[tuple[str, str], ...] = Field(min_length=2)
     policy: CarryPolicy
     plan: CarryWalkForwardPlan
+
+    @model_validator(mode="after")
+    def evaluator_environment_is_unique_and_sorted(self):
+        if tuple(sorted(set(self.evaluator_environment))) != self.evaluator_environment:
+            raise ValueError("carry 评价环境必须唯一且有序")
+        return self
 
     @classmethod
     def freeze(
@@ -169,6 +177,8 @@ class CarryEvaluationSpec(FrozenModel):
         *,
         carry_dataset: HistoricalCarryDataset,
         spot_dataset: HistoricalDataset,
+        evaluator_code_version: str,
+        evaluator_environment: tuple[tuple[str, str], ...],
         policy: CarryPolicy,
         plan: CarryWalkForwardPlan,
     ) -> CarryEvaluationSpec:
@@ -177,6 +187,8 @@ class CarryEvaluationSpec(FrozenModel):
             carry_dataset_id=carry_dataset.manifest.dataset_id,
             spot_dataset_id=carry_dataset.manifest.spot_dataset_id,
             funding_dataset_id=carry_dataset.manifest.funding_dataset_id,
+            evaluator_code_version=evaluator_code_version,
+            evaluator_environment=evaluator_environment,
             policy=policy,
             plan=plan,
         )
@@ -286,7 +298,13 @@ def validate_carry_evaluation_plan(
     plan: EvaluationPlan,
     champion_manifest_id: str,
     evaluated_at: datetime,
+    evaluator_code_version: str,
+    evaluator_environment: tuple[tuple[str, str], ...],
 ) -> None:
+    if evaluator_code_version != spec.evaluator_code_version:
+        raise ValueError("carry 必须使用预登记的精确评价代码版本")
+    if evaluator_environment != spec.evaluator_environment:
+        raise ValueError("carry 必须使用预登记的精确评价依赖环境")
     if plan.plan_id != spec.plan.plan_id:
         raise ValueError("carry 评价与预登记计划 ID 不一致")
     if plan.registered_at > _require_utc(evaluated_at):
