@@ -14,8 +14,8 @@ from investment_manager.fact_pipeline import (
     project_fomc_calendar_fact,
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.official_information import parse_fomc_calendar
-from investment_manager.official_information_sql import SqlFedOfficialInformationIngestor
+from investment_manager.information.official import parse_fomc_calendar
+from investment_manager.information.official_repository import SqlFedOfficialInformationIngestor
 from investment_manager.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
@@ -97,7 +97,7 @@ def test_fact_requires_persisted_source_observation() -> None:
         _record("15-16", observed_at=OBSERVED_AT),
         observed_at=OBSERVED_AT,
     )[0]
-    from investment_manager.official_information import build_fomc_calendar_revision
+    from investment_manager.information.official import build_fomc_calendar_revision
 
     fact = project_fomc_calendar_fact(
         build_fomc_calendar_revision(record),

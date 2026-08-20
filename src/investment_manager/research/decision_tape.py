@@ -16,12 +16,12 @@ from investment_manager.domain import (
     AnalysisProposal,
     DirectionalForecast,
     DirectionalView,
-    IntelligenceEvent,
     Side,
     SignalCandidate,
 )
 from investment_manager.forecast_evaluation import unique_successful_codex_completion
 from investment_manager.governance import EvaluationPlan, EvaluationStage
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

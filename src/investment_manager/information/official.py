@@ -12,11 +12,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.asset_management import SourceObservation, SourceTier
+from investment_manager.information.models import SourceObservation, SourceTier
+from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.source_payload import build_raw_source_payload
 
 FED_SOURCE_ID = "federal-reserve"
 FED_MONETARY_RSS_URL = "https://www.federalreserve.gov/feeds/press_monetary.xml"

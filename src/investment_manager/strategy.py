@@ -9,12 +9,12 @@ from investment_manager.config import StrategyPolicy
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    IntelligenceEvent,
     OrderType,
     PriceCondition,
     Side,
     SignalCandidate,
 )
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import (
     FeatureSnapshot,

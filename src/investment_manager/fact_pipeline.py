@@ -12,14 +12,14 @@ from investment_manager.asset_management import (
     Materiality,
     StateSnapshot,
 )
-from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.kernel.time import require_utc
-from investment_manager.kernel.types import FrozenModel
-from investment_manager.official_information import (
+from investment_manager.information.official import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
     MarketCalendarEventRevision,
 )
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
 
 FOMC_MEETING_FACT_TYPE = "FOMC_MEETING_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"

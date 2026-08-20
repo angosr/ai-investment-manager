@@ -39,7 +39,7 @@ from investment_manager.governance import (
     validate_manifest_code_version,
 )
 from investment_manager.governance_runtime import assemble_governance
-from investment_manager.ingestion import (
+from investment_manager.information.collector import (
     EventNormalizer,
     HttpxNewsNowTransport,
     InformationCollector,
@@ -48,6 +48,7 @@ from investment_manager.ingestion import (
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
+from investment_manager.information.repository import SqlEventStore
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.lifecycle_runtime import (
     LifecycleTemporalWorker,
@@ -57,10 +58,7 @@ from investment_manager.lifecycle_runtime import (
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.outcome_evaluation_runtime import assemble_outcome_evaluation
-from investment_manager.persistence import (
-    SqlEventStore,
-    SqlGovernanceRepository,
-)
+from investment_manager.persistence import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.portfolio_protection import SqlPortfolioProtectionStore
 from investment_manager.reconciliation_runtime import assemble_reconciliation
@@ -1623,8 +1621,8 @@ def freeze_event_history_command(
 
     from sqlalchemy import select
 
-    from investment_manager.domain import IntelligenceEvent
-    from investment_manager.persistence import normalized_events
+    from investment_manager.information.models import IntelligenceEvent
+    from investment_manager.information.tables import normalized_events
     from investment_manager.research.dataset import (
         HistoricalEventDatasetCatalog,
         freeze_historical_events,

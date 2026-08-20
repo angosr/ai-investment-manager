@@ -6,8 +6,8 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.persistence import raw_source_payloads
-from investment_manager.source_payload import RawSourcePayload
+from investment_manager.information.raw_payload import RawSourcePayload
+from investment_manager.information.tables import raw_source_payloads
 
 
 class SqlRawSourcePayloadStore:

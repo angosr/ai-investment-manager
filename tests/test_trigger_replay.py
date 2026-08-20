@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from investment_manager.domain import IntelligenceEvent
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.research.dataset import freeze_historical_events
 from investment_manager.research.trigger_replay import (
     ExternalTriggerReplaySpec,

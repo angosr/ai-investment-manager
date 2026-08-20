@@ -32,18 +32,24 @@ from investment_manager.fact_pipeline import (
 from investment_manager.fact_state_sql import SqlFactStateStore
 from investment_manager.governance import ReleaseManifest
 from investment_manager.governance_context import GovernanceSnapshotAssembler
-from investment_manager.lifecycle import PositionLifecycleManager
-from investment_manager.market.models import MarketSnapshot, MarketTrade
-from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.official_information import (
+from investment_manager.information.official import (
     FED_FOMC_CALENDAR_URL,
     FED_SOURCE_ID,
     MarketCalendarEventRevision,
     parse_fomc_calendar,
 )
-from investment_manager.official_information_sql import SqlOfficialInformationStore
+from investment_manager.information.official_repository import SqlOfficialInformationStore
+from investment_manager.information.raw_payload import build_raw_source_payload
+from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
+from investment_manager.information.repository import SqlEventStore
+from investment_manager.information.tables import (
+    market_calendar_event_revisions,
+    source_observations,
+)
+from investment_manager.lifecycle import PositionLifecycleManager
+from investment_manager.market.models import MarketSnapshot, MarketTrade
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.persistence import (
-    SqlEventStore,
     SqlFactLedger,
     SqlGovernanceRepository,
     SqlLifecycleLedger,
@@ -52,16 +58,12 @@ from investment_manager.persistence import (
     candidate_outcomes,
     canonical_fact_revisions,
     decision_outcomes,
-    market_calendar_event_revisions,
     metric_observations,
     orders,
-    source_observations,
 )
 from investment_manager.platform.database import build_engine, metadata
 from investment_manager.reconciliation import MockReconciler
 from investment_manager.risk_budget import SqlRiskBudgetStore, portfolio_risk_budgets
-from investment_manager.source_payload import build_raw_source_payload
-from investment_manager.source_payload_sql import SqlRawSourcePayloadStore
 from investment_manager.trigger import (
     AnalysisTriggerType,
     TriggerNow,

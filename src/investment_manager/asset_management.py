@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.domain import DirectionalView
+from investment_manager.kernel.identity import SHA256_PATTERN
 from investment_manager.kernel.time import (
     optional_utc,
     require_utc,
@@ -16,14 +17,6 @@ from investment_manager.kernel.types import (
     Money,
     PositiveDecimal,
 )
-
-SHA256_PATTERN = r"^[0-9a-f]{64}$"
-
-
-class SourceTier(StrEnum):
-    FIRST_PARTY = "FIRST_PARTY"
-    CONTRACTED = "CONTRACTED"
-    AGGREGATOR = "AGGREGATOR"
 
 
 class FactRevisionStatus(StrEnum):
@@ -67,29 +60,6 @@ class ForecastRole(StrEnum):
     PROGRAM_BASE = "PROGRAM_BASE"
     AI_EVENT = "AI_EVENT"
     AI_ADJUSTED = "AI_ADJUSTED"
-
-
-class SourceObservation(FrozenModel):
-    observation_id: str = Field(min_length=1)
-    source_id: str = Field(min_length=1)
-    source_tier: SourceTier
-    source_record_id: str = Field(min_length=1)
-    observed_at: datetime
-    source_published_at: datetime | None = None
-    payload_hash: str = Field(pattern=SHA256_PATTERN)
-    payload_ref: str = Field(min_length=1)
-
-    _utc_observed_at = field_validator("observed_at")(require_utc)
-    _utc_source_published_at = field_validator("source_published_at")(optional_utc)
-
-    @model_validator(mode="after")
-    def publication_must_be_point_in_time_visible(self):
-        if (
-            self.source_published_at is not None
-            and self.source_published_at > self.observed_at
-        ):
-            raise ValueError("来源发布时间不能晚于系统观察时间")
-        return self
 
 
 class CanonicalFactRevision(FrozenModel):

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from investment_manager.config import AppConfig
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.execution import MockExchange
-from investment_manager.ingestion import InMemoryEventStore
+from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.market.models import (
     ClosedMarketBar,
     MarketQuote,

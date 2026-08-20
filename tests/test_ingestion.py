@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from investment_manager.ingestion import (
+from investment_manager.information.collector import (
     EventNormalizer,
     InformationCollector,
     InformationCollectorService,
@@ -18,11 +18,9 @@ from investment_manager.ingestion import (
     RawIntelligenceItem,
     TrendRadarMcpSource,
 )
-from investment_manager.persistence import (
-    SqlEventStore,
-    analysis_trigger_events,
-    normalized_events,
-)
+from investment_manager.information.repository import SqlEventStore
+from investment_manager.information.tables import normalized_events
+from investment_manager.persistence import analysis_trigger_events
 from investment_manager.schema import create_schema
 
 

@@ -5,8 +5,7 @@ from datetime import datetime
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.asset_management import SHA256_PATTERN
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import SHA256_PATTERN, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 

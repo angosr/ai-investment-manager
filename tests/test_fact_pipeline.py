@@ -14,7 +14,7 @@ from investment_manager.fact_pipeline import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
-from investment_manager.official_information import (
+from investment_manager.information.official import (
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
     parse_fomc_calendar,

@@ -10,7 +10,10 @@ from sqlalchemy import create_engine, func, insert, select
 from investment_manager.analyst import AnalystResult, canonical_json
 from investment_manager.candidate_evaluation import SqlCandidateOutcomeStore
 from investment_manager.cycle import AnalysisCycle
-from investment_manager.domain import CandidateOutcome, CandidateOutcomeStatus, IntelligenceEvent
+from investment_manager.domain import (
+    CandidateOutcome,
+    CandidateOutcomeStatus,
+)
 from investment_manager.execution import MockExchange
 from investment_manager.governance import (
     ChangeProposal,
@@ -27,6 +30,8 @@ from investment_manager.governance_agent import (
     SqlGovernorDecisionStore,
 )
 from investment_manager.governance_context import GovernanceSnapshotAssembler
+from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.persistence import (
     SqlFactLedger,
@@ -36,7 +41,6 @@ from investment_manager.persistence import (
     change_proposals,
     codex_runs,
     governance_decisions,
-    normalized_events,
     signal_candidates,
 )
 from investment_manager.risk_budget import SqlRiskBudgetStore

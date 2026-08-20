@@ -4,13 +4,13 @@ from sqlalchemy import create_engine, func, select
 
 from investment_manager.fact_pipeline import OfficialFactProjectionPolicy
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.official_fact_pipeline import SqlFedFactIngestor
-from investment_manager.official_information_sql import SqlFedOfficialInformationIngestor
-from investment_manager.persistence import (
-    canonical_fact_revisions,
+from investment_manager.information.official_repository import SqlFedOfficialInformationIngestor
+from investment_manager.information.tables import (
     raw_source_payloads,
     source_observations,
 )
+from investment_manager.official_fact_pipeline import SqlFedFactIngestor
+from investment_manager.persistence import canonical_fact_revisions
 from investment_manager.schema import create_schema
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)

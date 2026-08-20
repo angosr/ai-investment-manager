@@ -19,11 +19,13 @@ from investment_manager.asset_management import (
     Materiality,
     PortfolioTarget,
     PricedState,
-    SourceObservation,
-    SourceTier,
     StateSnapshot,
 )
 from investment_manager.domain import DirectionalView
+from investment_manager.information.models import (
+    SourceObservation,
+    SourceTier,
+)
 
 NOW = datetime(2026, 8, 20, 10, 30, tzinfo=UTC)
 HASH = "a" * 64

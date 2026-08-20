@@ -18,7 +18,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.domain import IntelligenceEvent
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

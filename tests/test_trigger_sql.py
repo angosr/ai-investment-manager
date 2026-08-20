@@ -4,13 +4,13 @@ from datetime import timedelta
 
 from sqlalchemy import create_engine, func, select
 
+from investment_manager.information.repository import SqlEventStore
+from investment_manager.information.tables import normalized_events
 from investment_manager.persistence import (
-    SqlEventStore,
     analysis_call_admissions,
     analysis_trigger_batches,
     analysis_trigger_events,
     analysis_trigger_plans,
-    normalized_events,
     trigger_outbox,
 )
 from investment_manager.schema import create_schema

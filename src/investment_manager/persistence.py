@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -13,7 +13,6 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
-    LargeBinary,
     Numeric,
     PrimaryKeyConstraint,
     String,
@@ -35,7 +34,6 @@ from investment_manager.domain import (
     AccountSnapshot,
     AnalysisProposal,
     DecisionOutcome,
-    IntelligenceEvent,
     MetricObservation,
     Order,
     PanelSnapshot,
@@ -74,9 +72,7 @@ from investment_manager.risk_budget import (
 )
 from investment_manager.trigger import (
     AnalysisTriggerEvent,
-    AnalysisTriggerType,
     TriggerOutboxKind,
-    build_trigger_event,
 )
 
 
@@ -264,45 +260,6 @@ Index(
     assessment_view_outcomes.c.evaluation_at,
 )
 
-source_observations = Table(
-    "source_observations",
-    metadata,
-    Column("observation_id", String(128), primary_key=True),
-    Column("source_id", String(128), nullable=False),
-    Column("source_record_id", String(2_000), nullable=False),
-    Column("record_kind", String(64), nullable=False),
-    Column("source_tier", String(32), nullable=False),
-    Column("source_published_at", DateTime(timezone=True), nullable=True),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("payload_hash", String(64), nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "source_id",
-        "source_record_id",
-        "observed_at",
-        name="uq_source_observation_record_time",
-    ),
-)
-
-raw_source_payloads = Table(
-    "raw_source_payloads",
-    metadata,
-    Column("payload_id", String(128), primary_key=True),
-    Column("source_id", String(128), nullable=False),
-    Column("source_url", String(2_000), nullable=False),
-    Column("media_type", String(128), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("byte_count", Integer, nullable=False),
-    Column("content", LargeBinary, nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_raw_source_payloads_source_observed",
-    raw_source_payloads.c.source_id,
-    raw_source_payloads.c.observed_at,
-)
-
 state_evidence_snapshots = Table(
     "state_evidence_snapshots",
     metadata,
@@ -311,40 +268,6 @@ state_evidence_snapshots = Table(
     Column("as_of", DateTime(timezone=True), nullable=False),
     Column("observed_at", DateTime(timezone=True), nullable=False),
     Column("payload", JSON, nullable=False),
-)
-
-market_calendar_event_revisions = Table(
-    "market_calendar_event_revisions",
-    metadata,
-    Column("revision_id", String(128), primary_key=True),
-    Column("event_id", String(128), nullable=False),
-    Column(
-        "previous_revision_id",
-        ForeignKey("market_calendar_event_revisions.revision_id"),
-        nullable=True,
-    ),
-    Column(
-        "source_observation_id",
-        ForeignKey("source_observations.observation_id"),
-        nullable=False,
-        unique=True,
-    ),
-    Column("source_id", String(128), nullable=False),
-    Column("source_record_id", String(2_000), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("scheduled_release_at", DateTime(timezone=True), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "event_id",
-        "observed_at",
-        name="uq_market_calendar_event_revision_time",
-    ),
-)
-Index(
-    "ix_market_calendar_event_revisions_release",
-    market_calendar_event_revisions.c.scheduled_release_at,
 )
 
 canonical_fact_revisions = Table(
@@ -644,20 +567,6 @@ metric_observations = Table(
     UniqueConstraint("cycle_id", "phase", "sequence", name="uq_metric_cycle_phase_sequence"),
 )
 Index("ix_metric_observations_cycle", metric_observations.c.cycle_id)
-
-normalized_events = Table(
-    "normalized_events",
-    metadata,
-    Column("evidence_id", String(128), primary_key=True),
-    Column("event_time", DateTime(timezone=True), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("source", String(128), nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint("source", "content_hash", name="uq_normalized_event_source_hash"),
-)
-# Dashboard 世界事件按 event_time 倒序分页；交易热路径通过 trigger scope 关联后有界读取。
-Index("ix_normalized_events_event_time", normalized_events.c.event_time)
 
 analysis_trigger_events = Table(
     "analysis_trigger_events",
@@ -1561,114 +1470,6 @@ class SqlGovernanceRepository:
                 ).scalar_one()
             if existing != payload:
                 raise ValueError(f"治理事实 {key} 已存在且内容不同") from None
-
-
-class SqlEventStore:
-    """标准事件事实；新增事件与每品种 Trigger/Outbox 在同一事务提交。"""
-
-    def __init__(
-        self,
-        engine: Engine,
-        *,
-        pipeline_id: str = "default",
-        trigger_expiry_seconds: int = 900,
-        max_visible_events: int = 100,
-    ) -> None:
-        if trigger_expiry_seconds < 1:
-            raise ValueError("事件触发有效期必须为正数")
-        if not 1 <= max_visible_events <= 1000:
-            raise ValueError("可见事件读取上限必须在 1..1000")
-        self._engine = engine
-        self._pipeline_id = pipeline_id
-        self._trigger_expiry_seconds = trigger_expiry_seconds
-        self._max_visible_events = max_visible_events
-
-    def put(self, event: IntelligenceEvent) -> bool:
-        payload = event.model_dump(mode="json")
-        digest = content_hash({"title": event.title, "body": event.body})
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(normalized_events).values(
-                        evidence_id=event.evidence_id,
-                        event_time=event.event_time,
-                        observed_at=event.observed_at,
-                        source=event.source,
-                        content_hash=digest,
-                        payload=payload,
-                    )
-                )
-                for symbol in event.symbols:
-                    trigger = build_trigger_event(
-                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
-                        symbol=symbol,
-                        pipeline_id=self._pipeline_id,
-                        occurred_at=event.event_time,
-                        observed_at=event.observed_at,
-                        priority=int(event.impact * 100),
-                        dedup_key=event.evidence_id,
-                        evidence_ids=(event.evidence_id,),
-                        expires_at=event.observed_at
-                        + timedelta(seconds=self._trigger_expiry_seconds),
-                    )
-                    insert_trigger_with_outbox(connection, trigger)
-        except IntegrityError:
-            with self._engine.connect() as connection:
-                existing = connection.execute(
-                    select(normalized_events.c.payload).where(
-                        (normalized_events.c.evidence_id == event.evidence_id)
-                        | (
-                            (normalized_events.c.source == event.source)
-                            & (normalized_events.c.content_hash == digest)
-                        )
-                    )
-                ).scalar_one_or_none()
-            if existing is not None and existing != payload:
-                same_content = (
-                    existing.get("source") == payload["source"]
-                    and existing.get("title") == payload["title"]
-                    and existing.get("body") == payload["body"]
-                )
-                if not same_content:
-                    raise ValueError("事件唯一键冲突且事实不一致") from None
-            return False
-        return True
-
-    def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]:
-        as_of = require_utc(as_of)
-        # Trigger 激活必须按 pipeline 隔离，但已观测到的世界事实不应在每次
-        # 发布时清空。这里只复用历史 Trigger 中的品种路由事实，不会让旧
-        # pipeline 的触发器、待处理批次或调用准入进入新 pipeline。
-        routed_evidence = (
-            select(analysis_trigger_events.c.dedup_key.label("evidence_id"))
-            .where(
-                analysis_trigger_events.c.trigger_type == "INTELLIGENCE_INSERTED",
-                analysis_trigger_events.c.symbol == symbol,
-                analysis_trigger_events.c.observed_at <= as_of,
-            )
-            .distinct()
-            .subquery()
-        )
-        with self._engine.connect() as connection:
-            rows = connection.execute(
-                select(normalized_events.c.payload)
-                .select_from(
-                    normalized_events.join(
-                        routed_evidence,
-                        routed_evidence.c.evidence_id == normalized_events.c.evidence_id,
-                    )
-                )
-                .where(
-                    normalized_events.c.observed_at <= as_of,
-                )
-                .order_by(
-                    normalized_events.c.event_time.desc(),
-                    normalized_events.c.evidence_id.desc(),
-                )
-                .limit(self._max_visible_events)
-            ).scalars()
-            events = tuple(IntelligenceEvent.model_validate(item) for item in rows)
-        return tuple(sorted(events, key=lambda item: (item.event_time, item.evidence_id)))
 
 
 class SqlEvaluationRepository:

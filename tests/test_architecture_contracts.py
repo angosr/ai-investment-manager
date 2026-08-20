@@ -298,6 +298,58 @@ def test_market_models_are_imported_from_their_domain_owner() -> None:
     assert not (PACKAGE_ROOT / "features.py").exists()
 
 
+def test_information_facts_are_imported_from_their_domain_owner() -> None:
+    moved_models = {"IntelligenceEvent", "SourceObservation", "SourceTier"}
+    old_modules = {
+        "investment_manager.domain",
+        "investment_manager.asset_management",
+    }
+
+    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module in old_modules:
+                assert not moved_models.intersection(
+                    alias.name for alias in node.names
+                ), path
+
+    for filename in (
+        "ingestion.py",
+        "official_information.py",
+        "official_information_sql.py",
+        "source_payload.py",
+        "source_payload_sql.py",
+    ):
+        assert not (PACKAGE_ROOT / filename).exists()
+
+
+def test_information_tables_have_one_domain_owner() -> None:
+    owned_tables = {
+        "market_calendar_event_revisions",
+        "normalized_events",
+        "raw_source_payloads",
+        "source_observations",
+    }
+    owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id in owned_tables
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners[target.id].append(path)
+
+    expected = PACKAGE_ROOT / "information" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
+
+
 def test_old_package_and_console_entry_are_removed() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

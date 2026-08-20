@@ -20,7 +20,6 @@ from investment_manager.domain import (
     AnalysisProposal,
     CycleOutcome,
     DecisionOutcome,
-    IntelligenceEvent,
     MetricObservation,
     Order,
     OrderStatus,
@@ -38,6 +37,7 @@ from investment_manager.execution_contract import (
     build_execution_request,
     build_execution_result,
 )
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

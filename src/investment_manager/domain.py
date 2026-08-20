@@ -114,25 +114,6 @@ class AccountSnapshot(FrozenModel):
     _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
-class IntelligenceEvent(FrozenModel):
-    evidence_id: str
-    normalizer_version: str = "legacy-unknown"
-    acquisition_route: str = "legacy-unknown"
-    event_time: datetime
-    observed_at: datetime
-    source: str
-    title: str
-    body: str
-    symbols: tuple[str, ...]
-    relevance: UnitInterval
-    impact: UnitInterval
-    source_reliability: UnitInterval
-    novelty: UnitInterval
-
-    _utc_event_time = field_validator("event_time")(require_utc)
-    _utc_observed_at = field_validator("observed_at")(require_utc)
-
-
 class PanelEvidence(FrozenModel):
     evidence_id: str
     event_time: datetime

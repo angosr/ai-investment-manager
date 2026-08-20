@@ -6,7 +6,6 @@ from decimal import Decimal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.asset_management import (
-    SHA256_PATTERN,
     CanonicalFactRevision,
     ContextAssessment,
     ContextView,
@@ -14,11 +13,16 @@ from investment_manager.asset_management import (
     FactRevisionStatus,
     MaterialDelta,
     Materiality,
-    SourceTier,
     StateSnapshot,
 )
 from investment_manager.domain import AccountSnapshot
-from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.information.models import SourceTier
+from investment_manager.kernel.identity import (
+    SHA256_PATTERN,
+    canonical_json,
+    content_hash,
+    stable_id,
+)
 from investment_manager.kernel.time import (
     optional_utc,
     require_utc,

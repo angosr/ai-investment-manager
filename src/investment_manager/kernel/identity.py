@@ -7,6 +7,8 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
+
 
 def canonical_json(value: BaseModel | dict[str, Any] | list[Any] | tuple[Any, ...]) -> str:
     if isinstance(value, BaseModel):

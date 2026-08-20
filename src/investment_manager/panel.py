@@ -10,10 +10,10 @@ from investment_manager.config import PanelPolicy
 from investment_manager.domain import (
     SUPPORTED_OPEN_SIDES,
     AccountSnapshot,
-    IntelligenceEvent,
     PanelEvidence,
     PanelSnapshot,
 )
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import (
     FeatureSnapshot,

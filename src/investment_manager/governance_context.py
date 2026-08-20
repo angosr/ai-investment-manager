@@ -13,7 +13,6 @@ from investment_manager.config import AppConfig
 from investment_manager.domain import (
     CandidateOutcome,
     CandidateOutcomeStatus,
-    IntelligenceEvent,
 )
 from investment_manager.evaluation import OutcomeWindowReport
 from investment_manager.governance import (
@@ -25,6 +24,8 @@ from investment_manager.governance import (
     load_release_manifest,
     validate_manifest_against_config,
 )
+from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.tables import normalized_events
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
@@ -38,7 +39,6 @@ from investment_manager.persistence import (
     codex_runs,
     evaluation_plans,
     failed_experiment_records,
-    normalized_events,
     outcome_window_reports,
     reconciliation_reports,
     release_manifests,

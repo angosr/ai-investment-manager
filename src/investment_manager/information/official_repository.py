@@ -6,9 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
-from investment_manager.kernel.identity import stable_id
-from investment_manager.kernel.time import require_utc
-from investment_manager.official_information import (
+from investment_manager.information.official import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
     FED_SOURCE_ID,
@@ -21,13 +19,15 @@ from investment_manager.official_information import (
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
-from investment_manager.persistence import (
+from investment_manager.information.raw_payload import build_raw_source_payload
+from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
+from investment_manager.information.tables import (
     market_calendar_event_revisions,
     raw_source_payloads,
     source_observations,
 )
-from investment_manager.source_payload import build_raw_source_payload
-from investment_manager.source_payload_sql import SqlRawSourcePayloadStore
+from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.sql_locking import advisory_xact_lock
 
 

@@ -11,12 +11,12 @@ from investment_manager.fact_pipeline import (
     validate_material_delta_identity,
     validate_state_snapshot_identity,
 )
+from investment_manager.information.tables import source_observations
 from investment_manager.kernel.time import require_utc
 from investment_manager.persistence import (
     canonical_fact_revision_sources,
     canonical_fact_revisions,
     material_deltas,
-    source_observations,
     state_evidence_snapshots,
     state_snapshots,
 )

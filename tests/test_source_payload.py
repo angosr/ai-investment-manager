@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from investment_manager.persistence import raw_source_payloads
+from investment_manager.information.raw_payload import build_raw_source_payload
+from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
+from investment_manager.information.tables import raw_source_payloads
 from investment_manager.schema import create_schema
-from investment_manager.source_payload import build_raw_source_payload
-from investment_manager.source_payload_sql import SqlRawSourcePayloadStore
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 

@@ -14,7 +14,6 @@ from investment_manager.asset_management import (
     MaterialDelta,
     Materiality,
     PricedState,
-    SourceTier,
     StateSnapshot,
 )
 from investment_manager.context_analyst import AssessRunBundleBuilder, CodexContextAnalyst
@@ -33,6 +32,7 @@ from investment_manager.decision_packet import (
     finalize_context_assessment,
 )
 from investment_manager.domain import DirectionalView
+from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.market.features import FeatureEngine
 from investment_manager.platform.database import metadata

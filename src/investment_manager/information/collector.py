@@ -18,7 +18,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import Field, field_validator
 
-from investment_manager.domain import IntelligenceEvent
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel

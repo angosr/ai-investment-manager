@@ -18,13 +18,13 @@ from investment_manager.cli import _parse_research_symbol
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    IntelligenceEvent,
     OrderType,
     PriceCondition,
     ProgramExitCondition,
     Side,
     SignalCandidate,
 )
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import (

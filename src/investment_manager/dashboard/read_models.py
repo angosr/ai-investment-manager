@@ -17,11 +17,12 @@ from investment_manager.config import AppConfig
 from investment_manager.domain import (
     AnalysisProposal,
     DecisionOutcome,
-    IntelligenceEvent,
     TradeIntent,
 )
 from investment_manager.evaluation import OutcomeMetrics, calculate_outcome_metrics
 from investment_manager.governance import ReleaseManifest, validate_manifest_against_config
+from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.tables import normalized_events
 from investment_manager.ledger import CycleFacts
 from investment_manager.lifecycle import OpenLifecycleRecord
 from investment_manager.market.repository import market_quotes, market_trades
@@ -40,7 +41,6 @@ from investment_manager.persistence import (
     codex_runs,
     decision_outcomes,
     market_snapshots,
-    normalized_events,
     orders,
     panel_snapshots,
     release_manifests,

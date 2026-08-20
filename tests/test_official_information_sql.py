@@ -4,12 +4,12 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 
-from investment_manager.official_information import parse_fomc_calendar
-from investment_manager.official_information_sql import (
+from investment_manager.information.official import parse_fomc_calendar
+from investment_manager.information.official_repository import (
     SqlFedOfficialInformationIngestor,
     SqlOfficialInformationStore,
 )
-from investment_manager.persistence import (
+from investment_manager.information.tables import (
     market_calendar_event_revisions,
     raw_source_payloads,
     source_observations,

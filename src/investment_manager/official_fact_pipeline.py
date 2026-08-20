@@ -12,8 +12,8 @@ from investment_manager.fact_pipeline import (
     project_fomc_calendar_fact,
 )
 from investment_manager.fact_state_sql import SqlFactStateStore
-from investment_manager.official_information import FedMonetaryReleaseRecord, FomcMeetingRecord
-from investment_manager.official_information_sql import (
+from investment_manager.information.official import FedMonetaryReleaseRecord, FomcMeetingRecord
+from investment_manager.information.official_repository import (
     OfficialRecordWrite,
     SqlFedOfficialInformationIngestor,
 )

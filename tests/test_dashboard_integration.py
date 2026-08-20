@@ -14,10 +14,14 @@ from sqlalchemy import create_engine, insert
 from investment_manager.cycle import AnalysisCycle
 from investment_manager.dashboard import serializers as ser
 from investment_manager.dashboard.read_models import DashboardReader
-from investment_manager.domain import DecisionOutcome, ExitReason, IntelligenceEvent
+from investment_manager.domain import (
+    DecisionOutcome,
+    ExitReason,
+)
 from investment_manager.execution import MockExchange
+from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.repository import SqlEventStore
 from investment_manager.persistence import (
-    SqlEventStore,
     SqlFactLedger,
     analysis_call_admissions,
     decision_outcomes,

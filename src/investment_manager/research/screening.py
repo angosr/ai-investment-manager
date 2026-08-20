@@ -13,10 +13,10 @@ from investment_manager.decision import estimate_round_trip_cost_amount
 from investment_manager.domain import (
     AccountSnapshot,
     Action,
-    IntelligenceEvent,
     OrderType,
     Side,
 )
+from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
