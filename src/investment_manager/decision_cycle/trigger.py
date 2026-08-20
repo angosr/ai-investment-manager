@@ -39,6 +39,7 @@ from investment_manager.scheduling.workflows import BUILD_TRIGGER_DISPATCHES_ACT
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.application import (
     DecisionPacketPreparation,
+    DecisionPacketPreparationError,
     PacketPreparationStatus,
 )
 
@@ -236,7 +237,17 @@ class TriggerCoordinatorActivities:
                 non_retryable=True,
             ) from exc
         except AnalysisCallDeferred as exc:
-            return {"deferred_until": exc.retry_at.isoformat()}
+            # Admission is checked after all enabled consumers have frozen their
+            # inputs.  Keep that exact batch so a persisted Delta cannot become
+            # invisible while waiting for the global minimum interval.
+            return {
+                "deferred_until": exc.retry_at.isoformat(),
+                "retry_frozen_batch": True,
+            }
+        except DecisionPacketPreparationError:
+            # State/Delta are already durable.  Advancing batch.as_of would make
+            # that delta background state and suppress the assessment permanently.
+            return {"retry_frozen_batch": True}
         except ValueError as exc:
             raise ApplicationError(
                 "TriggerBatch 的行情或账户输入暂不可用",

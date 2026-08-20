@@ -9,6 +9,7 @@ from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.application import (
     DecisionPacketPreparation,
+    DecisionPacketPreparationError,
     PacketPreparationStatus,
 )
 from investment_manager.state.decision.packet import (
@@ -342,6 +343,89 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
     assert revised.packet.trigger_ids == (revised.delta_id,)
     assert revised.packet.facts[0].highest_source_tier == "FIRST_PARTY"
     assert replayed == revised
+
+
+def test_packet_preparation_exact_retry_recovers_persisted_delta(
+    app_config,
+    replay_input,
+) -> None:
+    class FailingAssembler:
+        def assemble(self, **_kwargs):
+            raise ValueError("packet capacity")
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    fed = SqlFedFactIngestor(engine, FACT_POLICY)
+    facts = SqlFactStateStore(engine)
+    projector = SqlStateProjector(
+        engine,
+        projection_version="portfolio-state-recovery-v1",
+        delta_policy=DELTA_POLICY,
+    )
+    common = {
+        "market_store": _PointInTimeMarketStore(replay_input.market),
+        "account_reader": _PointInTimeAccountReader(replay_input.account),
+        "event_reader": InMemoryEventStore(),
+        "facts": facts,
+        "projector": projector,
+        "features": FeatureEngine(app_config.feature),
+        "market_interval": app_config.market_data.interval,
+        "market_bar_window": app_config.market_data.bar_window,
+        "market_source": app_config.market_data.version,
+        "initial_quote_balance": app_config.shadow.initial_quote_balance,
+        "maximum_market_age_seconds": app_config.risk.maximum_market_age_seconds,
+        "clock": lambda: OBSERVED_AT + timedelta(minutes=2),
+    }
+    mandate = AnalysisMandate(
+        version="crypto-recovery-mandate-v1",
+        analysis_scope="crypto-recovery-portfolio",
+        question="Assess a durable material state transition.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("US_MONETARY_POLICY",),
+    )
+    failing = DecisionPacketPreparation(assembler=FailingAssembler(), **common)
+    fed.ingest_calendar(_calendar("15-16"), observed_at=OBSERVED_AT)
+    assert failing.prepare(
+        analysis_id="recovery-baseline",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+    ).status == PacketPreparationStatus.BASELINE_RECORDED
+    revised_at = OBSERVED_AT + timedelta(minutes=2)
+    fed.ingest_calendar(_calendar("16-17"), observed_at=revised_at)
+
+    with pytest.raises(DecisionPacketPreparationError):
+        failing.prepare(
+            analysis_id="recovery-revised",
+            as_of=revised_at,
+            mandate=mandate,
+        )
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(material_deltas)) == 1
+
+    recovered = DecisionPacketPreparation(
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-recovery-v1",
+                schema_version="decision-packet-recovery-v1",
+            ),
+        ),
+        **common,
+    ).prepare(
+        analysis_id="recovery-revised",
+        as_of=revised_at,
+        mandate=mandate,
+    )
+
+    assert recovered.status == PacketPreparationStatus.READY
+    assert recovered.packet is not None
+    assert recovered.packet.trigger_ids == (recovered.delta_id,)
 
 
 def test_packet_preparation_uses_only_exact_triggered_intelligence_event(

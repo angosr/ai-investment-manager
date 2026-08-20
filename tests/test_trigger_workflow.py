@@ -8,6 +8,10 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from investment_manager.decision_cycle.trigger import (
+    AnalysisCallDeferred,
+    TriggerCoordinatorActivities,
+)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.legacy.workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
 from investment_manager.scheduling.models import (
@@ -15,6 +19,7 @@ from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     TriggerOutboxKind,
     build_initial_trigger_plan,
+    build_trigger_batch,
     build_trigger_event,
 )
 from investment_manager.scheduling.runtime import build_trigger_coordinator_input
@@ -24,6 +29,7 @@ from investment_manager.scheduling.workflows import (
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
 )
+from investment_manager.state.decision.application import DecisionPacketPreparationError
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=UTC)
 
@@ -240,6 +246,50 @@ def test_trigger_coordinator_uses_most_specific_matching_event_rule() -> None:
     assert coordinator._rule_value(urgent, "coalesce_seconds") == 0
 
 
+def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> None:
+    class FailingBuilder:
+        def build(self, _batch):
+            raise DecisionPacketPreparationError("packet assembly failed")
+
+    activity_handler = TriggerCoordinatorActivities(builder=FailingBuilder())
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=None,
+    )
+    event = build_trigger_event(
+        trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=100,
+        dedup_key="packet-failure",
+    )
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(event,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    assert activity_handler.build_analysis_dispatches(batch.model_dump(mode="json")) == {
+        "retry_frozen_batch": True
+    }
+
+    class DeferredBuilder:
+        def build(self, _batch):
+            raise AnalysisCallDeferred(NOW + timedelta(seconds=10))
+
+    deferred = TriggerCoordinatorActivities(builder=DeferredBuilder())
+    assert deferred.build_analysis_dispatches(batch.model_dump(mode="json")) == {
+        "deferred_until": (NOW + timedelta(seconds=10)).isoformat(),
+        "retry_frozen_batch": True,
+    }
+
+
 def test_trigger_signal_can_arrive_before_workflow_run_initializes_settings(
     app_config,
 ) -> None:
@@ -286,11 +336,13 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
 ) -> None:
     async def scenario() -> None:
         attempts = 0
+        batch_ids: list[str] = []
 
         @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
         async def fail_once(raw_batch):
             nonlocal attempts
             attempts += 1
+            batch_ids.append(raw_batch["batch_id"])
             if attempts == 1:
                 raise ApplicationError(
                     "market bootstrap pending",
@@ -361,14 +413,204 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
                     },
                 )
                 for _ in range(100):
+                    if attempts == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                await env.sleep(timedelta(seconds=31))
+                for _ in range(100):
                     status = await handle.query(TriggerCoordinatorWorkflow.status)
                     if status["completed_batches"] == 1:
                         break
                     await asyncio.sleep(0.01)
                 status = await handle.query(TriggerCoordinatorWorkflow.status)
                 assert attempts == 2
+                assert len(set(batch_ids)) == 2
                 assert status["completed_batches"] == 1
                 assert status["pending_count"] == 0
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
+def test_trigger_coordinator_retries_post_projection_failure_with_frozen_batch(
+    app_config,
+) -> None:
+    async def scenario() -> None:
+        attempts = 0
+        batches: list[dict] = []
+
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def fail_packet_once(raw_batch):
+            nonlocal attempts
+            attempts += 1
+            batches.append(raw_batch)
+            if attempts == 1:
+                return {"retry_frozen_batch": True}
+            return await build_request(raw_batch)
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            trigger_queue = "trigger-frozen-retry-test"
+            analysis_queue = "trigger-analysis-test"
+            temporal = app_config.temporal.model_copy(
+                update={
+                    "trigger_task_queue": trigger_queue,
+                    "task_queue": analysis_queue,
+                    "retry_initial_seconds": 1,
+                    "retry_maximum_seconds": 1,
+                }
+            )
+            config = app_config.model_copy(update={"temporal": temporal})
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=NOW,
+                heartbeat_seconds=None,
+                event_rules=(
+                    AnalysisEventRule(
+                        rule_id="news",
+                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    ),
+                ),
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=100,
+                dedup_key="frozen-packet-retry",
+            )
+            async with (
+                Worker(
+                    env.client,
+                    task_queue=trigger_queue,
+                    workflows=[TriggerCoordinatorWorkflow],
+                    activities=[fail_packet_once],
+                ),
+                Worker(
+                    env.client,
+                    task_queue=analysis_queue,
+                    workflows=[AnalysisCycleWorkflow],
+                    activities=[prepare_no_action],
+                ),
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    build_trigger_coordinator_input(plan, config),
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await handle.signal(
+                    TRIGGER_SIGNAL,
+                    {
+                        "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                        "trigger": event.model_dump(mode="json"),
+                    },
+                )
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["completed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert attempts == 2
+                assert batches[0] == batches[1]
+                assert status["completed_batches"] == 1
+                assert status["failed_batches"] == 0
+                assert status["pending_count"] == 0
+                assert status["active_batch_id"] is None
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
+def test_trigger_coordinator_fails_frozen_batch_at_analysis_deadline(app_config) -> None:
+    async def scenario() -> None:
+        attempts = 0
+
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def keep_failing(_raw_batch):
+            nonlocal attempts
+            attempts += 1
+            return {"retry_frozen_batch": True}
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            trigger_queue = "trigger-frozen-deadline-test"
+            temporal = app_config.temporal.model_copy(
+                update={
+                    "trigger_task_queue": trigger_queue,
+                    "retry_initial_seconds": 1,
+                    "retry_maximum_seconds": 10,
+                }
+            )
+            shadow = app_config.shadow.model_copy(
+                update={"analysis_deadline_seconds": 30}
+            )
+            config = app_config.model_copy(
+                update={"temporal": temporal, "shadow": shadow}
+            )
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=NOW,
+                heartbeat_seconds=None,
+                event_rules=(
+                    AnalysisEventRule(
+                        rule_id="news",
+                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    ),
+                ),
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=100,
+                dedup_key="frozen-deadline",
+            )
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[keep_failing],
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    build_trigger_coordinator_input(plan, config),
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await handle.signal(
+                    TRIGGER_SIGNAL,
+                    {
+                        "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                        "trigger": event.model_dump(mode="json"),
+                    },
+                )
+                for _ in range(100):
+                    if attempts == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                await env.sleep(timedelta(seconds=31))
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["failed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert attempts >= 1
+                assert status["failed_batches"] == 1
+                assert status["completed_batches"] == 0
+                assert status["pending_count"] == 0
+                assert status["active_batch_id"] is None
+                assert status["last_batch_id"] is not None
                 await handle.signal(TriggerCoordinatorWorkflow.stop)
                 await handle.result()
 
@@ -380,13 +622,19 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
 ) -> None:
     async def scenario() -> None:
         attempts = 0
+        batches: list[dict] = []
 
         @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
         async def defer_once(raw_batch):
             nonlocal attempts
             attempts += 1
+            batches.append(raw_batch)
             if attempts == 1:
-                return {"deferred_until": (NOW + timedelta(seconds=10)).isoformat()}
+                created_at = datetime.fromisoformat(raw_batch["created_at"])
+                return {
+                    "deferred_until": (created_at + timedelta(seconds=10)).isoformat(),
+                    "retry_frozen_batch": True,
+                }
             return await build_request(raw_batch)
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -446,12 +694,18 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
                     },
                 )
                 for _ in range(100):
+                    if attempts == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                await env.sleep(timedelta(seconds=11))
+                for _ in range(100):
                     status = await handle.query(TriggerCoordinatorWorkflow.status)
                     if status["completed_batches"] == 1:
                         break
                     await asyncio.sleep(0.01)
                 status = await handle.query(TriggerCoordinatorWorkflow.status)
                 assert attempts == 2
+                assert batches[0] == batches[1]
                 assert status["completed_batches"] == 1
                 assert status["pending_count"] == 0
                 await handle.signal(TriggerCoordinatorWorkflow.stop)
@@ -460,11 +714,12 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
     asyncio.run(scenario())
 
 
-def test_trigger_coordinator_discards_event_at_expiry_before_admission_retry(
+def test_frozen_admission_batch_survives_trigger_expiry_until_deadline(
     app_config,
 ) -> None:
     async def scenario() -> None:
         attempts = 0
+        batches: list[dict] = []
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             test_now = await env.get_current_time()
@@ -473,9 +728,15 @@ def test_trigger_coordinator_discards_event_at_expiry_before_admission_retry(
             async def defer_beyond_expiry(raw_batch):
                 nonlocal attempts
                 attempts += 1
-                return {
-                    "deferred_until": (test_now + timedelta(seconds=31)).isoformat()
-                }
+                batches.append(raw_batch)
+                if attempts == 1:
+                    return {
+                        "deferred_until": (
+                            test_now + timedelta(seconds=31)
+                        ).isoformat(),
+                        "retry_frozen_batch": True,
+                    }
+                return {"workflow_dispatches": []}
 
             trigger_queue = "trigger-expiry-before-admission-test"
             temporal = app_config.temporal.model_copy(
@@ -528,12 +789,18 @@ def test_trigger_coordinator_discards_event_at_expiry_before_admission_retry(
                     if attempts == 1:
                         break
                     await asyncio.sleep(0.01)
-                assert attempts == 1
-                await env.sleep(timedelta(seconds=20))
+                await env.sleep(timedelta(seconds=32))
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["completed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
                 status = await handle.query(TriggerCoordinatorWorkflow.status)
-                assert attempts == 1
+                assert attempts == 2
+                assert batches[0] == batches[1]
                 assert status["pending_count"] == 0
-                assert status["completed_batches"] == 0
+                assert status["completed_batches"] == 1
+                assert status["failed_batches"] == 0
                 await handle.signal(TriggerCoordinatorWorkflow.stop)
                 await handle.result()
 

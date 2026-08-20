@@ -30,6 +30,10 @@ class PacketPreparationStatus(StrEnum):
     READY = "READY"
 
 
+class DecisionPacketPreparationError(ValueError):
+    """State transition exists, but its immutable Packet could not be assembled."""
+
+
 class DecisionPacketPreparationResult(FrozenModel):
     status: PacketPreparationStatus
     reason_code: str = Field(min_length=1)
@@ -213,13 +217,21 @@ class DecisionPacketPreparation:
                 state_id=projection.state.state_id,
                 delta_id=delta.delta_id,
             )
-        packet = self._assembler.assemble(
-            mandate=mandate,
-            state_id=projection.state.state_id,
-            delta_ids=(delta.delta_id,),
-            active_hypotheses=active_hypotheses,
-            previous_assessment_refs=previous_assessment_refs,
-        )
+        try:
+            packet = self._assembler.assemble(
+                mandate=mandate,
+                state_id=projection.state.state_id,
+                delta_ids=(delta.delta_id,),
+                active_hypotheses=active_hypotheses,
+                previous_assessment_refs=previous_assessment_refs,
+            )
+        except ValueError as exc:
+            # Projection persists State/Delta before Packet assembly.  Callers must
+            # retry this exact point-in-time transition instead of advancing as_of
+            # and silently turning the unassessed delta into background state.
+            raise DecisionPacketPreparationError(
+                "MaterialDelta 已持久化但 DecisionPacket 组装失败"
+            ) from exc
         return DecisionPacketPreparationResult(
             status=PacketPreparationStatus.READY,
             reason_code="DECISION_PACKET_READY",

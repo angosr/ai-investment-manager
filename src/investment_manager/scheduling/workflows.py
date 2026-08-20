@@ -16,6 +16,7 @@ from investment_manager.scheduling.models import (
     AnalysisTriggerEvent,
     AnalysisTriggerPlan,
     AnalysisTriggerType,
+    TriggerBatch,
     TriggerOutboxKind,
     build_trigger_batch,
     build_trigger_event,
@@ -46,6 +47,7 @@ class TriggerCoordinatorWorkflow:
         self._stopping = False
         self._last_batch_id: str | None = None
         self._active_batch_id: str | None = None
+        self._frozen_retry_batch: dict[str, Any] | None = None
         self._input_retry_not_before: datetime | None = None
         self._next_reconsider_at: datetime | None = None
 
@@ -122,8 +124,23 @@ class TriggerCoordinatorWorkflow:
             self._enqueue_due(now, started_at)
             self._trim_pending()
             self._discard_expired(now)
-            eligible = self._eligible_pending()
-            if eligible:
+            if self._frozen_retry_batch is not None:
+                batch = TriggerBatch.model_validate(self._frozen_retry_batch)
+                if now >= batch.deadline:
+                    self._fail_frozen_batch(batch)
+                    continue
+                retry_at = self._input_retry_not_before or now
+                self._next_reconsider_at = retry_at
+                if retry_at > now:
+                    await self._wait_for_change(retry_at - now)
+                    continue
+                selected_ids = tuple(item.trigger_id for item in batch.triggers)
+            else:
+                eligible = self._eligible_pending()
+                if not eligible:
+                    self._next_reconsider_at = None
+                    await self._wait_for_change(self._next_timer_delay(now, started_at))
+                    continue
                 delay = self._required_delay(eligible, now)
                 self._next_reconsider_at = now + delay
                 if delay > timedelta(0):
@@ -144,38 +161,41 @@ class TriggerCoordinatorWorkflow:
                     deadline=now
                     + timedelta(seconds=int(self._settings["analysis_deadline_seconds"])),
                 )
+                selected_ids = tuple(item.trigger_id for item in triggers)
                 self._active_batch_id = batch.batch_id
-                dispatches, deferred_until = await self._build_dispatches(
-                    batch.model_dump(mode="json")
+            dispatches, deferred_until, retry_frozen_batch = await self._build_dispatches(
+                batch.model_dump(mode="json")
+            )
+            if dispatches is None:
+                if retry_frozen_batch:
+                    self._frozen_retry_batch = batch.model_dump(mode="json")
+                    self._active_batch_id = batch.batch_id
+                else:
+                    self._frozen_retry_batch = None
+                    self._active_batch_id = None
+                self._input_retry_not_before = deferred_until or (
+                    workflow.now()
+                    + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
                 )
-                if dispatches is None:
-                    self._active_batch_id = None
-                    self._input_retry_not_before = deferred_until or (
-                        workflow.now()
-                        + timedelta(seconds=int(self._settings["retry_maximum_seconds"]))
-                    )
-                    continue
-                self._input_retry_not_before = None
-                for item in selected:
-                    self._pending.pop(str(item["trigger_id"]), None)
-                self._last_batch_id = batch.batch_id
-                try:
-                    results = await asyncio.gather(
-                        *(self._execute_dispatch(item) for item in dispatches)
-                    )
-                    if not all(results):
-                        self._failed_batches += 1
-                finally:
-                    self._active_batch_id = None
-                completed_at = workflow.now()
-                self._last_analysis_at = completed_at
-                self._completed_batches += 1
-                if self._completed_batches % 500 == 0 and not self._pending:
-                    workflow.continue_as_new(self._continued_request(request))
                 continue
-
-            self._next_reconsider_at = None
-            await self._wait_for_change(self._next_timer_delay(now, started_at))
+            self._frozen_retry_batch = None
+            self._input_retry_not_before = None
+            for trigger_id in selected_ids:
+                self._pending.pop(trigger_id, None)
+            self._last_batch_id = batch.batch_id
+            try:
+                results = await asyncio.gather(
+                    *(self._execute_dispatch(item) for item in dispatches)
+                )
+                if not all(results):
+                    self._failed_batches += 1
+            finally:
+                self._active_batch_id = None
+            completed_at = workflow.now()
+            self._last_analysis_at = completed_at
+            self._completed_batches += 1
+            if self._completed_batches % 500 == 0 and not self._pending:
+                workflow.continue_as_new(self._continued_request(request))
 
         return {
             "status": "STOPPED",
@@ -186,7 +206,11 @@ class TriggerCoordinatorWorkflow:
     async def _build_dispatches(
         self,
         batch: dict[str, Any],
-    ) -> tuple[tuple[AnalysisDispatchRequest, ...] | None, datetime | None]:
+    ) -> tuple[
+        tuple[AnalysisDispatchRequest, ...] | None,
+        datetime | None,
+        bool,
+    ]:
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=int(self._settings["retry_initial_seconds"])),
             maximum_interval=timedelta(seconds=int(self._settings["retry_maximum_seconds"])),
@@ -210,20 +234,23 @@ class TriggerCoordinatorWorkflow:
                 summary="冻结触发批次分析输入",
             )
         except ActivityError:
-            return None, None
+            return None, None, False
+        retry_frozen_batch = result.get("retry_frozen_batch") is True
         deferred_until = result.get("deferred_until")
         if isinstance(deferred_until, str):
-            return None, _parse_time(deferred_until)
+            return None, _parse_time(deferred_until), retry_frozen_batch
+        if retry_frozen_batch:
+            return None, None, True
         raw_dispatches = result.get("workflow_dispatches")
         if not isinstance(raw_dispatches, list):
-            return None, None
+            return None, None, False
         try:
             dispatches = tuple(
                 AnalysisDispatchRequest.model_validate(item) for item in raw_dispatches
             )
         except (TypeError, ValueError):
-            return None, None
-        return dispatches, None
+            return None, None, False
+        return dispatches, None, False
 
     @staticmethod
     async def _execute_dispatch(dispatch: AnalysisDispatchRequest) -> bool:
@@ -334,11 +361,32 @@ class TriggerCoordinatorWorkflow:
                 self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
 
     def _discard_expired(self, now: datetime) -> None:
+        protected = (
+            {
+                str(item["trigger_id"])
+                for item in self._frozen_retry_batch.get("triggers", [])
+                if isinstance(item, dict) and isinstance(item.get("trigger_id"), str)
+            }
+            if self._frozen_retry_batch is not None
+            else set()
+        )
         self._pending = {
             key: item
             for key, item in self._pending.items()
-            if item.get("expires_at") is None or _parse_time(item["expires_at"]) > now
+            if key in protected
+            or item.get("expires_at") is None
+            or _parse_time(item["expires_at"]) > now
         }
+
+    def _fail_frozen_batch(self, batch: TriggerBatch) -> None:
+        for trigger in batch.triggers:
+            self._pending.pop(trigger.trigger_id, None)
+        self._last_batch_id = batch.batch_id
+        self._failed_batches += 1
+        self._active_batch_id = None
+        self._frozen_retry_batch = None
+        self._input_retry_not_before = None
+        self._next_reconsider_at = None
 
     def _trim_pending(self) -> None:
         maximum = int(self._settings["maximum_pending_triggers"])
