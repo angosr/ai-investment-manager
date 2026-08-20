@@ -43,7 +43,7 @@ from quant_core.domain import (
 from quant_core.ids import canonical_json, content_hash, stable_id
 from quant_core.trigger import TriggerDecision
 
-ANALYST_INPUT_VERSION = "analyst-input-v2"
+ANALYST_INPUT_VERSION = "analyst-input-v3"
 
 
 def analysis_behavior_hash(config: AppConfig) -> str:
@@ -460,7 +460,10 @@ class RunBundleBuilder:
             "panel_view_json 中存在的证据。"
             "无论是否交易，都必须在 forecasts 中为每个允许周期各给出一次独立的 "
             "directional_view（UP、DOWN 或 UNCERTAIN）及置信度；这些只是可结算研究预测，"
-            "绝不授权下单。forecasts 必须按周期升序且不得遗漏或增加周期。"
+            "绝不授权下单。rules_digest 中的可交易方向只约束 suggested_action 和 side，"
+            "不约束 forecasts；即使当前不能做空，预期价格下跌时也必须输出 DOWN，不得"
+            "改写为 UP 或 UNCERTAIN。UNCERTAIN 只用于确实没有可辨识方向。forecasts "
+            "必须按周期升序且不得遗漏或增加周期。"
             "panel_view_json.trigger 标记本轮触发原因及直接触发证据；若其中存在"
             "missing_evidence_ids，必须将其视为数据不完整，不得猜测其内容。"
             f"最小置信度为 {self._proposal.minimum_confidence}，最大周期为 "

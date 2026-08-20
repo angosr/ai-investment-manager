@@ -274,6 +274,8 @@ def test_run_bundle_is_hashed_read_only_and_detects_tampering(
     assert "禁止调用任何工具" in bundle.prompt
     assert "必须遵守 panel_view_json.rules_digest" in bundle.prompt
     assert "OPEN 的 side 只能为 BUY" in bundle.prompt
+    assert "可交易方向只约束 suggested_action 和 side" in bundle.prompt
+    assert "当前不能做空，预期价格下跌时也必须输出 DOWN" in bundle.prompt
     assert f'"analyst_input_version":"{ANALYST_INPUT_VERSION}"' in bundle.prompt
     prompt_view = bundle.prompt.split("<panel_view_json>\n", 1)[1].split("\n</panel_view_json>", 1)[
         0
