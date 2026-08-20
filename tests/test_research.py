@@ -7,6 +7,7 @@ import json
 import zipfile
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -75,6 +76,47 @@ def test_public_data_research_symbol_is_independent_of_production_allowlist(
 
     with pytest.raises(typer.BadParameter, match="字母和数字"):
         _parse_research_symbol("BNB/USDT")
+
+
+def test_history_command_overrides_production_symbol_and_interval(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from quant_core.cli import fetch_binance_history_command
+    from quant_core.research import dataset as dataset_module
+
+    instrument = _instrument().model_copy(
+        update={"symbol": "BNBUSDT", "base_asset": "BNB"}
+    )
+    frozen = _dataset(
+        count=2,
+        interval="1d",
+        bar_delta=timedelta(days=1),
+        instrument=instrument,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return frozen
+
+    monkeypatch.setattr(dataset_module, "fetch_binance_history", fake_fetch)
+    fetch_binance_history_command(
+        config=Path("config/quant-core.yaml"),
+        symbol="bnbusdt",
+        start="2026-01-01T00:00:00Z",
+        end="2026-01-03T00:00:00Z",
+        interval="1d",
+        candidate="configured",
+        funding_dataset_id=None,
+        catalog=tmp_path,
+        funding_catalog=tmp_path,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["symbol"] == payload["symbol"] == "BNBUSDT"
+    assert captured["interval"] == payload["interval"] == "1d"
 
 
 class _TestResearchSpec(FrozenModel):

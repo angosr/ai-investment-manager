@@ -334,6 +334,10 @@ def fetch_binance_history_command(
     symbol: Annotated[str, typer.Option()],
     start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
     end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    interval: Annotated[
+        str | None,
+        typer.Option(help="研究 K 线周期；省略时沿用 MarketDataPolicy"),
+    ] = None,
     candidate: Annotated[str, typer.Option()] = "configured",
     funding_dataset_id: Annotated[str | None, typer.Option()] = None,
     catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(".runtime/datasets"),
@@ -368,7 +372,7 @@ def fetch_binance_history_command(
         fetch_binance_history(
             base_url=loaded.market_data.rest_base_url,
             symbol=canonical_symbol,
-            interval=loaded.market_data.interval,
+            interval=interval or loaded.market_data.interval,
             start=_parse_utc_option(start, name="start"),
             end=_parse_utc_option(end, name="end"),
             timeout_seconds=loaded.market_data.rest_timeout_seconds,
