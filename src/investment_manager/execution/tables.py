@@ -14,6 +14,20 @@ from sqlalchemy import (
 
 from investment_manager.platform.database import metadata
 
+account_snapshots = Table(
+    "account_snapshots",
+    metadata,
+    Column("snapshot_id", String(128), primary_key=True),
+    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
+    Column("phase", String(32), nullable=False),
+    Column("as_of", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("reconciled", Boolean, nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint("cycle_id", "phase", name="uq_account_snapshot_cycle_phase"),
+)
+Index("ix_account_snapshots_as_of", account_snapshots.c.as_of)
+
 execution_requests = Table(
     "execution_requests",
     metadata,

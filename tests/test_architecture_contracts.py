@@ -750,6 +750,7 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
         "Side",
     }
     owned_tables = {
+        "account_snapshots",
         "execution_requests",
         "fills",
         "mock_exchange_orders",

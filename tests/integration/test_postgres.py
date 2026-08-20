@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from investment_manager.execution.legacy_exchange import MockExchange
 from investment_manager.execution.lifecycle import PositionLifecycleManager
 from investment_manager.execution.reconciliation import MockReconciler
-from investment_manager.execution.tables import orders
+from investment_manager.execution.tables import account_snapshots, orders
 from investment_manager.governance.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
@@ -43,7 +43,6 @@ from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
-    account_snapshots,
     candidate_outcomes,
     decision_outcomes,
     metric_observations,

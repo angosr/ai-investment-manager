@@ -7,6 +7,9 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from investment_manager.execution.account_repository import (
+    latest_account_snapshot_payload,
+)
 from investment_manager.execution.models import (
     AccountSnapshot,
     Order,
@@ -23,10 +26,7 @@ from investment_manager.execution.tables import (
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.legacy.repository import (
-    analysis_cycles,
-    latest_account_snapshot_payload,
-)
+from investment_manager.legacy.repository import analysis_cycles
 
 
 class SqlLocalTradingStateSource:

@@ -17,6 +17,10 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
+from investment_manager.execution.account_repository import (
+    AccountSnapshotReader,
+    SqlAccountSnapshotReader,
+)
 from investment_manager.execution.binance import assemble_binance_testnet
 from investment_manager.execution.lifecycle import (
     OpenLifecycleRecord,
@@ -30,6 +34,9 @@ from investment_manager.execution.lifecycle_workflows import (
 from investment_manager.execution.mock_repository import SqlMockExchange
 from investment_manager.execution.models import PositionLifecycle
 from investment_manager.execution.reconciliation import MockReconciler
+from investment_manager.execution.reconciliation_repository import (
+    SqlReconciliationReportStore,
+)
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -38,7 +45,6 @@ from investment_manager.legacy.repository import (
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
 )
-from investment_manager.legacy.shadow import ShadowStateReader, SqlShadowStateReader
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -124,7 +130,7 @@ def build_lifecycle_workflow_request(
 class PositionLifecycleActivities:
     config: AppConfig
     market_store: MarketDataStore
-    state: ShadowStateReader
+    state: AccountSnapshotReader
     manager: PositionLifecycleManager
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
@@ -296,9 +302,10 @@ def assemble_lifecycle_activities(
     return PositionLifecycleActivities(
         config=config,
         market_store=SqlMarketDataStore(engine),
-        state=SqlShadowStateReader(
+        state=SqlAccountSnapshotReader(
             engine,
             maximum_reconciliation_age_seconds=(config.reconciliation.maximum_report_age_seconds),
+            reports=SqlReconciliationReportStore(engine),
         ),
         manager=PositionLifecycleManager(
             exchange=exchange,

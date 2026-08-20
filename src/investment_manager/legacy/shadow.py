@@ -1,33 +1,28 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
+from investment_manager.execution.account_repository import (
+    AccountSnapshotReader,
+    SqlAccountSnapshotReader,
+)
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.execution.reconciliation import ReconciliationStatus
-from investment_manager.execution.reconciliation_repository import SqlReconciliationReportStore
+from investment_manager.execution.reconciliation_repository import (
+    SqlReconciliationReportStore,
+)
 from investment_manager.execution.tables import orders
 from investment_manager.kernel.time import require_utc
 from investment_manager.legacy.repository import (
     analysis_cycles,
-    latest_account_snapshot_payload,
     market_snapshots,
 )
 
 
-class ShadowStateReader(Protocol):
-    def account_for_cycle(
-        self,
-        *,
-        cycle_id: str,
-        as_of: datetime,
-        initial_quote_balance,
-    ) -> AccountSnapshot: ...
-
+class ShadowStateReader(AccountSnapshotReader, Protocol):
     def last_cycle_at(self, *, symbol: str, as_of: datetime) -> datetime | None: ...
 
     def last_entry_order_at(self, *, symbol: str, as_of: datetime) -> datetime | None: ...
@@ -45,8 +40,11 @@ class SqlShadowStateReader:
         maximum_reconciliation_age_seconds: int | None = None,
     ) -> None:
         self._engine = engine
-        self._maximum_reconciliation_age_seconds = maximum_reconciliation_age_seconds
-        self._reconciliation_reports = SqlReconciliationReportStore(engine)
+        self._accounts = SqlAccountSnapshotReader(
+            engine,
+            maximum_reconciliation_age_seconds=maximum_reconciliation_age_seconds,
+            reports=SqlReconciliationReportStore(engine),
+        )
 
     def account_for_cycle(
         self,
@@ -55,50 +53,10 @@ class SqlShadowStateReader:
         as_of: datetime,
         initial_quote_balance,
     ) -> AccountSnapshot:
-        as_of = require_utc(as_of)
-        if self._maximum_reconciliation_age_seconds is not None:
-            report = self._reconciliation_reports.latest(as_of=as_of)
-            if report is not None:
-                authoritative = report.authoritative_account
-                fresh = (
-                    as_of - report.as_of
-                ).total_seconds() <= self._maximum_reconciliation_age_seconds
-                daily_pnl = (
-                    authoritative.daily_pnl
-                    if authoritative.as_of.date() == as_of.date()
-                    else Decimal("0")
-                )
-                return authoritative.model_copy(
-                    update={
-                        "cycle_id": cycle_id,
-                        "as_of": as_of,
-                        "observed_at": report.as_of,
-                        "daily_pnl": daily_pnl,
-                        "reconciled": (fresh and report.status == ReconciliationStatus.MATCHED),
-                    }
-                )
-        with self._engine.connect() as connection:
-            payload = latest_account_snapshot_payload(connection, as_of=as_of)
-        if payload is None:
-            return AccountSnapshot(
-                cycle_id=cycle_id,
-                as_of=as_of,
-                observed_at=as_of,
-                quote_balance=initial_quote_balance,
-                reconciled=self._maximum_reconciliation_age_seconds is None,
-            )
-        previous = AccountSnapshot.model_validate(payload)
-        daily_pnl = previous.daily_pnl if previous.as_of.date() == as_of.date() else Decimal("0")
-        return previous.model_copy(
-            update={
-                "cycle_id": cycle_id,
-                "as_of": as_of,
-                "observed_at": as_of,
-                "daily_pnl": daily_pnl,
-                "reconciled": (
-                    previous.reconciled and self._maximum_reconciliation_age_seconds is None
-                ),
-            }
+        return self._accounts.account_for_cycle(
+            cycle_id=cycle_id,
+            as_of=as_of,
+            initial_quote_balance=initial_quote_balance,
         )
 
     def last_cycle_at(self, *, symbol: str, as_of: datetime) -> datetime | None:

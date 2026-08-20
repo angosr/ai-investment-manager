@@ -6,7 +6,6 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -16,7 +15,6 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
-    case,
     func,
     insert,
     select,
@@ -38,6 +36,7 @@ from investment_manager.execution.models import (
     PositionLifecycle,
 )
 from investment_manager.execution.tables import (
+    account_snapshots,
     execution_requests,
     fills,
     orders,
@@ -87,20 +86,6 @@ market_snapshots = Table(
     Column("payload", JSON, nullable=False),
 )
 Index("ix_market_snapshots_symbol_as_of", market_snapshots.c.symbol, market_snapshots.c.as_of)
-
-account_snapshots = Table(
-    "account_snapshots",
-    metadata,
-    Column("snapshot_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
-    Column("phase", String(32), nullable=False),
-    Column("as_of", DateTime(timezone=True), nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("reconciled", Boolean, nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint("cycle_id", "phase", name="uq_account_snapshot_cycle_phase"),
-)
-Index("ix_account_snapshots_as_of", account_snapshots.c.as_of)
 
 panel_snapshots = Table(
     "panel_snapshots",
@@ -240,31 +225,6 @@ metric_observations = Table(
     UniqueConstraint("cycle_id", "phase", "sequence", name="uq_metric_cycle_phase_sequence"),
 )
 Index("ix_metric_observations_cycle", metric_observations.c.cycle_id)
-
-def latest_account_snapshot_payload(connection: Connection, *, as_of: datetime):
-    """给定 ``as_of``，返回"当前账户"快照 payload（无则 None）。
-
-    规则：按 ``as_of`` 倒序，同一 ``as_of`` 内按 phase 优先 POST_EXIT > POST_EXECUTION >
-    其它。影子账户投影（``shadow.py``）与对账本地态（``reconciliation_sql.py``）必须共用
-    这一条可见性规则，否则"两处看到的当前账户"会静默分裂。
-    """
-
-    phase_priority = case(
-        (account_snapshots.c.phase == "POST_EXIT", 3),
-        (account_snapshots.c.phase == "POST_EXECUTION", 2),
-        else_=1,
-    )
-    return connection.execute(
-        select(account_snapshots.c.payload)
-        .where(account_snapshots.c.as_of <= as_of)
-        .order_by(
-            account_snapshots.c.as_of.desc(),
-            phase_priority.desc(),
-            account_snapshots.c.snapshot_id.desc(),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-
 
 class SqlLifecycleLedger:
     """持久化独立于分析周期运行的持仓退出和结果归因。"""
