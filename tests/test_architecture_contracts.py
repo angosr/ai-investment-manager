@@ -85,7 +85,7 @@ CLI_CONTRACT = {
         "config,database_url,event_dataset_id,replay_start,replay_end,"
         "analysis_duration_seconds,admission_order,event_catalog,include_batches"
     ),
-    "research-catalog": "evaluation_catalog",
+    "research-catalog": "evaluation_catalog,blind_evaluation_catalog",
     "reset-portfolio-protection": "config,database_url,reason,acknowledge_risk",
     "run-mock": "input_path,config",
     "screen-signals": (

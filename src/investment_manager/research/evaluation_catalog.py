@@ -4,6 +4,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 
@@ -11,6 +12,17 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.research.walk_forward import BlindEvaluationResult, WalkForwardResult
+
+EvidenceStatus = Literal[
+    "CATALOG_AMBIGUOUS",
+    "WALK_FORWARD_INCOMPLETE",
+    "WALK_FORWARD_REJECTED",
+    "BLIND_NOT_RESERVED",
+    "BLIND_PENDING",
+    "BLIND_REJECTED",
+    "BLIND_PASSED",
+    "BLIND_AMBIGUOUS",
+]
 
 
 class HistoricalEvaluationEnvelope(FrozenModel):
@@ -33,6 +45,10 @@ class HistoricalExperimentSummary(FrozenModel):
     canonical_backtest_model_version: str | None
     canonical_completed: bool | None
     canonical_passed: bool | None
+    evidence_status: EvidenceStatus
+    blind_result_id: str | None
+    blind_passed: bool | None
+    blind_reason_codes: tuple[str, ...]
     superseded_evaluation_ids: tuple[str, ...]
     ambiguity_reasons: tuple[str, ...]
 
@@ -70,7 +86,11 @@ class HistoricalEvaluationCatalog:
             raise ValueError("历史评价文件名与内容 ID 不一致")
         return envelope.result
 
-    def summaries(self) -> tuple[HistoricalExperimentSummary, ...]:
+    def summaries(
+        self,
+        *,
+        blind_catalog: BlindEvaluationCatalog | None = None,
+    ) -> tuple[HistoricalExperimentSummary, ...]:
         """从不可变结果确定性派生唯一有效版本；目录本身不维护可漂移索引。"""
 
         if not self._root.exists():
@@ -131,11 +151,16 @@ class HistoricalEvaluationCatalog:
                     content_hash(plan_policy),
                 )
             groups[key].append(result)
+        blind_by_source: dict[str, list[BlindEvaluationResult]] = defaultdict(list)
+        if blind_catalog is not None:
+            for blind in blind_catalog.results():
+                blind_by_source[blind.source_evaluation_id].append(blind)
         summaries = [
             _summarize_experiment(
                 identity,
                 tuple(members),
                 family_attempts=family_attempts,
+                blind_by_source=blind_by_source,
             )
             for identity, members in groups.items()
         ]
@@ -179,6 +204,11 @@ class BlindEvaluationCatalog:
             raise ValueError("盲测结果文件名与内容 ID 不一致")
         return envelope.result
 
+    def results(self) -> tuple[BlindEvaluationResult, ...]:
+        if not self._root.exists():
+            return ()
+        return tuple(self.load(path.stem) for path in sorted(self._root.glob("*.json")))
+
 
 _MODEL_VERSION = re.compile(r"^investment-manager-bar-backtest-v([1-9][0-9]*)$")
 _PRE_RENAME_MODEL_PREFIX_PARTS = ("quant", "core")
@@ -205,6 +235,7 @@ def _summarize_experiment(
     results: tuple[WalkForwardResult, ...],
     *,
     family_attempts: dict[str, int],
+    blind_by_source: dict[str, list[BlindEvaluationResult]],
 ) -> HistoricalExperimentSummary:
     dataset_ids = {item.dataset_id for item in results}
     if len(dataset_ids) != 1:
@@ -258,6 +289,10 @@ def _summarize_experiment(
     canonical = highest[0] if not reasons else None
     canonical_result = canonical[2] if canonical else None
     canonical_id = canonical_result.evaluation_id if canonical_result else None
+    evidence_status, blind_result = _evidence_status(
+        canonical_result,
+        tuple(blind_by_source.get(canonical_id, ())) if canonical_id else (),
+    )
     evaluation_ids = tuple(item[2].evaluation_id for item in ranked)
     return HistoricalExperimentSummary(
         experiment_id=stable_id("historical_experiment", identity),
@@ -276,6 +311,12 @@ def _summarize_experiment(
         canonical_backtest_model_version=canonical[1] if canonical else None,
         canonical_completed=canonical_result.completed if canonical_result else None,
         canonical_passed=canonical_result.passed if canonical_result else None,
+        evidence_status=evidence_status,
+        blind_result_id=blind_result.result_id if blind_result is not None else None,
+        blind_passed=blind_result.passed if blind_result is not None else None,
+        blind_reason_codes=(
+            blind_result.reason_codes if blind_result is not None else ()
+        ),
         superseded_evaluation_ids=(
             tuple(item for item in evaluation_ids if item != canonical_id)
             if canonical_id
@@ -283,6 +324,26 @@ def _summarize_experiment(
         ),
         ambiguity_reasons=tuple(reasons),
     )
+
+
+def _evidence_status(
+    canonical: WalkForwardResult | None,
+    blind_results: tuple[BlindEvaluationResult, ...],
+) -> tuple[EvidenceStatus, BlindEvaluationResult | None]:
+    if canonical is None:
+        return "CATALOG_AMBIGUOUS", None
+    if not canonical.completed:
+        return "WALK_FORWARD_INCOMPLETE", None
+    if not canonical.passed:
+        return "WALK_FORWARD_REJECTED", None
+    if canonical.blind_bar_count == 0:
+        return "BLIND_NOT_RESERVED", None
+    if not blind_results:
+        return "BLIND_PENDING", None
+    if len(blind_results) != 1:
+        return "BLIND_AMBIGUOUS", None
+    blind = blind_results[0]
+    return ("BLIND_PASSED" if blind.passed else "BLIND_REJECTED"), blind
 
 
 def _snapshot_value(result: WalkForwardResult, key: str) -> str | None:

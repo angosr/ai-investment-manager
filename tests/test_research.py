@@ -1821,7 +1821,10 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     pytest.importorskip("nautilus_trader")
     from investment_manager.legacy.strategy import PriceTrendStrategy
     from investment_manager.research.decision_tape import validate_forecast_gate_baseline
-    from investment_manager.research.evaluation_catalog import BlindEvaluationCatalog
+    from investment_manager.research.evaluation_catalog import (
+        BlindEvaluationCatalog,
+        HistoricalEvaluationCatalog,
+    )
     from investment_manager.research.walk_forward import (
         WalkForwardPlan,
         blind_evaluation_scope,
@@ -1907,6 +1910,15 @@ def test_blind_evaluation_replays_only_reserved_tail_after_source_passes(
     blind_catalog = BlindEvaluationCatalog(tmp_path / "blind-evaluations")
     blind_catalog.store(result)
     assert blind_catalog.load(result.result_id) == result
+    evaluation_catalog = HistoricalEvaluationCatalog(tmp_path / "evaluations")
+    evaluation_catalog.store(admitted_source)
+    summary = evaluation_catalog.summaries(blind_catalog=blind_catalog)[0]
+    assert summary.evidence_status == (
+        "BLIND_PASSED" if result.passed else "BLIND_REJECTED"
+    )
+    assert summary.blind_result_id == result.result_id
+    assert summary.blind_passed is result.passed
+    assert summary.blind_reason_codes == result.reason_codes
     failure = failed_blind_experiment(
         result,
         rejected_at=datetime(2026, 8, 19, tzinfo=UTC),

@@ -1241,12 +1241,20 @@ def research_catalog_command(
     evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/evaluations"
     ),
+    blind_evaluation_catalog: Annotated[
+        Path, typer.Option(file_okay=False)
+    ] = Path(".runtime/blind-evaluations"),
 ) -> None:
-    """派生历史实验的唯一有效版本、累计尝试与歧义；不改写制品。"""
+    """派生历史实验的最终证据状态、累计尝试与歧义；不改写制品。"""
 
-    from investment_manager.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from investment_manager.research.evaluation_catalog import (
+        BlindEvaluationCatalog,
+        HistoricalEvaluationCatalog,
+    )
 
-    summaries = HistoricalEvaluationCatalog(evaluation_catalog).summaries()
+    summaries = HistoricalEvaluationCatalog(evaluation_catalog).summaries(
+        blind_catalog=BlindEvaluationCatalog(blind_evaluation_catalog)
+    )
     typer.echo(
         json.dumps(
             {"experiments": [item.model_dump(mode="json") for item in summaries]},
