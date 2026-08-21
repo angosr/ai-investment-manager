@@ -13,11 +13,11 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v15 接入财政部回购日历，但仍将计划上限与实际成交、Fed QE 严格分离。
-  version: portfolio-state-v15
+  # v16 冷启动保留诚实晚到的已发生回购，并让近期日历上下文进入有界 Packet。
+  version: portfolio-state-v16
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v6
+    version: official-fact-v7
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
@@ -68,7 +68,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v20
+    version: decision-packet-policy-v21
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -347,7 +347,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v19
+  version: information-intake-v20
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

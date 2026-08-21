@@ -145,6 +145,20 @@ def test_information_ingestor_replay_is_idempotent() -> None:
     assert all(item.calendar_revision is not None for item in duplicate)
 
 
+def test_cold_start_preserves_recent_completed_operations_without_backdating() -> None:
+    engine = _engine()
+    observed_at = datetime(2026, 8, 21, 12, tzinfo=UTC)
+
+    writes = SqlTreasuryBuybackInformationIngestor(engine).ingest_calendar(
+        _calendar(),
+        observed_at=observed_at,
+    )
+
+    assert len(writes) == 2
+    assert all(item.record.operation_end_at < observed_at for item in writes)
+    assert all(item.record.observation.observed_at == observed_at for item in writes)
+
+
 def test_http_source_rejects_redirect_and_honors_conditional_request() -> None:
     requests: list[httpx.Request] = []
 

@@ -458,11 +458,10 @@ class SqlTreasuryBuybackInformationIngestor:
         )
         self._raw.put(raw, content)
         snapshot = parse_treasury_buyback_calendar(content, observed_at=observed_at)
-        current = tuple(
-            record
-            for record in snapshot.records
-            if record.operation_end_at >= observed_at
-        )
+        # A first observation may occur after an operation. Preserve every row
+        # with the honest observed_at instead of silently losing still-relevant
+        # fiscal context or pretending it was known earlier.
+        current = snapshot.records
         current_ids = {item.observation.source_record_id for item in current}
         previous = tuple(
             record

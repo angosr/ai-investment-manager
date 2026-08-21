@@ -52,6 +52,7 @@ from investment_manager.state.decision.packet import (
     VisibleFact,
     decision_packet_analysis_projection,
 )
+from investment_manager.state.facts import TREASURY_BUYBACK_OPERATION_FACT_TYPE
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -1011,6 +1012,70 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
             "decision_materiality",
             "directly_triggered",
     )
+
+
+def test_packet_keeps_treasury_calendar_context_beyond_event_window(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+    direct = _fact(market.as_of)
+    calendar = _fact(
+        market.as_of,
+        revision_id="revision-buyback",
+        fact_id="fact-buyback",
+        event_time=market.as_of - timedelta(days=3),
+        observation_id="obs-buyback",
+    )
+    calendar = calendar.model_copy(
+        update={
+            "fact": calendar.fact.model_copy(
+                update={"fact_type": TREASURY_BUYBACK_OPERATION_FACT_TYPE}
+            )
+        }
+    )
+    facts = (direct, calendar)
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
+
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-buyback-v1",
+            schema_version="decision-packet-v1",
+            maximum_background_fact_distance_seconds=86_400,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess the event.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=("REGULATION",),
+        ),
+        state=state,
+        deltas=(_delta(market.as_of),),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert tuple(item.revision_id for item in packet.facts) == (
+        "revision-1",
+        "revision-buyback",
+    )
+    assert packet.omitted_fact_revision_ids == ()
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:

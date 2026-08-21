@@ -33,6 +33,7 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
+from investment_manager.state.facts import TREASURY_BUYBACK_OPERATION_FACT_TYPE
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -65,6 +66,10 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v10",
     "decision-packet-v11",
     "decision-packet-v12",
+}
+_ALWAYS_VISIBLE_BACKGROUND_FACT_TYPES = {
+    *OFFICIAL_METRIC_FACT_TYPES,
+    TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
@@ -1169,7 +1174,7 @@ class DecisionPacketBuilder:
             )
             if (
                 item.fact.revision_id in direct_fact_ids
-                or item.fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                or item.fact.fact_type in _ALWAYS_VISIBLE_BACKGROUND_FACT_TYPES
                 or distance <= self._policy.maximum_background_fact_distance_seconds
             ):
                 eligible.append(item)
