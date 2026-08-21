@@ -206,6 +206,9 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 窗口已被其他候选消耗，配置必须显式记录 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝
 装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
 Venue 与账户投影；错过月初窗口时正式选择现金，不为制造交易改变行为。
+研究入口还保留一个精确的总敞口 30% ETH 规格；它的 walk-forward 和唯一 blind
+均为正，但 blind 费用后年收益仅 0.281%，在同一资本上限下被 BTC 候选支配。因此它不进入运行
+配置，也不为一个被支配的 sleeve 引入多生产者装配层。
 
 账户账本把每个相邻权威快照追加为 `PortfolioPerformanceInterval`：同一时点较高 revision 记录成交后
 费用变化，跨时点记录 funding、已实现和可成交价盯市共同形成的净权益变化；累计净 PnL 直接由首尾
