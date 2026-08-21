@@ -131,6 +131,43 @@ review identity，由 portfolio Packet 身份和全局准入共同抑制重复�
 - Evaluation 以 Sleeve 为结算单位，统一计入每条 Leg 的成交价、手续费、滑点、funding、basis、
   保证金占用和失配损失；只看某一 Leg 的收益不得形成权限证据。
 
+统一计量口径如下，不允许各层各自解释“仓位”：
+
+- `sleeve_id` 由 portfolio、预测族和规范化 `ForecastTarget` 确定；同一投资对象的新预测更新同一
+  Sleeve，不按每次分析创建无法退出的新仓位身份。
+- `desired_gross_notional` 是 Portfolio 唯一决定的规模，表示所有 Leg 绝对报价名义金额之和；第
+  `i` 条 Leg 的有符号目标名义金额为该值乘 `gross_weight`，再由 `LONG/SHORT` 决定正负。因
+  `gross_weight` 之和为 1，单腿和多腿 Forecast 的 bps 都以同一 gross notional 为分母。
+- 当前资本路径不使用隐含杠杆：全部 Sleeve 的 desired gross notional 之和不得超过参考权益，未分配
+  部分就是现金。保证金、净 delta 或压力损失更紧时只能由 Risk 整组缩小，不能反向增加 Portfolio
+  目标；未来若允许杠杆，必须作为新的预登记 Policy 和评价版本显式发布。
+- 费用估计覆盖预期建仓、持有和退出成本，并与 Forecast 的费用前 bps 使用同一分母。Portfolio 只
+  比较保守费用后收益，不把 funding 收益重复记为负成本；最终权限只读取 Execution/Evaluation 的
+  实际费用后结果。
+
+账户经济事实归 Portfolio，而不是 Venue 适配器。`PortfolioAccountSnapshot` 保存现金、权益、高水位、
+产品级持仓、Sleeve 归属、待完成 execution group 和对账状态；Execution 仍拥有订单、成交与交易所
+对账原文，并用这些事实投影账户。所有 Sleeve 的有符号 Leg 数量加未托管持仓必须与交易所产品级净
+持仓一致，否则快照标记为未对账并禁止新增风险。Risk 和 Execution 共同消费该快照，二者不再互相
+拥有对方的模型。
+
+Risk 授权以一个 `sleeve_scale` 原子作用于 Sleeve 全部 Leg。它同时检查 quote 新鲜度与点差、gross、
+net delta、单产品集中度、可用现金/保证金、funding 与 basis 压力以及账户损失门禁；任何新增风险 Leg
+失败都会拒绝或整组缩小，不能留下“只批准便宜的一腿”。纯减险目标即使行情退化也可进入受限恢复，
+但在成交和对账完成前不得释放既有风险。授权同时冻结最大未对冲名义金额和最长未对冲时间，Execution
+无权放宽。
+
+一个 `TradePlan` 对每个 Sleeve 只产生一个稳定 group identity，Leg 数量按产品过滤器独立取整；任一
+新增风险 Leg 低于最小交易额时整组不执行。group 只有两个成功终态：全部目标 Leg 已成交并对账的
+`HEDGED`，或补偿后确认无残余暴露的 `FLAT`。提交结果未知、拒单、部分成交或进程崩溃都保持在
+`RECOVERING/COMPENSATING`，禁止把本地异常写成失败终态；超过 Risk 冻结的失配阈值后优先回到
+`FLAT`，不无限追价补齐。相同 sleeve 存在非终态 group 时，不得启动第二组新增风险。
+
+`PortfolioTarget → RiskDecision → TradePlan → ExecutionGroup` 每个交接都以内容身份幂等持久化；
+进程重启从数据库事实和 Venue 对账恢复，不从内存或 Codex 上下文猜测。模拟盘和真实适配器实现同一
+状态机，差别只在 Venue 端口；故障注入必须覆盖每条 Leg 提交前崩溃、提交后响应丢失、部分成交、
+拒单和补偿失败。
+
 Binance 的 Spot 新单与 USDⓈ-M Futures 新单是两个独立接口，系统必须假定两腿会独立成功、失败或
 部分成交，不能把客户端并发请求当作原子成交（[Spot New Order](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints)、
 [USDⓈ-M New Order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order)）。
