@@ -183,6 +183,31 @@ class MarketQuote(FrozenModel):
         return self
 
 
+class ExecutableQuote(FrozenModel):
+    """Product-qualified bid/ask frozen for one portfolio decision point."""
+
+    source_quote_id: str = Field(min_length=1)
+    instrument: InstrumentId
+    as_of: datetime
+    observed_at: datetime
+    bid: PositiveDecimal
+    bid_quantity: Money
+    ask: PositiveDecimal
+    ask_quantity: Money
+    source: str = Field(min_length=1)
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def quote_must_be_visible_and_executable(self):
+        if self.observed_at > self.as_of:
+            raise ValueError("ExecutableQuote observed_at 不能晚于 as_of")
+        if self.ask < self.bid:
+            raise ValueError("ExecutableQuote ask 不能低于 bid")
+        return self
+
+
 class MarketTrade(FrozenModel):
     trade_id: str
     symbol: str

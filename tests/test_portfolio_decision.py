@@ -12,48 +12,83 @@ from investment_manager.forecast.models import (
     ForecastRole,
     ForecastTarget,
 )
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentId,
+    InstrumentProduct,
+)
 from investment_manager.portfolio.decision import (
-    PortfolioAssetInput,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
+    PortfolioSleeveInput,
 )
+from investment_manager.portfolio.models import SleeveTarget
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
 
 
+def _instruments(symbol: str = "BTCUSDT") -> tuple[InstrumentId, InstrumentId]:
+    base = symbol.removesuffix("USDT")
+    return (
+        InstrumentId.binance_spot(
+            symbol=symbol,
+            base_asset=base,
+            quote_asset="USDT",
+        ),
+        InstrumentId(
+            product=InstrumentProduct.USD_M_PERPETUAL,
+            symbol=symbol,
+            base_asset=base,
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        ),
+    )
+
+
+def _target(symbol: str = "BTCUSDT") -> ForecastTarget:
+    spot, perpetual = _instruments(symbol)
+    return ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=spot,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("0.5"),
+            ),
+            ForecastLeg(
+                instrument=perpetual,
+                direction=ExposureDirection.SHORT,
+                gross_weight=Decimal("0.5"),
+            ),
+        )
+    )
+
+
 def _forecast(
-    symbol: str,
+    symbol: str = "BTCUSDT",
     *,
-    forecast_id: str,
+    forecast_id: str = "forecast-1",
     gross_bps: str = "20",
     direction: DirectionalView = DirectionalView.UP,
-    reference_price: str = "100",
     half_life_seconds: int = 3_600,
     available_at: datetime = NOW,
     valid_until: datetime = NOW + timedelta(hours=1),
 ) -> CalibratedForecast:
-    target = ForecastTarget.single_long(
-        InstrumentId.binance_spot(
-            symbol=symbol,
-            base_asset=symbol.removesuffix("USDT"),
-            quote_asset="USDT",
-        )
-    )
+    target = _target(symbol)
     return CalibratedForecast(
         forecast_id=forecast_id,
         role=ForecastRole.PROGRAM_BASE,
-        producer_id="calibration",
+        producer_id="carry-calibration",
         producer_version="v1",
-        forecast_family="trend",
+        forecast_family="delta-neutral-funding-carry",
         target=target,
         horizon_minutes=240,
         direction=direction,
-        reference_prices=(
+        reference_prices=tuple(
             ForecastReferencePrice(
-                instrument_id=target.legs[0].instrument.key,
-                price=Decimal(reference_price),
-            ),
+                instrument_id=leg.instrument.key,
+                price=Decimal("100"),
+            )
+            for leg in target.legs
         ),
         expected_edge_half_life_seconds=half_life_seconds,
         available_at=available_at,
@@ -69,29 +104,51 @@ def _forecast(
     )
 
 
-def _asset(
-    symbol: str,
+def _quotes(symbol: str = "BTCUSDT", *, spot_bid: str = "100"):
+    quotes = []
+    for instrument in _instruments(symbol):
+        bid = Decimal(spot_bid) if instrument.product == InstrumentProduct.SPOT else Decimal("100")
+        quotes.append(
+            ExecutableQuote(
+                source_quote_id=f"quote-{instrument.product.value}",
+                instrument=instrument,
+                as_of=NOW,
+                observed_at=NOW,
+                bid=bid,
+                bid_quantity=Decimal("100"),
+                ask=bid + Decimal("0.01"),
+                ask_quantity=Decimal("100"),
+                source="test",
+            )
+        )
+    return tuple(quotes)
+
+
+def _input(
     *,
-    current: str = "0",
-    current_price: str = "100",
-    cost_bps: str = "5",
     forecast: CalibratedForecast | None = None,
-) -> PortfolioAssetInput:
-    return PortfolioAssetInput(
-        symbol=symbol,
-        current_quote_notional=Decimal(current),
-        current_price=Decimal(current_price),
+    current: str = "0",
+    cost_bps: str = "5",
+) -> PortfolioSleeveInput:
+    forecast = forecast or _forecast()
+    sleeve_id = SleeveTarget.identity_for(
+        portfolio_id="primary",
+        forecast_family=forecast.forecast_family,
+        forecast_target_id=forecast.target.target_id,
+    )
+    return PortfolioSleeveInput(
+        sleeve_id=sleeve_id,
+        current_gross_notional=Decimal(current),
         estimated_variable_cost_bps=Decimal(cost_bps),
         forecast=forecast,
     )
 
 
 def _policy(**updates) -> PortfolioDecisionPolicy:
-    base = PortfolioDecisionPolicy(
-        version="portfolio-shadow-v1",
+    return PortfolioDecisionPolicy(
+        version="portfolio-shadow-v2",
         portfolio_id="primary",
-    )
-    return base.model_copy(update=updates)
+    ).model_copy(update=updates)
 
 
 def test_engine_is_off_by_default() -> None:
@@ -99,131 +156,74 @@ def test_engine_is_off_by_default() -> None:
         cycle_id="cycle-1",
         as_of=NOW,
         reference_equity=Decimal("10000"),
-        assets=(
-            _asset(
-                "BTCUSDT",
-                forecast=_forecast("BTCUSDT", forecast_id="btc-1"),
-            ),
-        ),
+        sleeves=(_input(),),
+        quotes=_quotes(),
     )
 
     assert result is None
 
 
-def test_current_portfolio_mvp_rejects_multi_leg_target_instead_of_mispricing_it() -> None:
-    forecast = _forecast("BTCUSDT", forecast_id="carry-1")
-    spot = forecast.target.legs[0].instrument
-    perpetual = InstrumentId(
-        product=InstrumentProduct.USD_M_PERPETUAL,
-        symbol="BTCUSDT",
-        base_asset="BTC",
-        quote_asset="USDT",
-        settlement_asset="USDT",
+def test_engine_allocates_one_multi_leg_sleeve_in_gross_notional() -> None:
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        reference_equity=Decimal("10000"),
+        sleeves=(_input(),),
+        quotes=_quotes(),
     )
-    target = ForecastTarget.create(
+
+    assert result is not None
+    assert len(result.sleeves) == 1
+    assert result.sleeves[0].desired_gross_notional == Decimal("3000")
+    assert tuple(
+        (leg.instrument.product, leg.direction, leg.gross_weight)
+        for leg in result.sleeves[0].forecast_target.legs
+    ) == (
+        (InstrumentProduct.SPOT, ExposureDirection.LONG, Decimal("0.5")),
         (
-            ForecastLeg(
-                instrument=spot,
-                direction=ExposureDirection.LONG,
-                gross_weight=Decimal("0.5"),
-            ),
-            ForecastLeg(
-                instrument=perpetual,
-                direction=ExposureDirection.SHORT,
-                gross_weight=Decimal("0.5"),
-            ),
-        )
-    )
-    multi_leg = CalibratedForecast.model_validate(
-        {
-            **forecast.model_dump(mode="json"),
-            "target": target.model_dump(mode="json"),
-            "reference_prices": [
-                {"instrument_id": item.instrument.key, "price": "100"}
-                for item in target.legs
-            ],
-        }
-    )
-
-    with pytest.raises(ValueError, match="只接受单腿 Spot Long"):
-        _asset("BTCUSDT", forecast=multi_leg)
-
-
-def test_engine_selects_positive_fee_adjusted_long_forecasts_only() -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        reference_equity=Decimal("10000"),
-        assets=(
-            _asset(
-                "BTCUSDT",
-                forecast=_forecast("BTCUSDT", forecast_id="btc-1"),
-            ),
-            _asset(
-                "ETHUSDT",
-                forecast=_forecast(
-                    "ETHUSDT",
-                    forecast_id="eth-1",
-                    direction=DirectionalView.DOWN,
-                ),
-            ),
-            _asset(
-                "SOLUSDT",
-                cost_bps="18",
-                forecast=_forecast(
-                    "SOLUSDT",
-                    forecast_id="sol-1",
-                    gross_bps="20",
-                ),
-            ),
+            InstrumentProduct.USD_M_PERPETUAL,
+            ExposureDirection.SHORT,
+            Decimal("0.5"),
         ),
     )
 
-    assert result is not None
-    assert tuple(item.symbol for item in result.targets) == ("BTCUSDT",)
-    assert result.targets[0].desired_quote_notional == Decimal("3000")
-    assert result.targets[0].conservative_net_bps == Decimal("15")
 
+def test_engine_selects_highest_fee_adjusted_sleeve() -> None:
+    btc = _input(forecast=_forecast(forecast_id="btc", gross_bps="20"))
+    eth_forecast = _forecast("ETHUSDT", forecast_id="eth", gross_bps="30")
+    eth = _input(forecast=eth_forecast)
+    quotes = tuple(sorted((*_quotes(), *_quotes("ETHUSDT")), key=lambda item: item.instrument.key))
+    sleeves = tuple(sorted((btc, eth), key=lambda item: item.sleeve_id))
 
-def test_engine_selects_only_highest_conservative_net_edge() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         reference_equity=Decimal("10000"),
-        assets=(
-            _asset(
-                "BTCUSDT",
-                forecast=_forecast(
-                    "BTCUSDT",
-                    forecast_id="btc-1",
-                    gross_bps="20",
-                ),
-            ),
-            _asset(
-                "ETHUSDT",
-                forecast=_forecast(
-                    "ETHUSDT",
-                    forecast_id="eth-1",
-                    gross_bps="30",
-                ),
+        sleeves=sleeves,
+        quotes=quotes,
+    )
+
+    assert result is not None
+    assert result.sleeves[0].forecast_ids == ("eth",)
+
+
+def test_engine_emits_explicit_zero_target_to_exit_open_sleeve() -> None:
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        reference_equity=Decimal("10000"),
+        sleeves=(
+            _input(
+                forecast=_forecast(direction=DirectionalView.DOWN),
+                current="2500",
             ),
         ),
+        quotes=_quotes(),
     )
 
     assert result is not None
-    assert tuple(item.symbol for item in result.targets) == ("ETHUSDT",)
-
-
-def test_engine_emits_all_cash_target_to_exit_when_edge_disappears() -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        reference_equity=Decimal("10000"),
-        assets=(_asset("BTCUSDT", current="2500"),),
-    )
-
-    assert result is not None
-    assert result.targets == ()
+    assert result.sleeves[0].desired_gross_notional == 0
+    assert "CASH_SELECTED" in result.sleeves[0].reason_codes
 
 
 def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
@@ -233,96 +233,56 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
         cycle_id="cycle-1",
         as_of=NOW,
         reference_equity=Decimal("10000"),
-        assets=(
-            _asset(
-                "BTCUSDT",
-                current="2950",
-                forecast=_forecast("BTCUSDT", forecast_id="btc-1"),
-            ),
-        ),
+        sleeves=(_input(current="2950"),),
+        quotes=_quotes(),
     )
 
     assert result is None
 
 
-def test_engine_does_not_chase_edge_already_consumed_by_price() -> None:
+def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         reference_equity=Decimal("10000"),
-        assets=(
-            _asset(
-                "BTCUSDT",
-                current_price="100.20",
-                forecast=_forecast(
-                    "BTCUSDT",
-                    forecast_id="btc-1",
-                    gross_bps="20",
-                ),
-            ),
-        ),
+        sleeves=(_input(),),
+        quotes=_quotes(spot_bid="100.50"),
     )
 
     assert result is None
 
 
-def test_engine_applies_alpha_time_decay_before_cost() -> None:
-    forecast = _forecast(
-        "BTCUSDT",
-        forecast_id="btc-1",
-        gross_bps="20",
-        half_life_seconds=60,
-        available_at=NOW - timedelta(seconds=60),
-    )
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        reference_equity=Decimal("10000"),
-        assets=(_asset("BTCUSDT", cost_bps="6", forecast=forecast),),
-    )
-
-    assert result is None
+def test_engine_requires_complete_product_quotes() -> None:
+    with pytest.raises(ValueError, match="精确覆盖"):
+        PortfolioDecisionEngine(_policy(enabled=True)).decide(
+            cycle_id="cycle-1",
+            as_of=NOW,
+            reference_equity=Decimal("10000"),
+            sleeves=(_input(),),
+            quotes=(_quotes()[0],),
+        )
 
 
 @pytest.mark.parametrize(
     "forecast",
     [
+        _forecast(forecast_id="future", available_at=NOW + timedelta(seconds=1)),
         _forecast(
-            "BTCUSDT",
-            forecast_id="future",
-            available_at=NOW + timedelta(seconds=1),
-        ),
-        _forecast(
-            "BTCUSDT",
             forecast_id="expired",
             available_at=NOW - timedelta(seconds=1),
             valid_until=NOW,
         ),
     ],
 )
-def test_engine_never_uses_unavailable_forecast(
+def test_engine_never_opens_from_unavailable_forecast(
     forecast: CalibratedForecast,
 ) -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         reference_equity=Decimal("10000"),
-        assets=(_asset("BTCUSDT", forecast=forecast),),
+        sleeves=(_input(forecast=forecast),),
+        quotes=_quotes(),
     )
 
     assert result is None
-
-
-def test_engine_requires_deterministic_asset_order() -> None:
-    engine = PortfolioDecisionEngine(_policy(enabled=True))
-
-    with pytest.raises(ValueError, match="唯一且排序"):
-        engine.decide(
-            cycle_id="cycle-1",
-            as_of=NOW,
-            reference_equity=Decimal("10000"),
-            assets=(
-                _asset("ETHUSDT"),
-                _asset("BTCUSDT"),
-            ),
-        )

@@ -6,18 +6,28 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from investment_manager.execution.models import AccountSnapshot
-from investment_manager.execution.planner import MarketExecutionSpec, TradePlan, TradePlanner
+from investment_manager.execution.planner import (
+    InstrumentExecutionSpec,
+    TradePlan,
+    TradePlanner,
+)
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.models import MarketSnapshot
-from investment_manager.portfolio.decision import PortfolioAssetInput, PortfolioDecisionEngine
-from investment_manager.portfolio.models import PortfolioTarget
+from investment_manager.market.models import ExecutableQuote
+from investment_manager.portfolio.decision import (
+    PortfolioDecisionEngine,
+    PortfolioSleeveInput,
+)
+from investment_manager.portfolio.models import (
+    PortfolioAccountSnapshot,
+    PortfolioTarget,
+    sleeve_gross_notional,
+)
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     PortfolioRiskDecision,
     PortfolioRiskEngine,
-    ProtectiveStop,
+    SleeveRiskProfile,
 )
 
 
@@ -52,7 +62,7 @@ class PortfolioPipelineResult(FrozenModel):
 
 
 class PortfolioDecisionPipeline:
-    """Coordinate one frozen Portfolio → Risk → Execution planning decision."""
+    """Coordinate one frozen Portfolio → Risk → grouped TradePlan decision."""
 
     def __init__(
         self,
@@ -70,30 +80,28 @@ class PortfolioDecisionPipeline:
         cycle_id: str,
         as_of: datetime,
         reference_equity: Decimal,
-        assets: tuple[PortfolioAssetInput, ...],
-        account: AccountSnapshot,
-        markets: tuple[MarketSnapshot, ...],
-        protective_stops: tuple[ProtectiveStop, ...],
-        execution_specs: tuple[MarketExecutionSpec, ...],
+        sleeves: tuple[PortfolioSleeveInput, ...],
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
+        risk_profiles: tuple[SleeveRiskProfile, ...],
+        execution_specs: tuple[InstrumentExecutionSpec, ...],
     ) -> PortfolioPipelineResult:
         as_of = require_utc(as_of)
         if reference_equity <= 0:
             raise ValueError("PortfolioPipeline reference_equity 必须为正数")
-        if account.cycle_id != cycle_id or any(
-            item.cycle_id != cycle_id for item in markets
-        ):
-            raise ValueError("PortfolioPipeline 冻结输入 cycle_id 不一致")
         self._require_frozen_inputs(
-            assets=assets,
+            cycle_id=cycle_id,
+            sleeves=sleeves,
             account=account,
-            markets=markets,
+            quotes=quotes,
             as_of=as_of,
         )
         target = self._decision.decide(
             cycle_id=cycle_id,
             as_of=as_of,
             reference_equity=reference_equity,
-            assets=assets,
+            sleeves=sleeves,
+            quotes=quotes,
         )
         if target is None:
             return PortfolioPipelineResult(
@@ -103,8 +111,8 @@ class PortfolioDecisionPipeline:
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,
-            markets=markets,
-            protective_stops=protective_stops,
+            quotes=quotes,
+            risk_profiles=risk_profiles,
             as_of=as_of,
         )
         if (
@@ -120,7 +128,7 @@ class PortfolioDecisionPipeline:
         trade_plan = self._planner.plan(
             approved=risk_decision.approved_target,
             account=account,
-            markets=markets,
+            quotes=quotes,
             specs=execution_specs,
             as_of=as_of,
         )
@@ -132,49 +140,41 @@ class PortfolioDecisionPipeline:
             trade_plan=trade_plan,
         )
 
-    @staticmethod
+    @classmethod
     def _require_frozen_inputs(
+        cls,
         *,
-        assets: tuple[PortfolioAssetInput, ...],
-        account: AccountSnapshot,
-        markets: tuple[MarketSnapshot, ...],
+        cycle_id: str,
+        sleeves: tuple[PortfolioSleeveInput, ...],
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
         as_of: datetime,
     ) -> None:
-        if account.as_of != as_of or any(item.as_of != as_of for item in markets):
-            raise ValueError("PortfolioPipeline 冻结输入 as_of 不一致")
-        market_by_symbol = {item.symbol: item for item in markets}
-        if len(market_by_symbol) != len(markets):
-            raise ValueError("PortfolioPipeline MarketSnapshot symbol 必须唯一")
-        position_by_symbol = {item.symbol: item for item in account.positions}
-        if len(position_by_symbol) != len(account.positions):
-            raise ValueError("PortfolioPipeline Account position symbol 必须唯一")
-        asset_symbols = tuple(item.symbol for item in assets)
-        if tuple(sorted(set(asset_symbols))) != asset_symbols:
-            raise ValueError("PortfolioAssetInput 必须按 symbol 唯一且排序")
-        missing_positions = tuple(sorted(set(position_by_symbol) - set(asset_symbols)))
+        if account.cycle_id != cycle_id or account.as_of != as_of:
+            raise ValueError("PortfolioPipeline 账户 cycle_id/as_of 不一致")
+        quote_by_instrument = {item.instrument.key: item for item in quotes}
+        quote_keys = tuple(item.instrument.key for item in quotes)
+        if tuple(sorted(set(quote_keys))) != quote_keys:
+            raise ValueError("PortfolioPipeline ExecutableQuote 必须唯一且排序")
+        if any(item.as_of != as_of for item in quotes):
+            raise ValueError("PortfolioPipeline 行情 as_of 不一致")
+        sleeve_ids = tuple(item.sleeve_id for item in sleeves)
+        if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
+            raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
+        account_by_sleeve = {item.sleeve_id: item for item in account.sleeves}
+        missing_positions = tuple(sorted(set(account_by_sleeve) - set(sleeve_ids)))
         if missing_positions:
             raise ValueError(
-                "PortfolioPipeline 当前持仓缺少资产输入: "
+                "PortfolioPipeline 当前 Sleeve 缺少输入: "
                 + ", ".join(missing_positions)
             )
-        for asset in assets:
-            market = market_by_symbol.get(asset.symbol)
-            if market is None:
-                raise ValueError(
-                    f"PortfolioPipeline 资产缺少冻结行情: {asset.symbol}"
-                )
-            position = position_by_symbol.get(asset.symbol)
-            expected_notional = (
-                position.quantity * market.bid
-                if position is not None
-                else Decimal("0")
+        for item in sleeves:
+            current = sleeve_gross_notional(
+                account_by_sleeve.get(item.sleeve_id),
+                quote_by_instrument=quote_by_instrument,
             )
-            if asset.current_price != market.last:
+            if item.current_gross_notional != current:
                 raise ValueError(
-                    f"PortfolioPipeline current_price 与冻结行情不一致: {asset.symbol}"
-                )
-            if asset.current_quote_notional != expected_notional:
-                raise ValueError(
-                    "PortfolioPipeline current_quote_notional 与冻结账户不一致: "
-                    + asset.symbol
+                    "PortfolioPipeline current_gross_notional 与冻结账户不一致: "
+                    + item.sleeve_id
                 )

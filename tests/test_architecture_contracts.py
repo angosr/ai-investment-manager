@@ -973,6 +973,37 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
     ):
         assert not (PACKAGE_ROOT / filename).exists()
 
+    portfolio_models = ast.parse(
+        (PACKAGE_ROOT / "portfolio" / "models.py").read_text()
+    )
+    portfolio_classes = {
+        node.name for node in portfolio_models.body if isinstance(node, ast.ClassDef)
+    }
+    assert {"PortfolioAccountSnapshot", "SleevePosition", "SleeveTarget"}.issubset(
+        portfolio_classes
+    )
+    assert "AssetTarget" not in portfolio_classes
+
+    risk_portfolio = ast.parse((PACKAGE_ROOT / "risk" / "portfolio.py").read_text())
+    planner = ast.parse((PACKAGE_ROOT / "execution" / "planner.py").read_text())
+    decision_pipeline = ast.parse(
+        (PACKAGE_ROOT / "decision_cycle" / "portfolio.py").read_text()
+    )
+    for tree in (risk_portfolio, planner, decision_pipeline):
+        imported_account_owners = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == "PortfolioAccountSnapshot" for alias in node.names)
+        }
+        assert imported_account_owners == {"investment_manager.portfolio.models"}
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and node.module.startswith("investment_manager.execution")
+        for node in ast.walk(risk_portfolio)
+    )
+
 
 def test_risk_models_and_modules_have_one_domain_owner() -> None:
     moved_models = {

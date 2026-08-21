@@ -24,8 +24,8 @@ from investment_manager.information.models import (
 )
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.portfolio.models import (
-    AssetTarget,
     PortfolioTarget,
+    SleeveTarget,
 )
 from investment_manager.state.models import (
     CanonicalFactRevision,
@@ -145,10 +145,17 @@ def _context_view(*, asset: str = "BTC") -> ContextView:
     )
 
 
-def _asset_target(*, symbol: str = "BTCUSDT") -> AssetTarget:
-    return AssetTarget(
-        symbol=symbol,
-        desired_quote_notional=Decimal("1000"),
+def _sleeve_target() -> SleeveTarget:
+    target = _spot_target()
+    return SleeveTarget(
+        sleeve_id=SleeveTarget.identity_for(
+            portfolio_id="mock-main",
+            forecast_family="trend",
+            forecast_target_id=target.target_id,
+        ),
+        forecast_family="trend",
+        forecast_target=target,
+        desired_gross_notional=Decimal("1000"),
         forecast_ids=("forecast-1",),
         conservative_gross_bps=Decimal("20"),
         estimated_variable_cost_bps=Decimal("8"),
@@ -349,7 +356,7 @@ def test_calibrated_forecast_rejects_role_reference_mismatch() -> None:
         )
 
 
-def test_portfolio_target_rejects_leverage_and_duplicate_assets() -> None:
+def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
     with pytest.raises(ValidationError, match="不能超过参考权益"):
         PortfolioTarget(
             target_id="target-1",
@@ -359,14 +366,14 @@ def test_portfolio_target_rejects_leverage_and_duplicate_assets() -> None:
             as_of=NOW,
             valid_until=NOW + timedelta(minutes=30),
             reference_equity=Decimal("10000"),
-            targets=(
-                _asset_target().model_copy(
-                    update={"desired_quote_notional": Decimal("10001")}
+            sleeves=(
+                _sleeve_target().model_copy(
+                    update={"desired_gross_notional": Decimal("10001")}
                 ),
             ),
         )
 
-    with pytest.raises(ValidationError, match="资产必须唯一且排序"):
+    with pytest.raises(ValidationError, match="Sleeves 必须唯一且排序"):
         PortfolioTarget(
             target_id="target-1",
             cycle_id="cycle-1",
@@ -375,16 +382,16 @@ def test_portfolio_target_rejects_leverage_and_duplicate_assets() -> None:
             as_of=NOW,
             valid_until=NOW + timedelta(minutes=30),
             reference_equity=Decimal("10000"),
-            targets=(_asset_target(), _asset_target()),
+            sleeves=(_sleeve_target(), _sleeve_target()),
         )
 
 
-def test_asset_target_net_edge_has_one_formula() -> None:
-    payload = _asset_target().model_dump()
+def test_sleeve_target_net_edge_has_one_formula() -> None:
+    payload = _sleeve_target().model_dump()
     payload["conservative_net_bps"] = Decimal("13")
 
     with pytest.raises(ValidationError, match="净收益必须等于"):
-        AssetTarget.model_validate(payload)
+        SleeveTarget.model_validate(payload)
 
 
 def test_portfolio_target_can_represent_all_cash() -> None:
@@ -398,4 +405,4 @@ def test_portfolio_target_can_represent_all_cash() -> None:
         reference_equity=Decimal("10000"),
     )
 
-    assert target.targets == ()
+    assert target.sleeves == ()

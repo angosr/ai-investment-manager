@@ -3,285 +3,319 @@ from decimal import Decimal
 
 import pytest
 
-from investment_manager.execution.models import (
-    AccountSnapshot,
-    Position,
-    Side,
-)
+from investment_manager.execution.models import Side
 from investment_manager.execution.planner import (
-    MarketExecutionSpec,
+    InstrumentExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,
 )
+from investment_manager.forecast.models import (
+    ExposureDirection,
+    ForecastLeg,
+    ForecastTarget,
+)
 from investment_manager.kernel.identity import content_hash
-from investment_manager.risk.portfolio import ApprovedAssetTarget, ApprovedTarget
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentId,
+    InstrumentProduct,
+)
+from investment_manager.portfolio.models import (
+    InstrumentPosition,
+    PortfolioAccountSnapshot,
+    SleevePosition,
+    SleeveTarget,
+)
+from investment_manager.risk.portfolio import (
+    ApprovedPortfolioTarget,
+    ApprovedSleeve,
+)
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
 HASH = "a" * 64
 
 
+def _instruments() -> tuple[InstrumentId, InstrumentId]:
+    return (
+        InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        ),
+        InstrumentId(
+            product=InstrumentProduct.USD_M_PERPETUAL,
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        ),
+    )
+
+
+def _target() -> ForecastTarget:
+    spot, perpetual = _instruments()
+    return ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=spot,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("0.5"),
+            ),
+            ForecastLeg(
+                instrument=perpetual,
+                direction=ExposureDirection.SHORT,
+                gross_weight=Decimal("0.5"),
+            ),
+        )
+    )
+
+
+def _sleeve_id() -> str:
+    return SleeveTarget.identity_for(
+        portfolio_id="primary",
+        forecast_family="delta-neutral-funding-carry",
+        forecast_target_id=_target().target_id,
+    )
+
+
+def _quotes() -> tuple[ExecutableQuote, ...]:
+    return tuple(
+        ExecutableQuote(
+            source_quote_id=f"quote-{instrument.product.value}",
+            instrument=instrument,
+            as_of=NOW,
+            observed_at=NOW,
+            bid=Decimal("100"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("100"),
+            ask_quantity=Decimal("100"),
+            source="test",
+        )
+        for instrument in _instruments()
+    )
+
+
 def _account(
     *,
-    btc_quantity: str = "0",
-    eth_quantity: str = "0",
-    open_order_count: int = 0,
-) -> AccountSnapshot:
-    positions = tuple(
-        Position(
-            symbol=symbol,
-            quantity=Decimal(quantity),
-            average_price=Decimal("100"),
+    gross: str = "0",
+    pending: tuple[str, ...] = (),
+) -> PortfolioAccountSnapshot:
+    gross_value = Decimal(gross)
+    positions: tuple[InstrumentPosition, ...] = ()
+    sleeves: tuple[SleevePosition, ...] = ()
+    if gross_value > 0:
+        quantity = gross_value / Decimal("2") / Decimal("100")
+        spot, perpetual = _instruments()
+        positions = (
+            InstrumentPosition(
+                instrument=spot,
+                quantity=quantity,
+                average_price=Decimal("100"),
+            ),
+            InstrumentPosition(
+                instrument=perpetual,
+                quantity=-quantity,
+                average_price=Decimal("100"),
+            ),
         )
-        for symbol, quantity in (
-            ("BTCUSDT", btc_quantity),
-            ("ETHUSDT", eth_quantity),
+        sleeves = (
+            SleevePosition(
+                sleeve_id=_sleeve_id(),
+                forecast_family="delta-neutral-funding-carry",
+                target=_target(),
+                legs=positions,
+            ),
         )
-        if Decimal(quantity) != 0
-    )
-    return AccountSnapshot(
+    return PortfolioAccountSnapshot(
+        snapshot_id="account-1",
         cycle_id="cycle-1",
+        portfolio_id="primary",
         as_of=NOW,
         observed_at=NOW,
-        quote_balance=Decimal("10000"),
-        positions=positions,
-        open_order_count=open_order_count,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000") - gross_value,
         equity=Decimal("10000"),
-        reconciled=True,
+        equity_high_water=Decimal("10000"),
+        positions=positions,
+        sleeves=sleeves,
+        pending_execution_group_ids=pending,
     )
 
 
 def _approved(
-    account: AccountSnapshot,
+    account: PortfolioAccountSnapshot,
     *,
-    symbol: str = "BTCUSDT",
-    desired: str = "1000",
-    market_hash: str = HASH,
-) -> ApprovedTarget:
-    return ApprovedTarget(
+    desired: str = "2000",
+    quotes: tuple[ExecutableQuote, ...] | None = None,
+) -> ApprovedPortfolioTarget:
+    quotes = quotes or _quotes()
+    desired_value = Decimal(desired)
+    sleeve = ApprovedSleeve(
+        sleeve_id=_sleeve_id(),
+        forecast_family="delta-neutral-funding-carry",
+        forecast_target=_target(),
+        requested_gross_notional=desired_value,
+        approved_gross_notional=desired_value,
+        sleeve_scale=Decimal("1") if desired_value > 0 else Decimal("0"),
+        risk_profile_version="carry-risk-v1",
+        maximum_unhedged_notional=min(Decimal("500"), desired_value),
+        maximum_unhedged_seconds=10,
+        reason_codes=("TARGET_WITHIN_RISK_ENVELOPE",),
+    )
+    return ApprovedPortfolioTarget(
         approved_target_id="approved-1",
         target_id="target-1",
         cycle_id="cycle-1",
         portfolio_id="primary",
-        policy_version="risk-v1",
+        policy_version="risk-v2",
         as_of=NOW,
         valid_until=NOW + timedelta(minutes=30),
         reference_equity=Decimal("10000"),
         target_hash=HASH,
         account_snapshot_hash=content_hash(account),
-        market_snapshot_hashes=(market_hash,),
-        targets=(
-            ApprovedAssetTarget(
-                symbol=symbol,
-                requested_quote_notional=Decimal(desired),
-                approved_quote_notional=Decimal(desired),
-                protective_stop_price=Decimal("95"),
-                reason_codes=("TARGET_WITHIN_RISK_ENVELOPE",),
+        quote_hashes=tuple(sorted(content_hash(item) for item in quotes)),
+        risk_profile_hashes=(HASH,),
+        sleeves=(sleeve,),
+    )
+
+
+def _specs(*, perpetual_minimum: str = "10"):
+    return tuple(
+        InstrumentExecutionSpec(
+            instrument=instrument,
+            quantity_step=Decimal("0.01"),
+            minimum_order_notional=(
+                Decimal(perpetual_minimum)
+                if instrument.product == InstrumentProduct.USD_M_PERPETUAL
+                else Decimal("10")
             ),
-        ),
+        )
+        for instrument in _instruments()
     )
 
 
 def _planner() -> TradePlanner:
     return TradePlanner(
         TradePlannerPolicy(
-            version="planner-v1",
-            managed_symbols=("BTCUSDT", "ETHUSDT"),
+            version="planner-v2",
+            managed_instruments=tuple(item.key for item in _instruments()),
         )
     )
 
 
-def _markets(replay_input):
-    btc = replay_input.market.model_copy(
-        update={
-            "cycle_id": "cycle-1",
-            "symbol": "BTCUSDT",
-            "as_of": NOW,
-            "observed_at": NOW,
-            "bid": Decimal("100"),
-            "ask": Decimal("100"),
-            "last": Decimal("100"),
-        }
-    )
-    return (
-        btc,
-        btc.model_copy(update={"symbol": "ETHUSDT"}),
-    )
-
-
-def _specs():
-    return tuple(
-        MarketExecutionSpec(
-            symbol=symbol,
-            quantity_step=Decimal("0.01"),
-            minimum_order_notional=Decimal("10"),
-        )
-        for symbol in ("BTCUSDT", "ETHUSDT")
-    )
-
-
-def test_planner_translates_approved_increase_to_buy(replay_input) -> None:
+def test_planner_creates_one_group_with_spot_long_and_perpetual_short() -> None:
     account = _account()
-    markets = _markets(replay_input)
     plan = _planner().plan(
-        approved=_approved(account, market_hash=content_hash(markets[0])),
+        approved=_approved(account),
         account=account,
-        markets=markets,
+        quotes=_quotes(),
         specs=_specs(),
         as_of=NOW,
     )
 
-    assert len(plan.trades) == 1
-    trade = plan.trades[0]
-    assert trade.side == Side.BUY
-    assert not trade.reduce_only
-    assert trade.quantity == Decimal("10")
-    assert trade.quote_notional == Decimal("1000")
-    assert trade.protective_stop_price == Decimal("95")
-
-
-def test_planner_does_not_trade_position_missing_from_risk_approval(
-    replay_input,
-) -> None:
-    account = _account(eth_quantity="5")
-    markets = _markets(replay_input)
-    plan = _planner().plan(
-        approved=_approved(account, market_hash=content_hash(markets[0])),
-        account=account,
-        markets=markets,
-        specs=_specs(),
-        as_of=NOW,
-    )
-
-    assert tuple((item.symbol, item.side) for item in plan.trades) == (
-        ("BTCUSDT", Side.BUY),
-    )
-    eth_delta = next(item for item in plan.target_deltas if item.symbol == "ETHUSDT")
-    assert eth_delta.delta_quote_notional == 0
-
-
-def test_planner_never_sells_more_than_current_position(replay_input) -> None:
-    account = _account(btc_quantity="3")
-    markets = _markets(replay_input)
-    approved = _approved(
-        account,
-        desired="0",
-        market_hash=content_hash(markets[0]),
-    )
-    plan = _planner().plan(
-        approved=approved,
-        account=account,
-        markets=markets,
-        specs=_specs(),
-        as_of=NOW,
-    )
-
-    assert len(plan.trades) == 1
-    assert plan.trades[0].side == Side.SELL
-    assert plan.trades[0].quantity == Decimal("3")
-
-
-def test_planner_records_below_minimum_delta_instead_of_hiding_it(
-    replay_input,
-) -> None:
-    account = _account()
-    markets = _markets(replay_input)
-    plan = _planner().plan(
-        approved=_approved(
-            account,
-            desired="9",
-            market_hash=content_hash(markets[0]),
+    assert len(plan.groups) == 1
+    group = plan.groups[0]
+    assert tuple(
+        (item.instrument.product, item.side, item.reduce_only, item.quantity)
+        for item in group.legs
+    ) == (
+        (InstrumentProduct.SPOT, Side.BUY, False, Decimal("10")),
+        (
+            InstrumentProduct.USD_M_PERPETUAL,
+            Side.SELL,
+            False,
+            Decimal("10"),
         ),
+    )
+    assert group.maximum_unhedged_notional == Decimal("500")
+
+
+def test_one_new_risk_leg_below_minimum_omits_whole_group() -> None:
+    account = _account()
+    plan = _planner().plan(
+        approved=_approved(account),
         account=account,
-        markets=markets,
+        quotes=_quotes(),
+        specs=_specs(perpetual_minimum="1001"),
+        as_of=NOW,
+    )
+
+    assert plan.groups == ()
+    assert plan.omissions[0].reason_code == (
+        "GROUP_NEW_RISK_LEG_BELOW_EXECUTION_MINIMUM"
+    )
+
+
+def test_planner_reduces_both_long_and_short_legs() -> None:
+    account = _account(gross="2000")
+    plan = _planner().plan(
+        approved=_approved(account, desired="1000"),
+        account=account,
+        quotes=_quotes(),
         specs=_specs(),
         as_of=NOW,
     )
 
-    assert plan.trades == ()
-    assert len(plan.omissions) == 1
-    assert plan.omissions[0].reason_code == "DELTA_BELOW_EXECUTION_MINIMUM"
+    legs = plan.groups[0].legs
+    assert tuple((item.side, item.reduce_only, item.quantity) for item in legs) == (
+        (Side.SELL, True, Decimal("5")),
+        (Side.BUY, True, Decimal("5")),
+    )
 
 
-def test_planner_rejects_account_snapshot_drift(replay_input) -> None:
+def test_planner_rejects_quote_snapshot_drift() -> None:
+    account = _account()
+    approved = _approved(account)
+    changed = _quotes()[0].model_copy(update={"bid": Decimal("99")})
+
+    with pytest.raises(ValueError, match=r"报价.*不一致"):
+        _planner().plan(
+            approved=approved,
+            account=account,
+            quotes=(changed, _quotes()[1]),
+            specs=_specs(),
+            as_of=NOW,
+        )
+
+
+def test_planner_rejects_account_snapshot_drift() -> None:
     approved_account = _account()
-    changed = _account(btc_quantity="1")
 
     with pytest.raises(ValueError, match="快照不一致"):
         _planner().plan(
             approved=_approved(approved_account),
-            account=changed,
-            markets=_markets(replay_input),
+            account=_account(gross="1000"),
+            quotes=_quotes(),
             specs=_specs(),
             as_of=NOW,
         )
 
 
-def test_planner_rejects_market_snapshot_drift_for_new_risk(replay_input) -> None:
-    account = _account()
-
-    with pytest.raises(ValueError, match=r"行情.*不一致"):
-        _planner().plan(
-            approved=_approved(account),
-            account=account,
-            markets=_markets(replay_input),
-            specs=_specs(),
-            as_of=NOW,
-        )
-
-
-def test_planner_rejects_market_snapshot_drift_for_reduction(replay_input) -> None:
-    account = _account(btc_quantity="3")
-
-    with pytest.raises(ValueError, match=r"行情.*不一致"):
-        _planner().plan(
-            approved=_approved(account, desired="0"),
-            account=account,
-            markets=_markets(replay_input),
-            specs=_specs(),
-            as_of=NOW,
-        )
-
-
-def test_planner_rejects_reuse_after_risk_approval_time(replay_input) -> None:
-    account = _account()
-    markets = _markets(replay_input)
-
-    with pytest.raises(ValueError, match="Risk 批准时点"):
-        _planner().plan(
-            approved=_approved(account, market_hash=content_hash(markets[0])),
-            account=account,
-            markets=markets,
-            specs=_specs(),
-            as_of=NOW + timedelta(seconds=1),
-        )
-
-
-def test_planner_waits_for_reconciliation_when_orders_are_open(
-    replay_input,
-) -> None:
-    account = _account(open_order_count=1)
-    markets = _markets(replay_input)
+def test_planner_waits_for_pending_group_reconciliation() -> None:
+    account = _account(pending=("group-existing",))
     plan = _planner().plan(
-        approved=_approved(account, market_hash=content_hash(markets[0])),
+        approved=_approved(account),
         account=account,
-        markets=markets,
+        quotes=_quotes(),
         specs=_specs(),
         as_of=NOW,
     )
 
-    assert plan.trades == ()
-    assert plan.omissions[0].reason_code == "OPEN_ORDERS_REQUIRE_RECONCILIATION"
+    assert plan.groups == ()
+    assert plan.omissions[0].reason_code == (
+        "EXECUTION_GROUP_REQUIRES_RECONCILIATION"
+    )
 
 
-def test_planner_rejects_open_position_without_market(replay_input) -> None:
-    account = _account(eth_quantity="1")
-    markets = _markets(replay_input)
+def test_planner_records_missing_leg_spec_without_partial_group() -> None:
+    account = _account()
+    plan = _planner().plan(
+        approved=_approved(account),
+        account=account,
+        quotes=_quotes(),
+        specs=(_specs()[0],),
+        as_of=NOW,
+    )
 
-    with pytest.raises(ValueError, match="已有持仓缺少行情"):
-        _planner().plan(
-            approved=_approved(account, market_hash=content_hash(markets[0])),
-            account=account,
-            markets=(markets[0],),
-            specs=_specs(),
-            as_of=NOW,
-        )
+    assert plan.groups == ()
+    assert plan.omissions[0].reason_code == "QUOTE_OR_EXECUTION_SPEC_MISSING"

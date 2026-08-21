@@ -181,10 +181,11 @@ NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue
 （[NautilusTrader advanced orders](https://github.com/nautechsystems/nautilus_trader/blob/2114cf6f761429e0adb5ca9596fcd7b895b16011/docs/concepts/orders/advanced.md)）。
 
 主线 Forecast 已使用产品级 `InstrumentId`、规范化 `ForecastTarget` 和逐 Leg 参考价；相同 Binance
-symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。当前 AI_EVENT 投影只生成单腿 Spot
-Target；`AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 仍是尚未接入生产的 long-only Spot MVP，
-并会显式拒绝多腿 Target，而不是错误定价或拆腿授权。行情、账户、订单和持仓尚未完成产品级硬迁移，
-因此 carry 仍不能进入资本路径。
+symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。纯决策合同已经硬迁移为
+`PortfolioAccountSnapshot + SleeveTarget → ApprovedSleeve → grouped TradePlan`：Portfolio 用统一 gross
+notional 比较单腿/多腿机会，Risk 整组缩放，Planner 对任一不可交易的新增风险 Leg 整组省略，不再
+保留 `AssetTarget/ApprovedAssetTarget` Spot MVP 或兼容 alias。当前尚未完成这些交接的 SQL 持久化、
+产品级账户运行投影和 grouped Execution 恢复状态机，因此 carry 仍不能进入资本路径。
 
 主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
@@ -446,13 +447,13 @@ kernel/platform
 1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
-2. **投资对象与预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
+2. **投资对象与预测接线（已完成）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
    完整性检查、always-UP 配对门禁和内容寻址结果；`InstrumentId + ForecastTarget` 已成为 Base 与
-   Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实已接线。下一步让通过预登记
-   评估的 ProgramBase/carry 写入 Forecast 持久化与结算。两者未获权限时都不能影响资本。
-3. **组合与风险接线**：以同一冻结时点生成 Sleeve allocation，再统一推进
-   `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；现金、拒绝、整组缩减和低于
-   最小交易额都是完整终态。不得先保留 Spot-only 路径、再旁接一套 carry 组合器。
+   Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
+   可成交价/funding 结算和 carry ProgramBase 生产已接线。ProgramBase/carry 未获权限时仍不能影响资本。
+3. **组合与风险接线（进行中）**：产品级账户、Sleeve allocation、整组 Risk 缩放和 grouped TradePlan
+   的纯合同已经完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果，Spot MVP 不再并存。
+   下一步持久化 `PortfolioTarget → RiskDecision → TradePlan` 每个交接身份，并接好重启恢复和点时回放。
 4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成 group/Leg 幂等订单、未知结果恢复、
    部分成交、失配减险、保护与对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。

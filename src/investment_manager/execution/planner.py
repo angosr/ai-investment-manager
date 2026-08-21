@@ -5,11 +5,8 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.execution.models import (
-    AccountSnapshot,
-    OrderType,
-    Side,
-)
+from investment_manager.execution.models import OrderType, Side
+from investment_manager.forecast.models import ExposureDirection
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
@@ -18,75 +15,132 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     floor_to_step,
 )
-from investment_manager.market.models import MarketSnapshot
-from investment_manager.risk.portfolio import ApprovedTarget
+from investment_manager.market.models import ExecutableQuote, InstrumentId
+from investment_manager.portfolio.models import (
+    PortfolioAccountSnapshot,
+    SleevePosition,
+    sleeve_gross_notional,
+)
+from investment_manager.risk.portfolio import (
+    ApprovedPortfolioTarget,
+    ApprovedSleeve,
+)
 
 
 class TradePlannerPolicy(FrozenModel):
     version: str = Field(min_length=1)
-    managed_symbols: tuple[str, ...] = Field(min_length=1)
+    managed_instruments: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def managed_symbols_must_be_unique_and_sorted(self):
-        if tuple(sorted(set(self.managed_symbols))) != self.managed_symbols:
-            raise ValueError("managed_symbols 必须唯一且排序")
+    def managed_instruments_must_be_unique_and_sorted(self):
+        if tuple(sorted(set(self.managed_instruments))) != self.managed_instruments:
+            raise ValueError("managed_instruments 必须唯一且排序")
         return self
 
 
-class MarketExecutionSpec(FrozenModel):
-    symbol: str = Field(min_length=1)
+class InstrumentExecutionSpec(FrozenModel):
+    instrument: InstrumentId
     quantity_step: PositiveDecimal
     minimum_order_notional: Money
 
 
-class TargetDelta(FrozenModel):
-    symbol: str = Field(min_length=1)
-    current_quote_notional: Money
-    desired_quote_notional: Money
-    delta_quote_notional: Decimal
+class SleeveTargetDelta(FrozenModel):
+    sleeve_id: str = Field(min_length=1)
+    current_gross_notional: Money
+    desired_gross_notional: Money
+    delta_gross_notional: Decimal
 
     @model_validator(mode="after")
     def delta_must_equal_desired_minus_current(self):
-        if self.delta_quote_notional != (
-            self.desired_quote_notional - self.current_quote_notional
+        if self.delta_gross_notional != (
+            self.desired_gross_notional - self.current_gross_notional
         ):
-            raise ValueError("TargetDelta 必须等于目标减当前暴露")
+            raise ValueError("SleeveTargetDelta 必须等于目标减当前 gross notional")
         return self
 
 
 class PlanningOmission(FrozenModel):
-    symbol: str = Field(min_length=1)
-    delta_quote_notional: Decimal
+    sleeve_id: str = Field(min_length=1)
+    delta_gross_notional: Decimal
     reason_code: str = Field(min_length=1)
 
 
-class PlannedTrade(FrozenModel):
-    intent_id: str = Field(min_length=1)
+class PlannedLegTrade(FrozenModel):
+    leg_id: str = Field(min_length=1)
+    group_id: str = Field(min_length=1)
     approved_target_id: str = Field(min_length=1)
     cycle_id: str = Field(min_length=1)
-    planner_policy_version: str = Field(min_length=1)
-    symbol: str = Field(min_length=1)
+    sleeve_id: str = Field(min_length=1)
+    instrument: InstrumentId
     side: Side
     order_type: OrderType = OrderType.MARKET
     quantity: PositiveDecimal
     reference_price: PositiveDecimal
     quote_notional: PositiveDecimal
     reduce_only: bool
-    protective_stop_price: PositiveDecimal | None = None
     valid_until: datetime
 
     _utc_valid_until = field_validator("valid_until")(require_utc)
 
     @model_validator(mode="after")
-    def direction_and_protection_must_be_consistent(self):
-        if self.reduce_only != (self.side == Side.SELL):
-            raise ValueError("现货 Planner 只有 SELL 可以是 reduce_only")
-        if self.side == Side.BUY and self.protective_stop_price is None:
-            raise ValueError("新增风险 PlannedTrade 必须冻结保护止损")
-        if self.side == Side.SELL and self.protective_stop_price is not None:
-            raise ValueError("减仓 PlannedTrade 不携带新增风险止损")
-        if self.quote_notional != self.quantity * self.reference_price:
-            raise ValueError("PlannedTrade quote_notional 与数量价格不一致")
+    def leg_trade_must_be_self_consistent(self):
+        if self.quote_notional != (
+            self.quantity
+            * self.reference_price
+            * self.instrument.contract_multiplier
+        ):
+            raise ValueError("PlannedLegTrade quote_notional 与数量价格不一致")
+        expected_id = stable_id(
+            "planned_leg",
+            self.group_id,
+            self.instrument.key,
+            self.side.value,
+            str(self.quantity),
+            str(self.reduce_only),
+        )
+        if self.leg_id != expected_id:
+            raise ValueError("PlannedLegTrade leg_id 与冻结内容不一致")
+        return self
+
+
+class PlannedTradeGroup(FrozenModel):
+    group_id: str = Field(min_length=1)
+    approved_target_id: str = Field(min_length=1)
+    cycle_id: str = Field(min_length=1)
+    sleeve_id: str = Field(min_length=1)
+    planner_policy_version: str = Field(min_length=1)
+    desired_gross_notional: Money
+    maximum_unhedged_notional: Money
+    maximum_unhedged_seconds: int = Field(gt=0)
+    legs: tuple[PlannedLegTrade, ...] = Field(min_length=1)
+    valid_until: datetime
+
+    _utc_valid_until = field_validator("valid_until")(require_utc)
+
+    @model_validator(mode="after")
+    def group_identity_and_legs_must_be_consistent(self):
+        expected_group_id = stable_id(
+            "trade_group",
+            self.approved_target_id,
+            self.sleeve_id,
+            self.planner_policy_version,
+        )
+        if self.group_id != expected_group_id:
+            raise ValueError("PlannedTradeGroup group_id 不一致")
+        if self.maximum_unhedged_notional > self.desired_gross_notional:
+            raise ValueError("Trade group 未对冲上限不能超过目标 gross notional")
+        leg_keys = tuple(item.instrument.key for item in self.legs)
+        if tuple(sorted(set(leg_keys))) != leg_keys:
+            raise ValueError("PlannedTradeGroup legs 必须按 Instrument 唯一且排序")
+        if any(
+            item.group_id != self.group_id
+            or item.approved_target_id != self.approved_target_id
+            or item.cycle_id != self.cycle_id
+            or item.sleeve_id != self.sleeve_id
+            or item.valid_until != self.valid_until
+            for item in self.legs
+        ):
+            raise ValueError("PlannedTradeGroup 与 Leg 身份或有效期不一致")
         return self
 
 
@@ -96,8 +150,8 @@ class TradePlan(FrozenModel):
     cycle_id: str = Field(min_length=1)
     planner_policy_version: str = Field(min_length=1)
     created_at: datetime
-    target_deltas: tuple[TargetDelta, ...]
-    trades: tuple[PlannedTrade, ...]
+    target_deltas: tuple[SleeveTargetDelta, ...]
+    groups: tuple[PlannedTradeGroup, ...]
     omissions: tuple[PlanningOmission, ...]
     plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -105,14 +159,16 @@ class TradePlan(FrozenModel):
 
     @model_validator(mode="after")
     def plan_order_and_identity_must_be_deterministic(self):
-        delta_symbols = tuple(item.symbol for item in self.target_deltas)
-        if tuple(sorted(set(delta_symbols))) != delta_symbols:
-            raise ValueError("TargetDelta 必须按 symbol 唯一且排序")
-        ordering = tuple(
-            (0 if item.reduce_only else 1, item.symbol) for item in self.trades
-        )
-        if tuple(sorted(ordering)) != ordering:
-            raise ValueError("TradePlan 必须先减仓再新增风险")
+        delta_ids = tuple(item.sleeve_id for item in self.target_deltas)
+        group_ids = tuple(item.sleeve_id for item in self.groups)
+        omission_ids = tuple(item.sleeve_id for item in self.omissions)
+        for values, label in (
+            (delta_ids, "SleeveTargetDelta"),
+            (group_ids, "PlannedTradeGroup"),
+            (omission_ids, "PlanningOmission"),
+        ):
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"{label} 必须按 sleeve_id 唯一且排序")
         payload = self.model_dump(mode="json", exclude={"plan_hash"})
         if self.plan_hash != content_hash(payload):
             raise ValueError("TradePlan plan_hash 与内容不一致")
@@ -120,7 +176,7 @@ class TradePlan(FrozenModel):
 
 
 class TradePlanner:
-    """Translate an approved target delta; never reassess economic direction."""
+    """Translate each authorized Sleeve into one all-or-nothing planned group."""
 
     def __init__(self, policy: TradePlannerPolicy) -> None:
         self._policy = policy
@@ -128,110 +184,82 @@ class TradePlanner:
     def plan(
         self,
         *,
-        approved: ApprovedTarget,
-        account: AccountSnapshot,
-        markets: tuple[MarketSnapshot, ...],
-        specs: tuple[MarketExecutionSpec, ...],
+        approved: ApprovedPortfolioTarget,
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
+        specs: tuple[InstrumentExecutionSpec, ...],
         as_of: datetime,
     ) -> TradePlan:
         as_of = require_utc(as_of)
         if approved.valid_until <= as_of:
-            raise ValueError("ApprovedTarget 已过期")
+            raise ValueError("ApprovedPortfolioTarget 已过期")
         if approved.as_of != as_of:
             raise ValueError("TradePlanner 必须使用 Risk 批准时点")
         if content_hash(account) != approved.account_snapshot_hash:
             raise ValueError("TradePlanner account 与 Risk 批准快照不一致")
-        market_by_symbol = self._unique(markets, "MarketSnapshot")
-        spec_by_symbol = self._unique(specs, "MarketExecutionSpec")
-        approved_market_hashes = set(approved.market_snapshot_hashes)
-        position_by_symbol = self._positions(account)
-        approved_by_symbol = {item.symbol: item for item in approved.targets}
-        if not set(approved_by_symbol).issubset(self._policy.managed_symbols):
-            raise ValueError("ApprovedTarget 包含未托管资产")
+        quote_by_instrument = self._unique_quotes(quotes)
+        spec_by_instrument = self._unique_specs(specs)
+        approved_quote_hashes = set(approved.quote_hashes)
+        current_by_sleeve = {item.sleeve_id: item for item in account.sleeves}
 
-        deltas: list[TargetDelta] = []
-        trades: list[PlannedTrade] = []
+        deltas: list[SleeveTargetDelta] = []
+        groups: list[PlannedTradeGroup] = []
         omissions: list[PlanningOmission] = []
-        for symbol in self._policy.managed_symbols:
-            market = market_by_symbol.get(symbol)
-            position = position_by_symbol.get(symbol)
-            current_quantity = (
-                position.quantity
-                if position is not None
-                else Decimal("0")
+        for sleeve in approved.sleeves:
+            target_keys = tuple(
+                item.instrument.key for item in sleeve.forecast_target.legs
             )
-            if current_quantity < 0:
-                raise ValueError("现货 TradePlanner 不接受负持仓")
-            if current_quantity > 0 and market is None:
-                raise ValueError("已有持仓缺少行情，无法安全规划减仓")
-            if market is not None and market.observed_at > as_of:
-                raise ValueError("TradePlanner 不接受未来行情")
-            current_notional = (
-                current_quantity * market.bid
-                if market is not None
-                else Decimal("0")
+            if not set(target_keys).issubset(self._policy.managed_instruments):
+                raise ValueError("ApprovedPortfolioTarget 包含未托管 Instrument")
+            current = current_by_sleeve.get(sleeve.sleeve_id)
+            current_gross = sleeve_gross_notional(
+                current,
+                quote_by_instrument=quote_by_instrument,
             )
-            approved_asset = approved_by_symbol.get(symbol)
-            desired_notional = (
-                approved_asset.approved_quote_notional
-                if approved_asset is not None
-                else current_notional
-            )
-            delta = TargetDelta(
-                symbol=symbol,
-                current_quote_notional=current_notional,
-                desired_quote_notional=desired_notional,
-                delta_quote_notional=desired_notional - current_notional,
+            delta = SleeveTargetDelta(
+                sleeve_id=sleeve.sleeve_id,
+                current_gross_notional=current_gross,
+                desired_gross_notional=sleeve.approved_gross_notional,
+                delta_gross_notional=sleeve.approved_gross_notional - current_gross,
             )
             deltas.append(delta)
-            if delta.delta_quote_notional == 0:
+            if delta.delta_gross_notional == 0:
                 continue
-            if account.open_order_count > 0:
+            if account.pending_execution_group_ids:
                 omissions.append(
                     PlanningOmission(
-                        symbol=symbol,
-                        delta_quote_notional=delta.delta_quote_notional,
-                        reason_code="OPEN_ORDERS_REQUIRE_RECONCILIATION",
+                        sleeve_id=sleeve.sleeve_id,
+                        delta_gross_notional=delta.delta_gross_notional,
+                        reason_code="EXECUTION_GROUP_REQUIRES_RECONCILIATION",
                     )
                 )
                 continue
-            if market is None or symbol not in spec_by_symbol:
-                omissions.append(
-                    PlanningOmission(
-                        symbol=symbol,
-                        delta_quote_notional=delta.delta_quote_notional,
-                        reason_code="MARKET_OR_EXECUTION_SPEC_MISSING",
-                    )
-                )
-                continue
-            if content_hash(market) not in approved_market_hashes:
-                raise ValueError("交易行情与 Risk 批准快照不一致")
-            planned = self._trade(
+            group, reason = self._group(
                 approved=approved,
-                approved_asset=approved_asset,
-                delta=delta,
-                current_quantity=current_quantity,
-                market=market,
-                spec=spec_by_symbol[symbol],
+                sleeve=sleeve,
+                current=current,
+                quote_by_instrument=quote_by_instrument,
+                spec_by_instrument=spec_by_instrument,
+                approved_quote_hashes=approved_quote_hashes,
             )
-            if planned is None:
+            if group is None:
                 omissions.append(
                     PlanningOmission(
-                        symbol=symbol,
-                        delta_quote_notional=delta.delta_quote_notional,
-                        reason_code="DELTA_BELOW_EXECUTION_MINIMUM",
+                        sleeve_id=sleeve.sleeve_id,
+                        delta_gross_notional=delta.delta_gross_notional,
+                        reason_code=reason,
                     )
                 )
             else:
-                trades.append(planned)
-        trades.sort(key=lambda item: (not item.reduce_only, item.symbol))
+                groups.append(group)
+
         values = {
             "approved_target_id": approved.approved_target_id,
             "cycle_id": approved.cycle_id,
             "planner_policy_version": self._policy.version,
             "created_at": as_of,
             "target_deltas": tuple(deltas),
-            "trades": tuple(trades),
+            "groups": tuple(groups),
             "omissions": tuple(omissions),
         }
         plan_id = stable_id(
@@ -241,70 +269,135 @@ class TradePlanner:
             content_hash(values),
         )
         payload = {"plan_id": plan_id, **values}
-        return TradePlan(
-            **payload,
-            plan_hash=content_hash(payload),
-        )
+        return TradePlan(**payload, plan_hash=content_hash(payload))
 
-    def _trade(
+    def _group(
         self,
         *,
-        approved: ApprovedTarget,
-        approved_asset,
-        delta: TargetDelta,
-        current_quantity: Decimal,
-        market: MarketSnapshot,
-        spec: MarketExecutionSpec,
-    ) -> PlannedTrade | None:
-        reducing = delta.delta_quote_notional < 0
-        price = market.bid if reducing else market.ask
-        raw_quantity = (
-            current_quantity
-            if reducing and delta.desired_quote_notional == 0
-            else abs(delta.delta_quote_notional) / price
+        approved: ApprovedPortfolioTarget,
+        sleeve: ApprovedSleeve,
+        current: SleevePosition | None,
+        quote_by_instrument: dict[str, ExecutableQuote],
+        spec_by_instrument: dict[str, InstrumentExecutionSpec],
+        approved_quote_hashes: set[str],
+    ) -> tuple[PlannedTradeGroup | None, str]:
+        target_legs = sleeve.forecast_target.legs
+        if any(
+            leg.instrument.key not in quote_by_instrument
+            or leg.instrument.key not in spec_by_instrument
+            for leg in target_legs
+        ):
+            return None, "QUOTE_OR_EXECUTION_SPEC_MISSING"
+        for leg in target_legs:
+            if content_hash(quote_by_instrument[leg.instrument.key]) not in (
+                approved_quote_hashes
+            ):
+                raise ValueError("交易报价与 Risk 批准快照不一致")
+
+        group_id = stable_id(
+            "trade_group",
+            approved.approved_target_id,
+            sleeve.sleeve_id,
+            self._policy.version,
         )
-        if reducing:
-            raw_quantity = min(raw_quantity, current_quantity)
-        quantity = floor_to_step(raw_quantity, spec.quantity_step)
-        quote_notional = quantity * price
-        if quantity <= 0 or quote_notional < spec.minimum_order_notional:
-            return None
-        side = Side.SELL if reducing else Side.BUY
-        return PlannedTrade(
-            intent_id=stable_id(
-                "target_trade_intent",
-                approved.approved_target_id,
-                delta.symbol,
+        current_quantities = {
+            item.instrument.key: item.quantity
+            for item in current.legs
+        } if current is not None else {}
+        trades: list[PlannedLegTrade] = []
+        opening_leg_below_minimum = False
+        reducing_leg_below_minimum = False
+        for leg in target_legs:
+            quote = quote_by_instrument[leg.instrument.key]
+            spec = spec_by_instrument[leg.instrument.key]
+            sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
+            entry_price = quote.ask if sign > 0 else quote.bid
+            desired_quantity = sign * floor_to_step(
+                (
+                    sleeve.approved_gross_notional
+                    * leg.gross_weight
+                    / entry_price
+                    / leg.instrument.contract_multiplier
+                ),
+                spec.quantity_step,
+            )
+            current_quantity = current_quantities.get(leg.instrument.key, Decimal("0"))
+            delta_quantity = desired_quantity - current_quantity
+            if delta_quantity == 0:
+                continue
+            side = Side.BUY if delta_quantity > 0 else Side.SELL
+            reference_price = quote.ask if side == Side.BUY else quote.bid
+            quantity = floor_to_step(abs(delta_quantity), spec.quantity_step)
+            quote_notional = (
+                quantity
+                * reference_price
+                * leg.instrument.contract_multiplier
+            )
+            reducing = abs(desired_quantity) < abs(current_quantity)
+            if quantity <= 0 or quote_notional < spec.minimum_order_notional:
+                opening_leg_below_minimum |= not reducing
+                reducing_leg_below_minimum |= reducing
+                continue
+            leg_id = stable_id(
+                "planned_leg",
+                group_id,
+                leg.instrument.key,
                 side.value,
                 str(quantity),
+                str(reducing),
+            )
+            trades.append(
+                PlannedLegTrade(
+                    leg_id=leg_id,
+                    group_id=group_id,
+                    approved_target_id=approved.approved_target_id,
+                    cycle_id=approved.cycle_id,
+                    sleeve_id=sleeve.sleeve_id,
+                    instrument=leg.instrument,
+                    side=side,
+                    quantity=quantity,
+                    reference_price=reference_price,
+                    quote_notional=quote_notional,
+                    reduce_only=reducing,
+                    valid_until=approved.valid_until,
+                )
+            )
+        if opening_leg_below_minimum:
+            return None, "GROUP_NEW_RISK_LEG_BELOW_EXECUTION_MINIMUM"
+        if reducing_leg_below_minimum:
+            return None, "GROUP_REDUCTION_LEG_BELOW_EXECUTION_MINIMUM"
+        if not trades:
+            return None, "GROUP_DELTA_BELOW_EXECUTION_MINIMUM"
+        return (
+            PlannedTradeGroup(
+                group_id=group_id,
+                approved_target_id=approved.approved_target_id,
+                cycle_id=approved.cycle_id,
+                sleeve_id=sleeve.sleeve_id,
+                planner_policy_version=self._policy.version,
+                desired_gross_notional=sleeve.approved_gross_notional,
+                maximum_unhedged_notional=sleeve.maximum_unhedged_notional,
+                maximum_unhedged_seconds=sleeve.maximum_unhedged_seconds,
+                legs=tuple(trades),
+                valid_until=approved.valid_until,
             ),
-            approved_target_id=approved.approved_target_id,
-            cycle_id=approved.cycle_id,
-            planner_policy_version=self._policy.version,
-            symbol=delta.symbol,
-            side=side,
-            quantity=quantity,
-            reference_price=price,
-            quote_notional=quote_notional,
-            reduce_only=reducing,
-            protective_stop_price=(
-                None
-                if reducing or approved_asset is None
-                else approved_asset.protective_stop_price
-            ),
-            valid_until=approved.valid_until,
+            "GROUP_PLANNED",
         )
 
     @staticmethod
-    def _unique(values, label: str):
-        by_symbol = {item.symbol: item for item in values}
-        if len(by_symbol) != len(values):
-            raise ValueError(f"{label} symbol 必须唯一")
-        return by_symbol
+    def _unique_quotes(
+        quotes: tuple[ExecutableQuote, ...],
+    ) -> dict[str, ExecutableQuote]:
+        keys = tuple(item.instrument.key for item in quotes)
+        if tuple(sorted(set(keys))) != keys:
+            raise ValueError("ExecutableQuote 必须按 Instrument 唯一且排序")
+        return {item.instrument.key: item for item in quotes}
 
     @staticmethod
-    def _positions(account: AccountSnapshot):
-        values = {item.symbol: item for item in account.positions}
-        if len(values) != len(account.positions):
-            raise ValueError("Account positions symbol 必须唯一")
-        return values
+    def _unique_specs(
+        specs: tuple[InstrumentExecutionSpec, ...],
+    ) -> dict[str, InstrumentExecutionSpec]:
+        keys = tuple(item.instrument.key for item in specs)
+        if tuple(sorted(set(keys))) != keys:
+            raise ValueError("InstrumentExecutionSpec 必须按 Instrument 唯一且排序")
+        return {item.instrument.key: item for item in specs}

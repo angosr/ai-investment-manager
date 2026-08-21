@@ -19,11 +19,8 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     UnitInterval,
 )
-from investment_manager.market.models import InstrumentProduct
-from investment_manager.portfolio.models import (
-    AssetTarget,
-    PortfolioTarget,
-)
+from investment_manager.market.models import ExecutableQuote
+from investment_manager.portfolio.models import PortfolioTarget, SleeveTarget
 
 
 class PortfolioDecisionPolicy(FrozenModel):
@@ -35,7 +32,7 @@ class PortfolioDecisionPolicy(FrozenModel):
     )
     minimum_conservative_net_bps: Decimal = Field(default=Decimal("5"), ge=0)
     maximum_total_exposure_fraction: UnitInterval = Decimal("0.50")
-    maximum_single_asset_fraction: UnitInterval = Decimal("0.30")
+    maximum_single_sleeve_fraction: UnitInterval = Decimal("0.30")
     minimum_rebalance_notional: Money = Decimal("25")
     target_validity_minutes: int = Field(default=30, ge=1, le=1_440)
 
@@ -44,32 +41,16 @@ class PortfolioDecisionPolicy(FrozenModel):
         roles = tuple(sorted(set(self.eligible_forecast_roles), key=lambda item: item.value))
         if roles != self.eligible_forecast_roles:
             raise ValueError("eligible_forecast_roles 必须唯一且排序")
-        if self.maximum_single_asset_fraction <= 0:
-            raise ValueError("单资产暴露上限必须为正数")
+        if self.maximum_single_sleeve_fraction <= 0:
+            raise ValueError("单 Sleeve 暴露上限必须为正数")
         return self
 
 
-class PortfolioAssetInput(FrozenModel):
-    symbol: str = Field(min_length=1)
-    current_quote_notional: Money
-    current_price: PositiveDecimal
+class PortfolioSleeveInput(FrozenModel):
+    sleeve_id: str = Field(min_length=1)
+    current_gross_notional: Money
     estimated_variable_cost_bps: Money
-    forecast: CalibratedForecast | None = None
-
-    @model_validator(mode="after")
-    def forecast_target_must_match_current_spot_mvp(self):
-        if self.forecast is None:
-            return self
-        legs = self.forecast.target.legs
-        if (
-            len(legs) != 1
-            or legs[0].instrument.product != InstrumentProduct.SPOT
-            or legs[0].direction != ExposureDirection.LONG
-        ):
-            raise ValueError("当前 PortfolioAssetInput 只接受单腿 Spot Long ForecastTarget")
-        if legs[0].instrument.symbol != self.symbol:
-            raise ValueError("PortfolioAssetInput 与 ForecastTarget Instrument 不一致")
-        return self
+    forecast: CalibratedForecast
 
 
 class PortfolioDecisionEngine:
@@ -84,74 +65,96 @@ class PortfolioDecisionEngine:
         cycle_id: str,
         as_of: datetime,
         reference_equity: PositiveDecimal,
-        assets: tuple[PortfolioAssetInput, ...],
+        sleeves: tuple[PortfolioSleeveInput, ...],
+        quotes: tuple[ExecutableQuote, ...],
     ) -> PortfolioTarget | None:
         if not self._policy.enabled:
             return None
         as_of = require_utc(as_of)
-        symbols = tuple(item.symbol for item in assets)
-        if tuple(sorted(set(symbols))) != symbols:
-            raise ValueError("PortfolioAssetInput 必须按 symbol 唯一且排序")
+        sleeve_ids = tuple(item.sleeve_id for item in sleeves)
+        if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
+            raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
+        quote_by_instrument = self._quotes(quotes=quotes, as_of=as_of)
+        required_quote_keys = {
+            leg.instrument.key
+            for item in sleeves
+            for leg in item.forecast.target.legs
+        }
+        if set(quote_by_instrument) != required_quote_keys:
+            raise ValueError("ExecutableQuote 必须精确覆盖 Portfolio Sleeve Instruments")
+        for item in sleeves:
+            expected_id = SleeveTarget.identity_for(
+                portfolio_id=self._policy.portfolio_id,
+                forecast_family=item.forecast.forecast_family,
+                forecast_target_id=item.forecast.target.target_id,
+            )
+            if item.sleeve_id != expected_id:
+                raise ValueError("PortfolioSleeveInput sleeve_id 与 Forecast 不一致")
+            missing = set(leg.instrument.key for leg in item.forecast.target.legs) - set(
+                quote_by_instrument
+            )
+            if missing:
+                raise ValueError("PortfolioSleeveInput 缺少产品级可成交报价")
 
         eligible = tuple(
             sorted(
                 (
                     item
-                    for item in assets
-                    if self._is_eligible(item, as_of=as_of)
+                    for item in sleeves
+                    if self._is_eligible(
+                        item,
+                        quote_by_instrument=quote_by_instrument,
+                        as_of=as_of,
+                    )
                 ),
                 key=lambda item: (
-                    -self._net_edge(item, as_of=as_of),
+                    -self._net_edge(
+                        item,
+                        quote_by_instrument=quote_by_instrument,
+                        as_of=as_of,
+                    ),
                     item.forecast.dispersion_bps,
-                    item.symbol,
+                    item.sleeve_id,
                 ),
             )[:1]
         )
-        total_capacity = reference_equity * (
-            self._policy.maximum_total_exposure_fraction
-        )
-        per_asset_capacity = reference_equity * (
-            self._policy.maximum_single_asset_fraction
-        )
+        selected_ids = {item.sleeve_id for item in eligible}
         desired_notional = (
-            min(total_capacity, per_asset_capacity)
+            min(
+                reference_equity * self._policy.maximum_total_exposure_fraction,
+                reference_equity * self._policy.maximum_single_sleeve_fraction,
+            )
             if eligible
             else Decimal("0")
         )
         targets = tuple(
-            sorted(
-                (
-                    self._target(
-                        item,
-                        desired_notional=desired_notional,
-                        as_of=as_of,
-                    )
-                    for item in eligible
+            self._target(
+                item,
+                desired_notional=(
+                    desired_notional if item.sleeve_id in selected_ids else Decimal("0")
                 ),
-                key=lambda item: item.symbol,
+                quote_by_instrument=quote_by_instrument,
+                as_of=as_of,
             )
+            for item in sleeves
+            if item.sleeve_id in selected_ids or item.current_gross_notional > 0
         )
-        desired_by_symbol = {
-            item.symbol: item.desired_quote_notional for item in targets
+        desired_by_sleeve = {
+            item.sleeve_id: item.desired_gross_notional for item in targets
         }
         turnover = sum(
             abs(
-                desired_by_symbol.get(item.symbol, Decimal("0"))
-                - item.current_quote_notional
+                desired_by_sleeve.get(item.sleeve_id, Decimal("0"))
+                - item.current_gross_notional
             )
-            for item in assets
+            for item in sleeves
         )
         if turnover < self._policy.minimum_rebalance_notional:
             return None
 
-        valid_until = as_of + timedelta(
-            minutes=self._policy.target_validity_minutes
-        )
+        valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
         if eligible:
-            valid_until = min(
-                valid_until,
-                *(item.forecast.valid_until for item in eligible),
-            )
+            valid_until = min(valid_until, *(item.forecast.valid_until for item in eligible))
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._policy.portfolio_id,
@@ -159,7 +162,7 @@ class PortfolioDecisionEngine:
             "as_of": as_of.isoformat(),
             "valid_until": valid_until.isoformat(),
             "reference_equity": reference_equity,
-            "targets": [item.model_dump(mode="json") for item in targets],
+            "sleeves": [item.model_dump(mode="json") for item in targets],
         }
         return PortfolioTarget(
             target_id=stable_id("portfolio_target", content_hash(payload)),
@@ -168,81 +171,118 @@ class PortfolioDecisionEngine:
 
     def _is_eligible(
         self,
-        item: PortfolioAssetInput,
+        item: PortfolioSleeveInput,
         *,
+        quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
     ) -> bool:
         forecast = item.forecast
         return bool(
-            forecast is not None
-            and forecast.available_at <= as_of < forecast.valid_until
+            forecast.available_at <= as_of < forecast.valid_until
             and forecast.direction == DirectionalView.UP
             and forecast.role in self._policy.eligible_forecast_roles
-            and self._net_edge(item, as_of=as_of)
+            and self._net_edge(
+                item,
+                quote_by_instrument=quote_by_instrument,
+                as_of=as_of,
+            )
             >= self._policy.minimum_conservative_net_bps
         )
 
     @classmethod
     def _net_edge(
         cls,
-        item: PortfolioAssetInput,
+        item: PortfolioSleeveInput,
         *,
+        quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
     ) -> Decimal:
-        return cls._remaining_gross_edge(item, as_of=as_of) - (
-            item.estimated_variable_cost_bps
-        )
+        return cls._remaining_gross_edge(
+            item,
+            quote_by_instrument=quote_by_instrument,
+            as_of=as_of,
+        ) - item.estimated_variable_cost_bps
 
     @staticmethod
     def _remaining_gross_edge(
-        item: PortfolioAssetInput,
+        item: PortfolioSleeveInput,
         *,
+        quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
     ) -> Decimal:
-        assert item.forecast is not None
+        forecast = item.forecast
         age_seconds = Decimal(
-            str(max(0, (as_of - item.forecast.available_at).total_seconds()))
+            str(max(0, (as_of - forecast.available_at).total_seconds()))
         )
         decay = max(
             Decimal("0"),
             Decimal("1")
             - age_seconds
-            / (Decimal("2") * item.forecast.expected_edge_half_life_seconds),
+            / (Decimal("2") * forecast.expected_edge_half_life_seconds),
         )
-        consumed_bps = (
-            max(
-                Decimal("0"),
-                (
-                    item.current_price / item.forecast.reference_prices[0].price
-                    - Decimal("1")
-                )
-                * Decimal("10000"),
+        references = {item.instrument_id: item.price for item in forecast.reference_prices}
+        consumed_bps = Decimal("0")
+        for leg in forecast.target.legs:
+            quote = quote_by_instrument[leg.instrument.key]
+            exit_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+            sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
+            consumed_bps += (
+                sign
+                * leg.gross_weight
+                * (exit_price / references[leg.instrument.key] - Decimal("1"))
+                * Decimal("10000")
             )
-            if item.forecast.direction == DirectionalView.UP
-            else Decimal("0")
+        return forecast.conservative_gross_bps * decay - max(
+            Decimal("0"), consumed_bps
         )
-        return item.forecast.conservative_gross_bps * decay - consumed_bps
 
     @classmethod
     def _target(
         cls,
-        item: PortfolioAssetInput,
+        item: PortfolioSleeveInput,
         *,
         desired_notional: Decimal,
+        quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
-    ) -> AssetTarget:
-        assert item.forecast is not None
-        remaining_gross = cls._remaining_gross_edge(item, as_of=as_of)
-        net_edge = cls._net_edge(item, as_of=as_of)
-        return AssetTarget(
-            symbol=item.symbol,
-            desired_quote_notional=desired_notional,
+    ) -> SleeveTarget:
+        remaining_gross = cls._remaining_gross_edge(
+            item,
+            quote_by_instrument=quote_by_instrument,
+            as_of=as_of,
+        )
+        net_edge = remaining_gross - item.estimated_variable_cost_bps
+        return SleeveTarget(
+            sleeve_id=item.sleeve_id,
+            forecast_family=item.forecast.forecast_family,
+            forecast_target=item.forecast.target,
+            desired_gross_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
             conservative_gross_bps=remaining_gross,
             estimated_variable_cost_bps=item.estimated_variable_cost_bps,
             conservative_net_bps=net_edge,
-            reason_codes=(
-                f"FORECAST_ROLE:{item.forecast.role.value}",
-                "POSITIVE_CONSERVATIVE_NET_EDGE",
+            reason_codes=tuple(
+                sorted(
+                    (
+                        f"FORECAST_ROLE:{item.forecast.role.value}",
+                        (
+                            "POSITIVE_CONSERVATIVE_NET_EDGE"
+                            if desired_notional > 0
+                            else "CASH_SELECTED"
+                        ),
+                    )
+                )
             ),
         )
+
+    @staticmethod
+    def _quotes(
+        *,
+        quotes: tuple[ExecutableQuote, ...],
+        as_of: datetime,
+    ) -> dict[str, ExecutableQuote]:
+        keys = tuple(item.instrument.key for item in quotes)
+        if tuple(sorted(set(keys))) != keys:
+            raise ValueError("ExecutableQuote 必须按 Instrument 唯一且排序")
+        if any(item.as_of != as_of for item in quotes):
+            raise ValueError("ExecutableQuote 必须冻结在 Portfolio as_of")
+        return {item.instrument.key: item for item in quotes}

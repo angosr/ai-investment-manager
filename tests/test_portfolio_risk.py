@@ -4,46 +4,88 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.execution.models import (
-    AccountSnapshot,
-    Position,
+from investment_manager.forecast.models import (
+    ExposureDirection,
+    ForecastLeg,
+    ForecastTarget,
 )
-from investment_manager.portfolio.models import AssetTarget, PortfolioTarget
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentId,
+    InstrumentProduct,
+)
+from investment_manager.portfolio.models import (
+    InstrumentPosition,
+    PortfolioAccountSnapshot,
+    PortfolioTarget,
+    SleevePosition,
+    SleeveTarget,
+)
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
-    ApprovedAssetTarget,
+    ApprovedSleeve,
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
-    ProtectiveStop,
+    SleeveRiskProfile,
 )
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
 
 
-def _policy() -> PortfolioRiskPolicy:
-    return PortfolioRiskPolicy(
-        version="portfolio-risk-v1",
-        symbol_allowlist=("BTCUSDT", "ETHUSDT"),
-        maximum_market_age_seconds=180,
-        maximum_account_age_seconds=60,
-        maximum_daily_loss=Decimal("200"),
-        maximum_drawdown_fraction=Decimal("0.05"),
-        maximum_risk_fraction=Decimal("0.005"),
-        maximum_total_exposure_fraction=Decimal("0.5"),
-        maximum_position_notional=Decimal("2000"),
-        maximum_spread_bps=Decimal("20"),
+def _instruments() -> tuple[InstrumentId, InstrumentId]:
+    return (
+        InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        ),
+        InstrumentId(
+            product=InstrumentProduct.USD_M_PERPETUAL,
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        ),
+    )
+
+
+def _forecast_target() -> ForecastTarget:
+    spot, perpetual = _instruments()
+    return ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=spot,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("0.5"),
+            ),
+            ForecastLeg(
+                instrument=perpetual,
+                direction=ExposureDirection.SHORT,
+                gross_weight=Decimal("0.5"),
+            ),
+        )
+    )
+
+
+def _sleeve_id() -> str:
+    return SleeveTarget.identity_for(
+        portfolio_id="primary",
+        forecast_family="delta-neutral-funding-carry",
+        forecast_target_id=_forecast_target().target_id,
     )
 
 
 def _target(
     *,
     desired: str = "3000",
-    as_of=NOW,
-    valid_until=None,
+    as_of: datetime = NOW,
+    valid_until: datetime | None = None,
 ) -> PortfolioTarget:
-    target = AssetTarget(
-        symbol="BTCUSDT",
-        desired_quote_notional=Decimal(desired),
+    sleeve = SleeveTarget(
+        sleeve_id=_sleeve_id(),
+        forecast_family="delta-neutral-funding-carry",
+        forecast_target=_forecast_target(),
+        desired_gross_notional=Decimal(desired),
         forecast_ids=("forecast-1",),
         conservative_gross_bps=Decimal("20"),
         estimated_variable_cost_bps=Decimal("5"),
@@ -54,200 +96,213 @@ def _target(
         target_id="target-1",
         cycle_id="cycle-1",
         portfolio_id="primary",
-        policy_version="portfolio-v1",
+        policy_version="portfolio-v2",
         as_of=as_of,
         valid_until=valid_until or as_of + timedelta(minutes=30),
         reference_equity=Decimal("10000"),
-        targets=(target,),
+        sleeves=(sleeve,),
+    )
+
+
+def _quotes(*, observed_at: datetime = NOW) -> tuple[ExecutableQuote, ...]:
+    return tuple(
+        ExecutableQuote(
+            source_quote_id=f"quote-{instrument.product.value}",
+            instrument=instrument,
+            as_of=NOW,
+            observed_at=observed_at,
+            bid=Decimal("100"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("100.01"),
+            ask_quantity=Decimal("100"),
+            source="test",
+        )
+        for instrument in _instruments()
     )
 
 
 def _account(
     *,
-    quantity: str = "0",
+    gross: str = "0",
     reconciled: bool = True,
-    observed_at=NOW,
+    observed_at: datetime = NOW,
     daily_pnl: str = "0",
     drawdown: str = "0",
     kill_switch: bool = False,
     equity: str = "10000",
-    symbol: str = "BTCUSDT",
-) -> AccountSnapshot:
-    positions = (
-        (
-            Position(
-                symbol=symbol,
-                quantity=Decimal(quantity),
+    pending: tuple[str, ...] = (),
+) -> PortfolioAccountSnapshot:
+    gross_value = Decimal(gross)
+    positions: tuple[InstrumentPosition, ...] = ()
+    sleeves: tuple[SleevePosition, ...] = ()
+    if gross_value > 0:
+        quantity = gross_value / Decimal("2") / Decimal("100")
+        spot, perpetual = _instruments()
+        legs = (
+            InstrumentPosition(
+                instrument=spot,
+                quantity=quantity,
+                average_price=Decimal("100"),
+            ),
+            InstrumentPosition(
+                instrument=perpetual,
+                quantity=-quantity,
                 average_price=Decimal("100"),
             ),
         )
-        if Decimal(quantity) != 0
-        else ()
-    )
-    return AccountSnapshot(
+        positions = legs
+        sleeves = (
+            SleevePosition(
+                sleeve_id=_sleeve_id(),
+                forecast_family="delta-neutral-funding-carry",
+                target=_forecast_target(),
+                legs=legs,
+            ),
+        )
+    return PortfolioAccountSnapshot(
+        snapshot_id="account-1",
         cycle_id="cycle-1",
+        portfolio_id="primary",
         as_of=NOW,
         observed_at=observed_at,
-        quote_balance=Decimal("10000"),
-        positions=positions,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000") - gross_value,
         equity=Decimal(equity),
-        reconciled=reconciled,
+        equity_high_water=max(Decimal("10000"), Decimal(equity)),
         daily_pnl=Decimal(daily_pnl),
         drawdown_fraction=Decimal(drawdown),
+        positions=positions,
+        sleeves=sleeves,
+        pending_execution_group_ids=pending,
         kill_switch_active=kill_switch,
+        reconciled=reconciled,
     )
 
 
-def _evaluate(
-    replay_input,
-    *,
-    target=None,
-    account=None,
-    market=None,
-    stops=None,
-):
-    base_market = replay_input.market.model_copy(
-        update={
-            "cycle_id": "cycle-1",
-            "symbol": "BTCUSDT",
-            "as_of": NOW,
-            "observed_at": NOW,
-            "bid": Decimal("100"),
-            "ask": Decimal("100"),
-            "last": Decimal("100"),
-        }
+def _profile() -> SleeveRiskProfile:
+    return SleeveRiskProfile(
+        sleeve_id=_sleeve_id(),
+        version="carry-risk-v1",
+        basis_stress_bps=Decimal("50"),
+        funding_stress_bps=Decimal("30"),
+        execution_stress_bps=Decimal("20"),
+        derivative_initial_margin_fraction=Decimal("1"),
     )
+
+
+def _policy() -> PortfolioRiskPolicy:
+    return PortfolioRiskPolicy(
+        version="portfolio-risk-v2",
+        instrument_allowlist=tuple(item.key for item in _instruments()),
+        maximum_quote_age_seconds=180,
+        maximum_account_age_seconds=60,
+        maximum_daily_loss=Decimal("200"),
+        maximum_drawdown_fraction=Decimal("0.05"),
+        maximum_gross_exposure_fraction=Decimal("0.5"),
+        maximum_net_delta_fraction=Decimal("0.1"),
+        maximum_instrument_fraction=Decimal("0.4"),
+        maximum_margin_fraction=Decimal("0.5"),
+        maximum_stress_loss_fraction=Decimal("0.002"),
+        maximum_spread_bps=Decimal("20"),
+        maximum_unhedged_fraction=Decimal("0.05"),
+        maximum_unhedged_seconds=10,
+    )
+
+
+def _evaluate(*, target=None, account=None, quotes=None):
     return PortfolioRiskEngine(_policy()).evaluate(
         target=target or _target(),
         account=account or _account(),
-        markets=((market or base_market),),
-        protective_stops=(
-            stops
-            if stops is not None
-            else (ProtectiveStop(symbol="BTCUSDT", stop_price=Decimal("95")),)
-        ),
+        quotes=quotes or _quotes(),
+        risk_profiles=(_profile(),),
         as_of=NOW,
     )
 
 
-def test_risk_clamps_target_by_stop_loss_budget(replay_input) -> None:
-    decision = _evaluate(replay_input)
+def test_risk_clamps_entire_carry_sleeve_by_stress_budget() -> None:
+    decision = _evaluate()
 
     assert decision.outcome == RiskOutcome.APPROVED
     assert decision.approved_target is not None
-    approved = decision.approved_target.targets[0]
-    assert approved.requested_quote_notional == Decimal("3000")
-    assert approved.approved_quote_notional == Decimal("1000")
-    assert approved.approved_quote_notional <= approved.requested_quote_notional
+    approved = decision.approved_target.sleeves[0]
+    assert approved.requested_gross_notional == Decimal("3000")
+    assert approved.approved_gross_notional == Decimal("2000")
+    assert approved.sleeve_scale == Decimal("2") / Decimal("3")
+    assert approved.maximum_unhedged_notional == Decimal("500")
+    assert len(approved.forecast_target.legs) == 2
 
 
-def test_unreconciled_account_cannot_increase_risk(replay_input) -> None:
-    decision = _evaluate(
-        replay_input,
-        account=_account(quantity="10", reconciled=False),
-    )
+def test_stale_one_leg_quote_clamps_whole_new_sleeve_to_zero() -> None:
+    quotes = _quotes()
+    stale = quotes[1].model_copy(update={"observed_at": NOW - timedelta(hours=1)})
+    decision = _evaluate(quotes=(quotes[0], stale))
 
     assert decision.approved_target is not None
-    approved = decision.approved_target.targets[0]
-    assert approved.approved_quote_notional == Decimal("1000")
-    assert approved.reason_codes == ("NEW_RISK_CLAMPED_TO_CURRENT",)
+    approved = decision.approved_target.sleeves[0]
+    assert approved.approved_gross_notional == 0
+    assert "NEW_RISK_CLAMPED_TO_CURRENT" in approved.reason_codes
 
 
-def test_risk_reduction_is_not_blocked_by_missing_stop_or_stale_account(
-    replay_input,
-) -> None:
+def test_pending_execution_group_blocks_new_risk_for_whole_sleeve() -> None:
+    decision = _evaluate(account=_account(pending=("group-1",)))
+
+    assert decision.approved_target is not None
+    assert decision.approved_target.sleeves[0].approved_gross_notional == 0
+
+
+def test_risk_reduction_is_allowed_with_stale_unreconciled_account() -> None:
     decision = _evaluate(
-        replay_input,
         target=_target(desired="500"),
         account=_account(
-            quantity="10",
+            gross="1000",
             reconciled=False,
             observed_at=NOW - timedelta(hours=1),
         ),
-        stops=(),
     )
 
     assert decision.approved_target is not None
-    approved = decision.approved_target.targets[0]
-    assert approved.approved_quote_notional == Decimal("500")
-    assert approved.reason_codes == ("RISK_REDUCTION_ALLOWED",)
+    approved = decision.approved_target.sleeves[0]
+    assert approved.approved_gross_notional == Decimal("500")
+    assert "RISK_REDUCTION_ALLOWED" in approved.reason_codes
 
 
-def test_risk_explicitly_authorizes_cash_target_for_unselected_position(
-    replay_input,
-) -> None:
-    btc_market = replay_input.market.model_copy(
-        update={
-            "cycle_id": "cycle-1",
-            "symbol": "BTCUSDT",
-            "as_of": NOW,
-            "observed_at": NOW,
-            "bid": Decimal("100"),
-            "ask": Decimal("100"),
-            "last": Decimal("100"),
-        }
-    )
-    eth_market = btc_market.model_copy(update={"symbol": "ETHUSDT"})
-
-    decision = PortfolioRiskEngine(_policy()).evaluate(
-        target=_target(),
-        account=_account(quantity="5", symbol="ETHUSDT"),
-        markets=(btc_market, eth_market),
-        protective_stops=(
-            ProtectiveStop(symbol="BTCUSDT", stop_price=Decimal("95")),
-        ),
-        as_of=NOW,
-    )
+def test_kill_switch_forces_whole_sleeve_to_cash() -> None:
+    decision = _evaluate(account=_account(gross="1000", kill_switch=True))
 
     assert decision.approved_target is not None
-    approved = decision.approved_target.targets
-    assert tuple(item.symbol for item in approved) == ("BTCUSDT", "ETHUSDT")
-    assert approved[1].requested_quote_notional == 0
-    assert approved[1].approved_quote_notional == 0
-    assert approved[1].reason_codes == ("RISK_REDUCTION_ALLOWED",)
+    assert decision.approved_target.sleeves[0].approved_gross_notional == 0
 
 
-def test_kill_switch_forces_target_to_cash(replay_input) -> None:
+def test_expired_target_is_rejected() -> None:
     decision = _evaluate(
-        replay_input,
-        account=_account(quantity="10", kill_switch=True),
-    )
-
-    assert decision.approved_target is not None
-    approved = decision.approved_target.targets[0]
-    assert approved.approved_quote_notional == Decimal("0")
-    assert approved.reason_codes == ("ACCOUNT_RISK_FORCED_CASH",)
-
-
-def test_expired_target_is_rejected(replay_input) -> None:
-    decision = _evaluate(
-        replay_input,
         target=_target(
             as_of=NOW - timedelta(hours=1),
             valid_until=NOW - timedelta(minutes=1),
-        ),
+        )
     )
 
     assert decision.outcome == RiskOutcome.REJECTED
     assert decision.approved_target is None
 
 
-def test_zero_equity_fails_closed_to_zero_target(replay_input) -> None:
-    decision = _evaluate(
-        replay_input,
-        account=_account(equity="0"),
-    )
+def test_target_must_explicitly_close_every_current_sleeve() -> None:
+    target = _target().model_copy(update={"sleeves": ()})
 
-    assert decision.approved_target is not None
-    assert decision.approved_target.reference_equity == 0
-    assert decision.approved_target.targets[0].approved_quote_notional == 0
+    with pytest.raises(ValueError, match="显式包含全部当前 Sleeve"):
+        _evaluate(target=target, account=_account(gross="1000"))
 
 
-def test_approved_target_contract_cannot_increase_requested_exposure() -> None:
+def test_approved_sleeve_contract_cannot_increase_requested_exposure() -> None:
     with pytest.raises(ValidationError, match="不得增加"):
-        ApprovedAssetTarget(
-            symbol="BTCUSDT",
-            requested_quote_notional=Decimal("1000"),
-            approved_quote_notional=Decimal("1001"),
+        ApprovedSleeve(
+            sleeve_id=_sleeve_id(),
+            forecast_family="delta-neutral-funding-carry",
+            forecast_target=_forecast_target(),
+            requested_gross_notional=Decimal("1000"),
+            approved_gross_notional=Decimal("1001"),
+            sleeve_scale=Decimal("1"),
+            risk_profile_version="carry-risk-v1",
+            maximum_unhedged_notional=Decimal("100"),
+            maximum_unhedged_seconds=10,
             reason_codes=("INVALID",),
         )
