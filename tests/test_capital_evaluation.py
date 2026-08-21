@@ -6,6 +6,7 @@ import pytest
 from investment_manager.governance.evaluation.capital import (
     CapitalShadowEvaluationSpec,
     build_capital_shadow_evaluation_plan,
+    validate_capital_shadow_evaluation_plan,
 )
 from investment_manager.governance.models import (
     EvaluationStage,
@@ -93,4 +94,85 @@ def test_capital_shadow_plan_rejects_short_or_retrospective_windows() -> None:
         build_capital_shadow_evaluation_plan(
             spec=spec,
             registered_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+
+
+def test_capital_shadow_startup_requires_one_exact_preregistered_contract() -> None:
+    config, manifest = _release()
+    spec = CapitalShadowEvaluationSpec.freeze(
+        plan_id="capital-shadow-startup-v1",
+        config=config,
+        manifest=manifest,
+        observation_start=datetime(2026, 9, 1, tzinfo=UTC),
+        observation_end=datetime(2027, 9, 1, tzinfo=UTC),
+    )
+    plan = build_capital_shadow_evaluation_plan(
+        spec=spec,
+        registered_at=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    assert validate_capital_shadow_evaluation_plan(
+        config=config,
+        manifest=manifest,
+        plans=(plan,),
+        started_at=datetime(2026, 8, 22, tzinfo=UTC),
+    ) == (spec, plan)
+
+    with pytest.raises(ValueError, match="恰好绑定一个"):
+        validate_capital_shadow_evaluation_plan(
+            config=config,
+            manifest=manifest,
+            plans=(),
+            started_at=datetime(2026, 8, 22, tzinfo=UTC),
+        )
+
+    with pytest.raises(ValueError, match="完整合同不一致"):
+        validate_capital_shadow_evaluation_plan(
+            config=config,
+            manifest=manifest,
+            plans=(plan.model_copy(update={"primary_metric": "gross_return"}),),
+            started_at=datetime(2026, 8, 22, tzinfo=UTC),
+        )
+
+
+def test_capital_shadow_startup_rejects_ambiguous_or_future_registration() -> None:
+    config, manifest = _release()
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    first_spec = CapitalShadowEvaluationSpec.freeze(
+        plan_id="capital-shadow-startup-first",
+        config=config,
+        manifest=manifest,
+        observation_start=start,
+        observation_end=datetime(2027, 9, 1, tzinfo=UTC),
+    )
+    second_spec = first_spec.model_copy(
+        update={"plan_id": "capital-shadow-startup-second"}
+    )
+    first = build_capital_shadow_evaluation_plan(
+        spec=first_spec,
+        registered_at=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    second = build_capital_shadow_evaluation_plan(
+        spec=second_spec,
+        registered_at=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match="恰好绑定一个"):
+        validate_capital_shadow_evaluation_plan(
+            config=config,
+            manifest=manifest,
+            plans=(first, second),
+            started_at=datetime(2026, 8, 22, tzinfo=UTC),
+        )
+
+    future = build_capital_shadow_evaluation_plan(
+        spec=first_spec,
+        registered_at=datetime(2026, 8, 30, tzinfo=UTC),
+    )
+    with pytest.raises(ValueError, match="晚于本次服务启动"):
+        validate_capital_shadow_evaluation_plan(
+            config=config,
+            manifest=manifest,
+            plans=(future,),
+            started_at=datetime(2026, 8, 22, tzinfo=UTC),
         )

@@ -160,6 +160,82 @@ def test_trigger_service_acquires_leadership_before_durable_release_setup(
     assert events == ["leadership"]
 
 
+def test_trigger_service_validates_capital_contract_before_plan_bootstrap(
+    monkeypatch, app_config
+) -> None:
+    events: list[str] = []
+    capital_config = app_config.model_copy(
+        update={
+            "capital": app_config.capital.model_copy(update={"enabled": True})
+        }
+    )
+    manifest = SimpleNamespace(manifest_id="release-capital-contract")
+
+    class Leadership:
+        def __init__(self, _engine, _lock_key):
+            pass
+
+        def __enter__(self):
+            events.append("leadership")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    class Governance:
+        def record_release(self, release):
+            assert release is manifest
+            events.append("release")
+
+        def plans_for_manifest(self, manifest_id):
+            assert manifest_id == manifest.manifest_id
+            events.append("load-evaluation-plans")
+            return ("capital-plan",)
+
+    class SetupComplete(RuntimeError):
+        pass
+
+    def validate(**kwargs):
+        assert kwargs["config"] is capital_config
+        assert kwargs["manifest"] is manifest
+        assert kwargs["plans"] == ("capital-plan",)
+        events.append("validate-capital-contract")
+
+    def stop_after_setup(**_kwargs):
+        events.append("bootstrap-trigger-plans")
+        raise SetupComplete
+
+    monkeypatch.setattr(trigger_runtime, "build_engine", lambda _url: object())
+    monkeypatch.setattr(trigger_runtime, "require_current_schema", lambda _engine: None)
+    monkeypatch.setattr(
+        trigger_runtime,
+        "SqlTriggerRepository",
+        lambda _engine, _policy: object(),
+    )
+    monkeypatch.setattr(trigger_runtime, "PostgresTriggerLeadership", Leadership)
+    monkeypatch.setattr(trigger_runtime, "SqlGovernanceRepository", lambda _engine: Governance())
+    monkeypatch.setattr(
+        trigger_runtime,
+        "validate_capital_shadow_evaluation_plan",
+        validate,
+    )
+    monkeypatch.setattr(trigger_runtime, "ensure_trigger_plans", stop_after_setup)
+
+    with pytest.raises(SetupComplete):
+        trigger_runtime.run_trigger_service(
+            config=capital_config,
+            manifest=manifest,
+            database_url="postgresql://unused",
+        )
+
+    assert events == [
+        "leadership",
+        "release",
+        "load-evaluation-plans",
+        "validate-capital-contract",
+        "bootstrap-trigger-plans",
+    ]
+
+
 def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
     app_config, replay_input,
 ) -> None:

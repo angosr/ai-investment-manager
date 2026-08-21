@@ -13,6 +13,9 @@ from investment_manager.decision_cycle.trigger import (
 )
 from investment_manager.forecast.carry import CarryForecastProducer
 from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.governance.evaluation.capital import (
+    validate_capital_shadow_evaluation_plan,
+)
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.market.repository import SqlMarketDataStore
@@ -105,7 +108,15 @@ def run_trigger_service(
         config.trigger.dispatcher_advisory_lock_key,
     )
     with leadership:
-        SqlGovernanceRepository(engine).record_release(manifest)
+        governance = SqlGovernanceRepository(engine)
+        governance.record_release(manifest)
+        if config.capital.enabled:
+            validate_capital_shadow_evaluation_plan(
+                config=config,
+                manifest=manifest,
+                plans=governance.plans_for_manifest(manifest.manifest_id),
+                started_at=datetime.now(UTC),
+            )
         ensure_trigger_plans(
             repository=repository,
             symbols=config.market_data.symbols,

@@ -224,6 +224,48 @@ def build_capital_shadow_evaluation_plan(
     )
 
 
+def validate_capital_shadow_evaluation_plan(
+    *,
+    config: AppConfig,
+    manifest: ReleaseManifest,
+    plans: tuple[EvaluationPlan, ...],
+    started_at: datetime,
+) -> tuple[CapitalShadowEvaluationSpec, EvaluationPlan]:
+    """Require one exact preregistered evaluation contract before Capital starts."""
+
+    started_at = require_utc(started_at)
+    candidates: list[tuple[CapitalShadowEvaluationSpec, EvaluationPlan]] = []
+    for plan in plans:
+        snapshot = plan.candidate_spec_snapshot
+        if not isinstance(snapshot, dict) or snapshot.get("version") != (
+            "capital-shadow-evaluation-spec-v1"
+        ):
+            continue
+        try:
+            spec = CapitalShadowEvaluationSpec.model_validate(snapshot)
+            expected_spec = CapitalShadowEvaluationSpec.freeze(
+                plan_id=spec.plan_id,
+                config=config,
+                manifest=manifest,
+                observation_start=spec.observation_start,
+                observation_end=spec.observation_end,
+            )
+            expected_plan = build_capital_shadow_evaluation_plan(
+                spec=expected_spec,
+                registered_at=plan.registered_at,
+            )
+        except ValueError as exc:
+            raise ValueError("Capital EvaluationPlan 不是有效的完整预登记合同") from exc
+        if spec != expected_spec or plan != expected_plan:
+            raise ValueError("Capital EvaluationPlan 与当前 Release 完整合同不一致")
+        if plan.registered_at > started_at:
+            raise ValueError("Capital EvaluationPlan 登记时间晚于本次服务启动时间")
+        candidates.append((spec, plan))
+    if len(candidates) != 1:
+        raise ValueError("Capital Release 必须恰好绑定一个精确的预登记评价合同")
+    return candidates[0]
+
+
 def _calendar_month_count(start: datetime, end: datetime) -> int:
     start = require_utc(start)
     end = require_utc(end)

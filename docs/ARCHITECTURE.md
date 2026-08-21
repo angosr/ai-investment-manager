@@ -235,8 +235,10 @@ Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新�
 Capital 的前瞻评价不建立第二套收益账本。`CapitalShadowEvaluationSpec` 在首笔订单前绑定精确
 Release、配置哈希、组件版本、Evidence 制品、资本行为哈希和未来十二个自然月，并把现金与源研究策略
 冻结为双基线；运行完整率、晚开、重复 group、未对冲/恢复时限以及全部成本维度进入同一个通用
-`EvaluationPlan` 快照。任何绑定身份变化都截断 cohort，未来 evaluator 只能从 Account、Performance、
-Forecast、PortfolioTarget、Account、Performance 与 ExecutionGroup 权威事实派生结果。旧月度 Release
+`EvaluationPlan` 快照。Capital Trigger Service 在创建 TriggerPlan 或装配资本消费者前，必须从治理库
+取得恰好一个与当前 Release 逐字段一致且已提前登记的合同，否则失败关闭。任何绑定身份变化都截断
+cohort，未来 evaluator 只能从 Forecast、PortfolioTarget、Account、Performance 与 ExecutionGroup
+权威事实派生结果。旧月度 Release
 的自然月行为继续由其冻结 Forecast policy 与评价 spec 表达，不得重新泄漏为账户级 cadence。
 
 下一步是在独立事实库持续验证恢复、绩效区间和 30 日结算，并补 Sleeve 级可核对归因；随后才实现

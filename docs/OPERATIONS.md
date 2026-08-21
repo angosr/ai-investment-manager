@@ -163,6 +163,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
 ```
 
 计划以现金和同策略研究账本为双基线，要求十二个月决策完整、至少十一个月 Forecast 可用、禁止晚开与重复 group，并冻结未对冲/恢复时限、费用后权益、资本占用、fee、spread、funding、basis 和 compensation loss。任一绑定的代码、配置、组件、Evidence 或行为身份变化都截断 cohort；不得把不同 Release 的月份拼接后晋级。
+Trigger Service 启动时会在创建任何触发计划前重新派生完整合同，并要求该 Manifest 恰好匹配一个已登记计划；缺失、篡改、重复或晚于服务启动时间登记都会拒绝启动。
 
 部署私有配置必须满足：
 

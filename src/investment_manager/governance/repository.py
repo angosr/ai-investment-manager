@@ -125,6 +125,22 @@ class SqlGovernanceRepository:
             ).scalar_one_or_none()
         return EvaluationPlan.model_validate(payload) if payload else None
 
+    def plans_for_manifest(self, manifest_id: str) -> tuple[EvaluationPlan, ...]:
+        """Return preregistered plans bound to one exact release manifest."""
+
+        with self._engine.connect() as connection:
+            payloads = tuple(
+                connection.execute(
+                    select(evaluation_plans.c.payload)
+                    .where(evaluation_plans.c.base_manifest_id == manifest_id)
+                    .order_by(
+                        evaluation_plans.c.registered_at,
+                        evaluation_plans.c.plan_id,
+                    )
+                ).scalars()
+            )
+        return tuple(EvaluationPlan.model_validate(payload) for payload in payloads)
+
     def claim_blind_evaluation(self, claim: BlindEvaluationClaim) -> BlindEvaluationClaim:
         """Atomically consume one plan's blind query budget; exact retries resume."""
 
