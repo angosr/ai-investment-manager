@@ -70,7 +70,8 @@ calibration:
   artifacts: []
 
 carry_forecast:
-  version: btc-carry-shadow-v1
+  version: btc-carry-monthly-first-open-v2
+  rebalance_policy_version: monthly-first-open-v2
   evaluated_policy_version: btc-spot-perp-monthly-50pct-v1
   enabled: true
   producer_id: btc-spot-perp-carry
@@ -97,11 +98,14 @@ carry_forecast:
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
 capital:
-  version: carry-capital-shadow-v1
+  version: carry-capital-monthly-v2
   enabled: false
   settlement_asset: USDT
+  rebalance:
+    version: monthly-first-open-v2
+    maximum_entry_delay_minutes: 30
   decision:
-    version: carry-portfolio-v1
+    version: carry-portfolio-monthly-v2
     portfolio_id: primary
     enabled: true
     eligible_forecast_roles: [PROGRAM_BASE]
@@ -332,7 +336,7 @@ codex_runtime:
   isolation_verified: false
   binary: /usr/bin/codex
   bundle_root: /var/lib/investment-manager/codex-runs
-  expected_cli_version: codex-cli 0.148.0
+  expected_cli_version: codex-cli 0.149.0
   expected_binary_sha256: null
   model: gpt-5.6-sol
   reasoning_effort: high

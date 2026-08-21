@@ -30,6 +30,8 @@ class ExecutionGroupStore(Protocol):
 
     def visible(self, *, as_of: datetime) -> tuple[ExecutionGroup, ...]: ...
 
+    def for_plan(self, plan_id: str) -> tuple[ExecutionGroup, ...]: ...
+
     def save(self, group: ExecutionGroup, *, expected_revision: int) -> bool: ...
 
 
@@ -83,6 +85,15 @@ class SqlExecutionGroupStore:
                     execution_groups.c.started_at,
                     execution_groups.c.group_id,
                 )
+            ).scalars()
+            return tuple(ExecutionGroup.model_validate(item) for item in payloads)
+
+    def for_plan(self, plan_id: str) -> tuple[ExecutionGroup, ...]:
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(execution_groups.c.payload)
+                .where(execution_groups.c.plan_id == plan_id)
+                .order_by(execution_groups.c.sleeve_id)
             ).scalars()
             return tuple(ExecutionGroup.model_validate(item) for item in payloads)
 

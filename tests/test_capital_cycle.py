@@ -9,32 +9,43 @@ from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
     serialize_capital_overview,
 )
-from investment_manager.execution.tables import mock_product_orders
+from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.repository import SqlPortfolioStore
-from investment_manager.portfolio.tables import portfolio_performance_intervals
+from investment_manager.portfolio.tables import (
+    portfolio_performance_intervals,
+    portfolio_rebalance_periods,
+    portfolio_targets,
+)
+from investment_manager.risk.tables import portfolio_risk_decisions
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
 NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
 
 
-def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
-    market = SqlMarketDataStore(engine)
+def _put_market(
+    market: SqlMarketDataStore,
+    config,
+    *,
+    at: datetime,
+    sequence: int,
+    spot_bid: str = "99990",
+    spot_ask: str = "100000",
+    perpetual_bid: str = "100300",
+    perpetual_ask: str = "100310",
+) -> None:
     market.put_quote(
         MarketQuote(
-            quote_id="spot-capital-quote",
+            quote_id=f"spot-capital-quote-{sequence}",
             symbol="BTCUSDT",
-            observed_at=NOW,
-            bid=Decimal("99990"),
+            observed_at=at,
+            bid=Decimal(spot_bid),
             bid_quantity=Decimal("2"),
-            ask=Decimal("100000"),
+            ask=Decimal(spot_ask),
             ask_quantity=Decimal("2"),
             source="test",
         )
@@ -46,15 +57,15 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     )
     market.put_perpetual_quote(
         PerpetualQuote(
-            quote_id=stable_id("perpetual_quote", perpetual.key, 7),
+            quote_id=stable_id("perpetual_quote", perpetual.key, sequence),
             instrument=perpetual,
-            exchange_time=NOW,
-            observed_at=NOW,
-            bid=Decimal("100300"),
+            exchange_time=at,
+            observed_at=at,
+            bid=Decimal(perpetual_bid),
             bid_quantity=Decimal("2"),
-            ask=Decimal("100310"),
+            ask=Decimal(perpetual_ask),
             ask_quantity=Decimal("2"),
-            update_id=7,
+            update_id=sequence,
             source="test",
         )
     )
@@ -63,19 +74,27 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
             state_id=stable_id(
                 "perpetual_market_state",
                 perpetual.key,
-                NOW.isoformat(),
+                at.isoformat(),
             ),
             instrument=perpetual,
-            exchange_time=NOW,
-            observed_at=NOW,
-            mark_price=Decimal("100300"),
-            index_price=Decimal("100000"),
+            exchange_time=at,
+            observed_at=at,
+            mark_price=Decimal(perpetual_bid),
+            index_price=Decimal(spot_ask),
             last_funding_rate=Decimal("0.0001"),
             interest_rate=Decimal("0.0001"),
-            next_funding_time=NOW + timedelta(hours=4),
+            next_funding_time=at + timedelta(hours=4),
             source="test",
         )
     )
+
+
+def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=7)
     service = assemble_capital_cycle(config, engine)
 
     first = service.produce(as_of=NOW)
@@ -85,6 +104,7 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert replay == first
     assert len(first.groups) == 1
     assert first.groups[0].terminal
+    assert first.groups[0].valid_until == NOW.replace(minute=30)
     assert first.account.equity < Decimal("10000")
     assert first.account.equity == Decimal("9996.91685")
     assert first.account.revision == 1
@@ -124,3 +144,99 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
     assert dto["forecast"]["base_count"] == 1
     assert dto["forecast"]["calibrated_count"] == 1
+
+
+def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_window() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=1)
+    service = assemble_capital_cycle(config, engine)
+
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+
+    heartbeat = NOW + timedelta(minutes=15)
+    _put_market(
+        market,
+        config,
+        at=heartbeat,
+        sequence=2,
+        spot_bid="105000",
+        spot_ask="105010",
+        perpetual_bid="105310",
+        perpetual_ask="105320",
+    )
+    held = service.produce(as_of=heartbeat)
+
+    missed = datetime(2026, 10, 1, 0, 31, tzinfo=UTC)
+    _put_market(
+        market,
+        config,
+        at=missed,
+        sequence=3,
+        spot_bid="103000",
+        spot_ask="103010",
+        perpetual_bid="103280",
+        perpetual_ask="103290",
+    )
+    after_restart = assemble_capital_cycle(config, engine).produce(as_of=missed)
+
+    assert held.outcome.value == "NO_CHANGE"
+    assert after_restart.outcome.value == "NO_CHANGE"
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+        assert (
+            connection.scalar(select(func.count()).select_from(mock_product_orders))
+            == 2
+        )
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(portfolio_rebalance_periods)
+            )
+            == 2
+        )
+
+
+def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    loaded = load_config("config/investment-manager.shadow.yaml")
+    config = loaded.model_copy(
+        update={
+            "capital": loaded.capital.model_copy(
+                update={
+                    "risk": loaded.capital.risk.model_copy(
+                        update={"kill_switch": True}
+                    )
+                }
+            )
+        }
+    )
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=10)
+    service = assemble_capital_cycle(config, engine)
+
+    forced_cash = service.produce(as_of=NOW)
+    later = NOW + timedelta(minutes=15)
+    _put_market(market, config, at=later, sequence=11)
+    held = service.produce(as_of=later)
+
+    assert forced_cash.outcome.value == "PLANNED"
+    assert forced_cash.trade_plan is not None
+    assert forced_cash.trade_plan.groups == ()
+    assert held.outcome.value == "NO_CHANGE"
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(portfolio_risk_decisions)
+            )
+            == 1
+        )
+        assert connection.scalar(select(func.count()).select_from(trade_plans)) == 1
+        assert (
+            connection.scalar(select(func.count()).select_from(mock_product_orders))
+            == 0
+        )

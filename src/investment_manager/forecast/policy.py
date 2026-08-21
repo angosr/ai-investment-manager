@@ -53,6 +53,7 @@ class StrategyPolicy(StrictConfig):
 
 class CarryForecastPolicy(StrictConfig):
     version: str
+    rebalance_policy_version: str = Field(min_length=1)
     evaluated_policy_version: str
     enabled: bool = False
     producer_id: str = "btc-spot-perp-carry"

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from investment_manager.decision_cycle.portfolio import (
     PortfolioDecisionPipeline,
+    PortfolioPipelineOutcome,
     PortfolioPipelineResult,
     TradePlanExecutionPipeline,
     TradePlanExecutionResult,
@@ -17,8 +18,9 @@ from investment_manager.execution.group.accounting import (
     ProductAccountProjector,
 )
 from investment_manager.execution.group.engine import ExecutionGroupEngine
+from investment_manager.execution.group.models import ExecutionGroup
 from investment_manager.execution.group.repository import SqlExecutionGroupStore
-from investment_manager.execution.planning.planner import TradePlanner
+from investment_manager.execution.planning.planner import TradePlan, TradePlanner
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
@@ -26,9 +28,10 @@ from investment_manager.forecast.carry import (
     CarryForecastProducer,
     ReleasedCarryForecastProducer,
 )
+from investment_manager.forecast.models import CalibratedForecast
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import ExecutableQuote, InstrumentProduct
 from investment_manager.market.repository import SqlMarketDataStore
@@ -36,11 +39,16 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioSleeveInput,
 )
-from investment_manager.portfolio.models import SleeveTarget
+from investment_manager.portfolio.models import PortfolioAccountSnapshot, SleeveTarget
+from investment_manager.portfolio.rebalance import (
+    PortfolioRebalancePeriod,
+    RebalancePeriodMode,
+)
 from investment_manager.portfolio.repository import (
     SqlPortfolioPerformanceStore,
     SqlPortfolioStore,
 )
+from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     SleeveRiskProfile,
@@ -63,6 +71,9 @@ class CapitalCycleService:
         producer: ReleasedCarryForecastProducer,
         portfolio: SqlPortfolioStore,
         performance: SqlPortfolioPerformanceStore,
+        risks: SqlPortfolioRiskStore,
+        plans: SqlTradePlanStore,
+        groups: SqlExecutionGroupStore,
         accounts: ProductAccountProjectionService,
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
@@ -74,6 +85,9 @@ class CapitalCycleService:
         self._producer = producer
         self._portfolio = portfolio
         self._performance = performance
+        self._risks = risks
+        self._plans = plans
+        self._groups = groups
         self._accounts = accounts
         self._decisions = decisions
         self._execution = execution
@@ -86,61 +100,37 @@ class CapitalCycleService:
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         requested_at = require_utc(as_of)
         policy = self._config.capital
-        forecast = self._producer.produce(as_of=requested_at)
-        if forecast is None:
-            forecast = self._forecasts.latest_calibrated(
-                producer_id=self._config.carry_forecast.producer_id,
-                forecast_family=self._config.carry_forecast.forecast_family,
-                as_of=requested_at,
-            )
-        as_of = max(
-            requested_at,
-            forecast.available_at if forecast is not None else requested_at,
-        )
-        cycle_id = stable_id(
-            "capital_cycle",
-            policy.version,
-            policy.decision.portfolio_id,
-            as_of.isoformat(),
-        )
-        quotes = self._quotes(as_of=as_of)
-        recovered = self._execution.recover_pending(as_of=as_of)
-        if recovered:
+        period = self._rebalance_period(requested_at)
+        if period.mode == RebalancePeriodMode.NO_CHANGE:
             logger.info(
-                "capital cycle reconciled pending execution groups",
+                "capital month frozen without late rebalance",
                 extra={
-                    "cycle_id": cycle_id,
-                    "group_count": len(recovered),
-                    "nonterminal_count": sum(not item.terminal for item in recovered),
+                    "period_id": period.period_id,
+                    "as_of": requested_at.isoformat(),
+                    "reason_codes": period.reason_codes,
                 },
             )
-        account = self._portfolio.account_for_cycle(
-            cycle_id=cycle_id,
-            portfolio_id=policy.decision.portfolio_id,
-        )
-        if account is None:
-            account = self._accounts.project(
-                cycle_id=cycle_id,
-                as_of=as_of,
-                quotes=quotes,
+            self._observe(as_of=requested_at)
+            return PortfolioPipelineResult(
+                cycle_id=period.cycle_id,
+                outcome=PortfolioPipelineOutcome.NO_CHANGE,
             )
-            self._portfolio.record_account(account)
-        self._performance.record(account)
 
-        if forecast is None:
-            logger.info(
-                "capital cycle selected cash: monthly entry window unavailable",
-                extra={"cycle_id": cycle_id, "as_of": as_of.isoformat()},
-            )
-            return self._decisions.run(
-                cycle_id=cycle_id,
-                as_of=as_of,
-                sleeves=(),
-                account=account,
-                quotes=(),
-                risk_profiles=(),
-                execution_specs=policy.execution_specs,
-            )
+        assert period.candidate_forecast_id is not None
+        loaded = self._forecasts.forecast(period.candidate_forecast_id)
+        if not isinstance(loaded, CalibratedForecast):
+            raise ValueError("月度 Portfolio 周期缺少绑定的 CalibratedForecast")
+        forecast = loaded
+        as_of = period.decision_at
+        cycle_id = period.cycle_id
+
+        completed = self._completed_decision(period, requested_at=requested_at)
+        if completed is not None:
+            return completed
+
+        self._recover(as_of=requested_at, cycle_id=cycle_id)
+        quotes = self._quotes(as_of=as_of)
+        account = self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
 
         sleeve_id = SleeveTarget.identity_for(
             portfolio_id=policy.decision.portfolio_id,
@@ -171,6 +161,7 @@ class CapitalCycleService:
             quotes=quotes,
             risk_profiles=(risk_profile,),
             execution_specs=policy.execution_specs,
+            decision_valid_until=period.entry_window_end,
         )
         plan = decision.trade_plan
         if plan is None or not plan.groups:
@@ -181,8 +172,12 @@ class CapitalCycleService:
             return decision
         result = self._execution.run(
             plan_id=plan.plan_id,
-            as_of=as_of,
-            quotes=quotes,
+            as_of=max(as_of, requested_at),
+            quotes=(
+                quotes
+                if requested_at <= as_of
+                else self._quotes(as_of=requested_at)
+            ),
         )
         self._performance.record(result.account)
         logger.info(
@@ -196,8 +191,171 @@ class CapitalCycleService:
         )
         return result
 
+    def _rebalance_period(self, requested_at: datetime) -> PortfolioRebalancePeriod:
+        policy = self._config.capital
+        period_start = requested_at.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        period_end = (
+            period_start.replace(year=period_start.year + 1, month=1)
+            if period_start.month == 12
+            else period_start.replace(month=period_start.month + 1)
+        )
+        existing = self._portfolio.rebalance_period(
+            portfolio_id=policy.decision.portfolio_id,
+            policy_version=policy.rebalance.version,
+            period_start=period_start,
+        )
+        if existing is not None:
+            return existing
+        forecast = self._producer.produce(as_of=requested_at)
+        decision_at = max(
+            requested_at,
+            forecast.available_at if forecast is not None else requested_at,
+        )
+        entry_window_end = period_start + timedelta(
+            minutes=policy.rebalance.maximum_entry_delay_minutes
+        )
+        if forecast is not None and decision_at >= entry_window_end:
+            raise ValueError("Carry Forecast 在月度 Portfolio 窗口后才可用")
+        proposed = PortfolioRebalancePeriod.create(
+            portfolio_id=policy.decision.portfolio_id,
+            policy_version=policy.rebalance.version,
+            period_start=period_start,
+            period_end=period_end,
+            entry_window_end=entry_window_end,
+            decision_at=decision_at,
+            candidate_forecast_id=(
+                forecast.forecast_id if forecast is not None else None
+            ),
+        )
+        return self._portfolio.claim_rebalance_period(proposed)
+
+    def _completed_decision(
+        self,
+        period: PortfolioRebalancePeriod,
+        *,
+        requested_at: datetime,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult | None:
+        target = self._portfolio.target_for_cycle(period.cycle_id)
+        if target is None:
+            return None
+        risk = self._risks.for_target(target.target_id)
+        if risk is None:
+            return None
+        if risk.outcome != RiskOutcome.APPROVED:
+            result = PortfolioPipelineResult(
+                cycle_id=period.cycle_id,
+                outcome=PortfolioPipelineOutcome.RISK_REJECTED,
+                target=target,
+                risk_decision=risk,
+            )
+            if requested_at <= period.decision_at:
+                return result
+            self._observe(as_of=requested_at)
+            return PortfolioPipelineResult(
+                cycle_id=period.cycle_id,
+                outcome=PortfolioPipelineOutcome.NO_CHANGE,
+            )
+        plan = self._plans.for_cycle(period.cycle_id)
+        if plan is None:
+            return None
+        groups = self._groups.for_plan(plan.plan_id)
+        if len(groups) != len(plan.groups):
+            return None
+        if requested_at <= period.decision_at:
+            if not plan.groups:
+                return PortfolioPipelineResult(
+                    cycle_id=period.cycle_id,
+                    outcome=PortfolioPipelineOutcome.PLANNED,
+                    target=target,
+                    risk_decision=risk,
+                    trade_plan=plan,
+                )
+            result = self._execution_result(plan, groups=groups, as_of=period.decision_at)
+            if result is not None:
+                return result
+        self._observe(as_of=requested_at)
+        return PortfolioPipelineResult(
+            cycle_id=period.cycle_id,
+            outcome=PortfolioPipelineOutcome.NO_CHANGE,
+        )
+
+    def _execution_result(
+        self,
+        plan: TradePlan,
+        *,
+        groups: tuple[ExecutionGroup, ...],
+        as_of: datetime,
+    ) -> TradePlanExecutionResult | None:
+        projection_cycle_id = stable_id(
+            "execution_account",
+            plan.cycle_id,
+            as_of.isoformat(),
+            content_hash(groups),
+        )
+        account = self._portfolio.account_for_cycle(
+            cycle_id=projection_cycle_id,
+            portfolio_id=self._config.capital.decision.portfolio_id,
+        )
+        if account is None:
+            return None
+        return TradePlanExecutionResult(
+            plan_id=plan.plan_id,
+            groups=groups,
+            account=account,
+        )
+
+    def _recover(self, *, as_of: datetime, cycle_id: str) -> None:
+        recovered = self._execution.recover_pending(as_of=as_of)
+        if recovered:
+            logger.info(
+                "capital cycle reconciled pending execution groups",
+                extra={
+                    "cycle_id": cycle_id,
+                    "group_count": len(recovered),
+                    "nonterminal_count": sum(not item.terminal for item in recovered),
+                },
+            )
+
+    def _observe(self, *, as_of: datetime) -> None:
+        cycle_id = stable_id(
+            "capital_observation",
+            self._config.capital.version,
+            self._config.capital.decision.portfolio_id,
+            as_of.isoformat(),
+        )
+        self._recover(as_of=as_of, cycle_id=cycle_id)
+        quotes = self._quotes(as_of=as_of)
+        self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
+
+    def _account(
+        self,
+        *,
+        cycle_id: str,
+        as_of: datetime,
+        quotes: tuple[ExecutableQuote, ...],
+    ) -> PortfolioAccountSnapshot:
+        account = self._portfolio.account_for_cycle(
+            cycle_id=cycle_id,
+            portfolio_id=self._config.capital.decision.portfolio_id,
+        )
+        if account is None:
+            account = self._accounts.project(
+                cycle_id=cycle_id,
+                as_of=as_of,
+                quotes=quotes,
+            )
+            self._portfolio.record_account(account)
+        self._performance.record(account)
+        return account
+
     def _quotes(self, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
-        values = []
+        values: list[ExecutableQuote] = []
         for spec in self._config.capital.execution_specs:
             instrument = spec.instrument
             if instrument.product == InstrumentProduct.SPOT:
@@ -302,6 +460,9 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
         producer=producer,
         portfolio=portfolio,
         performance=performance,
+        risks=risks,
+        plans=plans,
+        groups=groups,
         accounts=account_projection,
         decisions=PortfolioDecisionPipeline(
             decision=PortfolioDecisionEngine(config.capital.decision),

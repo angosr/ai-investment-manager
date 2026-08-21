@@ -27,6 +27,7 @@ from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     SleevePosition,
     SleeveTarget,
+    sleeve_gross_notional,
 )
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
@@ -294,6 +295,12 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
 
     assert result is not None
     assert "REBALANCE_BELOW_MINIMUM" in result.reason_codes
+    assert len(result.sleeves) == 1
+    account = _account(gross="2950")
+    assert result.sleeves[0].desired_gross_notional == sleeve_gross_notional(
+        account.sleeves[0],
+        quote_by_instrument={item.instrument.key: item for item in _quotes()},
+    )
 
 
 def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:

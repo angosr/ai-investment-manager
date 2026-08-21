@@ -96,6 +96,7 @@ class PortfolioDecisionPipeline:
         quotes: tuple[ExecutableQuote, ...],
         risk_profiles: tuple[SleeveRiskProfile, ...],
         execution_specs: tuple[InstrumentExecutionSpec, ...],
+        decision_valid_until: datetime | None = None,
     ) -> PortfolioPipelineResult:
         as_of = require_utc(as_of)
         self._require_frozen_inputs(
@@ -112,6 +113,7 @@ class PortfolioDecisionPipeline:
             account=account,
             sleeves=sleeves,
             quotes=quotes,
+            decision_valid_until=decision_valid_until,
         )
         if target is None:
             return PortfolioPipelineResult(

@@ -17,9 +17,11 @@ from investment_manager.portfolio.models import (
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
+from investment_manager.portfolio.rebalance import PortfolioRebalancePeriod
 from investment_manager.portfolio.tables import (
     portfolio_account_snapshots,
     portfolio_performance_intervals,
+    portfolio_rebalance_periods,
     portfolio_target_forecasts,
     portfolio_targets,
 )
@@ -43,6 +45,19 @@ class PortfolioStore(Protocol):
         portfolio_id: str,
         as_of: datetime,
     ) -> PortfolioAccountSnapshot | None: ...
+
+    def rebalance_period(
+        self,
+        *,
+        portfolio_id: str,
+        policy_version: str,
+        period_start: datetime,
+    ) -> PortfolioRebalancePeriod | None: ...
+
+    def claim_rebalance_period(
+        self,
+        period: PortfolioRebalancePeriod,
+    ) -> PortfolioRebalancePeriod: ...
 
 
 class SqlPortfolioStore:
@@ -160,6 +175,59 @@ class SqlPortfolioStore:
             if existing != target:
                 raise ValueError("Portfolio target cycle 已存在且内容不同") from None
             return False
+
+    def rebalance_period(
+        self,
+        *,
+        portfolio_id: str,
+        policy_version: str,
+        period_start: datetime,
+    ) -> PortfolioRebalancePeriod | None:
+        period_start = require_utc(period_start)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_rebalance_periods.c.payload).where(
+                    portfolio_rebalance_periods.c.portfolio_id == portfolio_id,
+                    portfolio_rebalance_periods.c.policy_version == policy_version,
+                    portfolio_rebalance_periods.c.period_start == period_start,
+                )
+            ).scalar_one_or_none()
+        return (
+            None
+            if payload is None
+            else PortfolioRebalancePeriod.model_validate(payload)
+        )
+
+    def claim_rebalance_period(
+        self,
+        period: PortfolioRebalancePeriod,
+    ) -> PortfolioRebalancePeriod:
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(portfolio_rebalance_periods).values(
+                        period_id=period.period_id,
+                        portfolio_id=period.portfolio_id,
+                        policy_version=period.policy_version,
+                        period_start=period.period_start,
+                        period_end=period.period_end,
+                        entry_window_end=period.entry_window_end,
+                        decision_at=period.decision_at,
+                        mode=period.mode.value,
+                        candidate_forecast_id=period.candidate_forecast_id,
+                        payload=period.model_dump(mode="json"),
+                    )
+                )
+            return period
+        except IntegrityError:
+            existing = self.rebalance_period(
+                portfolio_id=period.portfolio_id,
+                policy_version=period.policy_version,
+                period_start=period.period_start,
+            )
+            if existing is None:  # pragma: no cover - database contract guard
+                raise
+            return existing
 
     def target(self, target_id: str) -> PortfolioTarget | None:
         with self._engine.connect() as connection:

@@ -201,11 +201,17 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
 现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
 统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
-只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略。Shadow-only
+只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略；已持久化的
+Forecast 在窗口结束后也不再返回给新决策。Portfolio 用唯一的 `PortfolioRebalancePeriod` 以数据库
+first-writer-wins 方式冻结自然月、决策时点、统一截止时间和候选 Forecast：同月后续 Trigger 只恢复
+ExecutionGroup 与追加账户/绩效事实，不重新计算目标；错过窗口时本月 `NO_CHANGE`，空仓继续现金、旧仓
+继续持有。最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
+Shadow-only
 发布器把已通过的五折 walk-forward 制品投影成 `PROGRAM_BASE` CalibratedForecast；由于历史 blind
 窗口已被其他候选消耗，配置必须显式记录 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝
 装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
-Venue 与账户投影；错过月初窗口时正式选择现金，不为制造交易改变行为。
+Venue 与账户投影；错过月初窗口时不产生新的经济目标，不为制造交易改变行为。月内主动风险退出仍须在
+首次持仓前以独立、可恢复的 Risk Review 合同补齐，不能借恢复路径重新开放 allocation。
 研究入口还保留一个精确的总敞口 30% ETH 规格；它的 walk-forward 和唯一 blind
 均为正，但 blind 费用后年收益仅 0.281%，在同一资本上限下被 BTC 候选支配。因此它不进入运行
 配置，也不为一个被支配的 sleeve 引入多生产者装配层。

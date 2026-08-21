@@ -73,6 +73,36 @@ Index(
     portfolio_performance_intervals.c.interval_id,
 )
 
+portfolio_rebalance_periods = Table(
+    "portfolio_rebalance_periods",
+    metadata,
+    Column("period_id", String(128), primary_key=True),
+    Column("portfolio_id", String(64), nullable=False),
+    Column("policy_version", String(128), nullable=False),
+    Column("period_start", DateTime(timezone=True), nullable=False),
+    Column("period_end", DateTime(timezone=True), nullable=False),
+    Column("entry_window_end", DateTime(timezone=True), nullable=False),
+    Column("decision_at", DateTime(timezone=True), nullable=False),
+    Column("mode", String(32), nullable=False),
+    Column(
+        "candidate_forecast_id",
+        ForeignKey("forecasts.forecast_id"),
+        nullable=True,
+    ),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "portfolio_id",
+        "policy_version",
+        "period_start",
+        name="uq_portfolio_rebalance_period",
+    ),
+)
+Index(
+    "ix_portfolio_rebalance_period_start",
+    portfolio_rebalance_periods.c.portfolio_id,
+    portfolio_rebalance_periods.c.period_start,
+)
+
 portfolio_targets = Table(
     "portfolio_targets",
     metadata,

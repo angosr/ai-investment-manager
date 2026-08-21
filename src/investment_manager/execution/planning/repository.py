@@ -18,6 +18,8 @@ class TradePlanStore(Protocol):
 
     def plan(self, plan_id: str) -> TradePlan | None: ...
 
+    def for_cycle(self, cycle_id: str) -> TradePlan | None: ...
+
 
 class SqlTradePlanStore:
     """Immutable handoff ledger from Risk authorization to grouped Execution."""
@@ -65,6 +67,15 @@ class SqlTradePlanStore:
             payload = connection.execute(
                 select(trade_plans.c.payload).where(
                     trade_plans.c.approved_target_id == approved_target_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else TradePlan.model_validate(payload)
+
+    def for_cycle(self, cycle_id: str) -> TradePlan | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(trade_plans.c.payload).where(
+                    trade_plans.c.cycle_id == cycle_id
                 )
             ).scalar_one_or_none()
         return None if payload is None else TradePlan.model_validate(payload)

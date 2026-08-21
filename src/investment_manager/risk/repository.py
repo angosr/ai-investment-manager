@@ -15,6 +15,8 @@ from investment_manager.risk.tables import portfolio_risk_decisions
 class PortfolioRiskStore(Protocol):
     def record(self, decision: PortfolioRiskDecision) -> bool: ...
 
+    def for_target(self, target_id: str) -> PortfolioRiskDecision | None: ...
+
     def for_approved_targets(
         self,
         approved_target_ids: tuple[str, ...],

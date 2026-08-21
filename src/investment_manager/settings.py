@@ -124,6 +124,16 @@ class AppConfig(StrictConfig):
                 raise ValueError("Capital 必须绑定已发布的 Carry Shadow evidence")
             if self.capital.settlement_asset != self.carry_forecast.quote_asset:
                 raise ValueError("Capital 与 Shadow 结算资产必须一致")
+            if (
+                self.capital.rebalance.maximum_entry_delay_minutes
+                != self.carry_forecast.maximum_monthly_entry_delay_minutes
+            ):
+                raise ValueError("Capital 再平衡窗口必须与 Carry Forecast 窗口一致")
+            if (
+                self.capital.rebalance.version
+                != self.carry_forecast.rebalance_policy_version
+            ):
+                raise ValueError("Capital 与 Carry Forecast 必须绑定同一再平衡行为版本")
             instruments = tuple(
                 item.instrument for item in self.capital.execution_specs
             )

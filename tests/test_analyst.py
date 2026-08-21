@@ -932,7 +932,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     captured = {}
 
     def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, "codex-cli 0.148.0\n", "")
+        return subprocess.CompletedProcess(command, 0, "codex-cli 0.149.0\n", "")
 
     class FakeStream:
         def __init__(self, lines=()):
@@ -1077,7 +1077,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     assert thread["params"]["sandbox"] == "read-only"
     assert "environments" not in thread["params"]
     assert result.usage == {"input_tokens": 10}
-    assert result.diagnostics["codex_cli_version"] == "codex-cli 0.148.0"
+    assert result.diagnostics["codex_cli_version"] == "codex-cli 0.149.0"
     assert result.diagnostics["codex_binary_sha256"] == "0" * 64
     drifted = executor.execute(registry.accounts[1], bundle)
     assert not drifted.success
@@ -1089,7 +1089,7 @@ def test_codex_runtime_integrity_rejects_binary_drift(
 ) -> None:
     from investment_manager.forecast.codex.protocol import codex_runtime_integrity_matches
 
-    binary = tmp_path / "codex-0.148.0"
+    binary = tmp_path / "codex-0.149.0"
     binary.write_bytes(b"frozen-codex-binary")
     binary.chmod(0o500)
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -1100,7 +1100,7 @@ def test_codex_runtime_integrity_rejects_binary_drift(
         subprocess,
         "run",
         lambda command, **kwargs: subprocess.CompletedProcess(
-            command, 0, "codex-cli 0.148.0\n", ""
+            command, 0, "codex-cli 0.149.0\n", ""
         ),
     )
 

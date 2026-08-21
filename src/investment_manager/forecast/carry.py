@@ -44,6 +44,14 @@ class CarryForecastProducer:
             return None
         requested_at = require_utc(as_of)
         slot_start, slot_end = self._slot(requested_at)
+        available_at = max(require_utc(self.clock()), requested_at)
+        entry_window_end = slot_start + timedelta(
+            minutes=self.policy.maximum_monthly_entry_delay_minutes
+        )
+        if available_at >= entry_window_end:
+            # A persisted monthly forecast is evidence for the frozen decision,
+            # not permission to catch up later in the month.
+            return None
         if self._cached_slot_start == slot_start:
             return self._cached_forecast
         target = self._target()
@@ -61,14 +69,6 @@ class CarryForecastProducer:
             self._cached_slot_start = slot_start
             self._cached_forecast = existing
             return existing
-        available_at = max(require_utc(self.clock()), requested_at)
-        if available_at > slot_start + timedelta(
-            minutes=self.policy.maximum_monthly_entry_delay_minutes
-        ):
-            self._cached_slot_start = slot_start
-            self._cached_forecast = None
-            return None
-
         spot, perpetual = (item.instrument for item in target.legs)
         spot_quote = self.market.latest_spot_quote(
             instrument=spot,

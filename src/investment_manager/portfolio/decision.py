@@ -70,10 +70,15 @@ class PortfolioDecisionEngine:
         account: PortfolioAccountSnapshot,
         sleeves: tuple[PortfolioSleeveInput, ...],
         quotes: tuple[ExecutableQuote, ...],
+        decision_valid_until: datetime | None = None,
     ) -> PortfolioTarget | None:
         if not self._policy.enabled:
             return None
         as_of = require_utc(as_of)
+        if decision_valid_until is not None:
+            decision_valid_until = require_utc(decision_valid_until)
+            if decision_valid_until <= as_of:
+                raise ValueError("Portfolio 决策截止时间必须晚于 as_of")
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
@@ -171,15 +176,33 @@ class PortfolioDecisionEngine:
             )
             for item in sleeves
         )
+        below_rebalance_minimum = (
+            turnover < self._policy.minimum_rebalance_notional
+        )
+        if below_rebalance_minimum:
+            # Preserve the current economic target exactly.  A reason code without
+            # changing the target would still let Planner emit an uneconomic order.
+            targets = tuple(
+                self._target(
+                    item,
+                    desired_notional=current_by_sleeve[item.sleeve_id],
+                    quote_by_instrument=quote_by_instrument,
+                    as_of=as_of,
+                )
+                for item in sleeves
+                if current_by_sleeve[item.sleeve_id] > 0
+            )
         reason_codes = set()
         if not eligible:
             reason_codes.add("CASH_SELECTED_NO_ELIGIBLE_FORECAST")
         else:
             reason_codes.add("POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED")
-        if turnover < self._policy.minimum_rebalance_notional:
+        if below_rebalance_minimum:
             reason_codes.add("REBALANCE_BELOW_MINIMUM")
 
         valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
+        if decision_valid_until is not None:
+            valid_until = min(valid_until, decision_valid_until)
         if eligible:
             valid_until = min(valid_until, *(item.forecast.valid_until for item in eligible))
         payload = {
