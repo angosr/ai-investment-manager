@@ -53,6 +53,7 @@ from investment_manager.research.carry_evaluation import (
     CarryPolicy,
     CarryWalkForwardPlan,
     build_carry_evaluation_plan,
+    resolve_carry_policy,
     run_carry_backtest,
     run_carry_blind_evaluation,
     run_carry_walk_forward,
@@ -1111,6 +1112,17 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
     blind_catalog = CarryBlindCatalog(tmp_path / "blind")
     blind_catalog.store(blind)
     assert blind_catalog.load(blind.result_id) == blind
+
+
+def test_carry_policy_profiles_freeze_risk_sizing() -> None:
+    legacy = resolve_carry_policy("spot-perp-monthly-50pct-v1")
+    risk_aligned = resolve_carry_policy("spot-perp-monthly-risk-30pct-v2")
+
+    assert legacy.leg_equity_fraction == Decimal("0.5")
+    assert risk_aligned.leg_equity_fraction == Decimal("0.15")
+    assert risk_aligned.version == "spot-perp-monthly-risk-30pct-v2"
+    with pytest.raises(ValueError, match="未登记"):
+        resolve_carry_policy("arbitrary-curve-fit")
 
 
 def test_carry_backtest_fails_closed_on_liquidation_bound() -> None:

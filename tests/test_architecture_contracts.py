@@ -32,8 +32,8 @@ CLI_CONTRACT = {
         "blind_catalog"
     ),
     "carry-walk-forward": (
-        "database_url,carry_dataset_id,plan_id,carry_catalog,spot_catalog,evaluation_catalog,"
-        "register_only"
+        "database_url,carry_dataset_id,plan_id,policy_version,carry_catalog,spot_catalog,"
+        "evaluation_catalog,register_only"
     ),
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",

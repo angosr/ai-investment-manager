@@ -195,6 +195,10 @@ def carry_walk_forward_command(
     ],
     carry_dataset_id: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option()],
+    policy_version: Annotated[
+        str,
+        typer.Option(help="只允许精确登记的 carry 风险规格"),
+    ] = "spot-perp-monthly-50pct-v1",
     carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
         ".runtime/carry-datasets"
     ),
@@ -215,10 +219,10 @@ def carry_walk_forward_command(
     from investment_manager.research.carry_evaluation import (
         CarryEvaluationCatalog,
         CarryEvaluationSpec,
-        CarryPolicy,
         CarryWalkForwardPlan,
         build_carry_evaluation_plan,
         failed_carry_walk_forward_experiment,
+        resolve_carry_policy,
         run_carry_walk_forward,
         validate_carry_evaluation_plan,
     )
@@ -240,7 +244,7 @@ def carry_walk_forward_command(
             spot_dataset=spot_dataset,
             evaluator_code_version=current_clean_code_version(),
             evaluator_environment=current_carry_evaluator_environment(),
-            policy=CarryPolicy(),
+            policy=resolve_carry_policy(policy_version),
             plan=CarryWalkForwardPlan(plan_id=plan_id),
         )
         registered = build_carry_evaluation_plan(
@@ -271,6 +275,8 @@ def carry_walk_forward_command(
         spec = CarryEvaluationSpec.model_validate(
             registered.candidate_spec_snapshot
         )
+        if spec.policy.version != policy_version:
+            raise ValueError("carry policy version 与预登记规格不一致")
         if spec.carry_dataset_id != carry_dataset_id:
             raise ValueError("调用方 carry 数据集与预登记规格不一致")
         carry_dataset = HistoricalCarryDatasetCatalog(carry_catalog).load(

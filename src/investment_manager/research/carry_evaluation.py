@@ -28,7 +28,9 @@ class CarryPolicy(FrozenModel):
         "spot-perp-carry"
     )
     version: Literal[
-        "btc-spot-perp-monthly-50pct-v1", "spot-perp-monthly-50pct-v1"
+        "btc-spot-perp-monthly-50pct-v1",
+        "spot-perp-monthly-50pct-v1",
+        "spot-perp-monthly-risk-30pct-v2",
     ] = (
         "spot-perp-monthly-50pct-v1"
     )
@@ -40,6 +42,19 @@ class CarryPolicy(FrozenModel):
         default=Decimal("0.10"), gt=0, lt=1
     )
     one_leg_failure_move_bps: Decimal = Field(default=Decimal("100"), gt=0)
+
+
+def resolve_carry_policy(version: str) -> CarryPolicy:
+    """Resolve an exact preregistrable policy; arbitrary sizing is not a CLI input."""
+
+    if version == "spot-perp-monthly-50pct-v1":
+        return CarryPolicy()
+    if version == "spot-perp-monthly-risk-30pct-v2":
+        return CarryPolicy(
+            version="spot-perp-monthly-risk-30pct-v2",
+            leg_equity_fraction=Decimal("0.15"),
+        )
+    raise ValueError(f"未登记的 carry policy version: {version}")
 
 
 class CarryRunMetrics(FrozenModel):
