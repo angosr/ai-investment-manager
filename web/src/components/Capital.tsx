@@ -5,6 +5,8 @@ import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
 const REASON_LABELS: Record<string, string> = {
+  MONTHLY_ENTRY_WINDOW_MISSED_NO_CHANGE: "本月入口已错过，保持现金",
+  MONTHLY_REBALANCE_DECISION_FROZEN: "本月再平衡决策已冻结",
   CASH_SELECTED_NO_ELIGIBLE_FORECAST: "当前选择现金",
   REBALANCE_BELOW_MINIMUM: "变动低于最小再平衡金额",
   POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED: "保守净优势通过",

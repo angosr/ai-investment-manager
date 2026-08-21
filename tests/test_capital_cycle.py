@@ -187,6 +187,17 @@ def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_windo
 
     assert held.outcome.value == "NO_CHANGE"
     assert after_restart.outcome.value == "NO_CHANGE"
+    overview = CapitalDashboardReader(engine, config).overview(now=missed)
+    dto = serialize_capital_overview(overview)
+    assert dto["decision"] == {
+        "as_of": missed.isoformat(),
+        "mode": "NO_CHANGE",
+        "reason_codes": ["MONTHLY_ENTRY_WINDOW_MISSED_NO_CHANGE"],
+        "target_sleeve_count": 0,
+        "risk_outcome": None,
+        "plan_group_count": 0,
+        "plan_omission_count": 0,
+    }
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2

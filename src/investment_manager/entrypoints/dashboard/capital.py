@@ -24,9 +24,11 @@ from investment_manager.portfolio.models import (
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
+from investment_manager.portfolio.rebalance import PortfolioRebalancePeriod
 from investment_manager.portfolio.tables import (
     portfolio_account_snapshots,
     portfolio_performance_intervals,
+    portfolio_rebalance_periods,
     portfolio_targets,
 )
 from investment_manager.risk.portfolio import PortfolioRiskDecision
@@ -38,6 +40,7 @@ from investment_manager.settings import AppConfig
 class CapitalOverview:
     enabled: bool
     account: PortfolioAccountSnapshot | None = None
+    rebalance_period: PortfolioRebalancePeriod | None = None
     target: PortfolioTarget | None = None
     risk: PortfolioRiskDecision | None = None
     plan: TradePlan | None = None
@@ -74,6 +77,13 @@ class CapitalDashboardReader:
                 PortfolioAccountSnapshot,
                 secondary_order=portfolio_account_snapshots.c.revision,
             )
+            rebalance_period = self._latest_payload(
+                connection,
+                portfolio_rebalance_periods.c.payload,
+                portfolio_rebalance_periods.c.decision_at,
+                portfolio_rebalance_periods.c.period_id,
+                PortfolioRebalancePeriod,
+            )
             target = self._latest_payload(
                 connection,
                 portfolio_targets.c.payload,
@@ -81,6 +91,12 @@ class CapitalDashboardReader:
                 portfolio_targets.c.target_id,
                 PortfolioTarget,
             )
+            if rebalance_period is not None and target is not None and not (
+                rebalance_period.period_start
+                <= target.as_of
+                < rebalance_period.period_end
+            ):
+                target = None
             risk = None
             if target is not None:
                 risk = self._payload_for(
@@ -179,6 +195,7 @@ class CapitalDashboardReader:
         return CapitalOverview(
             enabled=True,
             account=account,
+            rebalance_period=rebalance_period,
             target=target,
             risk=risk,
             plan=plan,
@@ -251,6 +268,7 @@ class CapitalDashboardReader:
 
 def serialize_capital_overview(overview: CapitalOverview) -> dict:
     account = overview.account
+    rebalance_period = overview.rebalance_period
     target = overview.target
     risk = overview.risk
     plan = overview.plan
@@ -281,8 +299,25 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
             ],
         },
         "decision": {
-            "as_of": _iso(target.as_of if target is not None else None),
-            "reason_codes": list(target.reason_codes) if target is not None else [],
+            "as_of": _iso(
+                target.as_of
+                if target is not None
+                else (
+                    rebalance_period.decision_at
+                    if rebalance_period is not None
+                    else None
+                )
+            ),
+            "mode": rebalance_period.mode.value if rebalance_period is not None else None,
+            "reason_codes": list(
+                target.reason_codes
+                if target is not None
+                else (
+                    rebalance_period.reason_codes
+                    if rebalance_period is not None
+                    else ()
+                )
+            ),
             "target_sleeve_count": len(target.sleeves) if target is not None else 0,
             "risk_outcome": risk.outcome.value if risk is not None else None,
             "plan_group_count": len(plan.groups) if plan is not None else 0,

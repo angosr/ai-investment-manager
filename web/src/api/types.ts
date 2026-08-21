@@ -34,6 +34,7 @@ export interface CapitalOverview {
   } | null;
   decision: {
     as_of: string | null;
+    mode: "DECIDE" | "NO_CHANGE" | null;
     reason_codes: string[];
     target_sleeve_count: number;
     risk_outcome: string | null;
