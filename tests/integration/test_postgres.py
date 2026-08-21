@@ -430,6 +430,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
         )
         trigger = build_trigger_event(
             trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+            review_reason="PostgreSQL 契约复核",
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
             occurred_at=replay_input.market.as_of,

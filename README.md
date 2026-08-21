@@ -30,7 +30,7 @@
 - 直接资产、关键跨资产和一般跨资产三级事件路由；宏观/地缘信息可进入 BTC/ETH 面板，关键事件合并触发，一般事件不会单独消耗分析调用。
 - 标准事件、逐笔市场冲击与 Trigger Outbox 的事务化写入；PostgreSQL NOTIFY 只作低延迟提示，可靠性来自可重放 Outbox。
 - 每品种/Pipeline 唯一的 Temporal `TriggerCoordinatorWorkflow`：事件规则、去重、合并、single-flight、有界 pending、多未来时间点、Heartbeat、暂停和 Continue-As-New；跨品种只保留 PostgreSQL 原子防重复间隔，不设置 AI 小时调用配额。
-- 版本化 `AnalysisTriggerPlan` 与完整 `TriggerPlanPatch`：增删改时间点和事件规则、暂停/恢复、幂等 `TRIGGER_NOW`；revision、Manifest 和硬资源上限由确定性 Gate 校验。
+- 版本化 `AnalysisTriggerPlan` 与完整 `TriggerPlanPatch`：增删改时间点和事件规则、暂停/恢复、幂等 `TRIGGER_NOW`；显式 Agent 唤醒的理由进入不可变 `PacketReviewRequest`，可在无新 Delta 时真正触发 AI；revision、Manifest 和硬资源上限由确定性 Gate 校验。
 - Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
 - 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
@@ -49,7 +49,7 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成通过样本外门禁的 ProgramBase、`CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan` 生产接线，以及由独立可信环境提供的校准制品。私有 Challenger 正在运行真实 Codex ContextAssessment、多账号独占租约和严格失败关闭；每次成功 Assessment 同时冻结 BTC/ETH 的 60 与 240 分钟不可交易视图，以 Codex 完成时刻作为真实可用时间并分别到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选。当前 TriggerPlan 的无事件兜底为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束，不设置 AI 小时预算。尚无通过校准和组合门禁的 Forecast，因此当前保持 10,000 USDT 现金、无持仓；Spot Testnet 交易闭环与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成通过样本外门禁的 ProgramBase、`CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan` 生产接线，以及由独立可信环境提供的校准制品。私有 Challenger 正在运行真实 Codex ContextAssessment、多账号独占租约和严格失败关闭；每次成功 Assessment 同时冻结 BTC/ETH 的 60 与 240 分钟不可交易视图，以 Codex 完成时刻作为真实可用时间并分别到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选。当前 TriggerPlan 的 Heartbeat 每 60 分钟推进一次 State，但无新 Delta 时不调用 AI；资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束，不设置 AI 小时预算。尚无通过校准和组合门禁的 Forecast，因此当前保持 10,000 USDT 现金、无持仓；Spot Testnet 交易闭环与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 

@@ -14,6 +14,7 @@ from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
     DecisionPacketBuilder,
+    PacketReviewRequest,
     VisibleFact,
 )
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore, StateEvidenceKind
@@ -56,6 +57,7 @@ class SqlDecisionPacketAssembler:
         mandate: AnalysisMandate,
         state_id: str,
         delta_ids: tuple[str, ...],
+        review_requests: tuple[PacketReviewRequest, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
     ) -> DecisionPacket:
@@ -74,6 +76,7 @@ class SqlDecisionPacketAssembler:
             mandate=mandate,
             state=state,
             deltas=deltas,
+            review_requests=review_requests,
             facts=facts,
             intelligence_events=intelligence_events,
             account=account,
@@ -85,7 +88,7 @@ class SqlDecisionPacketAssembler:
 
     def _load_deltas(self, delta_ids: tuple[str, ...]) -> tuple[MaterialDelta, ...]:
         if not delta_ids:
-            raise ValueError("DecisionPacket 必须引用至少一个 MaterialDelta")
+            return ()
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(material_deltas.c.delta_id, material_deltas.c.payload).where(

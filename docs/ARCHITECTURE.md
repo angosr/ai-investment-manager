@@ -96,6 +96,18 @@ State 内容身份和 Assessment 权威复用共同抑制重复 Codex 调用。
 风险、倾向和不确定性；任何一层都不能借市场冲击直接决定仓位或下单。重复交付使用稳定批次、
 State 和 Delta 身份幂等处理，不另建第二条市场分析链。
 
+### 3.3 显式评审与 Heartbeat 边界
+
+`HEARTBEAT` 只保证协调器和点时 State 定期前进，不等价于强制调用 AI；没有新
+`MaterialDelta` 时必须停在 `NO_MATERIAL_DELTA`。这避免“每小时无条件调用 Codex”成为低信息
+密度的隐性轮询。
+
+主 Agent 的 `TRIGGER_NOW` 和尚未过期的 `ScheduledWakeup` 是另一种语义：它们必须携带理由，
+并形成内容寻址的 `PacketReviewRequest`。该请求可以在没有新 Delta 时单独驱动一个
+`DecisionPacket`，其请求时间、理由和证据引用进入不可变 Packet 与行为哈希；它不伪装成市场或
+事实变化，也不能绕过 Portfolio、Risk、Execution 和发布权限。相同语义的跨品种触发产生相同
+review identity，由 portfolio Packet 身份和全局准入共同抑制重复调用。
+
 ## 4. 目标目录
 
 ```text
@@ -181,7 +193,7 @@ src/investment_manager/
 
 ### Scheduling
 
-拥有 TriggerEvent、TriggerPlan、合并/冷却/优先级和动态 wakeup。主 Agent 可以立即触发、增加或删除未来触发点，但所有修改都是持久、版本化和可重放的 TriggerPlanPatch。Scheduling 只决定“何时重新分析”，不决定“买什么”。
+拥有 TriggerEvent、TriggerPlan、合并/冷却/优先级和动态 wakeup。主 Agent 可以立即触发、增加或删除未来触发点，但所有修改都是持久、版本化和可重放的 TriggerPlanPatch。显式 Agent 唤醒的理由被原样交给 State 的 `PacketReviewRequest`；Heartbeat 无变化时不强制 AI。Scheduling 只决定“何时重新分析”，不决定“买什么”。
 
 官方日历是这个边界的结构化输入：事实修订产生即时 `CANONICAL_FACT_REVISED`，未来正式发布时间以稳定事实身份同步为 `ScheduledWakeup`。同步器只管理自己拥有的官方 wakeup，不覆盖主 Agent 的计划；到点后的有效窗口仍由 TriggerCoordinator 负责交付。
 

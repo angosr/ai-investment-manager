@@ -112,6 +112,7 @@ class AnalysisTriggerEvent(FrozenModel):
     priority: int = Field(ge=0, le=100)
     dedup_key: str
     evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
+    review_reason: str | None = Field(default=None, min_length=1, max_length=500)
     expires_at: datetime | None = None
     plan_revision: int | None = Field(default=None, ge=1)
 
@@ -140,6 +141,11 @@ class AnalysisTriggerEvent(FrozenModel):
             raise ValueError("AnalysisTriggerEvent trigger_id 与事实身份不一致")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("触发 evidence_ids 不得重复")
+        if (
+            self.trigger_type != AnalysisTriggerType.AGENT_WAKEUP
+            and self.review_reason is not None
+        ):
+            raise ValueError("只有 AGENT_WAKEUP 可以包含 review_reason")
         return self
 
 
@@ -153,9 +159,14 @@ def build_trigger_event(
     priority: int,
     dedup_key: str,
     evidence_ids: tuple[str, ...] = (),
+    review_reason: str | None = None,
     expires_at: datetime | None = None,
     plan_revision: int | None = None,
 ) -> AnalysisTriggerEvent:
+    if (trigger_type == AnalysisTriggerType.AGENT_WAKEUP) != (
+        review_reason is not None
+    ):
+        raise ValueError("新 AGENT_WAKEUP 必须且只能携带 review_reason")
     return AnalysisTriggerEvent(
         trigger_id=stable_id(
             "analysis_trigger",
@@ -172,6 +183,7 @@ def build_trigger_event(
         priority=priority,
         dedup_key=dedup_key,
         evidence_ids=tuple(sorted(evidence_ids)),
+        review_reason=review_reason,
         expires_at=expires_at,
         plan_revision=plan_revision,
     )
@@ -625,6 +637,7 @@ class TriggerPlanGate:
                         priority=100,
                         dedup_key=operation.request_id,
                         evidence_ids=operation.evidence_ids,
+                        review_reason=operation.reason,
                         expires_at=now + timedelta(seconds=self._policy.trigger_expiry_seconds),
                         plan_revision=current.revision + 1,
                     )

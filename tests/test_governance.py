@@ -138,7 +138,7 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
     manifest = load_release_manifest("config/release-manifest.testnet.yaml")
 
-    with pytest.raises(ValueError, match="完整配置内容不一致"):
+    with pytest.raises(ValueError, match=r"配置版本不一致|完整配置内容不一致"):
         validate_manifest_against_config(
             manifest,
             config,
@@ -148,7 +148,7 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
 
 def test_runtime_release_binds_complete_configuration_content() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
-    manifest = load_release_manifest("config/release-manifest.testnet-v2.yaml")
+    manifest = load_release_manifest("config/release-manifest.testnet-v3.yaml")
 
     validate_manifest_against_config(
         manifest,

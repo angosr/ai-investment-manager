@@ -42,8 +42,8 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v4
-    schema_version: decision-packet-v3
+    version: decision-packet-policy-v5
+    schema_version: decision-packet-v4
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -129,7 +129,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v10
+  version: analysis-trigger-v11
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"

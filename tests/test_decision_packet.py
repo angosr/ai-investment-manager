@@ -35,6 +35,7 @@ from investment_manager.state.decision.packet import (
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
     MandateAsset,
+    PacketReviewRequest,
     VisibleFact,
 )
 from investment_manager.state.models import (
@@ -248,8 +249,44 @@ def test_packet_rejects_trigger_refs_that_do_not_match_deltas(
     payload = packet.model_dump(mode="json")
     payload["trigger_ids"] = ["different-delta"]
 
-    with pytest.raises(ValueError, match="trigger_ids 与 deltas"):
+    with pytest.raises(ValueError, match="trigger_ids 与分析原因"):
         DecisionPacket.model_validate(payload)
+
+
+def test_packet_can_be_driven_by_an_explicit_review_without_fake_delta(
+    app_config, replay_input
+) -> None:
+    builder, _ = _packet(app_config, replay_input)
+    market_btc = replay_input.market
+    market_eth = market_btc.model_copy(update={"symbol": "ETHUSDT"})
+    feature_btc = FeatureEngine(app_config.feature).compute(market_btc)
+    feature_eth = feature_btc.model_copy(update={"symbol": "ETHUSDT"})
+    review = PacketReviewRequest.create(
+        requested_at=market_btc.as_of,
+        reason="FOMC 会前立即复核风险倾向",
+        evidence_ids=("revision-1",),
+    )
+
+    packet = builder.build(
+        mandate=_mandate(),
+        state=_state(
+            market_btc.as_of,
+            account=replay_input.account,
+            markets=(market_btc, market_eth),
+            features=(feature_btc, feature_eth),
+        ),
+        deltas=(),
+        review_requests=(review,),
+        facts=(_fact(market_btc.as_of),),
+        account=replay_input.account,
+        markets=(market_btc, market_eth),
+        features=(feature_btc, feature_eth),
+    )
+
+    assert packet.deltas == ()
+    assert packet.review_requests == (review,)
+    assert packet.trigger_ids == (review.review_id,)
+    assert review.reason in canonical_json(packet)
 
 
 def test_packet_rejects_market_replacement_for_frozen_state(

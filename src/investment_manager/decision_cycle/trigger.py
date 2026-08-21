@@ -32,6 +32,7 @@ from investment_manager.state.decision.application import (
     DecisionPacketPreparationError,
     PacketPreparationStatus,
 )
+from investment_manager.state.decision.packet import PacketReviewRequest
 
 
 class TriggerBatchRecorder(Protocol):
@@ -89,6 +90,22 @@ class TriggerDispatchBuilder:
             if AnalysisTriggerType.MARKET_SHOCK in trigger_types
             else ()
         )
+        reviews_by_id: dict[str, PacketReviewRequest] = {}
+        for trigger in batch.triggers:
+            if trigger.trigger_type != AnalysisTriggerType.AGENT_WAKEUP:
+                continue
+            if trigger.review_reason is None:
+                # v11 以前的历史 payload 没有理由，允许读取但不能伪造评审授权。
+                continue
+            review = PacketReviewRequest.create(
+                requested_at=trigger.occurred_at,
+                reason=trigger.review_reason,
+                evidence_ids=trigger.evidence_ids,
+            )
+            reviews_by_id[review.review_id] = review
+        review_requests = tuple(
+            reviews_by_id[item] for item in sorted(reviews_by_id)
+        )
         dispatches: list[AnalysisDispatchRequest] = []
         if self._config.assessment.enabled:
             assert self._packet_preparation is not None
@@ -98,6 +115,7 @@ class TriggerDispatchBuilder:
                 mandate=self._config.assessment.mandate,
                 intelligence_evidence_ids=intelligence_evidence_ids,
                 market_shock_symbols=market_shock_symbols,
+                review_requests=review_requests,
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None

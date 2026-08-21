@@ -186,6 +186,51 @@ class RequiredView(FrozenModel):
     horizon_minutes: int = Field(gt=0)
 
 
+class PacketReviewRequest(FrozenModel):
+    review_id: str
+    requested_at: datetime
+    reason: str = Field(min_length=1, max_length=500)
+    evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
+
+    _utc_requested_at = field_validator("requested_at")(require_utc)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        requested_at: datetime,
+        reason: str,
+        evidence_ids: tuple[str, ...] = (),
+    ) -> PacketReviewRequest:
+        requested = require_utc(requested_at)
+        evidence = tuple(sorted(evidence_ids))
+        return cls(
+            review_id=stable_id(
+                "decision_packet_review",
+                requested,
+                reason,
+                evidence,
+            ),
+            requested_at=requested,
+            reason=reason,
+            evidence_ids=evidence,
+        )
+
+    @model_validator(mode="after")
+    def identity_and_evidence_must_be_canonical(self):
+        if tuple(sorted(set(self.evidence_ids))) != self.evidence_ids:
+            raise ValueError("PacketReviewRequest evidence_ids 必须唯一且排序")
+        expected = stable_id(
+            "decision_packet_review",
+            self.requested_at,
+            self.reason,
+            self.evidence_ids,
+        )
+        if self.review_id != expected:
+            raise ValueError("PacketReviewRequest review_id 与内容不一致")
+        return self
+
+
 class DecisionPacket(FrozenModel):
     packet_id: str
     schema_version: str
@@ -199,7 +244,8 @@ class DecisionPacket(FrozenModel):
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     portfolio: PacketPortfolioState
     asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
-    deltas: tuple[PacketDelta, ...] = Field(min_length=1)
+    deltas: tuple[PacketDelta, ...] = ()
+    review_requests: tuple[PacketReviewRequest, ...] = ()
     facts: tuple[PacketFact, ...]
     intelligence_events: tuple[PacketIntelligenceEvent, ...] = ()
     active_hypotheses: tuple[str, ...]
@@ -231,10 +277,21 @@ class DecisionPacket(FrozenModel):
 
     @model_validator(mode="after")
     def identity_and_refs_must_be_consistent(self):
-        if self.trigger_ids != tuple(item.delta_id for item in self.deltas):
-            raise ValueError("DecisionPacket trigger_ids 与 deltas 不一致")
+        expected_trigger_ids = (
+            *(item.delta_id for item in self.deltas),
+            *(item.review_id for item in self.review_requests),
+        )
+        if self.trigger_ids != expected_trigger_ids:
+            raise ValueError("DecisionPacket trigger_ids 与分析原因不一致")
         if len(set(self.trigger_ids)) != len(self.trigger_ids):
             raise ValueError("DecisionPacket trigger_ids 不得重复")
+        if not self.deltas and not self.review_requests:
+            raise ValueError("DecisionPacket 至少需要一个 Delta 或显式评审请求")
+        review_ids = tuple(item.review_id for item in self.review_requests)
+        if tuple(sorted(set(review_ids))) != review_ids:
+            raise ValueError("DecisionPacket review_requests 必须唯一且排序")
+        if any(item.requested_at > self.as_of for item in self.review_requests):
+            raise ValueError("DecisionPacket 评审请求不能晚于 as_of")
         required_view_keys = tuple(
             (item.asset, item.horizon_minutes) for item in self.required_views
         )
@@ -291,6 +348,7 @@ class DecisionPacketBuilder:
         deltas: tuple[MaterialDelta, ...],
         facts: tuple[VisibleFact, ...],
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
+        review_requests: tuple[PacketReviewRequest, ...] = (),
         account: AccountSnapshot,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
@@ -300,10 +358,14 @@ class DecisionPacketBuilder:
         ordered_deltas = tuple(
             sorted(deltas, key=lambda item: (item.observed_at, item.delta_id))
         )
+        ordered_reviews = tuple(
+            sorted(review_requests, key=lambda item: item.review_id)
+        )
         self._validate_inputs(
             mandate=mandate,
             state=state,
             deltas=ordered_deltas,
+            review_requests=ordered_reviews,
             facts=facts,
             intelligence_events=intelligence_events,
             account=account,
@@ -354,7 +416,10 @@ class DecisionPacketBuilder:
             for item in mandate.assets
             for horizon in item.horizons_minutes
         )
-        trigger_ids = tuple(delta.delta_id for delta in ordered_deltas)
+        trigger_ids = (
+            *(delta.delta_id for delta in ordered_deltas),
+            *(review.review_id for review in ordered_reviews),
+        )
         payload: dict[str, object] = {
             "schema_version": self._policy.schema_version,
             "policy_version": self._policy.version,
@@ -368,6 +433,7 @@ class DecisionPacketBuilder:
             "portfolio": self._portfolio_state(account),
             "asset_states": asset_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
+            "review_requests": ordered_reviews,
             "facts": selected,
             "intelligence_events": selected_events,
             "active_hypotheses": active_hypotheses,
@@ -427,6 +493,7 @@ class DecisionPacketBuilder:
         mandate: AnalysisMandate,
         state: StateSnapshot,
         deltas: tuple[MaterialDelta, ...],
+        review_requests: tuple[PacketReviewRequest, ...],
         facts: tuple[VisibleFact, ...],
         intelligence_events: tuple[IntelligenceEvent, ...],
         account: AccountSnapshot,
@@ -436,8 +503,14 @@ class DecisionPacketBuilder:
     ) -> None:
         if state.analysis_scope != mandate.analysis_scope:
             raise ValueError("StateSnapshot 与 AnalysisMandate scope 不一致")
-        if not deltas:
-            raise ValueError("DecisionPacket 必须包含至少一个 MaterialDelta")
+        if not deltas and not review_requests:
+            raise ValueError("DecisionPacket 至少需要 MaterialDelta 或显式评审请求")
+        if tuple(sorted(set(item.review_id for item in review_requests))) != tuple(
+            item.review_id for item in review_requests
+        ):
+            raise ValueError("PacketReviewRequest 必须按 review_id 唯一且排序")
+        if any(item.requested_at > state.as_of for item in review_requests):
+            raise ValueError("PacketReviewRequest requested_at 晚于 StateSnapshot")
         if len(active_hypotheses) > self._policy.maximum_active_hypotheses:
             raise DecisionPacketCapacityError("active hypotheses exceed policy")
         if account.as_of > state.as_of or account.observed_at > state.as_of:

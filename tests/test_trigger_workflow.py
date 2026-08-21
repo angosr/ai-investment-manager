@@ -261,6 +261,7 @@ def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> No
     )
     event = build_trigger_event(
         trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+        review_reason="工作流立即复核",
         symbol=plan.symbol,
         pipeline_id=plan.pipeline_id,
         occurred_at=NOW,

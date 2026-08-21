@@ -14,6 +14,7 @@ from investment_manager.governance.evaluation.assessment import (
     AssessmentEvaluationScope,
     AssessmentForwardEvaluationCatalog,
     AssessmentForwardEvaluationSpec,
+    AssessmentForwardOutcome,
     build_assessment_forward_plan,
     evaluate_assessment_forward_plan,
     failed_assessment_forward_experiment,
@@ -160,7 +161,7 @@ def test_assessment_forward_gate_scores_abstention_as_cash_against_always_up() -
         published_at=spec.signal_window_end + timedelta(minutes=70),
     )
 
-    assert result.passed_incremental_gate
+    assert result.outcome == AssessmentForwardOutcome.PASSED
     scope = result.scopes[0]
     assert scope.non_overlapping_scoreable_count == 2
     assert scope.abstention_fraction == Decimal("0.5")
@@ -170,7 +171,7 @@ def test_assessment_forward_gate_scores_abstention_as_cash_against_always_up() -
     assert scope.return_delta_bps_lower_bound_vs_always_up > 0
 
 
-def test_assessment_forward_gate_fails_missing_scope_and_persists_result(
+def test_assessment_forward_gate_is_inconclusive_when_scope_is_missing(
     tmp_path,
 ) -> None:
     spec = _spec(
@@ -196,11 +197,38 @@ def test_assessment_forward_gate_fails_missing_scope_and_persists_result(
         published_at=spec.signal_window_end + timedelta(minutes=70),
     )
 
-    assert not result.passed_incremental_gate
+    assert result.outcome == AssessmentForwardOutcome.INCONCLUSIVE
     assert "EXPECTED_SCOPE_MISSING" in result.reason_codes
     catalog = AssessmentForwardEvaluationCatalog(tmp_path / "forward")
     catalog.store(result)
     assert catalog.load(result.result_id) == result
+    with pytest.raises(ValueError, match="只有证据充分"):
+        failed_assessment_forward_experiment(
+            result,
+            rejected_at=result.published_at,
+        )
+
+
+def test_assessment_forward_gate_records_only_evidence_sufficient_failure() -> None:
+    spec = _spec()
+    result = evaluate_assessment_forward_plan(
+        spec=spec,
+        outcomes=(
+            _outcome(
+                1,
+                signal_at=START,
+                market_return_bps=Decimal("10"),
+            ),
+            _outcome(
+                2,
+                signal_at=START + timedelta(minutes=60),
+                market_return_bps=Decimal("10"),
+            ),
+        ),
+        published_at=spec.signal_window_end + timedelta(minutes=70),
+    )
+
+    assert result.outcome == AssessmentForwardOutcome.FAILED
     failed = failed_assessment_forward_experiment(
         result,
         rejected_at=result.published_at,

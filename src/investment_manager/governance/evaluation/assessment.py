@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -90,9 +91,15 @@ class AssessmentScopeMetrics(FrozenModel):
     sample_sufficient: bool
 
 
+class AssessmentForwardOutcome(StrEnum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
 class AssessmentForwardEvaluationResult(FrozenModel):
-    version: Literal["context-assessment-forward-result-v1"] = (
-        "context-assessment-forward-result-v1"
+    version: Literal["context-assessment-forward-result-v2"] = (
+        "context-assessment-forward-result-v2"
     )
     result_id: str
     evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -101,7 +108,7 @@ class AssessmentForwardEvaluationResult(FrozenModel):
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     scopes: tuple[AssessmentScopeMetrics, ...] = Field(min_length=1)
     outcome_ids: tuple[str, ...]
-    passed_incremental_gate: bool
+    outcome: AssessmentForwardOutcome
     reason_codes: tuple[str, ...]
     limitations: tuple[str, ...] = (
         "DIRECTIONAL_ASSESSMENT_ONLY_NOT_TRADABLE_PNL",
@@ -120,7 +127,7 @@ class AssessmentForwardEvaluationResult(FrozenModel):
             self.source_hash,
             self.scopes,
             self.outcome_ids,
-            self.passed_incremental_gate,
+            self.outcome,
             self.reason_codes,
             self.limitations,
         )
@@ -271,18 +278,24 @@ def evaluate_assessment_forward_plan(
         )
         for scope in spec.scopes
     )
-    reasons: list[str] = []
+    evidence_incomplete_reasons: list[str] = []
     if any(item.outcome_count == 0 for item in metrics):
-        reasons.append("EXPECTED_SCOPE_MISSING")
+        evidence_incomplete_reasons.append("EXPECTED_SCOPE_MISSING")
     if any(not item.sample_sufficient for item in metrics):
-        reasons.append("NON_OVERLAPPING_SAMPLE_TOO_SMALL")
-    if any(
+        evidence_incomplete_reasons.append("NON_OVERLAPPING_SAMPLE_TOO_SMALL")
+    if evidence_incomplete_reasons:
+        outcome = AssessmentForwardOutcome.INCONCLUSIVE
+        reason_codes = tuple(evidence_incomplete_reasons)
+    elif any(
         item.return_delta_bps_lower_bound_vs_always_up is None
         or item.return_delta_bps_lower_bound_vs_always_up <= 0
         for item in metrics
     ):
-        reasons.append("PAIRED_RETURN_DELTA_LOWER_BOUND_NOT_POSITIVE")
-    reason_codes = tuple(reasons)
+        outcome = AssessmentForwardOutcome.FAILED
+        reason_codes = ("PAIRED_RETURN_DELTA_LOWER_BOUND_NOT_POSITIVE",)
+    else:
+        outcome = AssessmentForwardOutcome.PASSED
+        reason_codes = ()
     source_hash = content_hash(
         [item.model_dump(mode="json") for item in ordered]
     )
@@ -299,7 +312,7 @@ def evaluate_assessment_forward_plan(
         source_hash,
         metrics,
         tuple(item.outcome_id for item in ordered),
-        not reasons,
+        outcome,
         reason_codes,
         limitations,
     )
@@ -311,7 +324,7 @@ def evaluate_assessment_forward_plan(
         source_hash=source_hash,
         scopes=metrics,
         outcome_ids=tuple(item.outcome_id for item in ordered),
-        passed_incremental_gate=not reasons,
+        outcome=outcome,
         reason_codes=reason_codes,
         limitations=limitations,
     )
@@ -322,8 +335,8 @@ def failed_assessment_forward_experiment(
     *,
     rejected_at: datetime,
 ) -> FailedExperiment:
-    if result.passed_incremental_gate:
-        raise ValueError("通过的 ContextAssessment 前向评价不能登记为失败实验")
+    if result.outcome != AssessmentForwardOutcome.FAILED:
+        raise ValueError("只有证据充分且未通过的前向评价才能登记为失败实验")
     hypothesis = (
         f"ContextAssessment 计划 {result.plan_id} 在全部资产和周期上相对 "
         "always-UP 的配对收益增量保守下界为正且样本充分"

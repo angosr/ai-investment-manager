@@ -98,7 +98,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `information-collector`：只调用本机 TrendRadar MCP 固定读工具和 NewsNow 类型化白名单源，将标准事件去重写入事实库。
 - `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
 - `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；Dispatcher 不实现业务防抖或批处理。
-- Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。
+- Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
 - `temporal-worker` 是旧 AnalysisCycle 的迁移期诊断入口，不属于现役 Shadow 服务；主线不得重新向它派发 Trigger。
@@ -109,6 +109,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 ### 前瞻证据稳定窗口
 
 - 已预登记的 `AssessmentForwardEvaluationSpec.analysis_behavior_hash` 是证据带不可变身份。在其 `signal_window_end` 前，不得改变 DecisionPacket 契约、Assessment mandate、模型、提示词、输出 Schema 或 Codex 执行契约；不影响该行为哈希的运维变更可以独立发布。
+- 前瞻结果只有 `PASSED`、`FAILED`、`INCONCLUSIVE` 三态。缺少作用域或非重叠样本不足只能是 `INCONCLUSIVE`；只有样本充分且配对增量下界未过门槛才进入 `FailedExperiment`，禁止把证据不足写成负面知识。
 - 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
 - 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
 

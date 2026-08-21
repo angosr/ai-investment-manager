@@ -15,6 +15,7 @@ from investment_manager.state.decision.application import (
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     MandateAsset,
+    PacketReviewRequest,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
 from investment_manager.state.facts import (
@@ -587,6 +588,16 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
         as_of=OBSERVED_AT + timedelta(minutes=2),
         mandate=mandate,
     )
+    review = PacketReviewRequest.create(
+        requested_at=OBSERVED_AT + timedelta(minutes=3),
+        reason="主 Agent 要求立即复核当前风险倾向",
+    )
+    explicit = preparation.prepare(
+        analysis_id="market-explicit-review",
+        as_of=review.requested_at,
+        mandate=mandate,
+        review_requests=(review,),
+    )
 
     assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
     assert shock.status == PacketPreparationStatus.READY
@@ -596,3 +607,9 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
     assert len(shock.packet.deltas[0].feature_snapshot_refs) == 1
     assert shock.packet.intelligence_events == ()
     assert heartbeat.status == PacketPreparationStatus.NO_MATERIAL_DELTA
+    assert explicit.status == PacketPreparationStatus.READY
+    assert explicit.delta_id is None
+    assert explicit.review_ids == (review.review_id,)
+    assert explicit.packet is not None
+    assert explicit.packet.deltas == ()
+    assert explicit.packet.review_requests == (review,)

@@ -23,6 +23,7 @@ from investment_manager.governance.evaluation.assessment import (
     AssessmentEvaluationScope,
     AssessmentForwardEvaluationCatalog,
     AssessmentForwardEvaluationSpec,
+    AssessmentForwardOutcome,
     build_assessment_forward_plan,
     evaluate_assessment_forward_plan,
     failed_assessment_forward_experiment,
@@ -179,7 +180,7 @@ def evaluate_assessment_forward_plan_command(
     result_path = AssessmentForwardEvaluationCatalog(evaluation_catalog).store(
         result
     )
-    if not result.passed_incremental_gate:
+    if result.outcome == AssessmentForwardOutcome.FAILED:
         governance.record_failed_experiment(
             failed_assessment_forward_experiment(result, rejected_at=publication)
         )

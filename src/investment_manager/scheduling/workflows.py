@@ -327,6 +327,7 @@ class TriggerCoordinatorWorkflow:
                 priority=90,
                 dedup_key=key,
                 evidence_ids=tuple(wakeup.get("evidence_ids", [])),
+                review_reason=str(wakeup["reason"]),
                 expires_at=_parse_time(wakeup["expires_at"]),
                 plan_revision=int(self._plan["revision"]),
             )

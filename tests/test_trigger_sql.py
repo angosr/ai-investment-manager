@@ -135,6 +135,7 @@ def test_analysis_call_admission_is_global_idempotent_and_interval_only(
         )
         trigger = build_trigger_event(
             trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+            review_reason="SQL 调度复核",
             symbol=symbol,
             pipeline_id="pipeline-v1",
             occurred_at=at,

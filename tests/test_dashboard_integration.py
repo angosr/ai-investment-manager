@@ -251,6 +251,7 @@ def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> N
     SqlTriggerRepository(engine, app_config.trigger).record_trigger(
         build_trigger_event(
             trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+            review_reason="Dashboard 立即复核",
             symbol="BTCUSDT",
             pipeline_id=app_config.pipeline.version,
             occurred_at=now,

@@ -32,7 +32,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v2"
     assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
     assert config.decision_state.delta_policy.version == "state-delta-v4"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v4"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v5"
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",

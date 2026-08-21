@@ -17,6 +17,7 @@ from investment_manager.market.repository import MarketDataStore
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
+    PacketReviewRequest,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
 from investment_manager.state.projection import SqlStateProjector
@@ -39,19 +40,26 @@ class DecisionPacketPreparationResult(FrozenModel):
     reason_code: str = Field(min_length=1)
     state_id: str = Field(min_length=1)
     delta_id: str | None = Field(default=None, min_length=1)
+    review_ids: tuple[str, ...] = ()
     packet: DecisionPacket | None = None
 
     @model_validator(mode="after")
     def shape_must_match_status(self):
         if self.status == PacketPreparationStatus.READY:
-            if self.packet is None or self.delta_id is None:
-                raise ValueError("READY Packet preparation 必须包含 Delta 和 Packet")
+            if self.packet is None:
+                raise ValueError("READY Packet preparation 必须包含 Packet")
             if self.packet.state_id != self.state_id:
                 raise ValueError("Prepared Packet 与 State identity 不一致")
-            if self.packet.trigger_ids != (self.delta_id,):
-                raise ValueError("Prepared Packet 必须且只能引用本次 MaterialDelta")
+            expected = (
+                *((self.delta_id,) if self.delta_id is not None else ()),
+                *self.review_ids,
+            )
+            if not expected or self.packet.trigger_ids != expected:
+                raise ValueError("Prepared Packet 必须且只能引用本次分析原因")
         elif self.packet is not None:
             raise ValueError("非 READY Packet preparation 不得携带 Packet")
+        elif self.review_ids:
+            raise ValueError("非 READY Packet preparation 不得携带 review_ids")
         return self
 
 
@@ -65,7 +73,7 @@ class IntelligenceEventReader(Protocol):
 
 
 class DecisionPacketPreparation:
-    """Build one portfolio-wide Packet only when accepted evidence materially changes."""
+    """Build one portfolio Packet for a material change or explicit Agent review."""
 
     def __init__(
         self,
@@ -110,6 +118,7 @@ class DecisionPacketPreparation:
         mandate: AnalysisMandate,
         intelligence_evidence_ids: tuple[str, ...] = (),
         market_shock_symbols: tuple[str, ...] = (),
+        review_requests: tuple[PacketReviewRequest, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
     ) -> DecisionPacketPreparationResult:
@@ -120,6 +129,12 @@ class DecisionPacketPreparation:
             raise ValueError("intelligence_evidence_ids 必须唯一且排序")
         if tuple(sorted(set(market_shock_symbols))) != market_shock_symbols:
             raise ValueError("market_shock_symbols 必须唯一且排序")
+        if tuple(sorted(set(item.review_id for item in review_requests))) != tuple(
+            item.review_id for item in review_requests
+        ):
+            raise ValueError("review_requests 必须按 review_id 唯一且排序")
+        if any(item.requested_at > as_of for item in review_requests):
+            raise ValueError("review_requests 不能晚于 DecisionPacket as_of")
         intelligence_events = self._event_reader.exact(
             evidence_ids=intelligence_evidence_ids,
             as_of=as_of,
@@ -191,7 +206,7 @@ class DecisionPacketPreparation:
             market_affected_assets=market_affected_assets,
             data_quality_codes=data_quality_codes,
         )
-        if projection.delta is None:
+        if projection.delta is None and not review_requests:
             baseline = not self._has_predecessor(
                 mandate=mandate,
                 as_of=as_of,
@@ -210,7 +225,7 @@ class DecisionPacketPreparation:
                 state_id=projection.state.state_id,
             )
         delta = projection.delta
-        if not projection.state.as_of < delta.expires_at:
+        if delta is not None and not projection.state.as_of < delta.expires_at:
             return DecisionPacketPreparationResult(
                 status=PacketPreparationStatus.MATERIAL_DELTA_EXPIRED,
                 reason_code="MATERIAL_DELTA_EXPIRED",
@@ -221,22 +236,27 @@ class DecisionPacketPreparation:
             packet = self._assembler.assemble(
                 mandate=mandate,
                 state_id=projection.state.state_id,
-                delta_ids=(delta.delta_id,),
+                delta_ids=((delta.delta_id,) if delta is not None else ()),
+                review_requests=review_requests,
                 active_hypotheses=active_hypotheses,
                 previous_assessment_refs=previous_assessment_refs,
             )
         except ValueError as exc:
-            # Projection persists State/Delta before Packet assembly.  Callers must
-            # retry this exact point-in-time transition instead of advancing as_of
-            # and silently turning the unassessed delta into background state.
+            # Projection persists State/Delta before Packet assembly. Callers must
+            # retry this exact point-in-time input instead of advancing as_of.
             raise DecisionPacketPreparationError(
-                "MaterialDelta 已持久化但 DecisionPacket 组装失败"
+                "分析原因已冻结但 DecisionPacket 组装失败"
             ) from exc
         return DecisionPacketPreparationResult(
             status=PacketPreparationStatus.READY,
-            reason_code="DECISION_PACKET_READY",
+            reason_code=(
+                "EXPLICIT_REVIEW_PACKET_READY"
+                if delta is None
+                else "DECISION_PACKET_READY"
+            ),
             state_id=projection.state.state_id,
-            delta_id=delta.delta_id,
+            delta_id=delta.delta_id if delta is not None else None,
+            review_ids=tuple(item.review_id for item in review_requests),
             packet=packet,
         )
 

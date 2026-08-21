@@ -50,10 +50,12 @@ class RecordingPacketPreparation:
     def __init__(self) -> None:
         self.intelligence_evidence_ids: tuple[str, ...] | None = None
         self.market_shock_symbols: tuple[str, ...] | None = None
+        self.review_requests = None
 
     def prepare(self, **kwargs):
         self.intelligence_evidence_ids = kwargs["intelligence_evidence_ids"]
         self.market_shock_symbols = kwargs["market_shock_symbols"]
+        self.review_requests = kwargs["review_requests"]
         return DecisionPacketPreparationResult(
             status=PacketPreparationStatus.NO_MATERIAL_DELTA,
             reason_code="NO_MATERIAL_STATE_CHANGE",
@@ -143,6 +145,52 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
 
     assert preparation.intelligence_evidence_ids == ("intel-evidence-1",)
     assert preparation.market_shock_symbols == ("BTCUSDT",)
+
+
+def test_trigger_builder_preserves_agent_review_reason(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=100,
+        dedup_key="agent-review-1",
+        review_reason="立即检查监管事件对当前风险倾向的影响",
+        evidence_ids=("official-event-1",),
+    )
+    preparation = RecordingPacketPreparation()
+
+    TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=preparation,
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert len(preparation.review_requests) == 1
+    review = preparation.review_requests[0]
+    assert review.reason == trigger.review_reason
+    assert review.requested_at == trigger.occurred_at
+    assert review.evidence_ids == trigger.evidence_ids
 
 
 def test_sql_shadow_account_is_projected_from_latest_business_fact(
