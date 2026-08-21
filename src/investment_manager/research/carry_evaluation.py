@@ -31,6 +31,7 @@ class CarryPolicy(FrozenModel):
         "btc-spot-perp-monthly-50pct-v1",
         "spot-perp-monthly-50pct-v1",
         "spot-perp-monthly-risk-30pct-v2",
+        "spot-perp-calendar-month-risk-30pct-v3",
     ] = (
         "spot-perp-monthly-50pct-v1"
     )
@@ -52,6 +53,11 @@ def resolve_carry_policy(version: str) -> CarryPolicy:
     if version == "spot-perp-monthly-risk-30pct-v2":
         return CarryPolicy(
             version="spot-perp-monthly-risk-30pct-v2",
+            leg_equity_fraction=Decimal("0.15"),
+        )
+    if version == "spot-perp-calendar-month-risk-30pct-v3":
+        return CarryPolicy(
+            version="spot-perp-calendar-month-risk-30pct-v3",
             leg_equity_fraction=Decimal("0.15"),
         )
     raise ValueError(f"未登记的 carry policy version: {version}")
@@ -450,7 +456,12 @@ def run_carry_backtest(
             futures_margin -= quantity * (day.contract_open - previous_contract_close)
 
         month = (day.open_time.year, day.open_time.month)
-        if month != previous_month:
+        should_rebalance = month != previous_month and (
+            previous_month is not None
+            or policy.version != "spot-perp-calendar-month-risk-30pct-v3"
+            or day.open_time.day == 1
+        )
+        if should_rebalance:
             target_notional = equity * policy.leg_equity_fraction
             raw_quantity = target_notional / max(spot.open, day.contract_open)
             target_quantity = floor_to_step(raw_quantity, quantity_step)
@@ -473,7 +484,6 @@ def run_carry_backtest(
             quantity = target_quantity
             futures_margin = equity - quantity * spot.open
             rebalance_count += 1
-            previous_month = month
             failure_loss = (
                 quantity
                 * max(spot.open, day.contract_open)
@@ -483,13 +493,18 @@ def run_carry_backtest(
             )
             maximum_failure_loss = max(maximum_failure_loss, failure_loss)
 
-        worst_short_loss = quantity * max(
-            Decimal("0"), day.mark_high - day.contract_open
-        )
-        maintenance = (
-            quantity * day.mark_high * policy.maintenance_margin_fraction
-        )
-        margin_buffer = (futures_margin - worst_short_loss - maintenance) / equity
+        previous_month = month
+
+        if quantity == 0:
+            margin_buffer = Decimal("1")
+        else:
+            worst_short_loss = quantity * max(
+                Decimal("0"), day.mark_high - day.contract_open
+            )
+            maintenance = (
+                quantity * day.mark_high * policy.maintenance_margin_fraction
+            )
+            margin_buffer = (futures_margin - worst_short_loss - maintenance) / equity
         minimum_margin_buffer = min(minimum_margin_buffer, margin_buffer)
         if margin_buffer <= 0:
             liquidated = True
@@ -528,9 +543,14 @@ def run_carry_backtest(
     elapsed_days = Decimal(str(elapsed_seconds)) / Decimal("86400")
     annualized = (net_pnl / starting_equity) * Decimal("365.25") / elapsed_days
     reason_codes = ("LIQUIDATION_BOUND_BREACHED",) if liquidated else ()
+    entry_assumption = (
+        "CALENDAR_MONTH_FIRST_DAY_REBALANCE"
+        if policy.version == "spot-perp-calendar-month-risk-30pct-v3"
+        else "MONTHLY_FIRST_OPEN_REBALANCE"
+    )
     assumptions = (
         "SAME_BASE_QUANTITY_SPOT_LONG_PERPETUAL_SHORT",
-        "MONTHLY_FIRST_OPEN_REBALANCE",
+        entry_assumption,
         "FUNDING_MARK_FROM_8H_PRE_SETTLEMENT_CLOSE",
         "CURRENT_RULE_SNAPSHOT_WITH_CONSERVATIVE_MAINTENANCE_MARGIN",
         "ONE_LEG_FAILURE_FIXED_PRICE_SHOCK",

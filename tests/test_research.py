@@ -1117,12 +1117,45 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
 def test_carry_policy_profiles_freeze_risk_sizing() -> None:
     legacy = resolve_carry_policy("spot-perp-monthly-50pct-v1")
     risk_aligned = resolve_carry_policy("spot-perp-monthly-risk-30pct-v2")
+    calendar_aligned = resolve_carry_policy(
+        "spot-perp-calendar-month-risk-30pct-v3"
+    )
 
     assert legacy.leg_equity_fraction == Decimal("0.5")
     assert risk_aligned.leg_equity_fraction == Decimal("0.15")
     assert risk_aligned.version == "spot-perp-monthly-risk-30pct-v2"
+    assert calendar_aligned.leg_equity_fraction == Decimal("0.15")
+    assert calendar_aligned.version == "spot-perp-calendar-month-risk-30pct-v3"
     with pytest.raises(ValueError, match="未登记"):
         resolve_carry_policy("arbitrary-curve-fit")
+
+
+def test_calendar_month_carry_waits_for_month_first_when_fold_starts_midmonth() -> None:
+    spot, _, carry = _carry_dataset(count=70)
+    start = carry.days[10].open_time
+    end = carry.days[-1].close_time + timedelta(microseconds=1)
+
+    legacy = run_carry_backtest(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=resolve_carry_policy("spot-perp-monthly-risk-30pct-v2"),
+        starting_equity=Decimal("10000"),
+        start=start,
+        end=end,
+    )
+    calendar = run_carry_backtest(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=resolve_carry_policy("spot-perp-calendar-month-risk-30pct-v3"),
+        starting_equity=Decimal("10000"),
+        start=start,
+        end=end,
+    )
+
+    assert legacy.metrics.rebalance_count == calendar.metrics.rebalance_count + 1
+    assert "MONTHLY_FIRST_OPEN_REBALANCE" in legacy.assumptions
+    assert "CALENDAR_MONTH_FIRST_DAY_REBALANCE" in calendar.assumptions
+    assert calendar.metrics.minimum_margin_buffer_fraction > 0
 
 
 def test_carry_backtest_fails_closed_on_liquidation_bound() -> None:
