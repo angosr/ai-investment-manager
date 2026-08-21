@@ -1,9 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
+from investment_manager.execution.group.accounting import (
+    ProductAccountProjectionService,
+    ProductAccountProjector,
+)
 from investment_manager.execution.group.engine import ExecutionGroupEngine
 from investment_manager.execution.group.models import (
     ExecutionGroupStatus,
@@ -18,17 +23,56 @@ from investment_manager.execution.planning.planner import (
     PlannedTradeGroup,
     TradePlan,
 )
-from investment_manager.execution.tables import mock_product_orders, trade_plans
-from investment_manager.execution.venue.product import UnknownVenueResult
+from investment_manager.execution.tables import (
+    mock_product_orders,
+    product_order_observations,
+    trade_plans,
+)
+from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
+from investment_manager.execution.venue.product import ProductOrderStatus, UnknownVenueResult
 from investment_manager.execution.venue.product_mock import (
     MockSubmitBehavior,
     SqlMockProductVenue,
 )
+from investment_manager.forecast.models import (
+    ExposureDirection,
+    ForecastLeg,
+    ForecastTarget,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentId,
+    InstrumentProduct,
+)
+from investment_manager.risk.portfolio import ApprovedSleeve
 from investment_manager.schema import create_schema
 
 NOW = datetime(2026, 8, 21, 5, 10, tzinfo=UTC)
+
+
+class _ApprovedReader:
+    def __init__(self, approved_target_id: str, sleeve: ApprovedSleeve) -> None:
+        self._approved_target_id = approved_target_id
+        self._sleeve = sleeve
+
+    def for_approved_targets(self, approved_target_ids: tuple[str, ...]):
+        return {
+            approved_target_id: SimpleNamespace(
+                approved_target=SimpleNamespace(
+                    approved_target_id=approved_target_id,
+                    sleeves=(self._sleeve,),
+                )
+            )
+            for approved_target_id in approved_target_ids
+            if approved_target_id == self._approved_target_id
+        }
+
+
+class _EmptyAccountHistory:
+    def latest_account(self, *, portfolio_id: str, as_of: datetime):
+        del portfolio_id, as_of
+        return None
 
 
 def _plan(
@@ -145,6 +189,51 @@ def _compensation_client_id(plan: TradePlan, index: int, attempt: int = 1) -> st
     return client_order_id(identity)
 
 
+def _approved_sleeve(plan: TradePlan) -> ApprovedSleeve:
+    planned = plan.groups[0]
+    target = ForecastTarget.create(
+        tuple(
+            ForecastLeg(
+                instrument=leg.instrument,
+                direction=(
+                    ExposureDirection.LONG if leg.side == Side.BUY else ExposureDirection.SHORT
+                ),
+                gross_weight=Decimal("0.5"),
+            )
+            for leg in planned.legs
+        )
+    )
+    return ApprovedSleeve(
+        sleeve_id=planned.sleeve_id,
+        forecast_family="delta-neutral-funding-carry",
+        forecast_target=target,
+        requested_gross_notional=Decimal("2000"),
+        approved_gross_notional=Decimal("2000"),
+        sleeve_scale=Decimal("1"),
+        risk_profile_version="carry-risk-v1",
+        maximum_unhedged_notional=planned.maximum_unhedged_notional,
+        maximum_unhedged_seconds=planned.maximum_unhedged_seconds,
+        reason_codes=("TARGET_WITHIN_RISK_ENVELOPE",),
+    )
+
+
+def _quotes(plan: TradePlan, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
+    return tuple(
+        ExecutableQuote(
+            source_quote_id=f"quote-{leg.instrument.product.value}-{as_of.timestamp()}",
+            instrument=leg.instrument,
+            as_of=as_of,
+            observed_at=as_of,
+            bid=Decimal("100"),
+            bid_quantity=Decimal("100"),
+            ask=Decimal("100"),
+            ask_quantity=Decimal("100"),
+            source="test",
+        )
+        for leg in plan.groups[0].legs
+    )
+
+
 def test_response_lost_after_accept_recovers_without_duplicate_after_restart() -> None:
     plan = _plan()
     engine = _database(plan)
@@ -155,7 +244,11 @@ def test_response_lost_after_accept_recovers_without_duplicate_after_restart() -
             _target_client_id(plan, 0): (MockSubmitBehavior.AFTER_ACCEPT_RESPONSE_LOST,)
         },
     )
-    first = ExecutionGroupEngine(store=store, venue=first_venue)
+    first = ExecutionGroupEngine(
+        store=store,
+        venue=first_venue,
+        observations=SqlProductOrderObservationStore(engine),
+    )
     group = first.start(plan=plan, planned=plan.groups[0], as_of=NOW)
     lost_client_id = _target_client_id(plan, 0)
     lost_leg = next(item for item in group.target_legs if item.client_order_id == lost_client_id)
@@ -166,6 +259,7 @@ def test_response_lost_after_accept_recovers_without_duplicate_after_restart() -
     restarted = ExecutionGroupEngine(
         store=SqlExecutionGroupStore(engine),
         venue=SqlMockProductVenue(engine),
+        observations=SqlProductOrderObservationStore(engine),
     )
     recovered = restarted.run_once(group.group_id, as_of=NOW + timedelta(seconds=1))
 
@@ -185,6 +279,7 @@ def test_response_lost_before_accept_retries_same_identity() -> None:
     executor = ExecutionGroupEngine(
         store=SqlExecutionGroupStore(engine),
         venue=venue,
+        observations=SqlProductOrderObservationStore(engine),
     )
     group = executor.start(plan=plan, planned=plan.groups[0], as_of=NOW)
 
@@ -214,6 +309,7 @@ def test_rejected_target_and_failed_compensation_retry_until_flat() -> None:
     executor = ExecutionGroupEngine(
         store=SqlExecutionGroupStore(engine),
         venue=venue,
+        observations=SqlProductOrderObservationStore(engine),
     )
     group = executor.start(plan=plan, planned=plan.groups[0], as_of=NOW)
 
@@ -235,7 +331,12 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         submit_behaviors={_target_client_id(plan, 0): (MockSubmitBehavior.PARTIAL_FILL,)},
     )
     store = SqlExecutionGroupStore(engine)
-    executor = ExecutionGroupEngine(store=store, venue=venue)
+    observations = SqlProductOrderObservationStore(engine)
+    executor = ExecutionGroupEngine(
+        store=store,
+        venue=venue,
+        observations=observations,
+    )
     group = executor.start(plan=plan, planned=plan.groups[0], as_of=NOW)
 
     partial = executor.run_once(group.group_id, as_of=NOW + timedelta(seconds=1))
@@ -265,3 +366,60 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
 
     assert completed.status == ExecutionGroupStatus.FLAT
     assert completed.residual_quantities == {}
+    visible_at_partial = observations.for_group(
+        group.group_id,
+        as_of=NOW + timedelta(seconds=1),
+    )
+    assert any(
+        item.order.status == ProductOrderStatus.PARTIALLY_FILLED for item in visible_at_partial
+    )
+    projector = ProductAccountProjector(
+        portfolio_id="primary",
+        settlement_asset="USDT",
+        initial_cash=Decimal("10000"),
+    )
+    partial_account = projector.project(
+        cycle_id="projection-partial",
+        as_of=NOW + timedelta(seconds=1),
+        groups=(completed,),
+        observations_by_group={group.group_id: visible_at_partial},
+        approved_sleeves=(_approved_sleeve(plan),),
+        quotes=_quotes(plan, as_of=NOW + timedelta(seconds=1)),
+    )
+    service_account = ProductAccountProjectionService(
+        projector=projector,
+        groups=store,
+        observations=observations,
+        risks=_ApprovedReader(plan.approved_target_id, _approved_sleeve(plan)),
+        accounts=_EmptyAccountHistory(),
+    ).project(
+        cycle_id="projection-partial",
+        as_of=NOW + timedelta(seconds=1),
+        quotes=_quotes(plan, as_of=NOW + timedelta(seconds=1)),
+    )
+    flat_account = projector.project(
+        cycle_id="projection-flat",
+        as_of=NOW + timedelta(seconds=11),
+        groups=(completed,),
+        observations_by_group={
+            group.group_id: observations.for_group(
+                group.group_id,
+                as_of=NOW + timedelta(seconds=11),
+            )
+        },
+        approved_sleeves=(_approved_sleeve(plan),),
+        quotes=_quotes(plan, as_of=NOW + timedelta(seconds=11)),
+        previous=partial_account,
+    )
+    assert partial_account.pending_execution_group_ids == (group.group_id,)
+    assert service_account == partial_account
+    assert len(partial_account.positions) == 2
+    assert flat_account.pending_execution_group_ids == ()
+    assert flat_account.positions == ()
+    assert flat_account.sleeves == ()
+    assert flat_account.equity == Decimal("9998.5")
+    assert flat_account.daily_pnl == Decimal("-1.5")
+    with engine.connect() as connection:
+        assert connection.scalar(
+            select(func.count()).select_from(product_order_observations)
+        ) > connection.scalar(select(func.count()).select_from(mock_product_orders))

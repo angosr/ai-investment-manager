@@ -221,8 +221,13 @@ def test_sleeve_handoffs_persist_idempotently_in_dependency_order() -> None:
     assert not plans.record(plan)
 
     assert portfolio.account(account.snapshot_id) == account
+    assert portfolio.latest_account(portfolio_id="primary", as_of=NOW) == account
     assert portfolio.target(target.target_id) == target
     assert risk.decision(decision.decision_id) == decision
+    assert decision.approved_target is not None
+    assert risk.for_approved_targets(
+        (decision.approved_target.approved_target_id,)
+    ) == {decision.approved_target.approved_target_id: decision}
     assert plans.plan(plan.plan_id) == plan
 
 

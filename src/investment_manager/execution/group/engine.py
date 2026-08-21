@@ -14,6 +14,7 @@ from investment_manager.execution.group.models import (
 )
 from investment_manager.execution.group.repository import ExecutionGroupStore
 from investment_manager.execution.planning.planner import PlannedTradeGroup, TradePlan
+from investment_manager.execution.venue.observation import ProductOrderObservationStore
 from investment_manager.execution.venue.product import (
     ProductOrder,
     ProductOrderStatus,
@@ -31,9 +32,11 @@ class ExecutionGroupEngine:
         *,
         store: ExecutionGroupStore,
         venue: ProductOrderVenue,
+        observations: ProductOrderObservationStore,
     ) -> None:
         self._store = store
         self._venue = venue
+        self._observations = observations
 
     def start(
         self,
@@ -188,6 +191,7 @@ class ExecutionGroupEngine:
                 except UnknownVenueResult:
                     observed = None
         if observed is not None:
+            self._observations.record(observed, available_at=as_of)
             return self._from_order(leg, observed)
         if not allow_submit and leg.status == ExecutionLegStatus.PENDING:
             return leg.model_copy(
@@ -211,6 +215,7 @@ class ExecutionGroupEngine:
             except UnknownVenueResult:
                 return leg.model_copy(update={"status": ExecutionLegStatus.UNKNOWN})
         if observed is not None:
+            self._observations.record(observed, available_at=as_of)
             return self._from_order(leg, observed)
         return leg.model_copy(
             update={

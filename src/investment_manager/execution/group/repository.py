@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from sqlalchemy import insert, select, update
@@ -15,6 +16,7 @@ from investment_manager.execution.group.models import (
 )
 from investment_manager.execution.planning.planner import TradePlan
 from investment_manager.execution.tables import execution_groups, trade_plans
+from investment_manager.kernel.time import require_utc
 
 
 class ConcurrentExecutionUpdate(RuntimeError):
@@ -25,6 +27,8 @@ class ExecutionGroupStore(Protocol):
     def record(self, group: ExecutionGroup) -> bool: ...
 
     def group(self, group_id: str) -> ExecutionGroup | None: ...
+
+    def visible(self, *, as_of: datetime) -> tuple[ExecutionGroup, ...]: ...
 
     def save(self, group: ExecutionGroup, *, expected_revision: int) -> bool: ...
 
@@ -68,6 +72,19 @@ class SqlExecutionGroupStore:
                 )
             ).scalar_one_or_none()
         return None if payload is None else ExecutionGroup.model_validate(payload)
+
+    def visible(self, *, as_of: datetime) -> tuple[ExecutionGroup, ...]:
+        as_of = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(execution_groups.c.payload)
+                .where(execution_groups.c.started_at <= as_of)
+                .order_by(
+                    execution_groups.c.started_at,
+                    execution_groups.c.group_id,
+                )
+            ).scalars()
+            return tuple(ExecutionGroup.model_validate(item) for item in payloads)
 
     def save(self, group: ExecutionGroup, *, expected_revision: int) -> bool:
         if group.revision != expected_revision + 1:
@@ -137,14 +154,21 @@ class SqlExecutionGroupStore:
             _leg_contract(item) for item in updated.target_legs
         ):
             raise ValueError("ExecutionGroup Target Leg 合同不得变更")
-        updated_compensations = {
-            item.execution_leg_id: _leg_contract(item) for item in updated.compensation_legs
-        }
-        if any(
-            updated_compensations.get(item.execution_leg_id) != _leg_contract(item)
-            for item in current.compensation_legs
+        for previous, observed in zip(
+            current.target_legs,
+            updated.target_legs,
+            strict=True,
         ):
-            raise ValueError("ExecutionGroup 既有 Compensation Leg 合同不得变更")
+            _validate_leg_progress(previous, observed)
+        updated_compensations = {item.execution_leg_id: item for item in updated.compensation_legs}
+        for previous in current.compensation_legs:
+            observed = updated_compensations.get(previous.execution_leg_id)
+            if observed is None or _leg_contract(observed) != _leg_contract(previous):
+                raise ValueError("ExecutionGroup 既有 Compensation Leg 合同不得变更")
+            _validate_leg_progress(
+                previous,
+                observed,
+            )
         allowed = {
             "EXECUTING": {"EXECUTING", "RECOVERING", "COMPENSATING", "HEDGED"},
             "RECOVERING": {"EXECUTING", "RECOVERING", "COMPENSATING", "HEDGED"},
@@ -184,3 +208,18 @@ def _leg_contract(leg: ExecutionLeg) -> tuple[object, ...]:
         leg.requested_quantity,
         leg.reference_price,
     )
+
+
+def _validate_leg_progress(previous: ExecutionLeg, observed: ExecutionLeg) -> None:
+    if observed.filled_quantity < previous.filled_quantity:
+        raise ValueError("ExecutionLeg 累计成交数量不得倒退")
+    if previous.venue_order_id is not None and (observed.venue_order_id != previous.venue_order_id):
+        raise ValueError("ExecutionLeg Venue order identity 不得变更")
+    if (
+        previous.observed_at is not None
+        and observed.observed_at is not None
+        and observed.observed_at < previous.observed_at
+    ):
+        raise ValueError("ExecutionLeg Venue 观察时间不得倒退")
+    if previous.status.terminal and observed != previous:
+        raise ValueError("ExecutionLeg 终态不得变更")

@@ -55,6 +55,8 @@ class ProductOrder(FrozenModel):
             self.filled_quantity != self.requested_quantity
         ):
             raise ValueError("FILLED Venue order 必须全部成交")
+        if self.status == ProductOrderStatus.WORKING and self.filled_quantity > 0:
+            raise ValueError("WORKING Venue order 不允许携带部分成交")
         if self.status == ProductOrderStatus.REJECTED and self.filled_quantity > 0:
             raise ValueError(f"{self.status} Venue order 不允许携带成交")
         return self

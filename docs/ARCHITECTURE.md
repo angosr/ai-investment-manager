@@ -172,6 +172,8 @@ ExecutionGroup 以一个带 revision 的聚合持久化全部短小 Leg 状态�
 Venue 订单则作为独立外部事实按稳定 `client_order_id` 持久化。同一 Sleeve 的非终态 group 由数据库
 唯一约束串行化。进入补偿后先持久化状态，再取消未终态目标单，并按残余数量创建不可覆写的补偿
 attempt；补偿拒绝只能追加新 attempt，不能篡改旧 Venue 事实或把未知结果伪装成 `FLAT`。
+Venue 最新状态可以更新，但系统首次看见每个不同订单事实的 `available_at` 必须进入不可变观察账本；
+账户回放只读取该时点已经可见的最新累计事实，禁止用事后全成或补偿状态覆盖历史部分成交。
 
 Binance 的 Spot 新单与 USDⓈ-M Futures 新单是两个独立接口，系统必须假定两腿会独立成功、失败或
 部分成交，不能把客户端并发请求当作原子成交（[Spot New Order](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints)、
@@ -462,10 +464,11 @@ kernel/platform
 3. **组合与风险接线（进行中）**：产品级账户、Sleeve allocation、整组 Risk 缩放和 grouped TradePlan
    已完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果，Spot MVP 不再并存。账户、
    `PortfolioTarget → RiskDecision → TradePlan` 已按领域持久化并由唯一 Pipeline 强制依赖顺序；下一步
-   接好产品账户投影与点时回放。
+   把已实现的产品账户点时投影接入唯一决策 Pipeline 与独立 Shadow。
 4. **执行接线（进行中）**：Execution 已直接消费已授权 `TradePlan`，并完成 group/Leg 幂等 Mock 订单、
-   未知结果恢复、部分成交超时减险、补偿失败重试和同 Sleeve 串行化；下一步接入产品级账户投影、
-   Binance 产品 Venue、保护与主动对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
+   未知结果恢复、部分成交超时减险、补偿失败重试、点时订单观察和同 Sleeve 串行化；产品账户投影已
+   统一计算现金、费用、产品/Sleeve 持仓、权益和待完成组。下一步接入 Binance 产品 Venue、funding、
+   保护与主动对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
 
 迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。

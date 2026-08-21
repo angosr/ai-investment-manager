@@ -15,6 +15,11 @@ from investment_manager.risk.tables import portfolio_risk_decisions
 class PortfolioRiskStore(Protocol):
     def record(self, decision: PortfolioRiskDecision) -> bool: ...
 
+    def for_approved_targets(
+        self,
+        approved_target_ids: tuple[str, ...],
+    ) -> dict[str, PortfolioRiskDecision]: ...
+
 
 class SqlPortfolioRiskStore:
     """Immutable authorization ledger bound to one persisted PortfolioTarget."""
@@ -71,3 +76,22 @@ class SqlPortfolioRiskStore:
                 )
             ).scalar_one_or_none()
         return None if payload is None else PortfolioRiskDecision.model_validate(payload)
+
+    def for_approved_targets(
+        self,
+        approved_target_ids: tuple[str, ...],
+    ) -> dict[str, PortfolioRiskDecision]:
+        approved_target_ids = tuple(sorted(set(approved_target_ids)))
+        if not approved_target_ids:
+            return {}
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    portfolio_risk_decisions.c.approved_target_id,
+                    portfolio_risk_decisions.c.payload,
+                ).where(portfolio_risk_decisions.c.approved_target_id.in_(approved_target_ids))
+            ).all()
+        return {
+            row.approved_target_id: PortfolioRiskDecision.model_validate(row.payload)
+            for row in rows
+        }

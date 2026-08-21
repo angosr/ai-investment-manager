@@ -102,6 +102,22 @@ mock_product_orders = Table(
 )
 Index("ix_mock_product_orders_group", mock_product_orders.c.group_id)
 
+product_order_observations = Table(
+    "product_order_observations",
+    metadata,
+    Column("observation_id", String(128), primary_key=True),
+    Column("observation_hash", String(64), nullable=False, unique=True),
+    Column("client_order_id", String(36), nullable=False),
+    Column("group_id", ForeignKey("execution_groups.group_id"), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_product_order_observations_group_available",
+    product_order_observations.c.group_id,
+    product_order_observations.c.available_at,
+)
+
 mock_exchange_orders = Table(
     "mock_exchange_orders",
     metadata,

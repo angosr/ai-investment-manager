@@ -199,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 71
+    assert len(contract) == 72
     assert content_hash(contract) == (
-        "c2bf9a22494601558a6a0594a4de06367d78559a2c50592250251900348b1723"
+        "aca91338b1df6baaaa978a616785e04dd818a02b1f2f423dd891f558aeb64418"
     )
 
 
@@ -1095,6 +1095,7 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
         "mock_product_orders",
         "orders",
         "position_lifecycles",
+        "product_order_observations",
         "reconciliation_reports",
         "trade_plans",
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from sqlalchemy import insert, select
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.forecast.models import CalibratedForecast, ForecastKind
 from investment_manager.forecast.tables import forecasts
 from investment_manager.kernel.identity import content_hash
+from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     PortfolioTarget,
@@ -24,6 +26,13 @@ class PortfolioStore(Protocol):
     def record_account(self, account: PortfolioAccountSnapshot) -> bool: ...
 
     def record_target(self, target: PortfolioTarget) -> bool: ...
+
+    def latest_account(
+        self,
+        *,
+        portfolio_id: str,
+        as_of: datetime,
+    ) -> PortfolioAccountSnapshot | None: ...
 
 
 class SqlPortfolioStore:
@@ -77,6 +86,28 @@ class SqlPortfolioStore:
                     portfolio_account_snapshots.c.cycle_id == cycle_id,
                     portfolio_account_snapshots.c.portfolio_id == portfolio_id,
                 )
+            ).scalar_one_or_none()
+        return None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
+
+    def latest_account(
+        self,
+        *,
+        portfolio_id: str,
+        as_of: datetime,
+    ) -> PortfolioAccountSnapshot | None:
+        as_of = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_account_snapshots.c.payload)
+                .where(
+                    portfolio_account_snapshots.c.portfolio_id == portfolio_id,
+                    portfolio_account_snapshots.c.as_of <= as_of,
+                )
+                .order_by(
+                    portfolio_account_snapshots.c.as_of.desc(),
+                    portfolio_account_snapshots.c.snapshot_id.desc(),
+                )
+                .limit(1)
             ).scalar_one_or_none()
         return None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
 
