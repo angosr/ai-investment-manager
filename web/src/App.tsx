@@ -5,12 +5,12 @@ import { Accounts } from "./components/Accounts";
 import { Capital, CapitalPositions } from "./components/Capital";
 import { CapitalEquityHero } from "./components/CapitalEquityHero";
 import { EquityHero } from "./components/EquityHero";
+import { LatestAssessment } from "./components/LatestAssessment";
 import { Masthead } from "./components/Masthead";
 import { Positions } from "./components/Positions";
 import { Resources } from "./components/Resources";
 import { SnapshotDrawer } from "./components/SnapshotDrawer";
 import { Timeline } from "./components/Timeline";
-import { WorldCognition } from "./components/WorldCognition";
 import { useLive, useTheme } from "./hooks";
 import styles from "./App.module.css";
 
@@ -67,7 +67,7 @@ function CapitalDashboard({
     <div className={styles.grid}>
       <main className={styles.main}>
         <CapitalEquityHero data={capital} />
-        <WorldCognition />
+        <LatestAssessment />
         <Timeline onOpenSnapshot={onOpenSnapshot} capitalMode />
       </main>
       <aside className={styles.side}>

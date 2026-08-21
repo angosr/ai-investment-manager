@@ -67,7 +67,6 @@ export interface CapitalAction {
   trigger_types: string[];
   outcome: string;
   summary: string;
-  state_snapshot_id?: string | null;
   reason_codes: string[];
   risk_outcome: string | null;
   order_count: number;
@@ -170,12 +169,6 @@ export interface AssessmentInputSnapshot {
   active_hypotheses: string[];
   data_quality_codes: string[];
   coverage_gap_codes: string[];
-  world_cognition: {
-    state_id: string;
-    beliefs: { belief_id?: string; statement?: string }[];
-    facts: { revision_id: string; headline: string; claim: string }[];
-    legacy_without_beliefs: boolean;
-  };
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";

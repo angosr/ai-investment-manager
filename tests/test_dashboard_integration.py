@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 from sqlalchemy import create_engine, insert
@@ -24,6 +25,7 @@ from investment_manager.forecast.models import (
     ContextView,
     PricedState,
 )
+from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
 from investment_manager.forecast.tables import codex_runs, context_assessments
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
@@ -168,27 +170,78 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         ),
         data_gaps=("缺少可靠方向证据",),
     )
+    bad_packet = _dashboard_assessment_packet(
+        as_of=as_of + timedelta(seconds=1),
+        analysis_scope="primary-portfolio",
+    )
+    bad_assessment = ContextAssessment(
+        assessment_id="context-assessment-dashboard-invalid-language",
+        analysis_scope="primary-portfolio",
+        mandate_version="dashboard-test-mandate-v1",
+        as_of=bad_packet.as_of,
+        available_at=datetime(2026, 8, 18, 12, 0, 20, tzinfo=UTC),
+        analysis_behavior_hash="c" * 64,
+        decision_packet_hash=bad_packet.content_hash,
+        trigger_ids=bad_packet.trigger_ids,
+        market_mechanism=(
+            "Accepted evidence suggests rising ETH while market_mechanism希望错误"
+        ),
+        views=(
+            ContextView(
+                asset="BTC",
+                horizon_minutes=60,
+                direction=DirectionalView.UNCERTAIN,
+                already_priced=PricedState.UNKNOWN,
+                uncertainty=AssessmentUncertainty.HIGH,
+                invalidation_conditions=("出现新的可靠方向证据",),
+            ),
+        ),
+        data_gaps=("Portfolio equity is unavailable.], views错误",),
+    )
     with archive_engine.begin() as connection:
         connection.execute(
-            insert(decision_packets).values(
-                packet_id=packet.packet_id,
-                analysis_scope=assessment.analysis_scope,
-                as_of=assessment.as_of,
-                policy_version=packet.policy_version,
-                content_hash=assessment.decision_packet_hash,
-                payload=packet.model_dump(mode="json"),
-            )
+            insert(decision_packets),
+            (
+                {
+                    "packet_id": packet.packet_id,
+                    "analysis_scope": assessment.analysis_scope,
+                    "as_of": assessment.as_of,
+                    "policy_version": packet.policy_version,
+                    "content_hash": assessment.decision_packet_hash,
+                    "payload": packet.model_dump(mode="json"),
+                },
+                {
+                    "packet_id": bad_packet.packet_id,
+                    "analysis_scope": bad_assessment.analysis_scope,
+                    "as_of": bad_assessment.as_of,
+                    "policy_version": bad_packet.policy_version,
+                    "content_hash": bad_assessment.decision_packet_hash,
+                    "payload": bad_packet.model_dump(mode="json"),
+                },
+            ),
         )
         connection.execute(
-            insert(context_assessments).values(
-                assessment_id=assessment.assessment_id,
-                packet_id=packet.packet_id,
-                analysis_scope=assessment.analysis_scope,
-                available_at=assessment.available_at,
-                analysis_behavior_hash=assessment.analysis_behavior_hash,
-                view_count=len(assessment.views),
-                payload=assessment.model_dump(mode="json"),
-            )
+            insert(context_assessments),
+            (
+                {
+                    "assessment_id": assessment.assessment_id,
+                    "packet_id": packet.packet_id,
+                    "analysis_scope": assessment.analysis_scope,
+                    "available_at": assessment.available_at,
+                    "analysis_behavior_hash": assessment.analysis_behavior_hash,
+                    "view_count": len(assessment.views),
+                    "payload": assessment.model_dump(mode="json"),
+                },
+                {
+                    "assessment_id": bad_assessment.assessment_id,
+                    "packet_id": bad_packet.packet_id,
+                    "analysis_scope": bad_assessment.analysis_scope,
+                    "available_at": bad_assessment.available_at,
+                    "analysis_behavior_hash": bad_assessment.analysis_behavior_hash,
+                    "view_count": len(bad_assessment.views),
+                    "payload": bad_assessment.model_dump(mode="json"),
+                },
+            ),
         )
     SqlEventStore(
         archive_engine,
@@ -213,6 +266,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         app_config,
         primary_url,
         assessment_database_url=assessment_url,
+        assessment_config=app_config,
     )
 
     async def read_endpoints():
@@ -225,13 +279,22 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 client.get(f"/api/assessment/cycles/{result.cycle_id}"),
                 client.get("/api/assessment/records"),
                 client.get(f"/api/assessment/records/{assessment.assessment_id}"),
+                client.get(
+                    f"/api/assessment/records/{bad_assessment.assessment_id}"
+                ),
                 client.get("/api/capital/activity"),
                 client.get("/api/events"),
             )
 
-    rows, detail, assessment_rows, assessment_detail, capital_rows, events = asyncio.run(
-        read_endpoints()
-    )
+    (
+        rows,
+        detail,
+        assessment_rows,
+        assessment_detail,
+        bad_assessment_detail,
+        capital_rows,
+        events,
+    ) = asyncio.run(read_endpoints())
 
     assert rows.status_code == 200
     assert [item["cycle_id"] for item in rows.json()["cycles"]] == [result.cycle_id]
@@ -242,8 +305,8 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
-    assert assessment_detail.json()["input_snapshot"]["packet_id"] == packet.packet_id
-    assert assessment_detail.json()["input_snapshot"]["state_id"] == packet.state_id
+    assert assessment_detail.json()["input_snapshot"] == packet.model_dump(mode="json")
+    assert bad_assessment_detail.status_code == 404
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": []}
     assert events.status_code == 200
@@ -264,6 +327,50 @@ def test_reader_and_serializer_render_a_real_persisted_cycle(app_config, replay_
     assert row_dto["symbol"]  # market_snapshots join filled the symbol
     assert row_dto["summary"]  # 一句人话摘要非空
     assert row_dto["category"] in {"exec", "pending", "rejected", "no-trade", "no-action"}
+
+
+def test_dashboard_accounts_use_the_assessment_archive_identity(app_config, tmp_path) -> None:
+    primary_url = f"sqlite+pysqlite:///{tmp_path / 'accounts-primary.db'}"
+    assessment_url = f"sqlite+pysqlite:///{tmp_path / 'accounts-assessment.db'}"
+    create_schema(create_engine(primary_url))
+    create_schema(create_engine(assessment_url))
+
+    def config_with_account(account_id: str):
+        return app_config.model_copy(
+            update={
+                "codex_accounts": CodexAccountRegistry(
+                    version=f"{account_id}-registry-v1",
+                    accounts=(
+                        CodexAccount(
+                            account_id=account_id,
+                            codex_home=Path(f"/tmp/{account_id}"),
+                            enabled=True,
+                        ),
+                    ),
+                )
+            }
+        )
+
+    application = create_app(
+        config_with_account(".codex-primary"),
+        primary_url,
+        assessment_database_url=assessment_url,
+        assessment_config=config_with_account(".codex-assessment"),
+    )
+
+    async def read_accounts():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            return await client.get("/api/accounts")
+
+    response = asyncio.run(read_accounts())
+
+    assert response.status_code == 200
+    assert [item["account_id"] for item in response.json()["accounts"]] == [
+        ".codex-assessment"
+    ]
 
 
 def test_cycle_detail_and_snapshot_project_real_payloads(app_config, replay_input) -> None:

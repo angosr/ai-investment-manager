@@ -19,6 +19,7 @@ from investment_manager.execution.reconciliation.engine import ReconciliationRep
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.context.contract import assessment_has_clean_chinese
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
@@ -226,16 +227,20 @@ class DashboardReader:
                 context_assessments.c.available_at.desc(),
                 context_assessments.c.assessment_id.desc(),
             )
-            .limit(limit)
+            .limit(max(limit, 100))
         )
         if before is not None:
             query = query.where(context_assessments.c.available_at < before)
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
+        assessments = (
+            ContextAssessment.model_validate(payload) for payload in payloads
+        )
         return [
-            AssessmentRecord(assessment=ContextAssessment.model_validate(payload))
-            for payload in payloads
-        ]
+            AssessmentRecord(assessment=assessment)
+            for assessment in assessments
+            if assessment_has_clean_chinese(assessment)
+        ][:limit]
 
     def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
         with self._engine.connect() as connection:
@@ -264,8 +269,11 @@ class DashboardReader:
                 .scalars()
                 .all()
             )
+        assessment = ContextAssessment.model_validate(row["assessment_payload"])
+        if not assessment_has_clean_chinese(assessment):
+            return None
         return AssessmentRecord(
-            assessment=ContextAssessment.model_validate(row["assessment_payload"]),
+            assessment=assessment,
             outcomes=tuple(
                 AssessmentViewOutcome.model_validate(payload) for payload in outcome_payloads
             ),

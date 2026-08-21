@@ -38,7 +38,8 @@ CLI_CONTRACT = {
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": (
-        "config,database_url,assessment_database_url,release_manifest,host,port,web_dist"
+        "config,database_url,assessment_database_url,assessment_config,"
+        "assessment_release_manifest,release_manifest,host,port,web_dist"
     ),
     "diagnose-legacy-analysis-forecasts": (
         "config,database_url,window_start,window_end,published_at,pipeline_version,"

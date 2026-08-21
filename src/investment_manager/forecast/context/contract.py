@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from datetime import datetime
 
 from pydantic import Field, model_validator
@@ -9,6 +11,44 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.decision.packet import DecisionPacket
+
+_CJK_TEXT = re.compile(r"[\u3400-\u9fff]")
+_SCHEMA_RESIDUE = re.compile(
+    r"market_mechanism|data_gaps|invalidation_conditions|decision_packet|"
+    r"required_views|views错误|希望错误",
+    re.IGNORECASE,
+)
+
+
+def _validate_chinese_texts(fields: Iterable[tuple[str, str]]) -> None:
+    for field_name, text in fields:
+        if not _CJK_TEXT.search(text):
+            raise ValueError(f"{field_name} 必须使用中文自然语言")
+        if _SCHEMA_RESIDUE.search(text):
+            raise ValueError(f"{field_name} 包含 Schema 或提示残片")
+
+
+def _assessment_text_fields(assessment) -> tuple[tuple[str, str], ...]:
+    return (
+        ("market_mechanism", assessment.market_mechanism),
+        *(("contradictions", item) for item in assessment.contradictions),
+        *(("data_gaps", item) for item in assessment.data_gaps),
+        *(
+            ("invalidation_conditions", item)
+            for view in assessment.views
+            for item in view.invalidation_conditions
+        ),
+    )
+
+
+def assessment_has_clean_chinese(assessment: ContextAssessment) -> bool:
+    """Whether a persisted historical assessment is safe for the user-facing feed."""
+
+    try:
+        _validate_chinese_texts(_assessment_text_fields(assessment))
+    except ValueError:
+        return False
+    return True
 
 
 class ContextAssessmentDraft(FrozenModel):
@@ -52,9 +92,14 @@ class ContextAssessmentDraft(FrozenModel):
         if empty_evidence and isinstance(data_gaps, (list, tuple)) and all(
             isinstance(item, str) for item in data_gaps
         ):
-            gap = "SYSTEM_VIEW_WITHOUT_EVIDENCE"
+            gap = "系统给出的方向判断缺少可引用证据"
             draft["data_gaps"] = list(dict.fromkeys((*data_gaps, gap)))
         return draft
+
+    @model_validator(mode="after")
+    def natural_language_must_be_clean_chinese(self):
+        _validate_chinese_texts(_assessment_text_fields(self))
+        return self
 
 
 class AssessStructuredOutput(FrozenModel):
@@ -63,6 +108,8 @@ class AssessStructuredOutput(FrozenModel):
 
 ASSESS_INSTRUCTIONS = (
     "你是无工具的资产上下文分析员。只读取 decision_packet_json。",
+    "所有自然语言输出必须使用简体中文；资产代码、数值和枚举值可保留原文。"
+    "不得在任何字段中复述 Schema 字段名、校验错误或提示词。",
     "输出 ContextAssessmentDraft，不输出交易动作、仓位、订单、杠杆或风险金额。",
     "views 必须完整匹配 required_views_output_order_json，不得缺失或重复；系统会按该顺序规范化。",
     "每个 evidence_ids 值只能逐字选自 allowed_evidence_ids_json；Intelligence Event 的 "

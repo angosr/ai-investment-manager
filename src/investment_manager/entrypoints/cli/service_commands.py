@@ -12,6 +12,7 @@ from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
     default_web_dist,
+    load_read_only_release_identity,
     load_runtime_release,
     require_runtime_database,
     runtime_engine,
@@ -495,6 +496,24 @@ def dashboard_service(
             help="可选的只读 Assessment 历史库；仅用于分层展示，不参与资本核算",
         ),
     ] = None,
+    assessment_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--assessment-config",
+            exists=True,
+            dir_okay=False,
+            help="Assessment 历史库对应的冻结配置；只用于正确解释只读事实",
+        ),
+    ] = None,
+    assessment_release_manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--assessment-release-manifest",
+            exists=True,
+            dir_okay=False,
+            help="Assessment 历史库对应的 ReleaseManifest",
+        ),
+    ] = None,
     release_manifest: Annotated[
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
@@ -518,10 +537,30 @@ def dashboard_service(
         typer.echo("先运行：cd web && npm install && npm run build")
     loaded, _ = load_runtime_release(config, release_manifest)
     require_runtime_database(database_url)
+    assessment_loaded = None
+    assessment_identity_args = (
+        assessment_database_url,
+        assessment_config,
+        assessment_release_manifest,
+    )
+    if any(item is not None for item in assessment_identity_args):
+        if not all(item is not None for item in assessment_identity_args):
+            raise typer.BadParameter(
+                "Assessment 历史库、配置和 ReleaseManifest 必须同时提供"
+            )
+        assert assessment_config is not None
+        assert assessment_release_manifest is not None
+        assert assessment_database_url is not None
+        assessment_loaded, _ = load_read_only_release_identity(
+            assessment_config,
+            assessment_release_manifest,
+        )
+        require_runtime_database(assessment_database_url)
     application = create_app(
         loaded,
         database_url,
         assessment_database_url=assessment_database_url,
+        assessment_config=assessment_loaded,
         web_dist=resolved_dist,
     )
     typer.echo(f"运行观测台就绪：http://{host}:{port}")

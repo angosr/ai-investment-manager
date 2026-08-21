@@ -39,6 +39,24 @@ def load_runtime_release(config: Path, release_manifest: Path):
     return loaded, manifest
 
 
+def load_read_only_release_identity(config: Path, release_manifest: Path):
+    """Validate an external fact producer's config identity without importing its code.
+
+    A dashboard may read an archive produced by an older frozen commit. Requiring that
+    producer's code version to equal the dashboard process would be false; config and
+    manifest integrity still remain mandatory.
+    """
+
+    loaded = load_config(config)
+    manifest = load_release_manifest(release_manifest)
+    validate_manifest_against_config(
+        manifest,
+        loaded,
+        require_configuration_hash=True,
+    )
+    return loaded, manifest
+
+
 def default_web_dist() -> Path | None:
     """Locate repository web assets independently from the process working directory."""
 

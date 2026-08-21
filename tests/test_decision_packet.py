@@ -173,7 +173,7 @@ def _packet(app_config, replay_input):
 def _assessment_output() -> AssessStructuredOutput:
     return AssessStructuredOutput(
         assessment=ContextAssessmentDraft(
-            market_mechanism="Regulatory clarity may alter the risk premium.",
+            market_mechanism="监管确定性变化可能改变市场要求的风险溢价。",
             views=tuple(
                 ContextView(
                     asset=asset,
@@ -182,12 +182,12 @@ def _assessment_output() -> AssessStructuredOutput:
                     already_priced=PricedState.UNKNOWN,
                     uncertainty=AssessmentUncertainty.HIGH,
                     evidence_ids=("revision-1",),
-                    invalidation_conditions=("official-retraction",),
+                    invalidation_conditions=("官方撤回或修订相关信息",),
                 )
                 for asset in ("BTC", "ETH")
                 for horizon in (60, 240)
             ),
-            data_gaps=("MARKET_REACTION_NOT_MATURE",),
+            data_gaps=("市场反应尚未充分形成",),
         )
     )
 

@@ -233,7 +233,7 @@ def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
     output = AssessStructuredOutput.model_validate(
         {
             "assessment": {
-                "market_mechanism": "A policy revision changes discount rates.",
+                "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
                 "views": [
                     {
                         "asset": "BTC",
@@ -243,8 +243,8 @@ def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
                         "uncertainty": "MEDIUM",
                         "evidence_ids": ["delta-1", "delta-1"],
                         "invalidation_conditions": [
-                            "policy-reversal",
-                            "policy-reversal",
+                            "政策方向发生反转",
+                            "政策方向发生反转",
                         ],
                     }
                 ],
@@ -256,7 +256,7 @@ def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
 
     view = output.assessment.views[0]
     assert view.evidence_ids == ("delta-1",)
-    assert view.invalidation_conditions == ("policy-reversal",)
+    assert view.invalidation_conditions == ("政策方向发生反转",)
     assessment = finalize_context_assessment(
         output=output,
         packet=_packet(),
@@ -280,7 +280,7 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
     output = AssessStructuredOutput.model_validate(
         {
             "assessment": {
-                "market_mechanism": "No visible evidence supports a direction.",
+                "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
                 "views": [
                     {
                         "asset": "BTC",
@@ -289,7 +289,7 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
                         "already_priced": "UNKNOWN",
                         "uncertainty": "HIGH",
                         "evidence_ids": [],
-                        "invalidation_conditions": ["new-evidence-arrives"],
+                        "invalidation_conditions": ["出现新的可靠方向证据"],
                     }
                 ],
                 "contradictions": [],
@@ -301,7 +301,7 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
     view = output.assessment.views[0]
     assert view.direction == DirectionalView.UNCERTAIN
     assert view.evidence_ids == ()
-    assert output.assessment.data_gaps == ("SYSTEM_VIEW_WITHOUT_EVIDENCE",)
+    assert output.assessment.data_gaps == ("系统给出的方向判断缺少可引用证据",)
     assessment = finalize_context_assessment(
         output=output,
         packet=_packet(),
@@ -316,6 +316,37 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
                 "direction": direction,
             }
         )
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "The accepted evidence supports an upward trend.",
+        "市场偏强，但 market_mechanism希望错误",
+    ),
+)
+def test_assessment_output_rejects_non_chinese_or_schema_residue(text: str) -> None:
+    payload = {
+        "assessment": {
+            "market_mechanism": text,
+            "views": [
+                {
+                    "asset": "BTC",
+                    "horizon_minutes": 240,
+                    "direction": "UNCERTAIN",
+                    "already_priced": "UNKNOWN",
+                    "uncertainty": "HIGH",
+                    "evidence_ids": [],
+                    "invalidation_conditions": ["出现新的可靠方向证据"],
+                }
+            ],
+            "contradictions": [],
+            "data_gaps": ["当前缺少足够的宏观背景"],
+        }
+    }
+
+    with pytest.raises(ValidationError, match=r"中文自然语言|Schema 或提示残片"):
+        AssessStructuredOutput.model_validate(payload)
 
 
 def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:

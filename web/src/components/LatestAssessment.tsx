@@ -2,15 +2,16 @@ import { api } from "../api/client";
 import { useLive } from "../hooks";
 import { hhmm } from "../lib/format";
 import { Card } from "./Card";
-import styles from "./WorldCognition.module.css";
+import styles from "./LatestAssessment.module.css";
 
 const DIRECTION: Record<string, string> = {
   UP: "看涨",
   DOWN: "看跌",
-  UNCERTAIN: "不确定",
+  UNCERTAIN: "方向不明",
 };
 
-export function WorldCognition() {
+/** Latest persisted ContextAssessment; this is not a World State projection. */
+export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
   const row = latest?.assessments[0] ?? null;
   const detail = useLive(
@@ -21,8 +22,8 @@ export function WorldCognition() {
 
   return (
     <Card
-      title="最新世界认知"
-      aside={row ? `${hhmm(row.at)} UTC · ${row.scope}` : "等待认知快照"}
+      title="最新市场判断"
+      aside={row ? `${hhmm(row.at)} UTC` : "暂无判断"}
       bodyPadded
     >
       {row ? (
@@ -45,7 +46,7 @@ export function WorldCognition() {
           </div>
         </div>
       ) : (
-        <p className={styles.empty}>尚未形成可展示的世界认知。</p>
+        <p className={styles.empty}>尚无符合展示要求的市场判断。</p>
       )}
     </Card>
   );

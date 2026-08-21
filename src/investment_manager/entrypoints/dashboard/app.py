@@ -45,6 +45,7 @@ def create_app(
     database_url: str,
     *,
     assessment_database_url: str | None = None,
+    assessment_config: AppConfig | None = None,
     web_dist: Path | None = None,
     stream_interval_seconds: float = 3.0,
     slow_refresh_every_ticks: int = 5,
@@ -53,10 +54,12 @@ def create_app(
         raise ValueError("Dashboard SSE 刷新间隔必须为正数")
     if slow_refresh_every_ticks < 1:
         raise ValueError("Dashboard 慢速刷新倍数必须至少为 1")
+    if (assessment_database_url is None) != (assessment_config is None):
+        raise ValueError("Assessment 历史库与冻结配置必须同时提供")
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
     assessment_reader = (
-        DashboardReader(build_engine(assessment_database_url), config)
+        DashboardReader(build_engine(assessment_database_url), assessment_config)
         if assessment_database_url is not None
         else None
     )
@@ -241,16 +244,20 @@ def create_app(
 
     async def accounts(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
+        account_reader = assessment_reader or reader
+        account_config = assessment_config or config
         statuses, calls = await asyncio.gather(
-            run_in_threadpool(reader.accounts, now=now),
-            run_in_threadpool(reader.ai_calls_last_hour, now=now),
+            run_in_threadpool(account_reader.accounts, now=now),
+            run_in_threadpool(account_reader.ai_calls_last_hour, now=now),
         )
         return _json(
             {
                 "accounts": [ser.account_status(status) for status in statuses],
                 "call_activity": {
                     "last_hour": calls,
-                    "minimum_interval_seconds": config.trigger.minimum_call_interval_seconds,
+                    "minimum_interval_seconds": (
+                        account_config.trigger.minimum_call_interval_seconds
+                    ),
                 },
             }
         )

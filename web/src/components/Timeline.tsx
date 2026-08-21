@@ -70,7 +70,7 @@ function CapitalTimeline() {
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
           <Tab id="actions" active={tab} label="资金决策" onPick={setTab} />
-          <Tab id="analysis" active={tab} label="AI 判断" count={assessmentRecords?.assessments.length} onPick={setTab} />
+          <Tab id="analysis" active={tab} label="AI" count={assessmentRecords?.assessments.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>

@@ -112,27 +112,9 @@ def assessment_detail(record: AssessmentRecord) -> dict:
 
 
 def _assessment_input_snapshot(packet: DecisionPacket) -> dict:
-    """Return the exact persisted AI input, plus a read-only cognition projection.
+    """Return the exact persisted AI input without inventing a second state model."""
 
-    Keeping the canonical packet intact avoids a second hand-maintained DTO silently
-    drifting away from what the analyst actually received.
-    """
-
-    payload = packet.model_dump(mode="json")
-    payload["world_cognition"] = {
-        "state_id": packet.state_id,
-        "beliefs": [],
-        "facts": [
-            {
-                "revision_id": item.revision_id,
-                "headline": item.headline,
-                "claim": item.claim,
-            }
-            for item in packet.facts
-        ],
-        "legacy_without_beliefs": True,
-    }
-    return payload
+    return packet.model_dump(mode="json")
 
 
 def snapshot(panel: PanelSnapshot) -> dict:
@@ -272,16 +254,29 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
-    directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
-    if not directional:
-        return "已分析 · 暂无可靠方向倾向"
-    direction_labels = {"UP": "看涨", "DOWN": "看跌"}
-    views = " · ".join(
-        f"{view.asset} {view.horizon_minutes}m "
-        f"{direction_labels.get(view.direction, view.direction)}"
-        for view in directional
-    )
-    return f"已分析 · {views}"
+    direction_labels = {"UP": "看涨", "DOWN": "看跌", "UNCERTAIN": "方向不明"}
+    by_asset: dict[str, list] = {}
+    for view in assessment.views:
+        by_asset.setdefault(view.asset, []).append(view)
+    summaries: list[str] = []
+    for asset, views in by_asset.items():
+        directions = {view.direction for view in views}
+        if len(directions) == 1:
+            horizons = "/".join(str(view.horizon_minutes) for view in views)
+            summaries.append(
+                f"{asset} {horizons} 分钟"
+                f"{direction_labels.get(views[0].direction, views[0].direction)}"
+            )
+            continue
+        summaries.append(
+            f"{asset} "
+            + "、".join(
+                f"{view.horizon_minutes} 分钟"
+                f"{direction_labels.get(view.direction, view.direction)}"
+                for view in views
+            )
+        )
+    return "；".join(summaries)
 
 
 def _assessment_outcome(outcome: AssessmentViewOutcome | None) -> dict | None:

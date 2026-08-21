@@ -18,6 +18,9 @@
   color: inherit;
   border-left: 3px solid transparent;
 }
+.assessmentRow {
+  grid-template-columns: 62px minmax(0, 1fr) auto 16px;
+}
 .row:hover {
   background: var(--panel-2);
 }
@@ -135,6 +138,85 @@
   grid-template-columns: 1.25fr 1fr;
   gap: 22px;
   margin-top: 14px;
+}
+.assessmentDetail {
+  margin-top: 14px;
+}
+.viewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.viewCard {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.viewHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.viewHead b {
+  color: var(--text);
+  font-size: 12px;
+}
+.viewHead span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.viewHead span[data-direction="UP"] {
+  color: var(--pos);
+}
+.viewHead span[data-direction="DOWN"] {
+  color: var(--neg);
+}
+.viewMeta,
+.viewOutcome {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.viewOutcome {
+  color: var(--faint);
+}
+.invalidation {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+}
+.invalidation > span {
+  color: var(--faint);
+  font-size: 10px;
+}
+.invalidation ul,
+.analysisList {
+  display: grid;
+  gap: 4px;
+  margin: 5px 0 0;
+  padding-left: 16px;
+}
+.invalidation li,
+.analysisList li {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.assessmentEvidence {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 22px;
+  margin-top: 18px;
+}
+.analysisBlock {
+  margin-top: 14px;
+}
+.analysisBlock:first-child {
+  margin-top: 0;
 }
 .h {
   font-size: 12px;
@@ -317,12 +399,6 @@
   line-height: 1.6;
   margin-top: 12px;
 }
-.snapshotNote {
-  color: var(--warn);
-  font-size: 12px;
-  line-height: 1.6;
-  margin: 12px 0 0;
-}
 .snapshotGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -385,7 +461,14 @@
 }
 @media (max-width: 640px) {
   .cols,
+  .assessmentEvidence,
   .snapshotGrid {
+    grid-template-columns: 1fr;
+  }
+  .assessmentRow {
+    grid-template-columns: 48px minmax(0, 1fr) auto 12px;
+  }
+  .viewGrid {
     grid-template-columns: 1fr;
   }
   .snapshotHeader {
