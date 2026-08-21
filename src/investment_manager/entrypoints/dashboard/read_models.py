@@ -82,6 +82,12 @@ _ASSESSMENT_QUALITY_SCAN_LIMIT = 500
 _ASSESSMENT_QUALITY_WINDOW_HOURS = 24
 
 
+def _is_assessment_rejection(reason_code: str) -> bool:
+    return reason_code == "CODEX_SCHEMA_INVALID" or reason_code.startswith(
+        "ASSESSMENT_"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CycleRow:
     """决策时间线一行所需的最小事实（不含整张周期图）。"""
@@ -393,9 +399,8 @@ class DashboardReader:
         if executions:
             latest_execution = executions[0]
             latest_status = latest_execution.status.value
-            if (
-                latest_status == "FAILED"
-                and latest_execution.reason_code == "CODEX_SCHEMA_INVALID"
+            if latest_status == "FAILED" and _is_assessment_rejection(
+                latest_execution.reason_code
             ):
                 latest_status = "REJECTED"
             return AssessmentQualityStatus(

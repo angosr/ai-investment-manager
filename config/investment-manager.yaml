@@ -41,7 +41,7 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v10
+    version: decision-packet-policy-v11
     schema_version: decision-packet-v8
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -50,7 +50,8 @@ decision_state:
     maximum_intelligence_events: 8
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500
-    maximum_packet_characters: 16000
+    # AI 投影的上限；为固定分析指令预留约 5K，最终完整提示仍由 runtime 的 16K 门禁复核。
+    maximum_packet_characters: 11000
     maximum_previous_context_drivers: 3
 
 strategy:

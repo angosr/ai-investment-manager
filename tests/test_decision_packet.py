@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -40,12 +41,14 @@ from investment_manager.state.decision.packet import (
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
     MandateAsset,
+    PacketDerivativeState,
     PacketPreviousContext,
     PacketPreviousDriver,
     PacketPreviousEventReference,
     PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
+    decision_packet_analysis_projection,
 )
 from investment_manager.state.models import (
     CanonicalFactRevision,
@@ -743,7 +746,9 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
         features=features,
     )
 
-    assert len(canonical_json(packet)) <= 6_000
+    projected_length = len(canonical_json(decision_packet_analysis_projection(packet)))
+    assert projected_length <= 6_000
+    assert len(canonical_json(packet)) > projected_length
     assert packet.facts[0].revision_id == "revision-1"
     assert packet.facts[0].directly_triggered is True
     assert packet.omitted_fact_revision_ids
@@ -971,6 +976,67 @@ def test_finalize_assessment_rejects_unknown_evidence(app_config, replay_input) 
         )
 
 
+def test_finalize_assessment_accepts_confirmed_exchange_observation(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    evidence_ref = "f" * 64
+    derivative = PacketDerivativeState(
+        evidence_ref=evidence_ref,
+        asset="BTC",
+        market_symbol="BTCUSDT",
+        observed_at=packet.as_of,
+        mark_index_premium_bps=Decimal("1.2"),
+        executable_short_basis_bps=Decimal("0.8"),
+        perpetual_spread_bps=Decimal("0.4"),
+        last_funding_rate_bps=Decimal("0.1"),
+        trailing_funding_rate_mean_bps=Decimal("0.08"),
+        trailing_funding_rate_sum_bps=Decimal("0.24"),
+        funding_settlement_count=3,
+        funding_window_hours=24,
+        next_funding_time=packet.as_of + timedelta(hours=4),
+    )
+    payload = {
+        name: getattr(packet, name)
+        for name in packet.__class__.model_fields
+        if name not in {"packet_id", "content_hash"}
+    }
+    payload["derivative_states"] = (
+        derivative,
+        derivative.model_copy(
+            update={
+                "evidence_ref": "e" * 64,
+                "asset": "ETH",
+                "market_symbol": "ETHUSDT",
+            }
+        ),
+    )
+    derivative_packet = DecisionPacket.create(**payload)
+    output = _assessment_output()
+    driver = output.assessment.drivers[0].model_copy(
+        update={
+            "statement": "BTC 永续资金费率已由交易所数据直接确认。",
+            "evidence_ids": (evidence_ref,),
+        }
+    )
+    output = output.model_copy(
+        update={
+            "assessment": output.assessment.model_copy(
+                update={"drivers": (driver,)}
+            )
+        }
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=derivative_packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.drivers[0].status == ContextDriverStatus.CONFIRMED
+
+
 def test_finalize_assessment_rejects_missing_required_view(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = _assessment_output().model_dump()
@@ -1122,21 +1188,20 @@ def test_context_analyst_fails_closed_on_semantically_invalid_output(
 
     assert not result.success
     assert result.output is None
-    assert result.reason_code == "CODEX_SCHEMA_INVALID"
+    assert result.reason_code == "ASSESSMENT_EVIDENCE_NOT_VISIBLE"
+    assert len(router.bundles) == 1
 
 
-def test_context_analyst_retries_same_frozen_bundle_after_semantic_schema_failure(
+def test_context_analyst_retries_same_frozen_bundle_after_output_schema_failure(
     app_config, replay_input, tmp_path
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    invalid_payload = _assessment_output().model_dump()
-    invalid_payload["assessment"]["views"][0]["evidence_ids"] = ("not-visible",)
     router = _StaticRouter(
         (
             AnalystResult(
-                True,
-                AssessStructuredOutput.model_validate(invalid_payload),
-                "CODEX_ANALYSIS_SUCCEEDED",
+                False,
+                None,
+                "CODEX_SCHEMA_INVALID",
                 ".codex",
                 1,
                 {"total_tokens": 100},
@@ -1173,7 +1238,7 @@ def test_context_analyst_retries_same_frozen_bundle_after_semantic_schema_failur
     assert router.bundles[0] == router.bundles[1]
 
 
-def test_context_analyst_stops_after_bounded_schema_attempts(
+def test_context_analyst_stops_immediately_after_deterministic_semantic_failure(
     app_config, replay_input, tmp_path
 ) -> None:
     _, packet = _packet(app_config, replay_input)
@@ -1208,11 +1273,11 @@ def test_context_analyst_stops_after_bounded_schema_attempts(
     result = analyst.assess(packet)
 
     assert not result.success
-    assert result.reason_code == "CODEX_SCHEMA_INVALID"
-    assert result.run_id == "run-invalid-2"
-    assert result.attempts == 2
-    assert result.usage == {"total_tokens": 220}
-    assert len(router.bundles) == 2
+    assert result.reason_code == "ASSESSMENT_VIEW_SET_INVALID"
+    assert result.run_id == "run-invalid-1"
+    assert result.attempts == 1
+    assert result.usage == {"total_tokens": 100}
+    assert len(router.bundles) == 1
 
 
 def test_context_assessment_store_is_immutable_and_idempotent(app_config, replay_input) -> None:

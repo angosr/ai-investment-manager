@@ -61,6 +61,22 @@ REASON_PLAIN = {
     "PROTECTION_FAILURE_EMERGENCY_EXIT": "保护单失败，已紧急退出",
 }
 
+ASSESSMENT_REASON_PLAIN = {
+    "SCHEMA_INVALID": "AI 输出格式不符合契约",
+    "CODEX_SCHEMA_INVALID": "AI 输出格式不符合契约",
+    "ASSESSMENT_VIEW_SET_INVALID": "资产与时域判断不完整",
+    "ASSESSMENT_EVIDENCE_NOT_VISIBLE": "引用了输入快照之外的证据",
+    "ASSESSMENT_CIRCULAR_INFERENCE": "使用上一版认知循环自证",
+    "ASSESSMENT_CONFIRMED_EVIDENCE_INVALID": "把推断误标为已确认事实",
+    "ASSESSMENT_EVENT_UPDATE_DUPLICATED": "事件影响更新重复",
+    "ASSESSMENT_EVENT_NOT_VISIBLE": "引用了输入快照之外的事件",
+    "ASSESSMENT_STALE_EVENT_REVIVED": "试图恢复已过时事件",
+    "ASSESSMENT_STALE_EVENT_REFERENCED": "使用已过时事件支撑当前判断",
+    "ASSESSMENT_ACTIVE_EVENT_NOT_REGISTERED": "引用事件但未维护其影响状态",
+    "ASSESSMENT_NEW_EVENT_MARKED_STALE": "新事件被直接标为过时",
+    "ASSESSMENT_EVENT_CONTENT_MISSING": "事件引用缺少可冻结内容",
+}
+
 # 风控规则 rule_id → 中文名
 RULE_PLAIN = {
     "kill-switch": "熔断开关",
@@ -89,6 +105,10 @@ def iso(value: datetime | None) -> str | None:
 
 def reason_plain(reason_code: str) -> str:
     return REASON_PLAIN.get(reason_code, reason_code)
+
+
+def assessment_reason_plain(reason_code: str) -> str:
+    return ASSESSMENT_REASON_PLAIN.get(reason_code, "AI 分析运行失败")
 
 
 def rule_plain(rule_id: str) -> str:

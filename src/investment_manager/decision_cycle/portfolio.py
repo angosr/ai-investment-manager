@@ -122,7 +122,7 @@ class PortfolioDecisionPipeline:
                 outcome=PortfolioPipelineOutcome.NO_CHANGE,
             )
         self._portfolio_store.record_target(target)
-        target_quotes = self._quotes_for_target(target=target, quotes=quotes)
+        target_quotes = target.quotes
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,
@@ -196,7 +196,7 @@ class PortfolioDecisionPipeline:
             ),
         )
         self._portfolio_store.record_target(target)
-        target_quotes = self._quotes_for_target(target=target, quotes=quotes)
+        target_quotes = target.quotes
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,

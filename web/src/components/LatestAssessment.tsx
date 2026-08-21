@@ -10,7 +10,7 @@ const DIRECTION: Record<string, string> = {
   UNCERTAIN: "方向不明",
 };
 
-/** Latest persisted ContextAssessment; this is not a World State projection. */
+/** Latest immutable world-cognition snapshot plus the current update status. */
 export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
   const row = latest?.assessments[0] ?? null;
@@ -38,6 +38,9 @@ export function LatestAssessment() {
   const eventHeading = activeEvents.length > 0
     ? "当前仍影响未来的事件"
     : "本次认知引用的事件（影响状态未评估）";
+  const currentSnapshot = Boolean(
+    row && quality?.latest_valid_at && row.at === quality.latest_valid_at,
+  );
 
   return (
     <Card
@@ -45,9 +48,11 @@ export function LatestAssessment() {
       aside={row ? `${hhmm(row.at)} UTC` : "暂无认知"}
       bodyPadded
     >
-      {quality && quality.latest_attempt_status !== "SUCCEEDED" ? (
+      {quality && !currentSnapshot ? (
         <p className={styles.warning}>
-          最近一次模型调用未产生结构化结果；下方显示上一条已持久化判断。
+          当前分析版本尚未形成有效世界认知；下方是 {row
+            ? `${hhmm(row.at)} UTC 留存的上一版快照，仅用于认知连续性`
+            : "空状态，不会用无效输出填充"}。
         </p>
       ) : null}
       {row ? (

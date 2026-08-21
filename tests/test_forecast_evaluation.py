@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import typer
 from sqlalchemy import create_engine, insert, select, update
 
+import investment_manager.entrypoints.cli.assessment_commands as assessment_commands
 from investment_manager.entrypoints.cli.assessment_commands import (
     register_assessment_forward_plan,
 )
@@ -45,6 +47,7 @@ from investment_manager.market.repository import SqlMarketDataStore, create_mark
 from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
+from investment_manager.settings import load_config
 
 
 class StaticAnalyst:
@@ -151,10 +154,21 @@ def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
     return AnalysisForecastOutcome.model_validate(payload)
 
 
-def test_forward_plan_registration_rejects_caller_supplied_behavior_hash() -> None:
+def test_forward_plan_registration_rejects_caller_supplied_behavior_hash(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        assessment_commands,
+        "load_runtime_release",
+        lambda config, _manifest: (
+            load_config(config),
+            SimpleNamespace(manifest_id="release-test"),
+        ),
+    )
     with pytest.raises(typer.BadParameter, match="实际行为哈希不一致"):
         register_assessment_forward_plan(
             config=Path("config/investment-manager.yaml"),
+            release_manifest=Path("config/release-manifest.yaml"),
             database_url="postgresql://unused",
             plan_id="wrong-behavior-plan",
             analysis_behavior_hash="0" * 64,

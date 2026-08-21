@@ -16,7 +16,18 @@ from investment_manager.information.models import SourceTier
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.state.decision.packet import DecisionPacket
+from investment_manager.state.decision.packet import (
+    DecisionPacket,
+    decision_packet_analysis_projection,
+)
+
+
+class ContextAssessmentContractError(ValueError):
+    """A bounded, deterministic rejection at the world-cognition boundary."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class ContextEventReferenceUpdate(FrozenModel):
@@ -46,6 +57,8 @@ ASSESS_INSTRUCTIONS = (
     "market_mechanism 必须给出跨层主导传导链，至少比较政策或资金变化、利率/美元等中介变量、"
     "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因。",
     "drivers 只保留仍影响当前定价的关键驱动：CONFIRMED 仅表示一手证据直接确认的事实；"
+    "Fed 官方事实与系统直接冻结的 Binance 衍生品观测都属于一手证据，"
+    "但对其经济含义的解释仍是 INFERRED；"
     "INFERRED 表示从证据与时序推导的机制；UNVERIFIED 表示尚未证实的市场假设。"
     "每项必须说明传导路径和可证伪条件，按当前决策影响从高到低排列，不得把推断或传闻升级为事实。",
     "previous_context 是上一轮仍可追溯的世界模型，不是独立事实。逐项判断它应继续、修正还是失效；"
@@ -99,39 +112,7 @@ def build_assess_prompt(packet: DecisionPacket) -> str:
 def assessment_input_projection(packet: DecisionPacket) -> dict:
     """High-density model input; audit-only omission IDs remain in the ledger."""
 
-    payload = packet.model_dump(mode="json")
-    payload["capacity_summary"] = {
-        "missing_fact_count": len(packet.missing_fact_revision_ids),
-        "omitted_fact_count": len(packet.omitted_fact_revision_ids),
-        "omitted_intelligence_event_count": len(
-            packet.omitted_intelligence_event_refs
-        ),
-    }
-    payload["information_coverage"] = tuple(
-        {
-            "domain": item.domain.value,
-            "status": item.status.value,
-            "source_stream_ids": item.source_stream_ids,
-            "latest_success_at": (
-                item.latest_success_at.isoformat()
-                if item.latest_success_at is not None
-                else None
-            ),
-            "latest_publication_at": (
-                item.latest_publication_at.isoformat()
-                if item.latest_publication_at is not None
-                else None
-            ),
-        }
-        for item in packet.information_coverage
-    )
-    for field_name in (
-        "missing_fact_revision_ids",
-        "omitted_fact_revision_ids",
-        "omitted_intelligence_event_refs",
-    ):
-        payload.pop(field_name)
-    return payload
+    return decision_packet_analysis_projection(packet)
 
 
 def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
@@ -196,7 +177,10 @@ def finalize_context_assessment(
     if len(views_by_key) != len(output.assessment.views) or set(views_by_key) != set(
         expected_views
     ):
-        raise ValueError("Assessment views 与 DecisionPacket required_views 不一致")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_VIEW_SET_INVALID",
+            "Assessment views 与 DecisionPacket required_views 不一致",
+        )
     ordered_views = tuple(views_by_key[key] for key in expected_views)
     visible_evidence = set(assessment_visible_evidence_ids(packet))
     referenced_evidence = {
@@ -209,7 +193,10 @@ def finalize_context_assessment(
     }
     unknown_evidence = tuple(sorted(referenced_evidence - visible_evidence))
     if unknown_evidence:
-        raise ValueError(f"Assessment 引用了不可见证据: {unknown_evidence}")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_EVIDENCE_NOT_VISIBLE",
+            f"Assessment 引用了不可见证据: {unknown_evidence}",
+        )
     previous_id = (
         packet.previous_context.assessment_id
         if packet.previous_context is not None
@@ -229,7 +216,10 @@ def finalize_context_assessment(
             and set(view.evidence_ids) == {previous_id}
         )
         if circular_inferences or circular_views:
-            raise ValueError("上一轮认知不能单独证明本轮推断或方向")
+            raise ContextAssessmentContractError(
+                "ASSESSMENT_CIRCULAR_INFERENCE",
+                "上一轮认知不能单独证明本轮推断或方向",
+            )
     first_party_evidence = {
         *(
             item.revision_id
@@ -241,6 +231,7 @@ def finalize_context_assessment(
             for item in packet.deltas
             if item.category.value == "FIRST_PARTY_FACT"
         ),
+        *(item.evidence_ref for item in packet.derivative_states),
     }
     unsupported_confirmed = tuple(
         driver.statement
@@ -249,7 +240,10 @@ def finalize_context_assessment(
         and not set(driver.evidence_ids).issubset(first_party_evidence)
     )
     if unsupported_confirmed:
-        raise ValueError("CONFIRMED driver 必须且只能引用一手事实证据")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_CONFIRMED_EVIDENCE_INVALID",
+            "CONFIRMED driver 必须且只能引用直接采集的一手证据",
+        )
     event_references = _finalize_event_references(
         output=output,
         packet=packet,
@@ -293,11 +287,17 @@ def _finalize_event_references(
     updates = output.assessment.event_reference_updates
     update_ids = tuple(item.evidence_id for item in updates)
     if len(set(update_ids)) != len(update_ids):
-        raise ValueError("Assessment event_reference_updates 不能重复")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_EVENT_UPDATE_DUPLICATED",
+            "Assessment event_reference_updates 不能重复",
+        )
     visible_event_ids = set(assessment_visible_event_ids(packet))
     unknown = tuple(sorted(set(update_ids) - visible_event_ids))
     if unknown:
-        raise ValueError(f"Assessment 引用了不可见事件: {unknown}")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_EVENT_NOT_VISIBLE",
+            f"Assessment 引用了不可见事件: {unknown}",
+        )
     previous_by_id = (
         {
             item.evidence_id: item
@@ -317,14 +317,20 @@ def _finalize_event_references(
         )
     )
     if revived:
-        raise ValueError("已过时事件引用不得恢复为 ACTIVE")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_STALE_EVENT_REVIVED",
+            "已过时事件引用不得恢复为 ACTIVE",
+        )
     stale_ids = {
         item.evidence_id
         for item in updates
         if item.impact_state == ContextEventImpactState.STALE
     }
     if stale_ids.intersection(referenced_evidence):
-        raise ValueError("过时事件不得继续支撑 Driver 或 View")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_STALE_EVENT_REFERENCED",
+            "过时事件不得继续支撑 Driver 或 View",
+        )
     referenced_event_ids = referenced_evidence.intersection(visible_event_ids)
     active_ids = {
         evidence_id
@@ -338,7 +344,10 @@ def _finalize_event_references(
     )
     active_ids.difference_update(stale_ids)
     if not referenced_event_ids.issubset(active_ids):
-        raise ValueError("Driver 或 View 引用的事件必须登记为 ACTIVE")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_ACTIVE_EVENT_NOT_REGISTERED",
+            "Driver 或 View 引用的事件必须登记为 ACTIVE",
+        )
     current_by_id = {
         item.evidence_ref: item for item in packet.intelligence_events
     }
@@ -351,7 +360,10 @@ def _finalize_event_references(
         )
     )
     if newly_stale:
-        raise ValueError("新事件引用不能直接登记为 STALE")
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_NEW_EVENT_MARKED_STALE",
+            "新事件引用不能直接登记为 STALE",
+        )
     finalized: list[ContextEventReference] = []
     for evidence_id in sorted(set(previous_by_id) | set(update_by_id)):
         update = update_by_id.get(evidence_id)
@@ -366,7 +378,10 @@ def _finalize_event_references(
             title = previous.title
             event_time = previous.event_time
         else:  # guarded by visible_event_ids
-            raise ValueError("事件引用缺少可冻结的来源内容")
+            raise ContextAssessmentContractError(
+                "ASSESSMENT_EVENT_CONTENT_MISSING",
+                "事件引用缺少可冻结的来源内容",
+            )
         impact_state = (
             update.impact_state
             if update is not None

@@ -23,6 +23,7 @@ from investment_manager.forecast.codex.router import (
 from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
+    ContextAssessmentContractError,
     assessment_visible_event_ids,
     assessment_visible_evidence_ids,
     build_assess_prompt,
@@ -33,8 +34,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v8"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v3"
+ASSESS_INPUT_VERSION = "assess-input-v9"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v4"
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -267,8 +268,17 @@ class CodexContextAnalyst:
                     analysis_behavior_hash=bundle.analysis_behavior_hash,
                     available_at=result.completed_at,
                 )
-            except ValueError:
-                continue
+            except ContextAssessmentContractError as exc:
+                return AnalystResult(
+                    False,
+                    None,
+                    exc.reason_code,
+                    result.account_id,
+                    attempts,
+                    usage,
+                    result.completed_at,
+                    result.run_id,
+                )
             return AnalystResult(
                 True,
                 assessment,

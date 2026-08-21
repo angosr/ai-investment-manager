@@ -390,7 +390,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         "execution_count_24h": 1,
         "final_success_count_24h": 0,
         "first_attempt_success_count_24h": 0,
-        "rejection_reasons": ["输出未通过分析契约"],
+        "rejection_reasons": ["AI 输出格式不符合契约"],
     }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"

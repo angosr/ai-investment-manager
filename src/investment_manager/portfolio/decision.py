@@ -257,14 +257,6 @@ class PortfolioDecisionEngine:
         selected = tuple(item for item in eligible if item.sleeve_id in selected_ids)
         if selected:
             valid_until = min(valid_until, *(item.forecast.valid_until for item in selected))
-        target_instruments = {
-            leg.instrument.key
-            for sleeve in targets
-            for leg in sleeve.forecast_target.legs
-        }
-        target_quotes = tuple(
-            item for item in quotes if item.instrument.key in target_instruments
-        )
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._policy.portfolio_id,
@@ -275,7 +267,10 @@ class PortfolioDecisionEngine:
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "considered_forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
-            "quotes": [item.model_dump(mode="json") for item in target_quotes],
+            # A cash decision still consumed every considered Forecast quote.
+            # Freeze the consideration set, not only instruments selected into
+            # a non-zero target, so persistence can reproduce why cash won.
+            "quotes": [item.model_dump(mode="json") for item in quotes],
             "sleeves": [item.model_dump(mode="json") for item in targets],
             "reason_codes": tuple(sorted(reason_codes)),
         }

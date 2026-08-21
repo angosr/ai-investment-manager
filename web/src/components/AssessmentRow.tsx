@@ -170,7 +170,9 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
                 {` · ${PRICED[view.already_priced] ?? view.already_priced}`}
                 {` · ${view.evidence_count} 条证据`}
               </div>
-              <div className={styles.viewOutcome}>{assessmentOutcome(view.outcome)}</div>
+              {view.outcome ? (
+                <div className={styles.viewOutcome}>{assessmentOutcome(view.outcome)}</div>
+              ) : null}
               <div className={styles.invalidation}>
                 <span>失效条件</span>
                 <ul>
@@ -229,7 +231,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
 }
 
 function assessmentOutcome(outcome: AssessmentRecordDetail["views"][number]["outcome"]): string {
-  if (!outcome) return "尚未到结算时间";
+  if (!outcome) return "";
   const direction = outcome.direction_correct === null
     ? ""
     : outcome.direction_correct

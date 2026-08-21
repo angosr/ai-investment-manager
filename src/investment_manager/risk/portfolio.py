@@ -287,8 +287,8 @@ class PortfolioRiskEngine:
         required_quote_keys = {
             leg.instrument.key for sleeve in target.sleeves for leg in sleeve.forecast_target.legs
         }
-        if set(quote_by_instrument) != required_quote_keys:
-            raise ValueError("Risk quotes 必须精确覆盖 PortfolioTarget Instruments")
+        if not required_quote_keys.issubset(quote_by_instrument):
+            raise ValueError("Risk quotes 必须覆盖 PortfolioTarget Instruments")
         if set(profile_by_sleeve) != set(target_by_sleeve):
             raise ValueError("Risk profiles 必须精确覆盖 PortfolioTarget Sleeves")
         if (

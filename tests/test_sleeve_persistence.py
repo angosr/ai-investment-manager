@@ -238,6 +238,45 @@ def test_sleeve_handoffs_persist_idempotently_in_dependency_order() -> None:
     assert plans.plan(plan.plan_id) == plan
 
 
+def test_cash_target_persists_quotes_used_to_reject_considered_forecast() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    base, forecast = _forecast_pair()
+    account, invested_target, _decision, _plan = _chain()
+    sleeve_id = SleeveTarget.identity_for(
+        portfolio_id="primary",
+        forecast_family=forecast.forecast_family,
+        forecast_target_id=forecast.target.target_id,
+    )
+    cash = PortfolioDecisionEngine(
+        PortfolioDecisionPolicy(
+            version="portfolio-v2",
+            portfolio_id="primary",
+            enabled=True,
+        )
+    ).decide(
+        cycle_id=account.cycle_id,
+        as_of=NOW,
+        account=account,
+        sleeves=(
+            PortfolioSleeveInput(
+                sleeve_id=sleeve_id,
+                estimated_variable_cost_bps=Decimal("50"),
+                forecast=forecast,
+            ),
+        ),
+        quotes=invested_target.quotes,
+    )
+    assert cash is not None and cash.sleeves == ()
+
+    forecasts = SqlForecastStore(engine)
+    portfolio = SqlPortfolioStore(engine)
+    assert forecasts.record(base)
+    assert forecasts.record(forecast)
+    assert portfolio.record_account(account)
+    assert portfolio.record_target(cash)
+
+
 def test_handoff_stores_reject_missing_authoritative_parent() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

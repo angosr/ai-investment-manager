@@ -65,6 +65,49 @@ class DecisionPacketCapacityError(ValueError):
     pass
 
 
+def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
+    """Return the dense model-facing projection of an auditable packet.
+
+    Omission identities remain in the immutable packet so a replay can explain
+    selection, but they are bookkeeping rather than evidence.  Counting or
+    sending those hashes would let audit metadata evict the facts it describes.
+    """
+
+    payload = packet.model_dump(mode="json")
+    payload["capacity_summary"] = {
+        "missing_fact_count": len(packet.missing_fact_revision_ids),
+        "omitted_fact_count": len(packet.omitted_fact_revision_ids),
+        "omitted_intelligence_event_count": len(
+            packet.omitted_intelligence_event_refs
+        ),
+    }
+    for field_name in (
+        "missing_fact_revision_ids",
+        "omitted_fact_revision_ids",
+        "omitted_intelligence_event_refs",
+    ):
+        payload.pop(field_name)
+    payload["information_coverage"] = tuple(
+        {
+            "domain": item.domain.value,
+            "status": item.status.value,
+            "source_stream_ids": item.source_stream_ids,
+            "latest_success_at": (
+                item.latest_success_at.isoformat()
+                if item.latest_success_at is not None
+                else None
+            ),
+            "latest_publication_at": (
+                item.latest_publication_at.isoformat()
+                if item.latest_publication_at is not None
+                else None
+            ),
+        }
+        for item in packet.information_coverage
+    )
+    return payload
+
+
 class MandateAsset(FrozenModel):
     asset: str = Field(min_length=1)
     market_symbol: str = Field(min_length=1)
@@ -652,27 +695,38 @@ class DecisionPacketBuilder:
                 sorted(omitted_intelligence)
             )
             packet = DecisionPacket.create(**payload)
-            if len(canonical_json(packet)) <= self._policy.maximum_packet_characters:
+            if (
+                len(canonical_json(decision_packet_analysis_projection(packet)))
+                <= self._policy.maximum_packet_characters
+            ):
                 return packet
-            removable_fact = next(
-                (
-                    index
-                    for index in range(len(selected_facts) - 1, -1, -1)
-                    if not selected_facts[index].directly_triggered
-                ),
-                None,
+            removable_fact = (
+                next(
+                    (
+                        index
+                        for index in range(len(selected_facts) - 1, -1, -1)
+                        if not selected_facts[index].directly_triggered
+                    ),
+                    None,
+                )
+                if len(selected_facts) > 1
+                else None
             )
             if removable_fact is not None:
                 removed = selected_facts.pop(removable_fact)
                 omitted_facts.add(removed.revision_id)
                 continue
-            removable_event = next(
-                (
-                    index
-                    for index in range(len(selected_intelligence) - 1, -1, -1)
-                    if not selected_intelligence[index].directly_triggered
-                ),
-                None,
+            removable_event = (
+                next(
+                    (
+                        index
+                        for index in range(len(selected_intelligence) - 1, -1, -1)
+                        if not selected_intelligence[index].directly_triggered
+                    ),
+                    None,
+                )
+                if len(selected_intelligence) > 1
+                else None
             )
             if removable_event is not None:
                 removed = selected_intelligence.pop(removable_event)

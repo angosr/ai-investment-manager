@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from investment_manager.entrypoints.dashboard.capital import CapitalOverview
+from investment_manager.entrypoints.dashboard.formatting import assessment_reason_plain
 from investment_manager.entrypoints.dashboard.read_models import (
     AnalysisRuntimeStatus,
     AssessmentQualityStatus,
@@ -81,10 +82,7 @@ def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
         state = "bad" if status.latest_valid_at is None else "warn"
         detail = "最近一次模型调用未产生可持久化结果"
         if status.latest_attempt_reason:
-            reason = {
-                "SCHEMA_INVALID": "分析契约未通过",
-            }.get(status.latest_attempt_reason, "运行失败")
-            detail += f"：{reason}"
+            detail += f"：{assessment_reason_plain(status.latest_attempt_reason)}"
     elif latest == "NO_ATTEMPT":
         state = "unknown"
         detail = "当前行为版本尚无输出尝试"

@@ -225,9 +225,6 @@ def _resolve_assessment_evidence(
 
 
 def assessment_quality(status: AssessmentQualityStatus) -> dict:
-    labels = {
-        "CODEX_SCHEMA_INVALID": "输出未通过分析契约",
-    }
     return {
         "latest_attempt_at": fmt.iso(status.latest_attempt_at),
         "latest_attempt_status": status.latest_attempt_status,
@@ -238,7 +235,8 @@ def assessment_quality(status: AssessmentQualityStatus) -> dict:
         "final_success_count_24h": status.final_success_count_24h,
         "first_attempt_success_count_24h": status.first_attempt_success_count_24h,
         "rejection_reasons": [
-            labels.get(code, code) for code in status.rejection_reason_codes
+            fmt.assessment_reason_plain(code)
+            for code in status.rejection_reason_codes
         ],
     }
 

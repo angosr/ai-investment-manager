@@ -348,6 +348,7 @@ def test_mock_candidate_uses_lower_hold_threshold_without_forcing_entry() -> Non
     )
 
     assert cash is not None and cash.sleeves == ()
+    assert cash.quotes == _quotes()
     assert held is not None
     held_account = _account(forecast=forecast, gross="1000")
     assert held.sleeves[0].desired_gross_notional == sleeve_gross_notional(
