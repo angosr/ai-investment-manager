@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pydantic import Field, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
@@ -28,6 +30,16 @@ class DecisionPacketPolicy(FrozenModel):
         default=500,
         ge=100,
         le=1_000,
+    )
+    minimum_background_intelligence_impact: Decimal = Field(
+        default=Decimal("0.80"),
+        ge=0,
+        le=1,
+    )
+    minimum_background_source_reliability: Decimal = Field(
+        default=Decimal("0.70"),
+        ge=0,
+        le=1,
     )
     maximum_packet_characters: int = Field(default=12_000, ge=2_000, le=16_000)
     maximum_previous_context_drivers: int = Field(default=3, ge=0, le=8)

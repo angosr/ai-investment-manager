@@ -50,6 +50,9 @@ decision_state:
     maximum_intelligence_events: 8
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500
+    # 低可靠聚合新闻永久入库，但不作为人工复核时的普通背景占用 AI 注意力。
+    minimum_background_intelligence_impact: "0.80"
+    minimum_background_source_reliability: "0.70"
     # AI 投影的上限；为固定分析指令预留约 5K，最终完整提示仍由 runtime 的 16K 门禁复核。
     maximum_packet_characters: 11000
     maximum_previous_context_drivers: 3

@@ -15,10 +15,16 @@ export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
   const row = latest?.assessments[0] ?? null;
   const quality = latest?.quality ?? null;
+  const currentSnapshot = Boolean(
+    row && quality?.latest_valid_at && row.at === quality.latest_valid_at,
+  );
+  const currentRow = currentSnapshot ? row : null;
   const detail = useLive(
-    () => row ? api.assessmentRecord(row.assessment_id) : Promise.resolve(null),
+    () => currentRow
+      ? api.assessmentRecord(currentRow.assessment_id)
+      : Promise.resolve(null),
     "cycles",
-    [row?.assessment_id],
+    [currentRow?.assessment_id],
   );
   const activeEvents = detail
     ? detail.event_references
@@ -38,28 +44,24 @@ export function LatestAssessment() {
   const eventHeading = activeEvents.length > 0
     ? "当前仍影响未来的事件"
     : "本次认知引用的事件（影响状态未评估）";
-  const currentSnapshot = Boolean(
-    row && quality?.latest_valid_at && row.at === quality.latest_valid_at,
-  );
-
   return (
     <Card
       title="最新世界认知"
-      aside={row ? `${hhmm(row.at)} UTC` : "暂无认知"}
+      aside={currentRow ? `${hhmm(currentRow.at)} UTC` : "尚未建立"}
       bodyPadded
     >
       {quality && !currentSnapshot ? (
         <p className={styles.warning}>
-          当前分析版本尚未形成有效世界认知；下方是 {row
-            ? `${hhmm(row.at)} UTC 留存的上一版快照，仅用于认知连续性`
-            : "空状态，不会用无效输出填充"}。
+          当前分析版本尚未形成合格世界认知。{row
+            ? `${hhmm(row.at)} UTC 的旧快照仅保留在 AI 分析历史，不作为当前判断。`
+            : "系统不会用无效输出填充。"}
         </p>
       ) : null}
-      {row ? (
+      {currentRow ? (
         <div className={styles.layout}>
           <div>
-            <div className={styles.summary}>{row.summary}</div>
-            <p className={styles.mechanism}>{detail?.mechanism ?? row.mechanism}</p>
+            <div className={styles.summary}>{currentRow.summary}</div>
+            <p className={styles.mechanism}>{detail?.mechanism ?? currentRow.mechanism}</p>
             {detail && detail.drivers.length > 0 ? (
               <div className={styles.drivers}>
                 {detail.drivers.slice(0, 3).map((driver) => (
@@ -95,7 +97,7 @@ export function LatestAssessment() {
           </div>
         </div>
       ) : (
-        <p className={styles.empty}>尚无已持久化的世界认知。</p>
+        <p className={styles.empty}>等待具备主导因果证据的分析通过门禁。</p>
       )}
     </Card>
   );

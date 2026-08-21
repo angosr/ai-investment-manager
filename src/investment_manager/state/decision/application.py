@@ -12,6 +12,7 @@ from investment_manager.execution.account_repository import AccountSnapshotReade
 from investment_manager.information.coverage import SqlInformationCoverageStore
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
 from investment_manager.information.policy import CoverageRequirement
+from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import (
@@ -210,13 +211,13 @@ class DecisionPacketPreparation:
             sorted(
                 {
                     symbol_to_asset[symbol]
-                    for event in intelligence_events
+                    for event in triggered_events
                     for symbol in event.symbols
                     if symbol in symbol_to_asset
                 }
             )
         )
-        if intelligence_events and not intelligence_affected_assets:
+        if triggered_events and not intelligence_affected_assets:
             raise ValueError("IntelligenceEvent 未命中 Mandate assets")
         market_affected_assets = tuple(
             sorted(symbol_to_asset[item] for item in market_shock_symbols)
@@ -273,6 +274,9 @@ class DecisionPacketPreparation:
             derivatives=derivatives,
             account=account,
             intelligence_events=intelligence_events,
+            material_intelligence_event_refs=tuple(
+                sorted(content_hash(item) for item in triggered_events)
+            ),
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
             market_affected_assets=market_affected_assets,

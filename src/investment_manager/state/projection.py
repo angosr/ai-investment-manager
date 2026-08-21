@@ -68,6 +68,7 @@ class SqlStateProjector:
         derivatives: tuple[DerivativeContextSnapshot, ...] = (),
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
+        material_intelligence_event_refs: tuple[str, ...] | None = None,
         intelligence_affected_assets: tuple[str, ...] = (),
         market_shock_symbols: tuple[str, ...] = (),
         market_affected_assets: tuple[str, ...] = (),
@@ -158,6 +159,7 @@ class SqlStateProjector:
             current=candidate,
             current_facts=facts,
             current_events=intelligence_events,
+            material_intelligence_event_refs=material_intelligence_event_refs,
             intelligence_affected_assets=intelligence_affected_assets,
             market_feature_refs=tuple(
                 sorted(feature_ref_by_symbol[item] for item in market_shock_symbols)

@@ -65,9 +65,12 @@ ASSESS_INSTRUCTIONS = (
     "可以引用其 assessment_id 支撑 INFERRED/UNVERIFIED 延续，但 CONFIRMED 必须引用本轮一手事实。"
     "INFERRED 或方向判断若引用上一轮，还必须同时引用至少一项本轮证据，禁止循环自证。"
     "禁止无视新证据照抄上一轮，也禁止没有失效依据就丢弃仍有效的因果链。",
-    "event_reference_updates 只提交本轮发生变化的事件引用，不要重写完整引用集合。"
+    "新事件首次被 driver 引用时，系统会直接将它登记为 ACTIVE，并使用该 driver "
+    "的 statement 作为影响理由；无需在 event_reference_updates 重复提交。"
+    "事件若要支撑 view，必须也出现在至少一个 driver 的 evidence_ids 中。"
+    "event_reference_updates 只提交已有引用本轮发生的理由修正或判旧，不要重写完整引用集合。"
     "上一轮引用由系统自动继承：省略表示状态和理由不变；需要修正理由时提交同状态更新，"
-    "需要判旧时提交 STALE。新引用只在它仍可能改变未来经济或定价时提交 ACTIVE，"
+    "需要判旧时提交 STALE。新引用只在它仍可能改变未来经济或定价时才应被 driver 引用，"
     "STALE 只允许在其对未来的边际影响已经完全消退、被证伪或被新事实取代时使用，"
     "禁止按发布时间机械判旧。"
     "已判 STALE 不得恢复 ACTIVE；新事件若已无未来影响应直接忽略，不要新增为 STALE。"
@@ -307,6 +310,12 @@ def _finalize_event_references(
         else {}
     )
     update_by_id = {item.evidence_id: item for item in updates}
+    current_by_id = {item.evidence_ref: item for item in packet.intelligence_events}
+    driver_rationale_by_id: dict[str, str] = {}
+    for driver in output.assessment.drivers:
+        for evidence_id in driver.evidence_ids:
+            if evidence_id in current_by_id:
+                driver_rationale_by_id.setdefault(evidence_id, driver.statement)
     revived = tuple(
         sorted(
             evidence_id
@@ -332,6 +341,17 @@ def _finalize_event_references(
             "过时事件不得继续支撑 Driver 或 View",
         )
     referenced_event_ids = referenced_evidence.intersection(visible_event_ids)
+    view_only_new_event_ids = (
+        referenced_event_ids
+        - set(previous_by_id)
+        - set(update_by_id)
+        - set(driver_rationale_by_id)
+    )
+    if view_only_new_event_ids:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_EVENT_VIEW_WITHOUT_DRIVER",
+            "新事件支撑 View 时必须同时由 Driver 解释传导逻辑",
+        )
     active_ids = {
         evidence_id
         for evidence_id, previous in previous_by_id.items()
@@ -342,15 +362,15 @@ def _finalize_event_references(
         for item in updates
         if item.impact_state == ContextEventImpactState.ACTIVE
     )
+    # Citing a new event in a reasoned driver is itself an ACTIVE relevance
+    # decision. Persist that reasoning instead of requiring duplicate output.
+    active_ids.update(driver_rationale_by_id)
     active_ids.difference_update(stale_ids)
     if not referenced_event_ids.issubset(active_ids):
         raise ContextAssessmentContractError(
             "ASSESSMENT_ACTIVE_EVENT_NOT_REGISTERED",
             "Driver 或 View 引用的事件必须登记为 ACTIVE",
         )
-    current_by_id = {
-        item.evidence_ref: item for item in packet.intelligence_events
-    }
     newly_stale = tuple(
         sorted(
             item.evidence_id
@@ -365,7 +385,9 @@ def _finalize_event_references(
             "新事件引用不能直接登记为 STALE",
         )
     finalized: list[ContextEventReference] = []
-    for evidence_id in sorted(set(previous_by_id) | set(update_by_id)):
+    for evidence_id in sorted(
+        set(previous_by_id) | set(update_by_id) | set(driver_rationale_by_id)
+    ):
         update = update_by_id.get(evidence_id)
         current = current_by_id.get(evidence_id)
         previous = previous_by_id.get(evidence_id)
@@ -386,8 +408,16 @@ def _finalize_event_references(
             update.impact_state
             if update is not None
             else ContextEventImpactState(previous.impact_state)
+            if previous is not None
+            else ContextEventImpactState.ACTIVE
         )
-        rationale = update.rationale if update is not None else previous.rationale
+        rationale = (
+            update.rationale
+            if update is not None
+            else previous.rationale
+            if previous is not None
+            else driver_rationale_by_id[evidence_id]
+        )
         stale_at = previous.stale_at if previous is not None else None
         if impact_state == ContextEventImpactState.STALE:
             stale_at = (

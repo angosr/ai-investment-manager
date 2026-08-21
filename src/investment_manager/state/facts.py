@@ -280,6 +280,7 @@ def build_state_material_delta(
     current: StateSnapshot,
     current_facts: tuple[CanonicalFactRevision, ...],
     current_events: tuple[IntelligenceEvent, ...] = (),
+    material_intelligence_event_refs: tuple[str, ...] | None = None,
     intelligence_affected_assets: tuple[str, ...] = (),
     market_feature_refs: tuple[str, ...] = (),
     market_affected_assets: tuple[str, ...] = (),
@@ -307,12 +308,27 @@ def build_state_material_delta(
     changed_ids = tuple(
         sorted(set(current.fact_revision_ids) - set(previous.fact_revision_ids))
     )
-    changed_event_refs = tuple(
-        sorted(
-            set(current.intelligence_event_refs)
-            - set(previous.intelligence_event_refs)
+    if material_intelligence_event_refs is None:
+        changed_event_refs = tuple(
+            sorted(
+                set(current.intelligence_event_refs)
+                - set(previous.intelligence_event_refs)
+            )
         )
-    )
+    else:
+        changed_event_refs = _unique_sorted(
+            material_intelligence_event_refs,
+            name="material_intelligence_event_refs",
+        )
+        if not set(changed_event_refs).issubset(current.intelligence_event_refs):
+            raise ValueError(
+                "material_intelligence_event_refs 必须属于 current StateSnapshot"
+            )
+        changed_event_refs = tuple(
+            item
+            for item in changed_event_refs
+            if item not in previous.intelligence_event_refs
+        )
     market_refs = _unique_sorted(market_feature_refs, name="market_feature_refs")
     if not set(market_refs).issubset(current.feature_snapshot_refs):
         raise ValueError("market_feature_refs 必须属于 current StateSnapshot")

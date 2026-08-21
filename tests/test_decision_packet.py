@@ -310,7 +310,7 @@ def test_world_cognition_event_reference_becomes_stale_then_leaves_future_contex
     app_config,
     replay_input,
 ) -> None:
-    event = replay_input.events[0]
+    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
     event_ref = content_hash(event)
     _, first_packet = _packet(
         app_config,
@@ -422,6 +422,41 @@ def test_world_cognition_event_reference_becomes_stale_then_leaves_future_contex
     )
     assert after_grace.previous_context is not None
     assert after_grace.previous_context.event_references == ()
+
+
+def test_new_driver_event_citation_registers_active_reference_without_duplicate_update(
+    app_config,
+    replay_input,
+) -> None:
+    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
+    event_ref = content_hash(event)
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        intelligence_events=(event,),
+    )
+    base = _assessment_output()
+    driver = base.assessment.drivers[0].model_copy(
+        update={
+            "status": ContextDriverStatus.UNVERIFIED,
+            "evidence_ids": (event_ref,),
+        }
+    )
+    output = base.model_copy(
+        update={"assessment": base.assessment.model_copy(update={"drivers": (driver,)})}
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=10),
+    )
+
+    assert len(assessment.event_references) == 1
+    assert assessment.event_references[0].evidence_id == event_ref
+    assert assessment.event_references[0].impact_state == ContextEventImpactState.ACTIVE
+    assert assessment.event_references[0].rationale == driver.statement
 
 
 def test_world_cognition_inherits_omitted_active_event_update(
@@ -783,9 +818,7 @@ def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
         account=replay_input.account,
         markets=(market,),
         features=features,
-    ).model_copy(
-        update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)}
-    )
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
     packet = DecisionPacketBuilder(
         DecisionPacketPolicy(
             version="packet-policy-v2",
@@ -1020,11 +1053,7 @@ def test_finalize_assessment_accepts_confirmed_exchange_observation(
         }
     )
     output = output.model_copy(
-        update={
-            "assessment": output.assessment.model_copy(
-                update={"drivers": (driver,)}
-            )
-        }
+        update={"assessment": output.assessment.model_copy(update={"drivers": (driver,)})}
     )
 
     assessment = finalize_context_assessment(

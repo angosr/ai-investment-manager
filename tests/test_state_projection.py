@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, func, select, update
 
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.information.models import IntelligenceEvent
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.perpetual.models import (
@@ -770,6 +770,11 @@ def test_explicit_review_receives_recent_background_intelligence(
         reason="复核当前市场背景",
     )
 
+    baseline = preparation.prepare(
+        analysis_id="explicit-review-baseline",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+    )
     prepared = preparation.prepare(
         analysis_id="explicit-review-with-context",
         as_of=event_at,
@@ -777,12 +782,94 @@ def test_explicit_review_receives_recent_background_intelligence(
         review_requests=(review,),
     )
 
+    assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
     assert prepared.status == PacketPreparationStatus.READY
     assert prepared.packet is not None
+    assert prepared.packet.deltas == ()
     assert tuple(item.evidence_id for item in prepared.packet.intelligence_events) == (
         event.evidence_id,
     )
     assert prepared.packet.intelligence_events[0].directly_triggered is False
+
+
+def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    events = InMemoryEventStore()
+    event_at = OBSERVED_AT + timedelta(minutes=1)
+    event = IntelligenceEvent(
+        evidence_id="weak-background-event",
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="test-aggregator-v1",
+        event_time=event_at,
+        observed_at=event_at,
+        source="test:aggregator",
+        title="Opinion article mentions Bitcoin",
+        body="No primary-source fact or independently observed transmission.",
+        symbols=("BTCUSDT",),
+        relevance="1",
+        impact="0.99",
+        source_reliability="0.60",
+        novelty="1",
+    )
+    events.put(event)
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        account_reader=_PointInTimeAccountReader(replay_input.account),
+        event_reader=events,
+        facts=SqlFactStateStore(engine),
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-weak-background-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-weak-background-v1",
+                schema_version="decision-packet-weak-background-v1",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        clock=lambda: event_at,
+    )
+    mandate = AnalysisMandate(
+        version="crypto-weak-background-v1",
+        analysis_scope="crypto-portfolio",
+        question="Assess current decision-grade evidence.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("EXTERNAL_INFORMATION",),
+    )
+    review = PacketReviewRequest.create(
+        requested_at=event_at,
+        reason="复核当前主导机制",
+    )
+
+    prepared = preparation.prepare(
+        analysis_id="explicit-review-with-weak-background",
+        as_of=event_at,
+        mandate=mandate,
+        review_requests=(review,),
+    )
+
+    assert prepared.status == PacketPreparationStatus.READY
+    assert prepared.packet is not None
+    assert prepared.packet.intelligence_events == ()
+    assert prepared.packet.omitted_intelligence_event_refs == (content_hash(event),)
 
 
 def test_packet_preparation_promotes_only_explicit_market_shock(

@@ -841,6 +841,13 @@ class DecisionPacketBuilder:
         for event in events:
             evidence_ref = content_hash(event)
             age_seconds = (as_of - event.event_time).total_seconds()
+            if evidence_ref not in direct_event_refs and (
+                event.impact < self._policy.minimum_background_intelligence_impact
+                or event.source_reliability
+                < self._policy.minimum_background_source_reliability
+            ):
+                omitted.append(evidence_ref)
+                continue
             if (
                 evidence_ref not in direct_event_refs
                 and age_seconds > self._policy.maximum_background_fact_distance_seconds
