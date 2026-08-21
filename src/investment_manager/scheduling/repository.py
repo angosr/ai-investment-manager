@@ -450,7 +450,12 @@ class PostgresTriggerLeadership:
     def acquire(self) -> bool:
         if self._connection is not None:
             raise RuntimeError("领导锁已经持有")
-        connection = self._engine.connect()
+        # This is a session-level lock: the connection must stay open, but a
+        # transaction must not.  SQLAlchemy otherwise autobegins here and leaves
+        # the leader ``idle in transaction`` for the full service lifetime.
+        connection = self._engine.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        )
         acquired = bool(
             connection.execute(select(func.pg_try_advisory_lock(self._lock_key))).scalar_one()
         )

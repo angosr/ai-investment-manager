@@ -410,6 +410,18 @@ def test_postgres_cycle_transaction_and_risk_budget(
         engine, app_config.trigger.dispatcher_advisory_lock_key
     )
     assert first_leader.acquire()
+    with engine.connect() as connection:
+        assert connection.scalar(
+            text(
+                """
+                SELECT count(*)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND state = 'idle in transaction'
+                  AND query LIKE 'SELECT pg_try_advisory_lock%'
+                """
+            )
+        ) == 0
     assert not second_leader.acquire()
     first_leader.release()
     assert second_leader.acquire()

@@ -33,7 +33,10 @@ from investment_manager.scheduling.models import (
     trigger_reconsideration,
     trigger_rule_value,
 )
-from investment_manager.scheduling.repository import TriggerOutboxMessage
+from investment_manager.scheduling.repository import (
+    PostgresTriggerLeadership,
+    TriggerOutboxMessage,
+)
 from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
     terminate_superseded_trigger_coordinators,
@@ -42,6 +45,44 @@ from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.state.models import CanonicalFactRevision, FactRevisionStatus
 
 trigger_runtime = import_module("investment_manager.decision_cycle.service")
+
+
+def test_trigger_leadership_connection_does_not_hold_an_idle_transaction() -> None:
+    class Result:
+        @staticmethod
+        def scalar_one():
+            return True
+
+    class Connection:
+        def __init__(self) -> None:
+            self.isolation_level = None
+            self.execute_count = 0
+            self.closed = False
+
+        def execution_options(self, *, isolation_level):
+            self.isolation_level = isolation_level
+            return self
+
+        def execute(self, _statement):
+            self.execute_count += 1
+            return Result()
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    engine = SimpleNamespace(
+        dialect=SimpleNamespace(name="postgresql"),
+        connect=lambda: connection,
+    )
+    leadership = PostgresTriggerLeadership(engine, 1234)
+
+    assert leadership.acquire()
+    assert connection.isolation_level == "AUTOCOMMIT"
+    leadership.release()
+
+    assert connection.execute_count == 2
+    assert connection.closed
 
 
 def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
