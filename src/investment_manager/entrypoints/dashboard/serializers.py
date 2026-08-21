@@ -12,6 +12,7 @@ from decimal import Decimal
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
+    AssessmentRecord,
     CycleRow,
     EquityWindow,
     WorldEvent,
@@ -20,6 +21,7 @@ from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.models import Order
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
+from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.legacy.models import (
     AnalysisProposal,
@@ -64,6 +66,44 @@ def cycle_detail(facts: CycleFacts) -> dict:
         "risk_checks": _risk_checks(facts.risk_decision),
         "action": _action(facts.intent, facts.order),
         "snapshot": snapshot(facts.panel),
+    }
+
+
+def assessment_row(record: AssessmentRecord) -> dict:
+    assessment = record.assessment
+    directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
+    return {
+        "assessment_id": assessment.assessment_id,
+        "at": fmt.iso(assessment.available_at),
+        "scope": assessment.analysis_scope,
+        "summary": _assessment_summary(assessment),
+        "mechanism": assessment.market_mechanism,
+        "directional_view_count": len(directional),
+        "view_count": len(assessment.views),
+    }
+
+
+def assessment_detail(record: AssessmentRecord) -> dict:
+    assessment = record.assessment
+    outcomes = {(item.asset, item.horizon_minutes): item for item in record.outcomes}
+    return {
+        **assessment_row(record),
+        "as_of": fmt.iso(assessment.as_of),
+        "views": [
+            {
+                "asset": view.asset,
+                "horizon_minutes": view.horizon_minutes,
+                "direction": view.direction,
+                "already_priced": view.already_priced,
+                "uncertainty": view.uncertainty,
+                "evidence_count": len(view.evidence_ids),
+                "invalidation_conditions": list(view.invalidation_conditions),
+                "outcome": _assessment_outcome(outcomes.get((view.asset, view.horizon_minutes))),
+            }
+            for view in assessment.views
+        ],
+        "contradictions": list(assessment.contradictions),
+        "data_gaps": list(assessment.data_gaps),
     }
 
 
@@ -203,6 +243,32 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 
 # --- internals -----------------------------------------------------------
+def _assessment_summary(assessment) -> str:
+    directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
+    if not directional:
+        return "已分析 · 暂无可靠方向倾向"
+    direction_labels = {"UP": "看涨", "DOWN": "看跌"}
+    views = " · ".join(
+        f"{view.asset} {view.horizon_minutes}m "
+        f"{direction_labels.get(view.direction, view.direction)}"
+        for view in directional
+    )
+    return f"已分析 · {views}"
+
+
+def _assessment_outcome(outcome: AssessmentViewOutcome | None) -> dict | None:
+    if outcome is None:
+        return None
+    return {
+        "status": outcome.status,
+        "market_return_bps": fmt.money(outcome.market_return_bps),
+        "directional_return_bps": fmt.money(outcome.directional_return_bps),
+        "direction_correct": outcome.direction_correct,
+        "reason_code": outcome.reason_code,
+        "settled_at": fmt.iso(outcome.settled_at),
+    }
+
+
 def _confidence(proposal: AnalysisProposal | None) -> float | None:
     return None if proposal is None else float(proposal.confidence)
 

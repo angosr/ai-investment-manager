@@ -19,6 +19,8 @@ from investment_manager.execution.reconciliation.engine import ReconciliationRep
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.context.settlement import AssessmentViewOutcome
+from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
     assessment_view_outcomes,
     codex_account_capacity,
@@ -83,6 +85,14 @@ class CycleRow:
     reason_code: str
     proposal: AnalysisProposal | None
     intent: TradeIntent | None
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentRecord:
+    """One current ContextAssessment and its independently settled views."""
+
+    assessment: ContextAssessment
+    outcomes: tuple[AssessmentViewOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +211,57 @@ class DashboardReader:
 
     def get_cycle(self, cycle_id: str) -> CycleFacts | None:
         return self._ledger.get(cycle_id)
+
+    def list_assessments(
+        self,
+        *,
+        before: datetime | None,
+        limit: int,
+    ) -> list[AssessmentRecord]:
+        query = (
+            select(context_assessments.c.payload)
+            .order_by(
+                context_assessments.c.available_at.desc(),
+                context_assessments.c.assessment_id.desc(),
+            )
+            .limit(limit)
+        )
+        if before is not None:
+            query = query.where(context_assessments.c.available_at < before)
+        with self._engine.connect() as connection:
+            payloads = connection.execute(query).scalars().all()
+        return [
+            AssessmentRecord(assessment=ContextAssessment.model_validate(payload))
+            for payload in payloads
+        ]
+
+    def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
+        with self._engine.connect() as connection:
+            assessment_payload = connection.execute(
+                select(context_assessments.c.payload).where(
+                    context_assessments.c.assessment_id == assessment_id
+                )
+            ).scalar_one_or_none()
+            if assessment_payload is None:
+                return None
+            outcome_payloads = (
+                connection.execute(
+                    select(assessment_view_outcomes.c.payload)
+                    .where(assessment_view_outcomes.c.assessment_id == assessment_id)
+                    .order_by(
+                        assessment_view_outcomes.c.asset,
+                        assessment_view_outcomes.c.horizon_minutes,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return AssessmentRecord(
+            assessment=ContextAssessment.model_validate(assessment_payload),
+            outcomes=tuple(
+                AssessmentViewOutcome.model_validate(payload) for payload in outcome_payloads
+            ),
+        )
 
     # --- 世界事件时间线 ---------------------------------------------------
     def list_events(self, *, before: datetime | None, limit: int) -> list[WorldEvent]:

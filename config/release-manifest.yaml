@@ -23,7 +23,7 @@ component_versions:
   - [temporal, temporal-analysis-v1]
   - [market_data, binance-public-shadow-v4]
   - [shadow, shadow-simulation-v1]
-  - [information, information-intake-v10]
+  - [information, information-intake-v11]
   - [pipeline, off-pipeline-v6]
   - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]

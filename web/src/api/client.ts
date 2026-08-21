@@ -2,6 +2,8 @@
 
 import type {
   Accounts,
+  AssessmentRecordDetail,
+  AssessmentRecordRow,
   CapitalAction,
   CapitalOverview,
   CycleDetail,
@@ -30,6 +32,14 @@ export const api = {
     getJson<{ cycles: CycleRow[] }>("/api/assessment/cycles?limit=100"),
   assessmentCycle: (id: string) =>
     getJson<CycleDetail>(`/api/assessment/cycles/${encodeURIComponent(id)}`),
+  assessmentRecords: () =>
+    getJson<{ assessments: AssessmentRecordRow[] }>(
+      "/api/assessment/records?limit=100",
+    ),
+  assessmentRecord: (id: string) =>
+    getJson<AssessmentRecordDetail>(
+      `/api/assessment/records/${encodeURIComponent(id)}`,
+    ),
   cycles: () => getJson<{ cycles: CycleRow[] }>("/api/cycles"),
   cycle: (id: string) => getJson<CycleDetail>(`/api/cycles/${encodeURIComponent(id)}`),
   events: () => getJson<{ events: WorldEvent[] }>("/api/events"),

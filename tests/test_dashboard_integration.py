@@ -18,12 +18,18 @@ from investment_manager.entrypoints.dashboard.app import create_app
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.execution.models import ExitReason
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.models import (
+    AssessmentUncertainty,
+    ContextAssessment,
+    ContextView,
+    PricedState,
+)
 from investment_manager.forecast.tables import codex_runs, context_assessments
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.models import DecisionOutcome
+from investment_manager.legacy.models import DecisionOutcome, DirectionalView
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     decision_outcomes,
@@ -59,11 +65,55 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assessment_url = f"sqlite+pysqlite:///{tmp_path / 'assessment.db'}"
     primary_engine = create_engine(primary_url)
     create_schema(primary_engine)
-    _archive_engine, result = _seed_cycle(
+    archive_engine, result = _seed_cycle(
         app_config,
         replay_input,
         database_url=assessment_url,
     )
+    assessment = ContextAssessment(
+        assessment_id="context-assessment-dashboard",
+        analysis_scope="primary-portfolio",
+        mandate_version="dashboard-test-mandate-v1",
+        as_of=datetime(2026, 8, 18, 12, tzinfo=UTC),
+        available_at=datetime(2026, 8, 18, 12, 0, 10, tzinfo=UTC),
+        analysis_behavior_hash="b" * 64,
+        decision_packet_hash="c" * 64,
+        trigger_ids=("dashboard-trigger",),
+        market_mechanism="宏观事实尚不足以形成可靠的短期方向判断。",
+        views=(
+            ContextView(
+                asset="BTC",
+                horizon_minutes=60,
+                direction=DirectionalView.UNCERTAIN,
+                already_priced=PricedState.UNKNOWN,
+                uncertainty=AssessmentUncertainty.HIGH,
+                invalidation_conditions=("出现新的可靠方向证据",),
+            ),
+        ),
+        data_gaps=("缺少可靠方向证据",),
+    )
+    with archive_engine.begin() as connection:
+        connection.execute(
+            insert(decision_packets).values(
+                packet_id="dashboard-assessment-packet",
+                analysis_scope=assessment.analysis_scope,
+                as_of=assessment.as_of,
+                policy_version="dashboard-packet-v1",
+                content_hash=assessment.decision_packet_hash,
+                payload={},
+            )
+        )
+        connection.execute(
+            insert(context_assessments).values(
+                assessment_id=assessment.assessment_id,
+                packet_id="dashboard-assessment-packet",
+                analysis_scope=assessment.analysis_scope,
+                available_at=assessment.available_at,
+                analysis_behavior_hash=assessment.analysis_behavior_hash,
+                view_count=len(assessment.views),
+                payload=assessment.model_dump(mode="json"),
+            )
+        )
 
     application = create_app(
         app_config,
@@ -79,15 +129,22 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
             return await asyncio.gather(
                 client.get("/api/assessment/cycles"),
                 client.get(f"/api/assessment/cycles/{result.cycle_id}"),
+                client.get("/api/assessment/records"),
+                client.get(f"/api/assessment/records/{assessment.assessment_id}"),
                 client.get("/api/capital/activity"),
             )
 
-    rows, detail, capital_rows = asyncio.run(read_endpoints())
+    rows, detail, assessment_rows, assessment_detail, capital_rows = asyncio.run(read_endpoints())
 
     assert rows.status_code == 200
     assert [item["cycle_id"] for item in rows.json()["cycles"]] == [result.cycle_id]
     assert detail.status_code == 200
     assert detail.json()["cycle_id"] == result.cycle_id
+    assert assessment_rows.status_code == 200
+    assert assessment_rows.json()["assessments"][0]["assessment_id"] == (assessment.assessment_id)
+    assert assessment_detail.status_code == 200
+    assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
+    assert assessment_detail.json()["views"][0]["outcome"] is None
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": []}
 
@@ -171,12 +228,8 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
     create_schema(engine)
     config = base_app_config.model_copy(
         update={
-            "assessment": base_app_config.assessment.model_copy(
-                update={"enabled": True}
-            ),
-            "codex_runtime": base_app_config.codex_runtime.model_copy(
-                update={"enabled": True}
-            ),
+            "assessment": base_app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": base_app_config.codex_runtime.model_copy(update={"enabled": True}),
         }
     )
     now = datetime(2026, 8, 21, 9, tzinfo=UTC)
@@ -228,8 +281,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                 available_at=completed_at,
                 analysis_behavior_hash=behavior_hash,
                 view_count=sum(
-                    len(asset.horizons_minutes)
-                    for asset in config.assessment.mandate.assets
+                    len(asset.horizons_minutes) for asset in config.assessment.mandate.assets
                 ),
                 payload={},
             )

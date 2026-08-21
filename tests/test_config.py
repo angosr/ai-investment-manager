@@ -30,7 +30,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "carry-capital-shadow-v8"
     assert config.temporal.namespace == "shadow-capital-20260821-v8"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v10"
+    assert config.information.version == "information-intake-v11"
     assert config.information.normalizer_version == "trendradar-collector-v7"
     assert config.decision_state.version == "portfolio-state-v2"
     assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"

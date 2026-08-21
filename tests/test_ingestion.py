@@ -144,6 +144,38 @@ def test_newsnow_fast_source_parses_millisecond_and_iso_timestamps() -> None:
     assert [item.rank for item in items] == [1, 1]
 
 
+def test_newsnow_bounds_oversized_external_text_without_losing_the_item() -> None:
+    observed_at = datetime(2026, 8, 18, 23, 15, tzinfo=UTC)
+    original_title = "Bitcoin " + "x" * 21_000
+    source = NewsNowSource(
+        FakeNewsNowTransport(
+            {
+                "mktnews-flash": {
+                    "status": "success",
+                    "id": "mktnews-flash",
+                    "items": [
+                        {
+                            "title": original_title,
+                            "pubDate": "2026-08-18T23:14:08Z",
+                            "url": "https://example.invalid/" + "u" * 3_000,
+                        }
+                    ],
+                }
+            }
+        ),
+        sources=("mktnews-flash",),
+        maximum_age_seconds=300,
+        clock=lambda: observed_at,
+    )
+
+    item = source.read(observed_at=observed_at)[0]
+
+    assert len(item.title) == 1_000
+    assert len(item.body) == 20_000
+    assert item.url is not None and len(item.url) == 2_000
+    assert item.source_item_id
+
+
 def test_newsnow_fast_source_rejects_future_event_time() -> None:
     observed_at = datetime(2026, 8, 18, 23, 15, tzinfo=UTC)
     source = NewsNowSource(
@@ -245,9 +277,7 @@ def test_sql_event_store_keeps_world_facts_visible_across_pipeline_releases() ->
     assert not new_release.visible(symbol="ETHUSDT", as_of=observed_at)
 
     with engine.connect() as connection:
-        pipelines = tuple(
-            connection.scalars(select(analysis_trigger_events.c.pipeline_id))
-        )
+        pipelines = tuple(connection.scalars(select(analysis_trigger_events.c.pipeline_id)))
     assert pipelines == ("pipeline-v1",)
 
 
@@ -599,8 +629,7 @@ def test_v7_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
         event_time=observed_at,
         observed_at=observed_at,
         title=(
-            "SEC filings show Cerebras executive plans to sell "
-            "$153.19 million of company shares"
+            "SEC filings show Cerebras executive plans to sell $153.19 million of company shares"
         ),
         rank=1,
     )

@@ -90,9 +90,10 @@ Capital Release 不把旧 AnalysisCycle 当成当前资本决策。主列默认�
 账户权益、现金、费用后 PnL、回撤、当前持仓、最新决策与非终态执行。预测计数、主机资源和账号状态
 不在 Capital 首页争夺注意力。
 
-主列另有两个明确分层的标签：历史 AI 判断来自可选的独立只读 Assessment 数据库，只用于回看分析
-及当时信息快照，不计入当前 Capital 绩效；世界事件仍来自当前事实库。两库不得按时间拼成同一条
-资本链，也不得从旧判断推断当前仓位或收益。
+主列另有两个明确分层的标签：AI 分析来自可选的独立只读 Assessment 数据库，把现役
+`ContextAssessment` 与仍可追溯的旧 `AnalysisCycle` 按可用时间合并展示；两类记录保持各自详情契约，
+不伪装成 Capital 行动，也不计入当前 Capital 绩效。世界事件仍来自当前事实库。两库不得按时间拼成
+同一条资本链，也不得从 AI 判断推断当前仓位或收益。
 
 ---
 
@@ -268,6 +269,7 @@ investment-manager dashboard-service \
 | `/api/capital` | 当前产品账户、最新资本决策、风险、执行与费用后绩效 |
 | `/api/capital/activity` | 按 TriggerBatch cause 读取不可变 Capital 行动记录 |
 | `/api/assessment/cycles[/{cycle_id}]` | 可选的独立只读历史 AI 判断档案 |
+| `/api/assessment/records[/{assessment_id}]` | 现役 `ContextAssessment` 及各时域结算结果 |
 | `/api/stream` | SSE 变更信号（§6） |
 
 ---

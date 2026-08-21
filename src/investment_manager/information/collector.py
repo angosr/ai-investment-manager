@@ -26,6 +26,17 @@ from investment_manager.kernel.types import FrozenModel
 logger = logging.getLogger(__name__)
 
 
+def _bounded_external_text(value: Any, *, maximum_length: int) -> str:
+    """Bound untrusted source text before constructing strict internal facts."""
+
+    return str(value).strip()[:maximum_length]
+
+
+def _bounded_external_url(value: Any) -> str | None:
+    bounded = _bounded_external_text(value, maximum_length=2_000) if value else ""
+    return bounded or None
+
+
 class RawIntelligenceItem(FrozenModel):
     source_item_id: str
     source: str
@@ -118,7 +129,8 @@ class TrendRadarMcpSource:
         for raw in response:
             if not isinstance(raw, dict):
                 raise ValueError("TrendRadar 新闻条目必须是对象")
-            title = str(raw.get("title", "")).strip()
+            original_title = str(raw.get("title", "")).strip()
+            title = _bounded_external_text(original_title, maximum_length=1_000)
             platform = str(raw.get("platform", "unknown")).strip() or "unknown"
             timestamp = str(raw.get("timestamp", "")).strip()
             try:
@@ -128,7 +140,9 @@ class TrendRadarMcpSource:
             except ValueError as exc:
                 raise ValueError("TrendRadar timestamp 格式非法") from exc
             event_time = event_time.astimezone(UTC)
-            source_item_id = stable_id("trendradar_item", platform, title, event_time.isoformat())
+            source_item_id = stable_id(
+                "trendradar_item", platform, original_title, event_time.isoformat()
+            )
             items.append(
                 RawIntelligenceItem(
                     source_item_id=source_item_id,
@@ -137,8 +151,11 @@ class TrendRadarMcpSource:
                     event_time=event_time,
                     observed_at=observed_at,
                     title=title,
-                    body=title,
-                    url=raw.get("url") or raw.get("mobileUrl") or None,
+                    body=_bounded_external_text(
+                        original_title,
+                        maximum_length=20_000,
+                    ),
+                    url=_bounded_external_url(raw.get("url") or raw.get("mobileUrl")),
                     rank=int(raw["rank"]) if raw.get("rank") is not None else None,
                 )
             )
@@ -208,9 +225,13 @@ class NewsNowSource:
             for rank, raw in enumerate(response["items"], start=1):
                 if not isinstance(raw, dict):
                     raise ValueError("NewsNow 新闻条目必须是对象")
-                title = str(raw.get("title", "")).strip()
-                if not title:
+                original_title = str(raw.get("title", "")).strip()
+                if not original_title:
                     raise ValueError("NewsNow 新闻标题不能为空")
+                title = _bounded_external_text(
+                    original_title,
+                    maximum_length=1_000,
+                )
                 event_time = self._event_time(raw.get("pubDate"))
                 if event_time > actual_observed_at:
                     raise ValueError("NewsNow pubDate 晚于实际观测时间")
@@ -219,7 +240,7 @@ class NewsNowSource:
                 source_item_id = stable_id(
                     "trendradar_item",
                     source_id,
-                    title,
+                    original_title,
                     event_time.isoformat(),
                 )
                 items.append(
@@ -230,8 +251,11 @@ class NewsNowSource:
                         event_time=event_time,
                         observed_at=actual_observed_at,
                         title=title,
-                        body=title,
-                        url=raw.get("url") or raw.get("mobileUrl") or None,
+                        body=_bounded_external_text(
+                            original_title,
+                            maximum_length=20_000,
+                        ),
+                        url=_bounded_external_url(raw.get("url") or raw.get("mobileUrl")),
                         rank=rank,
                     )
                 )

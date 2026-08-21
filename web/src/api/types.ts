@@ -72,6 +72,39 @@ export interface CapitalAction {
   order_count: number;
 }
 
+export interface AssessmentRecordRow {
+  assessment_id: string;
+  at: string;
+  scope: string;
+  summary: string;
+  mechanism: string;
+  directional_view_count: number;
+  view_count: number;
+}
+
+export interface AssessmentRecordDetail extends AssessmentRecordRow {
+  as_of: string;
+  views: {
+    asset: string;
+    horizon_minutes: number;
+    direction: "UP" | "DOWN" | "UNCERTAIN";
+    already_priced: string;
+    uncertainty: string;
+    evidence_count: number;
+    invalidation_conditions: string[];
+    outcome: {
+      status: string;
+      market_return_bps: string | null;
+      directional_return_bps: string | null;
+      direction_correct: boolean | null;
+      reason_code: string;
+      settled_at: string;
+    } | null;
+  }[];
+  contradictions: string[];
+  data_gaps: string[];
+}
+
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";
 
 export interface CycleRow {

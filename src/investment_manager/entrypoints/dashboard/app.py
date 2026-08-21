@@ -79,9 +79,7 @@ def create_app(
             async def query(symbol: str) -> dict:
                 workflow_id = coordinator_workflow_id(symbol, config.pipeline.version)
                 try:
-                    status = await temporal_client.get_workflow_handle(workflow_id).query(
-                        "status"
-                    )
+                    status = await temporal_client.get_workflow_handle(workflow_id).query("status")
                 except Exception as exc:
                     return {"symbol": symbol, "error": type(exc).__name__}
                 return {"symbol": symbol, **status}
@@ -156,6 +154,30 @@ def create_app(
         if facts is None:
             return _json({"detail": "cycle not found"}, status_code=404)
         return _json(ser.cycle_detail(facts))
+
+    async def assessment_records(request: Request) -> JSONResponse:
+        if assessment_reader is None:
+            return _json({"assessments": []})
+        rows = await run_in_threadpool(
+            assessment_reader.list_assessments,
+            before=_parse_before(request),
+            limit=_parse_limit(request),
+        )
+        return _json({"assessments": [ser.assessment_row(record) for record in rows]})
+
+    async def assessment_record_detail(request: Request) -> JSONResponse:
+        if assessment_reader is None:
+            return _json(
+                {"detail": "assessment archive is not configured"},
+                status_code=404,
+            )
+        record = await run_in_threadpool(
+            assessment_reader.get_assessment,
+            request.path_params["assessment_id"],
+        )
+        if record is None:
+            return _json({"detail": "assessment not found"}, status_code=404)
+        return _json(ser.assessment_detail(record))
 
     async def cycles(request: Request) -> JSONResponse:
         before = _parse_before(request)
@@ -256,6 +278,11 @@ def create_app(
         Route(
             "/api/assessment/cycles/{cycle_id}",
             assessment_cycle_detail,
+        ),
+        Route("/api/assessment/records", assessment_records),
+        Route(
+            "/api/assessment/records/{assessment_id}",
+            assessment_record_detail,
         ),
         Route("/api/stream", stream),
     ]
