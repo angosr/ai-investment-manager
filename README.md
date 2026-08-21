@@ -20,7 +20,7 @@
 - 止损、保护失败紧急退出、净收益、费用、MFE/MAE 与持有时间归因。
 - 事务型事实仓储、统一指标、SQLite 快速测试和 PostgreSQL 契约测试。
 - 固定回放样本，可验证同一周期不会重复记账或重复下单。
-- `PROPOSE` 管线：AI 与程序策略独立产出候选；AI 失败只移除本轮 AI 候选，不阻塞独立程序候选；未校准候选的毛优势固定为零，只积累 CandidateOutcome，任何 AI 结果仍必须通过确定性校验、校准、合成、频率和风控。
+- 迁移期 `PROPOSE` 回放管线：保留历史 CandidateOutcome 和恢复验证能力，但已退出当前 Trigger 主线；新能力不得继续扩展这条旧链。
 - 不可变 Codex 运行包、固定 JSON Schema、严格 App Server 事件校验，以及每次调用前对版本化原生 CLI 的版本与 SHA-256 双重检查。
 - 可扩展的目录同名显式白名单 Router：官方 App Server 额度探测、最紧张额度窗口计算、数据库单并发租约、跨批次瞬时故障冷却和受限故障切换；冷却到期必须复探成功，不能猜测恢复。
 - 账号切换只改变一次性认证目录；不扫描目录、不由 Python 读取 `auth.json`、不继承账号配置或 API Key/Access Token。
@@ -34,7 +34,7 @@
 - Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
 - 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
-- Temporal 父 `AnalysisCycleWorkflow` 与稳定 ID 子 `ExecutionWorkflow`：决策事务原子写入风险占用、不可变 `ExecutionRequest` 和 `EXECUTION_PENDING`，执行事务原子写入订单、成交、账户、风险终态和持仓；时间跳跃、崩溃重试及真实本地服务端均已验证。
+- `DecisionPacket → ContextAssessmentWorkflow` 新链：每个 Packet 的指定视图、数量和可引用证据进入动态 Structured Output 约束，Codex 失败关闭且没有交易权限；旧 `AnalysisCycleWorkflow` 已退出 Trigger 调度，只保留迁移期回放代码。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
 - `OutcomeEvaluationWorkflow`：固定窗口和结算宽限期后聚合实际运行周期与权威逐笔结果；未决持仓保持 `INCOMPLETE`，完整报告给出费用后净收益、Profit Factor、最大回撤和永不交易基线增量。
@@ -49,7 +49,7 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成真实 Governor 冒烟，以及由独立可信环境提供的校准制品与各阶段评估器。私有 Challenger 正在运行真实 Codex Analyst、多账号独占租约和严格失败关闭；每个成功 Proposal 即使 `NO_ACTION` 也在同一次调用中冻结 60 与 240 分钟两项不可交易方向预测，预测起点和参考价以 Codex 完成时已经可见的成交为准，各自独立到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选，盲测尾段没有因失败候选而查询。当前 TriggerPlan 将无事件兜底调整为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束。数据库 Champion 仍保持旧版本，Challenger 只能经独立评估和人工发布；Spot Testnet 订单 Worker 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成通过样本外门禁的 ProgramBase、`CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan` 生产接线，以及由独立可信环境提供的校准制品。私有 Challenger 正在运行真实 Codex ContextAssessment、多账号独占租约和严格失败关闭；每次成功 Assessment 同时冻结 BTC/ETH 的 60 与 240 分钟不可交易视图，以 Codex 完成时刻作为真实可用时间并分别到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选。当前 TriggerPlan 的无事件兜底为每 60 分钟一次；资讯、市场冲击和主 Agent 立即/定时触发不变，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束，不设置 AI 小时预算。尚无通过校准和组合门禁的 Forecast，因此当前保持 10,000 USDT 现金、无持仓；Spot Testnet 交易闭环与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
@@ -190,7 +190,7 @@ QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@12
 
 测试会重建名称包含 `quant_core_test` 的专用数据库 Schema，禁止把生产数据库 URL 传给该测试。
 
-### 运行 Temporal Mock 闭环
+### 回放旧 Temporal Mock 闭环（迁移期诊断）
 
 本地 Compose 使用固定摘要的 Temporal `auto-setup` 和独立 PostgreSQL，仅用于开发与验收：
 
@@ -210,7 +210,7 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
   --input fixtures/replay/btc_uptrend.json
 ```
 
-`submit-analysis` 是诊断入口，不替代生产触发服务。模拟 Worker 只允许 `MOCK`/`SHADOW`；`PROPOSE` 必须显式装配经过隔离验收的 Codex Analyst，其他情况失败关闭。
+`temporal-worker` 与 `submit-analysis` 只用于旧 AnalysisCycle 的迁移回放和恢复测试，不属于现役 Shadow 服务，也不替代生产 Trigger/Assessment 链；不得以此入口接入新策略或恢复旧生产分支。
 
 ### 运行实时 Shadow 角色
 
@@ -234,13 +234,10 @@ QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   market-stream --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
-  temporal-worker --config config/investment-manager.shadow.yaml \
+  assessment-worker --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   trigger-service --config config/investment-manager.shadow.yaml \
-  --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
-  lifecycle-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   reconciliation-service --config config/investment-manager.shadow.yaml \
@@ -250,7 +247,7 @@ QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 ```
 
-七个角色共享同一份 ReleaseManifest 但权限可分别收窄。每个长期进程启动时都核对完整规范化配置哈希、类型化组件版本、实际 Git 提交和运行 checkout 洁净度；任一数值阈值、账号白名单或源码漂移都失败关闭。Codex 运行包同时记录精确 `code_version` 与配置哈希，不接受版本字符串相同但内容已变的配置。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
+六个现役角色共享同一份 ReleaseManifest 但权限可分别收窄。旧 `temporal-worker` 与 `lifecycle-service` 不在当前无交易权限的 Assessment Shadow 中启动；前者没有主线消费者，后者只有在新 TradePlan 执行链获得权限并可能产生持仓后才需要。每个长期进程启动时都核对完整规范化配置哈希、类型化组件版本、实际 Git 提交和运行 checkout 洁净度；任一数值阈值、账号白名单或源码漂移都失败关闭。Codex 运行包同时记录精确 `code_version` 与配置哈希，不接受版本字符串相同但内容已变的配置。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
 
 ### 运行 Binance Spot Testnet
 
@@ -265,7 +262,7 @@ set -a; . ./.env; set +a
   --symbol BTCUSDT --config config/investment-manager.testnet.yaml
 ```
 
-`order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。它通过后，才由进程监督器用 Testnet 配置和 `release-manifest.testnet-v2.yaml` 启动与 Shadow 相同的七个角色。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前本机 audit 返回 Binance `401/-2015`，所以提交环境门禁仍为 `false`，未启动 Testnet Worker。
+`order-test` 只验证签名、规则和 TRADE 权限，不进入撮合引擎。即使它通过，也不能在新 `Forecast → Portfolio → Risk → TradePlan → Execution` 生产链接通并完成回放、恢复和独立模拟盘验收前启动交易 Worker。首次对账允许用远端权威账户作为空本地事实库的冷启动基线；此后任何余额、仓位、订单差异或查询未知都会冻结新增风险。当前提交环境门禁仍为 `false`，未启动 Testnet 交易 Worker。
 
 ### 运行观测台（只读 Web）
 

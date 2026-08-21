@@ -32,9 +32,9 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
 
 ## Temporal 编排
 
-`AnalysisCycleWorkflow` 是分析周期的父流程状态所有者。Decision Activity 只运行到确定性风控：批准时以单一数据库事务写入风险占用、不可变 `ExecutionRequest` 和 `EXECUTION_PENDING`。父流程随后以 `execution_id` 启动并等待唯一的 `ExecutionWorkflow`；子流程的 Execution Activity 才能执行撮合与对账，并以另一单一事务提交订单、成交、账户快照、风险终态和持仓生命周期。旧的分析/下单一体化 Activity 已删除。
+当前主线由 `TriggerCoordinatorWorkflow` 持有触发计划、pending、合并和 single-flight 状态，由 `ContextAssessmentWorkflow` 对一个冻结 `DecisionPacket` 执行无交易权限的 AI 判断。PostgreSQL 只保存 Trigger、Packet、Assessment 和评价事实，不复制 Workflow 运行状态。`AnalysisCycleWorkflow → ExecutionWorkflow` 属于待删除旧链，已经退出 Trigger 调度；现役 Assessment Shadow 不启动它的 `temporal-worker`。
 
-PostgreSQL 的 `execution_requests` 是业务交接事实，不是第二套 Workflow 状态机；Temporal 历史仍是重试、父子关系和流程终态的唯一来源。`analysis_workflow_runs` 已由迁移删除。待执行请求必须保持 `PENDING` 和 `ACTIVE` 风险占用，禁止运维人员直接改表“修复”；应先查询确定性 `client_order_id` 的交易所结果，再恢复或重置同一 Execution Workflow。
+新交易链完成后，`execution_requests` 仍只能是业务交接事实，Temporal 历史继续作为重试、父子关系和流程终态的唯一来源。任何待执行请求必须保持 `PENDING` 和 `ACTIVE` 风险占用，禁止运维人员直接改表“修复”；应先查询确定性 `client_order_id` 的交易所结果，再恢复同一 Execution Workflow。
 
 ExecutionWorkflow 的主重试耗尽或交易截止已过后会自动进入终态恢复循环：已有订单则完成入账，无订单且信号过期才释放预留，查询不确定时继续持有预算。禁止另加基于 `expires_at` 的 SQL 清扫器。账户日亏/回撤触发的持久 Kill Switch 只能人工解除：
 
@@ -47,14 +47,15 @@ ExecutionWorkflow 的主重试耗尽或交易截止已过后会自动进入终�
 
 该命令以最后观测权益建立新高水位，不会覆盖配置中的静态 `risk.kill_switch`；执行前必须先确认全部持仓盯市价格、最新对账和未决订单。
 
-本地启动顺序：
+本地验证 Assessment Workflow：
 
 ```bash
 docker compose --profile quant up -d postgres temporal
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
   .venv/bin/alembic upgrade head
 QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
-  .venv/bin/investment-manager temporal-worker --config config/investment-manager.yaml
+  .venv/bin/investment-manager assessment-worker --config '<已启用且冻结的 Assessment 配置>' \
+  --release-manifest '<匹配的冻结 ReleaseManifest>'
 ```
 
 必须由进程监督器运行 Worker；CLI 内没有自制无限循环、cron 或第二套租约恢复逻辑。Compose 的 `auto-setup` 与开发动态配置只用于本地，不是生产 Temporal 部署模板。生产环境应使用受维护的 Temporal 集群、独立凭据/TLS、备份和服务端升级流程。
@@ -90,7 +91,7 @@ PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager challenger-audit
   --project-root '<冻结 checkout>'
 ```
 
-该命令要求真实 Codex `PROPOSE`、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex。
+该命令要求真实 Codex 分析路径启用、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex。
 
 Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角色协作，不使用仓库脚本承载状态：
 
@@ -99,8 +100,9 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；Dispatcher 不实现业务防抖或批处理。
 - Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
-- `temporal-worker`：执行程序策略、信息面板、频率、风控和模拟撮合；不持有 Binance Secret。
-- `lifecycle-service`：发现未关闭持仓，运行生命周期 Workflow 和模拟退出 Activity。
+- `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
+- `temporal-worker` 是旧 AnalysisCycle 的迁移期诊断入口，不属于现役 Shadow 服务；主线不得重新向它派发 Trigger。
+- `lifecycle-service` 仅在新 TradePlan 执行链接通且可能产生持仓后启动；空仓 Assessment Shadow 不运行无消费者的生命周期进程。
 - `reconciliation-service`：按稳定时间桶运行主动对账；从独立 Mock 交易所账本和业务事实分别重建状态，报告非 `MATCHED` 或过期时冻结新增风险。
 - `outcome-evaluation-service`：唯一的前瞻结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，并分别结算不可交易的候选反事实、旧 Proposal 方向预测和新 `ContextAssessment` view；不为新判断另建重复服务。每项方向判断以真实可用时间和当时可见成交为共同起点并独立到期，`UNCERTAIN` 记为弃权而非命中，缺少时点行情记为不可评分。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 
@@ -209,7 +211,7 @@ Router 不扫描主目录，也不由 Python 读取或复制 `auth.json`。额�
 
 允许换号的错误只有：明确额度耗尽、认证失效、账号相关的上游瞬时错误。换号从头执行同一不可变运行包，不恢复或拼接跨账号上下文。
 
-以下错误不在同一批次换号：超时、进程崩溃、Schema 非法、运行包哈希错误、任何工具/错误事件、stderr 和确定性提案校验失败。超时、进程崩溃和明确账号上游瞬时错误会让该账号在后续批次前进入 `transient_failure_cooldown_seconds`；冷却到期必须先成功复探官方容量才能恢复健康。Schema、运行包、工具权限和确定性校验属于输入或系统问题，不归罪于账号。失败只让本轮 Codex 结果无效：依赖该结果的候选不存在并记入失败指标，已经独立产生且单独获准的程序候选仍继续通过校准、合成、频率和风控；若没有其他合法候选，周期才是 `NO_TRADE`。`OFF` 管线不调用 Codex。
+以下错误不触发账号故障切换：超时、进程崩溃、Schema 非法、运行包哈希错误、任何工具/错误事件、stderr 和确定性业务校验失败。超时、进程崩溃和明确账号上游瞬时错误会让该账号在后续批次前进入 `transient_failure_cooldown_seconds`；冷却到期必须先成功复探官方容量才能恢复健康。Schema、运行包、工具权限和确定性校验属于输入或系统问题，不归罪于账号。ContextAssessment 可在同一不可变 Packet/Schema 上进行最多 `1 + max_account_switches` 次有界 Schema 重试，但每次都是全新无上下文调用并独立审计；耗尽后本轮正式终态为 `NO_ASSESSMENT`，不得放宽 Schema 或绕过最终语义校验。独立 ProgramBase 将来仍可按自己的证据继续，但任何 AI 失败都不能伪造 Forecast 或交易倾向。`OFF` 管线不调用 Codex。
 
 AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。所有 Producer 只能提交零毛优势和绑定自身版本的 `uncalibrated` 引用；只有发布清单冻结的 `EdgeCalibrationBook` 能按 Producer、版本、品种、方向、周期和有效期写入保守毛优势。未命中制品的候选仍进入 CandidateOutcome 事实，但在合成前以 `EDGE_CALIBRATION_MISSING` 关闭，不能到达风险或订单。测试夹具中的非零毛优势只用于覆盖执行状态机，不是部署默认值。
 
@@ -219,13 +221,13 @@ AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。�
 
 候选内冻结的 `estimated_cost_bps` 只表示该候选可归因的完整往返交易成本：手续费、点差、预期滑点、持有期资金成本，以及延迟、逆向选择和估计不确定性缓冲。模型订阅、机器、存储和人员等固定或周期运营成本不得按拍脑袋常量硬摊到每笔候选；它们在 Pipeline/组合评价窗口按真实账单来源单独扣除。真实来源尚未接入时必须明确报告运营成本缺失，不能把交易成本后的收益命名为“全部成本后收益”。
 
-`PROPOSE` 发布还要求 `temporal.worker_threads <= 已启用 Codex 账号数`。数据库租约负责跨进程互斥，Worker 并发负责进程内排队；不能依赖租约冲突把已获全局调用准入的周期降级成“账号不可用”。连续超时时先查看 `codex_runs.payload.diagnostics` 中的事件数量、最后事件、完成项类型、线程终态、`turn_started`、`turn_completed` 和完成来源；该字段不含模型正文、会话 ID 或账号内容。若完整消息已经结束且线程空闲但缺失 `turn/completed`，Runner 只允许通过同一 App Server 的 `thread/read` 读回目标 turn；thread/turn ID、`completed` 状态、完整 items、允许项类型和消息正文必须全部一致，否则仍失败关闭。没有阶段证据时不得把超时主观归因于面板长度、模型或协议，也不得直接延长硬截止。
+旧 `PROPOSE` 回放还要求 `temporal.worker_threads <= 已启用 Codex 账号数`；现役 Assessment Worker 保持单 Activity 并发。数据库租约负责跨进程互斥，Worker 并发负责进程内排队；不能依赖租约冲突把已获全局调用准入的周期降级成“账号不可用”。连续超时时先查看 `codex_runs.payload.diagnostics` 中的事件数量、最后事件、完成项类型、线程终态、`turn_started`、`turn_completed` 和完成来源；该字段不含模型正文、会话 ID 或账号内容。若完整消息已经结束且线程空闲但缺失 `turn/completed`，Runner 只允许通过同一 App Server 的 `thread/read` 读回目标 turn；thread/turn ID、`completed` 状态、完整 items、允许项类型和消息正文必须全部一致，否则仍失败关闭。没有阶段证据时不得把超时主观归因于面板长度、模型或协议，也不得直接延长硬截止。
 
 额度探测优先使用所有适用窗口和额度桶中最小剩余量。探测失败时只允许使用仍新鲜的缓存；全部过期后仅在此前已确认健康且未处于冷却的账号间保守单并发轮转。冷却账号即使计时已到也必须复探成功；首次启动无法确认健康时失败关闭，不猜测账号状态。
 
 ## 不可变运行包和审计
 
-每次 PROPOSE 分析只接受一份带哈希的运行包：规范事实 `panel.json`、实际模型输入 `analyst_prompt.md`、`output.schema.json` 和 `manifest.json`。不生成与实际输入重复的 Markdown 面板或策略摘要；账号切换不能重建或修改运行包。
+每次现役 ASSESS 分析只接受一份带哈希的运行包：`decision_packet.json`、实际模型输入 `analyst_prompt.md`、Packet 动态 `output.schema.json` 和 `manifest.json`。旧 PROPOSE 回放对应 `panel.json`，不得与新链混读。系统不生成与实际输入重复的 Markdown 面板或策略摘要；账号切换或 Schema 重试都不能重建或修改运行包。
 
 持久化审计只保留匿名 `account_id`、额度窗口、有效余量、Attempt 状态、错误分类、usage 和运行包哈希。不得保存账号路径、邮箱、Token、完整账号响应或认证文件内容。
 
