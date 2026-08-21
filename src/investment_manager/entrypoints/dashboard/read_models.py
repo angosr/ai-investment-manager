@@ -19,9 +19,14 @@ from investment_manager.execution.reconciliation.engine import ReconciliationRep
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.context.executor import (
+    AssessmentExecution,
+    AssessmentExecutionStatus,
+)
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
+    assessment_executions,
     assessment_view_outcomes,
     codex_account_capacity,
     codex_account_leases,
@@ -107,6 +112,9 @@ class AssessmentQualityStatus:
     latest_valid_at: datetime | None
     rejected_attempt_count_24h: int
     rejection_reason_codes: tuple[str, ...]
+    execution_count_24h: int = 0
+    final_success_count_24h: int = 0
+    first_attempt_success_count_24h: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,12 +337,27 @@ class DashboardReader:
                     == behavior_hash,
                 )
                 .order_by(
-                    decision_packets.c.as_of.desc(),
-                    codex_runs.c.attempt.desc(),
+                    codex_runs.c.payload["completed_at"].as_string().desc(),
                     codex_runs.c.run_id.desc(),
                 )
                 .limit(_ASSESSMENT_QUALITY_SCAN_LIMIT)
             ).all()
+            execution_payloads = tuple(
+                connection.execute(
+                    select(assessment_executions.c.payload)
+                    .where(
+                        assessment_executions.c.completed_at >= cutoff,
+                        assessment_executions.c.completed_at <= now,
+                        assessment_executions.c.analysis_behavior_hash
+                        == behavior_hash,
+                    )
+                    .order_by(
+                        assessment_executions.c.completed_at.desc(),
+                        assessment_executions.c.execution_id.desc(),
+                    )
+                    .limit(_ASSESSMENT_QUALITY_SCAN_LIMIT)
+                ).scalars()
+            )
 
         latest_valid_at = None
         for payload, available_at, row_behavior_hash in assessment_rows:
@@ -342,16 +365,61 @@ class DashboardReader:
             if row_behavior_hash == behavior_hash and latest_valid_at is None:
                 latest_valid_at = database_utc(available_at)
 
+        executions = tuple(
+            AssessmentExecution.model_validate(payload)
+            for payload in execution_payloads
+        )
+        measured = tuple(item for item in executions if not item.reused_authoritative)
+        rejected_executions = tuple(
+            item
+            for item in measured
+            if item.status == AssessmentExecutionStatus.FAILED
+        )
         rejected_attempts = [
             row for row in attempt_rows if row.error_class == "SCHEMA_INVALID"
         ]
         reason_codes = tuple(
             sorted(
                 {
-                    *("CODEX_SCHEMA_INVALID" for _ in rejected_attempts),
+                    *(item.reason_code for item in rejected_executions),
+                    *(
+                        "CODEX_SCHEMA_INVALID"
+                        for _ in rejected_attempts
+                        if not executions
+                    ),
                 }
             )
         )
+        if executions:
+            latest_execution = executions[0]
+            latest_status = latest_execution.status.value
+            if (
+                latest_status == "FAILED"
+                and latest_execution.reason_code == "CODEX_SCHEMA_INVALID"
+            ):
+                latest_status = "REJECTED"
+            return AssessmentQualityStatus(
+                latest_attempt_at=latest_execution.completed_at,
+                latest_attempt_status=latest_status,
+                latest_attempt_reason=(
+                    None
+                    if latest_execution.status == AssessmentExecutionStatus.SUCCEEDED
+                    else latest_execution.reason_code
+                ),
+                latest_valid_at=latest_valid_at,
+                rejected_attempt_count_24h=len(rejected_executions),
+                rejection_reason_codes=reason_codes,
+                execution_count_24h=len(measured),
+                final_success_count_24h=sum(
+                    item.status == AssessmentExecutionStatus.SUCCEEDED
+                    for item in measured
+                ),
+                first_attempt_success_count_24h=sum(
+                    item.status == AssessmentExecutionStatus.SUCCEEDED
+                    and item.codex_attempts == 1
+                    for item in measured
+                ),
+            )
         if not attempt_rows:
             return AssessmentQualityStatus(
                 latest_attempt_at=None,

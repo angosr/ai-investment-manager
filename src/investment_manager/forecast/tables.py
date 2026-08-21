@@ -79,6 +79,23 @@ Index(
     context_assessments.c.available_at,
 )
 
+assessment_executions = Table(
+    "assessment_executions",
+    metadata,
+    Column("execution_id", String(128), primary_key=True),
+    Column("packet_id", ForeignKey("decision_packets.packet_id"), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("source_run_id", String(128), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_assessment_executions_behavior_completed",
+    assessment_executions.c.analysis_behavior_hash,
+    assessment_executions.c.completed_at,
+)
+
 assessment_view_outcomes = Table(
     "assessment_view_outcomes",
     metadata,

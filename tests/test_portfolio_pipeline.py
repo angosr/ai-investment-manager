@@ -305,6 +305,25 @@ def test_pipeline_allocates_clamps_and_groups_one_carry_sleeve() -> None:
     assert len(result.trade_plan.groups[0].legs) == 2
 
 
+def test_pipeline_accepts_cash_target_after_an_uneconomic_forecast() -> None:
+    inputs = _inputs()
+    forecast = _forecast().model_copy(update={"conservative_gross_bps": Decimal("4")})
+    inputs["sleeves"] = (
+        PortfolioSleeveInput(
+            sleeve_id=_sleeve_id(),
+            estimated_variable_cost_bps=Decimal("5"),
+            forecast=forecast,
+        ),
+    )
+
+    result = _pipeline(enabled=True).run(**inputs)
+
+    assert result.outcome == PortfolioPipelineOutcome.PLANNED
+    assert result.target is not None and result.target.sleeves == ()
+    assert result.risk_decision is not None
+    assert result.trade_plan is not None and result.trade_plan.groups == ()
+
+
 def test_pipeline_reads_equity_and_current_exposure_only_from_account() -> None:
     inputs = _inputs(gross="1000")
     account = inputs["account"]

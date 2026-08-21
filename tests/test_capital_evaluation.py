@@ -16,6 +16,8 @@ from investment_manager.governance.models import (
 from investment_manager.kernel.identity import content_hash
 from investment_manager.settings import load_config
 
+PLAN_ID = "capital-shadow-dynamic-v1"
+
 
 def _release():
     config = load_config("config/investment-manager.shadow.yaml")
@@ -46,7 +48,7 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
     config, manifest = _release()
     start = datetime(2026, 9, 1, tzinfo=UTC)
     spec = CapitalShadowEvaluationSpec.freeze(
-        plan_id="capital-shadow-202609-v1",
+        plan_id=PLAN_ID,
         config=config,
         manifest=manifest,
         observation_start=start,
@@ -76,7 +78,7 @@ def test_capital_shadow_plan_rejects_short_or_retrospective_windows() -> None:
     config, manifest = _release()
     with pytest.raises(ValueError, match="至少需要十二个"):
         CapitalShadowEvaluationSpec.freeze(
-            plan_id="capital-shadow-too-short",
+            plan_id=PLAN_ID,
             config=config,
             manifest=manifest,
             observation_start=datetime(2026, 9, 1, tzinfo=UTC),
@@ -84,7 +86,7 @@ def test_capital_shadow_plan_rejects_short_or_retrospective_windows() -> None:
         )
 
     spec = CapitalShadowEvaluationSpec.freeze(
-        plan_id="capital-shadow-too-late",
+        plan_id=PLAN_ID,
         config=config,
         manifest=manifest,
         observation_start=datetime(2026, 9, 1, tzinfo=UTC),
@@ -100,7 +102,7 @@ def test_capital_shadow_plan_rejects_short_or_retrospective_windows() -> None:
 def test_capital_shadow_startup_requires_one_exact_preregistered_contract() -> None:
     config, manifest = _release()
     spec = CapitalShadowEvaluationSpec.freeze(
-        plan_id="capital-shadow-startup-v1",
+        plan_id=PLAN_ID,
         config=config,
         manifest=manifest,
         observation_start=datetime(2026, 9, 1, tzinfo=UTC),
@@ -139,29 +141,21 @@ def test_capital_shadow_startup_rejects_ambiguous_or_future_registration() -> No
     config, manifest = _release()
     start = datetime(2026, 9, 1, tzinfo=UTC)
     first_spec = CapitalShadowEvaluationSpec.freeze(
-        plan_id="capital-shadow-startup-first",
+        plan_id=PLAN_ID,
         config=config,
         manifest=manifest,
         observation_start=start,
         observation_end=datetime(2027, 9, 1, tzinfo=UTC),
     )
-    second_spec = first_spec.model_copy(
-        update={"plan_id": "capital-shadow-startup-second"}
-    )
     first = build_capital_shadow_evaluation_plan(
         spec=first_spec,
         registered_at=datetime(2026, 8, 21, tzinfo=UTC),
     )
-    second = build_capital_shadow_evaluation_plan(
-        spec=second_spec,
-        registered_at=datetime(2026, 8, 21, tzinfo=UTC),
-    )
-
     with pytest.raises(ValueError, match="恰好绑定一个"):
         validate_capital_shadow_evaluation_plan(
             config=config,
             manifest=manifest,
-            plans=(first, second),
+            plans=(first, first),
             started_at=datetime(2026, 8, 22, tzinfo=UTC),
         )
 

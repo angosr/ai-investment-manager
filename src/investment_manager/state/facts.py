@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from pydantic import Field, model_validator
 
-from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
 from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
@@ -217,10 +217,12 @@ def build_state_snapshot(
     facts: tuple[CanonicalFactRevision, ...],
     market_snapshot_refs: tuple[str, ...] = (),
     feature_snapshot_refs: tuple[str, ...] = (),
+    derivative_snapshot_refs: tuple[str, ...] = (),
     intelligence_event_refs: tuple[str, ...] = (),
     account_snapshot_ref: str | None = None,
     data_quality_codes: tuple[str, ...] = (),
     coverage_gap_codes: tuple[str, ...] = (),
+    information_coverage: tuple[DomainCoverageSnapshot, ...] = (),
 ) -> StateSnapshot:
     as_of = require_utc(as_of)
     built_at = require_utc(built_at)
@@ -253,6 +255,14 @@ def build_state_snapshot(
             coverage_gap_codes, name="coverage_gap_codes"
         ),
     }
+    derivative_refs = _unique_sorted(
+        derivative_snapshot_refs,
+        name="derivative_snapshot_refs",
+    )
+    if derivative_refs:
+        payload["derivative_snapshot_refs"] = derivative_refs
+    if information_coverage:
+        payload["information_coverage"] = information_coverage
     if intelligence_refs:
         payload["intelligence_event_refs"] = intelligence_refs
     digest = content_hash(payload)
@@ -547,6 +557,10 @@ def _state_identity_payload(state: StateSnapshot) -> dict:
     }
     if state.intelligence_event_refs:
         payload["intelligence_event_refs"] = state.intelligence_event_refs
+    if state.derivative_snapshot_refs:
+        payload["derivative_snapshot_refs"] = state.derivative_snapshot_refs
+    if state.information_coverage:
+        payload["information_coverage"] = state.information_coverage
     return payload
 
 

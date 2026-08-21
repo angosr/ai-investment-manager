@@ -8,6 +8,7 @@ from investment_manager.execution.planning.planner import (
 )
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.portfolio.decision import PortfolioDecisionPolicy
+from investment_manager.portfolio.models import MockCandidateAuthorization
 from investment_manager.risk.portfolio import PortfolioRiskPolicy
 
 
@@ -45,6 +46,7 @@ class CapitalPolicy(StrictConfig):
     planner: TradePlannerPolicy
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
+    mock_candidate_authorizations: tuple[MockCandidateAuthorization, ...] = ()
 
     @model_validator(mode="after")
     def capital_path_has_one_exact_instrument_scope(self):
@@ -57,4 +59,12 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital Risk 与 execution_specs 白名单必须一致")
         if self.enabled and not self.decision.enabled:
             raise ValueError("启用 Capital 时 PortfolioDecision 必须启用")
+        identities = tuple(
+            (item.producer_id, item.producer_version, item.forecast_family)
+            for item in self.mock_candidate_authorizations
+        )
+        if len(identities) > 1:
+            raise ValueError("Capital 同时只允许一个 Mock challenger")
+        if len(set(identities)) != len(identities):
+            raise ValueError("Capital Mock candidate authorization 不得重复")
         return self

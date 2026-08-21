@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 from decimal import Decimal
 from itertools import pairwise
 
+from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import FeatureSnapshot, MarketSnapshot
+from investment_manager.market.perpetual.models import (
+    DerivativeContextSnapshot,
+    FundingSettlement,
+    PerpetualMarketState,
+    PerpetualQuote,
+)
 from investment_manager.market.policy import FeaturePolicy
 
 
@@ -65,3 +73,70 @@ class FeatureEngine:
             regime=regime,
             market_age_seconds=market_age,
         )
+
+
+def build_derivative_context_snapshot(
+    *,
+    cycle_id: str,
+    asset: str,
+    spot: MarketSnapshot,
+    state: PerpetualMarketState,
+    quote: PerpetualQuote,
+    settlements: tuple[FundingSettlement, ...],
+    funding_window_hours: int,
+) -> DerivativeContextSnapshot:
+    """Project executable basis and funding history into one dense, replayable fact."""
+
+    if not 1 <= funding_window_hours <= 168:
+        raise ValueError("Funding 汇总窗口必须在 1..168 小时")
+    if state.instrument != quote.instrument or state.instrument.symbol != spot.symbol:
+        raise ValueError("衍生品状态、报价和 Spot 快照必须属于同一产品标的")
+    if spot.cycle_id != cycle_id:
+        raise ValueError("衍生品决策状态必须绑定同一 cycle")
+    if state.observed_at > spot.as_of or quote.observed_at > spot.as_of:
+        raise ValueError("衍生品决策状态不能使用 as_of 后才可见的数据")
+    window_start = spot.as_of - timedelta(hours=funding_window_hours)
+    visible = tuple(
+        item
+        for item in settlements
+        if item.instrument == state.instrument
+        and window_start <= item.funding_time < spot.as_of
+        and item.observed_at <= spot.as_of
+    )
+    if len({item.settlement_id for item in visible}) != len(visible):
+        raise ValueError("Funding 汇总不能包含重复结算")
+    rates_bps = tuple(item.funding_rate * Decimal("10000") for item in visible)
+    rate_sum = sum(rates_bps, Decimal("0")) if rates_bps else None
+    rate_mean = rate_sum / Decimal(len(rates_bps)) if rate_sum is not None else None
+    return DerivativeContextSnapshot(
+        cycle_id=cycle_id,
+        asset=asset,
+        instrument=state.instrument,
+        as_of=spot.as_of,
+        observed_at=max(state.observed_at, quote.observed_at),
+        mark_index_premium_bps=(
+            state.mark_price / state.index_price - Decimal("1")
+        )
+        * Decimal("10000"),
+        executable_short_basis_bps=(quote.bid / spot.ask - Decimal("1"))
+        * Decimal("10000"),
+        perpetual_spread_bps=(quote.ask - quote.bid)
+        / ((quote.ask + quote.bid) / Decimal("2"))
+        * Decimal("10000"),
+        last_funding_rate_bps=state.last_funding_rate * Decimal("10000"),
+        trailing_funding_rate_mean_bps=rate_mean,
+        trailing_funding_rate_sum_bps=rate_sum,
+        funding_settlement_count=len(rates_bps),
+        funding_window_hours=funding_window_hours,
+        next_funding_time=state.next_funding_time,
+        input_refs=tuple(
+            sorted(
+                {
+                    content_hash(spot),
+                    state.state_id,
+                    quote.quote_id,
+                    *(item.settlement_id for item in visible),
+                }
+            )
+        ),
+    )

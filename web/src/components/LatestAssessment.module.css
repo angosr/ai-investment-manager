@@ -15,6 +15,36 @@
   font-size: 12px;
   line-height: 1.65;
 }
+.drivers {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+.driver {
+  display: grid;
+  gap: 3px;
+  padding-left: 9px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.driver b {
+  color: var(--text);
+  font-weight: 500;
+}
+.evidence {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.evidence b {
+  color: var(--muted);
+  font-weight: 500;
+}
 .views {
   display: flex;
   flex-wrap: wrap;

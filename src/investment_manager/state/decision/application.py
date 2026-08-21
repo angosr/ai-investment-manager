@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
@@ -9,10 +9,17 @@ from typing import Protocol
 from pydantic import Field, model_validator
 
 from investment_manager.execution.account_repository import AccountSnapshotReader
-from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.coverage import SqlInformationCoverageStore
+from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
+from investment_manager.information.policy import CoverageRequirement
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.features import FeatureEngine
+from investment_manager.market.features import (
+    FeatureEngine,
+    build_derivative_context_snapshot,
+)
+from investment_manager.market.models import InstrumentId, MarketSnapshot
+from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
@@ -98,12 +105,24 @@ class DecisionPacketPreparation:
         market_source: str,
         initial_quote_balance: Decimal,
         maximum_market_age_seconds: int,
+        coverage_reader: SqlInformationCoverageStore | None = None,
+        coverage_requirements: tuple[CoverageRequirement, ...] = (),
+        perpetual_instruments: tuple[InstrumentId, ...] = (),
+        funding_history_lookback_hours: int = 24,
+        maximum_perpetual_age_seconds: int = 900,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not market_interval or not market_source:
             raise ValueError("DecisionPacket market interval/source 不能为空")
         if market_bar_window < 2 or maximum_market_age_seconds < 1:
             raise ValueError("DecisionPacket market window/age 配置非法")
+        if not 8 <= funding_history_lookback_hours <= 168:
+            raise ValueError("DecisionPacket Funding 窗口配置非法")
+        if maximum_perpetual_age_seconds < 1:
+            raise ValueError("DecisionPacket Perpetual age 配置非法")
+        perpetual_symbols = tuple(item.symbol for item in perpetual_instruments)
+        if tuple(sorted(set(perpetual_symbols))) != perpetual_symbols:
+            raise ValueError("DecisionPacket perpetual_instruments 必须按 symbol 唯一且排序")
         self._market_store = market_store
         self._account_reader = account_reader
         self._event_reader = event_reader
@@ -116,6 +135,13 @@ class DecisionPacketPreparation:
         self._market_source = market_source
         self._initial_quote_balance = initial_quote_balance
         self._maximum_market_age_seconds = maximum_market_age_seconds
+        self._coverage_reader = coverage_reader
+        self._coverage_requirements = coverage_requirements
+        self._perpetual_by_symbol = {
+            item.symbol: item for item in perpetual_instruments
+        }
+        self._funding_history_lookback_hours = funding_history_lookback_hours
+        self._maximum_perpetual_age_seconds = maximum_perpetual_age_seconds
         self._clock = clock
 
     def prepare(
@@ -127,8 +153,6 @@ class DecisionPacketPreparation:
         intelligence_evidence_ids: tuple[str, ...] = (),
         market_shock_symbols: tuple[str, ...] = (),
         review_requests: tuple[PacketReviewRequest, ...] = (),
-        active_hypotheses: tuple[str, ...] = (),
-        previous_assessment_refs: tuple[str, ...] = (),
         previous_context: PacketPreviousContext | None = None,
     ) -> DecisionPacketPreparationResult:
         if not analysis_id:
@@ -217,12 +241,28 @@ class DecisionPacketPreparation:
         if stale_symbols:
             raise ValueError("DecisionPacket 行情已过期: " + ", ".join(stale_symbols))
         feature_snapshots = tuple(self._features.compute(market) for market in markets)
+        derivatives = self._derivative_context(
+            analysis_id=analysis_id,
+            as_of=as_of,
+            mandate=mandate,
+            markets=markets,
+        )
         account = self._account_reader.account_for_cycle(
             cycle_id=analysis_id,
             as_of=as_of,
             initial_quote_balance=self._initial_quote_balance,
         )
         data_quality_codes = () if account.reconciled else ("ACCOUNT_UNRECONCILED",)
+        information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
+        coverage_gap_codes: tuple[str, ...] = ()
+        if self._coverage_reader is not None:
+            information_coverage = self._coverage_reader.snapshot(
+                as_of=as_of,
+                requirements=self._coverage_requirements,
+            )
+            coverage_gap_codes = self._coverage_reader.gap_codes(
+                information_coverage
+            )
         projection = self._projector.project(
             analysis_scope=mandate.analysis_scope,
             as_of=as_of,
@@ -230,13 +270,17 @@ class DecisionPacketPreparation:
             facts=self._facts.facts_as_of(as_of=as_of),
             markets=markets,
             features=feature_snapshots,
+            derivatives=derivatives,
             account=account,
             intelligence_events=intelligence_events,
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
             market_affected_assets=market_affected_assets,
             data_quality_codes=data_quality_codes,
+            coverage_gap_codes=coverage_gap_codes,
+            information_coverage=information_coverage,
         )
+
         if projection.delta is None and not review_requests:
             baseline = not self._has_predecessor(
                 mandate=mandate,
@@ -269,8 +313,6 @@ class DecisionPacketPreparation:
                 state_id=projection.state.state_id,
                 delta_ids=((delta.delta_id,) if delta is not None else ()),
                 review_requests=review_requests,
-                active_hypotheses=active_hypotheses,
-                previous_assessment_refs=previous_assessment_refs,
                 previous_context=previous_context,
             )
         except ValueError as exc:
@@ -291,6 +333,62 @@ class DecisionPacketPreparation:
             review_ids=tuple(item.review_id for item in review_requests),
             packet=packet,
         )
+
+    def _derivative_context(
+        self,
+        *,
+        analysis_id: str,
+        as_of: datetime,
+        mandate: AnalysisMandate,
+        markets: tuple[MarketSnapshot, ...],
+    ) -> tuple[DerivativeContextSnapshot, ...]:
+        if not self._perpetual_by_symbol:
+            return ()
+        mandate_symbols = tuple(item.market_symbol for item in mandate.assets)
+        if set(self._perpetual_by_symbol) != set(mandate_symbols):
+            raise ValueError("DecisionPacket Perpetual universe 与 Mandate 不一致")
+        market_by_symbol = {item.symbol: item for item in markets}
+        snapshots: list[DerivativeContextSnapshot] = []
+        for asset in mandate.assets:
+            instrument = self._perpetual_by_symbol[asset.market_symbol]
+            state = self._market_store.latest_perpetual_state(
+                instrument=instrument,
+                as_of=as_of,
+            )
+            quote = self._market_store.latest_perpetual_quote(
+                instrument=instrument,
+                evaluation_at=as_of,
+                visible_at=as_of,
+            )
+            if state is None or quote is None:
+                raise ValueError(
+                    f"DecisionPacket 缺少 {asset.market_symbol} Perpetual 状态或报价"
+                )
+            if max(
+                (as_of - state.observed_at).total_seconds(),
+                (as_of - quote.observed_at).total_seconds(),
+            ) > self._maximum_perpetual_age_seconds:
+                raise ValueError(
+                    f"DecisionPacket {asset.market_symbol} Perpetual 行情已过期"
+                )
+            settlements = self._market_store.funding_settlements(
+                instrument=instrument,
+                start=as_of - timedelta(hours=self._funding_history_lookback_hours),
+                end=as_of,
+                visible_at=as_of,
+            )
+            snapshots.append(
+                build_derivative_context_snapshot(
+                    cycle_id=analysis_id,
+                    asset=asset.asset,
+                    spot=market_by_symbol[asset.market_symbol],
+                    state=state,
+                    quote=quote,
+                    settlements=settlements,
+                    funding_window_hours=self._funding_history_lookback_hours,
+                )
+            )
+        return tuple(sorted(snapshots, key=lambda item: item.asset))
 
     def _has_predecessor(
         self,

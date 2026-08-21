@@ -5,7 +5,15 @@ from sqlalchemy import create_engine, func, select, update
 
 from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.information.models import IntelligenceEvent
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market.features import FeatureEngine
+from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+    PerpetualMarketState,
+    PerpetualQuote,
+)
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.application import (
     DecisionPacketPreparation,
@@ -18,6 +26,10 @@ from investment_manager.state.decision.packet import (
     PacketReviewRequest,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
+from investment_manager.state.evidence_repository import (
+    SqlStateEvidenceStore,
+    StateEvidenceKind,
+)
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaRule,
@@ -66,8 +78,18 @@ def _calendar(date_text: str) -> str:
 
 
 class _PointInTimeMarketStore:
-    def __init__(self, market) -> None:
+    def __init__(
+        self,
+        market,
+        *,
+        perpetual_state=None,
+        perpetual_quote=None,
+        funding_settlements=(),
+    ) -> None:
         self.market = market
+        self.perpetual_state = perpetual_state
+        self.perpetual_quote = perpetual_quote
+        self.settlements = funding_settlements
 
     def snapshot(self, *, cycle_id, symbol, interval, as_of, bar_window, source):
         assert symbol == self.market.symbol
@@ -78,6 +100,23 @@ class _PointInTimeMarketStore:
                 "observed_at": as_of,
                 "source": source,
             }
+        )
+
+    def latest_perpetual_state(self, *, instrument, as_of):
+        assert self.perpetual_state.instrument == instrument
+        return self.perpetual_state
+
+    def latest_perpetual_quote(self, *, instrument, evaluation_at, visible_at):
+        assert self.perpetual_quote.instrument == instrument
+        return self.perpetual_quote
+
+    def funding_settlements(self, *, instrument, start, end, visible_at):
+        return tuple(
+            item
+            for item in self.settlements
+            if item.instrument == instrument
+            and start <= item.funding_time < end
+            and item.observed_at <= visible_at
         )
 
 
@@ -344,6 +383,135 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
     assert revised.packet.trigger_ids == (revised.delta_id,)
     assert revised.packet.facts[0].highest_source_tier == "FIRST_PARTY"
     assert replayed == revised
+
+
+def test_packet_preparation_freezes_derivative_context_for_ai(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    instrument = InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+    )
+    exchange_at = OBSERVED_AT - timedelta(seconds=1)
+    state = PerpetualMarketState(
+        state_id=stable_id(
+            "perpetual_market_state", instrument.key, exchange_at.isoformat()
+        ),
+        instrument=instrument,
+        exchange_time=exchange_at,
+        observed_at=OBSERVED_AT,
+        mark_price="100.2",
+        index_price="100",
+        last_funding_rate="0.0001",
+        interest_rate="0.0001",
+        next_funding_time=OBSERVED_AT + timedelta(hours=4),
+        source="test",
+    )
+    quote = PerpetualQuote(
+        quote_id=stable_id("perpetual_quote", instrument.key, 42),
+        instrument=instrument,
+        exchange_time=exchange_at,
+        observed_at=OBSERVED_AT,
+        bid="100",
+        bid_quantity="2",
+        ask="100.1",
+        ask_quantity="3",
+        update_id=42,
+        source="test",
+    )
+    funding_at = OBSERVED_AT - timedelta(hours=8)
+    settlement = FundingSettlement(
+        settlement_id=stable_id(
+            "funding_settlement",
+            instrument.key,
+            funding_at.isoformat(),
+            FundingRateType.REGULAR.value,
+        ),
+        instrument=instrument,
+        funding_time=funding_at,
+        observed_at=funding_at + timedelta(seconds=1),
+        funding_rate="0.0001",
+        mark_price="99.8",
+        rate_type=FundingRateType.REGULAR,
+        source="test",
+    )
+    market_store = _PointInTimeMarketStore(
+        replay_input.market,
+        perpetual_state=state,
+        perpetual_quote=quote,
+        funding_settlements=(settlement,),
+    )
+    facts = SqlFactStateStore(engine)
+    preparation = DecisionPacketPreparation(
+        market_store=market_store,
+        account_reader=_PointInTimeAccountReader(replay_input.account),
+        event_reader=InMemoryEventStore(),
+        facts=facts,
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-derivative-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-derivative-v1",
+                schema_version="decision-packet-v8",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        perpetual_instruments=(instrument,),
+        funding_history_lookback_hours=24,
+        maximum_perpetual_age_seconds=900,
+        clock=lambda: OBSERVED_AT,
+    )
+    mandate = AnalysisMandate(
+        version="crypto-derivative-mandate-v1",
+        analysis_scope="crypto-derivative-portfolio",
+        question="结合可执行基差和资金费率更新世界认知。",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("MARKET_VOLATILITY",),
+    )
+    request = PacketReviewRequest.create(
+        requested_at=OBSERVED_AT,
+        reason="定时更新世界认知",
+    )
+
+    result = preparation.prepare(
+        analysis_id="derivative-review",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+        review_requests=(request,),
+    )
+
+    assert result.status == PacketPreparationStatus.READY
+    assert result.packet is not None
+    assert len(result.packet.derivative_states) == 1
+    assert result.packet.derivative_states[0].last_funding_rate_bps == 1
+    frozen_state = facts.state(result.state_id)
+    assert frozen_state is not None
+    assert len(frozen_state.derivative_snapshot_refs) == 1
+    evidence_ref = frozen_state.derivative_snapshot_refs[0]
+    evidence = SqlStateEvidenceStore(engine).get(evidence_ref)
+    assert evidence is not None
+    assert evidence[0] == StateEvidenceKind.DERIVATIVE
 
 
 def test_packet_preparation_exact_retry_recovers_persisted_delta(

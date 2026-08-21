@@ -89,6 +89,14 @@ def assessment_row(record: AssessmentRecord) -> dict:
 def assessment_detail(record: AssessmentRecord) -> dict:
     assessment = record.assessment
     outcomes = {(item.asset, item.horizon_minutes): item for item in record.outcomes}
+    evidence_catalog = _assessment_evidence_catalog(record.packet)
+    cited_ids = tuple(
+        dict.fromkeys(
+            evidence_id
+            for item in (*assessment.drivers, *assessment.views)
+            for evidence_id in item.evidence_ids
+        )
+    )
     return {
         **assessment_row(record),
         "as_of": fmt.iso(assessment.as_of),
@@ -98,9 +106,25 @@ def assessment_detail(record: AssessmentRecord) -> dict:
                 "status": driver.status,
                 "transmission": driver.transmission,
                 "evidence_count": len(driver.evidence_ids),
+                "evidence": _resolve_assessment_evidence(
+                    driver.evidence_ids,
+                    evidence_catalog,
+                ),
                 "invalidation_conditions": list(driver.invalidation_conditions),
             }
             for driver in assessment.drivers
+        ],
+        "event_references": [
+            {
+                "evidence_id": item.evidence_id,
+                "source": item.source,
+                "title": item.title,
+                "event_time": fmt.iso(item.event_time),
+                "impact_state": item.impact_state.value,
+                "rationale": item.rationale,
+                "stale_at": fmt.iso(item.stale_at),
+            }
+            for item in assessment.event_references
         ],
         "views": [
             {
@@ -110,6 +134,10 @@ def assessment_detail(record: AssessmentRecord) -> dict:
                 "already_priced": view.already_priced,
                 "uncertainty": view.uncertainty,
                 "evidence_count": len(view.evidence_ids),
+                "evidence": _resolve_assessment_evidence(
+                    view.evidence_ids,
+                    evidence_catalog,
+                ),
                 "invalidation_conditions": list(view.invalidation_conditions),
                 "outcome": _assessment_outcome(outcomes.get((view.asset, view.horizon_minutes))),
             }
@@ -117,10 +145,83 @@ def assessment_detail(record: AssessmentRecord) -> dict:
         ],
         "contradictions": list(assessment.contradictions),
         "data_gaps": list(assessment.data_gaps),
+        "cited_evidence": _resolve_assessment_evidence(
+            cited_ids,
+            evidence_catalog,
+        ),
         "input_snapshot": (
             None if record.packet is None else _assessment_input_snapshot(record.packet)
         ),
     }
+
+
+def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dict]:
+    if packet is None:
+        return {}
+    catalog: dict[str, dict] = {}
+    for fact in packet.facts:
+        catalog[fact.revision_id] = {
+            "evidence_id": fact.revision_id,
+            "kind": "FIRST_PARTY_FACT",
+            "title": fact.headline,
+            "detail": fact.claim,
+            "source": fact.highest_source_tier.value,
+            "at": fmt.iso(fact.event_time or fact.observed_at),
+        }
+    for event in packet.intelligence_events:
+        catalog[event.evidence_ref] = {
+            "evidence_id": event.evidence_ref,
+            "kind": "INTELLIGENCE_EVENT",
+            "title": event.title,
+            "detail": event.body,
+            "source": event.source,
+            "at": fmt.iso(event.event_time),
+        }
+    for delta in packet.deltas:
+        catalog[delta.delta_id] = {
+            "evidence_id": delta.delta_id,
+            "kind": "MATERIAL_DELTA",
+            "title": " / ".join(delta.reason_codes),
+            "detail": "、".join((*delta.affected_assets, *delta.risk_factors)),
+            "source": delta.category.value,
+            "at": fmt.iso(delta.observed_at),
+        }
+        for feature_ref in delta.feature_snapshot_refs:
+            catalog[feature_ref] = {
+                "evidence_id": feature_ref,
+                "kind": "MARKET_FEATURE",
+                "title": "市场特征发生材料变化",
+                "detail": "、".join(delta.affected_assets),
+                "source": "MARKET",
+                "at": fmt.iso(delta.observed_at),
+            }
+    if packet.previous_context is not None:
+        previous = packet.previous_context
+        catalog[previous.assessment_id] = {
+            "evidence_id": previous.assessment_id,
+            "kind": "PREVIOUS_CONTEXT",
+            "title": "上一轮世界认知",
+            "detail": previous.market_mechanism,
+            "source": "CONTEXT_ASSESSMENT",
+            "at": fmt.iso(previous.available_at),
+        }
+        for item in previous.event_references:
+            catalog[item.evidence_id] = {
+                "evidence_id": item.evidence_id,
+                "kind": "INTELLIGENCE_EVENT",
+                "title": item.title,
+                "detail": item.rationale,
+                "source": item.source,
+                "at": fmt.iso(item.event_time),
+            }
+    return catalog
+
+
+def _resolve_assessment_evidence(
+    evidence_ids: tuple[str, ...],
+    catalog: dict[str, dict],
+) -> list[dict]:
+    return [catalog[item] for item in evidence_ids if item in catalog]
 
 
 def assessment_quality(status: AssessmentQualityStatus) -> dict:
@@ -133,6 +234,9 @@ def assessment_quality(status: AssessmentQualityStatus) -> dict:
         "latest_attempt_reason": status.latest_attempt_reason,
         "latest_valid_at": fmt.iso(status.latest_valid_at),
         "rejected_attempt_count_24h": status.rejected_attempt_count_24h,
+        "execution_count_24h": status.execution_count_24h,
+        "final_success_count_24h": status.final_success_count_24h,
+        "first_attempt_success_count_24h": status.first_attempt_success_count_24h,
         "rejection_reasons": [
             labels.get(code, code) for code in status.rejection_reason_codes
         ],

@@ -417,7 +417,7 @@ def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
 
 def test_sleeve_target_net_edge_has_one_formula() -> None:
     payload = _sleeve_target().model_dump()
-    payload["conservative_net_bps"] = Decimal("13")
+    payload["decision_net_bps"] = Decimal("13")
 
     with pytest.raises(ValidationError, match="净收益必须等于"):
         SleeveTarget.model_validate(payload)

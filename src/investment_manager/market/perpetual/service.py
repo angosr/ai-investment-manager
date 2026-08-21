@@ -26,6 +26,17 @@ class PerpetualMarketHealth:
     last_error_class: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PerpetualRefreshResult:
+    started_at: datetime
+    completed_at: datetime
+    succeeded: bool
+    latest_publication_at: datetime | None = None
+    observation_count: int = 0
+    changed_count: int = 0
+    error_class: str | None = None
+
+
 class BinancePerpetualMarketService:
     """Collect recoverable derivative facts without trading or trigger authority."""
 
@@ -35,11 +46,13 @@ class BinancePerpetualMarketService:
         policy: MarketDataPolicy,
         client: BinanceUsdmRestClient,
         store: MarketDataStore,
+        refresh_observer: Callable[[PerpetualRefreshResult], None] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._policy = policy
         self._client = client
         self._store = store
+        self._refresh_observer = refresh_observer
         self._clock = clock
         self._expected_funding_at: dict[str, datetime] = {}
         self.health = PerpetualMarketHealth()
@@ -62,21 +75,57 @@ class BinancePerpetualMarketService:
                 )
 
     async def refresh(self) -> None:
-        await asyncio.gather(
-            *(self._refresh_instrument(item) for item in self._policy.perpetual_instruments)
+        started_at = require_utc(self._clock())
+        try:
+            results = await asyncio.gather(
+                *(
+                    self._refresh_instrument(item)
+                    for item in self._policy.perpetual_instruments
+                )
+            )
+        except Exception as exc:
+            if self._refresh_observer is not None:
+                self._refresh_observer(
+                    PerpetualRefreshResult(
+                        started_at=started_at,
+                        completed_at=max(require_utc(self._clock()), started_at),
+                        succeeded=False,
+                        error_class=type(exc).__name__,
+                    )
+                )
+            raise
+        completed_at = max(require_utc(self._clock()), started_at)
+        refresh = PerpetualRefreshResult(
+            started_at=started_at,
+            completed_at=completed_at,
+            succeeded=True,
+            latest_publication_at=max(
+                (item[0] for item in results),
+                default=None,
+            ),
+            observation_count=sum(item[1] for item in results),
+            changed_count=sum(item[2] for item in results),
         )
+        if self._refresh_observer is not None:
+            self._refresh_observer(refresh)
         self.health.refresh_count += 1
-        self.health.last_refresh_at = require_utc(self._clock())
+        self.health.last_refresh_at = completed_at
 
-    async def _refresh_instrument(self, instrument: InstrumentId) -> None:
+    async def _refresh_instrument(
+        self,
+        instrument: InstrumentId,
+    ) -> tuple[datetime, int, int]:
         state, quote = await asyncio.gather(
             self._client.fetch_market_state(instrument),
             self._client.fetch_quote(instrument),
         )
+        changed_count = 0
         if self._store.put_perpetual_state(state):
             self.health.state_count += 1
+            changed_count += 1
         if self._store.put_perpetual_quote(quote):
             self.health.quote_count += 1
+            changed_count += 1
         previous_funding_at = self._expected_funding_at.get(instrument.key)
         history_due = previous_funding_at is None or state.observed_at >= previous_funding_at
         if history_due:
@@ -89,4 +138,10 @@ class BinancePerpetualMarketService:
             for settlement in settlements:
                 if self._store.put_funding_settlement(settlement):
                     self.health.settlement_count += 1
+                    changed_count += 1
         self._expected_funding_at[instrument.key] = state.next_funding_time
+        return (
+            max(state.observed_at, quote.observed_at),
+            2 + (len(settlements) if history_due else 0),
+            changed_count,
+        )

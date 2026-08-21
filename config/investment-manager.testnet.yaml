@@ -7,6 +7,10 @@ temporal:
 # 当前 Product Capital 链只拥有 Mock Shadow 权限，不继承到真实 Testnet 下单。
 capital:
   enabled: false
+  mock_candidate_authorizations: []
+
+dynamic_carry_forecast:
+  enabled: false
 
 market_data:
   version: binance-public-testnet-v3

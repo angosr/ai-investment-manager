@@ -6,6 +6,7 @@ from investment_manager.execution.account_repository import SqlAccountSnapshotRe
 from investment_manager.execution.reconciliation.repository import (
     SqlReconciliationReportStore,
 )
+from investment_manager.information.coverage import SqlInformationCoverageStore
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.repository import SqlMarketDataStore
@@ -48,4 +49,11 @@ def assemble_decision_packet_preparation(
         market_source=config.market_data.version,
         initial_quote_balance=config.shadow.initial_quote_balance,
         maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
+        coverage_reader=SqlInformationCoverageStore(engine),
+        coverage_requirements=config.information.coverage_requirements,
+        perpetual_instruments=config.market_data.perpetual_instruments,
+        funding_history_lookback_hours=(
+            config.market_data.funding_history_lookback_hours
+        ),
+        maximum_perpetual_age_seconds=config.market_data.perpetual_poll_seconds * 3,
     )

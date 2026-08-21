@@ -100,3 +100,19 @@ normalized_events = Table(
     UniqueConstraint("source", "content_hash", name="uq_normalized_event_source_hash"),
 )
 Index("ix_normalized_events_event_time", normalized_events.c.event_time)
+
+source_poll_records = Table(
+    "source_poll_records",
+    metadata,
+    Column("poll_id", String(128), primary_key=True),
+    Column("source_stream_id", String(128), nullable=False),
+    Column("domain", String(64), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_source_poll_records_stream_time",
+    source_poll_records.c.source_stream_id,
+    source_poll_records.c.completed_at,
+)

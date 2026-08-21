@@ -88,6 +88,9 @@ export interface AssessmentQuality {
   latest_attempt_reason: string | null;
   latest_valid_at: string | null;
   rejected_attempt_count_24h: number;
+  execution_count_24h: number;
+  final_success_count_24h: number;
+  first_attempt_success_count_24h: number;
   rejection_reasons: string[];
 }
 
@@ -103,7 +106,17 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
     status: "CONFIRMED" | "INFERRED" | "UNVERIFIED";
     transmission: string;
     evidence_count: number;
+    evidence: AssessmentEvidence[];
     invalidation_conditions: string[];
+  }[];
+  event_references: {
+    evidence_id: string;
+    source: string;
+    title: string;
+    event_time: string;
+    impact_state: "ACTIVE" | "STALE";
+    rationale: string;
+    stale_at: string | null;
   }[];
   views: {
     asset: string;
@@ -112,6 +125,7 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
     already_priced: string;
     uncertainty: string;
     evidence_count: number;
+    evidence: AssessmentEvidence[];
     invalidation_conditions: string[];
     outcome: {
       status: string;
@@ -124,7 +138,17 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
   }[];
   contradictions: string[];
   data_gaps: string[];
+  cited_evidence: AssessmentEvidence[];
   input_snapshot: AssessmentInputSnapshot | null;
+}
+
+export interface AssessmentEvidence {
+  evidence_id: string;
+  kind: "FIRST_PARTY_FACT" | "INTELLIGENCE_EVENT" | "MATERIAL_DELTA" | "MARKET_FEATURE" | "PREVIOUS_CONTEXT";
+  title: string;
+  detail: string;
+  source: string;
+  at: string;
 }
 
 export interface AssessmentInputSnapshot {
@@ -187,7 +211,6 @@ export interface AssessmentInputSnapshot {
     symbols: string[];
     directly_triggered: boolean;
   }[];
-  active_hypotheses: string[];
   previous_context: {
     assessment_id: string;
     as_of: string;

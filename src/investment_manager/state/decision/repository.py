@@ -10,6 +10,7 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
@@ -59,8 +60,6 @@ class SqlDecisionPacketAssembler:
         state_id: str,
         delta_ids: tuple[str, ...],
         review_requests: tuple[PacketReviewRequest, ...] = (),
-        active_hypotheses: tuple[str, ...] = (),
-        previous_assessment_refs: tuple[str, ...] = (),
         previous_context: PacketPreviousContext | None = None,
     ) -> DecisionPacket:
         if len(set(delta_ids)) != len(delta_ids):
@@ -73,7 +72,9 @@ class SqlDecisionPacketAssembler:
             raise ValueError("DecisionPacket StateSnapshot 与 Mandate scope 不一致")
         deltas = self._load_deltas(delta_ids)
         facts = self._load_visible_facts(state.fact_revision_ids)
-        markets, features, account, intelligence_events = self._load_state_evidence(state)
+        markets, features, derivatives, account, intelligence_events = (
+            self._load_state_evidence(state)
+        )
         return self._builder.build(
             mandate=mandate,
             state=state,
@@ -84,9 +85,9 @@ class SqlDecisionPacketAssembler:
             account=account,
             markets=markets,
             features=features,
-            active_hypotheses=active_hypotheses,
-            previous_assessment_refs=previous_assessment_refs,
+            derivatives=derivatives,
             previous_context=previous_context,
+            information_coverage=state.information_coverage,
         )
 
     def _load_deltas(self, delta_ids: tuple[str, ...]) -> tuple[MaterialDelta, ...]:
@@ -185,6 +186,7 @@ class SqlDecisionPacketAssembler:
     ) -> tuple[
         tuple[MarketSnapshot, ...],
         tuple[FeatureSnapshot, ...],
+        tuple[DerivativeContextSnapshot, ...],
         AccountSnapshot,
         tuple[IntelligenceEvent, ...],
     ]:
@@ -193,6 +195,7 @@ class SqlDecisionPacketAssembler:
         refs = (
             *state.market_snapshot_refs,
             *state.feature_snapshot_refs,
+            *state.derivative_snapshot_refs,
             *state.intelligence_event_refs,
             state.account_snapshot_ref,
         )
@@ -223,6 +226,17 @@ class SqlDecisionPacketAssembler:
                 key=lambda item: item.symbol,
             )
         )
+        derivatives = tuple(
+            sorted(
+                (
+                    value
+                    for kind, value in evidence.values()
+                    if kind == StateEvidenceKind.DERIVATIVE
+                    and isinstance(value, DerivativeContextSnapshot)
+                ),
+                key=lambda item: item.asset,
+            )
+        )
         intelligence_events = tuple(
             sorted(
                 (
@@ -239,4 +253,4 @@ class SqlDecisionPacketAssembler:
             account_entry[1], AccountSnapshot
         ):
             raise ValueError("DecisionPacket Account evidence 类型不一致")
-        return markets, features, account_entry[1], intelligence_events
+        return markets, features, derivatives, account_entry[1], intelligence_events

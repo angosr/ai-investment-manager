@@ -10,7 +10,7 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.models import CalibratedForecast, ForecastKind
+from investment_manager.forecast.models import BaseForecast, CalibratedForecast, ForecastKind
 from investment_manager.forecast.tables import forecasts
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
@@ -18,6 +18,7 @@ from investment_manager.platform.locking import advisory_xact_lock
 from investment_manager.portfolio.models import (
     CapitalCycleRecord,
     PortfolioAccountSnapshot,
+    PortfolioEdgeBasis,
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
@@ -242,12 +243,15 @@ class SqlPortfolioStore:
             )
         ).all()
         loaded = {
-            row.forecast_id: CalibratedForecast.model_validate(row.payload)
+            row.forecast_id: (
+                BaseForecast.model_validate(row.payload)
+                if row.kind == ForecastKind.BASE.value
+                else CalibratedForecast.model_validate(row.payload)
+            )
             for row in rows
-            if row.kind == ForecastKind.CALIBRATED.value
         }
         if set(loaded) != set(forecast_ids):
-            raise ValueError("PortfolioTarget 只能引用已持久化 CalibratedForecast")
+            raise ValueError("PortfolioTarget 引用了不存在的 Forecast")
         required_quote_keys = {
             leg.instrument.key
             for forecast in loaded.values()
@@ -257,11 +261,15 @@ class SqlPortfolioStore:
             raise ValueError("PortfolioTarget quotes 必须精确覆盖考虑集 Instruments")
         for sleeve in target.sleeves:
             if any(
-                loaded[forecast_id].target != sleeve.forecast_target
+                (
+                    isinstance(loaded[forecast_id], BaseForecast)
+                    != (sleeve.edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS)
+                )
+                or loaded[forecast_id].target != sleeve.forecast_target
                 or loaded[forecast_id].forecast_family != sleeve.forecast_family
                 for forecast_id in sleeve.forecast_ids
             ):
-                raise ValueError("PortfolioTarget Sleeve 与权威 Forecast 身份不一致")
+                raise ValueError("PortfolioTarget Sleeve 与 Forecast edge basis/身份不一致")
 
 
 class SqlCapitalCycleStore:

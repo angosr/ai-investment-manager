@@ -20,6 +20,7 @@ from investment_manager.forecast.policy import (
     CodexAccountRegistry,
     CodexRuntimePolicy,
     ContextAssessmentPolicy,
+    DynamicCarryForecastPolicy,
     PipelinePolicy,
     ProposalPolicy,
     StrategyPolicy,
@@ -32,6 +33,7 @@ from investment_manager.governance.policy import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import (
@@ -51,6 +53,7 @@ class AppConfig(StrictConfig):
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
     carry_forecast: CarryForecastPolicy
+    dynamic_carry_forecast: DynamicCarryForecastPolicy
     capital: CapitalPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
@@ -81,6 +84,11 @@ class AppConfig(StrictConfig):
         )
         if tuple(sorted(mandate_symbols)) != tuple(sorted(self.market_data.symbols)):
             raise ValueError("Assessment mandate 必须完整覆盖且排序匹配行情 universe")
+        perpetual_symbols = tuple(
+            item.symbol for item in self.market_data.perpetual_instruments
+        )
+        if self.assessment.enabled and set(perpetual_symbols) != set(mandate_symbols):
+            raise ValueError("启用 ContextAssessment 时 Perpetual universe 必须完整覆盖 Mandate")
         mandate_horizons = tuple(
             sorted(
                 {
@@ -117,10 +125,7 @@ class AppConfig(StrictConfig):
         if self.carry_forecast.enabled:
             if self.carry_forecast.symbol not in self.market_data.symbols:
                 raise ValueError("Carry Forecast symbol 必须属于 Spot 行情 universe")
-            perpetual_symbols = {
-                item.symbol for item in self.market_data.perpetual_instruments
-            }
-            if self.carry_forecast.symbol not in perpetual_symbols:
+            if self.carry_forecast.symbol not in set(perpetual_symbols):
                 raise ValueError("Carry Forecast 必须配置同 symbol 的 Perpetual 行情")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
@@ -160,6 +165,28 @@ class AppConfig(StrictConfig):
                 )
             ):
                 raise ValueError("Capital Instruments 必须精确匹配 Carry 双产品目标")
+        permissions = self.capital.mock_candidate_authorizations
+        if self.dynamic_carry_forecast.enabled:
+            if not self.capital.enabled or self.deployment.stage != DeploymentStage.SHADOW:
+                raise ValueError("Dynamic Carry 只能由启用的 SHADOW Capital 运行")
+            if len(permissions) != 1:
+                raise ValueError("Dynamic Carry 必须绑定唯一 Mock candidate authorization")
+            permission = permissions[0]
+            dynamic = self.dynamic_carry_forecast
+            if (
+                permission.producer_id != dynamic.producer_id
+                or permission.producer_version != dynamic.version
+                or permission.forecast_family != dynamic.forecast_family
+                or permission.hypothesis_fingerprint != content_hash(dynamic)
+            ):
+                raise ValueError("Dynamic Carry 与 Mock candidate authorization 身份不一致")
+            if (
+                dynamic.funding_lookback_hours
+                > self.market_data.funding_history_lookback_hours
+            ):
+                raise ValueError("Dynamic Carry 回看窗口超过 Market Funding 历史")
+        elif permissions:
+            raise ValueError("禁用 Dynamic Carry 时不得保留 Mock candidate authorization")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

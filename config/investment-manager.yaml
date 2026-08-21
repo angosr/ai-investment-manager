@@ -13,9 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # State 组装/可见性算法未变；新增事实类型由下级投影与 Delta 版本表达，
-  # 保持 v2 才能与发布前点时 State 连续比较，而不是吞掉首个材料变化。
-  version: portfolio-state-v4
+  # v6 将高密度衍生品状态冻结为可回放证据；原始 Funding 历史不进入 AI 输入。
+  version: portfolio-state-v6
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: fed-official-fact-v2
@@ -42,8 +41,8 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v8
-    schema_version: decision-packet-v6
+    version: decision-packet-policy-v10
+    schema_version: decision-packet-v8
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -52,7 +51,6 @@ decision_state:
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500
     maximum_packet_characters: 16000
-    maximum_active_hypotheses: 5
     maximum_previous_context_drivers: 3
 
 strategy:
@@ -102,6 +100,20 @@ carry_forecast:
     valid_from: 2026-08-21T10:03:30Z
     valid_until: 2027-08-01T00:00:00Z
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
+
+dynamic_carry_forecast:
+  version: dynamic-carry-point-in-time-v1
+  enabled: false
+  producer_id: btc-dynamic-carry
+  forecast_family: delta-neutral-dynamic-carry
+  symbol: BTCUSDT
+  base_asset: BTC
+  quote_asset: USDT
+  funding_lookback_hours: 24
+  minimum_funding_settlements: 2
+  forecast_horizon_hours: 168
+  funding_interval_hours: 8
+  signal_validity_minutes: 30
 
 capital:
   version: product-capital-v4
@@ -304,7 +316,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v12
+  version: information-intake-v14
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -317,6 +329,33 @@ information:
   collection_interval_seconds: 60
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
+  # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
+  coverage_requirements:
+    - domain: FISCAL_DEBT
+      source_stream_ids: []
+      maximum_poll_age_seconds: 300
+    - domain: MONETARY_INFLATION
+      source_stream_ids: [fed-monetary-releases]
+      maximum_poll_age_seconds: 120
+    - domain: REGULATION_LEGISLATION
+      source_stream_ids: []
+      maximum_poll_age_seconds: 300
+    - domain: INSTITUTIONAL_FLOWS
+      source_stream_ids: []
+      maximum_poll_age_seconds: 300
+      maximum_publication_age_seconds: 172800
+    - domain: SPOT_DERIVATIVES
+      source_stream_ids: [binance-usdm-market]
+      maximum_poll_age_seconds: 900
+      maximum_publication_age_seconds: 900
+    - domain: ONCHAIN_SUPPLY
+      source_stream_ids: []
+      maximum_poll_age_seconds: 300
+      maximum_publication_age_seconds: 3600
+    - domain: CROSS_ASSET_EXTERNAL
+      source_stream_ids: []
+      maximum_poll_age_seconds: 300
+      maximum_publication_age_seconds: 300
 
 pipeline:
   version: off-pipeline-v6
@@ -352,7 +391,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v5
+  version: context-assessment-v9
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v1

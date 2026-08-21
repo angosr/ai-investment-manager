@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.forecast.models import ContextAssessment
-from investment_manager.forecast.tables import context_assessments
+from investment_manager.forecast.tables import assessment_executions, context_assessments
 from investment_manager.kernel.time import require_utc
 from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.tables import decision_packets
+
+if TYPE_CHECKING:
+    from investment_manager.forecast.context.executor import AssessmentExecution
 
 
 class SqlContextAssessmentStore:
@@ -86,6 +90,36 @@ class SqlContextAssessmentStore:
                 ) from exc
             return raced
         return assessment
+
+    def record_execution(
+        self,
+        execution: AssessmentExecution,
+    ) -> AssessmentExecution:
+        if self.packet(execution.packet_id) is None:
+            raise ValueError("AssessmentExecution 必须引用已冻结的 DecisionPacket")
+        values = {
+            "execution_id": execution.execution_id,
+            "packet_id": execution.packet_id,
+            "analysis_behavior_hash": execution.analysis_behavior_hash,
+            "completed_at": execution.completed_at,
+            "status": execution.status.value,
+            "source_run_id": execution.source_run_id,
+            "payload": execution.model_dump(mode="json"),
+        }
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(insert(assessment_executions).values(**values))
+        except IntegrityError as exc:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(assessment_executions.c.payload).where(
+                        assessment_executions.c.execution_id
+                        == execution.execution_id
+                    )
+                ).scalar_one_or_none()
+            if existing != execution.model_dump(mode="json"):
+                raise ValueError("相同 AssessmentExecution 身份对应不同内容") from exc
+        return execution
 
     def packet(self, packet_id: str) -> DecisionPacket | None:
         with self._engine.connect() as connection:

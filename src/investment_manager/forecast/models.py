@@ -8,7 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import Side
 from investment_manager.kernel.identity import SHA256_PATTERN, content_hash, stable_id
-from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 
@@ -205,6 +205,35 @@ class ContextDriverStatus(StrEnum):
     UNVERIFIED = "UNVERIFIED"
 
 
+class ContextEventImpactState(StrEnum):
+    ACTIVE = "ACTIVE"
+    STALE = "STALE"
+
+
+class ContextEventReference(FrozenModel):
+    """Derived event relevance in one immutable world-cognition snapshot."""
+
+    evidence_id: str = Field(pattern=SHA256_PATTERN)
+    source: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=1_000)
+    event_time: datetime
+    impact_state: ContextEventImpactState
+    rationale: str = Field(min_length=1, max_length=600)
+    stale_at: datetime | None = None
+
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_stale_at = field_validator("stale_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def stale_time_must_match_state(self):
+        if self.impact_state == ContextEventImpactState.STALE:
+            if self.stale_at is None:
+                raise ValueError("过时事件引用必须记录首次过时时间")
+        elif self.stale_at is not None:
+            raise ValueError("仍有效事件引用不得记录过时时间")
+        return self
+
+
 class ForecastRole(StrEnum):
     PROGRAM_BASE = "PROGRAM_BASE"
     AI_EVENT = "AI_EVENT"
@@ -269,6 +298,7 @@ class ContextAssessment(FrozenModel):
     # Empty only preserves readability of immutable outputs produced before the
     # reasoned-driver contract. New drafts require at least one driver.
     drivers: tuple[ContextDriver, ...] = ()
+    event_references: tuple[ContextEventReference, ...] = ()
     views: tuple[ContextView, ...] = Field(min_length=1)
     contradictions: tuple[str, ...] = ()
     data_gaps: tuple[str, ...] = ()
@@ -285,6 +315,9 @@ class ContextAssessment(FrozenModel):
             raise ValueError("ContextView 必须按资产/时域唯一且排序")
         if len(set(self.trigger_ids)) != len(self.trigger_ids):
             raise ValueError("ContextAssessment 不能重复引用触发")
+        event_ids = tuple(item.evidence_id for item in self.event_references)
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("ContextAssessment 不能重复引用事件")
         return self
 
 

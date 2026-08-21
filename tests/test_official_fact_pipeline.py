@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
@@ -18,6 +19,7 @@ from investment_manager.schema import create_schema
 from investment_manager.state.facts import OfficialFactProjectionPolicy
 from investment_manager.state.official_ingestion import (
     FedOfficialCollectorService,
+    SourcePollAuditError,
     SqlFedFactIngestor,
 )
 from investment_manager.state.repository import SqlFactStateStore
@@ -215,6 +217,40 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
     assert service.health.new_fact_revision_count == 3
     assert service.health.publication_count == 1
     assert published_at == [OBSERVED_AT]
+
+
+def test_official_collector_fails_closed_when_poll_fact_is_not_durable() -> None:
+    engine = _engine()
+
+    class Source:
+        def fetch_calendar(self):
+            return _calendar("15-16")
+
+        def fetch_public_calendar(self):
+            return _public_calendar()
+
+        def fetch_monetary_rss(self):
+            return None
+
+    class BrokenRecorder:
+        def put(self, poll):
+            raise OSError("coverage ledger unavailable")
+
+    service = FedOfficialCollectorService(
+        source=Source(),
+        ingestor=SqlFedFactIngestor(engine, POLICY),
+        publish_recent=lambda as_of: None,
+        monetary_poll_seconds=15,
+        calendar_poll_seconds=21_600,
+        poll_recorder=BrokenRecorder(),
+        clock=lambda: OBSERVED_AT,
+    )
+
+    with pytest.raises(SourcePollAuditError, match="无法持久化"):
+        asyncio.run(service._poll("calendar"))
+
+    assert service.health.last_calendar_success_at is None
+    assert service.health.calendar_error_class == "SourcePollAuditError"
 
 
 def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -> None:

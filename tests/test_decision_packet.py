@@ -16,6 +16,7 @@ from investment_manager.forecast.context.analyst import (
 from investment_manager.forecast.context.contract import (
     AssessStructuredOutput,
     ContextAssessmentDraft,
+    ContextEventReferenceUpdate,
     build_assess_prompt,
     finalize_context_assessment,
 )
@@ -24,11 +25,12 @@ from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextDriver,
     ContextDriverStatus,
+    ContextEventImpactState,
     ContextView,
     DirectionalView,
     PricedState,
 )
-from investment_manager.information.models import SourceTier
+from investment_manager.information.models import IntelligenceEvent, SourceTier
 from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
@@ -40,6 +42,7 @@ from investment_manager.state.decision.packet import (
     MandateAsset,
     PacketPreviousContext,
     PacketPreviousDriver,
+    PacketPreviousEventReference,
     PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
@@ -107,7 +110,14 @@ def _fact(
     )
 
 
-def _state(as_of, *, account, markets, features) -> StateSnapshot:
+def _state(
+    as_of,
+    *,
+    account,
+    markets,
+    features,
+    intelligence_events: tuple[IntelligenceEvent, ...] = (),
+) -> StateSnapshot:
     return StateSnapshot(
         state_id="state-1",
         projection_version="state-projection-v1",
@@ -117,6 +127,9 @@ def _state(as_of, *, account, markets, features) -> StateSnapshot:
         fact_revision_ids=("revision-1",),
         market_snapshot_refs=tuple(sorted(content_hash(item) for item in markets)),
         feature_snapshot_refs=tuple(sorted(content_hash(item) for item in features)),
+        intelligence_event_refs=tuple(
+            sorted(content_hash(item) for item in intelligence_events)
+        ),
         account_snapshot_ref=content_hash(account),
         content_hash=HASH,
     )
@@ -144,30 +157,41 @@ def _delta(as_of, *, delta_id: str = "delta-1", seconds: int = 0) -> MaterialDel
     )
 
 
-def _packet(app_config, replay_input, *, previous_context=None):
+def _packet(
+    app_config,
+    replay_input,
+    *,
+    previous_context=None,
+    intelligence_events: tuple[IntelligenceEvent, ...] = (),
+    as_of=None,
+    packet_schema_version: str = "decision-packet-v1",
+):
     market_btc = replay_input.market
+    state_as_of = market_btc.as_of if as_of is None else as_of
     market_eth = replay_input.market.model_copy(update={"symbol": "ETHUSDT"})
     feature_btc = FeatureEngine(app_config.feature).compute(market_btc)
     feature_eth = feature_btc.model_copy(update={"symbol": "ETHUSDT"})
     builder = DecisionPacketBuilder(
         DecisionPacketPolicy(
             version="packet-policy-v1",
-            schema_version="decision-packet-v1",
+            schema_version=packet_schema_version,
         )
     )
     packet = builder.build(
         mandate=_mandate(),
         state=_state(
-            market_btc.as_of,
+            state_as_of,
             account=replay_input.account,
             markets=(market_btc, market_eth),
             features=(feature_btc, feature_eth),
+            intelligence_events=intelligence_events,
         ),
         deltas=(
-            _delta(market_btc.as_of, delta_id="delta-2"),
-            _delta(market_btc.as_of, delta_id="delta-1", seconds=1),
+            _delta(state_as_of, delta_id="delta-2"),
+            _delta(state_as_of, delta_id="delta-1", seconds=1),
         ),
-        facts=(_fact(market_btc.as_of),),
+        facts=(_fact(state_as_of),),
+        intelligence_events=intelligence_events,
         account=replay_input.account,
         markets=(market_eth, market_btc),
         features=(feature_eth, feature_btc),
@@ -182,6 +206,10 @@ def test_packet_carries_latest_world_model_as_derived_evidence(
 ) -> None:
     previous = PacketPreviousContext(
         assessment_id="assessment-prior-1",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
         as_of=replay_input.market.as_of - timedelta(hours=1),
         available_at=replay_input.market.as_of - timedelta(minutes=59),
         market_mechanism="财政流动性变化先影响长端利率，再改变风险资产贴现率。",
@@ -239,6 +267,206 @@ def test_packet_carries_latest_world_model_as_derived_evidence(
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),
         )
+
+
+@pytest.mark.parametrize(
+    ("scope", "available_offset", "message"),
+    (
+        ("other-scope", -1, "scope 不一致"),
+        ("crypto-risk", 1, "尚不可见"),
+    ),
+)
+def test_packet_rejects_future_or_cross_scope_previous_context(
+    app_config,
+    replay_input,
+    scope,
+    available_offset,
+    message,
+) -> None:
+    as_of = replay_input.market.as_of
+    previous = PacketPreviousContext(
+        assessment_id="assessment-invalid-context",
+        analysis_scope=scope,
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=as_of - timedelta(minutes=2),
+        available_at=as_of + timedelta(minutes=available_offset),
+        market_mechanism="用于验证点时与作用域门禁的历史认知。",
+        drivers=(),
+        views=(),
+        contradictions=(),
+        data_gaps=(),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _packet(app_config, replay_input, previous_context=previous)
+
+
+def test_world_cognition_event_reference_becomes_stale_then_leaves_future_context(
+    app_config,
+    replay_input,
+) -> None:
+    event = replay_input.events[0]
+    event_ref = content_hash(event)
+    _, first_packet = _packet(
+        app_config,
+        replay_input,
+        intelligence_events=(event,),
+    )
+    event_reference_updates_schema = assess_output_schema(first_packet)["$defs"][
+        "ContextAssessmentDraft"
+    ]["properties"]["event_reference_updates"]
+    assert event_reference_updates_schema["maxItems"] == 1
+    active_output = _assessment_output().model_copy(
+        update={
+            "assessment": _assessment_output().assessment.model_copy(
+                update={
+                    "event_reference_updates": (
+                        ContextEventReferenceUpdate(
+                            evidence_id=event_ref,
+                            impact_state=ContextEventImpactState.ACTIVE,
+                            rationale="该事件的政策传导仍可能改变未来风险溢价。",
+                        ),
+                    ),
+                }
+            )
+        }
+    )
+    active = finalize_context_assessment(
+        output=active_output,
+        packet=first_packet,
+        analysis_behavior_hash=HASH,
+        available_at=first_packet.as_of + timedelta(seconds=10),
+    )
+    assert active.event_references[0].stale_at is None
+
+    second_as_of = first_packet.as_of + timedelta(hours=2)
+    previous = PacketPreviousContext(
+        assessment_id=active.assessment_id,
+        analysis_scope=active.analysis_scope,
+        mandate_version=active.mandate_version,
+        analysis_behavior_hash=active.analysis_behavior_hash,
+        decision_packet_hash=active.decision_packet_hash,
+        as_of=active.as_of,
+        available_at=active.available_at,
+        market_mechanism=active.market_mechanism,
+        drivers=(),
+        event_references=(
+            PacketPreviousEventReference(
+                evidence_id=event_ref,
+                source=event.source,
+                title=event.title,
+                event_time=event.event_time,
+                impact_state="ACTIVE",
+                rationale=active.event_references[0].rationale,
+            ),
+        ),
+        views=(),
+        contradictions=(),
+        data_gaps=(),
+    )
+    _, second_packet = _packet(
+        app_config,
+        replay_input,
+        previous_context=previous,
+        as_of=second_as_of,
+    )
+    stale_output = _assessment_output().model_copy(
+        update={
+            "assessment": _assessment_output().assessment.model_copy(
+                update={
+                    "event_reference_updates": (
+                        ContextEventReferenceUpdate(
+                            evidence_id=event_ref,
+                            impact_state=ContextEventImpactState.STALE,
+                            rationale="预期传导已经完成，新增价格形成不再依赖该事件。",
+                        ),
+                    ),
+                }
+            )
+        }
+    )
+    stale = finalize_context_assessment(
+        output=stale_output,
+        packet=second_packet,
+        analysis_behavior_hash=HASH,
+        available_at=second_as_of + timedelta(seconds=10),
+    )
+    assert stale.event_references[0].stale_at == second_as_of
+
+    stale_previous = previous.model_copy(
+        update={
+            "assessment_id": stale.assessment_id,
+            "as_of": stale.as_of,
+            "available_at": stale.available_at,
+            "event_references": (
+                previous.event_references[0].model_copy(
+                    update={
+                        "impact_state": "STALE",
+                        "rationale": stale.event_references[0].rationale,
+                        "stale_at": second_as_of,
+                    }
+                ),
+            ),
+        }
+    )
+    _, after_grace = _packet(
+        app_config,
+        replay_input,
+        previous_context=stale_previous,
+        as_of=second_as_of + timedelta(days=1),
+    )
+    assert after_grace.previous_context is not None
+    assert after_grace.previous_context.event_references == ()
+
+
+def test_world_cognition_inherits_omitted_active_event_update(
+    app_config,
+    replay_input,
+) -> None:
+    event = replay_input.events[0]
+    event_ref = content_hash(event)
+    as_of = replay_input.market.as_of
+    previous = PacketPreviousContext(
+        assessment_id="assessment-with-active-event",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=as_of - timedelta(hours=1),
+        available_at=as_of - timedelta(minutes=59),
+        market_mechanism="该事件仍可能通过风险溢价影响未来定价。",
+        drivers=(),
+        event_references=(
+            PacketPreviousEventReference(
+                evidence_id=event_ref,
+                source=event.source,
+                title=event.title,
+                event_time=event.event_time,
+                impact_state="ACTIVE",
+                rationale="未来影响尚未完全消退。",
+            ),
+        ),
+        views=(),
+        contradictions=(),
+        data_gaps=(),
+    )
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        previous_context=previous,
+    )
+    assessment = finalize_context_assessment(
+        output=_assessment_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=as_of + timedelta(seconds=10),
+    )
+
+    assert assessment.event_references[0].evidence_id == event_ref
+    assert assessment.event_references[0].impact_state == ContextEventImpactState.ACTIVE
+    assert assessment.event_references[0].rationale == "未来影响尚未完全消退。"
 
 
 def _assessment_output() -> AssessStructuredOutput:
@@ -622,6 +850,48 @@ def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_i
         == ["delta-1", "delta-2", "feature-btc", "feature-eth", "revision-1"]
         for branch in branches
     )
+
+
+def test_historical_packet_payloads_remain_readable_after_context_provenance(
+    app_config,
+    replay_input,
+) -> None:
+    as_of = replay_input.market.as_of
+    previous = PacketPreviousContext(
+        assessment_id="assessment-v6",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=as_of - timedelta(minutes=2),
+        available_at=as_of - timedelta(minutes=1),
+        market_mechanism="用于验证历史输入包仍可读取。",
+        drivers=(),
+        views=(),
+        contradictions=(),
+        data_gaps=(),
+    )
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        previous_context=previous,
+        packet_schema_version="decision-packet-v6",
+    )
+    payload = packet.model_dump(mode="json")
+    for field_name in (
+        "analysis_scope",
+        "mandate_version",
+        "analysis_behavior_hash",
+        "decision_packet_hash",
+        "event_references",
+    ):
+        payload["previous_context"].pop(field_name)
+
+    restored = DecisionPacket.model_validate(payload)
+
+    assert restored.content_hash == packet.content_hash
+    assert restored.previous_context is not None
+    assert restored.previous_context.analysis_scope is None
 
 
 def test_finalize_assessment_binds_authoritative_runtime_metadata(app_config, replay_input) -> None:

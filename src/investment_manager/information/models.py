@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.kernel.identity import SHA256_PATTERN
+from investment_manager.kernel.identity import SHA256_PATTERN, content_hash, stable_id
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, UnitInterval
 
@@ -14,6 +14,101 @@ class SourceTier(StrEnum):
     FIRST_PARTY = "FIRST_PARTY"
     CONTRACTED = "CONTRACTED"
     AGGREGATOR = "AGGREGATOR"
+
+
+class CausalDomain(StrEnum):
+    """Decision-relevant world layers; sources map here, prompts do not invent them."""
+
+    FISCAL_DEBT = "FISCAL_DEBT"
+    MONETARY_INFLATION = "MONETARY_INFLATION"
+    REGULATION_LEGISLATION = "REGULATION_LEGISLATION"
+    INSTITUTIONAL_FLOWS = "INSTITUTIONAL_FLOWS"
+    SPOT_DERIVATIVES = "SPOT_DERIVATIVES"
+    ONCHAIN_SUPPLY = "ONCHAIN_SUPPLY"
+    CROSS_ASSET_EXTERNAL = "CROSS_ASSET_EXTERNAL"
+
+
+class SourcePollStatus(StrEnum):
+    CHANGED = "CHANGED"
+    UNCHANGED = "UNCHANGED"
+    FAILED = "FAILED"
+
+
+class CoverageStatus(StrEnum):
+    CURRENT = "CURRENT"
+    NO_RECENT_PUBLICATION = "NO_RECENT_PUBLICATION"
+    SOURCE_STALE = "SOURCE_STALE"
+    SOURCE_FAILED = "SOURCE_FAILED"
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+
+
+class SourcePollRecord(FrozenModel):
+    poll_id: str = Field(min_length=1)
+    source_stream_id: str = Field(min_length=1, max_length=128)
+    domain: CausalDomain
+    status: SourcePollStatus
+    started_at: datetime
+    completed_at: datetime
+    latest_publication_at: datetime | None = None
+    observation_count: int = Field(default=0, ge=0)
+    new_fact_count: int = Field(default=0, ge=0)
+    error_class: str | None = Field(default=None, min_length=1, max_length=200)
+
+    _utc_started_at = field_validator("started_at")(require_utc)
+    _utc_completed_at = field_validator("completed_at")(require_utc)
+    _utc_latest_publication_at = field_validator("latest_publication_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def outcome_must_be_consistent(self):
+        if self.completed_at < self.started_at:
+            raise ValueError("来源轮询完成时间不能早于开始时间")
+        if (
+            self.latest_publication_at is not None
+            and self.latest_publication_at > self.completed_at
+        ):
+            raise ValueError("来源最新发布时间不能晚于轮询完成时间")
+        if self.status == SourcePollStatus.FAILED:
+            if self.error_class is None or self.observation_count or self.new_fact_count:
+                raise ValueError("失败轮询必须只记录错误类型")
+        elif self.error_class is not None:
+            raise ValueError("成功轮询不得记录错误类型")
+        payload = self.model_dump(exclude={"poll_id"})
+        if self.poll_id != stable_id("source_poll", content_hash(payload)):
+            raise ValueError("来源轮询身份与内容不一致")
+        return self
+
+
+class DomainCoverageSnapshot(FrozenModel):
+    domain: CausalDomain
+    status: CoverageStatus
+    as_of: datetime
+    source_stream_ids: tuple[str, ...] = ()
+    latest_success_at: datetime | None = None
+    latest_publication_at: datetime | None = None
+    latest_poll_refs: tuple[str, ...] = ()
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_latest_success_at = field_validator("latest_success_at")(optional_utc)
+    _utc_latest_publication_at = field_validator("latest_publication_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def point_in_time_and_refs_must_be_consistent(self):
+        if tuple(sorted(set(self.source_stream_ids))) != self.source_stream_ids:
+            raise ValueError("coverage source_stream_ids 必须唯一且排序")
+        if tuple(sorted(set(self.latest_poll_refs))) != self.latest_poll_refs:
+            raise ValueError("coverage latest_poll_refs 必须唯一且排序")
+        if self.latest_success_at is not None and self.latest_success_at > self.as_of:
+            raise ValueError("coverage 成功时间不能晚于 as_of")
+        if self.latest_publication_at is not None and self.latest_publication_at > self.as_of:
+            raise ValueError("coverage 发布时间不能晚于 as_of")
+        if self.status == CoverageStatus.NOT_CONFIGURED and (
+            self.source_stream_ids
+            or self.latest_success_at is not None
+            or self.latest_publication_at is not None
+            or self.latest_poll_refs
+        ):
+            raise ValueError("未配置领域不得伪造来源覆盖")
+        return self
 
 
 class SourceObservation(FrozenModel):

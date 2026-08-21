@@ -27,9 +27,12 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
-from investment_manager.forecast.carry import CarryForecastProducer, ReleasedCarryForecastProducer
-from investment_manager.forecast.models import CalibratedForecast
-from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.carry import (
+    CarryForecastProducer,
+    DynamicCarryForecastProducer,
+    ReleasedCarryForecastProducer,
+)
+from investment_manager.forecast.repository import Forecast, SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -42,6 +45,7 @@ from investment_manager.portfolio.decision import (
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
+    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
     SleeveTarget,
 )
@@ -68,7 +72,7 @@ def _utc_now() -> datetime:
 
 
 class CapitalForecastProducer(Protocol):
-    def produce(self, *, as_of: datetime) -> CalibratedForecast | None: ...
+    def produce(self, *, as_of: datetime) -> Forecast | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,12 @@ class CapitalForecastSource:
     producer: CapitalForecastProducer
     estimated_variable_cost_bps: Decimal
     risk_template: SleeveRiskTemplate
+    mock_authorization: MockCandidateAuthorization | None = None
+
+    def __post_init__(self) -> None:
+        permission = self.mock_authorization
+        if permission is not None and permission.forecast_family != self.forecast_family:
+            raise ValueError("Capital Forecast source 与 Mock authorization family 不一致")
 
 
 class CapitalCycleService:
@@ -285,7 +295,7 @@ class CapitalCycleService:
         result: PortfolioPipelineResult | TradePlanExecutionResult,
         requested_at: datetime,
         triggered_at: datetime,
-        generated_forecasts: tuple[CalibratedForecast, ...],
+        generated_forecasts: tuple[Forecast, ...],
         cause_id: str,
         trigger_batch_id: str | None,
         symbol: str,
@@ -387,7 +397,7 @@ class CapitalCycleService:
 
     def _opportunity_cycle_id(
         self,
-        forecasts: tuple[CalibratedForecast, ...],
+        forecasts: tuple[Forecast, ...],
     ) -> str:
         return stable_id(
             "capital_opportunity_cycle",
@@ -441,7 +451,7 @@ class CapitalCycleService:
     def _decision_sleeves(
         self,
         *,
-        forecasts: tuple[CalibratedForecast, ...],
+        forecasts: tuple[Forecast, ...],
         account: PortfolioAccountSnapshot,
         as_of: datetime,
     ) -> tuple[PortfolioSleeveInput, ...]:
@@ -459,6 +469,7 @@ class CapitalCycleService:
                 sleeve_id=sleeve_id,
                 estimated_variable_cost_bps=source.estimated_variable_cost_bps,
                 forecast=forecast,
+                mock_authorization=source.mock_authorization,
             )
             existing = by_sleeve.get(sleeve_id)
             if existing is not None and existing != candidate:
@@ -470,9 +481,9 @@ class CapitalCycleService:
             source = self._source_by_family.get(position.forecast_family)
             if source is None:
                 raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
-            forecast = self._forecasts.latest_calibrated_for_target(
+            forecast = self._latest_forecast(
+                source=source,
                 target_id=position.target.target_id,
-                forecast_family=position.forecast_family,
                 as_of=as_of,
             )
             if forecast is None:
@@ -481,6 +492,7 @@ class CapitalCycleService:
                 sleeve_id=position.sleeve_id,
                 estimated_variable_cost_bps=source.estimated_variable_cost_bps,
                 forecast=forecast,
+                mock_authorization=source.mock_authorization,
                 refresh_target=False,
             )
         return tuple(by_sleeve[item] for item in sorted(by_sleeve))
@@ -564,9 +576,9 @@ class CapitalCycleService:
             source = self._source_by_family.get(position.forecast_family)
             if source is None:
                 raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
-            forecast = self._forecasts.latest_calibrated_for_target(
+            forecast = self._latest_forecast(
+                source=source,
                 target_id=position.target.target_id,
-                forecast_family=position.forecast_family,
                 as_of=as_of,
             )
             if forecast is None:
@@ -578,6 +590,7 @@ class CapitalCycleService:
                         source.estimated_variable_cost_bps
                     ),
                     forecast=forecast,
+                    mock_authorization=source.mock_authorization,
                 )
             )
             profiles.append(self._risk_profile(position.sleeve_id, source))
@@ -608,6 +621,25 @@ class CapitalCycleService:
             },
         )
         return result
+
+    def _latest_forecast(
+        self,
+        *,
+        source: CapitalForecastSource,
+        target_id: str,
+        as_of: datetime,
+    ) -> Forecast | None:
+        if source.mock_authorization is not None:
+            return self._forecasts.latest_base_for_target(
+                target_id=target_id,
+                forecast_family=source.forecast_family,
+                as_of=as_of,
+            )
+        return self._forecasts.latest_calibrated_for_target(
+            target_id=target_id,
+            forecast_family=source.forecast_family,
+            as_of=as_of,
+        )
 
     def _account(
         self,
@@ -736,18 +768,40 @@ def assemble_capital_cycle(
         venue=venue,
         observations=observations,
     )
+    forecast_sources = [
+        CapitalForecastSource(
+            forecast_family=config.carry_forecast.forecast_family,
+            producer=producer,
+            estimated_variable_cost_bps=evidence.round_trip_cost_bps,
+            risk_template=config.capital.sleeve_risk,
+        )
+    ]
+    if config.dynamic_carry_forecast.enabled:
+        forecast_sources.append(
+            CapitalForecastSource(
+                forecast_family=config.dynamic_carry_forecast.forecast_family,
+                producer=DynamicCarryForecastProducer(
+                    policy=config.dynamic_carry_forecast,
+                    market=market,
+                    store=forecasts,
+                    maximum_spot_age_seconds=(
+                        config.capital.risk.maximum_quote_age_seconds
+                    ),
+                    maximum_perpetual_age_seconds=(
+                        config.capital.risk.maximum_quote_age_seconds
+                    ),
+                    clock=forecast_clock,
+                ),
+                estimated_variable_cost_bps=evidence.round_trip_cost_bps,
+                risk_template=config.capital.sleeve_risk,
+                mock_authorization=config.capital.mock_candidate_authorizations[0],
+            )
+        )
     return CapitalCycleService(
         config=config,
         market=market,
         forecasts=forecasts,
-        forecast_sources=(
-            CapitalForecastSource(
-                forecast_family=config.carry_forecast.forecast_family,
-                producer=producer,
-                estimated_variable_cost_bps=evidence.round_trip_cost_bps,
-                risk_template=config.capital.sleeve_risk,
-            ),
-        ),
+        forecast_sources=tuple(forecast_sources),
         portfolio=portfolio,
         performance=performance,
         risks=risks,

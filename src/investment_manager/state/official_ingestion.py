@@ -10,6 +10,8 @@ from typing import Protocol
 
 from sqlalchemy.engine import Engine
 
+from investment_manager.information.coverage import build_source_poll_record
+from investment_manager.information.models import CausalDomain, SourcePollRecord, SourcePollStatus
 from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
@@ -40,6 +42,21 @@ class FedOfficialSource(Protocol):
     def fetch_public_calendar(self) -> str | None: ...
 
     def fetch_monetary_rss(self) -> str | None: ...
+
+
+class SourcePollRecorder(Protocol):
+    def put(self, poll: SourcePollRecord) -> bool: ...
+
+
+class SourcePollAuditError(RuntimeError):
+    """A successful source read is not auditable until its poll fact is durable."""
+
+
+_FED_STREAMS = {
+    "calendar": "fed-fomc-calendar",
+    "public_calendar": "fed-chair-calendar",
+    "monetary": "fed-monetary-releases",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +209,7 @@ class FedOfficialCollectorService:
         publish_recent: Callable[[datetime], None],
         monetary_poll_seconds: int,
         calendar_poll_seconds: int,
+        poll_recorder: SourcePollRecorder | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if monetary_poll_seconds < 1 or calendar_poll_seconds < 1:
@@ -201,6 +219,7 @@ class FedOfficialCollectorService:
         self._publish_recent = publish_recent
         self._monetary_poll_seconds = monetary_poll_seconds
         self._calendar_poll_seconds = calendar_poll_seconds
+        self._poll_recorder = poll_recorder
         self._clock = clock
         self.health = FedOfficialCollectorHealth()
 
@@ -246,13 +265,26 @@ class FedOfficialCollectorService:
         }.get(kind)
         if counter_field is None:
             raise ValueError(f"未知 Fed official collector kind: {kind}")
+        started_at = require_utc(self._clock())
         setattr(self.health, counter_field, getattr(self.health, counter_field) + 1)
         try:
             result = await asyncio.to_thread(self._collect, kind)
+            completed_at = require_utc(self._clock())
+            self._record_poll(
+                kind=kind,
+                status=(
+                    SourcePollStatus.CHANGED
+                    if any(item.inserted for item in result.records)
+                    else SourcePollStatus.UNCHANGED
+                ),
+                started_at=started_at,
+                completed_at=completed_at,
+                result=result,
+            )
             setattr(
                 self.health,
                 f"last_{kind}_success_at",
-                require_utc(self._clock()),
+                completed_at,
             )
             setattr(self.health, f"{kind}_error_class", None)
             self.health.new_fact_revision_count += len(result.new_fact_revisions)
@@ -260,6 +292,15 @@ class FedOfficialCollectorService:
             raise
         except Exception as exc:
             self._record_error(exc, kind)
+            if isinstance(exc, SourcePollAuditError):
+                raise
+            self._record_poll(
+                kind=kind,
+                status=SourcePollStatus.FAILED,
+                started_at=started_at,
+                completed_at=max(require_utc(self._clock()), started_at),
+                error_class=type(exc).__name__,
+            )
 
     def _collect(self, kind: str) -> OfficialFactIngestionResult:
         if kind == "calendar":
@@ -302,3 +343,41 @@ class FedOfficialCollectorService:
         if previous != type(exc).__name__:
             logger.exception("Fed official collector %s failed", component)
         setattr(self.health, field, type(exc).__name__)
+
+    def _record_poll(
+        self,
+        *,
+        kind: str,
+        status: SourcePollStatus,
+        started_at: datetime,
+        completed_at: datetime,
+        result: OfficialFactIngestionResult | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        if self._poll_recorder is None:
+            return
+        records = () if result is None else result.records
+        publications = tuple(
+            item.record.observation.source_published_at
+            or item.record.observation.observed_at
+            for item in records
+        )
+        poll = build_source_poll_record(
+            source_stream_id=_FED_STREAMS[kind],
+            domain=CausalDomain.MONETARY_INFLATION,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            latest_publication_at=max(publications, default=None),
+            observation_count=len(records),
+            new_fact_count=(
+                0 if result is None else len(result.new_fact_revisions)
+            ),
+            error_class=error_class,
+        )
+        try:
+            self._poll_recorder.put(poll)
+        except Exception as exc:
+            raise SourcePollAuditError(
+                f"Fed official {kind} 来源轮询事实无法持久化"
+            ) from exc

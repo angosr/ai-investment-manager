@@ -6,13 +6,14 @@ from datetime import datetime
 from sqlalchemy.engine import Engine
 
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.evidence_repository import SqlStateEvidenceStore
 from investment_manager.state.facts import (
     StateDeltaPolicy,
@@ -64,6 +65,7 @@ class SqlStateProjector:
         facts: tuple[CanonicalFactRevision, ...],
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
+        derivatives: tuple[DerivativeContextSnapshot, ...] = (),
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
         intelligence_affected_assets: tuple[str, ...] = (),
@@ -71,6 +73,7 @@ class SqlStateProjector:
         market_affected_assets: tuple[str, ...] = (),
         data_quality_codes: tuple[str, ...] = (),
         coverage_gap_codes: tuple[str, ...] = (),
+        information_coverage: tuple[DomainCoverageSnapshot, ...] = (),
     ) -> StateProjectionResult:
         as_of = require_utc(as_of)
         built_at = require_utc(built_at)
@@ -78,6 +81,7 @@ class SqlStateProjector:
             as_of=as_of,
             markets=markets,
             features=features,
+            derivatives=derivatives,
             account=account,
             intelligence_events=intelligence_events,
         )
@@ -89,12 +93,16 @@ class SqlStateProjector:
             facts=facts,
             market_snapshot_refs=tuple(content_hash(item) for item in markets),
             feature_snapshot_refs=tuple(content_hash(item) for item in features),
+            derivative_snapshot_refs=tuple(
+                content_hash(item) for item in derivatives
+            ),
             intelligence_event_refs=tuple(
                 content_hash(item) for item in intelligence_events
             ),
             account_snapshot_ref=content_hash(account),
             data_quality_codes=data_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
+            information_coverage=information_coverage,
         )
         feature_ref_by_symbol = {
             item.symbol: content_hash(item)
@@ -130,6 +138,7 @@ class SqlStateProjector:
         self._persist_evidence(
             markets=markets,
             features=features,
+            derivatives=derivatives,
             account=account,
             intelligence_events=intelligence_events,
         )
@@ -181,6 +190,7 @@ class SqlStateProjector:
         *,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
+        derivatives: tuple[DerivativeContextSnapshot, ...],
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
@@ -188,6 +198,8 @@ class SqlStateProjector:
             self._evidence.put_market(market)
         for feature in features:
             self._evidence.put_feature(feature)
+        for derivative in derivatives:
+            self._evidence.put_derivative(derivative)
         self._evidence.put_account(account)
         for event in intelligence_events:
             self._evidence.put_intelligence(event)
@@ -198,6 +210,7 @@ class SqlStateProjector:
         as_of: datetime,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
+        derivatives: tuple[DerivativeContextSnapshot, ...],
         account: AccountSnapshot,
         intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
@@ -209,12 +222,25 @@ class SqlStateProjector:
             raise ValueError("State projection 不能包含重复 Feature symbol")
         if set(market_symbols) != set(feature_symbols):
             raise ValueError("State projection 的 Market/Feature symbols 必须完全一致")
+        derivative_assets = tuple(item.asset for item in derivatives)
+        derivative_symbols = tuple(item.instrument.symbol for item in derivatives)
+        if len(set(derivative_assets)) != len(derivative_assets):
+            raise ValueError("State projection 不能包含重复 Derivative asset")
+        if len(set(derivative_symbols)) != len(derivative_symbols):
+            raise ValueError("State projection 不能包含重复 Derivative symbol")
+        if derivatives and set(derivative_symbols) != set(market_symbols):
+            raise ValueError("State projection 的 Derivative/Market symbols 必须完全一致")
         if any(
             item.as_of > as_of or item.observed_at > as_of for item in markets
         ):
             raise ValueError("State projection 不能使用 as_of 之后的 Market evidence")
         if any(item.as_of > as_of for item in features):
             raise ValueError("State projection 不能使用 as_of 之后的 Feature evidence")
+        if any(
+            item.as_of != as_of or item.observed_at > as_of
+            for item in derivatives
+        ):
+            raise ValueError("State projection 不能使用其他时点的 Derivative evidence")
         if account.as_of > as_of or account.observed_at > as_of:
             raise ValueError("State projection 不能使用 as_of 之后的 Account evidence")
         event_ids = tuple(item.evidence_id for item in intelligence_events)

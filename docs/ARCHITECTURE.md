@@ -35,7 +35,7 @@ Observation
   → StateSnapshot / MaterialDelta
   → DecisionPacket
   → BaseForecast + ContextAssessment
-  → CalibratedForecast
+  → Mock-authorized BaseForecast / CalibratedForecast
   → PortfolioTarget
   → RiskDecision
   → TradePlan
@@ -56,7 +56,10 @@ Observation
 | Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
 | Evaluation | 结算结果并更新机制权限证据 | 读取盲区后改写原计划 |
 
-AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 `ContextAssessment`/`AI_EVENT`，默认不能直接取得资本；程序机制产生 `PROGRAM_BASE`，也必须先通过预登记、样本外评估和显式发布。只有 Portfolio 能决定经济目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
+AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 `ContextAssessment`，只有绑定明确投资对象、参考价、
+时域和输入身份后才能投影为 Forecast；程序机制直接产生 `BaseForecast`。二者都必须先取得显式 Mock 候选授权才
+能进入模拟 Portfolio，取得真实订单权限则必须进一步形成合格 `CalibratedForecast`。只有 Portfolio 能决定经济
+目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
 
 现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
 `TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
@@ -97,6 +100,14 @@ Assessment 区分已确认事实、有证据推断与未验证假设；Dashboard
 `INFERRED / UNVERIFIED`，不能把旧推断升级为 `CONFIRMED`；一手事实仍必须引用本轮可见的官方
 Fact。这样可以跨事件维持多层传导链，同时避免无限上下文、无来源记忆和历史错误自我强化。
 
+事件引用属于每份 `ContextAssessment` 的派生认知，不修改 `IntelligenceEvent`。每个引用必须记录
+`ACTIVE / STALE`、经济作用理由和首次判旧时间：`STALE` 只表示该事件对未来经济与定价的边际影响已经
+完全消退、被证伪或被新事实替代，禁止按发布时间机械衰减。维护采用**状态继承、增量修改**：程序默认继承
+上一轮全部引用，AI 只提交新引用、理由修正或判旧；省略不等于删除，避免每轮复述相同状态造成输出膨胀和
+结构失败。已判旧事件不能恢复，也不能继续支撑 Driver/View。判旧未满 24 小时的引用仍随认知保留以便审计
+过渡，满 24 小时后由程序只从后续认知引用集合移除；原始事件、历史 Packet、历史 Assessment 及当时引用
+永久保留。
+
 信息完整性由**因果域覆盖合同**而不是人名、单次行情或关键词列表定义。每个 Release 必须冻结当前 Mandate
 所需的最小覆盖域、每域允许来源、权威等级、采集路线、正常发布节奏、可接受延迟和失明条件。初始覆盖域为：
 
@@ -115,11 +126,17 @@ Fact。这样可以跨事件维持多层传导链，同时避免无限上下文�
 内容身份、来源等级和下游语义不得专用。官方原文进入 `CanonicalFactRevision`，聚合报道仍是
 `IntelligenceEvent`；不得因 URL 来自 `.gov` 就跳过原文保存和事实投影。
 
-每次 State 同时冻结一个很小的 `CoverageSnapshot`：各必需域最近一次成功采集、最近可见事实时间、来源数、
-正常发布滞后、冲突和缺口。它只回答“系统现在看得见什么”，不保存投资判断。缺失必需域时 Packet 明确携带
-coverage gap，Assessment 必须降低相应结论的认知等级；采集成功但当天没有新发布与采集器失效必须区分。
+每次来源轮询无论内容变化、未变化还是失败，都先追加 `SourcePollRecord`；State 再按其 `as_of` 冻结一个很小的
+`DomainCoverageSnapshot`：各必需域的配置来源、最近成功采集、最近可见发布、状态和轮询引用，同时把真正的
+基础设施缺口写入 `coverage_gap_codes`。它只回答“系统现在看得见什么”，不保存投资判断。Packet 原样继承这份
+点时快照，Assessment 必须降低被缺失域截断的结论等级；`CURRENT` 只证明采集路线正常，不证明方向，
+`NO_RECENT_PUBLICATION`、`SOURCE_STALE / SOURCE_FAILED` 与 `NOT_CONFIGURED` 具有不同语义。当前 Fed 货币
+政策发布流与 Binance 现货/衍生品流已形成真实健康账本，其余域显式为 `NOT_CONFIGURED`，不得用新闻覆盖面
+冒充一手结构化覆盖。
 
-Packet 不扫描全库或发送原始时间序列。程序化投影先完成共指、修订合并、发布滞后、滚动流量、异常、
+Packet 不扫描全库或发送原始时间序列。以衍生品为例，程序先把同一时点可成交 Spot/Perpetual bid-ask、
+mark-index premium、最近资金费率和窗口内已结算 Funding 压缩为带精确输入引用的资产摘要，再冻结进 State；
+AI 只看到该高密度摘要和证据身份，不读取原始 Funding 历史。其他域同样先完成共指、修订合并、发布滞后、滚动流量、异常、
 价格响应、仓位放大器与跨域时序对齐，再按以下顺序分配容量：本次材料变化、仍有效的主导驱动、反证、
 即将发生的日程、组合风险、其余背景。每条入选内容保留稳定证据引用；被省略内容和覆盖缺口显式留痕。
 
@@ -139,6 +156,19 @@ Packet 为审计保留全部 omitted/missing 内容地址，但这些不可读�
 只有一手事实可以支撑 `CONFIRMED`；时序吻合不自动等于因果，资金提前交易也不自动证明内幕信息。
 Assessment 行为变化生成新 identity 并进入同口径前向评价。世界认知的晋级依据不是文字深度，而是点时事实
 准确率、修订/过时处理、重复调用减少、预测校准、风险事件识别和费用后组合增量；未证明增量前没有资本权限。
+
+AI 可靠性按“冻结 Packet 的最终成功率、首次结构成功率、端到端完成延迟、输入/输出密度和不可用原因”分别
+计量，不能用重试后的成功掩盖首次结构失败，也不能把中文、文风或关键词当作投资正确性。结构契约只校验
+机器必须依赖的不变量（完整资产/时域、证据可见性、时间、枚举和引用关系）；表达质量进入可观察评价，不用
+不断增长的字符串规则阻断有效结果。运行失败不产生伪 Assessment，重试仍绑定同一 Packet 和 behavior，超过
+截止时间则显式不可用。优化顺序固定为输入事实与投影质量、输出合同最小化、Prompt、模型/运行路由，禁止
+先通过增加重试掩盖根因。
+
+每次最终 `AssessmentExecution`（包括语义校验失败）都追加到独立执行账本；Codex 子进程调用账本继续记录每次
+账号尝试。前者计算最终成功率，后者计算首次结构成功率和账号切换，二者不得互相替代。Assessment Worker
+启动前必须找到恰好一个绑定当前 Release 与行为哈希的事前 `EvaluationPlan`；行为身份同时覆盖 Packet、Prompt、
+Schema、模型参数、运行 Policy、预期 CLI 版本和二进制哈希，Release 再绑定代码与完整配置。缺失、重复、失效
+或漂移时失败关闭，不能把不同运行制品的结果混进同一前向 cohort。
 
 ### 3.2 市场冲击证据边界
 
@@ -304,6 +334,31 @@ Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除
 `SHADOW` 必须在数据实时可见时生成并保存当时的 Forecast、Portfolio、Risk 和模拟 Execution 结果。
 FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整性或多 Leg 恢复，二者不得互相顶替。
 
+### 3.5 模拟候选与真实订单的授权边界
+
+系统只有模拟盘和正式盘，不建立“探索盘”、运营演练盘或第三条资本链。两者在 Venue 边界以上复用完全相同的
+`Forecast → Portfolio → Risk → TradePlan → ExecutionGroup → Account → Evaluation` 代码、成本、精度、
+恢复和评价语义；晋升只切换是否允许向真实 Venue 提交订单及其凭证/对账要求。相同冻结输入在两种 Venue 配置
+下必须得到相同 Forecast、Target、RiskDecision 和 TradePlan。
+
+权限分两次授予，但不是两种 Forecast 或两套组合算法：
+
+1. **Mock 候选授权**只要求事前冻结经济假设、点时数据合同、自然信号、行为身份、现实成本、风险上限、评价
+   窗口和失败/删除条件；它的目的就是产生尚不存在的前向证据，因此不得反过来要求已有盈利结论。
+2. **真实订单授权**必须读取同一候选在独立样本上的费用后增量、保守下界、回撤、容量、恢复和数据完整性，
+   未通过时不能因为模拟盈利、AI 自信或主 Agent 判断而放宽。
+
+模拟盘不设置专属交易频率、订单数 KPI、等待期或额外收益门槛，也不强制下单。候选按事前定义的自然信号在
+机会出现时交易，无信号时选择现金；数据新鲜度、最大敞口、回撤/kill switch、费用、funding、滑点、数量精度、
+幂等、部分成交和对账仍属于投资语义，不是“模拟特殊限制”。未校准 `BaseForecast` 可以在获得 Mock 候选授权后
+进入同一个 Portfolio，但 Target 必须明确记录其依据为候选假设而非保守校准收益；禁止伪造
+`CalibratedForecast` 数值穿过现有净 edge 门禁。正式授权只接受已校准且满足费用后保守门槛的 Forecast。
+
+同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
+并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
+结论。calendar carry 继续作为原冻结 cohort 的 baseline，不因当前月份无订单而改 cadence；新增收益来源一次只
+接入一个机制不同的 challenger，避免并行试错把选择偏差伪装成盈利能力。
+
 ## 4. 目标目录
 
 ```text
@@ -328,6 +383,7 @@ src/investment_manager/
     tables.py                 # Market 表的唯一声明位置
     perpetual/                # 永续 mark/index/funding 外部协议与轮询状态机
   information/                # 原始来源、新闻与规范化事件
+    coverage.py               # 来源轮询事实与点时因果域覆盖投影
     official/                 # 一手官方记录、解析、抓取和存储
   state/                      # Fact、State、Delta 与 Evidence
     decision/                 # DecisionPacket 的构建、存储和运行装配
@@ -391,7 +447,9 @@ src/investment_manager/
 
 拥有 Instrument、Quote、Trade、Bar、MarketSnapshot、Feature、Binance 行情适配和市场流。Spot
 连续报价仍由一个 WebSocket 流承载；低中频永续研究所需的 mark、index、premium、下一结算时间和
-已发生 funding 由 `market/perpetual` 通过可恢复 REST 轮询保存为点时事实，不复制第二套高频流。
+已发生 funding 由 `market/perpetual` 通过可恢复 REST 轮询保存为点时事实，不复制第二套高频流。每次完整
+刷新还必须追加成功、未变化或失败的覆盖记录；只有该记录持久化后刷新才算成功，防止数据库有行情但认知层
+仍把该域误报为未知。
 所有 Market 表只在 `market/tables.py` 声明。交易所过滤器和数量步长以 Binance 官方规则为准。
 Market 不知道预测、组合和订单意图。
 

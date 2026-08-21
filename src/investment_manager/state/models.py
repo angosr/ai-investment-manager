@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
+from investment_manager.information.models import DomainCoverageSnapshot
 from investment_manager.kernel.identity import SHA256_PATTERN
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -75,10 +76,12 @@ class StateSnapshot(FrozenModel):
     fact_revision_ids: tuple[str, ...] = ()
     market_snapshot_refs: tuple[str, ...] = ()
     feature_snapshot_refs: tuple[str, ...] = ()
+    derivative_snapshot_refs: tuple[str, ...] = ()
     intelligence_event_refs: tuple[str, ...] = ()
     account_snapshot_ref: str | None = Field(default=None, min_length=1)
     data_quality_codes: tuple[str, ...] = ()
     coverage_gap_codes: tuple[str, ...] = ()
+    information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
     content_hash: str = Field(pattern=SHA256_PATTERN)
 
     _utc_as_of = field_validator("as_of")(require_utc)
@@ -92,6 +95,7 @@ class StateSnapshot(FrozenModel):
             "fact_revision_ids",
             "market_snapshot_refs",
             "feature_snapshot_refs",
+            "derivative_snapshot_refs",
             "intelligence_event_refs",
             "data_quality_codes",
             "coverage_gap_codes",
@@ -99,6 +103,11 @@ class StateSnapshot(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"{name} 必须唯一且排序")
+        coverage_domains = tuple(item.domain.value for item in self.information_coverage)
+        if tuple(sorted(set(coverage_domains))) != coverage_domains:
+            raise ValueError("StateSnapshot information_coverage 必须按领域唯一且排序")
+        if any(item.as_of != self.as_of for item in self.information_coverage):
+            raise ValueError("StateSnapshot information_coverage 必须与 state as_of 一致")
         return self
 
 

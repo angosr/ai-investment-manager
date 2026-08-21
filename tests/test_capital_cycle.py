@@ -12,9 +12,14 @@ from investment_manager.entrypoints.dashboard.capital import (
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
-from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+    PerpetualMarketState,
+    PerpetualQuote,
+)
 from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.portfolio.models import CapitalCycleRecord
+from investment_manager.portfolio.models import CapitalCycleRecord, PortfolioEdgeBasis
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
@@ -117,6 +122,33 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
         )
 
 
+def _put_funding_history(market: SqlMarketDataStore, config, *, at: datetime) -> None:
+    perpetual = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.product == InstrumentProduct.USD_M_PERPETUAL
+    )
+    for hours, rate in ((24, "0.0003"), (16, "0.0002"), (8, "0.0001")):
+        funding_at = at - timedelta(hours=hours)
+        market.put_funding_settlement(
+            FundingSettlement(
+                settlement_id=stable_id(
+                    "funding_settlement",
+                    perpetual.key,
+                    funding_at.isoformat(),
+                    FundingRateType.REGULAR.value,
+                ),
+                instrument=perpetual,
+                funding_time=funding_at,
+                observed_at=funding_at + timedelta(seconds=1),
+                funding_rate=rate,
+                mark_price="100000",
+                rate_type=FundingRateType.REGULAR,
+                source="test",
+            )
+        )
+
+
 def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -197,6 +229,34 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert activity_by_symbol["ETHUSDT"].trigger_types == ("MARKET_SHOCK",)
     assert activity_by_symbol["BTCUSDT"].outcome == "EXECUTED"
     assert activity_by_symbol["BTCUSDT"].trigger_types == ("HEARTBEAT",)
+
+
+def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain() -> None:
+    at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=at, sequence=70)
+    _put_funding_history(market, config, at=at)
+
+    result = assemble_capital_cycle(config, engine, forecast_clock=lambda: at).produce(
+        as_of=at,
+        cause_id="dynamic-carry-batch",
+        trigger_batch_id="dynamic-carry-batch",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert result.groups and result.groups[0].terminal
+    target = SqlPortfolioStore(engine).target_for_cycle(result.groups[0].cycle_id)
+    assert target is not None
+    assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
+    assert target.sleeves[0].decision_net_bps > Decimal("5")
+    assert target.sleeves[0].desired_gross_notional == Decimal("3000")
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
 
 
 def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -> None:

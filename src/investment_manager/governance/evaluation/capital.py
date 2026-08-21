@@ -57,8 +57,11 @@ class CapitalShadowThresholds(FrozenModel):
 class CapitalShadowEvaluationSpec(FrozenModel):
     """The immutable cohort, baselines, metrics, and failure rules for Shadow."""
 
-    version: Literal["capital-shadow-evaluation-spec-v1"] = (
-        "capital-shadow-evaluation-spec-v1"
+    version: Literal[
+        "capital-shadow-evaluation-spec-v1",
+        "capital-shadow-evaluation-spec-v2",
+    ] = (
+        "capital-shadow-evaluation-spec-v2"
     )
     plan_id: str
     release_manifest_id: str
@@ -80,12 +83,13 @@ class CapitalShadowEvaluationSpec(FrozenModel):
         "SOURCE_RESEARCH_POLICY_COUNTERFACTUAL",
     )
     behavior_contract: tuple[str, ...] = (
-        "MONTHLY_FIRST_OPEN_ONLY",
-        "NO_LATE_ENTRY",
-        "FROZEN_BASE_QUANTITY_WITHIN_MONTH",
+        "SAME_DECISION_CHAIN_ABOVE_VENUE",
+        "NATURAL_SIGNAL_NO_FORCED_TRADES",
+        "MOCK_HYPOTHESIS_EDGE_EXPLICITLY_LABELED",
+        "MONTHLY_BASELINE_UNCHANGED",
         "RECOVER_OR_COMPENSATE_NONTERMINAL_GROUP",
         "PROGRAMMATIC_RISK_EXIT_ONLY",
-        "NO_TARGET_RETRACKING_WITHIN_MONTH",
+        "NO_REAL_ORDER_PERMISSION",
     )
     accounting_dimensions: tuple[str, ...] = (
         "NET_EQUITY",
@@ -144,12 +148,18 @@ class CapitalShadowEvaluationSpec(FrozenModel):
         months = _calendar_month_count(observation_start, observation_end)
         behavior_payload = {
             "carry_forecast": config.carry_forecast.model_dump(mode="json"),
+            "dynamic_carry_forecast": config.dynamic_carry_forecast.model_dump(
+                mode="json"
+            ),
             "capital": config.capital.model_dump(mode="json"),
             "market_data": config.market_data.model_dump(mode="json"),
             "trigger": config.trigger.model_dump(mode="json"),
             "temporal": config.temporal.model_dump(mode="json"),
             "shadow": config.shadow.model_dump(mode="json"),
         }
+        permissions = config.capital.mock_candidate_authorizations
+        if permissions and any(item.evaluation_plan_id != plan_id for item in permissions):
+            raise ValueError("Mock candidate authorization 必须绑定本 Capital EvaluationPlan")
         return cls(
             plan_id=plan_id,
             release_manifest_id=manifest.manifest_id,
@@ -193,13 +203,9 @@ def build_capital_shadow_evaluation_plan(
     registered_at = require_utc(registered_at)
     if registered_at >= spec.observation_start:
         raise ValueError("Capital Shadow 计划必须在首个观察月开始前登记")
-    return EvaluationPlan(
-        plan_id=spec.plan_id,
-        registered_at=registered_at,
-        base_manifest_id=spec.release_manifest_id,
-        primary_metric="annualized_net_equity_return_lower_bound_vs_cash",
-        minimum_sample_size=spec.thresholds.calendar_months,
-        hard_guardrails=(
+    legacy = spec.version == "capital-shadow-evaluation-spec-v1"
+    hard_guardrails = (
+        (
             "BOUND_RELEASE_AND_EVIDENCE_UNCHANGED",
             "MONTHLY_DECISIONS_COMPLETE",
             "NO_LATE_ENTRY",
@@ -211,13 +217,40 @@ def build_capital_shadow_evaluation_plan(
             "SOURCE_POLICY_ANNUAL_RETURN_GAP_WITHIN_LIMIT",
             "MAXIMUM_DRAWDOWN_WITHIN_LIMIT",
             "MARGIN_BUFFER_WITHIN_LIMIT",
-        ),
+        )
+        if legacy
+        else (
+            "BOUND_RELEASE_AND_FORECAST_PERMISSIONS_UNCHANGED",
+            "ALL_ADMITTED_CAPITAL_DECISIONS_COMPLETE",
+            "MOCK_HYPOTHESIS_NEVER_USED_AS_CALIBRATION",
+            "NO_FORCED_TRADE_OR_SIMULATION_FREQUENCY_GATE",
+            "NO_DUPLICATE_EXECUTION_GROUP",
+            "UNHEDGED_DURATION_WITHIN_LIMIT",
+            "GROUP_RECOVERY_WITHIN_LIMIT",
+            "NET_EQUITY_RECONCILES_AFTER_ALL_COSTS",
+            "ANNUALIZED_RETURN_LOWER_BOUND_POSITIVE_VS_CASH",
+            "SOURCE_POLICY_ANNUAL_RETURN_GAP_WITHIN_LIMIT",
+            "MAXIMUM_DRAWDOWN_WITHIN_LIMIT",
+            "MARGIN_BUFFER_WITHIN_LIMIT",
+        )
+    )
+    return EvaluationPlan(
+        plan_id=spec.plan_id,
+        registered_at=registered_at,
+        base_manifest_id=spec.release_manifest_id,
+        primary_metric="annualized_net_equity_return_lower_bound_vs_cash",
+        minimum_sample_size=spec.thresholds.calendar_months,
+        hard_guardrails=hard_guardrails,
         required_stages=(
             EvaluationStage.STATIC,
             EvaluationStage.FIXED_REGRESSION,
             EvaluationStage.SHADOW,
         ),
-        fixed_regression_suite_version="investment-manager-capital-shadow-regression-v1",
+        fixed_regression_suite_version=(
+            "investment-manager-capital-shadow-regression-v1"
+            if legacy
+            else "investment-manager-capital-shadow-regression-v2"
+        ),
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
         blind_query_budget=0,
@@ -237,9 +270,10 @@ def validate_capital_shadow_evaluation_plan(
     candidates: list[tuple[CapitalShadowEvaluationSpec, EvaluationPlan]] = []
     for plan in plans:
         snapshot = plan.candidate_spec_snapshot
-        if not isinstance(snapshot, dict) or snapshot.get("version") != (
-            "capital-shadow-evaluation-spec-v1"
-        ):
+        if not isinstance(snapshot, dict) or snapshot.get("version") not in {
+            "capital-shadow-evaluation-spec-v1",
+            "capital-shadow-evaluation-spec-v2",
+        }:
             continue
         try:
             spec = CapitalShadowEvaluationSpec.model_validate(snapshot)

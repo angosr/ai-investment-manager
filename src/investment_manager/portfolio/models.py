@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -305,15 +305,60 @@ class PortfolioPerformanceInterval(FrozenModel):
         return self
 
 
+class PortfolioEdgeBasis(StrEnum):
+    CALIBRATED_CONSERVATIVE = "CALIBRATED_CONSERVATIVE"
+    MOCK_HYPOTHESIS = "MOCK_HYPOTHESIS"
+
+
+class MockCandidateAuthorization(FrozenModel):
+    """Frozen permission to collect Mock evidence, never real-order permission."""
+
+    version: str = Field(min_length=1)
+    producer_id: str = Field(min_length=1)
+    producer_version: str = Field(min_length=1)
+    forecast_family: str = Field(min_length=1)
+    hypothesis_fingerprint: str = Field(pattern=SHA256_PATTERN)
+    evaluation_plan_id: str = Field(min_length=1)
+    valid_from: datetime
+    valid_until: datetime
+    maximum_allocation_fraction: UnitInterval
+    minimum_entry_net_bps: Decimal
+    minimum_hold_net_bps: Decimal
+
+    _utc_valid_from = field_validator("valid_from")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
+
+    @model_validator(mode="after")
+    def bounds_and_hysteresis_must_be_consistent(self):
+        if self.valid_from >= self.valid_until:
+            raise ValueError("Mock candidate authorization 时间范围非法")
+        if self.maximum_allocation_fraction <= 0:
+            raise ValueError("Mock candidate allocation 必须为正数")
+        if self.minimum_hold_net_bps > self.minimum_entry_net_bps:
+            raise ValueError("Mock candidate 持有门槛不能高于入场门槛")
+        return self
+
+
 class SleeveTarget(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
     forecast_target: ForecastTarget
     desired_gross_notional: Money
     forecast_ids: tuple[str, ...] = Field(min_length=1)
-    conservative_gross_bps: Decimal
+    edge_basis: PortfolioEdgeBasis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
+    decision_gross_bps: Decimal = Field(
+        validation_alias=AliasChoices(
+            "decision_gross_bps",
+            "conservative_gross_bps",
+        )
+    )
     estimated_variable_cost_bps: Money
-    conservative_net_bps: Decimal
+    decision_net_bps: Decimal = Field(
+        validation_alias=AliasChoices(
+            "decision_net_bps",
+            "conservative_net_bps",
+        )
+    )
     reason_codes: tuple[str, ...] = Field(min_length=1)
 
     @staticmethod
@@ -332,14 +377,26 @@ class SleeveTarget(FrozenModel):
 
     @model_validator(mode="after")
     def economics_and_refs_must_be_consistent(self):
-        expected_net = self.conservative_gross_bps - self.estimated_variable_cost_bps
-        if self.conservative_net_bps != expected_net:
-            raise ValueError("SleeveTarget 净收益必须等于保守毛收益减可变成本")
+        expected_net = self.decision_gross_bps - self.estimated_variable_cost_bps
+        if self.decision_net_bps != expected_net:
+            raise ValueError("SleeveTarget 决策净收益必须等于毛收益依据减可变成本")
         if tuple(sorted(set(self.forecast_ids))) != self.forecast_ids:
             raise ValueError("SleeveTarget forecast_ids 必须唯一且排序")
         if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
             raise ValueError("SleeveTarget reason_codes 必须唯一且排序")
         return self
+
+    @property
+    def conservative_gross_bps(self) -> Decimal:
+        """Compatibility accessor for pre-edge-basis consumers."""
+
+        return self.decision_gross_bps
+
+    @property
+    def conservative_net_bps(self) -> Decimal:
+        """Compatibility accessor for pre-edge-basis consumers."""
+
+        return self.decision_net_bps
 
 
 class PortfolioTarget(FrozenModel):

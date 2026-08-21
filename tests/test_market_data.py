@@ -10,7 +10,8 @@ import pytest
 from sqlalchemy import create_engine
 
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.market.features import build_derivative_context_snapshot
 from investment_manager.market.models import (
     ClosedMarketBar,
     InstrumentId,
@@ -177,6 +178,76 @@ def test_market_interval_seconds_are_canonical(app_config, interval, seconds) ->
     policy = app_config.market_data.model_copy(update={"interval": interval})
 
     assert policy.interval_seconds == seconds
+
+
+def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> None:
+    spot = replay_input.market.model_copy(
+        update={"cycle_id": "analysis-1", "as_of": NOW, "observed_at": NOW}
+    )
+    settlement = _funding_settlement(observed_at=NOW - timedelta(seconds=1))
+
+    snapshot = build_derivative_context_snapshot(
+        cycle_id="analysis-1",
+        asset="BTC",
+        spot=spot,
+        state=_perpetual_state(observed_at=NOW),
+        quote=_perpetual_quote(observed_at=NOW),
+        settlements=(settlement,),
+        funding_window_hours=24,
+    )
+
+    assert snapshot.mark_index_premium_bps == Decimal("20")
+    assert snapshot.executable_short_basis_bps == (
+        Decimal("100") / spot.ask - Decimal("1")
+    ) * Decimal("10000")
+    assert snapshot.last_funding_rate_bps == Decimal("1")
+    assert snapshot.trailing_funding_rate_sum_bps == Decimal("1")
+    assert snapshot.trailing_funding_rate_mean_bps == Decimal("1")
+    assert snapshot.funding_settlement_count == 1
+    assert snapshot.input_refs == tuple(
+        sorted(
+            (
+                content_hash(spot),
+                _perpetual_state(observed_at=NOW).state_id,
+                _perpetual_quote(observed_at=NOW).quote_id,
+                settlement.settlement_id,
+            )
+        )
+    )
+
+
+def test_derivative_context_without_visible_funding_keeps_empty_summary(
+    replay_input,
+) -> None:
+    spot = replay_input.market.model_copy(
+        update={"cycle_id": "analysis-1", "as_of": NOW, "observed_at": NOW}
+    )
+    too_old = _funding_settlement(observed_at=NOW - timedelta(seconds=1)).model_copy(
+        update={
+            "settlement_id": stable_id(
+                "funding_settlement",
+                _perpetual_instrument().key,
+                (NOW - timedelta(hours=25)).isoformat(),
+                FundingRateType.REGULAR.value,
+            ),
+            "funding_time": NOW - timedelta(hours=25),
+        }
+    )
+
+    snapshot = build_derivative_context_snapshot(
+        cycle_id="analysis-1",
+        asset="BTC",
+        spot=spot,
+        state=_perpetual_state(observed_at=NOW),
+        quote=_perpetual_quote(observed_at=NOW),
+        settlements=(too_old,),
+        funding_window_hours=24,
+    )
+
+    assert snapshot.funding_settlement_count == 0
+    assert snapshot.trailing_funding_rate_sum_bps is None
+    assert snapshot.trailing_funding_rate_mean_bps is None
+    assert len(snapshot.input_refs) == 3
 
 
 def test_official_websocket_contract_parses_quote_trade_and_only_closed_bar() -> None:
@@ -824,6 +895,7 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
     async def scenario():
         client = FakeClient()
         store = InMemoryMarketDataStore()
+        refreshes = []
         policy = app_config.market_data.model_copy(
             update={"perpetual_instruments": (_perpetual_instrument(),)}
         )
@@ -831,18 +903,24 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
             policy=policy,
             client=client,  # type: ignore[arg-type]
             store=store,
+            refresh_observer=refreshes.append,
             clock=lambda: NOW,
         )
         await service.refresh()
         await service.refresh()
-        return service, client, store
+        return service, client, store, refreshes
 
-    service, client, store = asyncio.run(scenario())
+    service, client, store, refreshes = asyncio.run(scenario())
     assert client.history_calls == 1
     assert service.health.refresh_count == 2
     assert service.health.state_count == 1
     assert service.health.quote_count == 1
     assert service.health.settlement_count == 1
+    assert refreshes[0].succeeded
+    assert refreshes[0].observation_count == 3
+    assert refreshes[0].changed_count == 3
+    assert refreshes[1].observation_count == 2
+    assert refreshes[1].changed_count == 0
     assert (
         store.latest_perpetual_state(
             instrument=_perpetual_instrument(),
@@ -855,6 +933,41 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         evaluation_at=NOW,
         visible_at=NOW,
     ) == _perpetual_quote()
+
+
+def test_perpetual_service_reports_failed_refresh_without_false_success(
+    app_config,
+) -> None:
+    class FailingClient:
+        async def fetch_market_state(self, instrument):
+            raise TimeoutError("upstream timeout")
+
+        async def fetch_quote(self, instrument):
+            return _perpetual_quote()
+
+    async def scenario():
+        refreshes = []
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (_perpetual_instrument(),)}
+        )
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=FailingClient(),  # type: ignore[arg-type]
+            store=InMemoryMarketDataStore(),
+            refresh_observer=refreshes.append,
+            clock=lambda: NOW,
+        )
+        with pytest.raises(TimeoutError):
+            await service.refresh()
+        return service, refreshes
+
+    service, refreshes = asyncio.run(scenario())
+
+    assert service.health.refresh_count == 0
+    assert len(refreshes) == 1
+    assert not refreshes[0].succeeded
+    assert refreshes[0].error_class == "TimeoutError"
+    assert refreshes[0].observation_count == 0
 
 
 def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(

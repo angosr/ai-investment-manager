@@ -6,6 +6,7 @@ from decimal import Decimal
 from pydantic import Field, model_validator
 
 from investment_manager.forecast.models import (
+    BaseForecast,
     CalibratedForecast,
     DirectionalView,
     ExposureDirection,
@@ -20,7 +21,9 @@ from investment_manager.kernel.types import (
 )
 from investment_manager.market.models import ExecutableQuote
 from investment_manager.portfolio.models import (
+    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
+    PortfolioEdgeBasis,
     PortfolioTarget,
     SleeveTarget,
     sleeve_gross_notional,
@@ -51,8 +54,23 @@ class PortfolioDecisionPolicy(FrozenModel):
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     estimated_variable_cost_bps: Money
-    forecast: CalibratedForecast
+    forecast: BaseForecast | CalibratedForecast
+    mock_authorization: MockCandidateAuthorization | None = None
     refresh_target: bool = True
+
+    @model_validator(mode="after")
+    def forecast_permission_must_be_explicit(self):
+        if isinstance(self.forecast, BaseForecast):
+            permission = self.mock_authorization
+            if permission is None or (
+                permission.producer_id != self.forecast.producer_id
+                or permission.producer_version != self.forecast.producer_version
+                or permission.forecast_family != self.forecast.forecast_family
+            ):
+                raise ValueError("BaseForecast 必须精确绑定 Mock candidate authorization")
+        elif self.mock_authorization is not None:
+            raise ValueError("CalibratedForecast 不得伪装成 Mock hypothesis")
+        return self
 
 
 class PortfolioDecisionEngine:
@@ -130,6 +148,7 @@ class PortfolioDecisionEngine:
                         item,
                         quote_by_instrument=quote_by_instrument,
                         as_of=as_of,
+                        current_notional=current_by_sleeve[item.sleeve_id],
                     )
                 ),
                 key=lambda item: (
@@ -138,7 +157,12 @@ class PortfolioDecisionEngine:
                         quote_by_instrument=quote_by_instrument,
                         as_of=as_of,
                     ),
-                    item.forecast.dispersion_bps,
+                    0 if isinstance(item.forecast, CalibratedForecast) else 1,
+                    (
+                        item.forecast.dispersion_bps
+                        if isinstance(item.forecast, CalibratedForecast)
+                        else Decimal("0")
+                    ),
                     item.sleeve_id,
                 ),
             )
@@ -161,7 +185,11 @@ class PortfolioDecisionEngine:
         )
         selected_ids: set[str] = set()
         for item in eligible:
-            desired = min(single_sleeve_limit, remaining_capacity)
+            desired = min(
+                single_sleeve_limit,
+                self._allocation_limit(item, equity=account.equity),
+                remaining_capacity,
+            )
             if desired <= 0:
                 break
             desired_by_sleeve[item.sleeve_id] = desired
@@ -177,7 +205,7 @@ class PortfolioDecisionEngine:
                 quote_by_instrument=quote_by_instrument,
                 as_of=as_of,
                 allocation_reason=(
-                    "POSITIVE_CONSERVATIVE_NET_EDGE"
+                    "POSITIVE_DECISION_NET_EDGE"
                     if item.sleeve_id in selected_ids
                     else "UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST"
                     if item.sleeve_id in retained_ids
@@ -217,7 +245,7 @@ class PortfolioDecisionEngine:
         if not eligible and not retained_ids:
             reason_codes.add("CASH_SELECTED_NO_ELIGIBLE_FORECAST")
         if selected_ids:
-            reason_codes.add("POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED")
+            reason_codes.add("POSITIVE_DECISION_NET_EDGE_SELECTED")
         if retained_ids:
             reason_codes.add("UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST")
         if below_rebalance_minimum:
@@ -229,6 +257,14 @@ class PortfolioDecisionEngine:
         selected = tuple(item for item in eligible if item.sleeve_id in selected_ids)
         if selected:
             valid_until = min(valid_until, *(item.forecast.valid_until for item in selected))
+        target_instruments = {
+            leg.instrument.key
+            for sleeve in targets
+            for leg in sleeve.forecast_target.legs
+        }
+        target_quotes = tuple(
+            item for item in quotes if item.instrument.key in target_instruments
+        )
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._policy.portfolio_id,
@@ -239,7 +275,7 @@ class PortfolioDecisionEngine:
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "considered_forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
-            "quotes": [item.model_dump(mode="json") for item in quotes],
+            "quotes": [item.model_dump(mode="json") for item in target_quotes],
             "sleeves": [item.model_dump(mode="json") for item in targets],
             "reason_codes": tuple(sorted(reason_codes)),
         }
@@ -292,15 +328,25 @@ class PortfolioDecisionEngine:
                     forecast_target=position.target,
                     desired_gross_notional=Decimal("0"),
                     forecast_ids=(item.forecast.forecast_id,),
-                    conservative_gross_bps=item.forecast.conservative_gross_bps,
+                    edge_basis=self._edge_basis(item),
+                    decision_gross_bps=self._forecast_gross_bps(item.forecast),
                     estimated_variable_cost_bps=item.estimated_variable_cost_bps,
-                    conservative_net_bps=(
-                        item.forecast.conservative_gross_bps - item.estimated_variable_cost_bps
+                    decision_net_bps=(
+                        self._forecast_gross_bps(item.forecast)
+                        - item.estimated_variable_cost_bps
                     ),
                     reason_codes=("PROGRAMMATIC_RISK_EXIT",),
                 )
             )
         all_reasons = tuple(sorted({"PROGRAMMATIC_RISK_EXIT", *reason_codes}))
+        target_instruments = {
+            leg.instrument.key
+            for sleeve in targets
+            for leg in sleeve.forecast_target.legs
+        }
+        target_quotes = tuple(
+            item for item in quotes if item.instrument.key in target_instruments
+        )
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._policy.portfolio_id,
@@ -311,7 +357,7 @@ class PortfolioDecisionEngine:
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "considered_forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
-            "quotes": quotes,
+            "quotes": target_quotes,
             "sleeves": tuple(targets),
             "reason_codes": all_reasons,
         }
@@ -326,19 +372,34 @@ class PortfolioDecisionEngine:
         *,
         quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
+        current_notional: Decimal,
     ) -> bool:
         forecast = item.forecast
-        return bool(
+        if not (
             forecast.available_at <= as_of < forecast.valid_until
             and forecast.direction == DirectionalView.UP
-            and forecast.role in self._policy.eligible_forecast_roles
-            and self._net_edge(
-                item,
-                quote_by_instrument=quote_by_instrument,
-                as_of=as_of,
-            )
-            >= self._policy.minimum_conservative_net_bps
+        ):
+            return False
+        net_edge = self._net_edge(
+            item,
+            quote_by_instrument=quote_by_instrument,
+            as_of=as_of,
         )
+        if isinstance(forecast, CalibratedForecast):
+            return bool(
+                forecast.role in self._policy.eligible_forecast_roles
+                and net_edge >= self._policy.minimum_conservative_net_bps
+            )
+        permission = item.mock_authorization
+        assert permission is not None
+        if not permission.valid_from <= as_of < permission.valid_until:
+            return False
+        threshold = (
+            permission.minimum_hold_net_bps
+            if current_notional > 0
+            else permission.minimum_entry_net_bps
+        )
+        return net_edge >= threshold
 
     @classmethod
     def _net_edge(
@@ -365,11 +426,19 @@ class PortfolioDecisionEngine:
         as_of: datetime,
     ) -> Decimal:
         forecast = item.forecast
-        age_seconds = Decimal(str(max(0, (as_of - forecast.available_at).total_seconds())))
-        decay = max(
-            Decimal("0"),
-            Decimal("1") - age_seconds / (Decimal("2") * forecast.expected_edge_half_life_seconds),
-        )
+        if isinstance(forecast, CalibratedForecast):
+            age_seconds = Decimal(
+                str(max(0, (as_of - forecast.available_at).total_seconds()))
+            )
+            decay = max(
+                Decimal("0"),
+                Decimal("1")
+                - age_seconds
+                / (Decimal("2") * forecast.expected_edge_half_life_seconds),
+            )
+            forecast_gross_bps = forecast.conservative_gross_bps * decay
+        else:
+            forecast_gross_bps = forecast.raw_score
         references = {item.instrument_id: item.price for item in forecast.reference_prices}
         consumed_bps = Decimal("0")
         for leg in forecast.target.legs:
@@ -382,7 +451,7 @@ class PortfolioDecisionEngine:
                 * (exit_price / references[leg.instrument.key] - Decimal("1"))
                 * Decimal("10000")
             )
-        return forecast.conservative_gross_bps * decay - max(Decimal("0"), consumed_bps)
+        return forecast_gross_bps - max(Decimal("0"), consumed_bps)
 
     @classmethod
     def _target(
@@ -406,17 +475,50 @@ class PortfolioDecisionEngine:
             forecast_target=item.forecast.target,
             desired_gross_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
-            conservative_gross_bps=remaining_gross,
+            edge_basis=cls._edge_basis(item),
+            decision_gross_bps=remaining_gross,
             estimated_variable_cost_bps=item.estimated_variable_cost_bps,
-            conservative_net_bps=net_edge,
+            decision_net_bps=net_edge,
             reason_codes=tuple(
                 sorted(
                     (
-                        f"FORECAST_ROLE:{item.forecast.role.value}",
+                        (
+                            f"FORECAST_ROLE:{item.forecast.role.value}"
+                            if isinstance(item.forecast, CalibratedForecast)
+                            else "FORECAST_BASIS:MOCK_HYPOTHESIS"
+                        ),
                         allocation_reason,
                     )
                 )
             ),
+        )
+
+    @staticmethod
+    def _allocation_limit(
+        item: PortfolioSleeveInput,
+        *,
+        equity: Decimal,
+    ) -> Decimal:
+        if item.mock_authorization is None:
+            return equity
+        return equity * item.mock_authorization.maximum_allocation_fraction
+
+    @staticmethod
+    def _edge_basis(item: PortfolioSleeveInput) -> PortfolioEdgeBasis:
+        return (
+            PortfolioEdgeBasis.MOCK_HYPOTHESIS
+            if isinstance(item.forecast, BaseForecast)
+            else PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
+        )
+
+    @staticmethod
+    def _forecast_gross_bps(
+        forecast: BaseForecast | CalibratedForecast,
+    ) -> Decimal:
+        return (
+            forecast.raw_score
+            if isinstance(forecast, BaseForecast)
+            else forecast.conservative_gross_bps
         )
 
     @staticmethod

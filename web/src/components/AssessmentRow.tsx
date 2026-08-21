@@ -89,71 +89,11 @@ export function AssessmentRow({ row }: { row: Row }) {
 
 function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
   const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [worldContextOpen, setWorldContextOpen] = useState(false);
   const snapshot = detail.input_snapshot;
 
   return (
     <>
-      <div className={styles.assessmentDetail}>
-        <section>
-          <div className={styles.h}>判断结论</div>
-          <div className={styles.viewGrid}>
-            {detail.views.map((view) => (
-              <div className={styles.viewCard} key={`${view.asset}-${view.horizon_minutes}`}>
-                <div className={styles.viewHead}>
-                  <b>{view.asset} · {view.horizon_minutes} 分钟</b>
-                  <span data-direction={view.direction}>
-                    {DIRECTION[view.direction] ?? view.direction}
-                  </span>
-                </div>
-                <div className={styles.viewMeta}>
-                  不确定性 {UNCERTAINTY[view.uncertainty] ?? view.uncertainty}
-                  {` · ${PRICED[view.already_priced] ?? view.already_priced}`}
-                  {` · ${view.evidence_count} 条证据`}
-                </div>
-                <div className={styles.viewOutcome}>{assessmentOutcome(view.outcome)}</div>
-                <div className={styles.invalidation}>
-                  <span>失效条件</span>
-                  <ul>
-                    {view.invalidation_conditions.map((condition) => (
-                      <li key={condition}>{condition}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-        <div className={styles.assessmentEvidence}>
-          <section>
-            <div className={styles.h}>推理依据与传导链</div>
-            <p className={styles.thesis}>{detail.mechanism}</p>
-            {detail.drivers.length > 0 ? (
-              <div className={styles.analysisBlock}>
-                <div className={styles.h}>当前关键驱动</div>
-                <ul className={styles.analysisList}>
-                  {detail.drivers.map((driver, index) => (
-                    <li key={`${index}-${driver.statement}`}>
-                      <b>{DRIVER_STATUS[driver.status] ?? driver.status}</b>
-                      {` · ${driver.statement}（${driver.evidence_count} 条证据）`}
-                      <div>{driver.transmission}</div>
-                      <div>证伪：{driver.invalidation_conditions.join("；")}</div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </section>
-          <div>
-            {detail.contradictions.length > 0 ? (
-              <TextList title="反向证据" items={detail.contradictions} />
-            ) : null}
-            {detail.data_gaps.length > 0 ? (
-              <TextList title="尚缺信息" items={detail.data_gaps} />
-            ) : null}
-          </div>
-        </div>
-        <div className={styles.cid}>assessment_id {detail.assessment_id}</div>
-      </div>
       <div className={styles.snapshotActions}>
         <button
           className={styles.snapBtn}
@@ -163,10 +103,128 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
         >
           查看这次 AI 看到的信息快照
         </button>
+        <button
+          className={styles.snapBtn}
+          aria-pressed={worldContextOpen}
+          onClick={() => setWorldContextOpen(!worldContextOpen)}
+        >
+          查看当时世界认知
+        </button>
         {!snapshot ? <span className={styles.snapshotUnavailable}>历史记录未保留输入包</span> : null}
       </div>
       {snapshotOpen && snapshot ? <SnapshotView snapshot={snapshot} /> : null}
+      {worldContextOpen ? <WorldContextSnapshot detail={detail} /> : null}
     </>
+  );
+}
+
+function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
+  const legacyEventReferences = detail.cited_evidence.filter(
+    (item) => item.kind === "INTELLIGENCE_EVENT",
+  );
+  return (
+    <div className={styles.snapshotPanel}>
+      <SnapshotHeader
+        title="当时世界认知"
+        stateId={detail.assessment_id}
+        asOf={detail.at}
+        identityLabel="assessment_id"
+      />
+      <div className={styles.snapshotQuestion}>
+        分析时点 {detail.as_of} · 世界认知形成并可用时间 {detail.at}
+      </div>
+      <SnapshotSection title="主导传导链">
+        <p className={styles.thesis}>{detail.mechanism}</p>
+      </SnapshotSection>
+      <SnapshotSection title="关键驱动及引用">
+        {detail.drivers.length > 0 ? (
+          <ul className={styles.analysisList}>
+            {detail.drivers.map((driver) => (
+              <li key={driver.statement}>
+                <b>{DRIVER_STATUS[driver.status] ?? driver.status}</b>
+                {` · ${driver.statement}`}
+                <div>{driver.transmission}</div>
+                {driver.evidence.map((item) => (
+                  <div key={item.evidence_id}>
+                    引用：{hhmm(item.at)} · {item.source} · {item.title}
+                  </div>
+                ))}
+                <div>证伪：{driver.invalidation_conditions.join("；")}</div>
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.snapshotEmpty}>没有形成可保留的关键驱动</p>}
+      </SnapshotSection>
+      <SnapshotSection title="资产与时域判断">
+        <div className={styles.viewGrid}>
+          {detail.views.map((view) => (
+            <div className={styles.viewCard} key={`${view.asset}-${view.horizon_minutes}`}>
+              <div className={styles.viewHead}>
+                <b>{view.asset} · {view.horizon_minutes} 分钟</b>
+                <span data-direction={view.direction}>
+                  {DIRECTION[view.direction] ?? view.direction}
+                </span>
+              </div>
+              <div className={styles.viewMeta}>
+                不确定性 {UNCERTAINTY[view.uncertainty] ?? view.uncertainty}
+                {` · ${PRICED[view.already_priced] ?? view.already_priced}`}
+                {` · ${view.evidence_count} 条证据`}
+              </div>
+              <div className={styles.viewOutcome}>{assessmentOutcome(view.outcome)}</div>
+              <div className={styles.invalidation}>
+                <span>失效条件</span>
+                <ul>
+                  {view.invalidation_conditions.map((condition) => (
+                    <li key={condition}>{condition}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SnapshotSection>
+      <SnapshotList title="反向证据" empty="无" items={detail.contradictions} />
+      <SnapshotList title="尚缺信息" empty="无" items={detail.data_gaps} />
+      <SnapshotSection title="关联事件及经济影响状态">
+        {detail.event_references.length > 0 ? (
+          <ul className={styles.snapshotList}>
+            {detail.event_references.map((item) => (
+              <li key={item.evidence_id}>
+                <b>
+                  {item.impact_state === "ACTIVE" ? "仍影响未来" : "已过时"}
+                  {` · ${hhmm(item.event_time)} · ${item.source}`}
+                </b>
+                {` · ${item.title}`}
+                <div>{item.rationale}</div>
+                {item.stale_at ? <div>首次判定过时：{item.stale_at}</div> : null}
+              </li>
+            ))}
+          </ul>
+        ) : legacyEventReferences.length > 0 ? (
+          <ul className={styles.snapshotList}>
+            {legacyEventReferences.map((item) => (
+              <li key={item.evidence_id}>
+                <b>历史引用（尚无影响状态） · {hhmm(item.at)} · {item.source}</b>
+                {` · ${item.title}`}
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.snapshotEmpty}>本次世界认知没有关联事件</p>}
+      </SnapshotSection>
+      <SnapshotSection title="本次认知实际引用的事实与事件">
+        {detail.cited_evidence.length > 0 ? (
+          <ul className={styles.snapshotList}>
+            {detail.cited_evidence.map((item) => (
+              <li key={item.evidence_id}>
+                <b>{hhmm(item.at)} · {item.source}</b>
+                {` · ${item.title}`}
+                {item.detail ? <div>{item.detail}</div> : null}
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.snapshotEmpty}>本次认知没有引用可解析的冻结证据</p>}
+      </SnapshotSection>
+    </div>
   );
 }
 
@@ -250,7 +308,6 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           </div>
         </SnapshotSection>
       ) : null}
-      <SnapshotList title="活跃假设" empty="没有活跃假设" items={snapshot.active_hypotheses} />
       <SnapshotList title="数据质量" empty="没有质量告警" items={snapshot.data_quality_codes} />
       <SnapshotList title="覆盖缺口" empty="没有已知覆盖缺口" items={snapshot.coverage_gap_codes} />
       <SnapshotList
@@ -263,11 +320,21 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
   );
 }
 
-function SnapshotHeader({ title, stateId, asOf }: { title: string; stateId: string; asOf: string }) {
+function SnapshotHeader({
+  title,
+  stateId,
+  asOf,
+  identityLabel = "state_id",
+}: {
+  title: string;
+  stateId: string;
+  asOf: string;
+  identityLabel?: string;
+}) {
   return (
     <div className={styles.snapshotHeader}>
       <b>{title}</b>
-      <span>{asOf} · state_id {stateId}</span>
+      <span>{asOf} · {identityLabel} {stateId}</span>
     </div>
   );
 }
@@ -300,18 +367,5 @@ function SnapshotList({
         </ul>
       ) : <p className={styles.snapshotEmpty}>{empty ?? "无"}</p>}
     </section>
-  );
-}
-
-function TextList({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className={styles.analysisBlock}>
-      <div className={styles.h}>{title}</div>
-      <ul className={styles.analysisList}>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
   );
 }

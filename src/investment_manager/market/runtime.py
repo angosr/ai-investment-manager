@@ -24,7 +24,10 @@ from investment_manager.market.models import (
     MarketTrade,
 )
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
-from investment_manager.market.perpetual.service import BinancePerpetualMarketService
+from investment_manager.market.perpetual.service import (
+    BinancePerpetualMarketService,
+    PerpetualRefreshResult,
+)
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
@@ -570,6 +573,8 @@ def assemble_shadow_market_stream(
     store: MarketDataStore,
     *,
     market_observer: Callable[[MarketEvent], bool] | None = None,
+    perpetual_refresh_observer: Callable[[PerpetualRefreshResult], None]
+    | None = None,
 ) -> MarketRuntime:
     if (
         config.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}
@@ -599,6 +604,7 @@ def assemble_shadow_market_stream(
             policy=policy,
             client=BinanceUsdmRestClient(perpetual_transport),
             store=store,
+            refresh_observer=perpetual_refresh_observer,
         )
     return MarketRuntime(
         spot=spot,

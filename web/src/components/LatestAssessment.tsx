@@ -20,11 +20,29 @@ export function LatestAssessment() {
     "cycles",
     [row?.assessment_id],
   );
+  const activeEvents = detail
+    ? detail.event_references
+      .filter((item) => item.impact_state === "ACTIVE")
+      .map((item) => ({
+        evidence_id: item.evidence_id,
+        at: item.event_time,
+        source: item.source,
+        title: item.title,
+      }))
+    : [];
+  const visibleEvents = activeEvents.length > 0
+    ? activeEvents
+    : (detail?.cited_evidence ?? []).filter(
+      (item) => item.kind === "INTELLIGENCE_EVENT",
+    );
+  const eventHeading = activeEvents.length > 0
+    ? "当前仍影响未来的事件"
+    : "本次认知引用的事件（影响状态未评估）";
 
   return (
     <Card
-      title="最新市场判断"
-      aside={row ? `${hhmm(row.at)} UTC` : "暂无判断"}
+      title="最新世界认知"
+      aside={row ? `${hhmm(row.at)} UTC` : "暂无认知"}
       bodyPadded
     >
       {quality && quality.latest_attempt_status !== "SUCCEEDED" ? (
@@ -37,6 +55,16 @@ export function LatestAssessment() {
           <div>
             <div className={styles.summary}>{row.summary}</div>
             <p className={styles.mechanism}>{detail?.mechanism ?? row.mechanism}</p>
+            {detail && detail.drivers.length > 0 ? (
+              <div className={styles.drivers}>
+                {detail.drivers.slice(0, 3).map((driver) => (
+                  <div key={driver.statement} className={styles.driver}>
+                    <b>{driver.statement}</b>
+                    <span>{driver.transmission}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div>
             <div className={styles.views}>
@@ -49,10 +77,20 @@ export function LatestAssessment() {
             {detail && detail.data_gaps.length > 0 ? (
               <div className={styles.gaps}>仍缺：{detail.data_gaps.join("；")}</div>
             ) : null}
+            {visibleEvents.length > 0 ? (
+              <div className={styles.evidence}>
+                <b>{eventHeading}</b>
+                {visibleEvents.slice(0, 6).map((item) => (
+                  <span key={item.evidence_id}>
+                    {hhmm(item.at)} · {item.source} · {item.title}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : (
-        <p className={styles.empty}>尚无已持久化的市场判断。</p>
+        <p className={styles.empty}>尚无已持久化的世界认知。</p>
       )}
     </Card>
   );

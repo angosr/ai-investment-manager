@@ -122,11 +122,15 @@ class PortfolioDecisionPipeline:
                 outcome=PortfolioPipelineOutcome.NO_CHANGE,
             )
         self._portfolio_store.record_target(target)
+        target_quotes = self._quotes_for_target(target=target, quotes=quotes)
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,
-            quotes=quotes,
-            risk_profiles=risk_profiles,
+            quotes=target_quotes,
+            risk_profiles=self._profiles_for_target(
+                target=target,
+                risk_profiles=risk_profiles,
+            ),
             as_of=as_of,
         )
         self._risk_store.record(risk_decision)
@@ -140,7 +144,10 @@ class PortfolioDecisionPipeline:
         trade_plan = self._planner.plan(
             approved=risk_decision.approved_target,
             account=account,
-            quotes=quotes,
+            quotes=self._quotes_for_target(
+                target=risk_decision.approved_target,
+                quotes=target_quotes,
+            ),
             specs=execution_specs,
             as_of=as_of,
         )
@@ -189,11 +196,15 @@ class PortfolioDecisionPipeline:
             ),
         )
         self._portfolio_store.record_target(target)
+        target_quotes = self._quotes_for_target(target=target, quotes=quotes)
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,
-            quotes=quotes,
-            risk_profiles=risk_profiles,
+            quotes=target_quotes,
+            risk_profiles=self._profiles_for_target(
+                target=target,
+                risk_profiles=risk_profiles,
+            ),
             as_of=as_of,
         )
         self._risk_store.record(risk_decision)
@@ -207,7 +218,10 @@ class PortfolioDecisionPipeline:
         plan = self._planner.plan(
             approved=risk_decision.approved_target,
             account=account,
-            quotes=quotes,
+            quotes=self._quotes_for_target(
+                target=risk_decision.approved_target,
+                quotes=target_quotes,
+            ),
             specs=execution_specs,
             as_of=as_of,
         )
@@ -240,6 +254,28 @@ class PortfolioDecisionPipeline:
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
+
+    @staticmethod
+    def _quotes_for_target(
+        *,
+        target: PortfolioTarget,
+        quotes: tuple[ExecutableQuote, ...],
+    ) -> tuple[ExecutableQuote, ...]:
+        required = {
+            leg.instrument.key
+            for sleeve in target.sleeves
+            for leg in sleeve.forecast_target.legs
+        }
+        return tuple(item for item in quotes if item.instrument.key in required)
+
+    @staticmethod
+    def _profiles_for_target(
+        *,
+        target: PortfolioTarget,
+        risk_profiles: tuple[SleeveRiskProfile, ...],
+    ) -> tuple[SleeveRiskProfile, ...]:
+        required = {item.sleeve_id for item in target.sleeves}
+        return tuple(item for item in risk_profiles if item.sleeve_id in required)
 
 
 class TradePlanExecutionResult(FrozenModel):

@@ -49,7 +49,7 @@ from investment_manager.forecast.models import (
     ForecastRole,
     PricedState,
 )
-from investment_manager.forecast.tables import assessment_view_outcomes
+from investment_manager.forecast.tables import assessment_executions, assessment_view_outcomes
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
@@ -696,6 +696,11 @@ def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     assert replayed.reused_authoritative is True
     assert replayed.assessment == first.assessment
     assert analyst.calls == 1
+    with engine.connect() as connection:
+        executions = tuple(
+            connection.execute(select(assessment_executions.c.payload)).scalars()
+        )
+    assert len(executions) == 2
 
 
 def test_assessment_command_identity_covers_packet_and_behavior() -> None:

@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 
 from investment_manager.forecast.carry import (
     CarryForecastProducer,
+    DynamicCarryForecastProducer,
     ReleasedCarryForecastProducer,
     validate_carry_evidence,
 )
@@ -16,7 +17,12 @@ from investment_manager.forecast.models import DirectionalView, ForecastRole
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
-from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+    PerpetualMarketState,
+    PerpetualQuote,
+)
 from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.schema import create_schema
 
@@ -187,6 +193,56 @@ def test_carry_producer_does_not_enter_late_in_month(app_config) -> None:
     )
 
     assert producer.produce(as_of=datetime(2026, 8, 21, tzinfo=UTC)) is None
+
+
+def test_dynamic_carry_uses_visible_median_funding_and_executable_basis(
+    app_config,
+) -> None:
+    market = _market(NOW)
+    instrument = _perpetual()
+    for hours, rate in ((24, "0.0003"), (16, "0.0001"), (8, "0.0002")):
+        funding_at = NOW - timedelta(hours=hours)
+        settlement = FundingSettlement(
+            settlement_id=stable_id(
+                "funding_settlement",
+                instrument.key,
+                funding_at.isoformat(),
+                FundingRateType.REGULAR.value,
+            ),
+            instrument=instrument,
+            funding_time=funding_at,
+            observed_at=funding_at + timedelta(seconds=1),
+            funding_rate=rate,
+            mark_price="100000",
+            rate_type=FundingRateType.REGULAR,
+            source="test",
+        )
+        market.put_funding_settlement(settlement)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlForecastStore(engine)
+    policy = app_config.dynamic_carry_forecast.model_copy(
+        update={"enabled": True}
+    )
+
+    forecast = DynamicCarryForecastProducer(
+        policy=policy,
+        market=market,
+        store=store,
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        clock=lambda: NOW,
+    ).produce(as_of=NOW)
+
+    assert forecast is not None
+    assert forecast.direction == DirectionalView.UP
+    # Executable half-basis is 15 bps; conservative current/median funding uses
+    # the lower 1 bp settlement rate for 21 seven-day periods at half gross.
+    assert forecast.raw_score == Decimal("25.5000")
+    assert forecast.horizon_minutes == 7 * 24 * 60
+    assert forecast.valid_until == NOW + timedelta(minutes=30)
+    assert len(forecast.input_refs) == 6
+    assert store.forecast(forecast.forecast_id) == forecast
 
 
 @pytest.mark.parametrize(

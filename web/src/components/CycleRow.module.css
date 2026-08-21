@@ -139,9 +139,6 @@
   gap: 22px;
   margin-top: 14px;
 }
-.assessmentDetail {
-  margin-top: 14px;
-}
 .viewGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -205,12 +202,6 @@
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
-}
-.assessmentEvidence {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-  gap: 22px;
-  margin-top: 18px;
 }
 .analysisBlock {
   margin-top: 14px;
@@ -461,7 +452,6 @@
 }
 @media (max-width: 640px) {
   .cols,
-  .assessmentEvidence,
   .snapshotGrid {
     grid-template-columns: 1fr;
   }

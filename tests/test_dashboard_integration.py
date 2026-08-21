@@ -19,9 +19,18 @@ from investment_manager.entrypoints.dashboard.app import create_app
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.execution.models import ExitReason
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.context.executor import (
+    AssessmentExecution,
+    AssessmentExecutionStatus,
+)
+from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
+    ContextDriver,
+    ContextDriverStatus,
+    ContextEventImpactState,
+    ContextEventReference,
     ContextView,
     PricedState,
 )
@@ -45,6 +54,7 @@ from investment_manager.state.decision.packet import (
     DecisionPacket,
     PacketAssetState,
     PacketDelta,
+    PacketIntelligenceEvent,
     PacketPortfolioState,
     RequiredView,
 )
@@ -120,6 +130,25 @@ def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> Dec
             ),
         ),
         facts=(),
+        intelligence_events=(
+            PacketIntelligenceEvent(
+                evidence_ref="d" * 64,
+                evidence_id="dashboard-world-event",
+                normalizer_version="dashboard-test-v1",
+                acquisition_route="dashboard-test",
+                source="official-calendar",
+                event_time=as_of - timedelta(minutes=5),
+                observed_at=as_of - timedelta(minutes=4),
+                title="重要政策日程发生变化",
+                body="该事件用于验证世界认知引用与输入快照来自同一冻结 Packet。",
+                symbols=("BTCUSDT",),
+                relevance=Decimal("0.9"),
+                impact=Decimal("0.8"),
+                source_reliability=Decimal("0.9"),
+                novelty=Decimal("0.8"),
+                directly_triggered=False,
+            ),
+        ),
         active_hypotheses=(),
         previous_assessment_refs=(),
         data_quality_codes=(),
@@ -158,6 +187,25 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         decision_packet_hash=packet.content_hash,
         trigger_ids=packet.trigger_ids,
         market_mechanism="宏观事实尚不足以形成可靠的短期方向判断。",
+        drivers=(
+            ContextDriver(
+                statement="政策日程仍可能改变未来风险溢价。",
+                status=ContextDriverStatus.INFERRED,
+                transmission="政策预期先影响风险偏好，再影响现货需求与价格。",
+                evidence_ids=("d" * 64,),
+                invalidation_conditions=("官方取消日程或市场完成定价",),
+            ),
+        ),
+        event_references=(
+            ContextEventReference(
+                evidence_id="d" * 64,
+                source="official-calendar",
+                title="重要政策日程发生变化",
+                event_time=as_of - timedelta(minutes=5),
+                impact_state=ContextEventImpactState.ACTIVE,
+                rationale="正式日程尚未结束，未来政策预期仍可能变化。",
+            ),
+        ),
         views=(
             ContextView(
                 asset="BTC",
@@ -259,6 +307,18 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 },
             )
         )
+    SqlContextAssessmentStore(archive_engine).record_execution(
+        AssessmentExecution.create(
+            status=AssessmentExecutionStatus.FAILED,
+            packet_id=bad_packet.packet_id,
+            analysis_behavior_hash=configured_assess_behavior_hash(app_config),
+            completed_at=bad_assessment.available_at,
+            codex_attempts=1,
+            reason_code="CODEX_SCHEMA_INVALID",
+            source_run_id="run-dashboard-invalid-output",
+            account_id=".codex-test",
+        )
+    )
     SqlEventStore(
         archive_engine,
         pipeline_id=app_config.pipeline.version,
@@ -324,14 +384,28 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert assessment_rows.json()["quality"] == {
         "latest_attempt_at": bad_assessment.available_at.isoformat(),
         "latest_attempt_status": "REJECTED",
-        "latest_attempt_reason": "SCHEMA_INVALID",
+        "latest_attempt_reason": "CODEX_SCHEMA_INVALID",
         "latest_valid_at": assessment.available_at.isoformat(),
         "rejected_attempt_count_24h": 1,
+        "execution_count_24h": 1,
+        "final_success_count_24h": 0,
+        "first_attempt_success_count_24h": 0,
         "rejection_reasons": ["输出未通过分析契约"],
     }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
+    assert assessment_detail.json()["drivers"][0]["evidence"] == [
+        {
+            "evidence_id": "d" * 64,
+            "kind": "INTELLIGENCE_EVENT",
+            "title": "重要政策日程发生变化",
+            "detail": "该事件用于验证世界认知引用与输入快照来自同一冻结 Packet。",
+            "source": "official-calendar",
+            "at": (as_of - timedelta(minutes=5)).isoformat(),
+        }
+    ]
+    assert assessment_detail.json()["event_references"][0]["impact_state"] == "ACTIVE"
     assert assessment_detail.json()["input_snapshot"]["packet_id"] == packet.packet_id
     assert assessment_detail.json()["input_snapshot"]["capacity_summary"] == {
         "missing_fact_count": len(packet.missing_fact_revision_ids),

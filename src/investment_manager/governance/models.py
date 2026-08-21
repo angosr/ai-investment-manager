@@ -644,6 +644,7 @@ def validate_manifest_against_config(
         "strategy",
         "calibration",
         "carry_forecast",
+        "dynamic_carry_forecast",
         "capital",
         "composition",
         "frequency",

@@ -32,8 +32,13 @@ from investment_manager.forecast.context.service import (
 )
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.governance.change.service import assemble_governance
+from investment_manager.governance.evaluation.assessment import (
+    validate_assessment_runtime_plan,
+)
 from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
+from investment_manager.governance.models import evaluation_plan_invalidation_id
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.collector import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -43,6 +48,11 @@ from investment_manager.information.collector import (
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
+from investment_manager.information.coverage import (
+    SqlInformationCoverageStore,
+    build_source_poll_record,
+)
+from investment_manager.information.models import CausalDomain, SourcePollStatus
 from investment_manager.information.official.source import HttpFedOfficialSource
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.application import submit_frozen_analysis
@@ -52,6 +62,7 @@ from investment_manager.legacy.runtime import (
     assemble_analysis_cycle,
     run_worker_process,
 )
+from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -106,6 +117,23 @@ def assessment_worker(
     """运行无交易权限的 ContextAssessment Worker。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
+    engine = runtime_engine(database_url)
+    governance = SqlGovernanceRepository(engine)
+    plans = tuple(
+        plan
+        for plan in governance.plans_for_manifest(manifest.manifest_id)
+        if governance.get_failed_experiment(
+            evaluation_plan_invalidation_id(plan.plan_id)
+        )
+        is None
+    )
+    validate_assessment_runtime_plan(
+        config=loaded,
+        manifest=manifest,
+        plans=plans,
+        started_at=datetime.now(UTC),
+    )
+    engine.dispose()
     application = assemble_assessment_application(
         loaded,
         database_url,
@@ -190,10 +218,35 @@ def market_stream(
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         sink=triggers,
     )
+    coverage = SqlInformationCoverageStore(engine)
+
+    def record_perpetual_refresh(refresh: PerpetualRefreshResult) -> None:
+        coverage.put(
+            build_source_poll_record(
+                source_stream_id="binance-usdm-market",
+                domain=CausalDomain.SPOT_DERIVATIVES,
+                status=(
+                    SourcePollStatus.FAILED
+                    if not refresh.succeeded
+                    else (
+                        SourcePollStatus.CHANGED
+                        if refresh.changed_count
+                        else SourcePollStatus.UNCHANGED
+                    )
+                ),
+                started_at=refresh.started_at,
+                completed_at=refresh.completed_at,
+                latest_publication_at=refresh.latest_publication_at,
+                observation_count=refresh.observation_count,
+                error_class=refresh.error_class,
+            )
+        )
+
     service = assemble_shadow_market_stream(
         loaded,
         store,
         market_observer=detector.observe,
+        perpetual_refresh_observer=record_perpetual_refresh,
     )
     asyncio.run(service.run(asyncio.Event()))
 
@@ -473,6 +526,7 @@ def information_collector(
         publish_recent=fact_trigger_publisher.publish_recent,
         monetary_poll_seconds=policy.fed_monetary_poll_seconds,
         calendar_poll_seconds=policy.fed_calendar_poll_seconds,
+        poll_recorder=SqlInformationCoverageStore(engine),
     )
 
     async def run() -> None:

@@ -13,17 +13,25 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.tables import state_evidence_snapshots
 
 
 class StateEvidenceKind(StrEnum):
     MARKET = "MARKET"
     FEATURE = "FEATURE"
+    DERIVATIVE = "DERIVATIVE"
     ACCOUNT = "ACCOUNT"
     INTELLIGENCE = "INTELLIGENCE"
 
 
-StateEvidence = MarketSnapshot | FeatureSnapshot | AccountSnapshot | IntelligenceEvent
+StateEvidence = (
+    MarketSnapshot
+    | FeatureSnapshot
+    | DerivativeContextSnapshot
+    | AccountSnapshot
+    | IntelligenceEvent
+)
 
 
 class SqlStateEvidenceStore:
@@ -37,6 +45,9 @@ class SqlStateEvidenceStore:
 
     def put_feature(self, snapshot: FeatureSnapshot) -> str:
         return self._put(StateEvidenceKind.FEATURE, snapshot)
+
+    def put_derivative(self, snapshot: DerivativeContextSnapshot) -> str:
+        return self._put(StateEvidenceKind.DERIVATIVE, snapshot)
 
     def put_account(self, snapshot: AccountSnapshot) -> str:
         return self._put(StateEvidenceKind.ACCOUNT, snapshot)
@@ -74,7 +85,10 @@ class SqlStateEvidenceStore:
 
     def _put(self, kind: StateEvidenceKind, snapshot: StateEvidence) -> str:
         evidence_ref = content_hash(snapshot)
-        if isinstance(snapshot, (MarketSnapshot, AccountSnapshot, IntelligenceEvent)):
+        if isinstance(
+            snapshot,
+            (MarketSnapshot, DerivativeContextSnapshot, AccountSnapshot, IntelligenceEvent),
+        ):
             observed_at = snapshot.observed_at
         else:
             observed_at = snapshot.as_of
@@ -106,6 +120,8 @@ def _parse_evidence(kind: StateEvidenceKind, payload: dict) -> StateEvidence:
         return MarketSnapshot.model_validate(payload)
     if kind == StateEvidenceKind.FEATURE:
         return FeatureSnapshot.model_validate(payload)
+    if kind == StateEvidenceKind.DERIVATIVE:
+        return DerivativeContextSnapshot.model_validate(payload)
     if kind == StateEvidenceKind.INTELLIGENCE:
         return IntelligenceEvent.model_validate(payload)
     return AccountSnapshot.model_validate(payload)

@@ -3,6 +3,9 @@ from decimal import Decimal
 
 import pytest
 
+from investment_manager.forecast.context.analyst import (
+    configured_assess_behavior_hash,
+)
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
@@ -19,8 +22,11 @@ from investment_manager.governance.evaluation.assessment import (
     evaluate_assessment_forward_plan,
     failed_assessment_forward_experiment,
     validate_assessment_forward_plan,
+    validate_assessment_runtime_plan,
 )
+from investment_manager.governance.models import load_release_manifest
 from investment_manager.kernel.identity import stable_id
+from investment_manager.settings import load_config
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -144,6 +150,71 @@ def test_assessment_forward_plan_is_registered_before_a_feasible_window() -> Non
         )
 
 
+def test_assessment_worker_requires_one_exact_current_behavior_plan() -> None:
+    config = load_config("config/investment-manager.yaml")
+    manifest = load_release_manifest("config/release-manifest.yaml").model_copy(
+        update={"manifest_id": "release-context-runtime-test"}
+    )
+    start = datetime(2026, 8, 21, 17, tzinfo=UTC)
+    spec = AssessmentForwardEvaluationSpec(
+        plan_id="context-runtime-plan",
+        analysis_scope=config.assessment.mandate.analysis_scope,
+        analysis_behavior_hash=configured_assess_behavior_hash(config),
+        outcome_evaluation_version=config.outcome_evaluation.assessment_version,
+        signal_window_start=start,
+        signal_window_end=start + timedelta(days=7),
+        scopes=tuple(
+            sorted(
+                (
+                    AssessmentEvaluationScope(
+                        asset=asset.asset,
+                        symbol=asset.market_symbol,
+                        horizon_minutes=horizon,
+                    )
+                    for asset in config.assessment.mandate.assets
+                    for horizon in asset.horizons_minutes
+                ),
+                key=lambda item: (item.asset, item.symbol, item.horizon_minutes),
+            )
+        ),
+        settlement_grace_minutes=(
+            config.outcome_evaluation.settlement_grace_minutes
+        ),
+    )
+    plan = build_assessment_forward_plan(
+        spec=spec,
+        base_manifest_id=manifest.manifest_id,
+        registered_at=start - timedelta(hours=1),
+    )
+
+    assert validate_assessment_runtime_plan(
+        config=config,
+        manifest=manifest,
+        plans=(plan,),
+        started_at=start,
+    ) == (spec, plan)
+    with pytest.raises(ValueError, match="恰好绑定一个"):
+        validate_assessment_runtime_plan(
+            config=config,
+            manifest=manifest,
+            plans=(),
+            started_at=start,
+        )
+    with pytest.raises(ValueError, match="当前行为不一致"):
+        validate_assessment_runtime_plan(
+            config=config,
+            manifest=manifest,
+            plans=(
+                build_assessment_forward_plan(
+                    spec=spec.model_copy(
+                        update={"analysis_behavior_hash": "f" * 64}
+                    ),
+                    base_manifest_id=manifest.manifest_id,
+                    registered_at=start - timedelta(hours=1),
+                ),
+            ),
+            started_at=start,
+        )
 def test_assessment_forward_gate_scores_abstention_as_cash_against_always_up() -> None:
     spec = _spec()
     outcomes = (

@@ -23,6 +23,7 @@ from investment_manager.forecast.codex.router import (
 from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
+    assessment_visible_event_ids,
     assessment_visible_evidence_ids,
     build_assess_prompt,
     finalize_context_assessment,
@@ -32,8 +33,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v4"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v2"
+ASSESS_INPUT_VERSION = "assess-input-v8"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v3"
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -50,6 +51,14 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     drivers = draft["properties"]["drivers"]
     drivers["minItems"] = 1
     drivers["maxItems"] = 8
+    event_reference = definitions["ContextEventReferenceUpdate"]
+    visible_event_ids = assessment_visible_event_ids(packet)
+    if visible_event_ids:
+        event_reference["properties"]["evidence_id"]["enum"] = list(
+            visible_event_ids
+        )
+    event_reference_updates = draft["properties"]["event_reference_updates"]
+    event_reference_updates["maxItems"] = len(visible_event_ids)
     branches: list[dict[str, object]] = []
     for required in packet.required_views:
         branch = deepcopy(context_view)
@@ -118,6 +127,9 @@ def _assess_behavior_hash(
             "mandate_version": mandate_version,
             "required_views": required_views,
             "execution_contract": codex_execution_contract(),
+            "runtime_policy_version": runtime.version,
+            "expected_cli_version": runtime.expected_cli_version,
+            "expected_binary_sha256": runtime.expected_binary_sha256,
             "model": runtime.model,
             "reasoning_effort": runtime.reasoning_effort,
             "maximum_schema_attempts": 1 + runtime.max_account_switches,

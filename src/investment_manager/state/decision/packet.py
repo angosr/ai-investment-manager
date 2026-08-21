@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import AccountSnapshot
-from investment_manager.information.models import IntelligenceEvent, SourceTier
+from investment_manager.information.models import (
+    DomainCoverageSnapshot,
+    IntelligenceEvent,
+    SourceTier,
+)
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -27,6 +31,7 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -42,6 +47,12 @@ _LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS = {
     "decision-packet-v1",
     "decision-packet-v2",
     "decision-packet-v3",
+}
+_LEGACY_PACKET_SCHEMAS_WITHOUT_EVENT_URL = {
+    "decision-packet-v1",
+    "decision-packet-v2",
+    "decision-packet-v3",
+    "decision-packet-v4",
 }
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
@@ -130,6 +141,25 @@ class PacketAssetState(FrozenModel):
     market_age_seconds: int = Field(ge=0)
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
+
+
+class PacketDerivativeState(FrozenModel):
+    evidence_ref: str = Field(pattern=SHA256_PATTERN)
+    asset: str
+    market_symbol: str
+    observed_at: datetime
+    mark_index_premium_bps: Decimal
+    executable_short_basis_bps: Decimal
+    perpetual_spread_bps: Money
+    last_funding_rate_bps: Decimal
+    trailing_funding_rate_mean_bps: Decimal | None
+    trailing_funding_rate_sum_bps: Decimal | None
+    funding_settlement_count: int = Field(ge=0)
+    funding_window_hours: int = Field(gt=0, le=168)
+    next_funding_time: datetime
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_next_funding = field_validator("next_funding_time")(require_utc)
 
 
 class PacketDelta(FrozenModel):
@@ -268,10 +298,42 @@ class PacketPreviousView(FrozenModel):
     uncertainty: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
 
 
+class PacketPreviousEventReference(FrozenModel):
+    evidence_id: str = Field(pattern=SHA256_PATTERN)
+    source: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=1_000)
+    event_time: datetime
+    impact_state: Literal["ACTIVE", "STALE"]
+    rationale: str = Field(min_length=1, max_length=600)
+    stale_at: datetime | None = None
+
+    _utc_event_time = field_validator("event_time")(require_utc)
+    _utc_stale_at = field_validator("stale_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def stale_time_must_match_state(self):
+        if self.impact_state == "STALE":
+            if self.stale_at is None:
+                raise ValueError("过时事件引用必须记录首次过时时间")
+        elif self.stale_at is not None:
+            raise ValueError("仍有效事件引用不得记录过时时间")
+        return self
+
+
 class PacketPreviousContext(FrozenModel):
     """Latest inherited world model; derived evidence, never a first-party fact."""
 
     assessment_id: str = Field(min_length=1)
+    analysis_scope: str | None = Field(default=None, min_length=1)
+    mandate_version: str | None = Field(default=None, min_length=1)
+    analysis_behavior_hash: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
+    decision_packet_hash: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
     as_of: datetime
     available_at: datetime
     market_mechanism: str = Field(
@@ -279,6 +341,7 @@ class PacketPreviousContext(FrozenModel):
         max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
     )
     drivers: tuple[PacketPreviousDriver, ...] = Field(max_length=8)
+    event_references: tuple[PacketPreviousEventReference, ...] = ()
     views: tuple[PacketPreviousView, ...]
     contradictions: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
     data_gaps: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
@@ -293,6 +356,9 @@ class PacketPreviousContext(FrozenModel):
         keys = tuple((item.asset, item.horizon_minutes) for item in self.views)
         if tuple(sorted(set(keys))) != keys:
             raise ValueError("上一轮世界认知 views 必须唯一且排序")
+        event_ids = tuple(item.evidence_id for item in self.event_references)
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("上一轮世界认知不能重复引用事件")
         return self
 
 
@@ -309,13 +375,17 @@ class DecisionPacket(FrozenModel):
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     portfolio: PacketPortfolioState
     asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
+    derivative_states: tuple[PacketDerivativeState, ...] = ()
     deltas: tuple[PacketDelta, ...] = ()
     review_requests: tuple[PacketReviewRequest, ...] = ()
     facts: tuple[PacketFact, ...]
     intelligence_events: tuple[PacketIntelligenceEvent, ...] = ()
-    active_hypotheses: tuple[str, ...]
-    previous_assessment_refs: tuple[str, ...]
+    # Read-only compatibility for immutable pre-v8 packets. New packets do not
+    # serialize or populate these superseded placeholders.
+    active_hypotheses: tuple[str, ...] = Field(default=(), exclude=True)
+    previous_assessment_refs: tuple[str, ...] = Field(default=(), exclude=True)
     previous_context: PacketPreviousContext | None = None
+    information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
     data_quality_codes: tuple[str, ...]
     coverage_gap_codes: tuple[str, ...]
     missing_fact_revision_ids: tuple[str, ...]
@@ -366,6 +436,11 @@ class DecisionPacket(FrozenModel):
             raise ValueError("DecisionPacket asset_states 必须按资产唯一且排序")
         if set(asset_keys) != {item.asset for item in self.required_views}:
             raise ValueError("DecisionPacket asset_states 与 required_views 不一致")
+        derivative_keys = tuple(item.asset for item in self.derivative_states)
+        if tuple(sorted(set(derivative_keys))) != derivative_keys:
+            raise ValueError("DecisionPacket derivative_states 必须按资产唯一且排序")
+        if self.derivative_states and set(derivative_keys) != set(asset_keys):
+            raise ValueError("DecisionPacket derivative_states 与 asset_states 不一致")
         revision_ids = tuple(item.revision_id for item in self.facts)
         if len(set(revision_ids)) != len(revision_ids):
             raise ValueError("DecisionPacket facts revision_id 不得重复")
@@ -373,7 +448,6 @@ class DecisionPacket(FrozenModel):
         if len(set(event_refs)) != len(event_refs):
             raise ValueError("DecisionPacket intelligence event ref 不得重复")
         for name in (
-            "previous_assessment_refs",
             "data_quality_codes",
             "coverage_gap_codes",
             "missing_fact_revision_ids",
@@ -383,6 +457,15 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
+        if self.schema_version == "decision-packet-v8" and (
+            self.active_hypotheses or self.previous_assessment_refs
+        ):
+            raise ValueError("DecisionPacket v8 不再写入旧假设或 Assessment 引用占位")
+        coverage_domains = tuple(item.domain.value for item in self.information_coverage)
+        if tuple(sorted(set(coverage_domains))) != coverage_domains:
+            raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
+        if any(item.as_of != self.as_of for item in self.information_coverage):
+            raise ValueError("DecisionPacket information_coverage 必须与 packet as_of 一致")
         expected_hash = _decision_packet_content_hash(self)
         if self.content_hash != expected_hash:
             raise ValueError("DecisionPacket content_hash 与内容不一致")
@@ -396,6 +479,9 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
+    if packet.schema_version != "decision-packet-v8":
+        payload["active_hypotheses"] = packet.active_hypotheses
+        payload["previous_assessment_refs"] = packet.previous_assessment_refs
     if (
         packet.schema_version in _LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS
         and not packet.review_requests
@@ -403,6 +489,28 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         payload.pop("review_requests", None)
     if packet.schema_version != "decision-packet-v6" and packet.previous_context is None:
         payload.pop("previous_context", None)
+    if packet.schema_version == "decision-packet-v6" and packet.previous_context is not None:
+        previous_context = payload["previous_context"]
+        for field_name in (
+            "analysis_scope",
+            "mandate_version",
+            "analysis_behavior_hash",
+            "decision_packet_hash",
+        ):
+            previous_context.pop(field_name, None)
+        if not packet.previous_context.event_references:
+            previous_context.pop("event_references", None)
+    if packet.schema_version in _LEGACY_PACKET_SCHEMAS_WITHOUT_EVENT_URL:
+        for event in payload["intelligence_events"]:
+            if event["url"] is None:
+                event.pop("url")
+    if (
+        packet.schema_version not in {"decision-packet-v7", "decision-packet-v8"}
+        and not packet.information_coverage
+    ):
+        payload.pop("information_coverage", None)
+    if packet.schema_version != "decision-packet-v8" and not packet.derivative_states:
+        payload.pop("derivative_states", None)
     return content_hash(payload)
 
 
@@ -429,9 +537,9 @@ class DecisionPacketBuilder:
         account: AccountSnapshot,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
-        active_hypotheses: tuple[str, ...] = (),
-        previous_assessment_refs: tuple[str, ...] = (),
+        derivatives: tuple[DerivativeContextSnapshot, ...] = (),
         previous_context: PacketPreviousContext | None = None,
+        information_coverage: tuple[DomainCoverageSnapshot, ...] = (),
     ) -> DecisionPacket:
         ordered_deltas = tuple(
             sorted(deltas, key=lambda item: (item.observed_at, item.delta_id))
@@ -449,7 +557,8 @@ class DecisionPacketBuilder:
             account=account,
             markets=markets,
             features=features,
-            active_hypotheses=active_hypotheses,
+            derivatives=derivatives,
+            previous_context=previous_context,
         )
         direct_fact_ids = tuple(
             sorted(
@@ -490,6 +599,10 @@ class DecisionPacketBuilder:
             )
             for item in mandate.assets
         )
+        derivative_states = tuple(
+            self._derivative_state(item)
+            for item in sorted(derivatives, key=lambda value: value.asset)
+        )
         required_views = tuple(
             RequiredView(asset=item.asset, horizon_minutes=horizon)
             for item in mandate.assets
@@ -511,13 +624,16 @@ class DecisionPacketBuilder:
             "required_views": required_views,
             "portfolio": self._portfolio_state(account),
             "asset_states": asset_states,
+            "derivative_states": derivative_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
             "review_requests": ordered_reviews,
             "facts": selected,
             "intelligence_events": selected_events,
-            "active_hypotheses": active_hypotheses,
-            "previous_assessment_refs": previous_assessment_refs,
-            "previous_context": self._compact_previous_context(previous_context),
+            "previous_context": self._compact_previous_context(
+                previous_context,
+                as_of=state.as_of,
+            ),
+            "information_coverage": information_coverage,
             "data_quality_codes": state.data_quality_codes,
             "coverage_gap_codes": state.coverage_gap_codes,
             "missing_fact_revision_ids": missing_fact_ids,
@@ -579,10 +695,16 @@ class DecisionPacketBuilder:
         account: AccountSnapshot,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
-        active_hypotheses: tuple[str, ...],
+        derivatives: tuple[DerivativeContextSnapshot, ...],
+        previous_context: PacketPreviousContext | None,
     ) -> None:
         if state.analysis_scope != mandate.analysis_scope:
             raise ValueError("StateSnapshot 与 AnalysisMandate scope 不一致")
+        if previous_context is not None:
+            if previous_context.analysis_scope != mandate.analysis_scope:
+                raise ValueError("上一轮世界认知与 AnalysisMandate scope 不一致")
+            if previous_context.available_at > state.as_of:
+                raise ValueError("上一轮世界认知在 StateSnapshot as_of 时尚不可见")
         if not deltas and not review_requests:
             raise ValueError("DecisionPacket 至少需要 MaterialDelta 或显式评审请求")
         if tuple(sorted(set(item.review_id for item in review_requests))) != tuple(
@@ -591,8 +713,6 @@ class DecisionPacketBuilder:
             raise ValueError("PacketReviewRequest 必须按 review_id 唯一且排序")
         if any(item.requested_at > state.as_of for item in review_requests):
             raise ValueError("PacketReviewRequest requested_at 晚于 StateSnapshot")
-        if len(active_hypotheses) > self._policy.maximum_active_hypotheses:
-            raise DecisionPacketCapacityError("active hypotheses exceed policy")
         if account.as_of > state.as_of or account.observed_at > state.as_of:
             raise ValueError("账户事实晚于 StateSnapshot as_of")
         if state.account_snapshot_ref != content_hash(account):
@@ -610,12 +730,26 @@ class DecisionPacketBuilder:
             sorted(content_hash(item) for item in features)
         ):
             raise ValueError("特征事实与 StateSnapshot feature_snapshot_refs 不一致")
+        if state.derivative_snapshot_refs != tuple(
+            sorted(content_hash(item) for item in derivatives)
+        ):
+            raise ValueError("衍生品事实与 StateSnapshot derivative_snapshot_refs 不一致")
+        derivative_assets = tuple(item.asset for item in derivatives)
+        derivative_symbols = tuple(item.instrument.symbol for item in derivatives)
+        if derivatives and (
+            set(derivative_assets) != {item.asset for item in mandate.assets}
+            or set(derivative_symbols) != set(symbols)
+        ):
+            raise ValueError("DerivativeContextSnapshot 集合与 Mandate assets 不一致")
         for market in markets:
             if market.as_of > state.as_of or market.observed_at > state.as_of:
                 raise ValueError("行情事实晚于 StateSnapshot as_of")
         for feature in features:
             if feature.as_of > state.as_of:
                 raise ValueError("特征事实晚于 StateSnapshot as_of")
+        for derivative in derivatives:
+            if derivative.as_of != state.as_of or derivative.observed_at > state.as_of:
+                raise ValueError("衍生品事实与 StateSnapshot 时点不一致")
         state_fact_ids = set(state.fact_revision_ids)
         revision_ids = tuple(item.fact.revision_id for item in facts)
         if len(set(revision_ids)) != len(revision_ids):
@@ -721,6 +855,8 @@ class DecisionPacketBuilder:
     def _compact_previous_context(
         self,
         context: PacketPreviousContext | None,
+        *,
+        as_of: datetime,
     ) -> PacketPreviousContext | None:
         if context is None:
             return None
@@ -729,6 +865,12 @@ class DecisionPacketBuilder:
                 "drivers": context.drivers[
                     : self._policy.maximum_previous_context_drivers
                 ],
+                "event_references": tuple(
+                    item
+                    for item in context.event_references
+                    if item.stale_at is None
+                    or item.stale_at + timedelta(days=1) > as_of
+                ),
             }
         )
 
@@ -872,6 +1014,26 @@ class DecisionPacketBuilder:
                 )
                 for item in sorted(account.positions, key=lambda value: value.symbol)
             ),
+        )
+
+    @staticmethod
+    def _derivative_state(
+        snapshot: DerivativeContextSnapshot,
+    ) -> PacketDerivativeState:
+        return PacketDerivativeState(
+            evidence_ref=content_hash(snapshot),
+            asset=snapshot.asset,
+            market_symbol=snapshot.instrument.symbol,
+            observed_at=snapshot.observed_at,
+            mark_index_premium_bps=snapshot.mark_index_premium_bps,
+            executable_short_basis_bps=snapshot.executable_short_basis_bps,
+            perpetual_spread_bps=snapshot.perpetual_spread_bps,
+            last_funding_rate_bps=snapshot.last_funding_rate_bps,
+            trailing_funding_rate_mean_bps=snapshot.trailing_funding_rate_mean_bps,
+            trailing_funding_rate_sum_bps=snapshot.trailing_funding_rate_sum_bps,
+            funding_settlement_count=snapshot.funding_settlement_count,
+            funding_window_hours=snapshot.funding_window_hours,
+            next_funding_time=snapshot.next_funding_time,
         )
 
     @staticmethod

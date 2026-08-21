@@ -94,6 +94,32 @@ class CarryForecastPolicy(StrictConfig):
         return self
 
 
+class DynamicCarryForecastPolicy(StrictConfig):
+    """Point-in-time funding/basis hypothesis for Mock evidence collection."""
+
+    version: str
+    enabled: bool = False
+    producer_id: str = "btc-dynamic-carry"
+    forecast_family: str = "delta-neutral-dynamic-carry"
+    symbol: str = Field(default="BTCUSDT", pattern=r"^[A-Z0-9]{5,32}$")
+    base_asset: str = Field(default="BTC", pattern=r"^[A-Z0-9._-]+$")
+    quote_asset: str = Field(default="USDT", pattern=r"^[A-Z0-9._-]+$")
+    funding_lookback_hours: int = Field(default=24, ge=8, le=168)
+    minimum_funding_settlements: int = Field(default=2, ge=1, le=21)
+    forecast_horizon_hours: int = Field(default=168, ge=8, le=720)
+    funding_interval_hours: int = Field(default=8, ge=1, le=24)
+    signal_validity_minutes: int = Field(default=30, ge=5, le=240)
+
+    @model_validator(mode="after")
+    def instrument_and_sample_window_must_be_consistent(self):
+        if self.symbol != f"{self.base_asset}{self.quote_asset}":
+            raise ValueError("Dynamic Carry symbol 必须匹配 base/quote asset")
+        maximum_settlements = self.funding_lookback_hours // self.funding_interval_hours
+        if self.minimum_funding_settlements > maximum_settlements:
+            raise ValueError("Dynamic Carry Funding 样本要求超过回看窗口容量")
+        return self
+
+
 class CalibrationPolicy(StrictConfig):
     version: str
     minimum_non_overlapping_samples: int = Field(default=30, ge=2)

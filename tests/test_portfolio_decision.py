@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from investment_manager.forecast.models import (
+    BaseForecast,
     CalibratedForecast,
     DirectionalView,
     ExposureDirection,
@@ -24,7 +25,9 @@ from investment_manager.portfolio.decision import (
 )
 from investment_manager.portfolio.models import (
     InstrumentPosition,
+    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
+    PortfolioEdgeBasis,
     SleevePosition,
     SleeveTarget,
     sleeve_gross_notional,
@@ -132,9 +135,10 @@ def _quotes(symbol: str = "BTCUSDT", *, spot_bid: str = "100"):
 
 def _input(
     *,
-    forecast: CalibratedForecast | None = None,
+    forecast: BaseForecast | CalibratedForecast | None = None,
     cost_bps: str = "5",
     refresh_target: bool = True,
+    mock_authorization: MockCandidateAuthorization | None = None,
 ) -> PortfolioSleeveInput:
     forecast = forecast or _forecast()
     sleeve_id = SleeveTarget.identity_for(
@@ -146,13 +150,14 @@ def _input(
         sleeve_id=sleeve_id,
         estimated_variable_cost_bps=Decimal(cost_bps),
         forecast=forecast,
+        mock_authorization=mock_authorization,
         refresh_target=refresh_target,
     )
 
 
 def _account(
     *,
-    forecast: CalibratedForecast | None = None,
+    forecast: BaseForecast | CalibratedForecast | None = None,
     gross: str = "0",
 ) -> PortfolioAccountSnapshot:
     forecast = forecast or _forecast()
@@ -210,6 +215,47 @@ def _policy(**updates) -> PortfolioDecisionPolicy:
     ).model_copy(update=updates)
 
 
+def _base_forecast(*, gross_bps: str) -> BaseForecast:
+    target = _target()
+    return BaseForecast(
+        forecast_id=f"mock-forecast-{gross_bps}",
+        producer_id="btc-dynamic-carry",
+        producer_version="dynamic-carry-v1",
+        forecast_family="delta-neutral-dynamic-carry",
+        target=target,
+        horizon_minutes=7 * 24 * 60,
+        direction=DirectionalView.UP,
+        reference_prices=tuple(
+            ForecastReferencePrice(
+                instrument_id=leg.instrument.key,
+                price=Decimal("100"),
+            )
+            for leg in target.legs
+        ),
+        observed_at=NOW,
+        available_at=NOW,
+        valid_until=NOW + timedelta(minutes=30),
+        raw_score=Decimal(gross_bps),
+        input_refs=("derivative-state-1",),
+    )
+
+
+def _mock_authorization() -> MockCandidateAuthorization:
+    return MockCandidateAuthorization(
+        version="mock-candidate-v1",
+        producer_id="btc-dynamic-carry",
+        producer_version="dynamic-carry-v1",
+        forecast_family="delta-neutral-dynamic-carry",
+        hypothesis_fingerprint="a" * 64,
+        evaluation_plan_id="mock-evaluation-v1",
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=30),
+        maximum_allocation_fraction=Decimal("0.10"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+
+
 def test_engine_is_off_by_default() -> None:
     result = PortfolioDecisionEngine(_policy()).decide(
         cycle_id="cycle-1",
@@ -246,6 +292,68 @@ def test_engine_allocates_one_multi_leg_sleeve_in_gross_notional() -> None:
         ),
     )
 
+
+def test_mock_authorized_base_forecast_uses_hypothesis_edge_without_fake_calibration(
+) -> None:
+    forecast = _base_forecast(gross_bps="25")
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(forecast=forecast),
+        sleeves=(
+            _input(
+                forecast=forecast,
+                cost_bps="20",
+                mock_authorization=_mock_authorization(),
+            ),
+        ),
+        quotes=_quotes(),
+    )
+
+    assert result is not None
+    assert result.sleeves[0].desired_gross_notional == Decimal("1000")
+    assert result.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
+    assert result.sleeves[0].decision_gross_bps == Decimal("25")
+    assert result.sleeves[0].decision_net_bps == Decimal("5")
+
+
+def test_base_forecast_without_mock_authorization_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Mock candidate authorization"):
+        _input(forecast=_base_forecast(gross_bps="25"), cost_bps="20")
+
+
+def test_mock_candidate_uses_lower_hold_threshold_without_forcing_entry() -> None:
+    forecast = _base_forecast(gross_bps="16")
+    authorization = _mock_authorization()
+    input_value = _input(
+        forecast=forecast,
+        cost_bps="20",
+        mock_authorization=authorization,
+    )
+    engine = PortfolioDecisionEngine(_policy(enabled=True))
+
+    cash = engine.decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(forecast=forecast),
+        sleeves=(input_value,),
+        quotes=_quotes(),
+    )
+    held = engine.decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(forecast=forecast, gross="1000"),
+        sleeves=(input_value,),
+        quotes=_quotes(),
+    )
+
+    assert cash is not None and cash.sleeves == ()
+    assert held is not None
+    held_account = _account(forecast=forecast, gross="1000")
+    assert held.sleeves[0].desired_gross_notional == sleeve_gross_notional(
+        held_account.sleeves[0],
+        quote_by_instrument={item.instrument.key: item for item in _quotes()},
+    )
 
 def test_engine_ranks_sleeves_and_allocates_only_remaining_capacity() -> None:
     btc = _input(forecast=_forecast(forecast_id="btc", gross_bps="20"))

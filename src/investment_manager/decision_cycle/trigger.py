@@ -41,6 +41,7 @@ from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
     PacketPreviousContext,
     PacketPreviousDriver,
+    PacketPreviousEventReference,
     PacketPreviousView,
     PacketReviewRequest,
 )
@@ -204,6 +205,10 @@ def _previous_context(
         return None
     return PacketPreviousContext(
         assessment_id=assessment.assessment_id,
+        analysis_scope=assessment.analysis_scope,
+        mandate_version=assessment.mandate_version,
+        analysis_behavior_hash=assessment.analysis_behavior_hash,
+        decision_packet_hash=assessment.decision_packet_hash,
         as_of=assessment.as_of,
         available_at=assessment.available_at,
         market_mechanism=sanitize_external_text(
@@ -227,6 +232,18 @@ def _previous_context(
                 )[0],
             )
             for item in assessment.drivers
+        ),
+        event_references=tuple(
+            PacketPreviousEventReference(
+                evidence_id=item.evidence_id,
+                source=item.source,
+                title=item.title,
+                event_time=item.event_time,
+                impact_state=item.impact_state.value,
+                rationale=item.rationale,
+                stale_at=item.stale_at,
+            )
+            for item in assessment.event_references
         ),
         views=tuple(
             PacketPreviousView(

@@ -158,6 +158,10 @@ function AssessmentQualityLine({ quality }: { quality: AssessmentQuality }) {
     ? `${hhmm(quality.latest_attempt_at)} 最近尝试${status}`
     : `最近尝试${status}`;
   const rejected = `当前行为 24 小时拒绝 ${quality.rejected_attempt_count_24h} 次`;
+  const success = quality.execution_count_24h > 0
+    ? ` · 最终成功 ${quality.final_success_count_24h}/${quality.execution_count_24h}`
+      + ` · 首次成功 ${quality.first_attempt_success_count_24h}/${quality.execution_count_24h}`
+    : "";
   const reasons = quality.rejection_reasons.length > 0
     ? ` · ${quality.rejection_reasons.join("；")}`
     : "";
@@ -166,7 +170,7 @@ function AssessmentQualityLine({ quality }: { quality: AssessmentQuality }) {
   return (
     <div className={`${styles.quality} ${unhealthy ? styles.qualityWarn : ""}`}>
       <b>{latestAttempt}</b>
-      <span>{rejected}{reasons}</span>
+      <span>{rejected}{success}{reasons}</span>
     </div>
   );
 }

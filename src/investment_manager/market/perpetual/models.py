@@ -8,7 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.kernel.types import FrozenModel, PositiveDecimal
+from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 
 
@@ -116,4 +116,44 @@ class FundingSettlement(FrozenModel):
             self.rate_type.value,
         ):
             raise ValueError("FundingSettlement settlement_id 与来源身份不一致")
+        return self
+
+
+class DerivativeContextSnapshot(FrozenModel):
+    """Compact point-in-time derivatives state for decisions, never raw history."""
+
+    cycle_id: str = Field(min_length=1)
+    asset: str = Field(min_length=1)
+    instrument: InstrumentId
+    as_of: datetime
+    observed_at: datetime
+    mark_index_premium_bps: Decimal
+    executable_short_basis_bps: Decimal
+    perpetual_spread_bps: Money
+    last_funding_rate_bps: Decimal
+    trailing_funding_rate_mean_bps: Decimal | None = None
+    trailing_funding_rate_sum_bps: Decimal | None = None
+    funding_settlement_count: int = Field(ge=0)
+    funding_window_hours: int = Field(gt=0, le=168)
+    next_funding_time: datetime
+    input_refs: tuple[str, ...] = Field(min_length=3)
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_next_funding = field_validator("next_funding_time")(require_utc)
+
+    @model_validator(mode="after")
+    def timing_and_funding_summary_must_be_consistent(self):
+        if self.instrument.product == InstrumentProduct.SPOT:
+            raise ValueError("DerivativeContextSnapshot 不能引用 Spot Instrument")
+        if self.observed_at > self.as_of:
+            raise ValueError("衍生品决策状态不能晚于 as_of")
+        if tuple(sorted(set(self.input_refs))) != self.input_refs:
+            raise ValueError("衍生品决策状态 input_refs 必须唯一且排序")
+        has_summary = (
+            self.trailing_funding_rate_mean_bps is not None
+            and self.trailing_funding_rate_sum_bps is not None
+        )
+        if has_summary != (self.funding_settlement_count > 0):
+            raise ValueError("Funding 汇总与结算样本数不一致")
         return self
