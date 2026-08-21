@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
-from investment_manager.forecast.codex.runtime import AnalystResult
+from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.change.agent import (
     CodexGovernor,

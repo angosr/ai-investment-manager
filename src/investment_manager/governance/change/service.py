@@ -20,7 +20,7 @@ from investment_manager.forecast.codex.repository import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
 )
-from investment_manager.forecast.codex.runtime import assemble_codex_router
+from investment_manager.forecast.codex.router import assemble_codex_router
 from investment_manager.governance.change.agent import (
     GOVERNOR_OUTPUT_ADAPTER,
     CodexGovernor,

@@ -5,7 +5,8 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
-from investment_manager.forecast.codex.runtime import AnalystResult, verify_bundle
+from investment_manager.forecast.codex.bundle import verify_bundle
+from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.analyst import (
     AssessRunBundleBuilder,
     CodexContextAnalyst,

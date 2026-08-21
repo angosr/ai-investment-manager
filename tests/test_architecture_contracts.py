@@ -379,14 +379,24 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
                 for node in init_tree.body
             ), package
 
-    output_module = PACKAGE_ROOT / "forecast" / "codex" / "output.py"
-    assert output_module.exists()
-    runtime_tree = ast.parse(
-        (PACKAGE_ROOT / "forecast" / "codex" / "runtime.py").read_text()
-    )
-    assert "strict_output_schema" not in {
-        node.name for node in runtime_tree.body if isinstance(node, ast.FunctionDef)
+    codex_package = PACKAGE_ROOT / "forecast" / "codex"
+    assert {
+        path.name for path in codex_package.glob("*.py")
+    } == {
+        "__init__.py",
+        "bundle.py",
+        "capacity.py",
+        "isolation.py",
+        "output.py",
+        "protocol.py",
+        "repository.py",
+        "router.py",
     }
+    protocol_tree = ast.parse((codex_package / "protocol.py").read_text())
+    assert "strict_output_schema" not in {
+        node.name for node in protocol_tree.body if isinstance(node, ast.FunctionDef)
+    }
+    assert not (codex_package / "runtime.py").exists()
 
     assert (PACKAGE_ROOT / "legacy" / "exchange.py").exists()
     assert not (PACKAGE_ROOT / "execution" / "legacy_exchange.py").exists()

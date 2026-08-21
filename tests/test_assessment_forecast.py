@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 from temporalio.testing import WorkflowEnvironment
 
-from investment_manager.forecast.codex.runtime import AnalystResult
+from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.application import (
     AssessmentApplication,
     AssessmentCommand,

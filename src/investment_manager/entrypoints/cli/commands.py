@@ -22,7 +22,7 @@ from investment_manager.execution.venue.binance import (
     BinanceTestnetClient,
     SymbolRules,
 )
-from investment_manager.forecast.codex.runtime import audit_codex_isolation
+from investment_manager.forecast.codex.isolation import audit_codex_isolation
 from investment_manager.governance.audit.acceptance import AuditProfile, PhaseAAuditor
 from investment_manager.governance.models import (
     build_evaluation_plan_invalidation,

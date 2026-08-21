@@ -10,12 +10,12 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.codex.runtime import (
-    CodexAccountRouter,
+from investment_manager.forecast.codex.bundle import (
     RunBundle,
     verify_bundle,
     write_run_bundle,
 )
+from investment_manager.forecast.codex.router import CodexAccountRouter
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.models import (
     ChangeProposal,

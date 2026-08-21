@@ -192,7 +192,13 @@ src/investment_manager/
   forecast/                   # 预测契约与共享表
     context/                  # ContextAssessment 全生命周期
     codex/                    # Codex 外部执行、账号路由与审计存储
+      bundle.py               # 内容寻址的不可变分析输入包
+      capacity.py             # 官方 App Server 额度读取协议
+      protocol.py             # 无工具推理会话与严格输出协议
+      router.py               # 账号租约、余量优先选择和失败切换
+      isolation.py            # 文件、网络和工具隔离验收
       output.py               # Structured Outputs 收紧、校验与脱敏失败诊断
+      repository.py           # 租约、额度与调用审计持久化
   portfolio/                  # 组合目标、现金比较、再平衡和成本权衡
   risk/                       # 风险预算、组合保护、压力约束和授权
   execution/                  # 交易计划、订单与成交契约
@@ -388,7 +394,9 @@ kernel/platform
 2. `forecast/context` 与 `forecast/codex`，隔离投资判断和外部 AI 执行；
 3. `execution/lifecycle`、`execution/reconciliation` 与 `execution/venue`，分开订单事实、恢复和场所协议；
 4. `governance/change`、`evaluation`、`release` 与 `audit`，避免治理成为第二个杂物核心；
-5. 只有完成上述归位后，才根据真实变更证据拆分 `codex/runtime.py`、Research 大文件和 CLI 大文件，禁止只按行数拆分。
+5. Codex 运行能力已按不可变输入包、额度协议、推理协议、账号路由、隔离验收和审计存储完成硬迁移，
+   旧 `codex/runtime.py` 已删除且没有转发入口；Research 大文件和 CLI 大文件仍只在真实能力边界成熟时
+   拆分，禁止只按行数拆分。
 
 ### 阶段 D：替换旧交易链
 

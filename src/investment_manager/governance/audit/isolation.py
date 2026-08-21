@@ -7,10 +7,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.forecast.codex.runtime import (
-    IsolationAuditCheck,
-    codex_runtime_integrity_matches,
-)
+from investment_manager.forecast.codex.isolation import IsolationAuditCheck
+from investment_manager.forecast.codex.protocol import codex_runtime_integrity_matches
 from investment_manager.governance.models import ReleaseManifest, validate_manifest_against_config
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc

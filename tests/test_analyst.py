@@ -15,27 +15,32 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
-from investment_manager.forecast.codex.output import strict_output_schema
-from investment_manager.forecast.codex.runtime import (
-    AccountState,
-    AnalystResult,
+from investment_manager.forecast.codex.bundle import RunBundle, verify_bundle
+from investment_manager.forecast.codex.capacity import (
     AppServerCapacityProbe,
     CapacityBucket,
     CapacitySnapshot,
     CapacityWindow,
-    CodexAccountRouter,
-    FailureClass,
-    InMemoryAccountLeaseStore,
-    InvocationResult,
-    IsolationProbeOutput,
-    RunBundle,
-    SubprocessCodexExecutor,
     _capacity_snapshot,
+)
+from investment_manager.forecast.codex.isolation import (
+    IsolationProbeOutput,
+    audit_codex_isolation,
+)
+from investment_manager.forecast.codex.output import strict_output_schema
+from investment_manager.forecast.codex.protocol import (
+    FailureClass,
+    InvocationResult,
+    SubprocessCodexExecutor,
     _recover_completed_turn,
     _terminal_message_is_idle,
+)
+from investment_manager.forecast.codex.router import (
+    AccountState,
+    AnalystResult,
+    CodexAccountRouter,
+    InMemoryAccountLeaseStore,
     assemble_codex_router,
-    audit_codex_isolation,
-    verify_bundle,
 )
 from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
@@ -521,11 +526,11 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.runtime.selectors.DefaultSelector",
+        "investment_manager.forecast.codex.protocol.selectors.DefaultSelector",
         FakeSelector,
     )
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.runtime.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.capacity.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: True,
     )
 
@@ -1032,12 +1037,12 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakeProcess)
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.runtime.selectors.DefaultSelector",
+        "investment_manager.forecast.codex.protocol.selectors.DefaultSelector",
         FakeSelector,
     )
     checks = iter((True, False))
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.runtime.codex_runtime_integrity_matches",
+        "investment_manager.forecast.codex.protocol.codex_runtime_integrity_matches",
         lambda policy, codex_home=None: next(checks),
     )
 
@@ -1082,7 +1087,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
 def test_codex_runtime_integrity_rejects_binary_drift(
     app_config, tmp_path, monkeypatch
 ) -> None:
-    from investment_manager.forecast.codex.runtime import codex_runtime_integrity_matches
+    from investment_manager.forecast.codex.protocol import codex_runtime_integrity_matches
 
     binary = tmp_path / "codex-0.148.0"
     binary.write_bytes(b"frozen-codex-binary")
@@ -1239,7 +1244,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     }
 
     monkeypatch.setattr(
-        "investment_manager.forecast.codex.runtime._write_json_rpc",
+        "investment_manager.forecast.codex.protocol._write_json_rpc",
         lambda _process, value: sent.append(value),
     )
 
@@ -1247,7 +1252,10 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
         kwargs["observed"].append(response)
         return response
 
-    monkeypatch.setattr("investment_manager.forecast.codex.runtime._read_json_rpc_until", fake_read)
+    monkeypatch.setattr(
+        "investment_manager.forecast.codex.protocol._read_json_rpc_until",
+        fake_read,
+    )
 
     assert _terminal_message_is_idle(events)
     assert _recover_completed_turn(object(), thread_id="thread-1", turn_id="turn-1", events=events)
