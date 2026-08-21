@@ -352,6 +352,13 @@ def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> No
     assert result.account.cash_balance == Decimal("8999")
     assert result.account.equity == Decimal("9999")
     assert result.account.daily_pnl == Decimal("-1")
+    assert result.account.accounting is not None
+    assert result.account.accounting.price_pnl == 0
+    assert result.account.accounting.funding_pnl == 0
+    assert result.account.accounting.fee_cost == Decimal("1")
+    assert result.account.accounting.execution_slippage_cost == 0
+    assert result.account.accounting.compensation_loss == 0
+    assert result.account.accounting.net_pnl == Decimal("-1")
     assert len(result.account.positions) == 2
     assert portfolio.account(result.account.snapshot_id) == result.account
 
@@ -386,6 +393,11 @@ def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> No
     assert after_funding.account.cash_balance == Decimal("9000")
     assert after_funding.account.equity == Decimal("10000")
     assert after_funding.account.daily_pnl == Decimal("0")
+    assert after_funding.account.accounting is not None
+    assert after_funding.account.accounting.price_pnl == 0
+    assert after_funding.account.accounting.funding_pnl == Decimal("1")
+    assert after_funding.account.accounting.fee_cost == Decimal("1")
+    assert after_funding.account.accounting.net_pnl == 0
 
 
 def test_response_lost_before_accept_retries_same_identity() -> None:
@@ -556,6 +568,10 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
     assert flat_account.sleeves == ()
     assert flat_account.equity == Decimal("9998.5")
     assert flat_account.daily_pnl == Decimal("-1.5")
+    assert flat_account.accounting is not None
+    assert flat_account.accounting.fee_cost == Decimal("1.5")
+    assert flat_account.accounting.compensation_loss == Decimal("1.5")
+    assert flat_account.accounting.net_pnl == Decimal("-1.5")
     with engine.connect() as connection:
         assert connection.scalar(
             select(func.count()).select_from(product_order_observations)

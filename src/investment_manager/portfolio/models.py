@@ -64,6 +64,75 @@ class SleevePosition(FrozenModel):
         return self
 
 
+class PortfolioAccountingTotals(FrozenModel):
+    """Cumulative fee-inclusive account attribution from inception.
+
+    ``execution_slippage_cost`` and ``compensation_loss`` are diagnostic subsets
+    already reflected in price PnL and fees.  They must never be added to net PnL
+    again by evaluation or dashboard consumers.
+    """
+
+    starting_equity: PositiveDecimal
+    price_pnl: Decimal = Decimal("0")
+    funding_pnl: Decimal = Decimal("0")
+    fee_cost: Money = Decimal("0")
+    execution_slippage_cost: Decimal = Decimal("0")
+    compensation_loss: Money = Decimal("0")
+    net_pnl: Decimal = Decimal("0")
+
+    @model_validator(mode="after")
+    def additive_components_reconcile(self):
+        if self.net_pnl != self.price_pnl + self.funding_pnl - self.fee_cost:
+            raise ValueError("Portfolio accounting 价格、Funding、费用与净损益无法核对")
+        return self
+
+
+class PortfolioPerformanceAttribution(FrozenModel):
+    """Attribution delta between two adjacent authoritative account facts.
+
+    Slippage and compensation remain non-additive diagnostics, matching the
+    cumulative account contract above.
+    """
+
+    price_pnl: Decimal
+    funding_pnl: Decimal
+    fee_cost: Money
+    execution_slippage_cost: Decimal
+    # A later fill can improve the cumulative average compensation price, so
+    # the interval delta may be negative even though each cumulative snapshot
+    # stores a non-negative loss.  Treating this delta as Money would make a
+    # valid partial-fill progression unrecordable.
+    compensation_loss: Decimal
+    net_pnl: Decimal
+
+    @model_validator(mode="after")
+    def additive_components_reconcile(self):
+        if self.net_pnl != self.price_pnl + self.funding_pnl - self.fee_cost:
+            raise ValueError("Portfolio interval 价格、Funding、费用与净损益无法核对")
+        return self
+
+    @classmethod
+    def between(
+        cls,
+        start: PortfolioAccountingTotals,
+        end: PortfolioAccountingTotals,
+    ) -> PortfolioPerformanceAttribution:
+        if end.starting_equity != start.starting_equity:
+            raise ValueError("Portfolio accounting 起始权益不得变化")
+        if end.fee_cost < start.fee_cost:
+            raise ValueError("Portfolio accounting 累计费用不能倒退")
+        return cls(
+            price_pnl=end.price_pnl - start.price_pnl,
+            funding_pnl=end.funding_pnl - start.funding_pnl,
+            fee_cost=end.fee_cost - start.fee_cost,
+            execution_slippage_cost=(
+                end.execution_slippage_cost - start.execution_slippage_cost
+            ),
+            compensation_loss=end.compensation_loss - start.compensation_loss,
+            net_pnl=end.net_pnl - start.net_pnl,
+        )
+
+
 class PortfolioAccountSnapshot(FrozenModel):
     """Authoritative economic account projected from execution facts."""
 
@@ -80,6 +149,7 @@ class PortfolioAccountSnapshot(FrozenModel):
     equity_high_water: Money
     daily_pnl: Decimal = Decimal("0")
     drawdown_fraction: UnitInterval = Decimal("0")
+    accounting: PortfolioAccountingTotals | None = None
     positions: tuple[InstrumentPosition, ...] = ()
     sleeves: tuple[SleevePosition, ...] = ()
     pending_execution_group_ids: tuple[str, ...] = ()
@@ -109,6 +179,10 @@ class PortfolioAccountSnapshot(FrozenModel):
             item.instrument.key: item.quantity for item in self.positions
         }:
             raise ValueError("已对账账户的 Sleeve 数量之和必须等于产品级净持仓")
+        if self.accounting is not None and self.equity != (
+            self.accounting.starting_equity + self.accounting.net_pnl
+        ):
+            raise ValueError("账户权益无法与累计 accounting 归因核对")
         return self
 
     def _sleeve_quantities(self) -> dict[str, Decimal]:
@@ -144,6 +218,7 @@ class PortfolioPerformanceInterval(FrozenModel):
     end_equity: Decimal
     net_pnl: Decimal
     return_fraction: Decimal
+    attribution: PortfolioPerformanceAttribution | None = None
 
     _utc_start_as_of = field_validator("start_as_of")(require_utc)
     _utc_end_as_of = field_validator("end_as_of")(require_utc)
@@ -180,6 +255,14 @@ class PortfolioPerformanceInterval(FrozenModel):
             "end_equity": end.equity,
             "net_pnl": end.equity - start.equity,
             "return_fraction": (end.equity - start.equity) / start.equity,
+            "attribution": (
+                PortfolioPerformanceAttribution.between(
+                    start.accounting,
+                    end.accounting,
+                )
+                if start.accounting is not None and end.accounting is not None
+                else None
+            ),
         }
         return cls(
             interval_id=stable_id(
@@ -211,6 +294,8 @@ class PortfolioPerformanceInterval(FrozenModel):
             expected_pnl / self.start_equity
         ):
             raise ValueError("Portfolio Performance 净收益无法与权益核对")
+        if self.attribution is not None and self.attribution.net_pnl != self.net_pnl:
+            raise ValueError("Portfolio Performance 归因净收益与权益变化不一致")
         if self.interval_id != stable_id(
             "portfolio_performance",
             self.start_snapshot_id,

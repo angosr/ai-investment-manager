@@ -29,6 +29,7 @@ from investment_manager.market.models import (
 from investment_manager.market.perpetual.models import FundingSettlement
 from investment_manager.portfolio.models import (
     InstrumentPosition,
+    PortfolioAccountingTotals,
     PortfolioAccountSnapshot,
     SleevePosition,
 )
@@ -133,11 +134,12 @@ class ProductAccountProjector:
                 sleeve_states.setdefault(group.sleeve_id, {}),
                 order,
             )
-        cash += self._funding_pnl(
+        funding_pnl = self._funding_pnl(
             history,
             settlements=funding_settlements,
             as_of=as_of,
         )
+        cash += funding_pnl
         positions = self._positions(product_states)
         sleeves = self._sleeve_positions(
             sleeve_states,
@@ -150,6 +152,23 @@ class ProductAccountProjector:
         )
         if cash < 0:
             raise ValueError("产品账户投影产生负现金，拒绝生成权威快照")
+        fee_cost = sum((item.order.fee for item in orders), Decimal("0"))
+        net_pnl = equity - self._initial_cash
+        accounting = PortfolioAccountingTotals(
+            starting_equity=self._initial_cash,
+            price_pnl=net_pnl - funding_pnl + fee_cost,
+            funding_pnl=funding_pnl,
+            fee_cost=fee_cost,
+            execution_slippage_cost=self._execution_slippage_cost(
+                groups=groups,
+                orders=orders,
+            ),
+            compensation_loss=self._compensation_loss(
+                groups=groups,
+                orders=orders,
+            ),
+            net_pnl=net_pnl,
+        )
         previous = self._previous(previous, as_of=as_of)
         if previous is None:
             daily_pnl = equity - self._initial_cash
@@ -185,6 +204,7 @@ class ProductAccountProjector:
             "equity_high_water": equity_high_water,
             "daily_pnl": daily_pnl,
             "drawdown_fraction": drawdown,
+            "accounting": accounting,
             "positions": positions,
             "sleeves": sleeves,
             "pending_execution_group_ids": pending,
@@ -195,6 +215,74 @@ class ProductAccountProjector:
             snapshot_id=stable_id("portfolio_account", content_hash(payload)),
             **payload,
         )
+
+    @staticmethod
+    def _execution_slippage_cost(
+        *,
+        groups: tuple[ExecutionGroup, ...],
+        orders: tuple[ProductOrderObservation, ...],
+    ) -> Decimal:
+        leg_by_client = {
+            leg.client_order_id: leg
+            for group in groups
+            for leg in (*group.target_legs, *group.compensation_legs)
+        }
+        cost = Decimal("0")
+        for observation in orders:
+            order = observation.order
+            if order.filled_quantity <= 0:
+                continue
+            assert order.average_fill_price is not None
+            leg = leg_by_client[order.client_order_id]
+            price_cost = (
+                order.average_fill_price - leg.reference_price
+                if order.side == Side.BUY
+                else leg.reference_price - order.average_fill_price
+            )
+            cost += (
+                price_cost
+                * order.filled_quantity
+                * order.instrument.contract_multiplier
+            )
+        return cost
+
+    @staticmethod
+    def _compensation_loss(
+        *,
+        groups: tuple[ExecutionGroup, ...],
+        orders: tuple[ProductOrderObservation, ...],
+    ) -> Decimal:
+        latest = {item.order.client_order_id: item.order for item in orders}
+        loss = Decimal("0")
+        for group in groups:
+            target_by_planned = {
+                item.planned_leg_id: item for item in group.target_legs
+            }
+            for leg in group.compensation_legs:
+                compensation = latest.get(leg.client_order_id)
+                target_leg = target_by_planned[leg.planned_leg_id]
+                target = latest.get(target_leg.client_order_id)
+                if (
+                    compensation is None
+                    or target is None
+                    or compensation.filled_quantity <= 0
+                    or target.filled_quantity <= 0
+                ):
+                    continue
+                assert compensation.average_fill_price is not None
+                assert target.average_fill_price is not None
+                quantity = compensation.filled_quantity
+                gross_loss = (
+                    target.average_fill_price - compensation.average_fill_price
+                    if target.side == Side.BUY
+                    else compensation.average_fill_price - target.average_fill_price
+                ) * quantity * target.instrument.contract_multiplier
+                allocated_target_fee = target.fee * quantity / target.filled_quantity
+                loss += max(
+                    Decimal("0"),
+                    gross_loss + allocated_target_fee + compensation.fee,
+                )
+        return loss
 
     @staticmethod
     def _groups(
