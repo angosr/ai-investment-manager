@@ -650,13 +650,27 @@ class DecisionPacketBuilder:
     ) -> tuple[tuple[PacketFact, ...], tuple[str, ...]]:
         relevant_assets = {item.asset for item in mandate.assets}
         relevant_risk = set(mandate.required_risk_factors)
-        eligible = [
+        scope_relevant = [
             item
             for item in facts
             if item.fact.revision_id in direct_fact_ids
             or bool(relevant_assets.intersection(item.fact.affected_assets))
             or bool(relevant_risk.intersection(item.fact.risk_factors))
         ]
+        eligible: list[VisibleFact] = []
+        omitted: list[str] = []
+        for item in scope_relevant:
+            distance = abs(
+                ((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()
+            )
+            if (
+                item.fact.revision_id in direct_fact_ids
+                or distance
+                <= self._policy.maximum_background_fact_distance_seconds
+            ):
+                eligible.append(item)
+            else:
+                omitted.append(item.fact.revision_id)
         eligible.sort(
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
@@ -678,7 +692,6 @@ class DecisionPacketBuilder:
         if direct_count > self._policy.maximum_facts:
             raise DecisionPacketCapacityError("direct facts exceed maximum_facts")
         selected: list[PacketFact] = []
-        omitted: list[str] = []
         used_characters = 0
         for item in eligible:
             headline, headline_suspicious = sanitize_external_text(

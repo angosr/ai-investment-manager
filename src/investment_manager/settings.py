@@ -92,6 +92,11 @@ class AppConfig(StrictConfig):
         )
         if mandate_horizons != self.decision_state.delta_policy.horizons_minutes:
             raise ValueError("Assessment mandate 与 FactDelta 时域必须一致")
+        if (
+            self.decision_state.packet_policy.maximum_background_fact_distance_seconds
+            < max(mandate_horizons) * 60
+        ):
+            raise ValueError("DecisionPacket 背景事实窗口不得短于最长 Assessment 时域")
         mandate_assets = tuple(item.asset for item in self.assessment.mandate.assets)
         if mandate_assets != self.decision_state.official_fact_policy.affected_assets:
             raise ValueError("OfficialFact projection 与 Assessment mandate 资产必须一致")

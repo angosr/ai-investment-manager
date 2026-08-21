@@ -73,21 +73,28 @@ def _mandate() -> AnalysisMandate:
     )
 
 
-def _fact(as_of, *, revision_id: str = "revision-1") -> VisibleFact:
+def _fact(
+    as_of,
+    *,
+    revision_id: str = "revision-1",
+    fact_id: str = "fact-1",
+    event_time=None,
+    observation_id: str = "obs-1",
+) -> VisibleFact:
     return VisibleFact(
         fact=CanonicalFactRevision(
-            fact_id="fact-1",
+            fact_id=fact_id,
             revision_id=revision_id,
             projection_version="fact-projection-v1",
             fact_type="REGULATORY_EVENT",
             status=FactRevisionStatus.ACTIVE,
-            event_time=as_of + timedelta(hours=1),
+            event_time=event_time or as_of + timedelta(hours=1),
             observed_at=as_of - timedelta(minutes=1),
             headline="<b>CFTC meeting</b>",
             claim="Official schedule update.",
             affected_assets=("BTC", "ETH"),
             risk_factors=("REGULATION",),
-            source_observation_ids=("obs-1",),
+            source_observation_ids=(observation_id,),
             revision_hash=HASH,
         ),
         highest_source_tier=SourceTier.FIRST_PARTY,
@@ -435,6 +442,71 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
     assert set(packet.omitted_fact_revision_ids).isdisjoint(
         item.revision_id for item in packet.facts
     )
+
+
+def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+    recent = _fact(market.as_of, revision_id="revision-recent")
+    distant = _fact(
+        market.as_of,
+        revision_id="revision-distant",
+        fact_id="fact-distant",
+        event_time=market.as_of - timedelta(days=30),
+        observation_id="obs-distant",
+    )
+    direct = _fact(
+        market.as_of,
+        fact_id="fact-direct",
+        event_time=market.as_of - timedelta(days=30),
+        observation_id="obs-direct",
+    )
+    facts = (direct, distant, recent)
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(
+        update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)}
+    )
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-v2",
+            schema_version="decision-packet-v1",
+            maximum_background_fact_distance_seconds=86_400,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess the event.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=("REGULATION",),
+        ),
+        state=state,
+        deltas=(_delta(market.as_of),),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert tuple(item.revision_id for item in packet.facts) == (
+        "revision-1",
+        "revision-recent",
+    )
+    assert packet.facts[0].directly_triggered is True
+    assert packet.omitted_fact_revision_ids == ("revision-distant",)
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:

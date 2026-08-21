@@ -35,7 +35,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v2"
     assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
     assert config.decision_state.delta_policy.version == "state-delta-v4"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v5"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v6"
+    assert (
+        config.decision_state.packet_policy.maximum_background_fact_distance_seconds
+        == 172_800
+    )
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",
@@ -55,6 +59,18 @@ def test_capital_sizing_cannot_drift_from_released_carry_evidence() -> None:
     payload["capital"]["risk"]["maximum_gross_exposure_fraction"] = Decimal("0.29")
 
     with pytest.raises(ValidationError, match="仓位尺寸必须完全一致"):
+        type(config).model_validate(payload)
+
+
+def test_background_fact_window_covers_the_longest_assessment_horizon() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["decision_state"]["packet_policy"][
+        "maximum_background_fact_distance_seconds"
+    ] = 3_600
+
+    with pytest.raises(ValidationError, match="背景事实窗口不得短于"):
         type(config).model_validate(payload)
 
 

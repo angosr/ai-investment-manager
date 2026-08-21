@@ -17,6 +17,11 @@ class DecisionPacketPolicy(FrozenModel):
     maximum_facts: int = Field(default=12, ge=1, le=50)
     maximum_fact_characters: int = Field(default=4_000, ge=500, le=10_000)
     maximum_characters_per_fact: int = Field(default=600, ge=100, le=1_200)
+    maximum_background_fact_distance_seconds: int = Field(
+        default=172_800,
+        ge=3_600,
+        le=2_592_000,
+    )
     maximum_intelligence_events: int = Field(default=8, ge=0, le=20)
     maximum_intelligence_characters: int = Field(default=3_000, ge=0, le=6_000)
     maximum_characters_per_intelligence_event: int = Field(

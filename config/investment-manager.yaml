@@ -42,11 +42,12 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v5
+    version: decision-packet-policy-v6
     schema_version: decision-packet-v4
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
+    maximum_background_fact_distance_seconds: 172800
     maximum_intelligence_events: 8
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500
