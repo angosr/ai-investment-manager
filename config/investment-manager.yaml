@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v18 覆盖投影只发送状态、缺失能力及异常时间，释放容量给因果证据。
-  version: portfolio-state-v18
+  # v19 在同一证据层级先保留不同事实类型，避免重复日程挤出传导证据。
+  version: portfolio-state-v19
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v7
@@ -68,7 +68,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v23
+    version: decision-packet-policy-v24
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000

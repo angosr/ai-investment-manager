@@ -1084,6 +1084,118 @@ def test_packet_keeps_treasury_calendar_context_beyond_event_window(
     assert packet.omitted_fact_revision_ids == ()
 
 
+def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+
+    def background_fact(
+        *, revision_id: str, fact_id: str, fact_type: str, hours: int
+    ) -> VisibleFact:
+        visible = _fact(
+            market.as_of,
+            revision_id=revision_id,
+            fact_id=fact_id,
+            event_time=market.as_of + timedelta(hours=hours),
+            observation_id=f"obs-{revision_id}",
+        )
+        return visible.model_copy(
+            update={
+                "fact": visible.fact.model_copy(
+                    update={
+                        "fact_type": fact_type,
+                        "decision_materiality": FactDecisionMateriality.BACKGROUND,
+                    }
+                )
+            }
+        )
+
+    facts = (
+        background_fact(
+            revision_id="revision-calendar-1",
+            fact_id="fact-calendar-1",
+            fact_type=TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+            hours=1,
+        ),
+        background_fact(
+            revision_id="revision-calendar-2",
+            fact_id="fact-calendar-2",
+            fact_type=TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+            hours=2,
+        ),
+        background_fact(
+            revision_id="revision-calendar-3",
+            fact_id="fact-calendar-3",
+            fact_type=TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+            hours=3,
+        ),
+        background_fact(
+            revision_id="revision-tga",
+            fact_id="fact-tga",
+            fact_type="US_TREASURY_CASH_SNAPSHOT",
+            hours=-24,
+        ),
+        background_fact(
+            revision_id="revision-yield",
+            fact_id="fact-yield",
+            fact_type="US_TREASURY_YIELD_CURVE_SNAPSHOT",
+            hours=-24,
+        ),
+    )
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
+
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-diversity-v1",
+            schema_version="decision-packet-v12",
+            maximum_facts=3,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess the event and its transmission evidence.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=("REGULATION",),
+        ),
+        state=state,
+        deltas=(),
+        review_requests=(
+            PacketReviewRequest.create(
+                requested_at=market.as_of,
+                reason="Validate bounded background evidence diversity.",
+            ),
+        ),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert {item.fact_type for item in packet.facts} == {
+        TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+        "US_TREASURY_CASH_SNAPSHOT",
+        "US_TREASURY_YIELD_CURVE_SNAPSHOT",
+    }
+    assert {
+        "revision-calendar-2",
+        "revision-calendar-3",
+    }.issubset(packet.omitted_fact_revision_ids)
+
+
 def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
     app_config,
     replay_input,

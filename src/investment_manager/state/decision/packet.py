@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
+from itertools import groupby
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -1210,6 +1211,33 @@ class DecisionPacketBuilder:
                 item.fact.revision_id,
             )
         )
+        # A calendar commonly produces several adjacent rows while a continuous
+        # indicator produces one snapshot.  Pure rank ordering therefore lets a
+        # single schedule consume the whole bounded Packet and evict the
+        # transmission evidence needed to interpret it.  Preserve the existing
+        # epistemic rank, but take one fact per type before taking a second fact
+        # of any type within the same mandatory/materiality class.
+        diversified: list[VisibleFact] = []
+
+        def epistemic_rank(item: VisibleFact) -> tuple[bool, bool]:
+            return (
+                item.fact.revision_id not in direct_fact_ids,
+                item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
+            )
+
+        for _, ranked_items in groupby(eligible, key=epistemic_rank):
+            remaining = list(ranked_items)
+            while remaining:
+                seen_types: set[str] = set()
+                next_round: list[VisibleFact] = []
+                for item in remaining:
+                    if item.fact.fact_type in seen_types:
+                        next_round.append(item)
+                        continue
+                    diversified.append(item)
+                    seen_types.add(item.fact.fact_type)
+                remaining = next_round
+        eligible = diversified
         direct_count = sum(item.fact.revision_id in direct_fact_ids for item in eligible)
         if direct_count > self._policy.maximum_facts:
             raise DecisionPacketCapacityError("direct facts exceed maximum_facts")
