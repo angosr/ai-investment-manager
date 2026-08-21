@@ -242,6 +242,16 @@ def test_packet_rejects_content_tampering_during_recovery(
         DecisionPacket.model_validate(payload)
 
 
+def test_packet_recovers_legacy_hash_without_default_review_field(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    payload = packet.model_dump(mode="json")
+    payload.pop("review_requests")
+
+    assert DecisionPacket.model_validate(payload) == packet
+
+
 def test_packet_rejects_trigger_refs_that_do_not_match_deltas(
     app_config, replay_input
 ) -> None:

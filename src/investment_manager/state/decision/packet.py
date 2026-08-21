@@ -37,6 +37,12 @@ from investment_manager.state.models import (
 from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.policy import DecisionPacketPolicy
 
+_LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS = {
+    "decision-packet-v1",
+    "decision-packet-v2",
+    "decision-packet-v3",
+}
+
 
 class DecisionPacketCapacityError(ValueError):
     pass
@@ -266,9 +272,7 @@ class DecisionPacket(FrozenModel):
             content_hash="0" * 64,
             **content,
         )
-        packet_hash = content_hash(
-            draft.model_dump(mode="json", exclude={"packet_id", "content_hash"})
-        )
+        packet_hash = _decision_packet_content_hash(draft)
         return cls(
             packet_id=stable_id("decision_packet", packet_hash),
             content_hash=packet_hash,
@@ -319,14 +323,25 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
-        expected_hash = content_hash(
-            self.model_dump(mode="json", exclude={"packet_id", "content_hash"})
-        )
+        expected_hash = _decision_packet_content_hash(self)
         if self.content_hash != expected_hash:
             raise ValueError("DecisionPacket content_hash 与内容不一致")
         if self.packet_id != stable_id("decision_packet", expected_hash):
             raise ValueError("DecisionPacket packet_id 与内容身份不一致")
         return self
+
+
+def _decision_packet_content_hash(packet: DecisionPacket) -> str:
+    payload = packet.model_dump(
+        mode="json",
+        exclude={"packet_id", "content_hash"},
+    )
+    if (
+        packet.schema_version in _LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS
+        and not packet.review_requests
+    ):
+        payload.pop("review_requests", None)
+    return content_hash(payload)
 
 
 _SOURCE_RANK = {
