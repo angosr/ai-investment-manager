@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
 
 from pydantic import Field, model_validator
 
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
-from investment_manager.information.official.metrics import OfficialMetricSnapshot
+from investment_manager.information.official.metrics import (
+    OFFICIAL_METRIC_FACT_TYPES,
+    OfficialMetricSnapshot,
+)
 from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
@@ -21,6 +25,7 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
+    FactDecisionMateriality,
     FactRevisionStatus,
     MaterialDelta,
     Materiality,
@@ -38,6 +43,12 @@ class OfficialFactProjectionPolicy(FrozenModel):
     release_risk_factors: tuple[str, ...] = Field(
         default=("US_MONETARY_POLICY",),
         min_length=1,
+    )
+    metric_minimum_history_observations: int = Field(default=30, ge=10, le=5_000)
+    metric_candidate_absolute_percentile: Decimal = Field(
+        default=Decimal("0.95"),
+        ge=Decimal("0.50"),
+        le=Decimal("1"),
     )
 
     @model_validator(mode="after")
@@ -125,6 +136,7 @@ def project_fomc_calendar_fact(
         claim=claim,
         affected_assets=policy.affected_assets,
         risk_factors=revision.risk_factors,
+        decision_materiality=FactDecisionMateriality.BACKGROUND,
         source_observation_ids=(revision.source_observation_id,),
         previous=previous,
     )
@@ -153,6 +165,7 @@ def project_fed_monetary_release_fact(
         claim=record.summary or record.title,
         affected_assets=policy.affected_assets,
         risk_factors=policy.release_risk_factors,
+        decision_materiality=FactDecisionMateriality.CANDIDATE,
         source_observation_ids=(observation.observation_id,),
         previous=previous,
     )
@@ -204,6 +217,7 @@ def project_fed_chair_public_event_fact(
         ),
         affected_assets=policy.affected_assets,
         risk_factors=revision.risk_factors,
+        decision_materiality=FactDecisionMateriality.BACKGROUND,
         source_observation_ids=(observation.observation_id,),
         previous=previous,
     )
@@ -212,24 +226,44 @@ def project_fed_chair_public_event_fact(
 def project_official_metric_fact(
     record: OfficialMetricSnapshot,
     *,
-    projection_version: str,
-    affected_assets: tuple[str, ...],
+    policy: OfficialFactProjectionPolicy,
     previous: CanonicalFactRevision | None = None,
 ) -> CanonicalFactRevision:
     metrics = "; ".join(
         f"{item.name.value}={item.value} {item.unit.value}" for item in record.metrics
     )
+    context = record.change_context
+    decision_materiality = (
+        FactDecisionMateriality.CANDIDATE
+        if context is not None
+        and context.sample_size >= policy.metric_minimum_history_observations
+        and context.absolute_change_percentile
+        >= policy.metric_candidate_absolute_percentile
+        else FactDecisionMateriality.BACKGROUND
+    )
+    context_text = (
+        ""
+        if context is None
+        else (
+            f" change_context={context.metric_name.value}:"
+            f"absolute_percentile={context.absolute_change_percentile},"
+            f"sample_size={context.sample_size},"
+            f"lookback={context.lookback_start.isoformat()}.."
+            f"{context.lookback_end.isoformat()};"
+        )
+    )
     return _build_fact_revision(
         fact_id=stable_id("canonical_fact", record.fact_type),
-        projection_version=projection_version,
+        projection_version=policy.version,
         fact_type=record.fact_type,
         status=FactRevisionStatus.ACTIVE,
         event_time=datetime.combine(record.effective_date, time.min, tzinfo=UTC),
         observed_at=record.observation.observed_at,
         headline=record.headline,
-        claim=f"effective_date={record.effective_date.isoformat()}; {metrics}.",
-        affected_assets=affected_assets,
+        claim=f"effective_date={record.effective_date.isoformat()};{context_text} {metrics}.",
+        affected_assets=policy.affected_assets,
         risk_factors=record.risk_factors,
+        decision_materiality=decision_materiality,
         source_observation_ids=(record.observation.observation_id,),
         previous=previous,
     )
@@ -332,8 +366,17 @@ def build_state_material_delta(
         raise ValueError("current_events 不能包含重复内容")
     if frozenset(events_by_ref) != frozenset(current.intelligence_event_refs):
         raise ValueError("current_events 必须与 current StateSnapshot 完全一致")
-    changed_ids = tuple(
+    observed_changed_ids = tuple(
         sorted(set(current.fact_revision_ids) - set(previous.fact_revision_ids))
+    )
+    changed_ids = tuple(
+        revision_id
+        for revision_id in observed_changed_ids
+        if (
+            facts_by_revision[revision_id].fact_type not in OFFICIAL_METRIC_FACT_TYPES
+            or facts_by_revision[revision_id].decision_materiality
+            == FactDecisionMateriality.CANDIDATE
+        )
     )
     if material_intelligence_event_refs is None:
         changed_event_refs = tuple(
@@ -520,6 +563,7 @@ def _build_fact_revision(
     claim: str,
     affected_assets: tuple[str, ...],
     risk_factors: tuple[str, ...],
+    decision_materiality: FactDecisionMateriality = FactDecisionMateriality.UNKNOWN,
     source_observation_ids: tuple[str, ...],
     previous: CanonicalFactRevision | None,
 ) -> CanonicalFactRevision:
@@ -540,6 +584,7 @@ def _build_fact_revision(
             claim=claim,
             affected_assets=_unique_sorted(affected_assets, name="affected_assets"),
             risk_factors=_unique_sorted(risk_factors, name="risk_factors"),
+            decision_materiality=decision_materiality,
         )
     )
     revision_hash = content_hash(semantic_payload)
@@ -573,7 +618,7 @@ def _unique_sorted(values: tuple, *, name: str) -> tuple:
 
 
 def _fact_semantic_payload(fact: CanonicalFactRevision) -> dict:
-    return {
+    payload = {
         "projection_version": fact.projection_version,
         "fact_id": fact.fact_id,
         "fact_type": fact.fact_type,
@@ -584,6 +629,11 @@ def _fact_semantic_payload(fact: CanonicalFactRevision) -> dict:
         "affected_assets": fact.affected_assets,
         "risk_factors": fact.risk_factors,
     }
+    # Preserve validation of revisions written before decision materiality was
+    # introduced.  New explicit classifications are still identity-bearing.
+    if fact.decision_materiality != FactDecisionMateriality.UNKNOWN:
+        payload["decision_materiality"] = fact.decision_materiality.value
+    return payload
 
 
 def _state_identity_payload(state: StateSnapshot) -> dict:

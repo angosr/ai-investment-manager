@@ -55,6 +55,7 @@ from investment_manager.state.decision.packet import (
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
+    FactDecisionMateriality,
     FactRevisionStatus,
     MaterialDelta,
     Materiality,
@@ -1005,9 +1006,10 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
         "revision_id",
         "fact_type",
         "event_time",
-        "claim",
-        "risk_factors",
-        "directly_triggered",
+            "claim",
+            "risk_factors",
+            "decision_materiality",
+            "directly_triggered",
     )
 
 
@@ -1245,6 +1247,50 @@ def test_finalize_assessment_rejects_derivative_state_as_only_driver(
         finalize_context_assessment(
             output=output,
             packet=derivative_packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_routine_metric_cannot_be_promoted_to_world_driver(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    background_fact = packet.facts[0].model_copy(
+        update={
+            "fact_type": "US_TREASURY_CASH_SNAPSHOT",
+            "decision_materiality": FactDecisionMateriality.BACKGROUND,
+        }
+    )
+    packet = packet.model_copy(update={"facts": (background_fact,)})
+    base = _assessment_output()
+    driver = base.assessment.drivers[0].model_copy(
+        update={"evidence_ids": (background_fact.revision_id,)}
+    )
+    views = tuple(
+        item.model_copy(
+            update={
+                "direction": DirectionalView.UNCERTAIN,
+                "evidence_ids": (),
+            }
+        )
+        for item in base.assessment.views
+    )
+    output = base.model_copy(
+        update={
+            "assessment": base.assessment.model_copy(
+                update={"drivers": (driver,), "views": views}
+            )
+        }
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="缺少足以改变基准情景",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),
         )

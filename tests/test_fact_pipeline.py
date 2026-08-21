@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from investment_manager.information.official.metrics import TGA_FACT_TYPE
 from investment_manager.information.official.records import (
     build_fomc_calendar_revision,
     parse_fed_monetary_rss,
@@ -18,7 +19,11 @@ from investment_manager.state.facts import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
 )
-from investment_manager.state.models import DeltaCategory, Materiality
+from investment_manager.state.models import (
+    DeltaCategory,
+    FactDecisionMateriality,
+    Materiality,
+)
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 FACT_POLICY = OfficialFactProjectionPolicy(
@@ -245,6 +250,42 @@ def test_fact_delta_fails_closed_when_policy_does_not_classify_fact() -> None:
             current_facts=(fact,),
             policy=incomplete_policy,
         )
+
+
+def test_routine_continuous_metric_updates_state_without_material_delta() -> None:
+    metric = project_fomc_calendar_fact(
+        _meeting("15-16", observed_at=OBSERVED_AT),
+        policy=FACT_POLICY,
+    ).model_copy(
+        update={
+            "fact_type": TGA_FACT_TYPE,
+            "decision_materiality": FactDecisionMateriality.BACKGROUND,
+        }
+    )
+    previous = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT - timedelta(seconds=1),
+        built_at=OBSERVED_AT,
+        facts=(),
+    )
+    current = build_state_snapshot(
+        projection_version="state-v1",
+        analysis_scope="crypto-macro",
+        as_of=OBSERVED_AT,
+        built_at=OBSERVED_AT,
+        facts=(metric,),
+    )
+
+    assert (
+        build_state_material_delta(
+            previous=previous,
+            current=current,
+            current_facts=(metric,),
+            policy=DELTA_POLICY,
+        )
+        is None
+    )
 
 
 def test_market_delta_requires_explicit_trigger_scoped_feature_evidence() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.identity import stable_id
 from investment_manager.scheduling.models import (
     AddWakeup,
@@ -21,6 +22,7 @@ from investment_manager.state.facts import (
 )
 from investment_manager.state.models import (
     CanonicalFactRevision,
+    FactDecisionMateriality,
     FactRevisionStatus,
     Materiality,
 )
@@ -90,6 +92,15 @@ class CanonicalFactTriggerPublisher:
                 raise ValueError(
                     f"CanonicalFact 缺少 MaterialDelta 规则: {fact.fact_type}"
                 ) from exc
+            if (
+                fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                and fact.decision_materiality != FactDecisionMateriality.CANDIDATE
+            ):
+                # Routine continuous observations remain in State but do not
+                # spend an event-driven AI call.  A later material event or
+                # explicit review still sees the latest background values.
+                self._published_revision_ids.add(fact.revision_id)
+                continue
             unknown_assets = tuple(
                 sorted(set(fact.affected_assets) - set(self._symbols_by_asset))
             )

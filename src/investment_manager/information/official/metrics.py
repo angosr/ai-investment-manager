@@ -97,6 +97,30 @@ class OfficialMetricValue(FrozenModel):
     unit: OfficialMetricUnit
 
 
+class OfficialMetricChangeContext(FrozenModel):
+    """Point-in-time empirical scale for the snapshot's most unusual change.
+
+    The percentile is calculated only from observations present in the same
+    first-party response.  It lets downstream policy distinguish a routine
+    update from a genuinely unusual move without encoding a bespoke absolute
+    threshold for every series.
+    """
+
+    metric_name: OfficialMetricName
+    latest_change: Decimal
+    unit: OfficialMetricUnit
+    absolute_change_percentile: Decimal = Field(ge=0, le=1)
+    sample_size: int = Field(gt=0)
+    lookback_start: date
+    lookback_end: date
+
+    @model_validator(mode="after")
+    def lookback_must_be_ordered(self):
+        if self.lookback_start > self.lookback_end:
+            raise ValueError("官方指标变化背景的回看区间非法")
+        return self
+
+
 class OfficialMetricSnapshot(FrozenModel):
     """One compact, revision-safe observation from a pinned first-party feed."""
 
@@ -111,6 +135,7 @@ class OfficialMetricSnapshot(FrozenModel):
     headline: str = Field(min_length=1, max_length=200)
     risk_factors: tuple[str, ...] = Field(min_length=1)
     metrics: tuple[OfficialMetricValue, ...] = Field(min_length=1)
+    change_context: OfficialMetricChangeContext | None = None
     source_url: str = Field(min_length=1, max_length=2_000)
 
     @model_validator(mode="after")
@@ -130,6 +155,22 @@ class OfficialMetricSnapshot(FrozenModel):
             raise ValueError("官方指标必须按名称唯一且排序")
         if tuple(sorted(set(self.risk_factors))) != self.risk_factors:
             raise ValueError("官方指标 risk_factors 必须唯一且排序")
+        if self.change_context is not None:
+            contextual_metric = next(
+                (
+                    item
+                    for item in self.metrics
+                    if item.name == self.change_context.metric_name
+                ),
+                None,
+            )
+            if contextual_metric is None:
+                raise ValueError("官方指标变化背景必须引用当前快照指标")
+            if (
+                contextual_metric.value != self.change_context.latest_change
+                or contextual_metric.unit != self.change_context.unit
+            ):
+                raise ValueError("官方指标变化背景与当前指标值不一致")
         expected_record_id = f"official-metric:{self.fact_type.lower()}"
         if self.observation.source_record_id != expected_record_id:
             raise ValueError("官方指标 source_record_id 与 fact_type 不一致")
@@ -149,7 +190,7 @@ class OfficialMetricSnapshot(FrozenModel):
 
 
 def metric_semantic_payload(snapshot: OfficialMetricSnapshot) -> dict:
-    return {
+    payload = {
         "stream_id": snapshot.stream_id,
         "domain": snapshot.domain.value,
         "fact_type": snapshot.fact_type,
@@ -159,6 +200,9 @@ def metric_semantic_payload(snapshot: OfficialMetricSnapshot) -> dict:
         "metrics": snapshot.metrics,
         "source_url": snapshot.source_url,
     }
+    if snapshot.change_context is not None:
+        payload["change_context"] = snapshot.change_context
+    return payload
 
 
 def parse_official_metric_document(
@@ -236,6 +280,21 @@ def _parse_tga(
                 OfficialMetricUnit.USD_MILLIONS,
             )
         )
+    change_context = _most_unusual_change_context(
+        ordered,
+        candidates=(
+            (
+                OfficialMetricName.TGA_CHANGE_1D_USD_M,
+                1,
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            (
+                OfficialMetricName.TGA_CHANGE_5D_USD_M,
+                5,
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+        ),
+    )
     return _snapshot(
         source_id=TREASURY_FISCAL_SOURCE_ID,
         stream_id=TGA_STREAM_ID,
@@ -245,6 +304,7 @@ def _parse_tga(
         headline="U.S. Treasury General Account cash balance",
         risk_factors=("US_FISCAL_LIQUIDITY",),
         metrics=tuple(metrics),
+        change_context=change_context,
         source_url=source_url,
         observed_at=observed_at,
         source_published_at=_effective_at(latest_date, observed_at),
@@ -277,6 +337,10 @@ def _parse_treasury_yields(
     y30 = _decimal(latest.get("BC_30YEAR"), name="Treasury 30Y")
     previous_y10 = _decimal(previous.get("BC_10YEAR"), name="previous Treasury 10Y")
     previous_y30 = _decimal(previous.get("BC_30YEAR"), name="previous Treasury 30Y")
+    ten_year_history = tuple(
+        (record_date, _decimal(values.get("BC_10YEAR"), name="Treasury 10Y"))
+        for record_date, values in entries
+    )
     updated = root.findtext(f"{atom}updated")
     published_at = _datetime(updated, name="Treasury yield updated")
     return _snapshot(
@@ -305,6 +369,17 @@ def _parse_treasury_yields(
                 OfficialMetricName.TREASURY_30Y_CHANGE_1D_BPS,
                 (y30 - previous_y30) * 100,
                 OfficialMetricUnit.BASIS_POINTS,
+            ),
+        ),
+        change_context=_most_unusual_change_context(
+            ten_year_history,
+            candidates=(
+                (
+                    OfficialMetricName.TREASURY_10Y_CHANGE_1D_BPS,
+                    1,
+                    OfficialMetricUnit.BASIS_POINTS,
+                    Decimal("100"),
+                ),
             ),
         ),
         source_url=source_url,
@@ -350,6 +425,18 @@ def _parse_broad_dollar(
                 OfficialMetricUnit.PERCENT,
             ),
         ),
+        change_context=_most_unusual_change_context(
+            observations,
+            candidates=(
+                (
+                    OfficialMetricName.BROAD_DOLLAR_CHANGE_1D_PCT,
+                    1,
+                    OfficialMetricUnit.PERCENT,
+                    Decimal("100"),
+                    True,
+                ),
+            ),
+        ),
         source_url=source_url,
         observed_at=observed_at,
         source_published_at=min(_datetime(channel_date, name="H10 channel date"), observed_at),
@@ -392,6 +479,16 @@ def _parse_rrp(
                 OfficialMetricUnit.USD_MILLIONS,
             ),
         ),
+        change_context=_most_unusual_change_context(
+            observations,
+            candidates=(
+                (
+                    OfficialMetricName.RRP_CHANGE_1D_USD_M,
+                    1,
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
+            ),
+        ),
         source_url=source_url,
         observed_at=observed_at,
         source_published_at=_effective_at(latest_date, observed_at),
@@ -432,6 +529,16 @@ def _parse_soma(
                 OfficialMetricName.SOMA_CHANGE_1W_USD_M,
                 latest - previous,
                 OfficialMetricUnit.USD_MILLIONS,
+            ),
+        ),
+        change_context=_most_unusual_change_context(
+            observations,
+            candidates=(
+                (
+                    OfficialMetricName.SOMA_CHANGE_1W_USD_M,
+                    1,
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
             ),
         ),
         source_url=source_url,
@@ -503,6 +610,7 @@ def _snapshot(
     headline: str,
     risk_factors: tuple[str, ...],
     metrics: tuple[OfficialMetricValue, ...],
+    change_context: OfficialMetricChangeContext | None = None,
     source_url: str,
     observed_at: datetime,
     source_published_at: datetime,
@@ -528,6 +636,7 @@ def _snapshot(
         headline=headline,
         risk_factors=ordered_risks,
         metrics=ordered_metrics,
+        change_context=change_context,
         source_url=source_url,
     )
     payload_hash = content_hash(metric_semantic_payload(draft))
@@ -564,6 +673,72 @@ def _metric(
     plain = format(rounded, "f").rstrip("0").rstrip(".")
     compact = Decimal(plain or "0")
     return OfficialMetricValue(name=name, value=compact, unit=unit)
+
+
+def _most_unusual_change_context(
+    observations: list[tuple[date, Decimal]] | tuple[tuple[date, Decimal], ...],
+    *,
+    candidates: tuple[
+        tuple[OfficialMetricName, int, OfficialMetricUnit]
+        | tuple[OfficialMetricName, int, OfficialMetricUnit, Decimal]
+        | tuple[OfficialMetricName, int, OfficialMetricUnit, Decimal, bool],
+        ...,
+    ],
+) -> OfficialMetricChangeContext | None:
+    """Rank current absolute changes against the response's own history.
+
+    Candidate tuples may provide a multiplier and request percentage-return
+    changes.  Selecting the highest percentile keeps the projection compact
+    while retaining the horizon on which the current move is most exceptional.
+    """
+
+    contexts: list[OfficialMetricChangeContext] = []
+    ordered = tuple(sorted(observations, key=lambda item: item[0]))
+    for candidate in candidates:
+        name, lag, unit, *options = candidate
+        multiplier = options[0] if options else Decimal("1")
+        percentage_return = bool(options[1]) if len(options) > 1 else False
+        if len(ordered) <= lag:
+            continue
+        changes: list[Decimal] = []
+        for index in range(lag, len(ordered)):
+            current = ordered[index][1]
+            prior = ordered[index - lag][1]
+            if percentage_return:
+                if prior == 0:
+                    continue
+                change = (current / prior - 1) * multiplier
+            else:
+                change = (current - prior) * multiplier
+            changes.append(change)
+        if not changes:
+            continue
+        latest = changes[-1]
+        percentile = Decimal(
+            sum(abs(value) <= abs(latest) for value in changes)
+        ) / Decimal(len(changes))
+        rounded_latest = _metric(name, latest, unit).value
+        contexts.append(
+            OfficialMetricChangeContext(
+                metric_name=name,
+                latest_change=rounded_latest,
+                unit=unit,
+                absolute_change_percentile=percentile.quantize(Decimal("0.0001")),
+                sample_size=len(changes),
+                lookback_start=ordered[lag][0],
+                lookback_end=ordered[-1][0],
+            )
+        )
+    if not contexts:
+        return None
+    return max(
+        contexts,
+        key=lambda item: (
+            item.absolute_change_percentile,
+            item.sample_size,
+            item.metric_name.value,
+        ),
+    )
 
 
 def _effective_at(value: date, observed_at: datetime) -> datetime:

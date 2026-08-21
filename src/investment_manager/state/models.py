@@ -35,6 +35,14 @@ class Materiality(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class FactDecisionMateriality(StrEnum):
+    """Whether a fact is large enough to compete for decision attention."""
+
+    UNKNOWN = "UNKNOWN"
+    BACKGROUND = "BACKGROUND"
+    CANDIDATE = "CANDIDATE"
+
+
 class CanonicalFactRevision(FrozenModel):
     fact_id: str = Field(min_length=1)
     revision_id: str = Field(min_length=1)
@@ -48,6 +56,7 @@ class CanonicalFactRevision(FrozenModel):
     claim: str = Field(min_length=1, max_length=2_000)
     affected_assets: tuple[str, ...] = ()
     risk_factors: tuple[str, ...] = Field(min_length=1)
+    decision_materiality: FactDecisionMateriality = FactDecisionMateriality.UNKNOWN
     source_observation_ids: tuple[str, ...] = Field(min_length=1)
     revision_hash: str = Field(pattern=SHA256_PATTERN)
 

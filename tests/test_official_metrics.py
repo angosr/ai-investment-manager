@@ -20,15 +20,21 @@ from investment_manager.information.official.metrics import (
 from investment_manager.information.official.source import OfficialMetricDocument
 from investment_manager.information.tables import source_observations
 from investment_manager.schema import create_schema
+from investment_manager.state.facts import OfficialFactProjectionPolicy
 from investment_manager.state.metric_ingestion import (
     OFFICIAL_METRIC_STREAM_DOMAINS,
     OfficialMetricCollectorService,
     SqlOfficialMetricFactIngestor,
 )
+from investment_manager.state.models import FactDecisionMateriality
 from investment_manager.state.official_ingestion import SourcePollAuditError
 from investment_manager.state.tables import canonical_fact_revisions
 
 OBSERVED_AT = datetime(2026, 8, 21, 20, tzinfo=UTC)
+METRIC_POLICY = OfficialFactProjectionPolicy(
+    version="official-metric-v1",
+    affected_assets=("BTC", "ETH"),
+)
 
 
 def _documents() -> dict[str, OfficialMetricDocument]:
@@ -199,8 +205,7 @@ def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> 
     engine = _engine()
     ingestor = SqlOfficialMetricFactIngestor(
         engine,
-        projection_version="official-metric-v1",
-        affected_assets=("BTC", "ETH"),
+        policy=METRIC_POLICY,
     )
     document = _documents()[TGA_STREAM_ID]
 
@@ -210,12 +215,52 @@ def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> 
     revised = ingestor.ingest(changed, observed_at=OBSERVED_AT + timedelta(minutes=2))
 
     assert first.new_fact_revision is not None
+    assert (
+        first.new_fact_revision.decision_materiality
+        == FactDecisionMateriality.BACKGROUND
+    )
     assert duplicate.new_fact_revision is None
     assert revised.new_fact_revision is not None
     assert revised.new_fact_revision.previous_revision_id == first.new_fact_revision.revision_id
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(source_observations)) == 2
         assert connection.scalar(select(func.count()).select_from(canonical_fact_revisions)) == 2
+
+
+def test_empirically_extreme_metric_change_becomes_material_candidate() -> None:
+    start = OBSERVED_AT.date() - timedelta(days=39)
+    rows = [
+        {
+            "record_date": (start + timedelta(days=index)).isoformat(),
+            "account_type": "Treasury General Account (TGA) Closing Balance",
+            "open_today_bal": str(900_000 + index * 10),
+        }
+        for index in range(39)
+    ]
+    rows.append(
+        {
+            "record_date": OBSERVED_AT.date().isoformat(),
+            "account_type": "Treasury General Account (TGA) Closing Balance",
+            "open_today_bal": "950000",
+        }
+    )
+    base = _documents()[TGA_STREAM_ID]
+    document = replace(base, content=json.dumps({"data": rows}).encode())
+
+    result = SqlOfficialMetricFactIngestor(
+        _engine(),
+        policy=METRIC_POLICY,
+    ).ingest(document, observed_at=OBSERVED_AT)
+
+    assert result.record is not None
+    assert result.record.record.change_context is not None
+    assert result.record.record.change_context.absolute_change_percentile == 1
+    assert result.record.record.change_context.sample_size >= 30
+    assert result.new_fact_revision is not None
+    assert (
+        result.new_fact_revision.decision_materiality
+        == FactDecisionMateriality.CANDIDATE
+    )
 
 
 def test_metric_collector_isolates_one_stream_failure_and_audits_both_polls() -> None:
@@ -240,8 +285,7 @@ def test_metric_collector_isolates_one_stream_failure_and_audits_both_polls() ->
         source=Source(),
         ingestor=SqlOfficialMetricFactIngestor(
             engine,
-            projection_version="official-metric-v1",
-            affected_assets=("BTC", "ETH"),
+            policy=METRIC_POLICY,
         ),
         publish_recent=lambda as_of: None,
         fast_poll_seconds=300,
@@ -276,8 +320,7 @@ def test_metric_collector_fails_closed_if_poll_audit_is_not_durable() -> None:
         source=Source(),
         ingestor=SqlOfficialMetricFactIngestor(
             _engine(),
-            projection_version="official-metric-v1",
-            affected_assets=("BTC", "ETH"),
+            policy=METRIC_POLICY,
         ),
         publish_recent=lambda as_of: None,
         fast_poll_seconds=300,

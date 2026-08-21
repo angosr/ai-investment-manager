@@ -36,6 +36,7 @@ from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
+    FactDecisionMateriality,
     FactRevisionStatus,
     MaterialDelta,
     Materiality,
@@ -54,6 +55,15 @@ _LEGACY_PACKET_SCHEMAS_WITHOUT_EVENT_URL = {
     "decision-packet-v2",
     "decision-packet-v3",
     "decision-packet-v4",
+}
+_PACKET_SCHEMAS_WITHOUT_FACT_MATERIALITY = {
+    f"decision-packet-v{version}" for version in range(1, 11)
+}
+_CURRENT_PACKET_SCHEMAS = {
+    "decision-packet-v8",
+    "decision-packet-v9",
+    "decision-packet-v10",
+    "decision-packet-v11",
 }
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
@@ -101,6 +111,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 ),
                 "claim": item.claim,
                 "risk_factors": item.risk_factors,
+                "decision_materiality": item.decision_materiality.value,
                 "directly_triggered": item.directly_triggered,
             }
             if item.fact_type in OFFICIAL_METRIC_FACT_TYPES
@@ -381,6 +392,7 @@ class PacketFact(FrozenModel):
     claim: str
     affected_assets: tuple[str, ...]
     risk_factors: tuple[str, ...]
+    decision_materiality: FactDecisionMateriality = FactDecisionMateriality.UNKNOWN
     highest_source_tier: SourceTier
     independent_source_count: int = Field(gt=0)
     prompt_injection_suspected: bool
@@ -661,11 +673,7 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
-        if self.schema_version in {
-            "decision-packet-v8",
-            "decision-packet-v9",
-            "decision-packet-v10",
-        } and (
+        if self.schema_version in _CURRENT_PACKET_SCHEMAS and (
             self.active_hypotheses or self.previous_assessment_refs
         ):
             raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
@@ -687,11 +695,7 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
-    if packet.schema_version not in {
-        "decision-packet-v8",
-        "decision-packet-v9",
-        "decision-packet-v10",
-    }:
+    if packet.schema_version not in _CURRENT_PACKET_SCHEMAS:
         payload["active_hypotheses"] = packet.active_hypotheses
         payload["previous_assessment_refs"] = packet.previous_assessment_refs
     if (
@@ -716,6 +720,9 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         for event in payload["intelligence_events"]:
             if event["url"] is None:
                 event.pop("url")
+    if packet.schema_version in _PACKET_SCHEMAS_WITHOUT_FACT_MATERIALITY:
+        for fact in payload["facts"]:
+            fact.pop("decision_materiality", None)
     if (
         packet.schema_version
         not in {
@@ -723,13 +730,14 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
             "decision-packet-v8",
             "decision-packet-v9",
             "decision-packet-v10",
+            "decision-packet-v11",
         }
         and not packet.information_coverage
     ):
         payload.pop("information_coverage", None)
     if (
         packet.schema_version
-        not in {"decision-packet-v8", "decision-packet-v9", "decision-packet-v10"}
+        not in _CURRENT_PACKET_SCHEMAS
         and not packet.derivative_states
     ):
         payload.pop("derivative_states", None)
@@ -1210,6 +1218,7 @@ class DecisionPacketBuilder:
                     claim=claim,
                     affected_assets=item.fact.affected_assets,
                     risk_factors=item.fact.risk_factors,
+                    decision_materiality=item.fact.decision_materiality,
                     highest_source_tier=item.highest_source_tier,
                     independent_source_count=item.independent_source_count,
                     prompt_injection_suspected=(

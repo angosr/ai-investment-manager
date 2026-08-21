@@ -120,30 +120,29 @@ class HttpOfficialMetricSource:
     @staticmethod
     def _request(stream_id: str, *, observed_at: datetime) -> tuple[str, str]:
         if stream_id == TGA_STREAM_ID:
-            start = (observed_at.date() - timedelta(days=14)).isoformat()
+            start = (observed_at.date() - timedelta(days=370)).isoformat()
             url = httpx.URL(
                 _TGA_API_URL,
                 params={
                     "filter": f"record_date:gte:{start}",
                     "sort": "-record_date,-account_type",
-                    "page[size]": "100",
+                    "page[size]": "5000",
                 },
             )
             return str(url), "application/json"
         if stream_id == TREASURY_YIELD_STREAM_ID:
-            month = observed_at.strftime("%Y%m")
             url = httpx.URL(
                 _TREASURY_YIELD_URL,
                 params={
                     "data": "daily_treasury_yield_curve",
-                    "field_tdr_date_value_month": month,
+                    "field_tdr_date_value": observed_at.strftime("%Y"),
                 },
             )
             return str(url), "application/xml"
         if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
             return _FED_BROAD_DOLLAR_URL, "application/xml"
         if stream_id == NYFED_RRP_STREAM_ID:
-            start = (observed_at.date() - timedelta(days=14)).isoformat()
+            start = (observed_at.date() - timedelta(days=370)).isoformat()
             url = httpx.URL(
                 _NYFED_RRP_URL,
                 params={

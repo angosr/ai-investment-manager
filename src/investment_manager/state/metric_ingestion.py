@@ -33,7 +33,10 @@ from investment_manager.information.official.source import OfficialMetricDocumen
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
 from investment_manager.kernel.time import require_utc
-from investment_manager.state.facts import project_official_metric_fact
+from investment_manager.state.facts import (
+    OfficialFactProjectionPolicy,
+    project_official_metric_fact,
+)
 from investment_manager.state.models import CanonicalFactRevision
 from investment_manager.state.official_ingestion import SourcePollAuditError
 from investment_manager.state.repository import SqlFactStateStore
@@ -82,14 +85,12 @@ class SqlOfficialMetricFactIngestor:
         self,
         engine: Engine,
         *,
-        projection_version: str,
-        affected_assets: tuple[str, ...],
+        policy: OfficialFactProjectionPolicy,
     ) -> None:
         self._raw = SqlRawSourcePayloadStore(engine)
         self._records = SqlOfficialInformationStore(engine)
         self._facts = SqlFactStateStore(engine)
-        self._projection_version = projection_version
-        self._affected_assets = affected_assets
+        self._policy = policy
 
     def ingest(
         self,
@@ -118,8 +119,7 @@ class SqlOfficialMetricFactIngestor:
         write = self._records.put(snapshot)
         candidate = project_official_metric_fact(
             write.record,
-            projection_version=self._projection_version,
-            affected_assets=self._affected_assets,
+            policy=self._policy,
         )
         previous = self._facts.latest_fact(candidate.fact_id)
         if previous is not None and not write.inserted:
@@ -131,8 +131,7 @@ class SqlOfficialMetricFactIngestor:
             if previous is None
             else project_official_metric_fact(
                 write.record,
-                projection_version=self._projection_version,
-                affected_assets=self._affected_assets,
+                policy=self._policy,
                 previous=previous,
             )
         )

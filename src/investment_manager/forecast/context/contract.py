@@ -13,6 +13,7 @@ from investment_manager.forecast.models import (
     ContextView,
 )
 from investment_manager.information.models import SourceTier
+from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -58,6 +59,10 @@ ASSESS_INSTRUCTIONS = (
     "再给出已经被本轮证据支持的跨层传导链。至少比较政策或资金变化、利率/美元等中介变量、"
     "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因，"
     "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
+    "官方连续指标的 decision_materiality 由程序根据同源历史绝对变化分位数生成。"
+    "BACKGROUND 或 UNKNOWN 指标只能合并为简短背景/反证，不得逐项展开，不得单独构成 driver，"
+    "也不得支持 UP/DOWN；只有 CANDIDATE 才表示量级足以进入主导因素竞争，"
+    "但仍需与中介变量和市场响应共同验证因果。",
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
     "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"
@@ -270,24 +275,9 @@ def finalize_context_assessment(
             "ASSESSMENT_DERIVATIVE_ONLY_DRIVER",
             "现货与衍生品市场结构不得单独冒充为主导驱动",
         )
+    baseline_changing_support = _baseline_changing_support(packet)
     directional_support = {
-        *(
-            item.revision_id
-            for item in packet.facts
-            if item.highest_source_tier == SourceTier.FIRST_PARTY
-        ),
-        *(item.delta_id for item in packet.deltas if item.category.value == "FIRST_PARTY_FACT"),
-        *(
-            evidence_id
-            for item in packet.deltas
-            if item.category.value == "MARKET"
-            for evidence_id in item.feature_snapshot_refs
-        ),
-        *(
-            item.evidence_ref
-            for item in packet.intelligence_events
-            if item.directional_support_eligible
-        ),
+        *baseline_changing_support,
     }
     unsupported_directional_views = tuple(
         (view.asset, view.horizon_minutes)
@@ -321,6 +311,16 @@ def finalize_context_assessment(
         packet=packet,
         referenced_evidence=referenced_evidence,
     )
+    unsupported_drivers = tuple(
+        driver.statement
+        for driver in output.assessment.drivers
+        if not set(driver.evidence_ids).intersection(baseline_changing_support)
+    )
+    if unsupported_drivers:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_DRIVER_MATERIALITY_INSUFFICIENT",
+            "Driver 缺少足以改变基准情景的候选证据",
+        )
     assessment_id = stable_id(
         "context_assessment",
         packet.content_hash,
@@ -348,6 +348,44 @@ def finalize_context_assessment(
         contradictions=output.assessment.contradictions,
         data_gaps=output.assessment.data_gaps,
     )
+
+
+def _baseline_changing_support(packet: DecisionPacket) -> set[str]:
+    candidate_facts = {
+        item.revision_id
+        for item in packet.facts
+        if item.highest_source_tier == SourceTier.FIRST_PARTY
+        and (
+            (
+                item.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                and item.decision_materiality.value == "CANDIDATE"
+            )
+            or (
+                item.fact_type not in OFFICIAL_METRIC_FACT_TYPES
+                and item.decision_materiality.value != "BACKGROUND"
+            )
+        )
+    }
+    candidate_deltas = {
+        item.delta_id
+        for item in packet.deltas
+        if (
+            item.category.value == "FIRST_PARTY_FACT"
+            and set(item.fact_revision_ids).intersection(candidate_facts)
+        )
+    }
+    market_shocks = {
+        evidence_id
+        for item in packet.deltas
+        if item.category.value == "MARKET"
+        for evidence_id in item.feature_snapshot_refs
+    }
+    eligible_events = {
+        item.evidence_ref
+        for item in packet.intelligence_events
+        if item.directional_support_eligible
+    }
+    return candidate_facts | candidate_deltas | market_shocks | eligible_events
 
 
 def _finalize_event_references(

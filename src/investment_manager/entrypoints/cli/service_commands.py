@@ -541,8 +541,7 @@ def information_collector(
         ),
         ingestor=SqlOfficialMetricFactIngestor(
             engine,
-            projection_version=loaded.decision_state.official_fact_policy.version,
-            affected_assets=loaded.decision_state.official_fact_policy.affected_assets,
+            policy=loaded.decision_state.official_fact_policy,
         ),
         publish_recent=fact_trigger_publisher.publish_recent,
         fast_poll_seconds=policy.official_metric_poll_seconds,
