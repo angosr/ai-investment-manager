@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { Snapshot } from "../api/types";
+import type { AssessmentQuality } from "../api/types";
 import { useLive } from "../hooks";
+import { hhmm } from "../lib/format";
 import { CycleRow } from "./CycleRow";
 import { CapitalDecisionFeed } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
@@ -84,6 +86,9 @@ function CapitalTimeline() {
         </div>
       ) : tab === "analysis" ? (
         <div>
+          {assessmentRecords?.quality ? (
+            <AssessmentQualityLine quality={assessmentRecords.quality} />
+          ) : null}
           {(assessmentRecords?.assessments ?? []).map((row) => (
             <AssessmentRow key={row.assessment_id} row={row} />
           ))}
@@ -95,6 +100,33 @@ function CapitalTimeline() {
         <WorldFeed events={events?.events ?? []} />
       )}
     </section>
+  );
+}
+
+function AssessmentQualityLine({ quality }: { quality: AssessmentQuality }) {
+  const status = {
+    SUCCEEDED: "有效",
+    REJECTED: "已拒绝",
+    FAILED: "失败",
+    NO_ATTEMPT: "尚未尝试",
+  }[quality.latest_attempt_status];
+  const latestAttempt = quality.latest_attempt_at
+    ? `${hhmm(quality.latest_attempt_at)} 最近尝试${status}`
+    : `最近尝试${status}`;
+  const rejected = `当前行为 24 小时拒绝 ${quality.rejected_attempt_count_24h} 次`;
+  const historical = quality.invalid_persisted_count_24h > 0
+    ? ` · 按当前规则排除历史记录 ${quality.invalid_persisted_count_24h} 条`
+    : "";
+  const reasons = quality.rejection_reasons.length > 0
+    ? ` · ${quality.rejection_reasons.join("；")}`
+    : "";
+  const unhealthy = ["REJECTED", "FAILED"].includes(quality.latest_attempt_status)
+    || quality.rejected_attempt_count_24h > 0;
+  return (
+    <div className={`${styles.quality} ${unhealthy ? styles.qualityWarn : ""}`}>
+      <b>{latestAttempt}</b>
+      <span>{rejected}{historical}{reasons}</span>
+    </div>
   );
 }
 

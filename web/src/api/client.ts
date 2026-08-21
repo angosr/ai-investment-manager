@@ -2,8 +2,8 @@
 
 import type {
   Accounts,
+  AssessmentFeed,
   AssessmentRecordDetail,
-  AssessmentRecordRow,
   CapitalAction,
   CapitalOverview,
   CycleDetail,
@@ -33,13 +33,9 @@ export const api = {
   assessmentCycle: (id: string) =>
     getJson<CycleDetail>(`/api/assessment/cycles/${encodeURIComponent(id)}`),
   assessmentRecords: () =>
-    getJson<{ assessments: AssessmentRecordRow[] }>(
-      "/api/assessment/records?limit=100",
-    ),
+    getJson<AssessmentFeed>("/api/assessment/records?limit=100"),
   latestAssessment: () =>
-    getJson<{ assessments: AssessmentRecordRow[] }>(
-      "/api/assessment/records?limit=1",
-    ),
+    getJson<AssessmentFeed>("/api/assessment/records?limit=1"),
   assessmentRecord: (id: string) =>
     getJson<AssessmentRecordDetail>(
       `/api/assessment/records/${encodeURIComponent(id)}`,

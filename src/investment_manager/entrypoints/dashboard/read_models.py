@@ -19,7 +19,10 @@ from investment_manager.execution.reconciliation.engine import ReconciliationRep
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
-from investment_manager.forecast.context.contract import assessment_has_clean_chinese
+from investment_manager.forecast.context.contract import (
+    assessment_has_clean_chinese,
+    assessment_output_quality_issues,
+)
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
@@ -74,6 +77,8 @@ from investment_manager.state.tables import decision_packets
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500
+_ASSESSMENT_QUALITY_SCAN_LIMIT = 500
+_ASSESSMENT_QUALITY_WINDOW_HOURS = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +101,17 @@ class AssessmentRecord:
     assessment: ContextAssessment
     outcomes: tuple[AssessmentViewOutcome, ...] = ()
     packet: DecisionPacket | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentQualityStatus:
+    latest_attempt_at: datetime | None
+    latest_attempt_status: str
+    latest_attempt_reason: str | None
+    latest_valid_at: datetime | None
+    rejected_attempt_count_24h: int
+    invalid_persisted_count_24h: int
+    rejection_reason_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +294,111 @@ class DashboardReader:
                 AssessmentViewOutcome.model_validate(payload) for payload in outcome_payloads
             ),
             packet=DecisionPacket.model_validate(row["packet_payload"]),
+        )
+
+    def assessment_quality_status(self, *, now: datetime) -> AssessmentQualityStatus:
+        """Expose rejected AI outputs without returning their untrusted body to the UI."""
+
+        behavior_hash = configured_assess_behavior_hash(self._config)
+        cutoff = now - timedelta(hours=_ASSESSMENT_QUALITY_WINDOW_HOURS)
+        with self._engine.connect() as connection:
+            assessment_rows = connection.execute(
+                select(
+                    context_assessments.c.payload,
+                    context_assessments.c.available_at,
+                    context_assessments.c.analysis_behavior_hash,
+                )
+                .where(
+                    context_assessments.c.available_at >= cutoff,
+                    context_assessments.c.available_at <= now,
+                )
+                .order_by(
+                    context_assessments.c.available_at.desc(),
+                    context_assessments.c.assessment_id.desc(),
+                )
+                .limit(_ASSESSMENT_QUALITY_SCAN_LIMIT)
+            ).all()
+            attempt_rows = connection.execute(
+                select(
+                    codex_runs.c.status,
+                    codex_runs.c.error_class,
+                    codex_runs.c.payload,
+                    decision_packets.c.as_of,
+                )
+                .select_from(
+                    codex_runs.join(
+                        decision_packets,
+                        decision_packets.c.packet_id == codex_runs.c.cycle_id,
+                    )
+                )
+                .where(
+                    decision_packets.c.as_of >= cutoff,
+                    decision_packets.c.as_of <= now,
+                    codex_runs.c.payload["analysis_behavior_hash"].as_string()
+                    == behavior_hash,
+                )
+                .order_by(
+                    decision_packets.c.as_of.desc(),
+                    codex_runs.c.attempt.desc(),
+                    codex_runs.c.run_id.desc(),
+                )
+                .limit(_ASSESSMENT_QUALITY_SCAN_LIMIT)
+            ).all()
+
+        latest_valid_at = None
+        persisted_rejected_count = 0
+        persisted_issue_codes: list[str] = []
+        for payload, available_at, row_behavior_hash in assessment_rows:
+            assessment = ContextAssessment.model_validate(payload)
+            issues = assessment_output_quality_issues(assessment)
+            if issues:
+                persisted_rejected_count += 1
+                persisted_issue_codes.extend(issues)
+            elif row_behavior_hash == behavior_hash and latest_valid_at is None:
+                latest_valid_at = database_utc(available_at)
+
+        rejected_attempts = [
+            row for row in attempt_rows if row.error_class == "SCHEMA_INVALID"
+        ]
+        reason_codes = tuple(
+            sorted(
+                {
+                    *persisted_issue_codes,
+                    *("CODEX_SCHEMA_INVALID" for _ in rejected_attempts),
+                }
+            )
+        )
+        if not attempt_rows:
+            return AssessmentQualityStatus(
+                latest_attempt_at=None,
+                latest_attempt_status="NO_ATTEMPT",
+                latest_attempt_reason=None,
+                latest_valid_at=latest_valid_at,
+                rejected_attempt_count_24h=0,
+                invalid_persisted_count_24h=persisted_rejected_count,
+                rejection_reason_codes=reason_codes,
+            )
+
+        latest = attempt_rows[0]
+        completed_at = latest.payload.get("completed_at")
+        latest_attempt_at = (
+            database_utc(datetime.fromisoformat(completed_at))
+            if isinstance(completed_at, str)
+            else database_utc(latest.as_of)
+        )
+        latest_status = str(latest.status)
+        if latest_status == "FAILED" and latest.error_class == "SCHEMA_INVALID":
+            latest_status = "REJECTED"
+        return AssessmentQualityStatus(
+            latest_attempt_at=latest_attempt_at,
+            latest_attempt_status=latest_status,
+            latest_attempt_reason=(
+                None if latest.error_class is None else str(latest.error_class)
+            ),
+            latest_valid_at=latest_valid_at,
+            rejected_attempt_count_24h=len(rejected_attempts),
+            invalid_persisted_count_24h=persisted_rejected_count,
+            rejection_reason_codes=reason_codes,
         )
 
     # --- 世界事件时间线 ---------------------------------------------------

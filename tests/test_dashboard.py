@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
@@ -22,6 +23,7 @@ from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
     AnalysisScopeRuntimeStatus,
+    AssessmentQualityStatus,
     EquityWindow,
     WorldEvent,
 )
@@ -129,6 +131,68 @@ def _health_policy_extras() -> dict:
         ),
         "shadow": SimpleNamespace(analysis_deadline_seconds=300),
     }
+
+
+def test_health_exposes_current_output_rejection_without_treating_history_as_failure() -> None:
+    now = datetime(2026, 8, 21, 14, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+    rejected = AssessmentQualityStatus(
+        latest_attempt_at=now,
+        latest_attempt_status="REJECTED",
+        latest_attempt_reason="SCHEMA_INVALID",
+        latest_valid_at=now - timedelta(minutes=5),
+        rejected_attempt_count_24h=1,
+        invalid_persisted_count_24h=32,
+        rejection_reason_codes=("CODEX_SCHEMA_INVALID",),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        assessment_quality=rejected,
+    )
+    check = next(
+        item for item in result["checks"] if item["key"] == "ai_output_quality"
+    )
+
+    assert check["state"] == "warn"
+    assert check["detail"] == (
+        "最近一次输出未通过质量门禁：结构或内容校验失败"
+        " · 历史记录按当前规则排除 32 条"
+    )
+
+    clean = replace(
+        rejected,
+        latest_attempt_status="SUCCEEDED",
+        latest_attempt_reason=None,
+        rejected_attempt_count_24h=0,
+    )
+    clean_result = assemble_health(
+        reader,
+        config,
+        now=now,
+        assessment_quality=clean,
+    )
+    clean_check = next(
+        item for item in clean_result["checks"] if item["key"] == "ai_output_quality"
+    )
+    assert clean_check["state"] == "ok"
 
 
 def test_direction_label_maps_side():

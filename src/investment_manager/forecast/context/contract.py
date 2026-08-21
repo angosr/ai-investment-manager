@@ -21,11 +21,22 @@ _SCHEMA_RESIDUE = re.compile(
 
 
 def _validate_chinese_texts(fields: Iterable[tuple[str, str]]) -> None:
+    issues = _text_quality_issues(fields)
+    if issues:
+        issue = issues[0]
+        if issue.endswith("_NOT_CHINESE"):
+            raise ValueError(f"{issue.removesuffix('_NOT_CHINESE')} 必须使用中文自然语言")
+        raise ValueError(f"{issue.removesuffix('_SCHEMA_RESIDUE')} 包含 Schema 或提示残片")
+
+
+def _text_quality_issues(fields: Iterable[tuple[str, str]]) -> tuple[str, ...]:
+    issues: list[str] = []
     for field_name, text in fields:
         if not _CJK_TEXT.search(text):
-            raise ValueError(f"{field_name} 必须使用中文自然语言")
+            issues.append(f"{field_name}_NOT_CHINESE")
         if _SCHEMA_RESIDUE.search(text):
-            raise ValueError(f"{field_name} 包含 Schema 或提示残片")
+            issues.append(f"{field_name}_SCHEMA_RESIDUE")
+    return tuple(sorted(set(issues)))
 
 
 def _assessment_text_fields(assessment) -> tuple[tuple[str, str], ...]:
@@ -44,11 +55,15 @@ def _assessment_text_fields(assessment) -> tuple[tuple[str, str], ...]:
 def assessment_has_clean_chinese(assessment: ContextAssessment) -> bool:
     """Whether a persisted historical assessment is safe for the user-facing feed."""
 
-    try:
-        _validate_chinese_texts(_assessment_text_fields(assessment))
-    except ValueError:
-        return False
-    return True
+    return not assessment_output_quality_issues(assessment)
+
+
+def assessment_output_quality_issues(
+    assessment: ContextAssessment,
+) -> tuple[str, ...]:
+    """Machine-readable reasons why an immutable historical output is not displayable."""
+
+    return _text_quality_issues(_assessment_text_fields(assessment))
 
 
 class ContextAssessmentDraft(FrozenModel):

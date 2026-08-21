@@ -14,6 +14,7 @@ const DIRECTION: Record<string, string> = {
 export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
   const row = latest?.assessments[0] ?? null;
+  const quality = latest?.quality ?? null;
   const detail = useLive(
     () => row ? api.assessmentRecord(row.assessment_id) : Promise.resolve(null),
     "cycles",
@@ -26,6 +27,11 @@ export function LatestAssessment() {
       aside={row ? `${hhmm(row.at)} UTC` : "暂无判断"}
       bodyPadded
     >
+      {quality && quality.latest_attempt_status !== "SUCCEEDED" ? (
+        <p className={styles.warning}>
+          最近一次输出未通过质量门禁；下方显示的是最近一次有效判断。
+        </p>
+      ) : null}
       {row ? (
         <div className={styles.layout}>
           <div>

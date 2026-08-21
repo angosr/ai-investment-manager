@@ -104,11 +104,20 @@ def create_app(
 
         def read_health() -> dict:
             capital_overview = capital_reader.overview(now=now)
+            quality_reader = assessment_reader or (
+                reader if config.assessment.enabled else None
+            )
+            assessment_quality = (
+                quality_reader.assessment_quality_status(now=now)
+                if quality_reader is not None
+                else None
+            )
             return assemble_health(
                 reader,
                 config,
                 now=now,
                 capital_overview=capital_overview,
+                assessment_quality=assessment_quality,
                 host_resources=sample_host_resources(),
                 coordinator_statuses=coordinator_facts,
             )
@@ -160,13 +169,24 @@ def create_app(
 
     async def assessment_records(request: Request) -> JSONResponse:
         if assessment_reader is None:
-            return _json({"assessments": []})
-        rows = await run_in_threadpool(
-            assessment_reader.list_assessments,
-            before=_parse_before(request),
-            limit=_parse_limit(request),
+            return _json({"assessments": [], "quality": None})
+        rows, quality = await asyncio.gather(
+            run_in_threadpool(
+                assessment_reader.list_assessments,
+                before=_parse_before(request),
+                limit=_parse_limit(request),
+            ),
+            run_in_threadpool(
+                assessment_reader.assessment_quality_status,
+                now=datetime.now(UTC),
+            ),
         )
-        return _json({"assessments": [ser.assessment_row(record) for record in rows]})
+        return _json(
+            {
+                "assessments": [ser.assessment_row(record) for record in rows],
+                "quality": ser.assessment_quality(quality),
+            }
+        )
 
     async def assessment_record_detail(request: Request) -> JSONResponse:
         if assessment_reader is None:

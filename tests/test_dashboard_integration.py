@@ -143,7 +143,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         replay_input,
         database_url=assessment_url,
     )
-    as_of = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    as_of = datetime.now(UTC) - timedelta(minutes=1)
     packet = _dashboard_assessment_packet(
         as_of=as_of,
         analysis_scope="primary-portfolio",
@@ -153,8 +153,8 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         analysis_scope="primary-portfolio",
         mandate_version="dashboard-test-mandate-v1",
         as_of=as_of,
-        available_at=datetime(2026, 8, 18, 12, 0, 10, tzinfo=UTC),
-        analysis_behavior_hash="b" * 64,
+        available_at=as_of + timedelta(seconds=10),
+        analysis_behavior_hash=configured_assess_behavior_hash(app_config),
         decision_packet_hash=packet.content_hash,
         trigger_ids=packet.trigger_ids,
         market_mechanism="宏观事实尚不足以形成可靠的短期方向判断。",
@@ -179,7 +179,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         analysis_scope="primary-portfolio",
         mandate_version="dashboard-test-mandate-v1",
         as_of=bad_packet.as_of,
-        available_at=datetime(2026, 8, 18, 12, 0, 20, tzinfo=UTC),
+        available_at=as_of + timedelta(seconds=20),
         analysis_behavior_hash="c" * 64,
         decision_packet_hash=bad_packet.content_hash,
         trigger_ids=bad_packet.trigger_ids,
@@ -243,6 +243,22 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 },
             ),
         )
+        connection.execute(
+            insert(codex_runs).values(
+                run_id="run-dashboard-invalid-output",
+                cycle_id=bad_packet.packet_id,
+                account_id=".codex-test",
+                attempt=1,
+                status="FAILED",
+                error_class="SCHEMA_INVALID",
+                payload={
+                    "analysis_behavior_hash": configured_assess_behavior_hash(
+                        app_config
+                    ),
+                    "completed_at": bad_assessment.available_at.isoformat(),
+                },
+            )
+        )
     SqlEventStore(
         archive_engine,
         pipeline_id=app_config.pipeline.version,
@@ -302,6 +318,19 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert detail.json()["cycle_id"] == result.cycle_id
     assert assessment_rows.status_code == 200
     assert assessment_rows.json()["assessments"][0]["assessment_id"] == (assessment.assessment_id)
+    assert assessment_rows.json()["quality"] == {
+        "latest_attempt_at": bad_assessment.available_at.isoformat(),
+        "latest_attempt_status": "REJECTED",
+        "latest_attempt_reason": "SCHEMA_INVALID",
+        "latest_valid_at": assessment.available_at.isoformat(),
+        "rejected_attempt_count_24h": 1,
+        "invalid_persisted_count_24h": 1,
+        "rejection_reasons": [
+            "输出未通过结构或内容校验",
+            "信息缺口含字段或提示残渣",
+            "核心判断含字段或提示残渣",
+        ],
+    }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None

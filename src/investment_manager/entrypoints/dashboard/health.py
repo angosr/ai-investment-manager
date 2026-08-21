@@ -11,6 +11,7 @@ from datetime import datetime
 from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.read_models import (
     AnalysisRuntimeStatus,
+    AssessmentQualityStatus,
     DashboardReader,
 )
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
@@ -26,6 +27,7 @@ def assemble_health(
     *,
     now: datetime,
     capital_overview: CapitalOverview | None = None,
+    assessment_quality: AssessmentQualityStatus | None = None,
     host_resources: dict | None = None,
     coordinator_statuses: tuple[dict, ...] | None = None,
 ) -> dict:
@@ -53,6 +55,8 @@ def assemble_health(
             _trigger_delivery_check(analysis, config, now),
             _release_alignment_check(analysis),
         ]
+    if assessment_quality is not None:
+        checks.append(_assessment_output_quality_check(assessment_quality))
     if coordinator_statuses is not None:
         checks.append(_trigger_coordinator_check(coordinator_statuses, now))
     if host_resources is not None:
@@ -68,6 +72,32 @@ def assemble_health(
     else:
         headline = f"{worst['name']}异常"
     return {"overall": overall, "headline": headline, "checks": checks}
+
+
+def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
+    rejected = status.rejected_attempt_count_24h
+    historical = status.invalid_persisted_count_24h
+    latest = status.latest_attempt_status
+    if latest in {"REJECTED", "FAILED"}:
+        state = "bad" if status.latest_valid_at is None else "warn"
+        detail = "最近一次输出未通过质量门禁"
+        if status.latest_attempt_reason:
+            reason = {
+                "SCHEMA_INVALID": "结构或内容校验失败",
+            }.get(status.latest_attempt_reason, "运行失败")
+            detail += f"：{reason}"
+    elif latest == "NO_ATTEMPT":
+        state = "unknown"
+        detail = "当前行为版本尚无输出尝试"
+    elif rejected:
+        state = "warn"
+        detail = f"最近一次有效 · 当前行为过去 24 小时拒绝 {rejected} 次"
+    else:
+        state = "ok"
+        detail = "最近一次输出有效 · 当前行为过去 24 小时无质量拒绝"
+    if historical:
+        detail += f" · 历史记录按当前规则排除 {historical} 条"
+    return _check("ai_output_quality", "AI 输出质量", state, detail)
 
 
 def _capital_account_check(

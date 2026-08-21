@@ -82,6 +82,21 @@ export interface AssessmentRecordRow {
   view_count: number;
 }
 
+export interface AssessmentQuality {
+  latest_attempt_at: string | null;
+  latest_attempt_status: "SUCCEEDED" | "REJECTED" | "FAILED" | "NO_ATTEMPT";
+  latest_attempt_reason: string | null;
+  latest_valid_at: string | null;
+  rejected_attempt_count_24h: number;
+  invalid_persisted_count_24h: number;
+  rejection_reasons: string[];
+}
+
+export interface AssessmentFeed {
+  assessments: AssessmentRecordRow[];
+  quality: AssessmentQuality | null;
+}
+
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
   as_of: string;
   views: {

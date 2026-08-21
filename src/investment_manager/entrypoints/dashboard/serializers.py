@@ -12,6 +12,7 @@ from decimal import Decimal
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
+    AssessmentQualityStatus,
     AssessmentRecord,
     CycleRow,
     EquityWindow,
@@ -108,6 +109,31 @@ def assessment_detail(record: AssessmentRecord) -> dict:
         "input_snapshot": (
             None if record.packet is None else _assessment_input_snapshot(record.packet)
         ),
+    }
+
+
+def assessment_quality(status: AssessmentQualityStatus) -> dict:
+    labels = {
+        "market_mechanism_NOT_CHINESE": "核心判断不是中文",
+        "market_mechanism_SCHEMA_RESIDUE": "核心判断含字段或提示残渣",
+        "contradictions_NOT_CHINESE": "反向证据不是中文",
+        "contradictions_SCHEMA_RESIDUE": "反向证据含字段或提示残渣",
+        "data_gaps_NOT_CHINESE": "信息缺口不是中文",
+        "data_gaps_SCHEMA_RESIDUE": "信息缺口含字段或提示残渣",
+        "invalidation_conditions_NOT_CHINESE": "失效条件不是中文",
+        "invalidation_conditions_SCHEMA_RESIDUE": "失效条件含字段或提示残渣",
+        "CODEX_SCHEMA_INVALID": "输出未通过结构或内容校验",
+    }
+    return {
+        "latest_attempt_at": fmt.iso(status.latest_attempt_at),
+        "latest_attempt_status": status.latest_attempt_status,
+        "latest_attempt_reason": status.latest_attempt_reason,
+        "latest_valid_at": fmt.iso(status.latest_valid_at),
+        "rejected_attempt_count_24h": status.rejected_attempt_count_24h,
+        "invalid_persisted_count_24h": status.invalid_persisted_count_24h,
+        "rejection_reasons": [
+            labels.get(code, code) for code in status.rejection_reason_codes
+        ],
     }
 
 
