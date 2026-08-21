@@ -199,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 69
+    assert len(contract) == 71
     assert content_hash(contract) == (
-        "20a22a62264d286101182f95c7d8ffa852f50529c8a07c6c5b54e7e99a706327"
+        "c2bf9a22494601558a6a0594a4de06367d78559a2c50592250251900348b1723"
     )
 
 
@@ -352,7 +352,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
     capabilities = {
-        "execution": {"lifecycle", "planning", "reconciliation", "venue"},
+        "execution": {"group", "lifecycle", "planning", "reconciliation", "venue"},
         "forecast": {"codex", "context"},
         "governance": {"audit", "change", "evaluation", "release"},
         "information": {"official"},
@@ -1088,9 +1088,11 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
     owned_tables = {
         "account_snapshots",
         "execution_requests",
+        "execution_groups",
         "fills",
         "mock_exchange_orders",
         "mock_exchange_protections",
+        "mock_product_orders",
         "orders",
         "position_lifecycles",
         "reconciliation_reports",
