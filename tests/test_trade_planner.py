@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from investment_manager.execution.models import Side
-from investment_manager.execution.planner import (
+from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,
@@ -172,6 +172,7 @@ def _approved(
         valid_until=NOW + timedelta(minutes=30),
         reference_equity=Decimal("10000"),
         target_hash=HASH,
+        account_snapshot_id=account.snapshot_id,
         account_snapshot_hash=content_hash(account),
         quote_hashes=tuple(sorted(content_hash(item) for item in quotes)),
         risk_profile_hashes=(HASH,),

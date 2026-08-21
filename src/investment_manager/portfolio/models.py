@@ -11,7 +11,7 @@ from investment_manager.forecast.models import (
     ExposureDirection,
     ForecastTarget,
 )
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import SHA256_PATTERN, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
@@ -165,6 +165,10 @@ class PortfolioTarget(FrozenModel):
     as_of: datetime
     valid_until: datetime
     reference_equity: PositiveDecimal
+    account_snapshot_id: str = Field(min_length=1)
+    account_snapshot_hash: str = Field(pattern=SHA256_PATTERN)
+    considered_forecast_ids: tuple[str, ...] = ()
+    quotes: tuple[ExecutableQuote, ...] = ()
     sleeves: tuple[SleeveTarget, ...] = ()
 
     _utc_as_of = field_validator("as_of")(require_utc)
@@ -177,6 +181,29 @@ class PortfolioTarget(FrozenModel):
         sleeve_ids = tuple(item.sleeve_id for item in self.sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioTarget Sleeves 必须唯一且排序")
+        if tuple(sorted(set(self.considered_forecast_ids))) != (
+            self.considered_forecast_ids
+        ):
+            raise ValueError("considered_forecast_ids 必须唯一且排序")
+        referenced_forecasts = {
+            forecast_id
+            for sleeve in self.sleeves
+            for forecast_id in sleeve.forecast_ids
+        }
+        if not referenced_forecasts.issubset(self.considered_forecast_ids):
+            raise ValueError("SleeveTarget Forecast 必须来自 Portfolio 考虑集")
+        quote_keys = tuple(item.instrument.key for item in self.quotes)
+        if tuple(sorted(set(quote_keys))) != quote_keys:
+            raise ValueError("PortfolioTarget quotes 必须按 Instrument 唯一且排序")
+        required_quote_keys = {
+            leg.instrument.key
+            for sleeve in self.sleeves
+            for leg in sleeve.forecast_target.legs
+        }
+        if not required_quote_keys.issubset(quote_keys):
+            raise ValueError("PortfolioTarget quotes 必须覆盖全部 Sleeve Legs")
+        if any(item.as_of != self.as_of for item in self.quotes):
+            raise ValueError("PortfolioTarget quotes 必须冻结在目标 as_of")
         for sleeve in self.sleeves:
             expected_id = SleeveTarget.identity_for(
                 portfolio_id=self.portfolio_id,

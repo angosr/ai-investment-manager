@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from investment_manager.execution.planner import (
+from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
     TradePlan,
     TradePlanner,
 )
+from investment_manager.execution.planning.repository import TradePlanStore
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import ExecutableQuote
@@ -21,14 +21,15 @@ from investment_manager.portfolio.decision import (
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     PortfolioTarget,
-    sleeve_gross_notional,
 )
+from investment_manager.portfolio.repository import PortfolioStore
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     PortfolioRiskDecision,
     PortfolioRiskEngine,
     SleeveRiskProfile,
 )
+from investment_manager.risk.repository import PortfolioRiskStore
 
 
 class PortfolioPipelineOutcome(StrEnum):
@@ -69,17 +70,22 @@ class PortfolioDecisionPipeline:
         decision: PortfolioDecisionEngine,
         risk: PortfolioRiskEngine,
         planner: TradePlanner,
+        portfolio_store: PortfolioStore,
+        risk_store: PortfolioRiskStore,
+        plan_store: TradePlanStore,
     ) -> None:
         self._decision = decision
         self._risk = risk
         self._planner = planner
+        self._portfolio_store = portfolio_store
+        self._risk_store = risk_store
+        self._plan_store = plan_store
 
     def run(
         self,
         *,
         cycle_id: str,
         as_of: datetime,
-        reference_equity: Decimal,
         sleeves: tuple[PortfolioSleeveInput, ...],
         account: PortfolioAccountSnapshot,
         quotes: tuple[ExecutableQuote, ...],
@@ -87,8 +93,6 @@ class PortfolioDecisionPipeline:
         execution_specs: tuple[InstrumentExecutionSpec, ...],
     ) -> PortfolioPipelineResult:
         as_of = require_utc(as_of)
-        if reference_equity <= 0:
-            raise ValueError("PortfolioPipeline reference_equity 必须为正数")
         self._require_frozen_inputs(
             cycle_id=cycle_id,
             sleeves=sleeves,
@@ -96,10 +100,11 @@ class PortfolioDecisionPipeline:
             quotes=quotes,
             as_of=as_of,
         )
+        self._portfolio_store.record_account(account)
         target = self._decision.decide(
             cycle_id=cycle_id,
             as_of=as_of,
-            reference_equity=reference_equity,
+            account=account,
             sleeves=sleeves,
             quotes=quotes,
         )
@@ -108,6 +113,7 @@ class PortfolioDecisionPipeline:
                 cycle_id=cycle_id,
                 outcome=PortfolioPipelineOutcome.NO_CHANGE,
             )
+        self._portfolio_store.record_target(target)
         risk_decision = self._risk.evaluate(
             target=target,
             account=account,
@@ -115,6 +121,7 @@ class PortfolioDecisionPipeline:
             risk_profiles=risk_profiles,
             as_of=as_of,
         )
+        self._risk_store.record(risk_decision)
         if (
             risk_decision.outcome != RiskOutcome.APPROVED
             or risk_decision.approved_target is None
@@ -132,6 +139,7 @@ class PortfolioDecisionPipeline:
             specs=execution_specs,
             as_of=as_of,
         )
+        self._plan_store.record(trade_plan)
         return PortfolioPipelineResult(
             cycle_id=cycle_id,
             outcome=PortfolioPipelineOutcome.PLANNED,
@@ -152,7 +160,6 @@ class PortfolioDecisionPipeline:
     ) -> None:
         if account.cycle_id != cycle_id or account.as_of != as_of:
             raise ValueError("PortfolioPipeline 账户 cycle_id/as_of 不一致")
-        quote_by_instrument = {item.instrument.key: item for item in quotes}
         quote_keys = tuple(item.instrument.key for item in quotes)
         if tuple(sorted(set(quote_keys))) != quote_keys:
             raise ValueError("PortfolioPipeline ExecutableQuote 必须唯一且排序")
@@ -161,20 +168,3 @@ class PortfolioDecisionPipeline:
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
-        account_by_sleeve = {item.sleeve_id: item for item in account.sleeves}
-        missing_positions = tuple(sorted(set(account_by_sleeve) - set(sleeve_ids)))
-        if missing_positions:
-            raise ValueError(
-                "PortfolioPipeline 当前 Sleeve 缺少输入: "
-                + ", ".join(missing_positions)
-            )
-        for item in sleeves:
-            current = sleeve_gross_notional(
-                account_by_sleeve.get(item.sleeve_id),
-                quote_by_instrument=quote_by_instrument,
-            )
-            if item.current_gross_notional != current:
-                raise ValueError(
-                    "PortfolioPipeline current_gross_notional 与冻结账户不一致: "
-                    + item.sleeve_id
-                )

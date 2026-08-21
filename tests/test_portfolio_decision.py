@@ -22,7 +22,12 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionPolicy,
     PortfolioSleeveInput,
 )
-from investment_manager.portfolio.models import SleeveTarget
+from investment_manager.portfolio.models import (
+    InstrumentPosition,
+    PortfolioAccountSnapshot,
+    SleevePosition,
+    SleeveTarget,
+)
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
 
@@ -127,7 +132,6 @@ def _quotes(symbol: str = "BTCUSDT", *, spot_bid: str = "100"):
 def _input(
     *,
     forecast: CalibratedForecast | None = None,
-    current: str = "0",
     cost_bps: str = "5",
 ) -> PortfolioSleeveInput:
     forecast = forecast or _forecast()
@@ -138,9 +142,61 @@ def _input(
     )
     return PortfolioSleeveInput(
         sleeve_id=sleeve_id,
-        current_gross_notional=Decimal(current),
         estimated_variable_cost_bps=Decimal(cost_bps),
         forecast=forecast,
+    )
+
+
+def _account(
+    *,
+    forecast: CalibratedForecast | None = None,
+    gross: str = "0",
+) -> PortfolioAccountSnapshot:
+    forecast = forecast or _forecast()
+    gross_value = Decimal(gross)
+    positions: tuple[InstrumentPosition, ...] = ()
+    sleeves: tuple[SleevePosition, ...] = ()
+    if gross_value > 0:
+        legs = tuple(
+            InstrumentPosition(
+                instrument=leg.instrument,
+                quantity=(
+                    Decimal("1")
+                    if leg.direction == ExposureDirection.LONG
+                    else Decimal("-1")
+                )
+                * gross_value
+                * leg.gross_weight
+                / Decimal("100"),
+                average_price=Decimal("100"),
+            )
+            for leg in forecast.target.legs
+        )
+        positions = legs
+        sleeves = (
+            SleevePosition(
+                sleeve_id=SleeveTarget.identity_for(
+                    portfolio_id="primary",
+                    forecast_family=forecast.forecast_family,
+                    forecast_target_id=forecast.target.target_id,
+                ),
+                forecast_family=forecast.forecast_family,
+                target=forecast.target,
+                legs=legs,
+            ),
+        )
+    return PortfolioAccountSnapshot(
+        snapshot_id="account-1",
+        cycle_id="cycle-1",
+        portfolio_id="primary",
+        as_of=NOW,
+        observed_at=NOW,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000") - gross_value,
+        equity=Decimal("10000"),
+        equity_high_water=Decimal("10000"),
+        positions=positions,
+        sleeves=sleeves,
     )
 
 
@@ -155,7 +211,7 @@ def test_engine_is_off_by_default() -> None:
     result = PortfolioDecisionEngine(_policy()).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(),
         sleeves=(_input(),),
         quotes=_quotes(),
     )
@@ -167,7 +223,7 @@ def test_engine_allocates_one_multi_leg_sleeve_in_gross_notional() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(),
         sleeves=(_input(),),
         quotes=_quotes(),
     )
@@ -198,7 +254,7 @@ def test_engine_selects_highest_fee_adjusted_sleeve() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(),
         sleeves=sleeves,
         quotes=quotes,
     )
@@ -211,11 +267,10 @@ def test_engine_emits_explicit_zero_target_to_exit_open_sleeve() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(forecast=_forecast(direction=DirectionalView.DOWN), gross="2500"),
         sleeves=(
             _input(
                 forecast=_forecast(direction=DirectionalView.DOWN),
-                current="2500",
             ),
         ),
         quotes=_quotes(),
@@ -232,8 +287,8 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
     ).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
-        sleeves=(_input(current="2950"),),
+        account=_account(gross="2950"),
+        sleeves=(_input(),),
         quotes=_quotes(),
     )
 
@@ -244,7 +299,7 @@ def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(),
         sleeves=(_input(),),
         quotes=_quotes(spot_bid="100.50"),
     )
@@ -257,7 +312,7 @@ def test_engine_requires_complete_product_quotes() -> None:
         PortfolioDecisionEngine(_policy(enabled=True)).decide(
             cycle_id="cycle-1",
             as_of=NOW,
-            reference_equity=Decimal("10000"),
+            account=_account(),
             sleeves=(_input(),),
             quotes=(_quotes()[0],),
         )
@@ -280,7 +335,7 @@ def test_engine_never_opens_from_unavailable_forecast(
     result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        reference_equity=Decimal("10000"),
+        account=_account(forecast=forecast),
         sleeves=(_input(forecast=forecast),),
         quotes=_quotes(),
     )

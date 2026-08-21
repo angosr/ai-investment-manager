@@ -16,11 +16,15 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
     Money,
-    PositiveDecimal,
     UnitInterval,
 )
 from investment_manager.market.models import ExecutableQuote
-from investment_manager.portfolio.models import PortfolioTarget, SleeveTarget
+from investment_manager.portfolio.models import (
+    PortfolioAccountSnapshot,
+    PortfolioTarget,
+    SleeveTarget,
+    sleeve_gross_notional,
+)
 
 
 class PortfolioDecisionPolicy(FrozenModel):
@@ -48,7 +52,6 @@ class PortfolioDecisionPolicy(FrozenModel):
 
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
-    current_gross_notional: Money
     estimated_variable_cost_bps: Money
     forecast: CalibratedForecast
 
@@ -64,7 +67,7 @@ class PortfolioDecisionEngine:
         *,
         cycle_id: str,
         as_of: datetime,
-        reference_equity: PositiveDecimal,
+        account: PortfolioAccountSnapshot,
         sleeves: tuple[PortfolioSleeveInput, ...],
         quotes: tuple[ExecutableQuote, ...],
     ) -> PortfolioTarget | None:
@@ -74,14 +77,33 @@ class PortfolioDecisionEngine:
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
+        if (
+            account.cycle_id != cycle_id
+            or account.as_of != as_of
+            or account.portfolio_id != self._policy.portfolio_id
+        ):
+            raise ValueError("Portfolio account 与 cycle/as_of/portfolio 不一致")
+        if account.equity <= 0:
+            return None
         quote_by_instrument = self._quotes(quotes=quotes, as_of=as_of)
         required_quote_keys = {
             leg.instrument.key
             for item in sleeves
             for leg in item.forecast.target.legs
         }
+        account_by_sleeve = {item.sleeve_id: item for item in account.sleeves}
+        missing_positions = set(account_by_sleeve) - set(sleeve_ids)
+        if missing_positions:
+            raise ValueError("Portfolio 输入必须显式覆盖全部当前 Sleeve")
         if set(quote_by_instrument) != required_quote_keys:
             raise ValueError("ExecutableQuote 必须精确覆盖 Portfolio Sleeve Instruments")
+        current_by_sleeve = {
+            item.sleeve_id: sleeve_gross_notional(
+                account_by_sleeve.get(item.sleeve_id),
+                quote_by_instrument=quote_by_instrument,
+            )
+            for item in sleeves
+        }
         for item in sleeves:
             expected_id = SleeveTarget.identity_for(
                 portfolio_id=self._policy.portfolio_id,
@@ -121,8 +143,8 @@ class PortfolioDecisionEngine:
         selected_ids = {item.sleeve_id for item in eligible}
         desired_notional = (
             min(
-                reference_equity * self._policy.maximum_total_exposure_fraction,
-                reference_equity * self._policy.maximum_single_sleeve_fraction,
+                account.equity * self._policy.maximum_total_exposure_fraction,
+                account.equity * self._policy.maximum_single_sleeve_fraction,
             )
             if eligible
             else Decimal("0")
@@ -137,7 +159,7 @@ class PortfolioDecisionEngine:
                 as_of=as_of,
             )
             for item in sleeves
-            if item.sleeve_id in selected_ids or item.current_gross_notional > 0
+            if item.sleeve_id in selected_ids or current_by_sleeve[item.sleeve_id] > 0
         )
         desired_by_sleeve = {
             item.sleeve_id: item.desired_gross_notional for item in targets
@@ -145,7 +167,7 @@ class PortfolioDecisionEngine:
         turnover = sum(
             abs(
                 desired_by_sleeve.get(item.sleeve_id, Decimal("0"))
-                - item.current_gross_notional
+                - current_by_sleeve[item.sleeve_id]
             )
             for item in sleeves
         )
@@ -161,7 +183,13 @@ class PortfolioDecisionEngine:
             "policy_version": self._policy.version,
             "as_of": as_of.isoformat(),
             "valid_until": valid_until.isoformat(),
-            "reference_equity": reference_equity,
+            "reference_equity": account.equity,
+            "account_snapshot_id": account.snapshot_id,
+            "account_snapshot_hash": content_hash(account),
+            "considered_forecast_ids": tuple(
+                sorted(item.forecast.forecast_id for item in sleeves)
+            ),
+            "quotes": [item.model_dump(mode="json") for item in quotes],
             "sleeves": [item.model_dump(mode="json") for item in targets],
         }
         return PortfolioTarget(

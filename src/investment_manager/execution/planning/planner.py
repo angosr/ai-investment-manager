@@ -1,3 +1,5 @@
+"""Pure product-level grouped trade planner."""
+
 from __future__ import annotations
 
 from datetime import datetime

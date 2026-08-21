@@ -184,8 +184,10 @@ NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue
 symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。纯决策合同已经硬迁移为
 `PortfolioAccountSnapshot + SleeveTarget → ApprovedSleeve → grouped TradePlan`：Portfolio 用统一 gross
 notional 比较单腿/多腿机会，Risk 整组缩放，Planner 对任一不可交易的新增风险 Leg 整组省略，不再
-保留 `AssetTarget/ApprovedAssetTarget` Spot MVP 或兼容 alias。当前尚未完成这些交接的 SQL 持久化、
-产品级账户运行投影和 grouped Execution 恢复状态机，因此 carry 仍不能进入资本路径。
+保留 `AssetTarget/ApprovedAssetTarget` Spot MVP 或兼容 alias。账户快照、Target、RiskDecision 与
+TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序持久化，唯一 Pipeline 不允许跳过
+交接账本。当前尚未完成产品级账户运行投影和 grouped Execution 恢复状态机，因此 carry 仍不能进入
+资本路径。
 
 主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
@@ -240,6 +242,7 @@ src/investment_manager/
   portfolio/                  # 组合目标、现金比较、再平衡和成本权衡
   risk/                       # 风险预算、组合保护、压力约束和授权
   execution/                  # 交易计划、订单与成交契约
+    planning/                 # grouped TradePlan 纯规划与不可变交接账本
     venue/                    # Binance/Mock 交易场所适配
     lifecycle/                # 持仓生命周期状态机
     reconciliation/           # 账户事实对账与恢复
@@ -434,7 +437,7 @@ kernel/platform
 
 1. `information/official` 与 `state/decision`，先稳定事实和冻结输入；
 2. `forecast/context` 与 `forecast/codex`，隔离投资判断和外部 AI 执行；
-3. `execution/lifecycle`、`execution/reconciliation` 与 `execution/venue`，分开订单事实、恢复和场所协议；
+3. `execution/planning`、`execution/lifecycle`、`execution/reconciliation` 与 `execution/venue`，分开计划交接、订单恢复和场所协议；
 4. `governance/change`、`evaluation`、`release` 与 `audit`，避免治理成为第二个杂物核心；
 5. Codex 运行能力已按不可变输入包、额度协议、推理协议、账号路由、隔离验收和审计存储完成硬迁移，
    旧 `codex/runtime.py` 已删除且没有转发入口；Research 大文件和 CLI 大文件仍只在真实能力边界成熟时
@@ -452,8 +455,9 @@ kernel/platform
    Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
    可成交价/funding 结算和 carry ProgramBase 生产已接线。ProgramBase/carry 未获权限时仍不能影响资本。
 3. **组合与风险接线（进行中）**：产品级账户、Sleeve allocation、整组 Risk 缩放和 grouped TradePlan
-   的纯合同已经完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果，Spot MVP 不再并存。
-   下一步持久化 `PortfolioTarget → RiskDecision → TradePlan` 每个交接身份，并接好重启恢复和点时回放。
+   已完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果，Spot MVP 不再并存。账户、
+   `PortfolioTarget → RiskDecision → TradePlan` 已按领域持久化并由唯一 Pipeline 强制依赖顺序；下一步
+   接好产品账户投影、group 恢复与点时回放。
 4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成 group/Leg 幂等订单、未知结果恢复、
    部分成交、失配减险、保护与对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。

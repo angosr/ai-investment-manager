@@ -128,6 +128,7 @@ class ApprovedPortfolioTarget(FrozenModel):
     valid_until: datetime
     reference_equity: Money
     target_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_snapshot_id: str = Field(min_length=1)
     account_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     quote_hashes: tuple[str, ...]
     risk_profile_hashes: tuple[str, ...]
@@ -159,6 +160,10 @@ class ApprovedPortfolioTarget(FrozenModel):
 class PortfolioRiskDecision(FrozenModel):
     decision_id: str = Field(min_length=1)
     target_id: str = Field(min_length=1)
+    target_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quote_hashes: tuple[str, ...]
+    risk_profiles: tuple[SleeveRiskProfile, ...]
     policy_version: str = Field(min_length=1)
     decided_at: datetime
     outcome: RiskOutcome
@@ -169,6 +174,11 @@ class PortfolioRiskDecision(FrozenModel):
 
     @model_validator(mode="after")
     def outcome_must_match_approved_target(self):
+        if tuple(sorted(set(self.quote_hashes))) != self.quote_hashes:
+            raise ValueError("RiskDecision quote_hashes 必须唯一且排序")
+        profile_ids = tuple(item.sleeve_id for item in self.risk_profiles)
+        if tuple(sorted(set(profile_ids))) != profile_ids:
+            raise ValueError("RiskDecision profiles 必须按 sleeve_id 唯一且排序")
         if (self.approved_target is not None) != (
             self.outcome == RiskOutcome.APPROVED
         ):
@@ -178,6 +188,17 @@ class PortfolioRiskDecision(FrozenModel):
             and self.approved_target.target_id != self.target_id
         ):
             raise ValueError("RiskDecision 与 ApprovedPortfolioTarget target_id 不一致")
+        expected_profile_hashes = tuple(
+            sorted(content_hash(item) for item in self.risk_profiles)
+        )
+        if self.approved_target is not None and (
+            self.approved_target.target_hash != self.target_hash
+            or self.approved_target.account_snapshot_hash
+            != self.account_snapshot_hash
+            or self.approved_target.quote_hashes != self.quote_hashes
+            or self.approved_target.risk_profile_hashes != expected_profile_hashes
+        ):
+            raise ValueError("RiskDecision 输入身份与 ApprovedPortfolioTarget 不一致")
         return self
 
 
@@ -213,9 +234,25 @@ class PortfolioRiskEngine:
             raise ValueError("Risk quotes 必须精确覆盖 PortfolioTarget Instruments")
         if set(profile_by_sleeve) != set(target_by_sleeve):
             raise ValueError("Risk profiles 必须精确覆盖 PortfolioTarget Sleeves")
+        if (
+            target.account_snapshot_id != account.snapshot_id
+            or target.account_snapshot_hash != content_hash(account)
+            or target.reference_equity != account.equity
+        ):
+            raise ValueError("Risk account 与 PortfolioTarget 冻结快照不一致")
+        if target.quotes != quotes:
+            raise ValueError("Risk quotes 与 PortfolioTarget 冻结报价不一致")
         rules = self._global_rules(target=target, account=account, as_of=as_of)
         if target.valid_until <= as_of:
-            return self._decision(target=target, as_of=as_of, rules=rules, approved=None)
+            return self._decision(
+                target=target,
+                account=account,
+                quotes=quotes,
+                profiles=risk_profiles,
+                as_of=as_of,
+                rules=rules,
+                approved=None,
+            )
 
         equity = min(target.reference_equity, account.equity)
         force_cash = self._policy.kill_switch or account.kill_switch_active or (
@@ -301,6 +338,9 @@ class PortfolioRiskEngine:
         )
         return self._decision(
             target=target,
+            account=account,
+            quotes=quotes,
+            profiles=risk_profiles,
             as_of=as_of,
             rules=rules,
             approved=approved_target,
@@ -496,6 +536,7 @@ class PortfolioRiskEngine:
             "valid_until": target.valid_until,
             "reference_equity": equity,
             "target_hash": content_hash(target),
+            "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "quote_hashes": tuple(sorted(content_hash(item) for item in quotes)),
             "risk_profile_hashes": tuple(
@@ -517,6 +558,9 @@ class PortfolioRiskEngine:
         self,
         *,
         target: PortfolioTarget,
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
+        profiles: tuple[SleeveRiskProfile, ...],
         as_of: datetime,
         rules: list[RuleResult],
         approved: ApprovedPortfolioTarget | None,
@@ -531,6 +575,10 @@ class PortfolioRiskEngine:
                 content_hash(rules),
             ),
             target_id=target.target_id,
+            target_hash=content_hash(target),
+            account_snapshot_hash=content_hash(account),
+            quote_hashes=tuple(sorted(content_hash(item) for item in quotes)),
+            risk_profiles=profiles,
             policy_version=self._policy.version,
             decided_at=as_of,
             outcome=outcome,

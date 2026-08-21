@@ -42,6 +42,23 @@ execution_requests = Table(
 )
 Index("ix_execution_requests_status", execution_requests.c.status)
 
+trade_plans = Table(
+    "trade_plans",
+    metadata,
+    Column("plan_id", String(128), primary_key=True),
+    Column(
+        "approved_target_id",
+        ForeignKey("portfolio_risk_decisions.approved_target_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("cycle_id", String(128), nullable=False, unique=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("plan_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index("ix_trade_plans_created_at", trade_plans.c.created_at, trade_plans.c.plan_id)
+
 mock_exchange_orders = Table(
     "mock_exchange_orders",
     metadata,

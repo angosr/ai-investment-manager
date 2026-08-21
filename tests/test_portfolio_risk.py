@@ -9,6 +9,7 @@ from investment_manager.forecast.models import (
     ForecastLeg,
     ForecastTarget,
 )
+from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
@@ -80,7 +81,11 @@ def _target(
     desired: str = "3000",
     as_of: datetime = NOW,
     valid_until: datetime | None = None,
+    account: PortfolioAccountSnapshot | None = None,
+    quotes: tuple[ExecutableQuote, ...] | None = None,
 ) -> PortfolioTarget:
+    account = account or _account()
+    quotes = quotes or _quotes()
     sleeve = SleeveTarget(
         sleeve_id=_sleeve_id(),
         forecast_family="delta-neutral-funding-carry",
@@ -99,7 +104,11 @@ def _target(
         policy_version="portfolio-v2",
         as_of=as_of,
         valid_until=valid_until or as_of + timedelta(minutes=30),
-        reference_equity=Decimal("10000"),
+        reference_equity=account.equity,
+        account_snapshot_id=account.snapshot_id,
+        account_snapshot_hash=content_hash(account),
+        considered_forecast_ids=("forecast-1",),
+        quotes=quotes,
         sleeves=(sleeve,),
     )
 
@@ -210,10 +219,12 @@ def _policy() -> PortfolioRiskPolicy:
 
 
 def _evaluate(*, target=None, account=None, quotes=None):
+    account = account or _account()
+    quotes = quotes or _quotes()
     return PortfolioRiskEngine(_policy()).evaluate(
-        target=target or _target(),
-        account=account or _account(),
-        quotes=quotes or _quotes(),
+        target=target or _target(account=account, quotes=quotes),
+        account=account,
+        quotes=quotes,
         risk_profiles=(_profile(),),
         as_of=NOW,
     )
@@ -251,13 +262,14 @@ def test_pending_execution_group_blocks_new_risk_for_whole_sleeve() -> None:
 
 
 def test_risk_reduction_is_allowed_with_stale_unreconciled_account() -> None:
+    account = _account(
+        gross="1000",
+        reconciled=False,
+        observed_at=NOW - timedelta(hours=1),
+    )
     decision = _evaluate(
-        target=_target(desired="500"),
-        account=_account(
-            gross="1000",
-            reconciled=False,
-            observed_at=NOW - timedelta(hours=1),
-        ),
+        target=_target(desired="500", account=account),
+        account=account,
     )
 
     assert decision.approved_target is not None
@@ -274,11 +286,23 @@ def test_kill_switch_forces_whole_sleeve_to_cash() -> None:
 
 
 def test_expired_target_is_rejected() -> None:
+    target_as_of = NOW - timedelta(hours=1)
+    account = _account().model_copy(
+        update={"as_of": target_as_of, "observed_at": target_as_of}
+    )
+    quotes = tuple(
+        item.model_copy(update={"as_of": target_as_of, "observed_at": target_as_of})
+        for item in _quotes()
+    )
     decision = _evaluate(
         target=_target(
-            as_of=NOW - timedelta(hours=1),
+            as_of=target_as_of,
             valid_until=NOW - timedelta(minutes=1),
-        )
+            account=account,
+            quotes=quotes,
+        ),
+        account=account,
+        quotes=quotes,
     )
 
     assert decision.outcome == RiskOutcome.REJECTED

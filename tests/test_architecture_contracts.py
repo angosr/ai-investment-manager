@@ -199,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 64
+    assert len(contract) == 69
     assert content_hash(contract) == (
-        "1bb1fe377c23909d5ad16755df398a279de8ba73393c813baca382675974bb1e"
+        "20a22a62264d286101182f95c7d8ffa852f50529c8a07c6c5b54e7e99a706327"
     )
 
 
@@ -338,7 +338,6 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "contracts.py",
             "ledger.py",
             "models.py",
-            "planner.py",
             "policy.py",
             "tables.py",
         },
@@ -353,7 +352,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
     capabilities = {
-        "execution": {"lifecycle", "reconciliation", "venue"},
+        "execution": {"lifecycle", "planning", "reconciliation", "venue"},
         "forecast": {"codex", "context"},
         "governance": {"audit", "change", "evaluation", "release"},
         "information": {"official"},
@@ -985,7 +984,9 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
     assert "AssetTarget" not in portfolio_classes
 
     risk_portfolio = ast.parse((PACKAGE_ROOT / "risk" / "portfolio.py").read_text())
-    planner = ast.parse((PACKAGE_ROOT / "execution" / "planner.py").read_text())
+    planner = ast.parse(
+        (PACKAGE_ROOT / "execution" / "planning" / "planner.py").read_text()
+    )
     decision_pipeline = ast.parse(
         (PACKAGE_ROOT / "decision_cycle" / "portfolio.py").read_text()
     )
@@ -1003,6 +1004,27 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
         and node.module.startswith("investment_manager.execution")
         for node in ast.walk(risk_portfolio)
     )
+
+    owned_tables = {
+        "portfolio_account_snapshots",
+        "portfolio_target_forecasts",
+        "portfolio_targets",
+    }
+    owners = {name: [] for name in owned_tables}
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        for node in ast.parse(path.read_text()).body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in owned_tables
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners[node.targets[0].id].append(path)
+    expected = PACKAGE_ROOT / "portfolio" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
 
 
 def test_risk_models_and_modules_have_one_domain_owner() -> None:
@@ -1032,6 +1054,21 @@ def test_risk_models_and_modules_have_one_domain_owner() -> None:
     ):
         assert not (PACKAGE_ROOT / filename).exists()
 
+    owners = []
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        for node in ast.parse(path.read_text()).body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "portfolio_risk_decisions"
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "Table"
+            ):
+                owners.append(path)
+    assert owners == [PACKAGE_ROOT / "risk" / "tables.py"]
+
 
 def test_execution_models_tables_and_modules_have_one_owner() -> None:
     moved_models = {
@@ -1057,6 +1094,7 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
         "orders",
         "position_lifecycles",
         "reconciliation_reports",
+        "trade_plans",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

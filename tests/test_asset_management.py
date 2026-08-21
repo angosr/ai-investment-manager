@@ -22,7 +22,11 @@ from investment_manager.information.models import (
     SourceObservation,
     SourceTier,
 )
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentId,
+    InstrumentProduct,
+)
 from investment_manager.portfolio.models import (
     PortfolioTarget,
     SleeveTarget,
@@ -57,6 +61,21 @@ def _spot_reference_prices() -> tuple[ForecastReferencePrice, ...]:
             instrument_id=target.legs[0].instrument.key,
             price=Decimal("100000"),
         ),
+    )
+
+
+def _spot_quote() -> ExecutableQuote:
+    instrument = _spot_target().legs[0].instrument
+    return ExecutableQuote(
+        source_quote_id="quote-spot",
+        instrument=instrument,
+        as_of=NOW,
+        observed_at=NOW,
+        bid=Decimal("100000"),
+        bid_quantity=Decimal("1"),
+        ask=Decimal("100001"),
+        ask_quantity=Decimal("1"),
+        source="test",
     )
 
 
@@ -366,6 +385,10 @@ def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
             as_of=NOW,
             valid_until=NOW + timedelta(minutes=30),
             reference_equity=Decimal("10000"),
+            account_snapshot_id="account-1",
+            account_snapshot_hash=HASH,
+            considered_forecast_ids=("forecast-1",),
+            quotes=(_spot_quote(),),
             sleeves=(
                 _sleeve_target().model_copy(
                     update={"desired_gross_notional": Decimal("10001")}
@@ -382,6 +405,10 @@ def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
             as_of=NOW,
             valid_until=NOW + timedelta(minutes=30),
             reference_equity=Decimal("10000"),
+            account_snapshot_id="account-1",
+            account_snapshot_hash=HASH,
+            considered_forecast_ids=("forecast-1",),
+            quotes=(_spot_quote(),),
             sleeves=(_sleeve_target(), _sleeve_target()),
         )
 
@@ -403,6 +430,9 @@ def test_portfolio_target_can_represent_all_cash() -> None:
         as_of=NOW,
         valid_until=NOW + timedelta(minutes=30),
         reference_equity=Decimal("10000"),
+        account_snapshot_id="account-1",
+        account_snapshot_hash=HASH,
+        quotes=(),
     )
 
     assert target.sleeves == ()

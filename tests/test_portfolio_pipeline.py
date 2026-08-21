@@ -7,7 +7,7 @@ from investment_manager.decision_cycle.portfolio import (
     PortfolioDecisionPipeline,
     PortfolioPipelineOutcome,
 )
-from investment_manager.execution.planner import (
+from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
     TradePlanner,
     TradePlannerPolicy,
@@ -44,6 +44,29 @@ from investment_manager.risk.portfolio import (
 )
 
 NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
+
+
+class _PortfolioStore:
+    def __init__(self) -> None:
+        self.accounts = []
+        self.targets = []
+
+    def record_account(self, account) -> bool:
+        self.accounts.append(account)
+        return True
+
+    def record_target(self, target) -> bool:
+        self.targets.append(target)
+        return True
+
+
+class _DecisionStore:
+    def __init__(self) -> None:
+        self.values = []
+
+    def record(self, value) -> bool:
+        self.values.append(value)
+        return True
 
 
 def _instruments() -> tuple[InstrumentId, InstrumentId]:
@@ -183,6 +206,9 @@ def _account(*, gross: str = "0") -> PortfolioAccountSnapshot:
 
 def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
     instruments = tuple(item.key for item in _instruments())
+    portfolio_store = _PortfolioStore()
+    risk_store = _DecisionStore()
+    plan_store = _DecisionStore()
     return PortfolioDecisionPipeline(
         PortfolioDecisionEngine(
             PortfolioDecisionPolicy(
@@ -215,6 +241,9 @@ def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
                 managed_instruments=instruments,
             )
         ),
+        portfolio_store,
+        risk_store,
+        plan_store,
     )
 
 
@@ -223,11 +252,9 @@ def _inputs(*, gross: str = "0") -> dict[str, object]:
     return {
         "cycle_id": "cycle-1",
         "as_of": NOW,
-        "reference_equity": Decimal("10000"),
         "sleeves": (
             PortfolioSleeveInput(
                 sleeve_id=_sleeve_id(),
-                current_gross_notional=Decimal(gross),
                 estimated_variable_cost_bps=Decimal("5"),
                 forecast=_forecast(),
             ),
@@ -278,21 +305,24 @@ def test_pipeline_allocates_clamps_and_groups_one_carry_sleeve() -> None:
     assert len(result.trade_plan.groups[0].legs) == 2
 
 
-def test_pipeline_rejects_caller_supplied_sleeve_notional_drift() -> None:
+def test_pipeline_reads_equity_and_current_exposure_only_from_account() -> None:
     inputs = _inputs(gross="1000")
-    sleeves = inputs["sleeves"]
-    assert isinstance(sleeves, tuple)
-    inputs["sleeves"] = (
-        sleeves[0].model_copy(update={"current_gross_notional": Decimal("999")}),
+    account = inputs["account"]
+    assert isinstance(account, PortfolioAccountSnapshot)
+    inputs["account"] = account.model_copy(
+        update={"cash_balance": Decimal("4000"), "equity": Decimal("5000")}
     )
 
-    with pytest.raises(ValueError, match="current_gross_notional"):
-        _pipeline(enabled=True).run(**inputs)
+    result = _pipeline(enabled=True).run(**inputs)
+
+    assert result.target is not None
+    assert result.target.reference_equity == Decimal("5000")
+    assert "current_gross_notional" not in PortfolioSleeveInput.model_fields
 
 
 def test_pipeline_rejects_account_sleeve_missing_from_inputs() -> None:
     inputs = _inputs(gross="1000")
     inputs["sleeves"] = ()
 
-    with pytest.raises(ValueError, match="当前 Sleeve 缺少输入"):
+    with pytest.raises(ValueError, match="显式覆盖全部当前 Sleeve"):
         _pipeline(enabled=True).run(**inputs)
