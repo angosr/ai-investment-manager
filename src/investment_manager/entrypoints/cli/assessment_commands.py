@@ -9,6 +9,7 @@ import typer
 
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
+    load_runtime_release,
     parse_utc_option,
     reject_invalidated_evaluation_plan,
     runtime_engine,
@@ -31,7 +32,6 @@ from investment_manager.governance.evaluation.assessment import (
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash
-from investment_manager.settings import load_config
 
 
 @app.command("register-assessment-forward-plan")
@@ -41,6 +41,10 @@ def register_assessment_forward_plan(
         str,
         typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ],
     plan_id: Annotated[str, typer.Option()],
     signal_window_start: Annotated[str, typer.Option()],
     signal_window_end: Annotated[str, typer.Option()],
@@ -49,7 +53,7 @@ def register_assessment_forward_plan(
 ) -> None:
     """在首个结果发生前冻结 ContextAssessment 前向评价窗口。"""
 
-    loaded = load_config(config)
+    loaded, manifest = load_runtime_release(config, release_manifest)
     expected_behavior_hash = configured_assess_behavior_hash(loaded)
     if (
         analysis_behavior_hash is not None
@@ -97,9 +101,10 @@ def register_assessment_forward_plan(
         )
         engine = runtime_engine(database_url)
         governance = SqlGovernanceRepository(engine)
+        governance.record_release(manifest)
         plan = build_assessment_forward_plan(
             spec=spec,
-            base_manifest_id=governance.get_champion().manifest_id,
+            base_manifest_id=manifest.manifest_id,
             registered_at=registered_at,
         )
     except ValueError as exc:

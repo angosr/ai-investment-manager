@@ -76,7 +76,7 @@ CLI_CONTRACT = {
         "config,database_url,release_manifest,plan_id,observation_start,observation_end"
     ),
     "register-assessment-forward-plan": (
-        "config,database_url,plan_id,signal_window_start,signal_window_end,"
+        "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
     "register-carry-forward-plan": (

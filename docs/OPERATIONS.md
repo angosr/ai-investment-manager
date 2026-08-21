@@ -127,13 +127,17 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 ```bash
 INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager register-assessment-forward-plan \
-  --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
+  --config '<冻结运行配置>' \
+  --release-manifest '<同一冻结 ReleaseManifest>' \
+  --plan-id '<唯一计划 ID>' \
   --signal-window-start '<未来 UTC 起点>' \
   --signal-window-end '<固定 UTC 终点>' \
   --minimum-non-overlapping-samples 30
 ```
 
-登记命令从冻结配置和语义行为制品自行计算 `analysis_behavior_hash`；调用方不需要也不能替换该身份。可选参数只用于显式核对，传入值不一致会失败关闭。
+登记命令先逐项核对冻结配置、ReleaseManifest、代码提交和 checkout 洁净度，再从语义行为制品自行计算
+`analysis_behavior_hash`；计划直接绑定该运行 Manifest，不借用全局 Champion。调用方不需要也不能替换行为身份；
+可选参数只用于显式核对，传入值不一致会失败关闭。
 
 只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-assessment-forward-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算 Assessment、独立可评分样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。`UP`/`DOWN` 使用方向收益，`UNCERTAIN` 在同一可评分时点使用现金收益 0；缺行情的终态单独计为 `UNSCORABLE`。结果始终写入内容寻址制品；失败同时登记稳定的负面治理事实，通过结果仍需由后续显式变更提案引用，不能自行晋级。
 
