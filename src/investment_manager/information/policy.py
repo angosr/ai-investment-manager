@@ -9,6 +9,8 @@ from investment_manager.kernel.configuration import StrictConfig
 class CoverageRequirement(StrictConfig):
     domain: CausalDomain
     source_stream_ids: tuple[str, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
+    source_capabilities: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     maximum_poll_age_seconds: int = Field(default=300, ge=10, le=604_800)
     maximum_publication_age_seconds: int | None = Field(
         default=None,
@@ -24,6 +26,52 @@ class CoverageRequirement(StrictConfig):
         if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", item) is None for item in values):
             raise ValueError("coverage source stream id 非法")
         return values
+
+    @field_validator("required_capabilities")
+    @classmethod
+    def capabilities_must_be_unique_and_sorted(
+        cls, values: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if tuple(sorted(set(values))) != values:
+            raise ValueError("coverage required capability 必须唯一且排序")
+        if any(re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None for item in values):
+            raise ValueError("coverage required capability id 非法")
+        return values
+
+    @field_validator("source_capabilities")
+    @classmethod
+    def source_capabilities_must_be_well_formed(
+        cls, values: dict[str, tuple[str, ...]]
+    ) -> dict[str, tuple[str, ...]]:
+        for stream, capabilities in values.items():
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", stream) is None:
+                raise ValueError("coverage source capability stream id 非法")
+            if tuple(sorted(set(capabilities))) != capabilities:
+                raise ValueError("coverage source capability 必须唯一且排序")
+            if any(
+                re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None
+                for item in capabilities
+            ):
+                raise ValueError("coverage source capability id 非法")
+        return values
+
+    @model_validator(mode="after")
+    def capability_contract_must_match_streams(self):
+        if (
+            self.required_capabilities or self.source_capabilities
+        ) and set(self.source_capabilities) != set(self.source_stream_ids):
+            raise ValueError("coverage source capability 必须逐一对应配置的数据流")
+        provided = {
+            capability
+            for capabilities in self.source_capabilities.values()
+            for capability in capabilities
+        }
+        unknown = tuple(sorted(provided - set(self.required_capabilities)))
+        if unknown:
+            raise ValueError(
+                "coverage source capability 不属于领域需求: " + ", ".join(unknown)
+            )
+        return self
 
 
 class InformationPolicy(StrictConfig):

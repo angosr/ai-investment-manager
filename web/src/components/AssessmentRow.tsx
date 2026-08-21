@@ -41,6 +41,54 @@ const DRIVER_STATUS: Record<string, string> = {
   UNVERIFIED: "未验证假设",
 };
 
+const COVERAGE_STATUS: Record<string, string> = {
+  CURRENT: "完整",
+  PARTIAL: "部分覆盖",
+  NO_RECENT_PUBLICATION: "近期无发布",
+  SOURCE_STALE: "采集过期",
+  SOURCE_FAILED: "采集失败",
+  NOT_CONFIGURED: "尚未接入",
+};
+
+const CAUSAL_DOMAIN: Record<string, string> = {
+  FISCAL_DEBT: "财政与主权债务",
+  MONETARY_INFLATION: "货币政策与通胀就业",
+  REGULATION_LEGISLATION: "监管与立法",
+  INSTITUTIONAL_FLOWS: "机构资金流",
+  SPOT_DERIVATIVES: "现货与衍生品",
+  ONCHAIN_SUPPLY: "链上与供给",
+  CROSS_ASSET_EXTERNAL: "跨资产与外部冲击",
+};
+
+const CAPABILITY: Record<string, string> = {
+  AGENCY_RULEMAKING: "监管机构正式规则",
+  BINANCE_PERPETUAL: "Binance 永续市场",
+  BINANCE_SPOT: "Binance 现货市场",
+  BTC_ETF_AGGREGATE_FLOW: "BTC ETF 合计资金流",
+  CREDIT: "信用市场",
+  DEBT_ISSUANCE: "国债发行",
+  DEBT_REPURCHASE: "国债回购",
+  EMPLOYMENT_SURPRISE: "就业数据相对预期差",
+  ENERGY: "能源市场",
+  EQUITIES: "股票市场",
+  ETH_ETF_AGGREGATE_FLOW: "ETH ETF 合计资金流",
+  EXCHANGE_BALANCES: "交易所链上余额",
+  FISCAL_CALENDAR: "财政日程",
+  GOLD: "黄金市场",
+  INFLATION_SURPRISE: "通胀数据相对预期差",
+  LEGISLATION_STATUS: "法案正式进度",
+  MULTI_VENUE_SPOT: "多交易场所现货",
+  OFFICIAL_EVENT_CALENDAR: "官方事件日程",
+  OPTIONS_POSITIONING: "期权仓位",
+  POLICY_DECISIONS: "政策决定",
+  POLICY_IMPLEMENTATION: "政策执行工具",
+  REALIZED_SUPPLY: "链上已实现供给",
+  STABLECOIN_SUPPLY: "稳定币供给",
+  TREASURY_CASH: "财政现金",
+  USD: "美元",
+  UST_YIELD_CURVE: "美债收益率曲线",
+};
+
 export function AssessmentRow({ row }: { row: Row }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<AssessmentRecordDetail | null>(null);
@@ -310,6 +358,18 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           </div>
         </SnapshotSection>
       ) : null}
+      <SnapshotList
+        title="因果信息覆盖"
+        empty="没有覆盖合同"
+        items={snapshot.information_coverage.map((item) => {
+          const missing = item.missing_capabilities.map(
+            (capability) => CAPABILITY[capability] ?? capability,
+          );
+          return `${CAUSAL_DOMAIN[item.domain] ?? item.domain}：${COVERAGE_STATUS[item.status] ?? item.status}${
+            missing.length > 0 ? `；仍缺 ${missing.join("、")}` : ""
+          }`;
+        })}
+      />
       <SnapshotList title="数据质量" empty="没有质量告警" items={snapshot.data_quality_codes} />
       <SnapshotList title="覆盖缺口" empty="没有已知覆盖缺口" items={snapshot.coverage_gap_codes} />
       <SnapshotList

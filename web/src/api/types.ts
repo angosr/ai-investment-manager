@@ -232,6 +232,15 @@ export interface AssessmentInputSnapshot {
     contradictions: string[];
     data_gaps: string[];
   } | null;
+  information_coverage: {
+    domain: string;
+    status: string;
+    source_stream_ids: string[];
+    covered_capabilities: string[];
+    missing_capabilities: string[];
+    latest_success_at: string | null;
+    latest_publication_at: string | null;
+  }[];
   data_quality_codes: string[];
   coverage_gap_codes: string[];
   capacity_summary: {

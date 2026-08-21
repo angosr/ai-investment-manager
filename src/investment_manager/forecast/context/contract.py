@@ -66,7 +66,8 @@ ASSESS_INSTRUCTIONS = (
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
     "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"
-    "仓位或数据缺口冒充为驱动。"
+    "仓位或数据缺口冒充为驱动。此时 market_mechanism 只需说明没有可用方向优势及其最关键的证据边界；"
+    "不得用逐项复述常规行情和衍生品指标制造虚假的分析深度。"
     "CONFIRMED 仅表示一手证据直接确认的事实；"
     "Fed 官方事实与系统直接冻结的 Binance 衍生品观测都属于一手证据，"
     "但对其经济含义的解释仍是 INFERRED；"
@@ -99,8 +100,9 @@ ASSESS_INSTRUCTIONS = (
     "方向观点还必须引用本轮一手事实、当前市场冲击响应，或被程序标记为"
     "directional_support_eligible 的事件之一；该标记只表示证据质量可用，不表示方向。",
     "review_requests 只说明主 Agent 为什么要求此刻复核，不是市场事实或方向证据。",
-    "information_coverage 是各因果领域的点时采集覆盖：CURRENT 表示来源轮询正常，"
-    "不等于支持某个方向；"
+    "information_coverage 是各因果领域的点时采集覆盖：CURRENT 表示所需决策能力齐全且来源正常，"
+    "PARTIAL 表示已有部分可用来源、但 missing_capabilities 所列关键能力仍缺失；"
+    "二者都不等于支持某个方向。"
     "NO_RECENT_PUBLICATION 表示来源正常但连续数据已过新鲜阈值；SOURCE_STALE/SOURCE_FAILED/"
     "NOT_CONFIGURED 表示信息基础设施缺口。必须据此区分‘没有新发布’与‘系统不知道’，"
     "并优先指出会截断关键传导链的缺口。",

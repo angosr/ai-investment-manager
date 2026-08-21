@@ -144,6 +144,7 @@ class SqlInformationCoverageStore:
                 for item in snapshots
                 if item.status
                 in {
+                    CoverageStatus.PARTIAL,
                     CoverageStatus.NOT_CONFIGURED,
                     CoverageStatus.SOURCE_FAILED,
                     CoverageStatus.SOURCE_STALE,
@@ -161,11 +162,24 @@ class SqlInformationCoverageStore:
         latest_publication_by_stream: dict[str, SourcePollRecord],
     ) -> DomainCoverageSnapshot:
         streams = requirement.source_stream_ids
+        covered_capabilities = tuple(
+            sorted(
+                {
+                    capability
+                    for stream in streams
+                    for capability in requirement.source_capabilities.get(stream, ())
+                }
+            )
+        )
+        missing_capabilities = tuple(
+            sorted(set(requirement.required_capabilities) - set(covered_capabilities))
+        )
         if not streams:
             return DomainCoverageSnapshot(
                 domain=requirement.domain,
                 status=CoverageStatus.NOT_CONFIGURED,
                 as_of=as_of,
+                missing_capabilities=requirement.required_capabilities,
             )
         polls = tuple(
             latest_by_stream[item] for item in streams if item in latest_by_stream
@@ -217,12 +231,18 @@ class SqlInformationCoverageStore:
         ):
             status = CoverageStatus.NO_RECENT_PUBLICATION
         else:
-            status = CoverageStatus.CURRENT
+            status = (
+                CoverageStatus.PARTIAL
+                if missing_capabilities
+                else CoverageStatus.CURRENT
+            )
         return DomainCoverageSnapshot(
             domain=requirement.domain,
             status=status,
             as_of=as_of,
             source_stream_ids=streams,
+            covered_capabilities=covered_capabilities,
+            missing_capabilities=missing_capabilities,
             latest_success_at=latest_success,
             latest_publication_at=latest_publication,
             latest_poll_refs=refs,

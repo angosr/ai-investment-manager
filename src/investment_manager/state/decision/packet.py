@@ -64,6 +64,7 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v9",
     "decision-packet-v10",
     "decision-packet-v11",
+    "decision-packet-v12",
 }
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
@@ -138,6 +139,8 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
             "domain": item.domain.value,
             "status": item.status.value,
             "source_stream_ids": item.source_stream_ids,
+            "covered_capabilities": item.covered_capabilities,
+            "missing_capabilities": item.missing_capabilities,
             "latest_success_at": (
                 item.latest_success_at.isoformat() if item.latest_success_at is not None else None
             ),

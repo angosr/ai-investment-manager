@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v13 接入单基金一手机构持仓，同时保持聚合机构覆盖显式不完整。
-  version: portfolio-state-v13
+  # v14 以决策能力而非“存在某条数据流”判断因果域是否完整。
+  version: portfolio-state-v14
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v5
@@ -65,8 +65,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v19
-    schema_version: decision-packet-v11
+    version: decision-packet-policy-v20
+    schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -344,7 +344,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v17
+  version: information-intake-v18
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -363,30 +363,51 @@ information:
   coverage_requirements:
     - domain: FISCAL_DEBT
       source_stream_ids: [treasury-tga-balance]
+      required_capabilities: [DEBT_ISSUANCE, DEBT_REPURCHASE, FISCAL_CALENDAR, TREASURY_CASH]
+      source_capabilities:
+        treasury-tga-balance: [TREASURY_CASH]
       maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 172800
     - domain: MONETARY_INFLATION
       source_stream_ids: [fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
+      required_capabilities: [EMPLOYMENT_SURPRISE, INFLATION_SURPRISE, POLICY_DECISIONS, POLICY_IMPLEMENTATION]
+      source_capabilities:
+        fed-monetary-releases: [POLICY_DECISIONS]
+        nyfed-reference-rates: [POLICY_IMPLEMENTATION]
+        nyfed-reverse-repo: [POLICY_IMPLEMENTATION]
+        nyfed-soma-holdings: [POLICY_IMPLEMENTATION]
       maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
     - domain: REGULATION_LEGISLATION
       source_stream_ids: []
+      required_capabilities: [AGENCY_RULEMAKING, LEGISLATION_STATUS, OFFICIAL_EVENT_CALENDAR]
       maximum_poll_age_seconds: 300
     - domain: INSTITUTIONAL_FLOWS
-      # IBIT 仅是部分观测；主要发行人未齐前不得把本域标记为 CURRENT。
-      source_stream_ids: []
+      # IBIT 仅证明一只基金的日持仓，不能满足 ETF 合计流量能力。
+      source_stream_ids: [ishares-ibit-holdings]
+      required_capabilities: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
+      source_capabilities:
+        ishares-ibit-holdings: []
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 172800
     - domain: SPOT_DERIVATIVES
       source_stream_ids: [binance-usdm-market]
+      required_capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT, MULTI_VENUE_SPOT, OPTIONS_POSITIONING]
+      source_capabilities:
+        binance-usdm-market: [BINANCE_PERPETUAL, BINANCE_SPOT]
       maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 900
     - domain: ONCHAIN_SUPPLY
       source_stream_ids: []
+      required_capabilities: [EXCHANGE_BALANCES, REALIZED_SUPPLY, STABLECOIN_SUPPLY]
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 3600
     - domain: CROSS_ASSET_EXTERNAL
       source_stream_ids: [fed-broad-dollar, treasury-yield-curve]
+      required_capabilities: [CREDIT, ENERGY, EQUITIES, GOLD, USD, UST_YIELD_CURVE]
+      source_capabilities:
+        fed-broad-dollar: [USD]
+        treasury-yield-curve: [UST_YIELD_CURVE]
       maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
 
@@ -424,7 +445,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v15
+  version: context-assessment-v16
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v3

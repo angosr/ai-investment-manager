@@ -135,22 +135,25 @@ Fact。这样可以跨事件维持多层传导链，同时避免无限上下文�
 `IntelligenceEvent`；不得因 URL 来自 `.gov` 就跳过原文保存和事实投影。
 
 每次来源轮询无论内容变化、未变化还是失败，都先追加 `SourcePollRecord`；State 再按其 `as_of` 冻结一个很小的
-`DomainCoverageSnapshot`：各必需域的配置来源、最近成功采集、最近可见发布、状态和轮询引用，同时把真正的
-基础设施缺口写入 `coverage_gap_codes`。它只回答“系统现在看得见什么”，不保存投资判断。Packet 原样继承这份
-点时快照，Assessment 必须降低被缺失域截断的结论等级；`CURRENT` 只证明采集路线正常，不证明方向，
+`DomainCoverageSnapshot`：各必需域的决策能力、数据流实际提供的能力、缺失能力、最近成功采集、最近可见发布、
+状态和轮询引用，同时把真正的基础设施缺口写入 `coverage_gap_codes`。它只回答“系统现在看得见什么”，不保存
+投资判断。领域完整性不能由“至少接入一条来源”推断：只有冻结合同要求的能力全集均被数据流覆盖且运行正常，
+才是 `CURRENT`；已有可用来源但能力不全必须是 `PARTIAL`。Packet 原样继承这份点时快照，Assessment 必须降低
+被缺失域截断的结论等级；`CURRENT` 也只证明采集和能力合同完整，不证明方向，
 `NO_RECENT_PUBLICATION`、`SOURCE_STALE / SOURCE_FAILED` 与 `NOT_CONFIGURED` 具有不同语义。同域配置源是
 合取而非替代：任一来源从未成功、轮询过期或最新轮询失败，整个领域都不能标记 `CURRENT`，领域时间采用最弱来源。
 当前 Fed 日历/政策流、Treasury TGA/收益率、Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR 与 Binance
 现货/衍生品流已形成真实健康账本。官方指标保留原始响应，但只向 Packet 投影有效日期、当前值和必要变化量；
 同内容不产生重复事实，连续状态不会因普通事件窗口过期而从 Packet 消失。现货 K 线额外冻结窗口内主动买入与主动卖出量，
 永续侧冻结 basis、funding、OI、账户比例与主动成交。Binance 现货流只代表单一交易场所，不能冒充 ETF、
-基金或全市场机构净流入；机构资金流仍须保持 `NOT_CONFIGURED`，直到可核验的逐基金持仓或申赎来源接线。
+基金或全市场机构净流入；已有单基金观测但缺少合计流量能力时，机构资金流必须保持 `PARTIAL`。
 其余未接线领域同样显式为 `NOT_CONFIGURED`，不得用新闻覆盖面冒充一手结构化覆盖。
 
 iShares IBIT 已通过发行人官方日持仓 CSV 接入同一 Raw/Observation/Fact/State 链，冻结 BTC 数量、流通份额和
 资产价值；从第二个真实观测日起才计算日变化，并在累计足够历史前保持 `BACKGROUND`。单只基金不能代表美国
 现货 ETF 合计，持仓变化也不能直接等同净现金流，因此该来源暂不使 `INSTITUTIONAL_FLOWS` 晋级为 `CURRENT`；
-只有主要发行人覆盖合同完成后才修改领域覆盖要求。历史不能按今天看到的页面倒填 observed_at，冷启动缺口必须保留。
+只有主要发行人合计流量能力完成后才能使机构资金域从 `PARTIAL` 晋级。历史不能按今天看到的页面倒填
+observed_at，冷启动缺口必须保留。
 
 连续宏观数值的“发生变化”不等于“足以改变大盘基准情景”。采集器从同一份一手响应保留点时可见历史，
 程序按绝对变化的经验分位数和最小样本合同生成 `BACKGROUND / CANDIDATE`：样本不足或未达到冻结异常阈值的更新

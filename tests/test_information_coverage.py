@@ -232,3 +232,37 @@ def test_multi_source_domain_is_only_current_when_every_source_is_fresh() -> Non
     assert complete.status == CoverageStatus.CURRENT
     assert complete.latest_success_at == first.completed_at
     assert complete.latest_publication_at == AS_OF - timedelta(hours=2)
+
+
+def test_fresh_sources_are_partial_when_decision_capabilities_are_missing() -> None:
+    store = _store()
+    poll = build_source_poll_record(
+        source_stream_id="treasury-yield-curve",
+        domain=CausalDomain.CROSS_ASSET_EXTERNAL,
+        status=SourcePollStatus.CHANGED,
+        started_at=AS_OF - timedelta(seconds=31),
+        completed_at=AS_OF - timedelta(seconds=30),
+        latest_publication_at=AS_OF - timedelta(minutes=5),
+        observation_count=1,
+        new_fact_count=1,
+    )
+    store.put(poll)
+    requirement = CoverageRequirement(
+        domain=CausalDomain.CROSS_ASSET_EXTERNAL,
+        source_stream_ids=("treasury-yield-curve",),
+        required_capabilities=("EQUITIES", "USD", "UST_YIELD_CURVE"),
+        source_capabilities={
+            "treasury-yield-curve": ("UST_YIELD_CURVE",),
+        },
+        maximum_poll_age_seconds=120,
+        maximum_publication_age_seconds=3_600,
+    )
+
+    snapshot = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
+
+    assert snapshot.status == CoverageStatus.PARTIAL
+    assert snapshot.covered_capabilities == ("UST_YIELD_CURVE",)
+    assert snapshot.missing_capabilities == ("EQUITIES", "USD")
+    assert store.gap_codes((snapshot,)) == (
+        "INFORMATION_CROSS_ASSET_EXTERNAL_PARTIAL",
+    )

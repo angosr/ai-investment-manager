@@ -36,6 +36,7 @@ class SourcePollStatus(StrEnum):
 
 class CoverageStatus(StrEnum):
     CURRENT = "CURRENT"
+    PARTIAL = "PARTIAL"
     NO_RECENT_PUBLICATION = "NO_RECENT_PUBLICATION"
     SOURCE_STALE = "SOURCE_STALE"
     SOURCE_FAILED = "SOURCE_FAILED"
@@ -83,6 +84,8 @@ class DomainCoverageSnapshot(FrozenModel):
     status: CoverageStatus
     as_of: datetime
     source_stream_ids: tuple[str, ...] = ()
+    covered_capabilities: tuple[str, ...] = ()
+    missing_capabilities: tuple[str, ...] = ()
     latest_success_at: datetime | None = None
     latest_publication_at: datetime | None = None
     latest_poll_refs: tuple[str, ...] = ()
@@ -97,17 +100,28 @@ class DomainCoverageSnapshot(FrozenModel):
             raise ValueError("coverage source_stream_ids 必须唯一且排序")
         if tuple(sorted(set(self.latest_poll_refs))) != self.latest_poll_refs:
             raise ValueError("coverage latest_poll_refs 必须唯一且排序")
+        if tuple(sorted(set(self.covered_capabilities))) != self.covered_capabilities:
+            raise ValueError("coverage covered_capabilities 必须唯一且排序")
+        if tuple(sorted(set(self.missing_capabilities))) != self.missing_capabilities:
+            raise ValueError("coverage missing_capabilities 必须唯一且排序")
+        if set(self.covered_capabilities) & set(self.missing_capabilities):
+            raise ValueError("coverage 已覆盖与缺失能力不得重叠")
         if self.latest_success_at is not None and self.latest_success_at > self.as_of:
             raise ValueError("coverage 成功时间不能晚于 as_of")
         if self.latest_publication_at is not None and self.latest_publication_at > self.as_of:
             raise ValueError("coverage 发布时间不能晚于 as_of")
         if self.status == CoverageStatus.NOT_CONFIGURED and (
             self.source_stream_ids
+            or self.covered_capabilities
             or self.latest_success_at is not None
             or self.latest_publication_at is not None
             or self.latest_poll_refs
         ):
             raise ValueError("未配置领域不得伪造来源覆盖")
+        if self.status == CoverageStatus.PARTIAL and not self.missing_capabilities:
+            raise ValueError("部分覆盖领域必须声明缺失能力")
+        if self.status == CoverageStatus.CURRENT and self.missing_capabilities:
+            raise ValueError("完整覆盖领域不得声明缺失能力")
         return self
 
 
