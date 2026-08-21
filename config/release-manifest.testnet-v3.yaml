@@ -1,7 +1,7 @@
 manifest_id: release-testnet-explicit-agent-review-v3
 created_at: 2026-08-21T00:48:00Z
 status: CHALLENGER
-code_version: a0ed8b41e486a1495bbc9b624236f5d7eca2ae77
+code_version: 61a3c4aab184871cb0a0e2f3de45a938b9c15000
 configuration_hash: e9b9633ca4287a26c01e148bc1a4bef16a1427059f43b81b7ff6ef0b4540fd1c
 constitution_version: constitution-v1
 parent_manifest_id: release-testnet-no-unvalidated-strategy-v2
