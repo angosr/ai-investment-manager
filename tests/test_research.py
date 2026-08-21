@@ -20,6 +20,7 @@ from investment_manager.execution.models import (
     ProgramExitCondition,
     Side,
 )
+from investment_manager.governance.models import EvaluationStage
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.types import FrozenModel
@@ -1148,6 +1149,13 @@ def test_carry_forward_requires_preregistration_maturity_and_exact_future_data(
         base_manifest_id="test-champion",
         registered_at=datetime(2025, 12, 31, tzinfo=UTC),
     )
+    assert spec.version == "carry-forward-evaluation-spec-v2"
+    assert registered.required_stages == (
+        EvaluationStage.STATIC,
+        EvaluationStage.FIXED_REGRESSION,
+        EvaluationStage.FORWARD,
+    )
+    assert EvaluationStage.SHADOW not in registered.required_stages
     with pytest.raises(ValueError, match="宽限期尚未成熟"):
         validate_carry_forward_evaluation_plan(
             spec=spec,

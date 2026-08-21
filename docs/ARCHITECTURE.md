@@ -149,6 +149,10 @@ NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue
 ForecastTarget，随后一次性接通 Sleeve Portfolio/Risk、grouped Execution、故障回放和统一评价。
 在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
 
+评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
+`SHADOW` 必须在数据实时可见时生成并保存当时的 Forecast、Portfolio、Risk 和模拟 Execution 结果。
+FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整性或多 Leg 恢复，二者不得互相顶替。
+
 ## 4. 目标目录
 
 ```text

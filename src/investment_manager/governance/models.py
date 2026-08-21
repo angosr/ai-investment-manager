@@ -37,6 +37,7 @@ class EvaluationStage(StrEnum):
     FIXED_REGRESSION = "FIXED_REGRESSION"
     WALK_FORWARD = "WALK_FORWARD"
     BLIND = "BLIND"
+    FORWARD = "FORWARD"
     SHADOW = "SHADOW"
     CANARY = "CANARY"
 

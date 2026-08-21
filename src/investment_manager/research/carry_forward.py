@@ -27,8 +27,8 @@ from investment_manager.research.dataset import HistoricalDataset, HistoricalFun
 class CarryForwardEvaluationSpec(FrozenModel):
     """Future carry window registered before its market data exists."""
 
-    version: Literal["carry-forward-evaluation-spec-v1"] = (
-        "carry-forward-evaluation-spec-v1"
+    version: Literal["carry-forward-evaluation-spec-v2"] = (
+        "carry-forward-evaluation-spec-v2"
     )
     plan_id: str
     base_manifest_id: str
@@ -185,7 +185,7 @@ def build_carry_forward_evaluation_plan(
         required_stages=(
             EvaluationStage.STATIC,
             EvaluationStage.FIXED_REGRESSION,
-            EvaluationStage.SHADOW,
+            EvaluationStage.FORWARD,
         ),
         fixed_regression_suite_version="quant-core-carry-forward-regression-v1",
         candidate_spec_hash=content_hash(spec),
