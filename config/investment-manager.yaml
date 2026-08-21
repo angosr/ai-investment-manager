@@ -71,9 +71,9 @@ calibration:
   artifacts: []
 
 carry_forecast:
-  version: btc-carry-monthly-first-open-v2
+  version: btc-carry-monthly-first-open-v3
   rebalance_policy_version: monthly-first-open-v2
-  evaluated_policy_version: spot-perp-monthly-risk-30pct-v2
+  evaluated_policy_version: spot-perp-calendar-month-risk-30pct-v3
   enabled: true
   producer_id: btc-spot-perp-carry
   forecast_family: delta-neutral-funding-carry
@@ -85,21 +85,21 @@ carry_forecast:
   funding_interval_hours: 8
   expected_edge_half_life_seconds: 31536000
   evidence:
-    version: carry-walk-forward-risk-30pct-v2
-    source_evaluation_id: carry_walk_forward_de969ed82f588ccc343a
-    source_result_hash: 4afbca5712c60030b941182d154efb3ee1eea2141d72342afca25f2ced256e2a
-    source_evaluation_spec_hash: 7707bea607dd014abe68707a87cf5a20ecae78a4200def61d20e286d44f64b24
+    version: carry-walk-forward-calendar-risk-30pct-v3
+    source_evaluation_id: carry_walk_forward_9f306b67253a4d6ffa2f
+    source_result_hash: 52bbafdfb75693d227dee79b584d70a4a2c1574cdebbef9ca6f258256381fc83
+    source_evaluation_spec_hash: 9186e85339dd4a7061335d6a8803a833aa025eb52140602d3d2f5a2f9781982d
     source_dataset_id: historical_carry_dataset_e605f49c521fdc68e910
-    source_artifact_path: config/evidence/carry_walk_forward_de969ed82f588ccc343a.json
-    source_artifact_sha256: 10aff6597580cd5149528322dffe7053e50788a350a5b52a556f6f6447da15e6
-    evaluated_policy_version: spot-perp-monthly-risk-30pct-v2
+    source_artifact_path: config/evidence/carry_walk_forward_9f306b67253a4d6ffa2f.json
+    source_artifact_sha256: f67293b22ccc817af36cef241988a6385ed7a7125a77c7de6f36fa52cfb9022b
+    evaluated_policy_version: spot-perp-calendar-month-risk-30pct-v3
     evaluated_gross_exposure_fraction: "0.30"
-    expected_annualized_net_fraction: "0.0211048136714328200889592583"
-    conservative_annualized_net_fraction: "0.00845795837588403158427061391"
+    expected_annualized_net_fraction: "0.01969669908440934004761743988"
+    conservative_annualized_net_fraction: "0.00777031374855142609417636994"
     independent_sample_count: 5
     round_trip_cost_bps: "20"
-    published_at: 2026-08-21T08:47:00Z
-    valid_from: 2026-08-21T08:47:00Z
+    published_at: 2026-08-21T10:03:30Z
+    valid_from: 2026-08-21T10:03:30Z
     valid_until: 2027-08-01T00:00:00Z
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 

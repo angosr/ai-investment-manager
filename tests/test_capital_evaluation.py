@@ -56,7 +56,7 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
         registered_at=datetime(2026, 8, 21, tzinfo=UTC),
     )
 
-    assert spec.source_policy_version == "spot-perp-monthly-risk-30pct-v2"
+    assert spec.source_policy_version == "spot-perp-calendar-month-risk-30pct-v3"
     assert spec.thresholds.calendar_months == 12
     assert spec.thresholds.minimum_forecast_available_months == 11
     assert spec.thresholds.minimum_decision_complete_months == 12
