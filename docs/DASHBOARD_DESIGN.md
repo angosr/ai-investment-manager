@@ -90,8 +90,9 @@ Capital Release 不把旧 AnalysisCycle 当成当前资本决策。主列默认�
 账户权益、现金、费用后 PnL、回撤、当前持仓、最新决策与非终态执行。预测计数、主机资源和账号状态
 不在 Capital 首页争夺注意力。
 
-主列只保留两个标签。默认“运行记录”将 `CapitalCycleRecord`、现役 `ContextAssessment`
-与仍可追溯的旧 `AnalysisCycle` 按时间倒序展示，并明确标注“资本复核 / AI 分析 / 历史决策”；
+主列只保留三个职责互斥的标签。默认“决策与行动”将 `CapitalCycleRecord` 与仍可追溯的旧
+`AnalysisCycle` 按时间倒序展示，并明确标注“资本复核 / 历史决策”；“AI 判断”只展示现役
+`ContextAssessment`，避免高频分析记录淹没实际资本行动；
 三类记录保持各自详情契约，不伪装成同一条资本链，也不从 AI 判断推断当前仓位或收益。
 “世界事件”合并主资本库的运行触发和 Assessment 库采集的新闻，按事实去重后展示。
 

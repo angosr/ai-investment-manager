@@ -8,10 +8,11 @@ import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
 import styles from "./Timeline.module.css";
 
-type Tab = "activity" | "world";
+type Tab = "actions" | "analysis" | "world";
 
 const HINTS: Record<Tab, string> = {
-  activity: "资本复核、AI 分析与历史决策，按时间倒序",
+  actions: "资本复核与历史决策，按时间倒序",
+  analysis: "AI 只提供风险与方向判断，不直接下单",
   world: "系统采集到的新闻与行情事件",
 };
 
@@ -29,7 +30,7 @@ export function Timeline({
 }
 
 function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
-  const [tab, setTab] = useState<Tab>("activity");
+  const [tab, setTab] = useState<Tab>("actions");
   const cycles = useLive(() => api.cycles(), "cycles");
   const events = useLive(() => api.events(), "events");
 
@@ -37,12 +38,12 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="activity" active={tab} label="运行记录" count={cycles?.cycles.length} onPick={setTab} />
+          <Tab id="actions" active={tab} label="决策与行动" count={cycles?.cycles.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
-      {tab === "activity" ? (
+      {tab === "actions" ? (
         <div>
           {(cycles?.cycles ?? []).map((row) => (
             <CycleRow key={row.cycle_id} row={row} onOpenSnapshot={onOpenSnapshot} />
@@ -63,15 +64,15 @@ function CapitalTimeline({
 }: {
   onOpenSnapshot: (snapshot: Snapshot) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("activity");
+  const [tab, setTab] = useState<Tab>("actions");
   const actions = useLive(() => api.capitalActivity(), "cycles");
   const assessmentRecords = useLive(() => api.assessmentRecords(), "cycles");
   const assessments = useLive(() => api.assessmentCycles(), "cycles");
   const events = useLive(() => api.events(), "events");
-  const assessmentHistory = [
-    ...(assessmentRecords?.assessments ?? []).map((row) => ({
-      kind: "assessment" as const,
-      id: row.assessment_id,
+  const actionHistory = [
+    ...(actions?.actions ?? []).map((row) => ({
+      kind: "capital" as const,
+      id: row.activity_id,
       at: row.at,
       row,
     })),
@@ -82,31 +83,21 @@ function CapitalTimeline({
       row,
     })),
   ].sort((left, right) => right.at.localeCompare(left.at));
-  const activity = [
-    ...(actions?.actions ?? []).map((row) => ({
-      kind: "capital" as const,
-      id: row.activity_id,
-      at: row.at,
-      row,
-    })),
-    ...assessmentHistory,
-  ].sort((left, right) => right.at.localeCompare(left.at));
   return (
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="activity" active={tab} label="运行记录" count={activity.length} onPick={setTab} />
+          <Tab id="actions" active={tab} label="决策与行动" count={actionHistory.length} onPick={setTab} />
+          <Tab id="analysis" active={tab} label="AI 判断" count={assessmentRecords?.assessments.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
-      {tab === "activity" ? (
+      {tab === "actions" ? (
         <div>
-          {activity.map((item) =>
+          {actionHistory.map((item) =>
             item.kind === "capital" ? (
               <CapitalActionRow key={item.id} action={item.row} />
-            ) : item.kind === "assessment" ? (
-              <AssessmentRow key={item.id} row={item.row} />
             ) : (
               <CycleRow
                 key={item.id}
@@ -117,8 +108,17 @@ function CapitalTimeline({
               />
             ),
           )}
-          {actions && assessmentRecords && assessments && activity.length === 0 ? (
-            <p className={styles.empty}>尚无运行记录。</p>
+          {actions && assessments && actionHistory.length === 0 ? (
+            <p className={styles.empty}>尚无决策与行动记录。</p>
+          ) : null}
+        </div>
+      ) : tab === "analysis" ? (
+        <div>
+          {(assessmentRecords?.assessments ?? []).map((row) => (
+            <AssessmentRow key={row.assessment_id} row={row} />
+          ))}
+          {assessmentRecords && assessmentRecords.assessments.length === 0 ? (
+            <p className={styles.empty}>尚无 AI 判断。</p>
           ) : null}
         </div>
       ) : (
