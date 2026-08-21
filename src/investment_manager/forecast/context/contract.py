@@ -67,9 +67,29 @@ def build_assess_prompt(packet: DecisionPacket) -> str:
             "required_views_output_order_json=" + canonical_json(required_views),
             "allowed_evidence_ids_json=" + canonical_json(assessment_visible_evidence_ids(packet)),
             "decision_packet_json=",
-            canonical_json(packet),
+            canonical_json(assessment_input_projection(packet)),
         )
     )
+
+
+def assessment_input_projection(packet: DecisionPacket) -> dict:
+    """High-density model input; audit-only omission IDs remain in the ledger."""
+
+    payload = packet.model_dump(mode="json")
+    payload["capacity_summary"] = {
+        "missing_fact_count": len(packet.missing_fact_revision_ids),
+        "omitted_fact_count": len(packet.omitted_fact_revision_ids),
+        "omitted_intelligence_event_count": len(
+            packet.omitted_intelligence_event_refs
+        ),
+    }
+    for field_name in (
+        "missing_fact_revision_ids",
+        "omitted_fact_revision_ids",
+        "omitted_intelligence_event_refs",
+    ):
+        payload.pop(field_name)
+    return payload
 
 
 def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:

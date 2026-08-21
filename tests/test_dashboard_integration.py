@@ -332,7 +332,15 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
-    assert assessment_detail.json()["input_snapshot"] == packet.model_dump(mode="json")
+    assert assessment_detail.json()["input_snapshot"]["packet_id"] == packet.packet_id
+    assert assessment_detail.json()["input_snapshot"]["capacity_summary"] == {
+        "missing_fact_count": len(packet.missing_fact_revision_ids),
+        "omitted_fact_count": len(packet.omitted_fact_revision_ids),
+        "omitted_intelligence_event_count": len(packet.omitted_intelligence_event_refs),
+    }
+    assert "omitted_intelligence_event_refs" not in assessment_detail.json()[
+        "input_snapshot"
+    ]
     assert bad_assessment_detail.status_code == 200
     assert bad_assessment_detail.json()["mechanism"] == bad_assessment.market_mechanism
     assert capital_rows.status_code == 200

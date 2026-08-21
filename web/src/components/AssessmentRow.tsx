@@ -253,6 +253,12 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
       <SnapshotList title="活跃假设" empty="没有活跃假设" items={snapshot.active_hypotheses} />
       <SnapshotList title="数据质量" empty="没有质量告警" items={snapshot.data_quality_codes} />
       <SnapshotList title="覆盖缺口" empty="没有已知覆盖缺口" items={snapshot.coverage_gap_codes} />
+      <SnapshotList
+        title="输入容量"
+        items={[
+          `本次未发送：${snapshot.capacity_summary.omitted_fact_count} 条背景事实、${snapshot.capacity_summary.omitted_intelligence_event_count} 条背景事件；缺失引用 ${snapshot.capacity_summary.missing_fact_count} 条`,
+        ]}
+      />
     </div>
   );
 }

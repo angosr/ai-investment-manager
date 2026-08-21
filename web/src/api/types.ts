@@ -211,6 +211,11 @@ export interface AssessmentInputSnapshot {
   } | null;
   data_quality_codes: string[];
   coverage_gap_codes: string[];
+  capacity_summary: {
+    missing_fact_count: number;
+    omitted_fact_count: number;
+    omitted_intelligence_event_count: number;
+  };
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";

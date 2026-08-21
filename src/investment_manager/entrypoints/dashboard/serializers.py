@@ -22,6 +22,7 @@ from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.models import Order
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
+from investment_manager.forecast.context.contract import assessment_input_projection
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.legacy.models import (
@@ -141,7 +142,7 @@ def assessment_quality(status: AssessmentQualityStatus) -> dict:
 def _assessment_input_snapshot(packet: DecisionPacket) -> dict:
     """Return the exact persisted AI input without inventing a second state model."""
 
-    return packet.model_dump(mode="json")
+    return assessment_input_projection(packet)
 
 
 def snapshot(panel: PanelSnapshot) -> dict:
