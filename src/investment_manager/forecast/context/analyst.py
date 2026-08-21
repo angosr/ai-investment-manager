@@ -34,8 +34,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v10"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v5"
+ASSESS_INPUT_VERSION = "assess-input-v11"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v6"
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -55,9 +55,7 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     event_reference = definitions["ContextEventReferenceUpdate"]
     visible_event_ids = assessment_visible_event_ids(packet)
     if visible_event_ids:
-        event_reference["properties"]["evidence_id"]["enum"] = list(
-            visible_event_ids
-        )
+        event_reference["properties"]["evidence_id"]["enum"] = list(visible_event_ids)
     event_reference_updates = draft["properties"]["event_reference_updates"]
     event_reference_updates["maxItems"] = len(visible_event_ids)
     branches: list[dict[str, object]] = []
@@ -83,9 +81,7 @@ def assess_behavior_hash(
         packet_schema_version=packet.schema_version,
         packet_policy_version=packet.policy_version,
         mandate_version=packet.mandate_version,
-        required_views=tuple(
-            (item.asset, item.horizon_minutes) for item in packet.required_views
-        ),
+        required_views=tuple((item.asset, item.horizon_minutes) for item in packet.required_views),
     )
 
 
@@ -99,9 +95,7 @@ def configured_assess_behavior_hash(config: AppConfig) -> str:
         packet_policy_version=config.decision_state.packet_policy.version,
         mandate_version=mandate.version,
         required_views=tuple(
-            (asset.asset, horizon)
-            for asset in mandate.assets
-            for horizon in asset.horizons_minutes
+            (asset.asset, horizon) for asset in mandate.assets for horizon in asset.horizons_minutes
         ),
     )
 
@@ -121,9 +115,7 @@ def _assess_behavior_hash(
             "packet_policy_version": packet_policy_version,
             "instructions": ASSESS_INSTRUCTIONS,
             "input_schema": DecisionPacket.model_json_schema(),
-            "output_schema": strict_output_schema(
-                AssessStructuredOutput.model_json_schema()
-            ),
+            "output_schema": strict_output_schema(AssessStructuredOutput.model_json_schema()),
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
             "required_views": required_views,
@@ -225,9 +217,7 @@ class CodexContextAnalyst:
                 expected_manifest={
                     "analysis_mode": "ASSESS",
                     "decision_packet_hash": packet.content_hash,
-                    "analysis_behavior_hash": self._bundle_builder.behavior_hash(
-                        packet
-                    ),
+                    "analysis_behavior_hash": self._bundle_builder.behavior_hash(packet),
                 },
             )
             if bundle is None:
@@ -303,10 +293,8 @@ class CodexContextAnalyst:
 
 
 def _merge_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
-    return {
-        key: left.get(key, 0) + right.get(key, 0)
-        for key in left.keys() | right.keys()
-    }
+    return {key: left.get(key, 0) + right.get(key, 0) for key in left.keys() | right.keys()}
+
 
 def assemble_codex_context_analyst(
     config: AppConfig,

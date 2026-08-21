@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v7 将完整事件状态与真正准入的材料变化分开，并保留高密度衍生品证据。
-  version: portfolio-state-v7
+  # v8 在同一衍生品证据链增加 OI、多空账户与主动成交的窗口摘要。
+  version: portfolio-state-v8
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: fed-official-fact-v2
@@ -41,8 +41,8 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v12
-    schema_version: decision-packet-v8
+    version: decision-packet-policy-v13
+    schema_version: decision-packet-v9
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -244,7 +244,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v11
+  version: analysis-trigger-v12
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
@@ -281,7 +281,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v4
+  version: binance-public-shadow-v5
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64
@@ -395,7 +395,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v9
+  version: context-assessment-v10
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v1

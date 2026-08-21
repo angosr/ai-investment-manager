@@ -7,7 +7,7 @@ from enum import StrEnum
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.kernel.identity import stable_id
-from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 
@@ -41,9 +41,7 @@ class PerpetualQuote(FrozenModel):
         if self.ask < self.bid:
             raise ValueError("PerpetualQuote ask 不能低于 bid")
         marker: str | int = (
-            self.update_id
-            if self.update_id is not None
-            else self.exchange_time.isoformat()
+            self.update_id if self.update_id is not None else self.exchange_time.isoformat()
         )
         if self.quote_id != stable_id(
             "perpetual_quote",
@@ -65,11 +63,69 @@ class PerpetualMarketState(FrozenModel):
     last_funding_rate: Decimal
     interest_rate: Decimal
     next_funding_time: datetime
+    positioning_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    positioning_window_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1_440,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_value: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_change_fraction: Decimal | None = Field(
+        default=None,
+        gt=-1,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_short_account_ratio: Decimal | None = Field(
+        default=None,
+        gt=0,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    global_short_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_sell_ratio: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_sell_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     source: str = Field(min_length=1)
 
     _utc_exchange_time = field_validator("exchange_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
+    _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
     def derivative_timing_and_identity_must_be_valid(self):
@@ -83,6 +139,38 @@ class PerpetualMarketState(FrozenModel):
             self.exchange_time.isoformat(),
         ):
             raise ValueError("PerpetualMarketState state_id 与来源身份不一致")
+        positioning_values = (
+            self.positioning_observed_at,
+            self.positioning_window_minutes,
+            self.open_interest,
+            self.open_interest_value,
+            self.global_long_short_account_ratio,
+            self.global_long_account_fraction,
+            self.global_short_account_fraction,
+            self.taker_buy_sell_ratio,
+            self.taker_buy_volume,
+            self.taker_sell_volume,
+        )
+        if any(item is not None for item in positioning_values) and not all(
+            item is not None for item in positioning_values
+        ):
+            raise ValueError("衍生品仓位摘要必须完整或全部缺省")
+        if (
+            self.positioning_observed_at is not None
+            and self.positioning_observed_at > self.observed_at
+        ):
+            raise ValueError("衍生品仓位摘要不能晚于系统观察时间")
+        if (
+            self.global_long_account_fraction is not None
+            and self.global_short_account_fraction is not None
+            and abs(
+                self.global_long_account_fraction
+                + self.global_short_account_fraction
+                - Decimal("1")
+            )
+            > Decimal("0.01")
+        ):
+            raise ValueError("全市场多空账户占比不完整")
         return self
 
     @property
@@ -136,11 +224,69 @@ class DerivativeContextSnapshot(FrozenModel):
     funding_settlement_count: int = Field(ge=0)
     funding_window_hours: int = Field(gt=0, le=168)
     next_funding_time: datetime
+    positioning_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    positioning_window_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1_440,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_value: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_change_fraction: Decimal | None = Field(
+        default=None,
+        gt=-1,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_short_account_ratio: Decimal | None = Field(
+        default=None,
+        gt=0,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    global_short_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_sell_ratio: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_sell_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     input_refs: tuple[str, ...] = Field(min_length=3)
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
+    _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
     def timing_and_funding_summary_must_be_consistent(self):
@@ -156,4 +302,36 @@ class DerivativeContextSnapshot(FrozenModel):
         )
         if has_summary != (self.funding_settlement_count > 0):
             raise ValueError("Funding 汇总与结算样本数不一致")
+        positioning_values = (
+            self.positioning_observed_at,
+            self.positioning_window_minutes,
+            self.open_interest,
+            self.open_interest_value,
+            self.global_long_short_account_ratio,
+            self.global_long_account_fraction,
+            self.global_short_account_fraction,
+            self.taker_buy_sell_ratio,
+            self.taker_buy_volume,
+            self.taker_sell_volume,
+        )
+        if any(item is not None for item in positioning_values) and not all(
+            item is not None for item in positioning_values
+        ):
+            raise ValueError("决策仓位摘要必须完整或全部缺省")
+        if (
+            self.positioning_observed_at is not None
+            and self.positioning_observed_at > self.observed_at
+        ):
+            raise ValueError("决策仓位摘要不能晚于衍生品观察时间")
+        if (
+            self.global_long_account_fraction is not None
+            and self.global_short_account_fraction is not None
+            and abs(
+                self.global_long_account_fraction
+                + self.global_short_account_fraction
+                - Decimal("1")
+            )
+            > Decimal("0.01")
+        ):
+            raise ValueError("决策仓位摘要的多空账户占比不完整")
         return self

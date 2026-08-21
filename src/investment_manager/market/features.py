@@ -114,12 +114,9 @@ def build_derivative_context_snapshot(
         instrument=state.instrument,
         as_of=spot.as_of,
         observed_at=max(state.observed_at, quote.observed_at),
-        mark_index_premium_bps=(
-            state.mark_price / state.index_price - Decimal("1")
-        )
+        mark_index_premium_bps=(state.mark_price / state.index_price - Decimal("1"))
         * Decimal("10000"),
-        executable_short_basis_bps=(quote.bid / spot.ask - Decimal("1"))
-        * Decimal("10000"),
+        executable_short_basis_bps=(quote.bid / spot.ask - Decimal("1")) * Decimal("10000"),
         perpetual_spread_bps=(quote.ask - quote.bid)
         / ((quote.ask + quote.bid) / Decimal("2"))
         * Decimal("10000"),
@@ -129,6 +126,17 @@ def build_derivative_context_snapshot(
         funding_settlement_count=len(rates_bps),
         funding_window_hours=funding_window_hours,
         next_funding_time=state.next_funding_time,
+        positioning_observed_at=state.positioning_observed_at,
+        positioning_window_minutes=state.positioning_window_minutes,
+        open_interest=state.open_interest,
+        open_interest_value=state.open_interest_value,
+        open_interest_change_fraction=state.open_interest_change_fraction,
+        global_long_short_account_ratio=state.global_long_short_account_ratio,
+        global_long_account_fraction=state.global_long_account_fraction,
+        global_short_account_fraction=state.global_short_account_fraction,
+        taker_buy_sell_ratio=state.taker_buy_sell_ratio,
+        taker_buy_volume=state.taker_buy_volume,
+        taker_sell_volume=state.taker_sell_volume,
         input_refs=tuple(
             sorted(
                 {

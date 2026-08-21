@@ -126,10 +126,7 @@ class SourceObservation(FrozenModel):
 
     @model_validator(mode="after")
     def publication_must_be_point_in_time_visible(self):
-        if (
-            self.source_published_at is not None
-            and self.source_published_at > self.observed_at
-        ):
+        if self.source_published_at is not None and self.source_published_at > self.observed_at:
             raise ValueError("来源发布时间不能晚于系统观察时间")
         return self
 
@@ -152,3 +149,9 @@ class IntelligenceEvent(FrozenModel):
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @property
+    def trigger_priority(self) -> int:
+        """Quality-adjusted materiality; weak leads remain stored but do not wake AI."""
+
+        return int(self.impact * self.source_reliability * 100)

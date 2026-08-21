@@ -35,7 +35,7 @@ def _event(
         symbols=symbols,
         relevance=Decimal("1"),
         impact=impact,
-        source_reliability=Decimal("0.8"),
+        source_reliability=Decimal("1"),
         novelty=Decimal("1"),
     )
 

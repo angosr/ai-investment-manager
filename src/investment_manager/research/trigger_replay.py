@@ -33,6 +33,8 @@ class TriggerReplayInitialScopeState(FrozenModel):
     _utc_last_analysis = field_validator("last_analysis_at")(
         lambda value: require_utc(value) if value is not None else None
     )
+
+
 class ExternalTriggerReplaySpec(FrozenModel):
     """冻结生产触发规则及跨品种最小调用间隔。"""
 
@@ -109,6 +111,7 @@ class ExternalTriggerReplaySpec(FrozenModel):
             initial_scopes=initial_scopes,
             initial_state_source=initial_state_source,
         )
+
 
 class ReplayedTriggerBatch(FrozenModel):
     batch: TriggerBatch
@@ -266,7 +269,7 @@ def run_external_trigger_replay(
                     pipeline_id=plan.pipeline_id,
                     occurred_at=event.event_time,
                     observed_at=event.observed_at,
-                    priority=int(event.impact * 100),
+                    priority=event.trigger_priority,
                     dedup_key=event.evidence_id,
                     evidence_ids=(event.evidence_id,),
                     expires_at=event.observed_at + timedelta(seconds=spec.trigger_expiry_seconds),

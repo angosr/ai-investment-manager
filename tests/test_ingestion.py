@@ -411,7 +411,9 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
                 ).order_by(analysis_trigger_events.c.symbol)
             )
         )
-    assert tuple(row.priority for row in trigger_rows) == (84, 84)
+    # Aggregated headlines remain permanent evidence, but source reliability
+    # discounts their wake-up priority until a stronger source verifies them.
+    assert tuple(row.priority for row in trigger_rows) == (50, 50)
     assert all(
         row.expires_at.replace(tzinfo=UTC) == observed_at + timedelta(minutes=15)
         for row in trigger_rows

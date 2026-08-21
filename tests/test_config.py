@@ -32,15 +32,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.capital.enabled
     assert config.information.version == "information-intake-v14"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v7"
+    assert config.decision_state.version == "portfolio-state-v8"
     assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
     assert config.decision_state.delta_policy.version == "state-delta-v5"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v12"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v8"
-    assert (
-        config.decision_state.packet_policy.maximum_background_fact_distance_seconds
-        == 172_800
-    )
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v13"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v9"
+    assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",
@@ -67,9 +64,7 @@ def test_background_fact_window_covers_the_longest_assessment_horizon() -> None:
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
-    payload["decision_state"]["packet_policy"][
-        "maximum_background_fact_distance_seconds"
-    ] = 3_600
+    payload["decision_state"]["packet_policy"]["maximum_background_fact_distance_seconds"] = 3_600
 
     with pytest.raises(ValidationError, match="背景事实窗口不得短于"):
         type(config).model_validate(payload)

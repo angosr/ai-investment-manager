@@ -122,6 +122,17 @@ def _perpetual_state(*, observed_at: datetime = NOW) -> PerpetualMarketState:
         last_funding_rate="0.0001",
         interest_rate="0.0001",
         next_funding_time=observed_at + timedelta(hours=4),
+        positioning_observed_at=observed_at - timedelta(minutes=5),
+        positioning_window_minutes=60,
+        open_interest="110",
+        open_interest_value="11000",
+        open_interest_change_fraction="0.10",
+        global_long_short_account_ratio="1.5",
+        global_long_account_fraction="0.6",
+        global_short_account_fraction="0.4",
+        taker_buy_sell_ratio="1.25",
+        taker_buy_volume="500",
+        taker_sell_volume="400",
         source="test",
     )
 
@@ -133,9 +144,7 @@ def _perpetual_quote(
 ) -> PerpetualQuote:
     instrument = _perpetual_instrument()
     exchange_time = observed_at - timedelta(seconds=1)
-    marker: str | int = (
-        update_id if update_id is not None else exchange_time.isoformat()
-    )
+    marker: str | int = update_id if update_id is not None else exchange_time.isoformat()
     return PerpetualQuote(
         quote_id=stable_id("perpetual_quote", instrument.key, marker),
         instrument=instrument,
@@ -204,6 +213,12 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     assert snapshot.trailing_funding_rate_sum_bps == Decimal("1")
     assert snapshot.trailing_funding_rate_mean_bps == Decimal("1")
     assert snapshot.funding_settlement_count == 1
+    assert snapshot.positioning_observed_at == NOW - timedelta(minutes=5)
+    assert snapshot.positioning_window_minutes == 60
+    assert snapshot.open_interest == Decimal("110")
+    assert snapshot.open_interest_change_fraction == Decimal("0.10")
+    assert snapshot.global_long_short_account_ratio == Decimal("1.5")
+    assert snapshot.taker_buy_sell_ratio == Decimal("1.25")
     assert snapshot.input_refs == tuple(
         sorted(
             (
@@ -432,6 +447,36 @@ class FakePerpetualTransport:
                 "nextFundingTime": _millis(NOW + timedelta(hours=4)),
                 "time": _millis(NOW - timedelta(seconds=1)),
             }
+        if path.endswith("openInterestHist"):
+            return [
+                {
+                    "symbol": params["symbol"],
+                    "sumOpenInterest": "100" if index < 12 else "110",
+                    "sumOpenInterestValue": "10000" if index < 12 else "11000",
+                    "timestamp": _millis(NOW - timedelta(minutes=65 - index * 5)),
+                }
+                for index in range(13)
+            ]
+        if path.endswith("globalLongShortAccountRatio"):
+            return [
+                {
+                    "symbol": params["symbol"],
+                    "longShortRatio": "1.5",
+                    "longAccount": "0.6",
+                    "shortAccount": "0.4",
+                    "timestamp": _millis(NOW - timedelta(minutes=5)),
+                }
+            ]
+        if path.endswith("takerlongshortRatio"):
+            return [
+                {
+                    "buySellRatio": "1.25",
+                    "buyVol": "50",
+                    "sellVol": "40",
+                    "timestamp": _millis(NOW - timedelta(minutes=50 - index * 5)),
+                }
+                for index in range(10)
+            ]
         if path.endswith("fundingRate"):
             values = [
                 {
@@ -466,13 +511,22 @@ def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
         return quote, state, settlements
 
     quote, state, settlements = asyncio.run(scenario())
-    assert quote.model_dump(exclude={"source"}) == _perpetual_quote().model_dump(
-        exclude={"source"}
-    )
+    assert quote.model_dump(exclude={"source"}) == _perpetual_quote().model_dump(exclude={"source"})
     assert quote.source == "binance-usdm-book-ticker-rest"
     assert state.exchange_time == NOW - timedelta(seconds=1)
     assert state.observed_at == NOW
     assert state.premium_fraction == Decimal("0.002")
+    assert state.positioning_observed_at == NOW - timedelta(minutes=5)
+    assert state.positioning_window_minutes == 60
+    assert state.open_interest == Decimal("110")
+    assert state.open_interest_value == Decimal("11000")
+    assert state.open_interest_change_fraction == Decimal("0.10")
+    assert state.global_long_short_account_ratio == Decimal("1.5")
+    assert state.global_long_account_fraction == Decimal("0.6")
+    assert state.global_short_account_fraction == Decimal("0.4")
+    assert state.taker_buy_sell_ratio == Decimal("1.25")
+    assert state.taker_buy_volume == Decimal("500")
+    assert state.taker_sell_volume == Decimal("400")
     assert [item.funding_time for item in settlements] == [
         NOW - timedelta(hours=8),
         NOW - timedelta(hours=4),
@@ -673,9 +727,7 @@ def test_market_shock_uses_rolling_window_across_fixed_boundaries(app_config) ->
     )
 
     results = [
-        detector.observe(
-            _trade(at, trade_id=index).model_copy(update={"price": Decimal(price)})
-        )
+        detector.observe(_trade(at, trade_id=index).model_copy(update={"price": Decimal(price)}))
         for index, (at, price) in enumerate(prices, start=1)
     ]
 
@@ -709,11 +761,7 @@ def test_market_shock_rebases_and_cools_down_after_trigger(app_config) -> None:
         (NOW + timedelta(minutes=10, seconds=4), "106.5"),
     )
     results = [
-        detector.observe(
-            _trade(at, trade_id=index).model_copy(
-                update={"price": Decimal(price)}
-            )
-        )
+        detector.observe(_trade(at, trade_id=index).model_copy(update={"price": Decimal(price)}))
         for index, (at, price) in enumerate(samples, start=1)
     ]
 
@@ -750,11 +798,14 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
         base_asset="BTC",
         quote_asset="USDT",
     )
-    assert store.latest_spot_quote(
-        instrument=spot,
-        evaluation_at=NOW,
-        visible_at=NOW,
-    ) == _quote()
+    assert (
+        store.latest_spot_quote(
+            instrument=spot,
+            evaluation_at=NOW,
+            visible_at=NOW,
+        )
+        == _quote()
+    )
     assert (
         store.latest_spot_quote(
             instrument=spot,
@@ -849,11 +900,14 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         )
         is None
     )
-    assert store.latest_perpetual_quote(
-        instrument=instrument,
-        evaluation_at=NOW,
-        visible_at=NOW,
-    ) == quote
+    assert (
+        store.latest_perpetual_quote(
+            instrument=instrument,
+            evaluation_at=NOW,
+            visible_at=NOW,
+        )
+        == quote
+    )
     assert (
         store.funding_settlements(
             instrument=instrument,
@@ -928,11 +982,14 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         )
         == _perpetual_state()
     )
-    assert store.latest_perpetual_quote(
-        instrument=_perpetual_instrument(),
-        evaluation_at=NOW,
-        visible_at=NOW,
-    ) == _perpetual_quote()
+    assert (
+        store.latest_perpetual_quote(
+            instrument=_perpetual_instrument(),
+            evaluation_at=NOW,
+            visible_at=NOW,
+        )
+        == _perpetual_quote()
+    )
 
 
 def test_perpetual_service_reports_failed_refresh_without_false_success(

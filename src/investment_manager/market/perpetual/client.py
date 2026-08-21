@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,9 +41,7 @@ class BinanceUsdmRestClient:
             raise ValueError("Binance USD-M bookTicker REST 响应非法")
         exchange_time = _from_milliseconds(int(raw["time"]))
         update_id = int(raw["lastUpdateId"]) if "lastUpdateId" in raw else None
-        marker: str | int = (
-            update_id if update_id is not None else exchange_time.isoformat()
-        )
+        marker: str | int = update_id if update_id is not None else exchange_time.isoformat()
         return PerpetualQuote(
             quote_id=stable_id("perpetual_quote", instrument.key, marker),
             instrument=instrument,
@@ -57,15 +56,36 @@ class BinanceUsdmRestClient:
         )
 
     async def fetch_market_state(self, instrument: InstrumentId) -> PerpetualMarketState:
-        raw = await self.transport.get(
-            "/fapi/v1/premiumIndex",
-            {"symbol": instrument.symbol},
+        raw, open_interest, account_ratio, taker_ratio = await asyncio.gather(
+            self.transport.get(
+                "/fapi/v1/premiumIndex",
+                {"symbol": instrument.symbol},
+            ),
+            self.transport.get(
+                "/futures/data/openInterestHist",
+                {"symbol": instrument.symbol, "period": "5m", "limit": 13},
+            ),
+            self.transport.get(
+                "/futures/data/globalLongShortAccountRatio",
+                {"symbol": instrument.symbol, "period": "5m", "limit": 1},
+            ),
+            self.transport.get(
+                "/futures/data/takerlongshortRatio",
+                {"symbol": instrument.symbol, "period": "5m", "limit": 12},
+            ),
         )
         observed_at = require_utc(self.clock())
         if not isinstance(raw, dict) or str(raw.get("symbol")) != instrument.symbol:
             raise ValueError("Binance premiumIndex REST 响应非法")
         exchange_time = _from_milliseconds(int(raw["time"]))
         estimated = Decimal(str(raw["estimatedSettlePrice"]))
+        positioning = _positioning_summary(
+            instrument=instrument,
+            open_interest=open_interest,
+            account_ratio=account_ratio,
+            taker_ratio=taker_ratio,
+            observed_at=observed_at,
+        )
         return PerpetualMarketState(
             state_id=stable_id(
                 "perpetual_market_state",
@@ -81,7 +101,8 @@ class BinanceUsdmRestClient:
             last_funding_rate=Decimal(str(raw["lastFundingRate"])),
             interest_rate=Decimal(str(raw["interestRate"])),
             next_funding_time=_from_milliseconds(int(raw["nextFundingTime"])),
-            source="binance-usdm-premium-index-rest",
+            **positioning,
+            source="binance-usdm-public-market-rest",
         )
 
     async def fetch_funding_settlements(
@@ -136,3 +157,90 @@ class BinanceUsdmRestClient:
         if tuple(sorted(set(ordering))) != ordering:
             raise ValueError("Binance fundingRate REST 结算必须唯一且升序")
         return tuple(values)
+
+
+def _positioning_summary(
+    *,
+    instrument: InstrumentId,
+    open_interest: Any,
+    account_ratio: Any,
+    taker_ratio: Any,
+    observed_at: datetime,
+) -> dict[str, Decimal | datetime | int]:
+    oi_rows = _ordered_positioning_rows(
+        open_interest,
+        name="openInterestHist",
+        symbol=instrument.symbol,
+    )
+    account_rows = _ordered_positioning_rows(
+        account_ratio,
+        name="globalLongShortAccountRatio",
+        symbol=instrument.symbol,
+    )
+    taker_rows = _ordered_positioning_rows(
+        taker_ratio,
+        name="takerlongshortRatio",
+        symbol=None,
+    )
+    if len(oi_rows) < 2 or not account_rows or not taker_rows:
+        raise ValueError("Binance USD-M 仓位窗口样本不足")
+    first_oi = Decimal(str(oi_rows[0]["sumOpenInterest"]))
+    latest_oi = Decimal(str(oi_rows[-1]["sumOpenInterest"]))
+    latest_oi_value = Decimal(str(oi_rows[-1]["sumOpenInterestValue"]))
+    if first_oi <= 0 or latest_oi < 0 or latest_oi_value < 0:
+        raise ValueError("Binance USD-M Open Interest 非法")
+    latest_account = account_rows[-1]
+    long_fraction = Decimal(str(latest_account["longAccount"]))
+    short_fraction = Decimal(str(latest_account["shortAccount"]))
+    long_short_ratio = Decimal(str(latest_account["longShortRatio"]))
+    buy_volume = sum(
+        (Decimal(str(item["buyVol"])) for item in taker_rows),
+        Decimal("0"),
+    )
+    sell_volume = sum(
+        (Decimal(str(item["sellVol"])) for item in taker_rows),
+        Decimal("0"),
+    )
+    if sell_volume <= 0 or buy_volume < 0:
+        raise ValueError("Binance USD-M 主动买卖量非法")
+    latest_timestamp = max(
+        int(oi_rows[-1]["timestamp"]),
+        int(account_rows[-1]["timestamp"]),
+        int(taker_rows[-1]["timestamp"]),
+    )
+    positioning_observed_at = _from_milliseconds(latest_timestamp)
+    if positioning_observed_at > observed_at:
+        raise ValueError("Binance USD-M 仓位数据晚于系统观察时间")
+    return {
+        "positioning_observed_at": positioning_observed_at,
+        "positioning_window_minutes": 60,
+        "open_interest": latest_oi,
+        "open_interest_value": latest_oi_value,
+        "open_interest_change_fraction": latest_oi / first_oi - Decimal("1"),
+        "global_long_short_account_ratio": long_short_ratio,
+        "global_long_account_fraction": long_fraction,
+        "global_short_account_fraction": short_fraction,
+        "taker_buy_sell_ratio": buy_volume / sell_volume,
+        "taker_buy_volume": buy_volume,
+        "taker_sell_volume": sell_volume,
+    }
+
+
+def _ordered_positioning_rows(
+    raw: Any,
+    *,
+    name: str,
+    symbol: str | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise ValueError(f"Binance {name} REST 响应非法")
+    if symbol is not None and any(str(item.get("symbol")) != symbol for item in raw):
+        raise ValueError(f"Binance {name} REST symbol 不一致")
+    try:
+        rows = sorted(raw, key=lambda item: int(item["timestamp"]))
+        timestamps = tuple(int(item["timestamp"]) for item in rows)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Binance {name} REST 缺少时间字段") from exc
+    if len(set(timestamps)) != len(timestamps):
+        raise ValueError(f"Binance {name} REST 时间点重复")
+    return rows

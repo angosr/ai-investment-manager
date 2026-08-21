@@ -77,9 +77,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     payload["capacity_summary"] = {
         "missing_fact_count": len(packet.missing_fact_revision_ids),
         "omitted_fact_count": len(packet.omitted_fact_revision_ids),
-        "omitted_intelligence_event_count": len(
-            packet.omitted_intelligence_event_refs
-        ),
+        "omitted_intelligence_event_count": len(packet.omitted_intelligence_event_refs),
     }
     for field_name in (
         "missing_fact_revision_ids",
@@ -93,9 +91,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
             "status": item.status.value,
             "source_stream_ids": item.source_stream_ids,
             "latest_success_at": (
-                item.latest_success_at.isoformat()
-                if item.latest_success_at is not None
-                else None
+                item.latest_success_at.isoformat() if item.latest_success_at is not None else None
             ),
             "latest_publication_at": (
                 item.latest_publication_at.isoformat()
@@ -137,9 +133,7 @@ class AnalysisMandate(FrozenModel):
             raise ValueError("Mandate assets 必须唯一且排序")
         if len(set(symbol_keys)) != len(symbol_keys):
             raise ValueError("Mandate market_symbol 必须唯一")
-        if tuple(sorted(set(self.required_risk_factors))) != (
-            self.required_risk_factors
-        ):
+        if tuple(sorted(set(self.required_risk_factors))) != (self.required_risk_factors):
             raise ValueError("required_risk_factors 必须唯一且排序")
         return self
 
@@ -200,9 +194,92 @@ class PacketDerivativeState(FrozenModel):
     funding_settlement_count: int = Field(ge=0)
     funding_window_hours: int = Field(gt=0, le=168)
     next_funding_time: datetime
+    positioning_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    positioning_window_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1_440,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_value: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    open_interest_change_fraction: Decimal | None = Field(
+        default=None,
+        gt=-1,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_short_account_ratio: Decimal | None = Field(
+        default=None,
+        gt=0,
+        exclude_if=lambda value: value is None,
+    )
+    global_long_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    global_short_account_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_sell_ratio: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    taker_sell_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
+    _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def positioning_summary_must_be_complete(self):
+        values = (
+            self.positioning_observed_at,
+            self.positioning_window_minutes,
+            self.open_interest,
+            self.open_interest_value,
+            self.global_long_short_account_ratio,
+            self.global_long_account_fraction,
+            self.global_short_account_fraction,
+            self.taker_buy_sell_ratio,
+            self.taker_buy_volume,
+            self.taker_sell_volume,
+        )
+        if any(value is not None for value in values) and not all(
+            value is not None for value in values
+        ):
+            raise ValueError("决策包衍生品仓位摘要必须完整或全部缺省")
+        if (
+            self.positioning_observed_at is not None
+            and self.positioning_observed_at > self.observed_at
+        ):
+            raise ValueError("决策包仓位摘要不能晚于衍生品观察时间")
+        return self
 
 
 class PacketDelta(FrozenModel):
@@ -262,6 +339,10 @@ class PacketIntelligenceEvent(FrozenModel):
     novelty: Decimal
     prompt_injection_suspected: bool = True
     directly_triggered: bool
+    directional_support_eligible: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+    )
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
@@ -500,10 +581,10 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
-        if self.schema_version == "decision-packet-v8" and (
+        if self.schema_version in {"decision-packet-v8", "decision-packet-v9"} and (
             self.active_hypotheses or self.previous_assessment_refs
         ):
-            raise ValueError("DecisionPacket v8 不再写入旧假设或 Assessment 引用占位")
+            raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
         coverage_domains = tuple(item.domain.value for item in self.information_coverage)
         if tuple(sorted(set(coverage_domains))) != coverage_domains:
             raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
@@ -522,7 +603,7 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
-    if packet.schema_version != "decision-packet-v8":
+    if packet.schema_version not in {"decision-packet-v8", "decision-packet-v9"}:
         payload["active_hypotheses"] = packet.active_hypotheses
         payload["previous_assessment_refs"] = packet.previous_assessment_refs
     if (
@@ -548,11 +629,15 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
             if event["url"] is None:
                 event.pop("url")
     if (
-        packet.schema_version not in {"decision-packet-v7", "decision-packet-v8"}
+        packet.schema_version
+        not in {"decision-packet-v7", "decision-packet-v8", "decision-packet-v9"}
         and not packet.information_coverage
     ):
         payload.pop("information_coverage", None)
-    if packet.schema_version != "decision-packet-v8" and not packet.derivative_states:
+    if (
+        packet.schema_version not in {"decision-packet-v8", "decision-packet-v9"}
+        and not packet.derivative_states
+    ):
         payload.pop("derivative_states", None)
     return content_hash(payload)
 
@@ -584,12 +669,8 @@ class DecisionPacketBuilder:
         previous_context: PacketPreviousContext | None = None,
         information_coverage: tuple[DomainCoverageSnapshot, ...] = (),
     ) -> DecisionPacket:
-        ordered_deltas = tuple(
-            sorted(deltas, key=lambda item: (item.observed_at, item.delta_id))
-        )
-        ordered_reviews = tuple(
-            sorted(review_requests, key=lambda item: item.review_id)
-        )
+        ordered_deltas = tuple(sorted(deltas, key=lambda item: (item.observed_at, item.delta_id)))
+        ordered_reviews = tuple(sorted(review_requests, key=lambda item: item.review_id))
         self._validate_inputs(
             mandate=mandate,
             state=state,
@@ -604,13 +685,7 @@ class DecisionPacketBuilder:
             previous_context=previous_context,
         )
         direct_fact_ids = tuple(
-            sorted(
-                {
-                    fact_id
-                    for delta in ordered_deltas
-                    for fact_id in delta.fact_revision_ids
-                }
-            )
+            sorted({fact_id for delta in ordered_deltas for fact_id in delta.fact_revision_ids})
         )
         visible_by_id = {item.fact.revision_id: item for item in facts}
         missing_fact_ids = tuple(
@@ -623,9 +698,7 @@ class DecisionPacketBuilder:
             as_of=state.as_of,
         )
         direct_event_refs = frozenset(
-            event_ref
-            for delta in ordered_deltas
-            for event_ref in delta.intelligence_event_refs
+            event_ref for delta in ordered_deltas for event_ref in delta.intelligence_event_refs
         )
         selected_events, omitted_events = self._select_intelligence_events(
             events=intelligence_events,
@@ -691,9 +764,7 @@ class DecisionPacketBuilder:
             payload["facts"] = tuple(selected_facts)
             payload["intelligence_events"] = tuple(selected_intelligence)
             payload["omitted_fact_revision_ids"] = tuple(sorted(omitted_facts))
-            payload["omitted_intelligence_event_refs"] = tuple(
-                sorted(omitted_intelligence)
-            )
+            payload["omitted_intelligence_event_refs"] = tuple(sorted(omitted_intelligence))
             packet = DecisionPacket.create(**payload)
             if (
                 len(canonical_json(decision_packet_analysis_projection(packet)))
@@ -776,13 +847,9 @@ class DecisionPacketBuilder:
             raise ValueError("MarketSnapshot 集合与 Mandate assets 不一致")
         if tuple(sorted(item.symbol for item in features)) != tuple(sorted(symbols)):
             raise ValueError("FeatureSnapshot 集合与 Mandate assets 不一致")
-        if state.market_snapshot_refs != tuple(
-            sorted(content_hash(item) for item in markets)
-        ):
+        if state.market_snapshot_refs != tuple(sorted(content_hash(item) for item in markets)):
             raise ValueError("行情事实与 StateSnapshot market_snapshot_refs 不一致")
-        if state.feature_snapshot_refs != tuple(
-            sorted(content_hash(item) for item in features)
-        ):
+        if state.feature_snapshot_refs != tuple(sorted(content_hash(item) for item in features)):
             raise ValueError("特征事实与 StateSnapshot feature_snapshot_refs 不一致")
         if state.derivative_snapshot_refs != tuple(
             sorted(content_hash(item) for item in derivatives)
@@ -843,8 +910,7 @@ class DecisionPacketBuilder:
             age_seconds = (as_of - event.event_time).total_seconds()
             if evidence_ref not in direct_event_refs and (
                 event.impact < self._policy.minimum_background_intelligence_impact
-                or event.source_reliability
-                < self._policy.minimum_background_source_reliability
+                or event.source_reliability < self._policy.minimum_background_source_reliability
             ):
                 omitted.append(evidence_ref)
                 continue
@@ -884,8 +950,7 @@ class DecisionPacketBuilder:
             character_cost = len(title) + len(body)
             if (
                 len(selected) >= self._policy.maximum_intelligence_events
-                or used_characters + character_cost
-                > self._policy.maximum_intelligence_characters
+                or used_characters + character_cost > self._policy.maximum_intelligence_characters
             ):
                 omitted.append(evidence_ref)
                 continue
@@ -908,6 +973,11 @@ class DecisionPacketBuilder:
                     novelty=event.novelty,
                     prompt_injection_suspected=True,
                     directly_triggered=evidence_ref in direct_event_refs,
+                    directional_support_eligible=(
+                        event.impact >= self._policy.minimum_background_intelligence_impact
+                        and event.source_reliability
+                        >= self._policy.minimum_background_source_reliability
+                    ),
                 )
             )
             used_characters += character_cost
@@ -923,14 +993,11 @@ class DecisionPacketBuilder:
             return None
         return context.model_copy(
             update={
-                "drivers": context.drivers[
-                    : self._policy.maximum_previous_context_drivers
-                ],
+                "drivers": context.drivers[: self._policy.maximum_previous_context_drivers],
                 "event_references": tuple(
                     item
                     for item in context.event_references
-                    if item.stale_at is None
-                    or item.stale_at + timedelta(days=1) > as_of
+                    if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
                 ),
             }
         )
@@ -960,8 +1027,7 @@ class DecisionPacketBuilder:
             )
             if (
                 item.fact.revision_id in direct_fact_ids
-                or distance
-                <= self._policy.maximum_background_fact_distance_seconds
+                or distance <= self._policy.maximum_background_fact_distance_seconds
             ):
                 eligible.append(item)
             else:
@@ -971,19 +1037,12 @@ class DecisionPacketBuilder:
                 item.fact.revision_id not in direct_fact_ids,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
-                abs(
-                    (
-                        (item.fact.event_time or item.fact.observed_at)
-                        - as_of
-                    ).total_seconds()
-                ),
+                abs(((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()),
                 -item.fact.observed_at.timestamp(),
                 item.fact.revision_id,
             )
         )
-        direct_count = sum(
-            item.fact.revision_id in direct_fact_ids for item in eligible
-        )
+        direct_count = sum(item.fact.revision_id in direct_fact_ids for item in eligible)
         if direct_count > self._policy.maximum_facts:
             raise DecisionPacketCapacityError("direct facts exceed maximum_facts")
         selected: list[PacketFact] = []
@@ -1000,13 +1059,10 @@ class DecisionPacketBuilder:
             character_cost = len(headline) + len(claim)
             required = item.fact.revision_id in direct_fact_ids
             if len(selected) >= self._policy.maximum_facts or (
-                used_characters + character_cost
-                > self._policy.maximum_fact_characters
+                used_characters + character_cost > self._policy.maximum_fact_characters
             ):
                 if required:
-                    raise DecisionPacketCapacityError(
-                        "direct facts exceed fact character capacity"
-                    )
+                    raise DecisionPacketCapacityError("direct facts exceed fact character capacity")
                 omitted.append(item.fact.revision_id)
                 continue
             selected.append(
@@ -1024,9 +1080,7 @@ class DecisionPacketBuilder:
                     highest_source_tier=item.highest_source_tier,
                     independent_source_count=item.independent_source_count,
                     prompt_injection_suspected=(
-                        item.prompt_injection_suspected
-                        or headline_suspicious
-                        or claim_suspicious
+                        item.prompt_injection_suspected or headline_suspicious or claim_suspicious
                     ),
                     directly_triggered=required,
                 )
@@ -1095,6 +1149,17 @@ class DecisionPacketBuilder:
             funding_settlement_count=snapshot.funding_settlement_count,
             funding_window_hours=snapshot.funding_window_hours,
             next_funding_time=snapshot.next_funding_time,
+            positioning_observed_at=snapshot.positioning_observed_at,
+            positioning_window_minutes=snapshot.positioning_window_minutes,
+            open_interest=snapshot.open_interest,
+            open_interest_value=snapshot.open_interest_value,
+            open_interest_change_fraction=snapshot.open_interest_change_fraction,
+            global_long_short_account_ratio=snapshot.global_long_short_account_ratio,
+            global_long_account_fraction=snapshot.global_long_account_fraction,
+            global_short_account_fraction=snapshot.global_short_account_fraction,
+            taker_buy_sell_ratio=snapshot.taker_buy_sell_ratio,
+            taker_buy_volume=snapshot.taker_buy_volume,
+            taker_sell_volume=snapshot.taker_sell_volume,
         )
 
     @staticmethod

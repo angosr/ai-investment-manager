@@ -60,7 +60,7 @@ class SqlEventStore:
                         pipeline_id=self._pipeline_id,
                         occurred_at=event.event_time,
                         observed_at=event.observed_at,
-                        priority=int(event.impact * 100),
+                        priority=event.trigger_priority,
                         dedup_key=event.evidence_id,
                         evidence_ids=(event.evidence_id,),
                         expires_at=event.observed_at
@@ -146,12 +146,8 @@ class SqlEventStore:
                     normalized_events.c.observed_at <= as_of,
                 )
             ).all()
-        by_id = {
-            row.evidence_id: IntelligenceEvent.model_validate(row.payload)
-            for row in payloads
-        }
+        by_id = {row.evidence_id: IntelligenceEvent.model_validate(row.payload) for row in payloads}
         missing = tuple(item for item in evidence_ids if item not in by_id)
         if missing:
             raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
         return tuple(by_id[item] for item in evidence_ids)
-

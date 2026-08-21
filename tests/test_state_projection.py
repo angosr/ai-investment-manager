@@ -278,9 +278,7 @@ def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(state_snapshots)) == 3
         assert connection.scalar(select(func.count()).select_from(material_deltas)) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(state_evidence_snapshots)
-        ) == 7
+        assert connection.scalar(select(func.count()).select_from(state_evidence_snapshots)) == 7
 
     with engine.begin() as connection:
         payload = connection.scalar(
@@ -400,9 +398,7 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
     )
     exchange_at = OBSERVED_AT - timedelta(seconds=1)
     state = PerpetualMarketState(
-        state_id=stable_id(
-            "perpetual_market_state", instrument.key, exchange_at.isoformat()
-        ),
+        state_id=stable_id("perpetual_market_state", instrument.key, exchange_at.isoformat()),
         instrument=instrument,
         exchange_time=exchange_at,
         observed_at=OBSERVED_AT,
@@ -560,11 +556,14 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
     )
     failing = DecisionPacketPreparation(assembler=FailingAssembler(), **common)
     fed.ingest_calendar(_calendar("15-16"), observed_at=OBSERVED_AT)
-    assert failing.prepare(
-        analysis_id="recovery-baseline",
-        as_of=OBSERVED_AT,
-        mandate=mandate,
-    ).status == PacketPreparationStatus.BASELINE_RECORDED
+    assert (
+        failing.prepare(
+            analysis_id="recovery-baseline",
+            as_of=OBSERVED_AT,
+            mandate=mandate,
+        ).status
+        == PacketPreparationStatus.BASELINE_RECORDED
+    )
     revised_at = OBSERVED_AT + timedelta(minutes=2)
     fed.ingest_calendar(_calendar("16-17"), observed_at=revised_at)
 
@@ -698,6 +697,7 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
     packet_event = prepared.packet.intelligence_events[0]
     assert packet_event.evidence_id == event.evidence_id
     assert packet_event.directly_triggered is True
+    assert packet_event.directional_support_eligible is True
     assert packet_event.prompt_injection_suspected is True
     assert len(packet_event.title) <= 240
     assert replayed.status == PacketPreparationStatus.NO_MATERIAL_DELTA
@@ -790,6 +790,7 @@ def test_explicit_review_receives_recent_background_intelligence(
         event.evidence_id,
     )
     assert prepared.packet.intelligence_events[0].directly_triggered is False
+    assert prepared.packet.intelligence_events[0].directional_support_eligible is True
 
 
 def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
