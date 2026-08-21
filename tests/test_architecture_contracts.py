@@ -70,12 +70,6 @@ CLI_CONTRACT = {
         "blind_evaluation_catalog,starting_equity,spread_bps,include_trades,register_only"
     ),
     "phase-a-audit": "config,project_root",
-    "portfolio-momentum-walk-forward": (
-        "database_url,btc_dataset_id,eth_dataset_id,plan_id,catalog,evaluation_catalog,"
-        "training_days,test_days,starting_equity,minimum_trades,minimum_profit_factor,"
-        "minimum_daily_return_bps_lower_bound,maximum_drawdown_fraction,"
-        "minimum_positive_fold_fraction,include_trades,register_only"
-    ),
     "reconciliation-service": "config,database_url,release_manifest",
     "register-capital-shadow-plan": (
         "config,database_url,release_manifest,plan_id,observation_start,observation_end"
@@ -279,7 +273,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "replay-event-triggers",
             "research-catalog",
             "paired-decision-tape",
-            "portfolio-momentum-walk-forward",
         },
     }
 
