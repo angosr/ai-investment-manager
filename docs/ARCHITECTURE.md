@@ -149,8 +149,9 @@ Target；`AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 仍是尚未�
 并会显式拒绝多腿 Target，而不是错误定价或拆腿授权。行情、账户、订单和持仓尚未完成产品级硬迁移，
 因此 carry 仍不能进入资本路径。
 
-主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、下一 funding 时间和已结算 funding
-点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留现有单流。
+主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
+已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
+现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
 下一步只用这些事实生成并结算 carry 影子 ForecastTarget，再一次性完成 Sleeve Portfolio/Risk、
 grouped Execution、故障回放和统一评价。
 在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。

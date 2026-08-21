@@ -1140,3 +1140,30 @@ def test_package_root_contains_only_composition_entries() -> None:
         for path in PACKAGE_ROOT.iterdir()
         if path.is_file()
     } == {"__init__.py", "schema.py", "settings.py"}
+
+
+def test_top_level_packages_are_explicit_architectural_boundaries() -> None:
+    expected = {
+        "decision_cycle",
+        "entrypoints",
+        "execution",
+        "forecast",
+        "governance",
+        "information",
+        "kernel",
+        "legacy",
+        "market",
+        "platform",
+        "portfolio",
+        "research",
+        "risk",
+        "scheduling",
+        "state",
+    }
+    observed = {
+        path.name
+        for path in PACKAGE_ROOT.iterdir()
+        if path.is_dir() and not path.name.startswith("__")
+    }
+
+    assert observed == expected
