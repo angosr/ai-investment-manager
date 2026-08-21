@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v9 在同一市场结构证据链增加 Binance 现货主动成交窗口摘要。
-  version: portfolio-state-v9
+  # v10 的 Binance 现货主动成交摘要明确报告实际连续覆盖窗口。
+  version: portfolio-state-v10
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: fed-official-fact-v2
@@ -41,7 +41,7 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v15
+    version: decision-packet-policy-v16
     schema_version: decision-packet-v10
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -281,7 +281,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v6
+  version: binance-public-shadow-v7
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64

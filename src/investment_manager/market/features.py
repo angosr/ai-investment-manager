@@ -166,8 +166,15 @@ def _spot_flow_summary(
         and item.quote_volume is not None
         and item.taker_buy_quote_volume is not None
     )
-    if not bars:
+    if len(bars) < 2:
         return {}
+    intervals = tuple(
+        int((right.event_time - left.event_time).total_seconds() // 60)
+        for left, right in pairwise(bars)
+    )
+    if not intervals or intervals[0] <= 0 or len(set(intervals)) != 1:
+        return {}
+    covered_minutes = min(window_minutes, intervals[0] * len(bars))
     total_volume = sum((item.volume for item in bars), Decimal("0"))
     buy_volume = sum(
         (item.taker_buy_base_volume for item in bars if item.taker_buy_base_volume is not None),
@@ -178,7 +185,7 @@ def _spot_flow_summary(
         return {}
     return {
         "spot_flow_observed_at": max(item.observed_at for item in bars),
-        "spot_flow_window_minutes": window_minutes,
+        "spot_flow_window_minutes": covered_minutes,
         "spot_taker_buy_sell_ratio": buy_volume / sell_volume,
         "spot_taker_buy_volume": buy_volume,
         "spot_taker_sell_volume": sell_volume,

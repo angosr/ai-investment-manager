@@ -234,7 +234,7 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     assert snapshot.open_interest_change_fraction == Decimal("0.10")
     assert snapshot.global_long_short_account_ratio == Decimal("1.5")
     assert snapshot.taker_buy_sell_ratio == Decimal("1.25")
-    assert snapshot.spot_flow_window_minutes == 60
+    assert snapshot.spot_flow_window_minutes == 40
     assert snapshot.spot_taker_buy_sell_ratio == Decimal("1.5")
     assert snapshot.input_refs == tuple(
         sorted(
@@ -280,6 +280,40 @@ def test_derivative_context_without_visible_funding_keeps_empty_summary(
     assert snapshot.trailing_funding_rate_sum_bps is None
     assert snapshot.trailing_funding_rate_mean_bps is None
     assert len(snapshot.input_refs) == 3
+
+
+def test_spot_flow_reports_actual_contiguous_cold_start_window(replay_input) -> None:
+    enriched = tuple(
+        item.model_copy(
+            update={
+                "quote_volume": item.volume * item.close,
+                "taker_buy_base_volume": item.volume * Decimal("0.60"),
+                "taker_buy_quote_volume": item.volume * item.close * Decimal("0.60"),
+            }
+        )
+        for item in replay_input.market.bars[-2:]
+    )
+    spot = replay_input.market.model_copy(
+        update={
+            "cycle_id": "analysis-cold-start",
+            "as_of": NOW,
+            "observed_at": NOW,
+            "bars": (*replay_input.market.bars[:-2], *enriched),
+        }
+    )
+
+    snapshot = build_derivative_context_snapshot(
+        cycle_id="analysis-cold-start",
+        asset="BTC",
+        spot=spot,
+        state=_perpetual_state(observed_at=NOW),
+        quote=_perpetual_quote(observed_at=NOW),
+        settlements=(),
+        funding_window_hours=24,
+    )
+
+    assert snapshot.spot_flow_window_minutes == 10
+    assert snapshot.spot_taker_buy_sell_ratio == Decimal("1.5")
 
 
 def test_official_websocket_contract_parses_quote_trade_and_only_closed_bar() -> None:
