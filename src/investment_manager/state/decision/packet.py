@@ -99,6 +99,23 @@ def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, obj
     return {name: payload[name] for name in names if name in payload}
 
 
+def previous_context_is_decision_relevant(previous: PacketPreviousContext | None) -> bool:
+    """Only carry forward cognition that can still change a decision.
+
+    An all-uncertain assessment with no driver or active event is an audit result,
+    not durable evidence.  Re-sending it makes the model elaborate the previous
+    absence of an edge instead of reassessing the current evidence cut.
+    """
+
+    if previous is None:
+        return False
+    return bool(
+        previous.drivers
+        or any(item.impact_state == "ACTIVE" for item in previous.event_references)
+        or any(item.direction != "UNCERTAIN" for item in previous.views)
+    )
+
+
 def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     """Return the dense model-facing projection of an auditable packet.
 
@@ -188,7 +205,11 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         for item in packet.facts
     )
     previous = payload.get("previous_context")
-    if previous is not None:
+    if previous is not None and not previous_context_is_decision_relevant(
+        packet.previous_context
+    ):
+        payload.pop("previous_context")
+    elif previous is not None:
         for field_name in (
             "analysis_behavior_hash",
             "analysis_scope",

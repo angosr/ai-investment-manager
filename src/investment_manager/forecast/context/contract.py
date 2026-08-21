@@ -20,6 +20,7 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.decision.packet import (
     DecisionPacket,
     decision_packet_analysis_projection,
+    previous_context_is_decision_relevant,
 )
 
 
@@ -154,6 +155,11 @@ def assessment_input_projection(packet: DecisionPacket) -> dict:
 
 
 def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
+    previous = (
+        packet.previous_context
+        if previous_context_is_decision_relevant(packet.previous_context)
+        else None
+    )
     return tuple(
         sorted(
             {
@@ -167,17 +173,17 @@ def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
                 *(item.evidence_ref for item in packet.intelligence_events),
                 *(item.evidence_ref for item in packet.derivative_states),
                 *(
-                    (packet.previous_context.assessment_id,)
-                    if packet.previous_context is not None
+                    (previous.assessment_id,)
+                    if previous is not None
                     else ()
                 ),
                 *(
                     (
                         item.evidence_id
-                        for item in packet.previous_context.event_references
+                        for item in previous.event_references
                         if item.impact_state == ContextEventImpactState.ACTIVE.value
                     )
-                    if packet.previous_context is not None
+                    if previous is not None
                     else ()
                 ),
             }
@@ -186,6 +192,11 @@ def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
 
 
 def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
+    previous = (
+        packet.previous_context
+        if previous_context_is_decision_relevant(packet.previous_context)
+        else None
+    )
     return tuple(
         sorted(
             {
@@ -193,10 +204,10 @@ def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
                 *(
                     (
                         item.evidence_id
-                        for item in packet.previous_context.event_references
+                        for item in previous.event_references
                         if item.impact_state == ContextEventImpactState.ACTIVE.value
                     )
-                    if packet.previous_context is not None
+                    if previous is not None
                     else ()
                 ),
             }

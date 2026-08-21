@@ -81,6 +81,7 @@ def assessment_row(record: AssessmentRecord) -> dict:
         "scope": assessment.analysis_scope,
         "summary": _assessment_summary(assessment),
         "mechanism": assessment.market_mechanism,
+        "driver_count": len(assessment.drivers),
         "directional_view_count": len(directional),
         "view_count": len(assessment.views),
     }

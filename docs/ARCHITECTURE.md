@@ -99,6 +99,10 @@ Assessment 区分已确认事实、有证据推断与未验证假设；Dashboard
 并要求新一轮逐项延续、修正或判失效。上一份 Assessment 是派生证据，只能支持
 `INFERRED / UNVERIFIED`，不能把旧推断升级为 `CONFIRMED`；一手事实仍必须引用本轮可见的官方
 Fact。这样可以跨事件维持多层传导链，同时避免无限上下文、无来源记忆和历史错误自我强化。
+若上一份 Assessment 没有 Driver、没有仍有效事件且全部 View 均为 `UNCERTAIN`，它只是一次“未发现优势”的
+审计结果，不是应继续传播的世界知识；原 Packet 与 Assessment 永久保留，但下一次模型投影不再携带它，避免
+模型围绕上一轮无结论反复扩写。无合格主导驱动时，Dashboard 明示“本轮不提供收益方向”，详细审计仍可展开，
+不得把缺口说明或普通背景指标包装成世界认知主体。
 
 事件引用属于每份 `ContextAssessment` 的派生认知，不修改 `IntelligenceEvent`。每个引用必须记录
 `ACTIVE / STALE`、经济作用理由和首次判旧时间：`STALE` 只表示该事件对未来经济与定价的边际影响已经

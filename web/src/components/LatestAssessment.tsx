@@ -60,8 +60,16 @@ export function LatestAssessment() {
       {currentRow ? (
         <div className={styles.layout}>
           <div>
-            <div className={styles.summary}>{currentRow.summary}</div>
-            <p className={styles.mechanism}>{detail?.mechanism ?? currentRow.mechanism}</p>
+            <div className={styles.summary}>
+              {currentRow.driver_count > 0
+                ? currentRow.summary
+                : "当前没有达到决策门槛的主导因果"}
+            </div>
+            <p className={styles.mechanism}>
+              {currentRow.driver_count > 0
+                ? (detail?.mechanism ?? currentRow.mechanism)
+                : "本轮不产生收益方向；该结论只限制风险，不作为开仓依据。"}
+            </p>
             {detail && detail.drivers.length > 0 ? (
               <div className={styles.drivers}>
                 {detail.drivers.slice(0, 3).map((driver) => (

@@ -431,10 +431,8 @@ def test_world_cognition_event_reference_becomes_stale_then_leaves_future_contex
         previous_context=stale_previous,
         as_of=second_as_of + timedelta(hours=12),
     )
-    projected_previous = decision_packet_analysis_projection(within_grace)[
-        "previous_context"
-    ]
-    assert projected_previous["event_references"] == ()
+    assert within_grace.previous_context is not None
+    assert "previous_context" not in decision_packet_analysis_projection(within_grace)
     assert event_ref not in assessment_visible_evidence_ids(within_grace)
     _, after_grace = _packet(
         app_config,
@@ -1359,7 +1357,14 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
         as_of=replay_input.market.as_of - timedelta(hours=1),
         available_at=replay_input.market.as_of - timedelta(minutes=59),
         market_mechanism="上一轮仍有效的因果基准。",
-        drivers=(),
+        drivers=(
+            PacketPreviousDriver(
+                statement="仍在影响定价的主导因素。",
+                status="INFERRED",
+                transmission="该因素仍可能改变风险溢价。",
+                invalidation_condition="当前传导被新事实证伪",
+            ),
+        ),
         views=(),
         contradictions=("上一时点矛盾",),
         data_gaps=("上一时点缺口",),
@@ -1409,6 +1414,44 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
     assert "global_long_short_account_ratio" not in projected["derivative_states"][0]
     assert "contradictions" not in projected["previous_context"]
     assert "data_gaps" not in projected["previous_context"]
+
+
+def test_analysis_projection_does_not_recycle_empty_uncertain_context(
+    app_config,
+    replay_input,
+) -> None:
+    previous = PacketPreviousContext(
+        assessment_id="assessment-prior-no-edge",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=replay_input.market.as_of - timedelta(hours=1),
+        available_at=replay_input.market.as_of - timedelta(minutes=59),
+        market_mechanism="上一轮也没有识别到主导驱动。",
+        drivers=(),
+        views=tuple(
+            PacketPreviousView(
+                asset=asset,
+                horizon_minutes=horizon,
+                direction="UNCERTAIN",
+                already_priced="UNKNOWN",
+                uncertainty="HIGH",
+            )
+            for asset in ("BTC", "ETH")
+            for horizon in (60, 240)
+        ),
+        contradictions=(),
+        data_gaps=(),
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+
+    projected = decision_packet_analysis_projection(packet)
+    prompt = build_assess_prompt(packet)
+
+    assert packet.previous_context == previous
+    assert "previous_context" not in projected
+    assert previous.assessment_id not in prompt
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:

@@ -117,7 +117,11 @@ export function AssessmentRow({ row }: { row: Row }) {
         <span className={styles.time}>{hhmm(row.at)}</span>
         <span className={styles.mid}>
           <span className={styles.summary}>{row.summary}</span>
-          <span className={styles.reason}>{row.mechanism}</span>
+          <span className={styles.reason}>
+            {row.driver_count > 0
+              ? row.mechanism
+              : "未识别到可验证的主导驱动，本轮不提供收益方向。"}
+          </span>
         </span>
         <span className={`${styles.pill} ${styles[category]}`}>
           {row.directional_view_count > 0

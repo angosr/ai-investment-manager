@@ -78,6 +78,7 @@ export interface AssessmentRecordRow {
   scope: string;
   summary: string;
   mechanism: string;
+  driver_count: number;
   directional_view_count: number;
   view_count: number;
 }
