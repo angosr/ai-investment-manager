@@ -104,6 +104,78 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
   }[];
   contradictions: string[];
   data_gaps: string[];
+  input_snapshot: AssessmentInputSnapshot | null;
+}
+
+export interface AssessmentInputSnapshot {
+  packet_id: string;
+  state_id: string;
+  as_of: string;
+  policy_version: string;
+  question: string;
+  portfolio: {
+    quote_balance: string;
+    equity: string | null;
+    daily_pnl: string;
+    drawdown_fraction: string;
+    open_order_count: number;
+    kill_switch_active: boolean;
+    reconciled: boolean;
+    positions: { market_symbol: string; quantity: string; average_price: string }[];
+  };
+  asset_states: {
+    asset: string;
+    market_symbol: string;
+    observed_at: string;
+    bid: string;
+    ask: string;
+    last: string;
+    return_fraction: string;
+    realized_volatility: string;
+    atr: string;
+    spread_bps: string;
+    volume_ratio: string;
+    regime: string;
+    market_age_seconds: number;
+  }[];
+  deltas: {
+    delta_id: string;
+    category: string;
+    materiality: string;
+    observed_at: string;
+    affected_assets: string[];
+    risk_factors: string[];
+    reason_codes: string[];
+  }[];
+  facts: {
+    revision_id: string;
+    headline: string;
+    claim: string;
+    status: string;
+    affected_assets: string[];
+    risk_factors: string[];
+    independent_source_count: number;
+    directly_triggered: boolean;
+  }[];
+  intelligence_events: {
+    evidence_ref: string;
+    source: string;
+    title: string;
+    body: string;
+    event_time: string;
+    observed_at: string;
+    symbols: string[];
+    directly_triggered: boolean;
+  }[];
+  active_hypotheses: string[];
+  data_quality_codes: string[];
+  coverage_gap_codes: string[];
+  world_cognition: {
+    state_id: string;
+    beliefs: { belief_id?: string; statement?: string }[];
+    facts: { revision_id: string; headline: string; claim: string }[];
+    legacy_without_beliefs: boolean;
+  };
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";

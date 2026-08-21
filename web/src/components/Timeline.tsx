@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Snapshot } from "../api/types";
 import { useLive } from "../hooks";
 import { CycleRow } from "./CycleRow";
-import { CapitalActionRow } from "./CapitalActions";
+import { CapitalDecisionFeed, materialActionCount } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
 import styles from "./Timeline.module.css";
@@ -11,7 +11,7 @@ import styles from "./Timeline.module.css";
 type Tab = "actions" | "analysis" | "world";
 
 const HINTS: Record<Tab, string> = {
-  actions: "资本复核与历史决策，按时间倒序",
+  actions: "只突出资金、仓位或风险变化；重复例行检查自动归并",
   analysis: "AI 只提供风险与方向判断，不直接下单",
   world: "系统采集到的新闻与行情事件",
 };
@@ -24,7 +24,7 @@ export function Timeline({
   capitalMode?: boolean;
 }) {
   if (capitalMode) {
-    return <CapitalTimeline onOpenSnapshot={onOpenSnapshot} />;
+    return <CapitalTimeline />;
   }
   return <LegacyTimeline onOpenSnapshot={onOpenSnapshot} />;
 }
@@ -59,35 +59,17 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
   );
 }
 
-function CapitalTimeline({
-  onOpenSnapshot,
-}: {
-  onOpenSnapshot: (snapshot: Snapshot) => void;
-}) {
+function CapitalTimeline() {
   const [tab, setTab] = useState<Tab>("actions");
   const actions = useLive(() => api.capitalActivity(), "cycles");
   const assessmentRecords = useLive(() => api.assessmentRecords(), "cycles");
-  const assessments = useLive(() => api.assessmentCycles(), "cycles");
   const events = useLive(() => api.events(), "events");
-  const actionHistory = [
-    ...(actions?.actions ?? []).map((row) => ({
-      kind: "capital" as const,
-      id: row.activity_id,
-      at: row.at,
-      row,
-    })),
-    ...(assessments?.cycles ?? []).map((row) => ({
-      kind: "legacy" as const,
-      id: row.cycle_id,
-      at: row.at,
-      row,
-    })),
-  ].sort((left, right) => right.at.localeCompare(left.at));
+  const capitalActions = actions?.actions ?? [];
   return (
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="决策与行动" count={actionHistory.length} onPick={setTab} />
+          <Tab id="actions" active={tab} label="资金决策" count={materialActionCount(capitalActions)} onPick={setTab} />
           <Tab id="analysis" active={tab} label="AI 判断" count={assessmentRecords?.assessments.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
@@ -95,20 +77,8 @@ function CapitalTimeline({
       </div>
       {tab === "actions" ? (
         <div>
-          {actionHistory.map((item) =>
-            item.kind === "capital" ? (
-              <CapitalActionRow key={item.id} action={item.row} />
-            ) : (
-              <CycleRow
-                key={item.id}
-                row={item.row}
-                onOpenSnapshot={onOpenSnapshot}
-                loadDetail={api.assessmentCycle}
-                sourceLabel="历史决策"
-              />
-            ),
-          )}
-          {actions && assessments && actionHistory.length === 0 ? (
+          <CapitalDecisionFeed actions={capitalActions} />
+          {actions && capitalActions.length === 0 ? (
             <p className={styles.empty}>尚无决策与行动记录。</p>
           ) : null}
         </div>

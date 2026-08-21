@@ -28,6 +28,7 @@ from investment_manager.legacy.models import (
     TradeIntent,
 )
 from investment_manager.risk.models import RiskDecision
+from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.panel import PanelSnapshot
 
 _ECONOMICS_METRICS = (
@@ -104,7 +105,34 @@ def assessment_detail(record: AssessmentRecord) -> dict:
         ],
         "contradictions": list(assessment.contradictions),
         "data_gaps": list(assessment.data_gaps),
+        "input_snapshot": (
+            None if record.packet is None else _assessment_input_snapshot(record.packet)
+        ),
     }
+
+
+def _assessment_input_snapshot(packet: DecisionPacket) -> dict:
+    """Return the exact persisted AI input, plus a read-only cognition projection.
+
+    Keeping the canonical packet intact avoids a second hand-maintained DTO silently
+    drifting away from what the analyst actually received.
+    """
+
+    payload = packet.model_dump(mode="json")
+    payload["world_cognition"] = {
+        "state_id": packet.state_id,
+        "beliefs": [],
+        "facts": [
+            {
+                "revision_id": item.revision_id,
+                "headline": item.headline,
+                "claim": item.claim,
+            }
+            for item in packet.facts
+        ],
+        "legacy_without_beliefs": True,
+    }
+    return payload
 
 
 def snapshot(panel: PanelSnapshot) -> dict:

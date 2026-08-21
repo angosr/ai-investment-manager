@@ -67,6 +67,7 @@ from investment_manager.scheduling.tables import (
     trigger_outbox,
 )
 from investment_manager.settings import AppConfig
+from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.tables import decision_packets
 
@@ -93,6 +94,7 @@ class AssessmentRecord:
 
     assessment: ContextAssessment
     outcomes: tuple[AssessmentViewOutcome, ...] = ()
+    packet: DecisionPacket | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,12 +239,18 @@ class DashboardReader:
 
     def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
         with self._engine.connect() as connection:
-            assessment_payload = connection.execute(
-                select(context_assessments.c.payload).where(
-                    context_assessments.c.assessment_id == assessment_id
+            row = connection.execute(
+                select(
+                    context_assessments.c.payload.label("assessment_payload"),
+                    decision_packets.c.payload.label("packet_payload"),
                 )
-            ).scalar_one_or_none()
-            if assessment_payload is None:
+                .join(
+                    decision_packets,
+                    decision_packets.c.packet_id == context_assessments.c.packet_id,
+                )
+                .where(context_assessments.c.assessment_id == assessment_id)
+            ).mappings().one_or_none()
+            if row is None:
                 return None
             outcome_payloads = (
                 connection.execute(
@@ -257,10 +265,11 @@ class DashboardReader:
                 .all()
             )
         return AssessmentRecord(
-            assessment=ContextAssessment.model_validate(assessment_payload),
+            assessment=ContextAssessment.model_validate(row["assessment_payload"]),
             outcomes=tuple(
                 AssessmentViewOutcome.model_validate(payload) for payload in outcome_payloads
             ),
+            packet=DecisionPacket.model_validate(row["packet_payload"]),
         )
 
     # --- 世界事件时间线 ---------------------------------------------------

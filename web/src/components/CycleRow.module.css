@@ -269,8 +269,129 @@
 .snapBtn:hover {
   background: var(--accent-glow);
 }
+.snapBtn[aria-pressed="true"] {
+  background: var(--accent-glow);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.snapBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.snapshotActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.snapshotUnavailable {
+  color: var(--faint);
+  font-size: 11.5px;
+  margin-top: 14px;
+}
+.snapshotPanel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.snapshotHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.snapshotHeader b {
+  font-size: 13px;
+}
+.snapshotHeader span {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.snapshotQuestion {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 12px;
+}
+.snapshotNote {
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 12px 0 0;
+}
+.snapshotGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.snapshotSection {
+  margin-top: 14px;
+  min-width: 0;
+}
+.snapshotKv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 11.5px;
+  margin: 0;
+}
+.snapshotKv dt {
+  color: var(--muted);
+}
+.snapshotKv dd {
+  color: var(--text);
+  font-family: var(--font-mono);
+  margin: 0;
+  text-align: right;
+}
+.marketSnapshot {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding-bottom: 8px;
+}
+.marketSnapshot b {
+  color: var(--text);
+  font-family: var(--font-body);
+}
+.snapshotList {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.snapshotList li {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.snapshotList li::before {
+  color: var(--accent);
+  content: "·";
+  margin-right: 7px;
+}
+.snapshotEmpty {
+  color: var(--faint);
+  font-size: 11.5px;
+  margin: 0;
+}
 @media (max-width: 640px) {
-  .cols {
+  .cols,
+  .snapshotGrid {
     grid-template-columns: 1fr;
+  }
+  .snapshotHeader {
+    display: grid;
+  }
+  .snapshotHeader span {
+    text-align: left;
   }
 }

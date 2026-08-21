@@ -39,6 +39,13 @@ from investment_manager.scheduling.models import AnalysisTriggerType, build_trig
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.scheduling.tables import analysis_call_admissions
 from investment_manager.schema import create_schema
+from investment_manager.state.decision.packet import (
+    DecisionPacket,
+    PacketAssetState,
+    PacketDelta,
+    PacketPortfolioState,
+    RequiredView,
+)
 from investment_manager.state.tables import decision_packets
 
 
@@ -56,6 +63,70 @@ def _seed_cycle(app_config, replay_input, *, database_url: str | None = None):
     return engine, result
 
 
+def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> DecisionPacket:
+    return DecisionPacket.create(
+        schema_version="decision-packet-v4",
+        policy_version="dashboard-packet-v1",
+        mandate_version="dashboard-test-mandate-v1",
+        analysis_scope=analysis_scope,
+        as_of=as_of,
+        state_id="dashboard-state-1",
+        question="评估当前组合风险与方向倾向。",
+        trigger_ids=("dashboard-delta-1",),
+        required_views=(RequiredView(asset="BTC", horizon_minutes=60),),
+        portfolio=PacketPortfolioState(
+            quote_balance=Decimal("10000"),
+            equity=Decimal("10000"),
+            daily_pnl=Decimal("0"),
+            drawdown_fraction=Decimal("0"),
+            open_order_count=0,
+            kill_switch_active=False,
+            reconciled=True,
+            positions=(),
+        ),
+        asset_states=(
+            PacketAssetState(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                observed_at=as_of,
+                bid=Decimal("59999"),
+                ask=Decimal("60001"),
+                last=Decimal("60000"),
+                return_fraction=Decimal("0.01"),
+                realized_volatility=Decimal("0.30"),
+                atr=Decimal("900"),
+                spread_bps=Decimal("0.33"),
+                volume_ratio=Decimal("1.20"),
+                regime="TRENDING_UP",
+                market_age_seconds=0,
+            ),
+        ),
+        deltas=(
+            PacketDelta(
+                delta_id="dashboard-delta-1",
+                policy_version="dashboard-delta-v1",
+                category="MARKET",
+                materiality="HIGH",
+                observed_at=as_of,
+                expires_at=as_of + timedelta(hours=1),
+                affected_assets=("BTC",),
+                risk_factors=("CRYPTO_BETA",),
+                horizons_minutes=(60,),
+                fact_revision_ids=(),
+                feature_snapshot_refs=("dashboard-feature-1",),
+                reason_codes=("MARKET_REGIME_CHANGED",),
+            ),
+        ),
+        facts=(),
+        active_hypotheses=(),
+        previous_assessment_refs=(),
+        data_quality_codes=(),
+        coverage_gap_codes=(),
+        missing_fact_revision_ids=(),
+        omitted_fact_revision_ids=(),
+    )
+
+
 def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_store(
     app_config,
     replay_input,
@@ -70,15 +141,20 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         replay_input,
         database_url=assessment_url,
     )
+    as_of = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    packet = _dashboard_assessment_packet(
+        as_of=as_of,
+        analysis_scope="primary-portfolio",
+    )
     assessment = ContextAssessment(
         assessment_id="context-assessment-dashboard",
         analysis_scope="primary-portfolio",
         mandate_version="dashboard-test-mandate-v1",
-        as_of=datetime(2026, 8, 18, 12, tzinfo=UTC),
+        as_of=as_of,
         available_at=datetime(2026, 8, 18, 12, 0, 10, tzinfo=UTC),
         analysis_behavior_hash="b" * 64,
-        decision_packet_hash="c" * 64,
-        trigger_ids=("dashboard-trigger",),
+        decision_packet_hash=packet.content_hash,
+        trigger_ids=packet.trigger_ids,
         market_mechanism="宏观事实尚不足以形成可靠的短期方向判断。",
         views=(
             ContextView(
@@ -95,18 +171,18 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     with archive_engine.begin() as connection:
         connection.execute(
             insert(decision_packets).values(
-                packet_id="dashboard-assessment-packet",
+                packet_id=packet.packet_id,
                 analysis_scope=assessment.analysis_scope,
                 as_of=assessment.as_of,
-                policy_version="dashboard-packet-v1",
+                policy_version=packet.policy_version,
                 content_hash=assessment.decision_packet_hash,
-                payload={},
+                payload=packet.model_dump(mode="json"),
             )
         )
         connection.execute(
             insert(context_assessments).values(
                 assessment_id=assessment.assessment_id,
-                packet_id="dashboard-assessment-packet",
+                packet_id=packet.packet_id,
                 analysis_scope=assessment.analysis_scope,
                 available_at=assessment.available_at,
                 analysis_behavior_hash=assessment.analysis_behavior_hash,
@@ -166,6 +242,8 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
+    assert assessment_detail.json()["input_snapshot"]["packet_id"] == packet.packet_id
+    assert assessment_detail.json()["input_snapshot"]["state_id"] == packet.state_id
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": []}
     assert events.status_code == 200
