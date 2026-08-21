@@ -339,6 +339,13 @@ def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
         settlement_grace_minutes=5,
     )
 
+    pending_query = {
+        "analysis_behavior_hash": assessment.analysis_behavior_hash,
+        "evaluation_version": "assessment-outcome-v1",
+        "signal_window_start": NOW,
+        "signal_window_end": NOW + timedelta(hours=1),
+    }
+    assert store.pending_assessment_count(**pending_query) == 1
     before_maturity = settler.settle(as_of=evaluation_at - timedelta(seconds=1))
     settled = settler.settle(as_of=evaluation_at + timedelta(seconds=1))
     replayed = settler.settle(as_of=evaluation_at + timedelta(seconds=2))
@@ -346,6 +353,7 @@ def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
     assert before_maturity.pending == 1
     assert settled.settled == 1
     assert replayed.settled == 0
+    assert store.pending_assessment_count(**pending_query) == 0
     with engine.connect() as connection:
         payload = connection.execute(
             select(assessment_view_outcomes.c.payload)

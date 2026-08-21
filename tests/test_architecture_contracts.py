@@ -38,10 +38,12 @@ CLI_CONTRACT = {
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": "config,database_url,release_manifest,host,port,web_dist",
-    "evaluate-ai-forecast-plan": "database_url,plan_id,published_at,evaluation_catalog",
-    "evaluate-ai-forecasts": (
+    "diagnose-legacy-analysis-forecasts": (
         "config,database_url,window_start,window_end,published_at,pipeline_version,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
+    ),
+    "evaluate-assessment-forward-plan": (
+        "database_url,plan_id,published_at,evaluation_catalog"
     ),
     "evaluate-carry-forward-plan": (
         "database_url,plan_id,carry_dataset_id,carry_catalog,spot_catalog,funding_catalog,"
@@ -67,7 +69,7 @@ CLI_CONTRACT = {
     ),
     "phase-a-audit": "config,project_root",
     "reconciliation-service": "config,database_url,release_manifest",
-    "register-ai-forecast-plan": (
+    "register-assessment-forward-plan": (
         "config,database_url,plan_id,signal_window_start,signal_window_end,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
@@ -215,11 +217,13 @@ def test_cli_subcommand_parameter_contract_is_frozen() -> None:
 
 def test_cli_commands_are_owned_by_change_reason() -> None:
     expected = {
+        "entrypoints/cli/assessment_commands.py": {
+            "evaluate-assessment-forward-plan",
+            "register-assessment-forward-plan",
+        },
         "entrypoints/cli/commands.py": {
             "build-edge-calibration",
-            "evaluate-ai-forecast-plan",
-            "evaluate-ai-forecasts",
-            "register-ai-forecast-plan",
+            "diagnose-legacy-analysis-forecasts",
             "invalidate-evaluation-plan",
             "validate-config",
             "reset-portfolio-protection",
@@ -280,6 +284,22 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             )
         }
         assert actual == names
+
+
+def test_context_assessment_management_path_does_not_import_legacy() -> None:
+    owned_paths = (
+        PACKAGE_ROOT / "entrypoints" / "cli" / "assessment_commands.py",
+        PACKAGE_ROOT / "governance" / "evaluation" / "assessment.py",
+    )
+    for path in owned_paths:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("investment_manager.legacy"), path
+            if isinstance(node, ast.Import):
+                assert not any(
+                    alias.name.startswith("investment_manager.legacy")
+                    for alias in node.names
+                ), path
 
 
 def test_current_internal_module_graph_has_no_cycles() -> None:

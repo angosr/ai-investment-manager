@@ -108,7 +108,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 ### 前瞻证据稳定窗口
 
-- 已预登记的 `ForecastGateEvaluationSpec.pipeline_version` 是证据带不可变身份。在其 `evaluation_end` 前，不得因报告格式、离线研究或无关运维代码变更分析 Pipeline；这些变更可合并但延后部署。
+- 已预登记的 `AssessmentForwardEvaluationSpec.analysis_behavior_hash` 是证据带不可变身份。在其 `signal_window_end` 前，不得改变 DecisionPacket 契约、Assessment mandate、模型、提示词、输出 Schema 或 Codex 执行契约；不影响该行为哈希的运维变更可以独立发布。
 - 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
 - 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
 
@@ -116,16 +116,16 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager register-ai-forecast-plan \
+  .venv/bin/investment-manager register-assessment-forward-plan \
   --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
   --signal-window-start '<未来 UTC 起点>' \
   --signal-window-end '<固定 UTC 终点>' \
   --minimum-non-overlapping-samples 30
 ```
 
-登记命令从冻结配置和语义行为制品自行计算 `analysis_behavior_hash`；调用方不需要也不能替换该身份。兼容参数只用于核对，传入值不一致会失败关闭。
+登记命令从冻结配置和语义行为制品自行计算 `analysis_behavior_hash`；调用方不需要也不能替换该身份。可选参数只用于显式核对，传入值不一致会失败关闭。
 
-只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-ai-forecast-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算预测、独立样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。结果始终写入内容寻址制品；失败同时登记稳定的负面治理事实，通过结果仍需由后续显式变更提案引用，不能自行晋级。
+只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-assessment-forward-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算 Assessment、独立可评分样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。`UP`/`DOWN` 使用方向收益，`UNCERTAIN` 在同一可评分时点使用现金收益 0；缺行情的终态单独计为 `UNSCORABLE`。结果始终写入内容寻址制品；失败同时登记稳定的负面治理事实，通过结果仍需由后续显式变更提案引用，不能自行晋级。
 
 BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未来数据产生前登记：
 

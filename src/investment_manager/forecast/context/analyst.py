@@ -61,21 +61,55 @@ def assess_behavior_hash(
     runtime: CodexRuntimePolicy,
     packet: DecisionPacket,
 ) -> str:
+    return _assess_behavior_hash(
+        runtime,
+        packet_schema_version=packet.schema_version,
+        packet_policy_version=packet.policy_version,
+        mandate_version=packet.mandate_version,
+        required_views=tuple(
+            (item.asset, item.horizon_minutes) for item in packet.required_views
+        ),
+    )
+
+
+def configured_assess_behavior_hash(config: AppConfig) -> str:
+    """Return the behavior identity future packets from this config will carry."""
+
+    mandate = config.assessment.mandate
+    return _assess_behavior_hash(
+        config.codex_runtime,
+        packet_schema_version=config.decision_state.packet_policy.schema_version,
+        packet_policy_version=config.decision_state.packet_policy.version,
+        mandate_version=mandate.version,
+        required_views=tuple(
+            (asset.asset, horizon)
+            for asset in mandate.assets
+            for horizon in asset.horizons_minutes
+        ),
+    )
+
+
+def _assess_behavior_hash(
+    runtime: CodexRuntimePolicy,
+    *,
+    packet_schema_version: str,
+    packet_policy_version: str,
+    mandate_version: str,
+    required_views: tuple[tuple[str, int], ...],
+) -> str:
     return content_hash(
         {
             "input_version": ASSESS_INPUT_VERSION,
-            "packet_schema_version": packet.schema_version,
-            "packet_policy_version": packet.policy_version,
+            "packet_schema_version": packet_schema_version,
+            "packet_policy_version": packet_policy_version,
             "instructions": ASSESS_INSTRUCTIONS,
             "input_schema": DecisionPacket.model_json_schema(),
             "output_schema": strict_output_schema(
                 AssessStructuredOutput.model_json_schema()
             ),
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
-            "mandate_version": packet.mandate_version,
-            "required_views": tuple(
-                (item.asset, item.horizon_minutes) for item in packet.required_views
-            ),
+            "mandate_version": mandate_version,
+            "required_views": required_views,
             "execution_contract": codex_execution_contract(),
             "model": runtime.model,
             "reasoning_effort": runtime.reasoning_effort,

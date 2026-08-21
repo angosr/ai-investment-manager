@@ -10,11 +10,16 @@
 
 产品和 Python 顶层包统一命名为 `investment_manager`，命令行入口为 `investment-manager`。
 
-不再使用 `quant_core`：
+主线产品名与源码命名不再使用 `quant_core`：
 
 - `quant` 将系统误解为传统量化策略库，不能表达信息、AI 判断、组合管理、风险、执行和治理；
 - `core` 没有业务含义，容易成为任何代码都能进入的杂物边界；
 - 系统的稳定业务身份是 Investment Manager，AI、规则、优化器和具体策略只是可替换机制。
+
+当前仍能看到的 `QUANT_CORE_*` Secret 名、数据库角色/库名、旧 Temporal task queue 和历史评价
+版本属于冻结发布的外部恢复身份，不是源码命名空间。它们不能用 alias 或双读偷偷延续；等依赖
+这些身份的冻结发布退役后，以一次受控基础设施切流统一迁移。当前源码根目录只有
+`settings.py`、`schema.py` 和包入口，旧平铺模块不再存在。
 
 仓库是一个模块化单体，不拆微服务。当前只有一个投资组合、一个 PostgreSQL 事实库和一套 Temporal 集群；拆成网络服务只会增加延迟、失败面和运维成本。长期运行进程可以独立启动，但共享同一版本化代码、事实契约和发布清单。
 
@@ -127,7 +132,8 @@ src/investment_manager/
     reconciliation/           # 账户事实对账与恢复
   governance/                 # 治理事实、Policy 与存储
     change/                   # 治理 Agent 和变更周期
-    evaluation/               # 绩效、结算窗口与版本评价
+    evaluation/               # 预登记计划、统计门禁与版本评价
+      assessment.py           # ContextAssessment 前向评价；只读 Forecast 结果
     release/                  # 发布验证、审批和可恢复切换
     audit/                    # 架构及 Codex 隔离审计
 
@@ -135,7 +141,7 @@ src/investment_manager/
 
   research/                   # 隔离的离线研究与不可变评价制品
   entrypoints/
-    cli/                      # 薄命令适配器；research_commands.py 只注册研究命令
+    cli/                      # 按用例注册薄命令；Assessment/Research/Service 互不反向调用
     dashboard/                # 纯读投影和 Web 静态资源
   platform/                   # 数据库、Temporal、时钟等无投资语义设施
 ```
@@ -318,7 +324,7 @@ kernel/platform
 1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
-2. **预测接线**：将通过预登记评估的 ProgramBase 接入 Forecast 的持久化与结算；ContextAssessment 保持独立可评价输入，未获权限时不能影响资本。
+2. **预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算完整性检查、always-UP 配对门禁和内容寻址结果，当前管理入口不再读取旧 Proposal；下一步将通过预登记评估的 ProgramBase 接入 Forecast 的持久化与结算。两者未获权限时都不能影响资本。
 3. **组合接线**：以同一冻结时点生成 `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；空仓、拒绝和低于最小交易额都是完整终态。
 4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成幂等订单、未知结果恢复、部分成交、保护与对账，不再接收 `TradeIntent`。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。

@@ -8,7 +8,9 @@ import pytest
 import typer
 from sqlalchemy import create_engine, insert, select, update
 
-from investment_manager.entrypoints.cli.commands import register_ai_forecast_plan
+from investment_manager.entrypoints.cli.assessment_commands import (
+    register_assessment_forward_plan,
+)
 from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.forecast.codex.runtime import AnalystResult
 from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
@@ -151,7 +153,7 @@ def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
 
 def test_forward_plan_registration_rejects_caller_supplied_behavior_hash() -> None:
     with pytest.raises(typer.BadParameter, match="实际行为哈希不一致"):
-        register_ai_forecast_plan(
+        register_assessment_forward_plan(
             config=Path("config/investment-manager.yaml"),
             database_url="postgresql://unused",
             plan_id="wrong-behavior-plan",

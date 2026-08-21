@@ -10,6 +10,7 @@ from investment_manager.forecast.context.analyst import (
     AssessRunBundleBuilder,
     CodexContextAnalyst,
     assess_output_schema,
+    configured_assess_behavior_hash,
 )
 from investment_manager.forecast.context.contract import (
     AssessStructuredOutput,
@@ -532,6 +533,31 @@ def test_assess_bundle_reuses_generic_locked_runner_contract(
     assert "suggested_action" not in schema
     assert "target_notional" not in schema
     assert json.loads(schema) == assess_output_schema(packet)
+
+
+def test_configured_assessment_behavior_matches_packets_from_same_config(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    matching_config = app_config.model_copy(
+        update={
+            "decision_state": app_config.decision_state.model_copy(
+                update={
+                    "packet_policy": DecisionPacketPolicy(
+                        version=packet.policy_version,
+                        schema_version=packet.schema_version,
+                    )
+                }
+            ),
+            "assessment": app_config.assessment.model_copy(
+                update={"mandate": _mandate()}
+            ),
+        }
+    )
+
+    assert configured_assess_behavior_hash(matching_config) == _assess_bundle_builder(
+        matching_config
+    ).behavior_hash(packet)
 
 
 def test_assessment_behavior_hash_includes_schema_retry_contract(

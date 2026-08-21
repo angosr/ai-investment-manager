@@ -319,6 +319,55 @@ class SqlAssessmentViewOutcomeStore:
                 AssessmentViewOutcome.model_validate(payload) for payload in payloads
             )
 
+    def pending_assessment_count(
+        self,
+        *,
+        analysis_behavior_hash: str,
+        evaluation_version: str,
+        signal_window_start: datetime,
+        signal_window_end: datetime,
+    ) -> int:
+        """Count exact-window assessments whose required views are not terminal."""
+
+        start = require_utc(signal_window_start)
+        end = require_utc(signal_window_end)
+        if not start < end:
+            raise ValueError("Assessment pending 查询窗口顺序非法")
+        outcome_counts = (
+            select(
+                assessment_view_outcomes.c.assessment_id,
+                func.count(assessment_view_outcomes.c.outcome_id).label(
+                    "outcome_count"
+                ),
+            )
+            .where(
+                assessment_view_outcomes.c.evaluation_version
+                == evaluation_version
+            )
+            .group_by(assessment_view_outcomes.c.assessment_id)
+            .subquery()
+        )
+        with self._engine.connect() as connection:
+            return int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(context_assessments)
+                    .outerjoin(
+                        outcome_counts,
+                        outcome_counts.c.assessment_id
+                        == context_assessments.c.assessment_id,
+                    )
+                    .where(
+                        context_assessments.c.analysis_behavior_hash
+                        == analysis_behavior_hash,
+                        context_assessments.c.available_at >= start,
+                        context_assessments.c.available_at < end,
+                        func.coalesce(outcome_counts.c.outcome_count, 0)
+                        < context_assessments.c.view_count,
+                    )
+                ).scalar_one()
+            )
+
     @staticmethod
     def _require_packet_binding(
         *,

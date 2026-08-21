@@ -131,13 +131,13 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 
 完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 
-纯方向增量证据使用 `register-ai-forecast-plan` 在首个 Codex 完成时刻前冻结 signal-time 窗口，窗口完全成熟后再由 `evaluate-ai-forecast-plan` 读取同一治理计划。普通 `evaluate-ai-forecasts` 允许事后选择窗口，只是诊断命令，不能作为晋级证据。
+当前 AI 方向增量证据只评价新链 `ContextAssessment`：`register-assessment-forward-plan` 在首个 Codex 完成时刻前冻结行为哈希、资产/品种/周期、signal-time 窗口和统计门槛，窗口完全成熟后由 `evaluate-assessment-forward-plan` 读取同一治理计划及 `assessment_view_outcomes`。`UNCERTAIN` 不是被删掉的样本，而是在该时点按现金收益 0 与 always-UP 配对比较；因此大量弃权不能虚增方向样本质量。`diagnose-legacy-analysis-forecasts` 只允许事后诊断旧 Proposal 结果，不能作为当前链晋级证据，并将在旧链退役时删除。
 
 前瞻方向标签到期后可按冻结 Pipeline、品种和周期生成去重叠评价：
 
 ```bash
 QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager evaluate-ai-forecasts \
+  .venv/bin/investment-manager diagnose-legacy-analysis-forecasts \
   --config '<运行配置>' --pipeline-version '<冻结 Pipeline>' \
   --window-start '<含时区起点>' --window-end '<含时区终点>' \
   --published-at '<含时区发布时间>'
