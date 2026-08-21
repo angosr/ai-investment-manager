@@ -8,9 +8,14 @@ import styles from "./CycleRow.module.css";
 interface CycleRowProps {
   row: Row;
   onOpenSnapshot: (snapshot: Snapshot) => void;
+  loadDetail?: (cycleId: string) => Promise<CycleDetail>;
 }
 
-export function CycleRow({ row, onOpenSnapshot }: CycleRowProps) {
+export function CycleRow({
+  row,
+  onOpenSnapshot,
+  loadDetail = api.cycle,
+}: CycleRowProps) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<CycleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,12 +26,12 @@ export function CycleRow({ row, onOpenSnapshot }: CycleRowProps) {
     // 终态周期的详情不再变化，缓存即可；仍在执行中的（pending）每次展开都重取，避免停在旧态。
     if (next && (detail === null || row.category === "pending")) {
       try {
-        setDetail(await api.cycle(row.cycle_id));
+        setDetail(await loadDetail(row.cycle_id));
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     }
-  }, [open, detail, row.cycle_id, row.category]);
+  }, [open, detail, row.cycle_id, row.category, loadDetail]);
 
   return (
     <div className={`${styles.cyc} ${styles[row.category]} ${open ? styles.open : ""}`}>

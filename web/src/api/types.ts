@@ -21,7 +21,6 @@ export interface Health {
 
 export interface CapitalOverview {
   enabled: boolean;
-  entry_window: { start: string | null; end: string | null };
   account: {
     as_of: string;
     cash_balance: string;
@@ -36,10 +35,7 @@ export interface CapitalOverview {
     as_of: string | null;
     mode: "DECIDE" | "NO_CHANGE" | null;
     reason_codes: string[];
-    target_sleeve_count: number;
     risk_outcome: string | null;
-    plan_group_count: number;
-    plan_omission_count: number;
   };
   execution: {
     active_group_count: number;
@@ -62,12 +58,18 @@ export interface CapitalOverview {
       return_fraction: string;
     } | null;
   };
-  forecast: {
-    base_count: number;
-    calibrated_count: number;
-    latest_available_at: string | null;
-    latest_valid_until: string | null;
-  };
+}
+
+export interface CapitalAction {
+  activity_id: string;
+  at: string;
+  symbol: string;
+  trigger_types: string[];
+  outcome: string;
+  summary: string;
+  reason_codes: string[];
+  risk_outcome: string | null;
+  order_count: number;
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";

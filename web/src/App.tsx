@@ -24,10 +24,7 @@ export function App() {
         <div className={styles.grid}>
           <main className={styles.main}>
             {health?.capital_enabled ? (
-              <>
-                <Capital />
-                <Timeline onOpenSnapshot={setSnapshot} capitalMode />
-              </>
+              <Timeline onOpenSnapshot={setSnapshot} capitalMode />
             ) : (
               <>
                 <EquityHero />
@@ -36,13 +33,15 @@ export function App() {
             )}
           </main>
           <aside className={styles.side}>
-            {!health?.capital_enabled ? (
+            {health?.capital_enabled ? (
+              <Capital />
+            ) : (
               <>
                 <Positions />
                 <Accounts />
+                <Resources />
               </>
-            ) : null}
-            <Resources />
+            )}
           </aside>
         </div>
         <footer className={styles.foot}>

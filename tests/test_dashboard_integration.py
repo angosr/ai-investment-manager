@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import create_engine, insert
 
 from investment_manager.entrypoints.dashboard import serializers as ser
+from investment_manager.entrypoints.dashboard.app import create_app
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.execution.models import ExitReason
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
@@ -33,8 +36,8 @@ from investment_manager.schema import create_schema
 from investment_manager.state.tables import decision_packets
 
 
-def _seed_cycle(app_config, replay_input):
-    engine = create_engine("sqlite+pysqlite:///:memory:")
+def _seed_cycle(app_config, replay_input, *, database_url: str | None = None):
+    engine = create_engine(database_url or "sqlite+pysqlite:///:memory:")
     create_schema(engine)
     ledger = SqlFactLedger(engine)
     cycle = AnalysisCycle.with_adapters(
@@ -45,6 +48,48 @@ def _seed_cycle(app_config, replay_input):
     )
     result = cycle.run(replay_input)
     return engine, result
+
+
+def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_store(
+    app_config,
+    replay_input,
+    tmp_path,
+) -> None:
+    primary_url = f"sqlite+pysqlite:///{tmp_path / 'capital.db'}"
+    assessment_url = f"sqlite+pysqlite:///{tmp_path / 'assessment.db'}"
+    primary_engine = create_engine(primary_url)
+    create_schema(primary_engine)
+    _archive_engine, result = _seed_cycle(
+        app_config,
+        replay_input,
+        database_url=assessment_url,
+    )
+
+    application = create_app(
+        app_config,
+        primary_url,
+        assessment_database_url=assessment_url,
+    )
+
+    async def read_endpoints():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            return await asyncio.gather(
+                client.get("/api/assessment/cycles"),
+                client.get(f"/api/assessment/cycles/{result.cycle_id}"),
+                client.get("/api/capital/activity"),
+            )
+
+    rows, detail, capital_rows = asyncio.run(read_endpoints())
+
+    assert rows.status_code == 200
+    assert [item["cycle_id"] for item in rows.json()["cycles"]] == [result.cycle_id]
+    assert detail.status_code == 200
+    assert detail.json()["cycle_id"] == result.cycle_id
+    assert capital_rows.status_code == 200
+    assert capital_rows.json() == {"actions": []}
 
 
 def test_reader_and_serializer_render_a_real_persisted_cycle(app_config, replay_input) -> None:

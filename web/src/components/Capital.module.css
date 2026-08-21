@@ -59,27 +59,6 @@
   font-weight: 500;
   text-align: right;
 }
-.window {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 3px 8px;
-  margin-top: 12px;
-  padding: 9px;
-  color: var(--muted);
-  background: var(--warn-soft);
-  font-size: 11px;
-}
-.window b {
-  color: var(--warn);
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
-.window span {
-  grid-column: 1 / -1;
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
 .empty {
   color: var(--faint);
   font-size: 12px;

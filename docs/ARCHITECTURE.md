@@ -202,17 +202,22 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
 统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
 只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略；已持久化的
-Forecast 在窗口结束后也不再返回给新决策。Portfolio 用唯一的 `PortfolioRebalancePeriod` 以数据库
-first-writer-wins 方式冻结自然月、决策时点、统一截止时间和候选 Forecast：同月后续 Trigger 只恢复
-ExecutionGroup 与追加账户/绩效事实，不重新计算目标；错过窗口时本月 `NO_CHANGE`，空仓继续现金、旧仓
-继续持有。最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
+Forecast 把月末经济 horizon 与月首开仓有效期分开；窗口结束后 Producer 不再返回该机会。月度规则只
+属于这个 carry Producer，Capital 不拥有日历或全局再平衡周期。`CapitalCycleService` 以当前各合格
+Producer 返回的 Forecast ID 集合形成幂等机会周期；PortfolioTarget 自身已唯一绑定 cycle、账户、
+Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账本。后续不同 cadence 的 Producer
+可以在同一组合链协作，且不能绕过统一 Portfolio、Risk 和 grouped Execution。没有新机会时仅重放账户、
+恢复非终态组并检查持仓风险；最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
+每个冻结 TriggerBatch 还以自身 batch ID 作为 cause 追加一条 `CapitalCycleRecord`，直接保存品种、触发类型、
+账户快照、Forecast/Target 引用与终态；因此无 Target 的无机会/保持也是权威事实，多品种同一时刻触发不会
+依赖时间近似关联或互相覆盖。Dashboard 只投影该记录，不从“缺少 Target”反推行动。
 Shadow-only
 发布器只把与运行同为 15%/leg、30% gross 的 BTC 五折 walk-forward 制品投影成 `PROGRAM_BASE`
 CalibratedForecast；源文件 SHA-256、内部结果哈希、评价规格、数据集、策略、成本、样本与收益统计在
 装配时逐项校验，Capital ReleaseManifest 再绑定该制品哈希。研究、Portfolio 单 Sleeve 上限与 Risk
 gross/单产品上限必须满足同一尺寸恒等式。由于历史 blind 窗口已被其他候选消耗，配置必须显式记录
 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
-Venue 与账户投影；错过月初窗口时不产生新的经济目标，不为制造交易改变行为。月内主动风险退出在每次
+Venue 与账户投影；该 Producer 错过自身入口时不产生新的经济目标，不为制造交易改变行为。持仓主动风险退出在每次
 账户观察后形成显式 `PortfolioHoldingRiskReview`：正常持有为 `HOLD`，未对账、旧输入或未完成 group
 为 `DEFER`，账户/敞口/保证金/压力越界为 `EXIT`。EXIT 只能由 Portfolio 生成零暴露 Target，再走原有
 Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新开放 allocation，也不存在紧急下单旁路。
@@ -231,7 +236,8 @@ Capital 的前瞻评价不建立第二套收益账本。`CapitalShadowEvaluation
 Release、配置哈希、组件版本、Evidence 制品、资本行为哈希和未来十二个自然月，并把现金与源研究策略
 冻结为双基线；运行完整率、晚开、重复 group、未对冲/恢复时限以及全部成本维度进入同一个通用
 `EvaluationPlan` 快照。任何绑定身份变化都截断 cohort，未来 evaluator 只能从 Account、Performance、
-Forecast、RebalancePeriod 与 ExecutionGroup 权威事实派生结果。
+Forecast、PortfolioTarget、Account、Performance 与 ExecutionGroup 权威事实派生结果。旧月度 Release
+的自然月行为继续由其冻结 Forecast policy 与评价 spec 表达，不得重新泄漏为账户级 cadence。
 
 下一步是在独立事实库持续验证恢复、绩效区间和 30 日结算，并补 Sleeve 级可核对归因；随后才实现
 Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器或双路径。
@@ -257,6 +263,7 @@ src/investment_manager/
   decision_cycle/             # 冻结输入后跨域推进一次决策；不拥有领域事实
     trigger.py                # 一个 TriggerBatch 生成全部已启用消费者的不可变请求
     portfolio.py              # Portfolio → Risk → TradePlan 的纯编排
+    capital.py                # 多 Producer → 组合/风控/执行的一次资本用例
     service.py                # Trigger Worker 的运行装配
 
   market/                     # 行情、Instrument、交易状态、Feature
@@ -312,7 +319,7 @@ src/investment_manager/
 
 领域是第一级稳定边界，能力是可选的第二级边界。只有同时满足以下条件才建立能力子包：它拥有独立状态机或外部协议；至少有两个不同技术职责因同一业务原因一起变化；能够用一句业务语言命名。子包只允许再包含文件，不继续按技术层级无限嵌套。
 
-`decision_cycle` 是唯一例外：它不是业务事实域，而是最薄的跨域应用层。它只负责冻结同一批输入并按唯一决策链调用各领域，不能定义投资模型、Policy、数据库表、Repository 或第二套裁决。领域不得反向导入它。只有一个用例确实跨越两个以上领域、放入任一领域都会造成反向依赖时，代码才能进入这里。
+`decision_cycle` 是唯一例外：它不是业务事实域，而是最薄的跨域应用层。它只负责冻结同一批输入并按唯一决策链调用各领域，不能定义投资模型、Policy、数据库表、Repository 或第二套裁决。跨域用例的不可变运行收据归入最接近的业务所有者；例如 `CapitalCycleRecord` 随其账户和 Target 归 Portfolio，且只能引用而不能重新裁决 Risk、Execution 或 PnL。领域不得反向导入 `decision_cycle`。只有一个用例确实跨越两个以上领域、放入任一领域都会造成反向依赖时，代码才能进入这里。
 
 这不是要求每个领域复制相同文件模板。一个领域只有在确有独立职责时才创建模型、Policy、表、Repository、应用用例或 Workflow。单个文件足够时保持单文件；小领域继续平铺。禁止以减少目录观感为目标拆文件，也禁止以统一模板为目标制造空包、转发入口和重复装配。
 

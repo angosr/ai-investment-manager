@@ -70,6 +70,15 @@ class RecordingForecastProducer:
         return None
 
 
+class RecordingBatchConsumer:
+    def __init__(self) -> None:
+        self.batch = None
+
+    def consume(self, batch):
+        self.batch = batch
+        return None
+
+
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
@@ -123,21 +132,23 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
         dedup_key="heartbeat-1",
     )
     producer = RecordingForecastProducer()
+    consumer = RecordingBatchConsumer()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
 
     dispatches = TriggerDispatchBuilder(
         config=config,
         program_forecast_producers=(producer,),
-    ).build(
-        build_trigger_batch(
-            plan=plan,
-            triggers=(trigger,),
-            created_at=NOW,
-            deadline=NOW + timedelta(minutes=5),
-        )
-    )
+        program_batch_consumers=(consumer,),
+    ).build(batch)
 
     assert dispatches == ()
     assert producer.as_of == NOW
+    assert consumer.batch == batch
 
 
 def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:

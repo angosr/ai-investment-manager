@@ -103,14 +103,11 @@ carry_forecast:
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
 capital:
-  version: carry-capital-monthly-v3
+  version: product-capital-v4
   enabled: false
   settlement_asset: USDT
-  rebalance:
-    version: monthly-first-open-v2
-    maximum_entry_delay_minutes: 30
   decision:
-    version: carry-portfolio-monthly-v3
+    version: portfolio-net-edge-v4
     portfolio_id: primary
     enabled: true
     eligible_forecast_roles: [PROGRAM_BASE]

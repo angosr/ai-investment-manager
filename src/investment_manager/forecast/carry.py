@@ -47,8 +47,8 @@ class CarryForecastProducer:
             return None
         requested_at = require_utc(as_of)
         slot_start, slot_end = self._slot(requested_at)
-        horizon_minutes = int((slot_end - slot_start).total_seconds() // 60)
         available_at = max(require_utc(self.clock()), requested_at)
+        horizon_minutes = int((slot_end - available_at).total_seconds() // 60)
         entry_window_end = slot_start + timedelta(
             minutes=self.policy.maximum_monthly_entry_delay_minutes
         )
@@ -146,7 +146,10 @@ class CarryForecastProducer:
                 state.observed_at,
             ),
             available_at=available_at,
-            valid_until=slot_end,
+            # The economic horizon remains the natural month, while permission
+            # to initiate the position ends with this producer's entry window.
+            # Portfolio must not duplicate producer-specific cadence policy.
+            valid_until=entry_window_end,
             raw_score=expected_gross_bps,
             input_refs=tuple(
                 sorted(

@@ -37,7 +37,9 @@ CLI_CONTRACT = {
     ),
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
-    "dashboard-service": "config,database_url,release_manifest,host,port,web_dist",
+    "dashboard-service": (
+        "config,database_url,assessment_database_url,release_manifest,host,port,web_dist"
+    ),
     "diagnose-legacy-analysis-forecasts": (
         "config,database_url,window_start,window_end,published_at,pipeline_version,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
@@ -204,7 +206,7 @@ def test_schema_shape_is_frozen_during_structure_migration() -> None:
 
     assert len(contract) == 75
     assert content_hash(contract) == (
-        "1527aa2f7a1eab096aea79f64139139db116b75294614adb84fe8d0dcb54d44f"
+        "a0d60f2e1a877b4d36d0319a3e697b512221871c7f2a487d44671ba79b56b21c"
     )
 
 

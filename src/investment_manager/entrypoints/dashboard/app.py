@@ -20,6 +20,7 @@ from starlette.staticfiles import StaticFiles
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
+    serialize_capital_activity,
     serialize_capital_overview,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -43,6 +44,7 @@ def create_app(
     config: AppConfig,
     database_url: str,
     *,
+    assessment_database_url: str | None = None,
     web_dist: Path | None = None,
     stream_interval_seconds: float = 3.0,
     slow_refresh_every_ticks: int = 5,
@@ -53,6 +55,11 @@ def create_app(
         raise ValueError("Dashboard 慢速刷新倍数必须至少为 1")
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
+    assessment_reader = (
+        DashboardReader(build_engine(assessment_database_url), config)
+        if assessment_database_url is not None
+        else None
+    )
     capital_reader = CapitalDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
@@ -120,6 +127,35 @@ def create_app(
         now = datetime.now(UTC)
         overview = await run_in_threadpool(capital_reader.overview, now=now)
         return _json(serialize_capital_overview(overview))
+
+    async def capital_activity(request: Request) -> JSONResponse:
+        items = await run_in_threadpool(
+            capital_reader.activity,
+            before=_parse_before(request),
+            limit=_parse_limit(request),
+        )
+        return _json(serialize_capital_activity(items))
+
+    async def assessment_cycles(request: Request) -> JSONResponse:
+        if assessment_reader is None:
+            return _json({"cycles": []})
+        rows = await run_in_threadpool(
+            assessment_reader.list_cycles,
+            before=_parse_before(request),
+            limit=_parse_limit(request),
+        )
+        return _json({"cycles": [ser.cycle_row(row) for row in rows]})
+
+    async def assessment_cycle_detail(request: Request) -> JSONResponse:
+        if assessment_reader is None:
+            return _json({"detail": "assessment archive is not configured"}, status_code=404)
+        facts = await run_in_threadpool(
+            assessment_reader.get_cycle,
+            request.path_params["cycle_id"],
+        )
+        if facts is None:
+            return _json({"detail": "cycle not found"}, status_code=404)
+        return _json(ser.cycle_detail(facts))
 
     async def cycles(request: Request) -> JSONResponse:
         before = _parse_before(request)
@@ -215,6 +251,12 @@ def create_app(
         Route("/api/resources", resources),
         Route("/api/reconciliation", reconciliation),
         Route("/api/capital", capital),
+        Route("/api/capital/activity", capital_activity),
+        Route("/api/assessment/cycles", assessment_cycles),
+        Route(
+            "/api/assessment/cycles/{cycle_id}",
+            assessment_cycle_detail,
+        ),
         Route("/api/stream", stream),
     ]
     app = Starlette(routes=routes)

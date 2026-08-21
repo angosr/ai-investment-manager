@@ -58,6 +58,22 @@ def run_trigger_service(
         )
         if terminated and on_superseded is not None:
             on_superseded(terminated)
+        capital_consumer = (
+            assemble_capital_cycle(config, engine) if config.capital.enabled else None
+        )
+        standalone_carry = (
+            CarryForecastProducer(
+                policy=config.carry_forecast,
+                market=SqlMarketDataStore(engine),
+                store=SqlForecastStore(engine),
+                maximum_spot_age_seconds=config.risk.maximum_market_age_seconds,
+                maximum_perpetual_age_seconds=(
+                    config.market_data.perpetual_poll_seconds * 3
+                ),
+            )
+            if config.carry_forecast.enabled and capital_consumer is None
+            else None
+        )
         activities = TriggerCoordinatorActivities(
             TriggerDispatchBuilder(
                 config=config,
@@ -67,20 +83,11 @@ def run_trigger_service(
                     else None
                 ),
                 batch_recorder=repository,
-                program_forecast_producers=(
-                    assemble_capital_cycle(config, engine)
-                    if config.capital.enabled
-                    else CarryForecastProducer(
-                        policy=config.carry_forecast,
-                        market=SqlMarketDataStore(engine),
-                        store=SqlForecastStore(engine),
-                        maximum_spot_age_seconds=(config.risk.maximum_market_age_seconds),
-                        maximum_perpetual_age_seconds=(
-                            config.market_data.perpetual_poll_seconds * 3
-                        ),
-                    ),
-                )
-                if config.carry_forecast.enabled
+                program_forecast_producers=(standalone_carry,)
+                if standalone_carry is not None
+                else (),
+                program_batch_consumers=(capital_consumer,)
+                if capital_consumer is not None
                 else (),
             )
         )

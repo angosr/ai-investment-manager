@@ -50,6 +50,10 @@ class ProgramForecastProducer(Protocol):
     def produce(self, *, as_of: datetime) -> object: ...
 
 
+class ProgramBatchConsumer(Protocol):
+    def consume(self, batch: TriggerBatch) -> object: ...
+
+
 class AnalysisCallDeferred(Exception):
     def __init__(self, retry_at: datetime) -> None:
         self.retry_at = require_utc(retry_at)
@@ -66,6 +70,7 @@ class TriggerDispatchBuilder:
         packet_preparation: DecisionPacketPreparation | None = None,
         batch_recorder: TriggerBatchRecorder | None = None,
         program_forecast_producers: tuple[ProgramForecastProducer, ...] = (),
+        program_batch_consumers: tuple[ProgramBatchConsumer, ...] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if config.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
@@ -76,12 +81,15 @@ class TriggerDispatchBuilder:
         self._packet_preparation = packet_preparation
         self._batch_recorder = batch_recorder
         self._program_forecast_producers = program_forecast_producers
+        self._program_batch_consumers = program_batch_consumers
         self._clock = clock
 
     def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
         for producer in self._program_forecast_producers:
             producer.produce(as_of=as_of)
+        for consumer in self._program_batch_consumers:
+            consumer.consume(batch)
         trigger_types = {item.trigger_type for item in batch.triggers}
         intelligence_evidence_ids = tuple(
             sorted(

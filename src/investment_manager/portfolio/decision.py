@@ -52,6 +52,7 @@ class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     estimated_variable_cost_bps: Money
     forecast: CalibratedForecast
+    refresh_target: bool = True
 
 
 class PortfolioDecisionEngine:
@@ -124,6 +125,7 @@ class PortfolioDecisionEngine:
                 (
                     item
                     for item in sleeves
+                    if item.refresh_target
                     if self._is_eligible(
                         item,
                         quote_by_instrument=quote_by_instrument,
@@ -139,33 +141,59 @@ class PortfolioDecisionEngine:
                     item.forecast.dispersion_bps,
                     item.sleeve_id,
                 ),
-            )[:1]
-        )
-        selected_ids = {item.sleeve_id for item in eligible}
-        desired_notional = (
-            min(
-                account.equity * self._policy.maximum_total_exposure_fraction,
-                account.equity * self._policy.maximum_single_sleeve_fraction,
             )
-            if eligible
-            else Decimal("0")
         )
+        retained_ids = {
+            item.sleeve_id
+            for item in sleeves
+            if not item.refresh_target and current_by_sleeve[item.sleeve_id] > 0
+        }
+        desired_by_sleeve = {
+            sleeve_id: current_by_sleeve[sleeve_id] for sleeve_id in retained_ids
+        }
+        remaining_capacity = max(
+            Decimal("0"),
+            account.equity * self._policy.maximum_total_exposure_fraction
+            - sum(desired_by_sleeve.values()),
+        )
+        single_sleeve_limit = (
+            account.equity * self._policy.maximum_single_sleeve_fraction
+        )
+        selected_ids: set[str] = set()
+        for item in eligible:
+            desired = min(single_sleeve_limit, remaining_capacity)
+            if desired <= 0:
+                break
+            desired_by_sleeve[item.sleeve_id] = desired
+            selected_ids.add(item.sleeve_id)
+            remaining_capacity -= desired
         targets = tuple(
             self._target(
                 item,
-                desired_notional=(
-                    desired_notional if item.sleeve_id in selected_ids else Decimal("0")
+                desired_notional=desired_by_sleeve.get(
+                    item.sleeve_id,
+                    Decimal("0"),
                 ),
                 quote_by_instrument=quote_by_instrument,
                 as_of=as_of,
+                allocation_reason=(
+                    "POSITIVE_CONSERVATIVE_NET_EDGE"
+                    if item.sleeve_id in selected_ids
+                    else "UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST"
+                    if item.sleeve_id in retained_ids
+                    else "CASH_SELECTED"
+                ),
             )
             for item in sleeves
-            if item.sleeve_id in selected_ids or current_by_sleeve[item.sleeve_id] > 0
+            if item.sleeve_id in selected_ids
+            or current_by_sleeve[item.sleeve_id] > 0
         )
-        desired_by_sleeve = {item.sleeve_id: item.desired_gross_notional for item in targets}
+        frozen_desired = {
+            item.sleeve_id: item.desired_gross_notional for item in targets
+        }
         turnover = sum(
             abs(
-                desired_by_sleeve.get(item.sleeve_id, Decimal("0"))
+                frozen_desired.get(item.sleeve_id, Decimal("0"))
                 - current_by_sleeve[item.sleeve_id]
             )
             for item in sleeves
@@ -180,23 +208,27 @@ class PortfolioDecisionEngine:
                     desired_notional=current_by_sleeve[item.sleeve_id],
                     quote_by_instrument=quote_by_instrument,
                     as_of=as_of,
+                    allocation_reason="REBALANCE_BELOW_MINIMUM_CURRENT_TARGET",
                 )
                 for item in sleeves
                 if current_by_sleeve[item.sleeve_id] > 0
             )
         reason_codes = set()
-        if not eligible:
+        if not eligible and not retained_ids:
             reason_codes.add("CASH_SELECTED_NO_ELIGIBLE_FORECAST")
-        else:
+        if selected_ids:
             reason_codes.add("POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED")
+        if retained_ids:
+            reason_codes.add("UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST")
         if below_rebalance_minimum:
             reason_codes.add("REBALANCE_BELOW_MINIMUM")
 
         valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
         if decision_valid_until is not None:
             valid_until = min(valid_until, decision_valid_until)
-        if eligible:
-            valid_until = min(valid_until, *(item.forecast.valid_until for item in eligible))
+        selected = tuple(item for item in eligible if item.sleeve_id in selected_ids)
+        if selected:
+            valid_until = min(valid_until, *(item.forecast.valid_until for item in selected))
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._policy.portfolio_id,
@@ -360,6 +392,7 @@ class PortfolioDecisionEngine:
         desired_notional: Decimal,
         quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
+        allocation_reason: str,
     ) -> SleeveTarget:
         remaining_gross = cls._remaining_gross_edge(
             item,
@@ -380,11 +413,7 @@ class PortfolioDecisionEngine:
                 sorted(
                     (
                         f"FORECAST_ROLE:{item.forecast.role.value}",
-                        (
-                            "POSITIVE_CONSERVATIVE_NET_EDGE"
-                            if desired_notional > 0
-                            else "CASH_SELECTED"
-                        ),
+                        allocation_reason,
                     )
                 )
             ),

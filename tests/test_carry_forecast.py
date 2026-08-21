@@ -159,16 +159,15 @@ def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(
     assert released.base_forecast_id == first.forecast_id
     assert released.conservative_gross_bps > Decimal("20")
     evidence = app_config.carry_forecast.evidence
+    horizon_fraction = Decimal(first.horizon_minutes) / Decimal("525960")
     expected_conservative_net_bps = (
         evidence.conservative_annualized_net_fraction
-        * Decimal(first.horizon_minutes)
-        / Decimal("525960")
+        * horizon_fraction
         * Decimal("10000")
         / evidence.evaluated_gross_exposure_fraction
     )
-    assert (
-        released.conservative_gross_bps - evidence.round_trip_cost_bps
-        == expected_conservative_net_bps
+    assert released.conservative_gross_bps == (
+        expected_conservative_net_bps + evidence.round_trip_cost_bps
     )
     assert released.calibration_ref == (
         evidence.source_evaluation_id
@@ -215,7 +214,10 @@ def test_carry_forecast_horizon_matches_the_exact_calendar_month(
 
     assert forecast is not None
     assert forecast.horizon_minutes == expected_horizon_minutes
-    assert forecast.valid_until == as_of.replace(month=as_of.month + 1)
+    assert forecast.valid_until == as_of + timedelta(minutes=30)
+    assert forecast.economic_horizon_end == as_of + timedelta(
+        minutes=expected_horizon_minutes
+    )
 
 
 def test_carry_producer_does_not_use_an_on_time_request_processed_late(

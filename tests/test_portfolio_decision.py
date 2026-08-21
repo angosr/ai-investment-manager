@@ -134,6 +134,7 @@ def _input(
     *,
     forecast: CalibratedForecast | None = None,
     cost_bps: str = "5",
+    refresh_target: bool = True,
 ) -> PortfolioSleeveInput:
     forecast = forecast or _forecast()
     sleeve_id = SleeveTarget.identity_for(
@@ -145,6 +146,7 @@ def _input(
         sleeve_id=sleeve_id,
         estimated_variable_cost_bps=Decimal(cost_bps),
         forecast=forecast,
+        refresh_target=refresh_target,
     )
 
 
@@ -245,7 +247,7 @@ def test_engine_allocates_one_multi_leg_sleeve_in_gross_notional() -> None:
     )
 
 
-def test_engine_selects_highest_fee_adjusted_sleeve() -> None:
+def test_engine_ranks_sleeves_and_allocates_only_remaining_capacity() -> None:
     btc = _input(forecast=_forecast(forecast_id="btc", gross_bps="20"))
     eth_forecast = _forecast("ETHUSDT", forecast_id="eth", gross_bps="30")
     eth = _input(forecast=eth_forecast)
@@ -261,7 +263,36 @@ def test_engine_selects_highest_fee_adjusted_sleeve() -> None:
     )
 
     assert result is not None
-    assert result.sleeves[0].forecast_ids == ("eth",)
+    desired = {
+        item.forecast_ids: item.desired_gross_notional for item in result.sleeves
+    }
+    assert desired == {("eth",): Decimal("3000"), ("btc",): Decimal("2000")}
+
+
+def test_engine_retains_unrefreshed_sleeve_while_allocating_new_opportunity() -> None:
+    btc_forecast = _forecast(forecast_id="btc")
+    eth_forecast = _forecast("ETHUSDT", forecast_id="eth", gross_bps="30")
+    btc = _input(forecast=btc_forecast, refresh_target=False)
+    eth = _input(forecast=eth_forecast)
+    quotes = tuple(
+        sorted((*_quotes(), *_quotes("ETHUSDT")), key=lambda item: item.instrument.key)
+    )
+    sleeves = tuple(sorted((btc, eth), key=lambda item: item.sleeve_id))
+
+    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(forecast=btc_forecast, gross="2500"),
+        sleeves=sleeves,
+        quotes=quotes,
+    )
+
+    assert result is not None
+    desired = {
+        item.forecast_ids: item.desired_gross_notional for item in result.sleeves
+    }
+    assert desired == {("btc",): Decimal("2500.125"), ("eth",): Decimal("2499.875")}
+    assert "UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST" in result.reason_codes
 
 
 def test_engine_emits_explicit_zero_target_to_exit_open_sleeve() -> None:

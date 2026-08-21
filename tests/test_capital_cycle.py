@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, insert, select
 
 from investment_manager.decision_cycle.capital import assemble_capital_cycle
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
@@ -14,10 +14,11 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
 from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.portfolio.models import CapitalCycleRecord
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
+    capital_cycle_records,
     portfolio_performance_intervals,
-    portfolio_rebalance_periods,
     portfolio_targets,
 )
 from investment_manager.risk.portfolio import HoldingRiskOutcome, PortfolioHoldingRiskReview
@@ -25,6 +26,7 @@ from investment_manager.risk.tables import (
     portfolio_holding_risk_reviews,
     portfolio_risk_decisions,
 )
+from investment_manager.scheduling.tables import analysis_trigger_batches
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
@@ -54,6 +56,7 @@ def _put_market(
             source="test",
         )
     )
+
     perpetual = next(
         item.instrument
         for item in config.capital.execution_specs
@@ -93,6 +96,27 @@ def _put_market(
     )
 
 
+def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
+    batch_id = f"capital-test-batch-{sequence}"
+    with engine.begin() as connection:
+        connection.execute(
+            insert(analysis_trigger_batches).values(
+                batch_id=batch_id,
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                plan_revision=1,
+                first_occurred_at=at,
+                first_observed_at=at,
+                batched_at=at,
+                analysis_submitted_at=at,
+                payload={
+                    "batch_id": batch_id,
+                    "triggers": [{"trigger_type": "HEARTBEAT"}],
+                },
+            )
+        )
+
+
 def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -101,11 +125,32 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     _put_market(market, config, at=NOW, sequence=7)
     service = assemble_capital_cycle(config, engine)
 
-    first = service.produce(as_of=NOW)
-    replay = service.produce(as_of=NOW)
+    first = service.produce(
+        as_of=NOW,
+        cause_id="capital-test-batch-1",
+        trigger_batch_id="capital-test-batch-1",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+    replay = service.produce(
+        as_of=NOW,
+        cause_id="capital-test-batch-1",
+        trigger_batch_id="capital-test-batch-1",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+    same_time_other_batch = service.produce(
+        as_of=NOW,
+        cause_id="capital-test-batch-other-symbol",
+        trigger_batch_id="capital-test-batch-other-symbol",
+        symbol="ETHUSDT",
+        trigger_types=("MARKET_SHOCK",),
+    )
+    _put_trigger_batch(engine, config, at=NOW, sequence=1)
 
     assert isinstance(first, TradePlanExecutionResult)
     assert replay == first
+    assert same_time_other_batch == first
     assert len(first.groups) == 1
     assert first.groups[0].terminal
     assert first.groups[0].valid_until == NOW.replace(minute=30)
@@ -122,6 +167,7 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
             connection.scalar(select(func.count()).select_from(portfolio_performance_intervals))
             == 1
         )
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 2
 
     overview = CapitalDashboardReader(engine, config).overview(now=NOW)
     assert (
@@ -134,7 +180,6 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     dto = serialize_capital_overview(overview)
     assert dto["account"]["equity"] == "9996.91685"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
-    assert dto["decision"]["plan_group_count"] == 1
     assert dto["execution"] == {
         "active_group_count": 0,
         "active_groups": [],
@@ -144,11 +189,47 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert dto["performance"]["cumulative_net_pnl"] == "-3.08315"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
     assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
-    assert dto["forecast"]["base_count"] == 1
-    assert dto["forecast"]["calibrated_count"] == 1
+    activity = CapitalDashboardReader(engine, config).activity()
+    assert len(activity) == 2
+    activity_by_symbol = {item.symbol: item for item in activity}
+    assert activity_by_symbol["ETHUSDT"].outcome == "OPPORTUNITY_ALREADY_DECIDED"
+    assert activity_by_symbol["ETHUSDT"].order_count == 0
+    assert activity_by_symbol["ETHUSDT"].trigger_types == ("MARKET_SHOCK",)
+    assert activity_by_symbol["BTCUSDT"].outcome == "EXECUTED"
+    assert activity_by_symbol["BTCUSDT"].trigger_types == ("HEARTBEAT",)
 
 
-def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_window() -> None:
+def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=8)
+    available_at = NOW + timedelta(seconds=5)
+    service = assemble_capital_cycle(
+        config,
+        engine,
+        forecast_clock=lambda: available_at,
+    )
+
+    result = service.produce(
+        as_of=NOW,
+        cause_id="delayed-capital-batch",
+        trigger_batch_id="delayed-capital-batch",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert result.account.as_of == available_at
+    with engine.connect() as connection:
+        payload = connection.execute(select(capital_cycle_records.c.payload)).scalar_one()
+    record = CapitalCycleRecord.model_validate(payload)
+    assert record.triggered_at == NOW
+    assert record.evaluated_at == available_at
+
+
+def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -183,7 +264,14 @@ def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_windo
         perpetual_bid="103280",
         perpetual_ask="103290",
     )
-    after_restart = assemble_capital_cycle(config, engine).produce(as_of=missed)
+    after_restart = assemble_capital_cycle(config, engine).produce(
+        as_of=missed,
+        cause_id="capital-test-batch-2",
+        trigger_batch_id="capital-test-batch-2",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+    _put_trigger_batch(engine, config, at=missed, sequence=2)
 
     assert held.outcome.value == "NO_CHANGE"
     assert after_restart.outcome.value == "NO_CHANGE"
@@ -192,16 +280,15 @@ def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_windo
     assert dto["decision"] == {
         "as_of": missed.isoformat(),
         "mode": "NO_CHANGE",
-        "reason_codes": ["MONTHLY_ENTRY_WINDOW_MISSED_NO_CHANGE"],
-        "target_sleeve_count": 0,
+        "reason_codes": ["NO_NEW_OPPORTUNITY_HOLDING_REVIEWED"],
         "risk_outcome": None,
-        "plan_group_count": 0,
-        "plan_omission_count": 0,
     }
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
-        assert connection.scalar(select(func.count()).select_from(portfolio_rebalance_periods)) == 2
+    activity = CapitalDashboardReader(engine, config).activity()
+    assert activity[0].outcome == "HOLD"
+    assert activity[0].reason_codes == ("NO_NEW_OPPORTUNITY_HOLDING_REVIEWED",)
 
 
 def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:

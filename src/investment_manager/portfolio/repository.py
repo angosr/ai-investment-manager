@@ -16,15 +16,15 @@ from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
 from investment_manager.portfolio.models import (
+    CapitalCycleRecord,
     PortfolioAccountSnapshot,
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
-from investment_manager.portfolio.rebalance import PortfolioRebalancePeriod
 from investment_manager.portfolio.tables import (
+    capital_cycle_records,
     portfolio_account_snapshots,
     portfolio_performance_intervals,
-    portfolio_rebalance_periods,
     portfolio_target_forecasts,
     portfolio_targets,
 )
@@ -54,20 +54,6 @@ class PortfolioStore(Protocol):
         portfolio_id: str,
         as_of: datetime,
     ) -> PortfolioAccountSnapshot | None: ...
-
-    def rebalance_period(
-        self,
-        *,
-        portfolio_id: str,
-        policy_version: str,
-        period_start: datetime,
-    ) -> PortfolioRebalancePeriod | None: ...
-
-    def claim_rebalance_period(
-        self,
-        period: PortfolioRebalancePeriod,
-    ) -> PortfolioRebalancePeriod: ...
-
 
 class SqlPortfolioStore:
     """Immutable account/target ledger; retries must reproduce exact facts."""
@@ -201,59 +187,6 @@ class SqlPortfolioStore:
                 raise ValueError("Portfolio target cycle 已存在且内容不同") from None
             return False
 
-    def rebalance_period(
-        self,
-        *,
-        portfolio_id: str,
-        policy_version: str,
-        period_start: datetime,
-    ) -> PortfolioRebalancePeriod | None:
-        period_start = require_utc(period_start)
-        with self._engine.connect() as connection:
-            payload = connection.execute(
-                select(portfolio_rebalance_periods.c.payload).where(
-                    portfolio_rebalance_periods.c.portfolio_id == portfolio_id,
-                    portfolio_rebalance_periods.c.policy_version == policy_version,
-                    portfolio_rebalance_periods.c.period_start == period_start,
-                )
-            ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else PortfolioRebalancePeriod.model_validate(payload)
-        )
-
-    def claim_rebalance_period(
-        self,
-        period: PortfolioRebalancePeriod,
-    ) -> PortfolioRebalancePeriod:
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(portfolio_rebalance_periods).values(
-                        period_id=period.period_id,
-                        portfolio_id=period.portfolio_id,
-                        policy_version=period.policy_version,
-                        period_start=period.period_start,
-                        period_end=period.period_end,
-                        entry_window_end=period.entry_window_end,
-                        decision_at=period.decision_at,
-                        mode=period.mode.value,
-                        candidate_forecast_id=period.candidate_forecast_id,
-                        payload=period.model_dump(mode="json"),
-                    )
-                )
-            return period
-        except IntegrityError:
-            existing = self.rebalance_period(
-                portfolio_id=period.portfolio_id,
-                policy_version=period.policy_version,
-                period_start=period.period_start,
-            )
-            if existing is None:  # pragma: no cover - database contract guard
-                raise
-            return existing
-
     def target(self, target_id: str) -> PortfolioTarget | None:
         with self._engine.connect() as connection:
             payload = connection.execute(
@@ -329,6 +262,82 @@ class SqlPortfolioStore:
                 for forecast_id in sleeve.forecast_ids
             ):
                 raise ValueError("PortfolioTarget Sleeve 与权威 Forecast 身份不一致")
+
+
+class SqlCapitalCycleStore:
+    """Persist a causal capital receipt after validating all domain references."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def record(self, record: CapitalCycleRecord) -> bool:
+        try:
+            with self._engine.begin() as connection:
+                account = connection.execute(
+                    select(portfolio_account_snapshots.c.payload).where(
+                        portfolio_account_snapshots.c.snapshot_id
+                        == record.account_snapshot_id
+                    )
+                ).scalar_one_or_none()
+                if account is None or PortfolioAccountSnapshot.model_validate(
+                    account
+                ).portfolio_id != record.portfolio_id:
+                    raise ValueError("CapitalCycleRecord 缺少匹配账户快照")
+                if record.target_id is not None:
+                    target = connection.execute(
+                        select(portfolio_targets.c.payload).where(
+                            portfolio_targets.c.target_id == record.target_id
+                        )
+                    ).scalar_one_or_none()
+                    loaded_target = (
+                        None if target is None else PortfolioTarget.model_validate(target)
+                    )
+                    if loaded_target is None or (
+                        loaded_target.portfolio_id != record.portfolio_id
+                        or loaded_target.cycle_id != record.decision_cycle_id
+                    ):
+                        raise ValueError("CapitalCycleRecord 缺少匹配 PortfolioTarget")
+                if record.forecast_ids:
+                    present = set(
+                        connection.execute(
+                            select(forecasts.c.forecast_id).where(
+                                forecasts.c.forecast_id.in_(record.forecast_ids)
+                            )
+                        ).scalars()
+                    )
+                    if present != set(record.forecast_ids):
+                        raise ValueError("CapitalCycleRecord 引用了不存在的 Forecast")
+                connection.execute(
+                    insert(capital_cycle_records).values(
+                        record_id=record.record_id,
+                        portfolio_id=record.portfolio_id,
+                        pipeline_id=record.pipeline_id,
+                        cause_id=record.cause_id,
+                        evaluated_at=record.evaluated_at,
+                        decision_cycle_id=record.decision_cycle_id,
+                        account_snapshot_id=record.account_snapshot_id,
+                        target_id=record.target_id,
+                        outcome=record.outcome.value,
+                        payload=record.model_dump(mode="json"),
+                    )
+                )
+            return True
+        except IntegrityError:
+            existing = self.get(record.record_id)
+            if existing != record:
+                raise ValueError(
+                    "CapitalCycleRecord evaluation 已存在且内容不同"
+                ) from None
+            return False
+
+    def get(self, record_id: str) -> CapitalCycleRecord | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(capital_cycle_records.c.payload).where(
+                    capital_cycle_records.c.record_id == record_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else CapitalCycleRecord.model_validate(payload)
 
 
 class SqlPortfolioPerformanceStore:

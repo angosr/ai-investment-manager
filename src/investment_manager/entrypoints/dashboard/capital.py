@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -16,19 +16,18 @@ from investment_manager.execution.tables import (
     mock_product_orders,
     trade_plans,
 )
-from investment_manager.forecast.tables import forecasts
 from investment_manager.kernel.time import require_utc
-from investment_manager.platform.time import database_utc
 from investment_manager.portfolio.models import (
+    CapitalCycleOutcome,
+    CapitalCycleRecord,
     PortfolioAccountSnapshot,
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
-from investment_manager.portfolio.rebalance import PortfolioRebalancePeriod
 from investment_manager.portfolio.tables import (
+    capital_cycle_records,
     portfolio_account_snapshots,
     portfolio_performance_intervals,
-    portfolio_rebalance_periods,
     portfolio_targets,
 )
 from investment_manager.risk.portfolio import PortfolioRiskDecision
@@ -40,21 +39,27 @@ from investment_manager.settings import AppConfig
 class CapitalOverview:
     enabled: bool
     account: PortfolioAccountSnapshot | None = None
-    rebalance_period: PortfolioRebalancePeriod | None = None
+    cycle_record: CapitalCycleRecord | None = None
     target: PortfolioTarget | None = None
     risk: PortfolioRiskDecision | None = None
-    plan: TradePlan | None = None
     active_groups: tuple[ExecutionGroup, ...] = ()
-    base_forecast_count: int = 0
-    calibrated_forecast_count: int = 0
-    latest_forecast_available_at: datetime | None = None
-    latest_forecast_valid_until: datetime | None = None
     total_order_count: int = 0
-    entry_window_start: datetime | None = None
-    entry_window_end: datetime | None = None
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalActivity:
+    activity_id: str
+    at: datetime
+    symbol: str
+    trigger_types: tuple[str, ...]
+    outcome: str
+    summary: str
+    reason_codes: tuple[str, ...] = ()
+    risk_outcome: str | None = None
+    order_count: int = 0
 
 
 class CapitalDashboardReader:
@@ -77,12 +82,16 @@ class CapitalDashboardReader:
                 PortfolioAccountSnapshot,
                 secondary_order=portfolio_account_snapshots.c.revision,
             )
-            rebalance_period = self._latest_payload(
+            cycle_record = self._latest_payload(
                 connection,
-                portfolio_rebalance_periods.c.payload,
-                portfolio_rebalance_periods.c.decision_at,
-                portfolio_rebalance_periods.c.period_id,
-                PortfolioRebalancePeriod,
+                capital_cycle_records.c.payload,
+                capital_cycle_records.c.evaluated_at,
+                capital_cycle_records.c.record_id,
+                CapitalCycleRecord,
+                where_clause=(
+                    capital_cycle_records.c.pipeline_id
+                    == self._config.pipeline.version
+                ),
             )
             target = self._latest_payload(
                 connection,
@@ -91,10 +100,10 @@ class CapitalDashboardReader:
                 portfolio_targets.c.target_id,
                 PortfolioTarget,
             )
-            if rebalance_period is not None and target is not None and not (
-                rebalance_period.period_start
-                <= target.as_of
-                < rebalance_period.period_end
+            if (
+                account is not None
+                and target is not None
+                and account.as_of > target.as_of
             ):
                 target = None
             risk = None
@@ -105,16 +114,6 @@ class CapitalDashboardReader:
                         portfolio_risk_decisions.c.target_id == target.target_id
                     ),
                     PortfolioRiskDecision,
-                )
-            plan = None
-            if risk is not None and risk.approved_target is not None:
-                plan = self._payload_for(
-                    connection,
-                    select(trade_plans.c.payload).where(
-                        trade_plans.c.approved_target_id
-                        == risk.approved_target.approved_target_id
-                    ),
-                    TradePlan,
                 )
             active = tuple(
                 ExecutionGroup.model_validate(payload)
@@ -127,20 +126,6 @@ class CapitalDashboardReader:
                     )
                 ).scalars()
             )
-            forecast_counts = {
-                kind: int(count)
-                for kind, count in connection.execute(
-                    select(forecasts.c.kind, func.count()).group_by(forecasts.c.kind)
-                )
-            }
-            latest_forecast = connection.execute(
-                select(forecasts.c.available_at, forecasts.c.valid_until)
-                .order_by(
-                    forecasts.c.available_at.desc(),
-                    forecasts.c.forecast_id.desc(),
-                )
-                .limit(1)
-            ).one_or_none()
             order_count = int(
                 connection.scalar(select(func.count()).select_from(mock_product_orders))
                 or 0
@@ -191,33 +176,243 @@ class CapitalDashboardReader:
                     == self._config.capital.decision.portfolio_id
                 ),
             )
-        window_start, window_end = self._entry_window(now)
         return CapitalOverview(
             enabled=True,
             account=account,
-            rebalance_period=rebalance_period,
+            cycle_record=cycle_record,
             target=target,
             risk=risk,
-            plan=plan,
             active_groups=active,
-            base_forecast_count=forecast_counts.get("BASE", 0),
-            calibrated_forecast_count=forecast_counts.get("CALIBRATED", 0),
-            latest_forecast_available_at=(
-                database_utc(latest_forecast.available_at)
-                if latest_forecast is not None
-                else None
-            ),
-            latest_forecast_valid_until=(
-                database_utc(latest_forecast.valid_until)
-                if latest_forecast is not None
-                else None
-            ),
             total_order_count=order_count,
-            entry_window_start=window_start,
-            entry_window_end=window_end,
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
+        )
+
+    def activity(
+        self,
+        *,
+        before: datetime | None = None,
+        limit: int = 30,
+    ) -> tuple[CapitalActivity, ...]:
+        """Project one concise action row per admitted capital trigger batch."""
+
+        if limit < 1 or limit > 100:
+            raise ValueError("Capital activity limit 必须在 1..100")
+        query = select(
+            capital_cycle_records.c.evaluated_at,
+            capital_cycle_records.c.payload,
+        ).where(capital_cycle_records.c.pipeline_id == self._config.pipeline.version)
+        if before is not None:
+            query = query.where(
+                capital_cycle_records.c.evaluated_at < require_utc(before)
+            )
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                query.order_by(
+                    capital_cycle_records.c.evaluated_at.desc(),
+                    capital_cycle_records.c.record_id.desc(),
+                ).limit(limit)
+            ).all()
+            if not rows:
+                return ()
+            records = tuple(
+                CapitalCycleRecord.model_validate(item.payload) for item in rows
+            )
+            target_ids = tuple(
+                item.target_id for item in records if item.target_id is not None
+            )
+            targets = (
+                {
+                    item.target_id: PortfolioTarget.model_validate(item.payload)
+                    for item in connection.execute(
+                        select(
+                            portfolio_targets.c.target_id,
+                            portfolio_targets.c.payload,
+                        ).where(portfolio_targets.c.target_id.in_(target_ids))
+                    )
+                }
+                if target_ids
+                else {}
+            )
+            risks = (
+                {
+                    item.target_id: PortfolioRiskDecision.model_validate(item.payload)
+                    for item in connection.execute(
+                        select(
+                            portfolio_risk_decisions.c.target_id,
+                            portfolio_risk_decisions.c.payload,
+                        ).where(portfolio_risk_decisions.c.target_id.in_(target_ids))
+                    )
+                }
+                if target_ids
+                else {}
+            )
+            approved_ids = tuple(
+                item.approved_target.approved_target_id
+                for item in risks.values()
+                if item.approved_target is not None
+            )
+            plans = (
+                {
+                    item.approved_target_id: TradePlan.model_validate(item.payload)
+                    for item in connection.execute(
+                        select(
+                            trade_plans.c.approved_target_id,
+                            trade_plans.c.payload,
+                        ).where(trade_plans.c.approved_target_id.in_(approved_ids))
+                    )
+                }
+                if approved_ids
+                else {}
+            )
+            plan_ids = tuple(item.plan_id for item in plans.values())
+            groups_by_plan: dict[str, list[ExecutionGroup]] = {}
+            if plan_ids:
+                for item in connection.execute(
+                    select(execution_groups.c.plan_id, execution_groups.c.payload).where(
+                        execution_groups.c.plan_id.in_(plan_ids)
+                    )
+                ):
+                    groups_by_plan.setdefault(item.plan_id, []).append(
+                        ExecutionGroup.model_validate(item.payload)
+                    )
+            order_counts = (
+                {
+                    item.plan_id: int(item.order_count)
+                    for item in connection.execute(
+                        select(
+                            execution_groups.c.plan_id,
+                            func.count(mock_product_orders.c.client_order_id).label(
+                                "order_count"
+                            ),
+                        )
+                        .select_from(
+                            execution_groups.outerjoin(
+                                mock_product_orders,
+                                mock_product_orders.c.group_id
+                                == execution_groups.c.group_id,
+                            )
+                        )
+                        .where(execution_groups.c.plan_id.in_(plan_ids))
+                        .group_by(execution_groups.c.plan_id)
+                    )
+                }
+                if plan_ids
+                else {}
+            )
+        return tuple(
+            self._activity_row(
+                record=record,
+                target=(
+                    targets.get(record.target_id)
+                    if record.target_id is not None
+                    else None
+                ),
+                risks=risks,
+                plans=plans,
+                groups_by_plan=groups_by_plan,
+                order_counts=order_counts,
+            )
+            for record in records
+        )
+
+    @staticmethod
+    def _activity_row(
+        *,
+        record: CapitalCycleRecord,
+        target: PortfolioTarget | None,
+        risks: dict[str, PortfolioRiskDecision],
+        plans: dict[str, TradePlan],
+        groups_by_plan: dict[str, list[ExecutionGroup]],
+        order_counts: dict[str, int],
+    ) -> CapitalActivity:
+        if record.outcome in {
+            CapitalCycleOutcome.NO_OPPORTUNITY,
+            CapitalCycleOutcome.HOLD,
+        }:
+            summary = (
+                "已评估：维持现有持仓"
+                if record.outcome == CapitalCycleOutcome.HOLD
+                else "已评估：没有新的合格资本机会"
+            )
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome=record.outcome.value,
+                summary=summary,
+                reason_codes=record.reason_codes,
+            )
+        if target is None:
+            raise ValueError("Capital activity record 缺少绑定 Target")
+        risk = risks.get(target.target_id)
+        if risk is None:
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome="PENDING",
+                summary="组合目标已生成，等待风险审核",
+                reason_codes=target.reason_codes,
+            )
+        if risk.approved_target is None:
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome="RISK_REJECTED",
+                summary="组合目标被程序化风控拒绝",
+                reason_codes=target.reason_codes,
+                risk_outcome=risk.outcome.value,
+            )
+        if record.outcome == CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED:
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome=record.outcome.value,
+                summary="同一经济机会已决策，本轮未重复下单",
+                reason_codes=target.reason_codes,
+                risk_outcome=risk.outcome.value,
+            )
+        plan = plans.get(risk.approved_target.approved_target_id)
+        if plan is None:
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome="PENDING",
+                summary="风险审核通过，等待交易计划",
+                reason_codes=target.reason_codes,
+                risk_outcome=risk.outcome.value,
+            )
+        groups = tuple(groups_by_plan.get(plan.plan_id, ()))
+        order_count = order_counts.get(plan.plan_id, 0)
+        if not groups:
+            outcome = "NO_ORDER"
+            summary = "组合决策完成，无需产生订单"
+        elif all(item.terminal for item in groups):
+            outcome = "EXECUTED"
+            summary = f"模拟执行完成：{len(groups)} 个交易组，{order_count} 笔订单"
+        else:
+            outcome = "EXECUTING"
+            summary = f"正在执行：{len(groups)} 个交易组，{order_count} 笔订单"
+        return CapitalActivity(
+            activity_id=record.record_id,
+            at=record.evaluated_at,
+            symbol=record.symbol,
+            trigger_types=record.trigger_types,
+            outcome=outcome,
+            summary=summary,
+            reason_codes=target.reason_codes,
+            risk_outcome=risk.outcome.value,
+            order_count=order_count,
         )
 
     @staticmethod
@@ -248,37 +443,14 @@ class CapitalDashboardReader:
         payload = connection.execute(statement).scalar_one_or_none()
         return None if payload is None else model.model_validate(payload)
 
-    def _entry_window(self, now: datetime) -> tuple[datetime, datetime]:
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        end = start + self._entry_delay
-        if now <= end:
-            return start, end
-        if start.month == 12:
-            start = start.replace(year=start.year + 1, month=1)
-        else:
-            start = start.replace(month=start.month + 1)
-        return start, start + self._entry_delay
-
-    @property
-    def _entry_delay(self) -> timedelta:
-        return timedelta(
-            minutes=self._config.carry_forecast.maximum_monthly_entry_delay_minutes
-        )
-
-
 def serialize_capital_overview(overview: CapitalOverview) -> dict:
     account = overview.account
-    rebalance_period = overview.rebalance_period
+    cycle_record = overview.cycle_record
     target = overview.target
     risk = overview.risk
-    plan = overview.plan
     performance = overview.latest_performance
     return {
         "enabled": overview.enabled,
-        "entry_window": {
-            "start": _iso(overview.entry_window_start),
-            "end": _iso(overview.entry_window_end),
-        },
         "account": None
         if account is None
         else {
@@ -302,26 +474,25 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
             "as_of": _iso(
                 target.as_of
                 if target is not None
-                else (
-                    rebalance_period.decision_at
-                    if rebalance_period is not None
-                    else None
-                )
+                else cycle_record.evaluated_at
+                if cycle_record is not None
+                else None
             ),
-            "mode": rebalance_period.mode.value if rebalance_period is not None else None,
+            "mode": (
+                "DECIDE"
+                if target is not None
+                else "NO_CHANGE"
+                if cycle_record is not None
+                else None
+            ),
             "reason_codes": list(
                 target.reason_codes
                 if target is not None
-                else (
-                    rebalance_period.reason_codes
-                    if rebalance_period is not None
-                    else ()
-                )
+                else cycle_record.reason_codes
+                if cycle_record is not None
+                else ()
             ),
-            "target_sleeve_count": len(target.sleeves) if target is not None else 0,
             "risk_outcome": risk.outcome.value if risk is not None else None,
-            "plan_group_count": len(plan.groups) if plan is not None else 0,
-            "plan_omission_count": len(plan.omissions) if plan is not None else 0,
         },
         "execution": {
             "active_group_count": len(overview.active_groups),
@@ -349,12 +520,25 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 "return_fraction": str(performance.return_fraction),
             },
         },
-        "forecast": {
-            "base_count": overview.base_forecast_count,
-            "calibrated_count": overview.calibrated_forecast_count,
-            "latest_available_at": _iso(overview.latest_forecast_available_at),
-            "latest_valid_until": _iso(overview.latest_forecast_valid_until),
-        },
+    }
+
+
+def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
+    return {
+        "actions": [
+            {
+                "activity_id": item.activity_id,
+                "at": _iso(item.at),
+                "symbol": item.symbol,
+                "trigger_types": list(item.trigger_types),
+                "outcome": item.outcome,
+                "summary": item.summary,
+                "reason_codes": list(item.reason_codes),
+                "risk_outcome": item.risk_outcome,
+                "order_count": item.order_count,
+            }
+            for item in items
+        ]
     }
 
 

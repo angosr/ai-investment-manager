@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Protocol
 
 from investment_manager.decision_cycle.portfolio import (
     PortfolioDecisionPipeline,
@@ -24,10 +27,7 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
-from investment_manager.forecast.carry import (
-    CarryForecastProducer,
-    ReleasedCarryForecastProducer,
-)
+from investment_manager.forecast.carry import CarryForecastProducer, ReleasedCarryForecastProducer
 from investment_manager.forecast.models import CalibratedForecast
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
@@ -39,12 +39,15 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioSleeveInput,
 )
-from investment_manager.portfolio.models import PortfolioAccountSnapshot, SleeveTarget
-from investment_manager.portfolio.rebalance import (
-    PortfolioRebalancePeriod,
-    RebalancePeriodMode,
+from investment_manager.portfolio.models import (
+    CapitalCycleOutcome,
+    CapitalCycleRecord,
+    PortfolioAccountSnapshot,
+    SleeveTarget,
 )
+from investment_manager.portfolio.policy import SleeveRiskTemplate
 from investment_manager.portfolio.repository import (
+    SqlCapitalCycleStore,
     SqlPortfolioPerformanceStore,
     SqlPortfolioStore,
 )
@@ -54,9 +57,28 @@ from investment_manager.risk.portfolio import (
     SleeveRiskProfile,
 )
 from investment_manager.risk.repository import SqlPortfolioRiskStore
+from investment_manager.scheduling.models import TriggerBatch
 from investment_manager.settings import AppConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class CapitalForecastProducer(Protocol):
+    def produce(self, *, as_of: datetime) -> CalibratedForecast | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalForecastSource:
+    """One qualified producer with source-specific economics and risk."""
+
+    forecast_family: str
+    producer: CapitalForecastProducer
+    estimated_variable_cost_bps: Decimal
+    risk_template: SleeveRiskTemplate
 
 
 class CapitalCycleService:
@@ -68,7 +90,7 @@ class CapitalCycleService:
         config: AppConfig,
         market: SqlMarketDataStore,
         forecasts: SqlForecastStore,
-        producer: ReleasedCarryForecastProducer,
+        forecast_sources: tuple[CapitalForecastSource, ...],
         portfolio: SqlPortfolioStore,
         performance: SqlPortfolioPerformanceStore,
         risks: SqlPortfolioRiskStore,
@@ -77,12 +99,18 @@ class CapitalCycleService:
         accounts: ProductAccountProjectionService,
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
-        estimated_variable_cost_bps: Decimal,
+        cycle_records: SqlCapitalCycleStore,
     ) -> None:
+        families = tuple(item.forecast_family for item in forecast_sources)
+        if not families or tuple(sorted(set(families))) != tuple(sorted(families)):
+            raise ValueError("Capital Forecast sources 必须非空且 family 唯一")
         self._config = config
         self._market = market
         self._forecasts = forecasts
-        self._producer = producer
+        self._forecast_sources = forecast_sources
+        self._source_by_family = {
+            item.forecast_family: item for item in forecast_sources
+        }
         self._portfolio = portfolio
         self._performance = performance
         self._risks = risks
@@ -91,71 +119,121 @@ class CapitalCycleService:
         self._accounts = accounts
         self._decisions = decisions
         self._execution = execution
-        self._estimated_variable_cost_bps = estimated_variable_cost_bps
+        self._cycle_records = cycle_records
+
+    def consume(self, batch: TriggerBatch) -> PortfolioPipelineResult | TradePlanExecutionResult:
+        """Run capital once for an immutable trigger cause."""
+
+        return self.produce(
+            as_of=batch.created_at,
+            cause_id=batch.batch_id,
+            trigger_batch_id=batch.batch_id,
+            symbol=batch.symbol,
+            trigger_types=tuple(item.trigger_type.value for item in batch.triggers),
+        )
 
     def produce(
         self,
         *,
         as_of: datetime,
+        cause_id: str | None = None,
+        trigger_batch_id: str | None = None,
+        symbol: str = "SYSTEM",
+        trigger_types: tuple[str, ...] = (),
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         requested_at = require_utc(as_of)
-        policy = self._config.capital
-        period = self._rebalance_period(requested_at)
-        if period.mode == RebalancePeriodMode.NO_CHANGE:
-            logger.info(
-                "capital month frozen without late rebalance",
-                extra={
-                    "period_id": period.period_id,
-                    "as_of": requested_at.isoformat(),
-                    "reason_codes": period.reason_codes,
-                },
+        evaluation_cause_id = cause_id or stable_id(
+            "capital_manual_evaluation",
+            self._config.capital.decision.portfolio_id,
+            self._config.pipeline.version,
+            requested_at.isoformat(),
+        )
+        prior_record = self._cycle_records.get(
+            stable_id(
+                "capital_cycle_record",
+                self._config.capital.decision.portfolio_id,
+                self._config.pipeline.version,
+                evaluation_cause_id,
             )
-            return self._observe(as_of=requested_at)
-
-        assert period.candidate_forecast_id is not None
-        loaded = self._forecasts.forecast(period.candidate_forecast_id)
-        if not isinstance(loaded, CalibratedForecast):
-            raise ValueError("月度 Portfolio 周期缺少绑定的 CalibratedForecast")
-        forecast = loaded
-        as_of = period.decision_at
-        cycle_id = period.cycle_id
-
-        completed = self._completed_decision(period, requested_at=requested_at)
+        )
+        if prior_record is not None:
+            if (
+                prior_record.triggered_at != requested_at
+                or prior_record.trigger_batch_id != trigger_batch_id
+                or prior_record.symbol != symbol
+                or prior_record.trigger_types != tuple(sorted(set(trigger_types)))
+            ):
+                raise ValueError("Capital evaluation cause 已绑定不同触发事实")
+            return self._recorded_result(prior_record)
+        generated = tuple(
+            (source, forecast)
+            for source in self._forecast_sources
+            if (forecast := source.producer.produce(as_of=requested_at)) is not None
+        )
+        if not generated:
+            return self._finish(
+                result=self._observe(as_of=requested_at),
+                requested_at=requested_at,
+                triggered_at=requested_at,
+                generated_forecasts=(),
+                cause_id=evaluation_cause_id,
+                trigger_batch_id=trigger_batch_id,
+                symbol=symbol,
+                trigger_types=trigger_types,
+                opportunity_already_decided=False,
+            )
+        generated_forecasts = tuple(item[1] for item in generated)
+        decision_at = max(
+            requested_at,
+            *(item.available_at for item in generated_forecasts),
+        )
+        if any(item.valid_until <= decision_at for item in generated_forecasts):
+            raise ValueError("Capital Forecast 在其入场有效期后才可用于决策")
+        cycle_id = self._opportunity_cycle_id(generated_forecasts)
+        completed = self._completed_decision(
+            cycle_id=cycle_id,
+            requested_at=decision_at,
+        )
         if completed is not None:
-            return completed
+            return self._finish(
+                result=completed,
+                requested_at=decision_at,
+                triggered_at=requested_at,
+                generated_forecasts=generated_forecasts,
+                cause_id=evaluation_cause_id,
+                trigger_batch_id=trigger_batch_id,
+                symbol=symbol,
+                trigger_types=trigger_types,
+                opportunity_already_decided=True,
+            )
 
-        self._recover(as_of=requested_at, cycle_id=cycle_id)
-        quotes = self._quotes(as_of=as_of)
-        account = self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
-
-        sleeve_id = SleeveTarget.identity_for(
-            portfolio_id=policy.decision.portfolio_id,
-            forecast_family=forecast.forecast_family,
-            forecast_target_id=forecast.target.target_id,
+        self._recover(as_of=decision_at, cycle_id=cycle_id)
+        quotes = self._quotes(as_of=decision_at)
+        account = self._account(
+            cycle_id=cycle_id,
+            as_of=decision_at,
+            quotes=quotes,
         )
-        sleeve = PortfolioSleeveInput(
-            sleeve_id=sleeve_id,
-            estimated_variable_cost_bps=self._estimated_variable_cost_bps,
-            forecast=forecast,
+        sleeves = self._decision_sleeves(
+            forecasts=generated_forecasts,
+            account=account,
+            as_of=decision_at,
         )
-        template = policy.sleeve_risk
-        risk_profile = SleeveRiskProfile(
-            sleeve_id=sleeve_id,
-            version=template.version,
-            basis_stress_bps=template.basis_stress_bps,
-            funding_stress_bps=template.funding_stress_bps,
-            execution_stress_bps=template.execution_stress_bps,
-            derivative_initial_margin_fraction=(template.derivative_initial_margin_fraction),
+        risk_profiles = tuple(
+            self._risk_profile(
+                item.sleeve_id,
+                self._source_by_family[item.forecast.forecast_family],
+            )
+            for item in sleeves
         )
         decision = self._decisions.run(
             cycle_id=cycle_id,
-            as_of=as_of,
-            sleeves=(sleeve,),
+            as_of=decision_at,
+            sleeves=sleeves,
             account=account,
             quotes=quotes,
-            risk_profiles=(risk_profile,),
-            execution_specs=policy.execution_specs,
-            decision_valid_until=period.entry_window_end,
+            risk_profiles=risk_profiles,
+            execution_specs=self._config.capital.execution_specs,
         )
         plan = decision.trade_plan
         if plan is None or not plan.groups:
@@ -163,11 +241,21 @@ class CapitalCycleService:
                 "capital cycle completed without executable group",
                 extra={"cycle_id": cycle_id, "outcome": decision.outcome.value},
             )
-            return decision
+            return self._finish(
+                result=decision,
+                requested_at=decision_at,
+                triggered_at=requested_at,
+                generated_forecasts=generated_forecasts,
+                cause_id=evaluation_cause_id,
+                trigger_batch_id=trigger_batch_id,
+                symbol=symbol,
+                trigger_types=trigger_types,
+                opportunity_already_decided=False,
+            )
         result = self._execution.run(
             plan_id=plan.plan_id,
-            as_of=max(as_of, requested_at),
-            quotes=(quotes if requested_at <= as_of else self._quotes(as_of=requested_at)),
+            as_of=decision_at,
+            quotes=quotes,
         )
         self._performance.record(result.account)
         logger.info(
@@ -179,57 +267,142 @@ class CapitalCycleService:
                 "equity": str(result.account.equity),
             },
         )
+        return self._finish(
+            result=result,
+            requested_at=decision_at,
+            triggered_at=requested_at,
+            generated_forecasts=generated_forecasts,
+            cause_id=evaluation_cause_id,
+            trigger_batch_id=trigger_batch_id,
+            symbol=symbol,
+            trigger_types=trigger_types,
+            opportunity_already_decided=False,
+        )
+
+    def _finish(
+        self,
+        *,
+        result: PortfolioPipelineResult | TradePlanExecutionResult,
+        requested_at: datetime,
+        triggered_at: datetime,
+        generated_forecasts: tuple[CalibratedForecast, ...],
+        cause_id: str,
+        trigger_batch_id: str | None,
+        symbol: str,
+        trigger_types: tuple[str, ...],
+        opportunity_already_decided: bool,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult:
+        target = (
+            result.target if isinstance(result, PortfolioPipelineResult) else None
+        )
+        if isinstance(result, TradePlanExecutionResult):
+            plan = self._plans.plan(result.plan_id)
+            if plan is None:
+                raise ValueError("Capital execution result 缺少权威 TradePlan")
+            target = self._portfolio.target_for_cycle(plan.cycle_id)
+        expected_opportunity_cycle = (
+            self._opportunity_cycle_id(generated_forecasts)
+            if generated_forecasts
+            else None
+        )
+        if target is None and expected_opportunity_cycle is not None:
+            target = self._portfolio.target_for_cycle(expected_opportunity_cycle)
+        account = self._portfolio.latest_account(
+            portfolio_id=self._config.capital.decision.portfolio_id,
+            as_of=requested_at,
+        )
+        if account is None:
+            raise ValueError("Capital cycle 缺少最终账户快照")
+        generated_ids = tuple(item.forecast_id for item in generated_forecasts)
+        if target is not None:
+            outcome = (
+                CapitalCycleOutcome.RISK_EXIT
+                if expected_opportunity_cycle is None
+                or target.cycle_id != expected_opportunity_cycle
+                else CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED
+                if opportunity_already_decided
+                else CapitalCycleOutcome.TARGET_DECIDED
+            )
+            reason_codes = target.reason_codes
+            decision_cycle_id = target.cycle_id
+            forecast_ids = tuple(
+                sorted({*generated_ids, *target.considered_forecast_ids})
+            )
+            target_id = target.target_id
+        else:
+            outcome = (
+                CapitalCycleOutcome.HOLD
+                if account.sleeves
+                else CapitalCycleOutcome.NO_OPPORTUNITY
+            )
+            reason_codes = (
+                ("NO_NEW_OPPORTUNITY_HOLDING_REVIEWED",)
+                if account.sleeves
+                else ("NO_ACTIVE_CAPITAL_OPPORTUNITY",)
+            )
+            decision_cycle_id = account.cycle_id
+            forecast_ids = tuple(sorted(set(generated_ids)))
+            target_id = None
+        self._cycle_records.record(
+            CapitalCycleRecord.create(
+                portfolio_id=self._config.capital.decision.portfolio_id,
+                pipeline_id=self._config.pipeline.version,
+                cause_id=cause_id,
+                trigger_batch_id=trigger_batch_id,
+                symbol=symbol,
+                trigger_types=trigger_types,
+                triggered_at=triggered_at,
+                evaluated_at=requested_at,
+                decision_cycle_id=decision_cycle_id,
+                account_snapshot_id=account.snapshot_id,
+                forecast_ids=forecast_ids,
+                target_id=target_id,
+                outcome=outcome,
+                reason_codes=reason_codes,
+            )
+        )
         return result
 
-    def _rebalance_period(self, requested_at: datetime) -> PortfolioRebalancePeriod:
-        policy = self._config.capital
-        period_start = requested_at.replace(
-            day=1,
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
+    def _recorded_result(
+        self,
+        record: CapitalCycleRecord,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult:
+        """Reconstruct a completed cause without re-running producers or execution."""
+
+        if record.target_id is None:
+            return PortfolioPipelineResult(
+                cycle_id=record.decision_cycle_id,
+                outcome=PortfolioPipelineOutcome.NO_CHANGE,
+            )
+        target = self._portfolio.target(record.target_id)
+        if target is None or target.cycle_id != record.decision_cycle_id:
+            raise ValueError("CapitalCycleRecord 缺少权威 PortfolioTarget")
+        completed = self._completed_decision(
+            cycle_id=target.cycle_id,
+            requested_at=target.as_of,
         )
-        period_end = (
-            period_start.replace(year=period_start.year + 1, month=1)
-            if period_start.month == 12
-            else period_start.replace(month=period_start.month + 1)
+        if completed is None:
+            raise ValueError("CapitalCycleRecord 引用的决策链不完整")
+        return completed
+
+    def _opportunity_cycle_id(
+        self,
+        forecasts: tuple[CalibratedForecast, ...],
+    ) -> str:
+        return stable_id(
+            "capital_opportunity_cycle",
+            self._config.capital.decision.portfolio_id,
+            self._config.capital.decision.version,
+            tuple(sorted(item.forecast_id for item in forecasts)),
         )
-        existing = self._portfolio.rebalance_period(
-            portfolio_id=policy.decision.portfolio_id,
-            policy_version=policy.rebalance.version,
-            period_start=period_start,
-        )
-        if existing is not None:
-            return existing
-        forecast = self._producer.produce(as_of=requested_at)
-        decision_at = max(
-            requested_at,
-            forecast.available_at if forecast is not None else requested_at,
-        )
-        entry_window_end = period_start + timedelta(
-            minutes=policy.rebalance.maximum_entry_delay_minutes
-        )
-        if forecast is not None and decision_at >= entry_window_end:
-            raise ValueError("Carry Forecast 在月度 Portfolio 窗口后才可用")
-        proposed = PortfolioRebalancePeriod.create(
-            portfolio_id=policy.decision.portfolio_id,
-            policy_version=policy.rebalance.version,
-            period_start=period_start,
-            period_end=period_end,
-            entry_window_end=entry_window_end,
-            decision_at=decision_at,
-            candidate_forecast_id=(forecast.forecast_id if forecast is not None else None),
-        )
-        return self._portfolio.claim_rebalance_period(proposed)
 
     def _completed_decision(
         self,
-        period: PortfolioRebalancePeriod,
         *,
+        cycle_id: str,
         requested_at: datetime,
     ) -> PortfolioPipelineResult | TradePlanExecutionResult | None:
-        target = self._portfolio.target_for_cycle(period.cycle_id)
+        target = self._portfolio.target_for_cycle(cycle_id)
         if target is None:
             return None
         risk = self._risks.for_target(target.target_id)
@@ -237,33 +410,97 @@ class CapitalCycleService:
             return None
         if risk.outcome != RiskOutcome.APPROVED:
             result = PortfolioPipelineResult(
-                cycle_id=period.cycle_id,
+                cycle_id=cycle_id,
                 outcome=PortfolioPipelineOutcome.RISK_REJECTED,
                 target=target,
                 risk_decision=risk,
             )
-            if requested_at <= period.decision_at:
+            if requested_at <= target.as_of:
                 return result
             return self._observe(as_of=requested_at)
-        plan = self._plans.for_cycle(period.cycle_id)
+        plan = self._plans.for_cycle(cycle_id)
         if plan is None:
             return None
         groups = self._groups.for_plan(plan.plan_id)
         if len(groups) != len(plan.groups):
             return None
-        if requested_at <= period.decision_at:
+        if requested_at <= target.as_of:
             if not plan.groups:
                 return PortfolioPipelineResult(
-                    cycle_id=period.cycle_id,
+                    cycle_id=cycle_id,
                     outcome=PortfolioPipelineOutcome.PLANNED,
                     target=target,
                     risk_decision=risk,
                     trade_plan=plan,
                 )
-            result = self._execution_result(plan, groups=groups, as_of=period.decision_at)
+            result = self._execution_result(plan, groups=groups, as_of=target.as_of)
             if result is not None:
                 return result
         return self._observe(as_of=requested_at)
+
+    def _decision_sleeves(
+        self,
+        *,
+        forecasts: tuple[CalibratedForecast, ...],
+        account: PortfolioAccountSnapshot,
+        as_of: datetime,
+    ) -> tuple[PortfolioSleeveInput, ...]:
+        by_sleeve: dict[str, PortfolioSleeveInput] = {}
+        for forecast in forecasts:
+            source = self._source_by_family.get(forecast.forecast_family)
+            if source is None:
+                raise ValueError("Capital Forecast family 未绑定合格 source")
+            sleeve_id = SleeveTarget.identity_for(
+                portfolio_id=self._config.capital.decision.portfolio_id,
+                forecast_family=forecast.forecast_family,
+                forecast_target_id=forecast.target.target_id,
+            )
+            candidate = PortfolioSleeveInput(
+                sleeve_id=sleeve_id,
+                estimated_variable_cost_bps=source.estimated_variable_cost_bps,
+                forecast=forecast,
+            )
+            existing = by_sleeve.get(sleeve_id)
+            if existing is not None and existing != candidate:
+                raise ValueError("同一 Capital Sleeve 收到多个不同 Forecast")
+            by_sleeve[sleeve_id] = candidate
+        for position in account.sleeves:
+            if position.sleeve_id in by_sleeve:
+                continue
+            source = self._source_by_family.get(position.forecast_family)
+            if source is None:
+                raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
+            forecast = self._forecasts.latest_calibrated_for_target(
+                target_id=position.target.target_id,
+                forecast_family=position.forecast_family,
+                as_of=as_of,
+            )
+            if forecast is None:
+                raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
+            by_sleeve[position.sleeve_id] = PortfolioSleeveInput(
+                sleeve_id=position.sleeve_id,
+                estimated_variable_cost_bps=source.estimated_variable_cost_bps,
+                forecast=forecast,
+                refresh_target=False,
+            )
+        return tuple(by_sleeve[item] for item in sorted(by_sleeve))
+
+    @staticmethod
+    def _risk_profile(
+        sleeve_id: str,
+        source: CapitalForecastSource,
+    ) -> SleeveRiskProfile:
+        template = source.risk_template
+        return SleeveRiskProfile(
+            sleeve_id=sleeve_id,
+            version=template.version,
+            basis_stress_bps=template.basis_stress_bps,
+            funding_stress_bps=template.funding_stress_bps,
+            execution_stress_bps=template.execution_stress_bps,
+            derivative_initial_margin_fraction=(
+                template.derivative_initial_margin_fraction
+            ),
+        )
 
     def _execution_result(
         self,
@@ -323,8 +560,10 @@ class CapitalCycleService:
             )
         sleeves = []
         profiles = []
-        template = self._config.capital.sleeve_risk
         for position in account.sleeves:
+            source = self._source_by_family.get(position.forecast_family)
+            if source is None:
+                raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
             forecast = self._forecasts.latest_calibrated_for_target(
                 target_id=position.target.target_id,
                 forecast_family=position.forecast_family,
@@ -335,22 +574,13 @@ class CapitalCycleService:
             sleeves.append(
                 PortfolioSleeveInput(
                     sleeve_id=position.sleeve_id,
-                    estimated_variable_cost_bps=self._estimated_variable_cost_bps,
+                    estimated_variable_cost_bps=(
+                        source.estimated_variable_cost_bps
+                    ),
                     forecast=forecast,
                 )
             )
-            profiles.append(
-                SleeveRiskProfile(
-                    sleeve_id=position.sleeve_id,
-                    version=template.version,
-                    basis_stress_bps=template.basis_stress_bps,
-                    funding_stress_bps=template.funding_stress_bps,
-                    execution_stress_bps=template.execution_stress_bps,
-                    derivative_initial_margin_fraction=(
-                        template.derivative_initial_margin_fraction
-                    ),
-                )
-            )
+            profiles.append(self._risk_profile(position.sleeve_id, source))
         protected = self._decisions.protect(
             cycle_id=cycle_id,
             as_of=as_of,
@@ -451,7 +681,12 @@ class CapitalCycleService:
         return tuple(sorted(values, key=lambda item: item.instrument.key))
 
 
-def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
+def assemble_capital_cycle(
+    config: AppConfig,
+    engine,
+    *,
+    forecast_clock: Callable[[], datetime] = _utc_now,
+) -> CapitalCycleService:
     if not config.capital.enabled or config.deployment.stage != DeploymentStage.SHADOW:
         raise ValueError("Capital cycle 只装配显式启用的 SHADOW")
     evidence = config.carry_forecast.evidence
@@ -489,6 +724,7 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
         store=forecasts,
         maximum_spot_age_seconds=config.capital.risk.maximum_quote_age_seconds,
         maximum_perpetual_age_seconds=config.capital.risk.maximum_quote_age_seconds,
+        clock=forecast_clock,
     )
     producer = ReleasedCarryForecastProducer(
         base=base,
@@ -504,7 +740,14 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
         config=config,
         market=market,
         forecasts=forecasts,
-        producer=producer,
+        forecast_sources=(
+            CapitalForecastSource(
+                forecast_family=config.carry_forecast.forecast_family,
+                producer=producer,
+                estimated_variable_cost_bps=evidence.round_trip_cost_bps,
+                risk_template=config.capital.sleeve_risk,
+            ),
+        ),
         portfolio=portfolio,
         performance=performance,
         risks=risks,
@@ -526,5 +769,5 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
             accounts=account_projection,
             portfolio_store=portfolio,
         ),
-        estimated_variable_cost_bps=evidence.round_trip_cost_bps,
+        cycle_records=SqlCapitalCycleStore(engine),
     )

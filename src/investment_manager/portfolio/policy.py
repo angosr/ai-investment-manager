@@ -8,7 +8,6 @@ from investment_manager.execution.planning.planner import (
 )
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.portfolio.decision import PortfolioDecisionPolicy
-from investment_manager.portfolio.rebalance import PortfolioRebalancePolicy
 from investment_manager.risk.portfolio import PortfolioRiskPolicy
 
 
@@ -42,7 +41,6 @@ class CapitalPolicy(StrictConfig):
     enabled: bool = False
     settlement_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
     decision: PortfolioDecisionPolicy
-    rebalance: PortfolioRebalancePolicy
     risk: PortfolioRiskPolicy
     planner: TradePlannerPolicy
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)

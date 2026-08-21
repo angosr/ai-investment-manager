@@ -83,6 +83,17 @@
 
 响应式：≥1040px 双列；<1040px 右栏折到主列下方；<620px 单列，时间线行折成两行，周期轨横向可滚动。信息快照抽屉宽 `min(560px, 94vw)`。
 
+### 3.2 Capital 模式的信息层级
+
+Capital Release 不把旧 AnalysisCycle 当成当前资本决策。主列默认是 `CapitalCycleRecord` 行动记录，
+每个冻结 TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是否产生本轮订单”；右栏只保留
+账户权益、现金、费用后 PnL、回撤、当前持仓、最新决策与非终态执行。预测计数、主机资源和账号状态
+不在 Capital 首页争夺注意力。
+
+主列另有两个明确分层的标签：历史 AI 判断来自可选的独立只读 Assessment 数据库，只用于回看分析
+及当时信息快照，不计入当前 Capital 绩效；世界事件仍来自当前事实库。两库不得按时间拼成同一条
+资本链，也不得从旧判断推断当前仓位或收益。
+
 ---
 
 ## 4. 招牌元素：周期轨（Cycle Rail）
@@ -254,6 +265,9 @@ investment-manager dashboard-service \
 | `/api/accounts` | 白名单账号余量/状态/调用活动（§5.5） |
 | `/api/resources` | 主机 CPU/内存/磁盘（§5.6） |
 | `/api/reconciliation` | 最新对账（§5.7） |
+| `/api/capital` | 当前产品账户、最新资本决策、风险、执行与费用后绩效 |
+| `/api/capital/activity` | 按 TriggerBatch cause 读取不可变 Capital 行动记录 |
+| `/api/assessment/cycles[/{cycle_id}]` | 可选的独立只读历史 AI 判断档案 |
 | `/api/stream` | SSE 变更信号（§6） |
 
 ---
@@ -262,7 +276,8 @@ investment-manager dashboard-service \
 
 - **复用**：全部业务事实表与只读取数类、`cycle_id` 脊柱、`OutcomeWindowReport` 指标口径、配置加载。
 - **净新增**：① 只读 Web 服务层；② `psutil` 主机资源采样；③ 前端单页；④ 仅面向读取热路径的数据库索引。
-- **不新增**：业务表、写路径、控制动作、消息中间件。
+- **不因 Dashboard 新增**：业务表、写路径、控制动作、消息中间件。`CapitalCycleRecord` 属于资本
+  编排审计事实，由 Capital 服务写入；Dashboard 只是其只读消费者。
 
 因引入了一个新的进程角色与外部依赖，按 §12.3 建议补一条 **ADR**（记录：为何需要独立只读观测服务、最简替代方案、撤销条件）。
 

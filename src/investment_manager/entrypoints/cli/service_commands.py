@@ -488,6 +488,13 @@ def dashboard_service(
         str,
         typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    assessment_database_url: Annotated[
+        str | None,
+        typer.Option(
+            envvar="INVESTMENT_MANAGER_ASSESSMENT_DATABASE_URL",
+            help="可选的只读 Assessment 历史库；仅用于分层展示，不参与资本核算",
+        ),
+    ] = None,
     release_manifest: Annotated[
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
@@ -511,7 +518,12 @@ def dashboard_service(
         typer.echo("先运行：cd web && npm install && npm run build")
     loaded, _ = load_runtime_release(config, release_manifest)
     require_runtime_database(database_url)
-    application = create_app(loaded, database_url, web_dist=resolved_dist)
+    application = create_app(
+        loaded,
+        database_url,
+        assessment_database_url=assessment_database_url,
+        web_dist=resolved_dist,
+    )
     typer.echo(f"运行观测台就绪：http://{host}:{port}")
     # EventSource 是无限响应；有界等待后取消连接，避免服务重启被浏览器永久阻塞。
     uvicorn.run(

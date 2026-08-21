@@ -260,6 +260,7 @@ class ContextAssessment(FrozenModel):
 
 
 class BaseForecast(FrozenModel):
+    """Point-in-time thesis; valid_until gates entry, horizon gates settlement."""
     forecast_id: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
@@ -288,8 +289,13 @@ class BaseForecast(FrozenModel):
             raise ValueError("BaseForecast 不能重复引用输入")
         return self
 
+    @property
+    def economic_horizon_end(self) -> datetime:
+        return self.available_at + timedelta(minutes=self.horizon_minutes)
+
 
 class CalibratedForecast(FrozenModel):
+    """Investable thesis; valid_until gates entry, horizon gates settlement."""
     forecast_id: str = Field(min_length=1)
     role: ForecastRole
     producer_id: str = Field(min_length=1)
@@ -337,6 +343,10 @@ class CalibratedForecast(FrozenModel):
         if len(set(self.input_refs)) != len(self.input_refs):
             raise ValueError("CalibratedForecast 不能重复引用输入")
         return self
+
+    @property
+    def economic_horizon_end(self) -> datetime:
+        return self.available_at + timedelta(minutes=self.horizon_minutes)
 
 
 def _require_complete_reference_prices(

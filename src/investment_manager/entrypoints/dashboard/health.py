@@ -34,7 +34,7 @@ def assemble_health(
         checks = [
             _capital_account_check(capital_overview, config),
             _capital_freshness_check(reader, capital_overview, config, now),
-            _capital_decision_check(capital_overview, config, now),
+            _capital_decision_check(capital_overview, now),
             _capital_execution_check(capital_overview, now),
             _capital_performance_check(capital_overview),
             _forecast_settlement_check(analysis, now),
@@ -138,31 +138,26 @@ def _capital_freshness_check(
 
 def _capital_decision_check(
     overview: CapitalOverview | None,
-    config,
     now: datetime,
 ) -> dict:
-    period = overview.rebalance_period if overview is not None else None
     target = overview.target if overview is not None else None
-    if period is None and target is None:
-        return _check("capital_decision", "资本决策", "unknown", "等待首次决策")
-    if period is not None:
-        if not period.period_start <= now < period.period_end:
-            return _check("capital_decision", "资本决策", "bad", "当前月份尚无冻结决策")
-        reasons = ", ".join(target.reason_codes if target is not None else period.reason_codes)
-    else:
-        age = (now - target.as_of).total_seconds()
-        limit = (
-            config.trigger.heartbeat_minutes * 60
-            + config.shadow.analysis_deadline_seconds
+    account = overview.account if overview is not None else None
+    record = overview.cycle_record if overview is not None else None
+    if account is None:
+        return _check("capital_decision", "资本决策", "unknown", "等待首次评估")
+    if target is None:
+        if record is None:
+            return _check("capital_decision", "资本决策", "unknown", "等待首次决策记录")
+        return _check(
+            "capital_decision",
+            "资本决策",
+            "ok",
+            ", ".join(record.reason_codes),
         )
-        if age < 0 or age > limit * 2:
-            return _check(
-                "capital_decision",
-                "资本决策",
-                "bad",
-                f"决策已过期（{int(age)} 秒）",
-            )
-        reasons = ", ".join(target.reason_codes)
+    age = (now - target.as_of).total_seconds()
+    if age < 0:
+        return _check("capital_decision", "资本决策", "bad", "决策时间晚于当前时间")
+    reasons = ", ".join(target.reason_codes)
     return _check(
         "capital_decision",
         "资本决策",

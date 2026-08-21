@@ -78,36 +78,6 @@ Index(
     portfolio_performance_intervals.c.interval_id,
 )
 
-portfolio_rebalance_periods = Table(
-    "portfolio_rebalance_periods",
-    metadata,
-    Column("period_id", String(128), primary_key=True),
-    Column("portfolio_id", String(64), nullable=False),
-    Column("policy_version", String(128), nullable=False),
-    Column("period_start", DateTime(timezone=True), nullable=False),
-    Column("period_end", DateTime(timezone=True), nullable=False),
-    Column("entry_window_end", DateTime(timezone=True), nullable=False),
-    Column("decision_at", DateTime(timezone=True), nullable=False),
-    Column("mode", String(32), nullable=False),
-    Column(
-        "candidate_forecast_id",
-        ForeignKey("forecasts.forecast_id"),
-        nullable=True,
-    ),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "portfolio_id",
-        "policy_version",
-        "period_start",
-        name="uq_portfolio_rebalance_period",
-    ),
-)
-Index(
-    "ix_portfolio_rebalance_period_start",
-    portfolio_rebalance_periods.c.portfolio_id,
-    portfolio_rebalance_periods.c.period_start,
-)
-
 portfolio_targets = Table(
     "portfolio_targets",
     metadata,
@@ -143,4 +113,39 @@ portfolio_target_forecasts = Table(
         ForeignKey("forecasts.forecast_id"),
         primary_key=True,
     ),
+)
+
+capital_cycle_records = Table(
+    "capital_cycle_records",
+    metadata,
+    Column("record_id", String(128), primary_key=True),
+    Column("portfolio_id", String(64), nullable=False),
+    Column("pipeline_id", String(128), nullable=False),
+    Column("cause_id", String(128), nullable=False),
+    Column("evaluated_at", DateTime(timezone=True), nullable=False),
+    Column("decision_cycle_id", String(128), nullable=False),
+    Column(
+        "account_snapshot_id",
+        ForeignKey("portfolio_account_snapshots.snapshot_id"),
+        nullable=False,
+    ),
+    Column(
+        "target_id",
+        ForeignKey("portfolio_targets.target_id"),
+        nullable=True,
+    ),
+    Column("outcome", String(48), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "portfolio_id",
+        "pipeline_id",
+        "cause_id",
+        name="uq_capital_cycle_cause",
+    ),
+)
+Index(
+    "ix_capital_cycle_records_time",
+    capital_cycle_records.c.pipeline_id,
+    capital_cycle_records.c.evaluated_at,
+    capital_cycle_records.c.record_id,
 )

@@ -322,6 +322,108 @@ class PortfolioTarget(FrozenModel):
         return self
 
 
+class CapitalCycleOutcome(StrEnum):
+    NO_OPPORTUNITY = "NO_OPPORTUNITY"
+    HOLD = "HOLD"
+    TARGET_DECIDED = "TARGET_DECIDED"
+    OPPORTUNITY_ALREADY_DECIDED = "OPPORTUNITY_ALREADY_DECIDED"
+    RISK_EXIT = "RISK_EXIT"
+
+
+class CapitalCycleRecord(FrozenModel):
+    """Immutable receipt of one admitted capital evaluation, including no-op."""
+
+    record_id: str = Field(min_length=1)
+    portfolio_id: str = Field(min_length=1)
+    pipeline_id: str = Field(min_length=1)
+    cause_id: str = Field(min_length=1)
+    trigger_batch_id: str | None = Field(default=None, min_length=1)
+    symbol: str = Field(min_length=1)
+    trigger_types: tuple[str, ...] = ()
+    triggered_at: datetime
+    evaluated_at: datetime
+    decision_cycle_id: str = Field(min_length=1)
+    account_snapshot_id: str = Field(min_length=1)
+    forecast_ids: tuple[str, ...] = ()
+    target_id: str | None = None
+    outcome: CapitalCycleOutcome
+    reason_codes: tuple[str, ...] = Field(min_length=1)
+
+    _utc_times = field_validator("triggered_at", "evaluated_at")(require_utc)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        portfolio_id: str,
+        pipeline_id: str,
+        cause_id: str,
+        trigger_batch_id: str | None,
+        symbol: str,
+        trigger_types: tuple[str, ...],
+        triggered_at: datetime,
+        evaluated_at: datetime,
+        decision_cycle_id: str,
+        account_snapshot_id: str,
+        forecast_ids: tuple[str, ...],
+        target_id: str | None,
+        outcome: CapitalCycleOutcome,
+        reason_codes: tuple[str, ...],
+    ) -> CapitalCycleRecord:
+        triggered_at = require_utc(triggered_at)
+        evaluated_at = require_utc(evaluated_at)
+        return cls(
+            record_id=stable_id(
+                "capital_cycle_record",
+                portfolio_id,
+                pipeline_id,
+                cause_id,
+            ),
+            portfolio_id=portfolio_id,
+            pipeline_id=pipeline_id,
+            cause_id=cause_id,
+            trigger_batch_id=trigger_batch_id,
+            symbol=symbol,
+            trigger_types=tuple(sorted(set(trigger_types))),
+            triggered_at=triggered_at,
+            evaluated_at=evaluated_at,
+            decision_cycle_id=decision_cycle_id,
+            account_snapshot_id=account_snapshot_id,
+            forecast_ids=tuple(sorted(set(forecast_ids))),
+            target_id=target_id,
+            outcome=outcome,
+            reason_codes=tuple(sorted(set(reason_codes))),
+        )
+
+    @model_validator(mode="after")
+    def identity_and_refs_are_consistent(self):
+        if self.record_id != stable_id(
+            "capital_cycle_record",
+            self.portfolio_id,
+            self.pipeline_id,
+            self.cause_id,
+        ):
+            raise ValueError("CapitalCycleRecord identity 不一致")
+        if tuple(sorted(set(self.trigger_types))) != self.trigger_types:
+            raise ValueError("CapitalCycleRecord trigger_types 必须唯一且排序")
+        if self.trigger_batch_id is not None and self.cause_id != self.trigger_batch_id:
+            raise ValueError("触发批次产生的 CapitalCycleRecord 必须以 batch_id 为 cause")
+        if self.evaluated_at < self.triggered_at:
+            raise ValueError("CapitalCycleRecord evaluated_at 不能早于触发时间")
+        if tuple(sorted(set(self.forecast_ids))) != self.forecast_ids:
+            raise ValueError("CapitalCycleRecord forecast_ids 必须唯一且排序")
+        if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
+            raise ValueError("CapitalCycleRecord reason_codes 必须唯一且排序")
+        requires_target = self.outcome in {
+            CapitalCycleOutcome.TARGET_DECIDED,
+            CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED,
+            CapitalCycleOutcome.RISK_EXIT,
+        }
+        if requires_target != (self.target_id is not None):
+            raise ValueError("CapitalCycleRecord outcome 与 target_id 不一致")
+        return self
+
+
 def sleeve_gross_notional(
     sleeve: SleevePosition | None,
     *,

@@ -1,0 +1,67 @@
+.empty {
+  padding: 20px 16px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: start;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.row:last-child {
+  border-bottom: 0;
+}
+.time,
+.result {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.body {
+  min-width: 0;
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.line b {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+}
+.outcome {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.outcome[data-outcome="EXECUTED"] {
+  color: var(--pos);
+  border-color: var(--pos);
+}
+.outcome[data-outcome="RISK_REJECTED"] {
+  color: var(--neg);
+  border-color: var(--neg);
+}
+.detail {
+  display: block;
+  margin-top: 5px;
+  color: var(--faint);
+  font-size: 11px;
+}
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+  .result {
+    display: none;
+  }
+}
