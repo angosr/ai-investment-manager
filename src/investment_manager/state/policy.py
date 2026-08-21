@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 
+from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.facts import (
@@ -76,4 +77,7 @@ class DecisionStatePolicy(StrictConfig):
         configured = {item.fact_type for item in self.delta_policy.rules}
         if not required.issubset(configured):
             raise ValueError("OfficialFact projection 缺少对应 MaterialDelta 规则")
+        configured_metrics = configured & OFFICIAL_METRIC_FACT_TYPES
+        if configured_metrics and configured_metrics != OFFICIAL_METRIC_FACT_TYPES:
+            raise ValueError("官方宏观指标 MaterialDelta 规则必须完整启用或完整关闭")
         return self

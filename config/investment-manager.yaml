@@ -13,15 +13,15 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v10 的 Binance 现货主动成交摘要明确报告实际连续覆盖窗口。
-  version: portfolio-state-v10
+  # v11 在同一点时事实链加入官方宏观指标快照。
+  version: portfolio-state-v11
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: fed-official-fact-v2
+    version: official-fact-v3
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
-    version: state-delta-v5
+    version: state-delta-v6
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -31,6 +31,9 @@ decision_state:
     market_risk_factors: [MARKET_VOLATILITY]
     market_reason_code: MARKET_SHOCK_TRIGGERED
     rules:
+      - fact_type: FED_BROAD_DOLLAR_SNAPSHOT
+        materiality: HIGH
+        reason_code: FED_BROAD_DOLLAR_REVISION
       - fact_type: FED_CHAIR_PUBLIC_EVENT_SCHEDULE
         materiality: NORMAL
         reason_code: FED_CHAIR_EVENT_SCHEDULE_REVISION
@@ -40,8 +43,23 @@ decision_state:
       - fact_type: FOMC_MEETING_SCHEDULE
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
+      - fact_type: NYFED_REFERENCE_RATES_SNAPSHOT
+        materiality: HIGH
+        reason_code: NYFED_REFERENCE_RATES_REVISION
+      - fact_type: NYFED_REVERSE_REPO_SNAPSHOT
+        materiality: HIGH
+        reason_code: NYFED_REVERSE_REPO_REVISION
+      - fact_type: NYFED_SOMA_SNAPSHOT
+        materiality: HIGH
+        reason_code: NYFED_SOMA_REVISION
+      - fact_type: US_TREASURY_CASH_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_CASH_REVISION
+      - fact_type: US_TREASURY_YIELD_CURVE_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v16
+    version: decision-packet-policy-v17
     schema_version: decision-packet-v10
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -320,7 +338,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v14
+  version: information-intake-v15
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -333,14 +351,18 @@ information:
   collection_interval_seconds: 60
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
+  official_metric_poll_seconds: 300
+  official_metric_slow_poll_seconds: 900
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
     - domain: FISCAL_DEBT
-      source_stream_ids: []
-      maximum_poll_age_seconds: 300
+      source_stream_ids: [treasury-tga-balance]
+      maximum_poll_age_seconds: 900
+      maximum_publication_age_seconds: 172800
     - domain: MONETARY_INFLATION
-      source_stream_ids: [fed-monetary-releases]
-      maximum_poll_age_seconds: 120
+      source_stream_ids: [fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
+      maximum_poll_age_seconds: 1200
+      maximum_publication_age_seconds: 864000
     - domain: REGULATION_LEGISLATION
       source_stream_ids: []
       maximum_poll_age_seconds: 300
@@ -357,9 +379,9 @@ information:
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 3600
     - domain: CROSS_ASSET_EXTERNAL
-      source_stream_ids: []
-      maximum_poll_age_seconds: 300
-      maximum_publication_age_seconds: 300
+      source_stream_ids: [fed-broad-dollar, treasury-yield-curve]
+      maximum_poll_age_seconds: 1200
+      maximum_publication_age_seconds: 864000
 
 pipeline:
   version: off-pipeline-v6
@@ -395,10 +417,10 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v12
+  version: context-assessment-v13
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v1
+    version: primary-portfolio-mandate-v2
     analysis_scope: primary-portfolio
     question: Assess accepted material evidence and its portfolio implications.
     assets:
@@ -408,7 +430,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_MONETARY_POLICY]
+    required_risk_factors: [EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

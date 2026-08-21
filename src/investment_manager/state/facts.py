@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 from pydantic import Field, model_validator
 
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
+from investment_manager.information.official.metrics import OfficialMetricSnapshot
 from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
@@ -204,6 +205,32 @@ def project_fed_chair_public_event_fact(
         affected_assets=policy.affected_assets,
         risk_factors=revision.risk_factors,
         source_observation_ids=(observation.observation_id,),
+        previous=previous,
+    )
+
+
+def project_official_metric_fact(
+    record: OfficialMetricSnapshot,
+    *,
+    projection_version: str,
+    affected_assets: tuple[str, ...],
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    metrics = "; ".join(
+        f"{item.name.value}={item.value} {item.unit.value}" for item in record.metrics
+    )
+    return _build_fact_revision(
+        fact_id=stable_id("canonical_fact", record.fact_type),
+        projection_version=projection_version,
+        fact_type=record.fact_type,
+        status=FactRevisionStatus.ACTIVE,
+        event_time=datetime.combine(record.effective_date, time.min, tzinfo=UTC),
+        observed_at=record.observation.observed_at,
+        headline=record.headline,
+        claim=f"effective_date={record.effective_date.isoformat()}; {metrics}.",
+        affected_assets=affected_assets,
+        risk_factors=record.risk_factors,
+        source_observation_ids=(record.observation.observation_id,),
         previous=previous,
     )
 

@@ -31,6 +31,10 @@ from investment_manager.governance.policy import (
     GovernancePolicy,
     OutcomeEvaluationPolicy,
 )
+from investment_manager.information.official.metrics import (
+    OFFICIAL_METRIC_FACT_TYPES,
+    OFFICIAL_METRIC_RISK_FACTORS,
+)
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.identity import content_hash
@@ -114,6 +118,11 @@ class AppConfig(StrictConfig):
             *self.decision_state.delta_policy.intelligence_risk_factors,
             *self.decision_state.delta_policy.market_risk_factors,
         }
+        configured_fact_types = {
+            item.fact_type for item in self.decision_state.delta_policy.rules
+        }
+        if configured_fact_types & OFFICIAL_METRIC_FACT_TYPES:
+            configured_risk_factors.update(OFFICIAL_METRIC_RISK_FACTORS)
         if not configured_risk_factors.issubset(required_risk_factors):
             raise ValueError("DecisionState 风险因子必须属于 Assessment mandate")
         if self.assessment.enabled and not self.codex_runtime.enabled:

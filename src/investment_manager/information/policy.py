@@ -39,7 +39,19 @@ class InformationPolicy(StrictConfig):
     collection_interval_seconds: int = Field(default=60, ge=10, le=600)
     fed_monetary_poll_seconds: int = Field(default=15, ge=10, le=300)
     fed_calendar_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
+    official_metric_poll_seconds: int = Field(default=300, ge=60, le=3_600)
+    official_metric_slow_poll_seconds: int = Field(
+        default=900,
+        ge=300,
+        le=86_400,
+    )
     coverage_requirements: tuple[CoverageRequirement, ...] = ()
+
+    @model_validator(mode="after")
+    def official_metric_cadence_must_be_ordered(self):
+        if self.official_metric_slow_poll_seconds < self.official_metric_poll_seconds:
+            raise ValueError("官方指标慢速轮询周期不能短于快速周期")
+        return self
 
     @model_validator(mode="after")
     def coverage_domains_must_be_complete_and_unique(self):

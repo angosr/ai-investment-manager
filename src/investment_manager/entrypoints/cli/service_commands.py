@@ -53,7 +53,10 @@ from investment_manager.information.coverage import (
     build_source_poll_record,
 )
 from investment_manager.information.models import CausalDomain, SourcePollStatus
-from investment_manager.information.official.source import HttpFedOfficialSource
+from investment_manager.information.official.source import (
+    HttpFedOfficialSource,
+    HttpOfficialMetricSource,
+)
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.application import submit_frozen_analysis
 from investment_manager.legacy.cycle import CycleInput
@@ -71,6 +74,10 @@ from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPubl
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import DecisionPacket
+from investment_manager.state.metric_ingestion import (
+    OfficialMetricCollectorService,
+    SqlOfficialMetricFactIngestor,
+)
 from investment_manager.state.official_ingestion import (
     FedOfficialCollectorService,
     SqlFedFactIngestor,
@@ -528,10 +535,28 @@ def information_collector(
         calendar_poll_seconds=policy.fed_calendar_poll_seconds,
         poll_recorder=SqlInformationCoverageStore(engine),
     )
+    metric_service = OfficialMetricCollectorService(
+        source=HttpOfficialMetricSource(
+            timeout_seconds=policy.request_timeout_seconds,
+        ),
+        ingestor=SqlOfficialMetricFactIngestor(
+            engine,
+            projection_version=loaded.decision_state.official_fact_policy.version,
+            affected_assets=loaded.decision_state.official_fact_policy.affected_assets,
+        ),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        fast_poll_seconds=policy.official_metric_poll_seconds,
+        slow_poll_seconds=policy.official_metric_slow_poll_seconds,
+        poll_recorder=SqlInformationCoverageStore(engine),
+    )
 
     async def run() -> None:
         stop = asyncio.Event()
-        await asyncio.gather(service.run(stop), official_service.run(stop))
+        await asyncio.gather(
+            service.run(stop),
+            official_service.run(stop),
+            metric_service.run(stop),
+        )
 
     asyncio.run(run())
 

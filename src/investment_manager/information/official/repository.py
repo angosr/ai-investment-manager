@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
+from investment_manager.information.official.metrics import OfficialMetricSnapshot
 from investment_manager.information.official.public_calendar import (
     FED_PUBLIC_CALENDAR_URL,
     FedChairPublicEventRecord,
@@ -40,7 +41,7 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
 
-OfficialRecord = BaseOfficialRecord | FedChairPublicEventRecord
+OfficialRecord = BaseOfficialRecord | FedChairPublicEventRecord | OfficialMetricSnapshot
 CalendarOfficialRecord = FomcMeetingRecord | FedChairPublicEventRecord
 
 
@@ -390,6 +391,8 @@ def _record_from_payload(payload: dict) -> OfficialRecord:
         return FedMonetaryReleaseRecord.model_validate(payload)
     if kind == OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT.value:
         return FedChairPublicEventRecord.model_validate(payload)
+    if kind == OfficialRecordKind.OFFICIAL_METRIC_SNAPSHOT.value:
+        return OfficialMetricSnapshot.model_validate(payload)
     raise ValueError("未知官方记录类型")
 
 

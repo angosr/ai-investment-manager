@@ -12,6 +12,7 @@ from investment_manager.information.models import (
     IntelligenceEvent,
     SourceTier,
 )
+from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -1140,6 +1141,7 @@ class DecisionPacketBuilder:
             )
             if (
                 item.fact.revision_id in direct_fact_ids
+                or item.fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
                 or distance <= self._policy.maximum_background_fact_distance_seconds
             ):
                 eligible.append(item)
@@ -1148,6 +1150,7 @@ class DecisionPacketBuilder:
         eligible.sort(
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
+                item.fact.fact_type not in OFFICIAL_METRIC_FACT_TYPES,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
                 abs(((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()),

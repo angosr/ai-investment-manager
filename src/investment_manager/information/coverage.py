@@ -186,7 +186,7 @@ class SqlInformationCoverageStore:
             for item in streams
             if item in latest_success_by_stream
         )
-        latest_success = max(
+        latest_success = min(
             (item.completed_at for item in successes),
             default=None,
         )
@@ -195,21 +195,21 @@ class SqlInformationCoverageStore:
             for item in streams
             if item in latest_publication_by_stream
         )
-        latest_publication = max(publications, default=None)
+        latest_publication = min(publications, default=None)
         fresh_after = as_of - timedelta(
             seconds=requirement.maximum_poll_age_seconds
         )
-        latest_polls_failed = bool(polls) and all(
+        latest_polls_failed = any(
             item.status == SourcePollStatus.FAILED for item in polls
         )
         if latest_polls_failed:
             status = CoverageStatus.SOURCE_FAILED
-        elif latest_success is None or latest_success < fresh_after:
+        elif len(successes) != len(streams) or latest_success < fresh_after:
             status = CoverageStatus.SOURCE_STALE
         elif (
             requirement.maximum_publication_age_seconds is not None
             and (
-                latest_publication is None
+                len(publications) != len(streams)
                 or latest_publication
                 < as_of
                 - timedelta(seconds=requirement.maximum_publication_age_seconds)

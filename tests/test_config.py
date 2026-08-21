@@ -30,12 +30,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "carry-capital-shadow-v8"
     assert config.temporal.namespace == "shadow-capital-20260821-v8"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v14"
+    assert config.information.version == "information-intake-v15"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v10"
-    assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
-    assert config.decision_state.delta_policy.version == "state-delta-v5"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v16"
+    assert config.decision_state.version == "portfolio-state-v11"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v3"
+    assert config.decision_state.delta_policy.version == "state-delta-v6"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v17"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v10"
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.official_fact_policy.affected_assets == (
@@ -45,6 +45,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.assessment.mandate.required_risk_factors == (
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",
+        "US_DOLLAR",
+        "US_FISCAL_LIQUIDITY",
+        "US_INTEREST_RATES",
+        "US_MONETARY_LIQUIDITY",
         "US_MONETARY_POLICY",
     )
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
@@ -67,6 +71,20 @@ def test_background_fact_window_covers_the_longest_assessment_horizon() -> None:
     payload["decision_state"]["packet_policy"]["maximum_background_fact_distance_seconds"] = 3_600
 
     with pytest.raises(ValidationError, match="背景事实窗口不得短于"):
+        type(config).model_validate(payload)
+
+
+def test_official_macro_fact_rules_cannot_be_partially_enabled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.yaml")
+    payload = config.model_dump(mode="python")
+    payload["decision_state"]["delta_policy"]["rules"] = tuple(
+        item
+        for item in payload["decision_state"]["delta_policy"]["rules"]
+        if item["fact_type"] != "NYFED_SOMA_SNAPSHOT"
+    )
+
+    with pytest.raises(ValidationError, match="必须完整启用或完整关闭"):
         type(config).model_validate(payload)
 
 

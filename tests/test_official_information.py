@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from investment_manager.information.official.metrics import FED_BROAD_DOLLAR_STREAM_ID
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
     build_fed_chair_cancellation,
@@ -15,7 +16,10 @@ from investment_manager.information.official.records import (
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
-from investment_manager.information.official.source import HttpFedOfficialSource
+from investment_manager.information.official.source import (
+    HttpFedOfficialSource,
+    HttpOfficialMetricSource,
+)
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 
@@ -98,6 +102,32 @@ def test_fed_official_source_does_not_retry_other_http_errors() -> None:
     with pytest.raises(httpx.HTTPStatusError):
         source.fetch_monetary_rss()
     assert len(requests) == 1
+
+
+def test_official_metric_source_retries_xml_406_then_uses_validator() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(406)
+        if len(requests) == 2:
+            assert "*/*" in request.headers["accept"]
+            return httpx.Response(200, content=b"<rdf:RDF/>", headers={"etag": '"h10-1"'})
+        assert request.headers["if-none-match"] == '"h10-1"'
+        return httpx.Response(304)
+
+    source = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = source.fetch(FED_BROAD_DOLLAR_STREAM_ID, observed_at=OBSERVED_AT)
+    second = source.fetch(FED_BROAD_DOLLAR_STREAM_ID, observed_at=OBSERVED_AT)
+
+    assert first is not None and first.content == b"<rdf:RDF/>"
+    assert second is None
+    assert len(requests) == 3
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:

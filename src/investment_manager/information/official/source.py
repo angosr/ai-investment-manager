@@ -1,12 +1,165 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
 import httpx
 
+from investment_manager.information.official.metrics import (
+    FED_BROAD_DOLLAR_STREAM_ID,
+    NYFED_RATES_STREAM_ID,
+    NYFED_RRP_STREAM_ID,
+    NYFED_SOMA_STREAM_ID,
+    TGA_STREAM_ID,
+    TREASURY_YIELD_STREAM_ID,
+)
 from investment_manager.information.official.public_calendar import FED_PUBLIC_CALENDAR_URL
 from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
 )
+from investment_manager.kernel.time import require_utc
+
+_TGA_API_URL = (
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+    "v1/accounting/dts/operating_cash_balance"
+)
+_TREASURY_YIELD_URL = (
+    "https://home.treasury.gov/resource-center/data-chart-center/"
+    "interest-rates/pages/xml"
+)
+_FED_BROAD_DOLLAR_URL = (
+    "https://www.federalreserve.gov/feeds/data/H10_H10_JRXWTFB_N.B.xml"
+)
+_NYFED_RRP_URL = (
+    "https://markets.newyorkfed.org/api/rp/reverserepo/propositions/search.json"
+)
+_NYFED_SOMA_URL = "https://markets.newyorkfed.org/api/soma/summary.json"
+_NYFED_RATES_URL = "https://markets.newyorkfed.org/api/rates/all/latest.json"
+
+
+@dataclass(frozen=True, slots=True)
+class OfficialMetricDocument:
+    stream_id: str
+    source_url: str
+    media_type: str
+    content: bytes
+
+
+class HttpOfficialMetricSource:
+    """Fetch a small fixed catalog of public first-party macro data feeds."""
+
+    stream_ids = (
+        FED_BROAD_DOLLAR_STREAM_ID,
+        NYFED_RATES_STREAM_ID,
+        NYFED_RRP_STREAM_ID,
+        NYFED_SOMA_STREAM_ID,
+        TGA_STREAM_ID,
+        TREASURY_YIELD_STREAM_ID,
+    )
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int,
+        maximum_bytes: int = 1_000_000,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if timeout_seconds < 1 or maximum_bytes < 1:
+            raise ValueError("官方指标 source timeout/size 必须为正数")
+        self._timeout_seconds = timeout_seconds
+        self._maximum_bytes = maximum_bytes
+        self._transport = transport
+        self._validators: dict[str, dict[str, str]] = {}
+
+    def fetch(
+        self,
+        stream_id: str,
+        *,
+        observed_at: datetime,
+    ) -> OfficialMetricDocument | None:
+        observed_at = require_utc(observed_at)
+        url, media_type = self._request(stream_id, observed_at=observed_at)
+        headers = {
+            "Accept": media_type,
+            "User-Agent": "investment-manager-official-metrics/1.0",
+            **self._validators.get(url, {}),
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(url, headers=headers)
+            if response.status_code == 406 and media_type == "application/xml":
+                response = client.get(
+                    url,
+                    headers={**headers, "Accept": "application/xml, text/xml, */*;q=0.8"},
+                )
+        if response.status_code == 304:
+            return None
+        response.raise_for_status()
+        if str(response.url) != url:
+            raise ValueError("官方指标响应 URL 与固定请求不一致")
+        content = response.content
+        if not content or len(content) > self._maximum_bytes:
+            raise ValueError("官方指标响应为空或超过大小上限")
+        validators: dict[str, str] = {}
+        if etag := response.headers.get("etag"):
+            validators["If-None-Match"] = etag
+        if modified := response.headers.get("last-modified"):
+            validators["If-Modified-Since"] = modified
+        self._validators[url] = validators
+        return OfficialMetricDocument(
+            stream_id=stream_id,
+            source_url=url,
+            media_type=media_type,
+            content=content,
+        )
+
+    @staticmethod
+    def _request(stream_id: str, *, observed_at: datetime) -> tuple[str, str]:
+        if stream_id == TGA_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=14)).isoformat()
+            url = httpx.URL(
+                _TGA_API_URL,
+                params={
+                    "filter": f"record_date:gte:{start}",
+                    "sort": "-record_date,-account_type",
+                    "page[size]": "100",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == TREASURY_YIELD_STREAM_ID:
+            month = observed_at.strftime("%Y%m")
+            url = httpx.URL(
+                _TREASURY_YIELD_URL,
+                params={
+                    "data": "daily_treasury_yield_curve",
+                    "field_tdr_date_value_month": month,
+                },
+            )
+            return str(url), "application/xml"
+        if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
+            return _FED_BROAD_DOLLAR_URL, "application/xml"
+        if stream_id == NYFED_RRP_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=14)).isoformat()
+            url = httpx.URL(
+                _NYFED_RRP_URL,
+                params={
+                    "startDate": start,
+                    "endDate": observed_at.date().isoformat(),
+                    "type": "all",
+                    "sort": "postDt:-1,eventNum:-1",
+                    "format": "json",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == NYFED_SOMA_STREAM_ID:
+            return _NYFED_SOMA_URL, "application/json"
+        if stream_id == NYFED_RATES_STREAM_ID:
+            return _NYFED_RATES_URL, "application/json"
+        raise ValueError(f"未知官方指标流: {stream_id}")
 
 
 class HttpFedOfficialSource:

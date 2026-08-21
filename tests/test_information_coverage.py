@@ -118,13 +118,10 @@ def test_coverage_distinguishes_failed_source_from_no_recent_publication() -> No
     by_domain = {item.domain: item for item in snapshots}
 
     assert (
-        by_domain[CausalDomain.INSTITUTIONAL_FLOWS].status
-        == CoverageStatus.NO_RECENT_PUBLICATION
+        by_domain[CausalDomain.INSTITUTIONAL_FLOWS].status == CoverageStatus.NO_RECENT_PUBLICATION
     )
     assert by_domain[CausalDomain.ONCHAIN_SUPPLY].status == CoverageStatus.SOURCE_FAILED
-    assert store.gap_codes(snapshots) == (
-        "INFORMATION_ONCHAIN_SUPPLY_SOURCE_FAILED",
-    )
+    assert store.gap_codes(snapshots) == ("INFORMATION_ONCHAIN_SUPPLY_SOURCE_FAILED",)
 
 
 def test_coverage_is_point_in_time_and_ignores_future_recovery() -> None:
@@ -199,3 +196,39 @@ def test_failed_latest_poll_retains_last_success_and_publication() -> None:
     assert snapshot.latest_success_at == succeeded.completed_at
     assert snapshot.latest_publication_at == succeeded.latest_publication_at
     assert snapshot.latest_poll_refs == (failed.poll_id,)
+
+
+def test_multi_source_domain_is_only_current_when_every_source_is_fresh() -> None:
+    store = _store()
+    first = build_source_poll_record(
+        source_stream_id="first-party-a",
+        domain=CausalDomain.MONETARY_INFLATION,
+        status=SourcePollStatus.UNCHANGED,
+        started_at=AS_OF - timedelta(seconds=31),
+        completed_at=AS_OF - timedelta(seconds=30),
+        latest_publication_at=AS_OF - timedelta(hours=1),
+    )
+    store.put(first)
+    requirement = _requirement(
+        CausalDomain.MONETARY_INFLATION,
+        ("first-party-a", "first-party-b"),
+        publication_age=86_400,
+    )
+
+    missing = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
+    store.put(
+        build_source_poll_record(
+            source_stream_id="first-party-b",
+            domain=CausalDomain.MONETARY_INFLATION,
+            status=SourcePollStatus.UNCHANGED,
+            started_at=AS_OF - timedelta(seconds=21),
+            completed_at=AS_OF - timedelta(seconds=20),
+            latest_publication_at=AS_OF - timedelta(hours=2),
+        )
+    )
+    complete = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
+
+    assert missing.status == CoverageStatus.SOURCE_STALE
+    assert complete.status == CoverageStatus.CURRENT
+    assert complete.latest_success_at == first.completed_at
+    assert complete.latest_publication_at == AS_OF - timedelta(hours=2)
