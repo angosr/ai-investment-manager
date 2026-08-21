@@ -14,6 +14,8 @@ from sqlalchemy import create_engine, insert
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.execution.models import ExitReason
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
+from investment_manager.forecast.tables import codex_runs, context_assessments
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
@@ -28,6 +30,7 @@ from investment_manager.scheduling.models import AnalysisTriggerType, build_trig
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.scheduling.tables import analysis_call_admissions
 from investment_manager.schema import create_schema
+from investment_manager.state.tables import decision_packets
 
 
 def _seed_cycle(app_config, replay_input):
@@ -116,6 +119,83 @@ def test_equity_and_health_run_against_real_engine(app_config, replay_input) -> 
     accounts = [ser.account_status(status) for status in reader.accounts(now=now)]
     assert len(accounts) == 3
     assert all(account["state"] == "DISABLED" for account in accounts)
+
+
+def test_assessment_health_reads_the_current_context_chain(base_app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config = base_app_config.model_copy(
+        update={
+            "assessment": base_app_config.assessment.model_copy(
+                update={"enabled": True}
+            ),
+            "codex_runtime": base_app_config.codex_runtime.model_copy(
+                update={"enabled": True}
+            ),
+        }
+    )
+    now = datetime(2026, 8, 21, 9, tzinfo=UTC)
+    completed_at = now - timedelta(minutes=5)
+    packet_id = "packet-dashboard-assessment"
+    behavior_hash = configured_assess_behavior_hash(config)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(decision_packets).values(
+                packet_id=packet_id,
+                analysis_scope=config.assessment.mandate.analysis_scope,
+                as_of=now - timedelta(minutes=10),
+                policy_version=config.decision_state.packet_policy.version,
+                content_hash="a" * 64,
+                payload={},
+            )
+        )
+        connection.execute(
+            insert(codex_runs),
+            (
+                {
+                    "run_id": "run-dashboard-current",
+                    "cycle_id": packet_id,
+                    "account_id": ".codex-test",
+                    "attempt": 0,
+                    "status": "SUCCEEDED",
+                    "error_class": None,
+                    "payload": {
+                        "analysis_behavior_hash": behavior_hash,
+                        "completed_at": completed_at.isoformat(),
+                    },
+                },
+                {
+                    "run_id": "run-dashboard-retired",
+                    "cycle_id": packet_id,
+                    "account_id": ".codex-retired",
+                    "attempt": 0,
+                    "status": "FAILED",
+                    "error_class": "RETIRED_BEHAVIOR",
+                    "payload": {"analysis_behavior_hash": "b" * 64},
+                },
+            ),
+        )
+        connection.execute(
+            insert(context_assessments).values(
+                assessment_id="assessment-dashboard-current",
+                packet_id=packet_id,
+                analysis_scope=config.assessment.mandate.analysis_scope,
+                available_at=completed_at,
+                analysis_behavior_hash=behavior_hash,
+                view_count=sum(
+                    len(asset.horizons_minutes)
+                    for asset in config.assessment.mandate.assets
+                ),
+                payload={},
+            )
+        )
+
+    status = DashboardReader(engine, config).analysis_runtime_status(now=now)
+
+    assert status.recent_attempts == 1
+    assert status.recent_successes == 1
+    assert status.overdue_forecast_count == 0
+    assert {scope.latest_success_at for scope in status.scopes} == {completed_at}
 
 
 def test_equity_is_account_wide_and_uses_actual_close_time(app_config, replay_input) -> None:

@@ -18,10 +18,13 @@ from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.tables import (
+    assessment_view_outcomes,
     codex_account_capacity,
     codex_account_leases,
     codex_runs,
+    context_assessments,
 )
 from investment_manager.governance.evaluation.performance import (
     OutcomeMetrics,
@@ -63,6 +66,7 @@ from investment_manager.scheduling.tables import (
 )
 from investment_manager.settings import AppConfig
 from investment_manager.state.panel import sanitize_external_text
+from investment_manager.state.tables import decision_packets
 
 # 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
 _EVIDENCE_PANEL_SCAN_LIMIT = 500
@@ -485,26 +489,56 @@ class DashboardReader:
         pipeline = self._config.pipeline.version
         recent_start = now - timedelta(hours=1)
         scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.market_data.symbols)
+        assessment_mode = self._config.assessment.enabled
+        maximum_horizon_minutes = (
+            max(
+                horizon
+                for asset in self._config.assessment.mandate.assets
+                for horizon in asset.horizons_minutes
+            )
+            if assessment_mode
+            else max(self._config.proposal.forecast_horizons_minutes)
+        )
         forecast_cutoff = now - timedelta(
             seconds=(
-                max(self._config.proposal.forecast_horizons_minutes) * 60
+                maximum_horizon_minutes * 60
                 + self._config.shadow.analysis_deadline_seconds
                 + self._config.outcome_evaluation.poll_seconds * 2
             )
         )
+        behavior_hash = (
+            configured_assess_behavior_hash(self._config)
+            if assessment_mode
+            else None
+        )
         with self._engine.connect() as connection:
-            recent_rows = connection.execute(
-                select(codex_runs.c.status, codex_runs.c.payload)
-                .join(
-                    analysis_cycles,
-                    analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
-                )
-                .where(
-                    analysis_cycles.c.pipeline_version == pipeline,
-                    analysis_cycles.c.as_of >= recent_start,
-                    analysis_cycles.c.as_of <= now,
-                )
-            ).all()
+            if assessment_mode:
+                recent_rows = connection.execute(
+                    select(codex_runs.c.status, codex_runs.c.payload)
+                    .join(
+                        decision_packets,
+                        decision_packets.c.packet_id == codex_runs.c.cycle_id,
+                    )
+                    .where(
+                        decision_packets.c.as_of >= recent_start,
+                        decision_packets.c.as_of <= now,
+                        codex_runs.c.payload["analysis_behavior_hash"].as_string()
+                        == behavior_hash,
+                    )
+                ).all()
+            else:
+                recent_rows = connection.execute(
+                    select(codex_runs.c.status, codex_runs.c.payload)
+                    .join(
+                        analysis_cycles,
+                        analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
+                    )
+                    .where(
+                        analysis_cycles.c.pipeline_version == pipeline,
+                        analysis_cycles.c.as_of >= recent_start,
+                        analysis_cycles.c.as_of <= now,
+                    )
+                ).all()
             pending_count, oldest_pending = connection.execute(
                 select(func.count(), func.min(trigger_outbox.c.available_at)).where(
                     trigger_outbox.c.status == "PENDING",
@@ -532,71 +566,120 @@ class DashboardReader:
                 if len(manifest_ids) == 1
                 else None
             )
-            overdue_proposals = (
-                select(
-                    analysis_proposals.c.proposal_id,
-                    analysis_cycles.c.as_of.label("analysis_at"),
+            latest_assessment_completed = None
+            if assessment_mode:
+                overdue_analyses = (
+                    select(
+                        context_assessments.c.assessment_id.label("proposal_id"),
+                        decision_packets.c.as_of.label("analysis_at"),
+                    )
+                    .join(
+                        decision_packets,
+                        decision_packets.c.packet_id
+                        == context_assessments.c.packet_id,
+                    )
+                    .outerjoin(
+                        assessment_view_outcomes,
+                        assessment_view_outcomes.c.assessment_id
+                        == context_assessments.c.assessment_id,
+                    )
+                    .where(
+                        decision_packets.c.as_of <= forecast_cutoff,
+                        context_assessments.c.analysis_behavior_hash
+                        == behavior_hash,
+                    )
+                    .group_by(
+                        context_assessments.c.assessment_id,
+                        context_assessments.c.view_count,
+                        decision_packets.c.as_of,
+                    )
+                    .having(
+                        func.count(assessment_view_outcomes.c.outcome_id)
+                        < context_assessments.c.view_count
+                    )
+                    .subquery()
                 )
-                .join(
-                    analysis_cycles,
-                    analysis_cycles.c.cycle_id == analysis_proposals.c.cycle_id,
+                latest_assessment_completed = connection.execute(
+                    select(func.max(context_assessments.c.available_at)).where(
+                        context_assessments.c.analysis_behavior_hash == behavior_hash,
+                        context_assessments.c.available_at <= now,
+                    )
+                ).scalar_one_or_none()
+                if latest_assessment_completed is not None:
+                    latest_assessment_completed = database_utc(
+                        latest_assessment_completed
+                    )
+            else:
+                overdue_analyses = (
+                    select(
+                        analysis_proposals.c.proposal_id,
+                        analysis_cycles.c.as_of.label("analysis_at"),
+                    )
+                    .join(
+                        analysis_cycles,
+                        analysis_cycles.c.cycle_id
+                        == analysis_proposals.c.cycle_id,
+                    )
+                    .outerjoin(
+                        analysis_forecast_outcomes,
+                        analysis_forecast_outcomes.c.proposal_id
+                        == analysis_proposals.c.proposal_id,
+                    )
+                    .where(analysis_cycles.c.as_of <= forecast_cutoff)
+                    .group_by(
+                        analysis_proposals.c.proposal_id,
+                        analysis_proposals.c.forecast_count,
+                        analysis_cycles.c.as_of,
+                    )
+                    .having(
+                        func.count(analysis_forecast_outcomes.c.outcome_id)
+                        < analysis_proposals.c.forecast_count
+                    )
+                    .subquery()
                 )
-                .outerjoin(
-                    analysis_forecast_outcomes,
-                    analysis_forecast_outcomes.c.proposal_id
-                    == analysis_proposals.c.proposal_id,
-                )
-                .where(analysis_cycles.c.as_of <= forecast_cutoff)
-                .group_by(
-                    analysis_proposals.c.proposal_id,
-                    analysis_proposals.c.forecast_count,
-                    analysis_cycles.c.as_of,
-                )
-                .having(
-                    func.count(analysis_forecast_outcomes.c.outcome_id)
-                    < analysis_proposals.c.forecast_count
-                )
-                .subquery()
-            )
             overdue_count, oldest_overdue = connection.execute(
                 select(
                     func.count(),
-                    func.min(overdue_proposals.c.analysis_at),
-                ).select_from(overdue_proposals)
+                    func.min(overdue_analyses.c.analysis_at),
+                ).select_from(overdue_analyses)
             ).one()
 
             plan_by_symbol = {symbol: payload for symbol, _, payload in plan_rows}
             scope_statuses: list[AnalysisScopeRuntimeStatus] = []
             for symbol in self._config.market_data.symbols:
-                payload = connection.execute(
-                    select(codex_runs.c.payload)
-                    .join(
-                        analysis_cycles,
-                        analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
-                    )
-                    .join(
-                        market_snapshots,
-                        market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
-                    )
-                    .where(
-                        analysis_cycles.c.pipeline_version == pipeline,
-                        market_snapshots.c.symbol == symbol,
-                        codex_runs.c.status == "SUCCEEDED",
-                        analysis_cycles.c.as_of <= now,
-                    )
-                    .order_by(analysis_cycles.c.as_of.desc())
-                    .limit(1)
-                ).scalar_one_or_none()
-                completed = None
-                if isinstance(payload, dict) and isinstance(
-                    payload.get("completed_at"), str
-                ):
-                    try:
-                        completed = database_utc(
-                            datetime.fromisoformat(payload["completed_at"])
+                if assessment_mode:
+                    completed = latest_assessment_completed
+                else:
+                    payload = connection.execute(
+                        select(codex_runs.c.payload)
+                        .join(
+                            analysis_cycles,
+                            analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
                         )
-                    except ValueError:
-                        completed = None
+                        .join(
+                            market_snapshots,
+                            market_snapshots.c.cycle_id
+                            == analysis_cycles.c.cycle_id,
+                        )
+                        .where(
+                            analysis_cycles.c.pipeline_version == pipeline,
+                            market_snapshots.c.symbol == symbol,
+                            codex_runs.c.status == "SUCCEEDED",
+                            analysis_cycles.c.as_of <= now,
+                        )
+                        .order_by(analysis_cycles.c.as_of.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    completed = None
+                    if isinstance(payload, dict) and isinstance(
+                        payload.get("completed_at"), str
+                    ):
+                        try:
+                            completed = database_utc(
+                                datetime.fromisoformat(payload["completed_at"])
+                            )
+                        except ValueError:
+                            completed = None
                 plan_payload = plan_by_symbol.get(symbol)
                 heartbeat = (
                     plan_payload.get("heartbeat_seconds")
@@ -679,20 +762,42 @@ class DashboardReader:
             )
 
     def _recent_failures(self, *, now: datetime) -> dict[str, int]:
-        query = (
-            select(codex_runs.c.account_id, func.count())
-            .select_from(
-                codex_runs.join(
-                    analysis_cycles, analysis_cycles.c.cycle_id == codex_runs.c.cycle_id
+        if self._config.assessment.enabled:
+            behavior_hash = configured_assess_behavior_hash(self._config)
+            query = (
+                select(codex_runs.c.account_id, func.count())
+                .select_from(
+                    codex_runs.join(
+                        decision_packets,
+                        decision_packets.c.packet_id == codex_runs.c.cycle_id,
+                    )
                 )
+                .where(
+                    decision_packets.c.as_of >= now - timedelta(hours=1),
+                    decision_packets.c.as_of <= now,
+                    codex_runs.c.payload["analysis_behavior_hash"].as_string()
+                    == behavior_hash,
+                    codex_runs.c.status != "SUCCEEDED",
+                    codex_runs.c.account_id.is_not(None),
+                )
+                .group_by(codex_runs.c.account_id)
             )
-            .where(
-                analysis_cycles.c.as_of >= now - timedelta(hours=1),
-                analysis_cycles.c.as_of <= now,
-                codex_runs.c.status != "SUCCEEDED",
-                codex_runs.c.account_id.is_not(None),
+        else:
+            query = (
+                select(codex_runs.c.account_id, func.count())
+                .select_from(
+                    codex_runs.join(
+                        analysis_cycles,
+                        analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
+                    )
+                )
+                .where(
+                    analysis_cycles.c.as_of >= now - timedelta(hours=1),
+                    analysis_cycles.c.as_of <= now,
+                    codex_runs.c.status != "SUCCEEDED",
+                    codex_runs.c.account_id.is_not(None),
+                )
+                .group_by(codex_runs.c.account_id)
             )
-            .group_by(codex_runs.c.account_id)
-        )
         with self._engine.connect() as connection:
             return {account_id: count for account_id, count in connection.execute(query).all()}
