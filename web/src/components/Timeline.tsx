@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Snapshot } from "../api/types";
 import { useLive } from "../hooks";
 import { CycleRow } from "./CycleRow";
-import { CapitalDecisionFeed, materialActionCount } from "./CapitalActions";
+import { CapitalDecisionFeed } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
 import styles from "./Timeline.module.css";
@@ -69,7 +69,7 @@ function CapitalTimeline() {
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="资金决策" count={materialActionCount(capitalActions)} onPick={setTab} />
+          <Tab id="actions" active={tab} label="资金决策" onPick={setTab} />
           <Tab id="analysis" active={tab} label="AI 判断" count={assessmentRecords?.assessments.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>

@@ -51,10 +51,6 @@ export function CapitalDecisionFeed({ actions }: { actions: CapitalAction[] }) {
   );
 }
 
-export function materialActionCount(actions: CapitalAction[]): number {
-  return actions.filter((action) => !ROUTINE_OUTCOMES.has(action.outcome)).length;
-}
-
 function groupRoutineChecks(actions: CapitalAction[]): ActionGroup[] {
   const groups: ActionGroup[] = [];
   for (const action of actions) {
@@ -84,7 +80,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
   const reasons = action.reason_codes.map(
     (reason) => REASON_LABELS[reason] ?? `系统原因：${reason}`,
   );
-  const triggers = action.trigger_types.map(
+  const triggers = [...new Set(group.actions.flatMap((item) => item.trigger_types))].map(
     (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
   );
   const repeated = group.actions.length > 1;
