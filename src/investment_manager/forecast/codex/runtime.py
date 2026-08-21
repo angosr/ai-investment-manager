@@ -216,7 +216,7 @@ class AppServerCapacityProbe:
             "params": {
                 "clientInfo": {
                     "name": "investment_manager",
-                    "title": "Quant Core Capacity Probe",
+                    "title": "Investment Manager Capacity Probe",
                     "version": "0.1.0",
                 }
             },
@@ -224,7 +224,7 @@ class AppServerCapacityProbe:
         auth_source = account.codex_home / "auth.json"
         if not auth_source.is_file():
             raise RuntimeError("Codex App Server capacity probe unavailable")
-        profile_parent = account.codex_home.parent / ".quant-core-capacity-profiles"
+        profile_parent = account.codex_home.parent / ".investment-manager-capacity-profiles"
         try:
             profile_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         except OSError as exc:
@@ -432,7 +432,7 @@ _DISABLED_ANALYST_FEATURES = (
     "unified_exec",
     "view_image",
 )
-_TERMINAL_READ_REQUEST_ID = "quant-core-terminal-read"
+_TERMINAL_READ_REQUEST_ID = "investment-manager-terminal-read"
 
 
 class SubprocessCodexExecutor:
@@ -565,7 +565,7 @@ class SubprocessCodexExecutor:
                 "params": {
                     "clientInfo": {
                         "name": "investment_manager",
-                        "title": "Quant Core Analyst",
+                        "title": "Investment Manager Analyst",
                         "version": self._policy.version,
                     }
                 },
@@ -1024,7 +1024,9 @@ def audit_codex_isolation(
     outside = target / "outside"
     outside.mkdir()
     sentinel_path = outside / "sentinel.txt"
-    sentinel_value = sentinel or f"QUANT_CORE_ISOLATION_SENTINEL_{secrets.token_hex(16)}"
+    sentinel_value = sentinel or (
+        f"INVESTMENT_MANAGER_ISOLATION_SENTINEL_{secrets.token_hex(16)}"
+    )
     sentinel_path.write_text(sentinel_value + "\n", encoding="utf-8")
     sentinel_path.chmod(0o400)
     prompt = (

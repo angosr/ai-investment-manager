@@ -1215,7 +1215,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     ]
     sent = []
     response = {
-        "id": "quant-core-terminal-read",
+        "id": "investment-manager-terminal-read",
         "error": None,
         "result": {
             "thread": {
@@ -1254,7 +1254,7 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
     assert sent == [
         {
             "method": "thread/read",
-            "id": "quant-core-terminal-read",
+            "id": "investment-manager-terminal-read",
             "params": {"threadId": "thread-1", "includeTurns": True},
         }
     ]
@@ -1277,7 +1277,7 @@ def test_subprocess_ignores_only_failed_optional_read_after_normal_completion(
             "params": {"item": {"type": "agentMessage", "text": message_text}},
         },
         {
-            "id": "quant-core-terminal-read",
+            "id": "investment-manager-terminal-read",
             "error": {"code": -32000, "message": "optional read raced with completion"},
         },
         {

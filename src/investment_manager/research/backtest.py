@@ -240,7 +240,7 @@ def run_bar_backtest(
     )
     if expected_funding_dataset_id != observed_funding_dataset_id:
         raise ValueError("历史策略与资金费率数据集身份不一致")
-    adapter = _QuantCoreBarStrategy(
+    adapter = _BarBacktestStrategy(
         _AdapterConfig(
             instrument_id=instrument.id,
             bar_type=bar_type,
@@ -593,7 +593,7 @@ class _AdapterConfig(StrategyConfig, frozen=True):
     signal_end_ns: int
 
 
-class _QuantCoreBarStrategy(NautilusStrategy):
+class _BarBacktestStrategy(NautilusStrategy):
     def __init__(
         self,
         config: _AdapterConfig,
