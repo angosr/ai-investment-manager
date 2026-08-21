@@ -10,7 +10,6 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +19,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
+from investment_manager.forecast.codex.output import (
+    safe_validation_diagnostics,
+    strict_output_schema,
+)
 from investment_manager.forecast.policy import (
     CodexAccount,
     CodexAccountRegistry,
@@ -350,43 +353,6 @@ def write_run_bundle(
         prompt=prompt,
         analysis_behavior_hash=behavior_hash,
     )
-
-
-def strict_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """把 Pydantic schema 收紧为 Codex Structured Outputs 接受的子集。"""
-
-    normalized = deepcopy(schema)
-    validation_keywords = (
-        "minimum",
-        "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "multipleOf",
-        "minLength",
-        "maxLength",
-        "pattern",
-        "format",
-        "minItems",
-        "maxItems",
-    )
-
-    def visit(node: Any) -> None:
-        if isinstance(node, dict):
-            node.pop("default", None)
-            for keyword in validation_keywords:
-                node.pop(keyword, None)
-            properties = node.get("properties")
-            if isinstance(properties, dict):
-                node["additionalProperties"] = False
-                node["required"] = list(properties)
-            for value in node.values():
-                visit(value)
-        elif isinstance(node, list):
-            for value in node:
-                visit(value)
-
-    visit(normalized)
-    return normalized
 
 
 def verify_bundle(bundle: RunBundle) -> bool:
@@ -786,13 +752,26 @@ class SubprocessCodexExecutor:
             )
         try:
             output = self._output_adapter.validate_json(messages[0])
-        except (ValidationError, ValueError):
+        except ValidationError as exc:
             return InvocationResult(
                 False,
                 failure=FailureClass.SCHEMA_INVALID,
                 diagnostics={
                     **diagnostics,
                     "schema_failure_stage": "PAYLOAD_VALIDATION",
+                    **safe_validation_diagnostics(
+                        exc,
+                        self._output_adapter.json_schema(),
+                    ),
+                },
+            )
+        except ValueError:
+            return InvocationResult(
+                False,
+                failure=FailureClass.SCHEMA_INVALID,
+                diagnostics={
+                    **diagnostics,
+                    "schema_failure_stage": "PAYLOAD_DECODING",
                 },
             )
         return InvocationResult(

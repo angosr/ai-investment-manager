@@ -136,6 +136,7 @@ src/investment_manager/
   forecast/                   # 预测契约与共享表
     context/                  # ContextAssessment 全生命周期
     codex/                    # Codex 外部执行、账号路由与审计存储
+      output.py               # Structured Outputs 收紧、校验与脱敏失败诊断
   portfolio/                  # 组合目标、现金比较、再平衡和成本权衡
   risk/                       # 风险预算、组合保护、压力约束和授权
   execution/                  # 交易计划、订单与成交契约

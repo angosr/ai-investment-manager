@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 from pydantic import TypeAdapter
 
 from investment_manager.execution.models import OrderType, Side
+from investment_manager.forecast.codex.output import strict_output_schema
 from investment_manager.forecast.codex.runtime import (
     AccountLeaseStore,
     AnalystResult,
@@ -18,7 +19,6 @@ from investment_manager.forecast.codex.runtime import (
     assemble_codex_router,
     codex_execution_contract,
     load_existing_bundle,
-    strict_output_schema,
     validated_behavior_hash,
     write_run_bundle,
 )

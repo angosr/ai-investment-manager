@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from investment_manager.forecast.codex.output import strict_output_schema
 from investment_manager.forecast.codex.runtime import (
     AccountLeaseStore,
     AnalystResult,
@@ -15,7 +16,6 @@ from investment_manager.forecast.codex.runtime import (
     assemble_codex_router,
     codex_execution_contract,
     load_existing_bundle,
-    strict_output_schema,
     write_run_bundle,
 )
 from investment_manager.forecast.context.contract import (

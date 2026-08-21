@@ -15,6 +15,7 @@ from investment_manager.execution.models import (
     OrderType,
     Side,
 )
+from investment_manager.forecast.codex.output import strict_output_schema
 from investment_manager.forecast.codex.runtime import (
     AccountState,
     AnalystResult,
@@ -34,7 +35,6 @@ from investment_manager.forecast.codex.runtime import (
     _terminal_message_is_idle,
     assemble_codex_router,
     audit_codex_isolation,
-    strict_output_schema,
     verify_bundle,
 )
 from investment_manager.forecast.models import DirectionalView
@@ -1323,7 +1323,7 @@ def test_subprocess_contract_classifies_payload_validation_without_persisting_co
                 "item": {
                     "id": "message",
                     "type": "agentMessage",
-                    "text": '{"unexpected":"secret-model-output"}',
+                    "text": '{"secret-extra-field":"secret-model-output"}',
                 }
             },
         },
@@ -1339,6 +1339,9 @@ def test_subprocess_contract_classifies_payload_validation_without_persisting_co
     assert result.failure == FailureClass.SCHEMA_INVALID
     assert result.diagnostics["agent_message_count"] == 1
     assert result.diagnostics["schema_failure_stage"] == "PAYLOAD_VALIDATION"
+    assert result.diagnostics["schema_error_count"] == 2
+    assert result.diagnostics["schema_error_types"] == "extra_forbidden,missing"
+    assert result.diagnostics["schema_error_locations"] == "*,proposal"
     assert "secret" not in json.dumps(result.diagnostics)
 
 
