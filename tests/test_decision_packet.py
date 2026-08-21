@@ -184,15 +184,16 @@ def _assessment_output() -> AssessStructuredOutput:
     )
 
 
-def test_packet_is_one_multi_asset_high_density_projection(
-    app_config, replay_input
-) -> None:
+def test_packet_is_one_multi_asset_high_density_projection(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
 
     assert tuple(item.asset for item in packet.asset_states) == ("BTC", "ETH")
-    assert tuple(
-        (item.asset, item.horizon_minutes) for item in packet.required_views
-    ) == (("BTC", 60), ("BTC", 240), ("ETH", 60), ("ETH", 240))
+    assert tuple((item.asset, item.horizon_minutes) for item in packet.required_views) == (
+        ("BTC", 60),
+        ("BTC", 240),
+        ("ETH", 60),
+        ("ETH", 240),
+    )
     assert packet.trigger_ids == ("delta-1", "delta-2")
     encoded = canonical_json(packet)
     assert '"bars"' not in encoded
@@ -200,9 +201,7 @@ def test_packet_is_one_multi_asset_high_density_projection(
     assert len(encoded) < 12_000
 
 
-def test_packet_hash_is_independent_of_input_collection_order(
-    app_config, replay_input
-) -> None:
+def test_packet_hash_is_independent_of_input_collection_order(app_config, replay_input) -> None:
     builder, first = _packet(app_config, replay_input)
     market_btc = replay_input.market
     market_eth = replay_input.market.model_copy(update={"symbol": "ETHUSDT"})
@@ -231,9 +230,7 @@ def test_packet_hash_is_independent_of_input_collection_order(
     assert second.packet_id == first.packet_id
 
 
-def test_packet_rejects_content_tampering_during_recovery(
-    app_config, replay_input
-) -> None:
+def test_packet_rejects_content_tampering_during_recovery(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = packet.model_dump(mode="json")
     payload["question"] = "tampered after persistence"
@@ -242,9 +239,7 @@ def test_packet_rejects_content_tampering_during_recovery(
         DecisionPacket.model_validate(payload)
 
 
-def test_packet_recovers_legacy_hash_without_default_review_field(
-    app_config, replay_input
-) -> None:
+def test_packet_recovers_legacy_hash_without_default_review_field(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = packet.model_dump(mode="json")
     payload.pop("review_requests")
@@ -252,9 +247,7 @@ def test_packet_recovers_legacy_hash_without_default_review_field(
     assert DecisionPacket.model_validate(payload) == packet
 
 
-def test_packet_rejects_trigger_refs_that_do_not_match_deltas(
-    app_config, replay_input
-) -> None:
+def test_packet_rejects_trigger_refs_that_do_not_match_deltas(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = packet.model_dump(mode="json")
     payload["trigger_ids"] = ["different-delta"]
@@ -299,9 +292,7 @@ def test_packet_can_be_driven_by_an_explicit_review_without_fake_delta(
     assert review.reason in canonical_json(packet)
 
 
-def test_packet_rejects_market_replacement_for_frozen_state(
-    app_config, replay_input
-) -> None:
+def test_packet_rejects_market_replacement_for_frozen_state(app_config, replay_input) -> None:
     builder, _ = _packet(app_config, replay_input)
     market_btc = replay_input.market
     market_eth = market_btc.model_copy(update={"symbol": "ETHUSDT"})
@@ -405,13 +396,7 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
         account=replay_input.account,
         markets=(market,),
         features=features,
-    ).model_copy(
-        update={
-            "fact_revision_ids": tuple(
-                item.fact.revision_id for item in facts
-            )
-        }
-    )
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
     packet = DecisionPacketBuilder(
         DecisionPacketPolicy(
             version="packet-policy-v1",
@@ -486,9 +471,7 @@ def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_i
     )
 
 
-def test_finalize_assessment_binds_authoritative_runtime_metadata(
-    app_config, replay_input
-) -> None:
+def test_finalize_assessment_binds_authoritative_runtime_metadata(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     available_at = packet.as_of + timedelta(seconds=20)
 
@@ -505,9 +488,52 @@ def test_finalize_assessment_binds_authoritative_runtime_metadata(
     assert len(assessment.views) == 4
 
 
-def test_finalize_assessment_rejects_unknown_evidence(
+def test_finalize_assessment_canonicalizes_complete_reordered_views(
     app_config, replay_input
 ) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _assessment_output()
+    reordered = output.model_copy(
+        update={
+            "assessment": output.assessment.model_copy(
+                update={"views": tuple(reversed(output.assessment.views))}
+            )
+        }
+    )
+
+    assessment = finalize_context_assessment(
+        output=reordered,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert tuple((item.asset, item.horizon_minutes) for item in assessment.views) == tuple(
+        (item.asset, item.horizon_minutes) for item in packet.required_views
+    )
+
+
+def test_finalize_assessment_rejects_duplicate_view(app_config, replay_input) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _assessment_output()
+    duplicate = output.model_copy(
+        update={
+            "assessment": output.assessment.model_copy(
+                update={"views": (*output.assessment.views[:-1], output.assessment.views[0])}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="required_views 不一致"):
+        finalize_context_assessment(
+            output=duplicate,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_finalize_assessment_rejects_unknown_evidence(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = _assessment_output().model_dump()
     payload["assessment"]["views"][0]["evidence_ids"] = ("not-visible",)
@@ -522,9 +548,7 @@ def test_finalize_assessment_rejects_unknown_evidence(
         )
 
 
-def test_finalize_assessment_rejects_missing_required_view(
-    app_config, replay_input
-) -> None:
+def test_finalize_assessment_rejects_missing_required_view(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = _assessment_output().model_dump()
     payload["assessment"]["views"] = payload["assessment"]["views"][:-1]
@@ -573,9 +597,7 @@ def test_assess_bundle_reuses_generic_locked_runner_contract(
 
     assert verify_bundle(bundle)
     assert bundle.cycle_id == packet.packet_id
-    assert bundle.analysis_behavior_hash == _assess_bundle_builder(
-        app_config
-    ).behavior_hash(packet)
+    assert bundle.analysis_behavior_hash == _assess_bundle_builder(app_config).behavior_hash(packet)
     schema = (bundle.path / "output.schema.json").read_text(encoding="utf-8")
     assert "suggested_action" not in schema
     assert "target_notional" not in schema
@@ -596,9 +618,7 @@ def test_configured_assessment_behavior_matches_packets_from_same_config(
                     )
                 }
             ),
-            "assessment": app_config.assessment.model_copy(
-                update={"mandate": _mandate()}
-            ),
+            "assessment": app_config.assessment.model_copy(update={"mandate": _mandate()}),
         }
     )
 
@@ -607,9 +627,7 @@ def test_configured_assessment_behavior_matches_packets_from_same_config(
     ).behavior_hash(packet)
 
 
-def test_assessment_behavior_hash_includes_schema_retry_contract(
-    app_config, replay_input
-) -> None:
+def test_assessment_behavior_hash_includes_schema_retry_contract(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     one_attempt = app_config.codex_runtime.model_copy(update={"max_account_switches": 0})
     three_attempts = app_config.codex_runtime.model_copy(update={"max_account_switches": 2})
@@ -774,9 +792,7 @@ def test_context_analyst_stops_after_bounded_schema_attempts(
     assert len(router.bundles) == 2
 
 
-def test_context_assessment_store_is_immutable_and_idempotent(
-    app_config, replay_input
-) -> None:
+def test_context_assessment_store_is_immutable_and_idempotent(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     assessment = finalize_context_assessment(
         output=_assessment_output(),
@@ -794,10 +810,13 @@ def test_context_assessment_store_is_immutable_and_idempotent(
     assert store.record_assessment(packet.packet_id, assessment) == assessment
     assert store.packet(packet.packet_id) == packet
     assert store.assessment(assessment.assessment_id) == assessment
-    assert store.assessment_for(
-        packet_id=packet.packet_id,
-        analysis_behavior_hash=assessment.analysis_behavior_hash,
-    ) == assessment
+    assert (
+        store.assessment_for(
+            packet_id=packet.packet_id,
+            analysis_behavior_hash=assessment.analysis_behavior_hash,
+        )
+        == assessment
+    )
 
 
 def test_context_assessment_store_rejects_second_output_for_same_behavior(
@@ -825,15 +844,16 @@ def test_context_assessment_store_rejects_second_output_for_same_behavior(
     with pytest.raises(ValueError, match="已有不同的权威"):
         store.record_assessment(packet.packet_id, retry)
 
-    assert store.assessment_for(
-        packet_id=packet.packet_id,
-        analysis_behavior_hash=HASH,
-    ) == first
+    assert (
+        store.assessment_for(
+            packet_id=packet.packet_id,
+            analysis_behavior_hash=HASH,
+        )
+        == first
+    )
 
 
-def test_context_assessment_store_rejects_packet_mismatch(
-    app_config, replay_input
-) -> None:
+def test_context_assessment_store_rejects_packet_mismatch(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     assessment = finalize_context_assessment(
         output=_assessment_output(),
