@@ -13,18 +13,18 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v12 将连续宏观更新按同源历史异常度分为背景与主导候选。
-  version: portfolio-state-v12
+  # v13 接入单基金一手机构持仓，同时保持聚合机构覆盖显式不完整。
+  version: portfolio-state-v13
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v4
+    version: official-fact-v5
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v7
+    version: state-delta-v8
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -46,6 +46,9 @@ decision_state:
       - fact_type: FOMC_MEETING_SCHEDULE
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
+      - fact_type: IBIT_HOLDINGS_SNAPSHOT
+        materiality: HIGH
+        reason_code: IBIT_HOLDINGS_REVISION
       - fact_type: NYFED_REFERENCE_RATES_SNAPSHOT
         materiality: HIGH
         reason_code: NYFED_REFERENCE_RATES_REVISION
@@ -62,7 +65,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v18
+    version: decision-packet-policy-v19
     schema_version: decision-packet-v11
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -265,7 +268,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v13
+  version: analysis-trigger-v14
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
@@ -341,7 +344,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v16
+  version: information-intake-v17
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -370,6 +373,7 @@ information:
       source_stream_ids: []
       maximum_poll_age_seconds: 300
     - domain: INSTITUTIONAL_FLOWS
+      # IBIT 仅是部分观测；主要发行人未齐前不得把本域标记为 CURRENT。
       source_stream_ids: []
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 172800
@@ -420,10 +424,10 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v14
+  version: context-assessment-v15
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v2
+    version: primary-portfolio-mandate-v3
     analysis_scope: primary-portfolio
     question: Assess accepted material evidence and its portfolio implications.
     assets:
@@ -433,7 +437,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
+    required_risk_factors: [BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

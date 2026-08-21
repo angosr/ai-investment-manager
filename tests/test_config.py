@@ -30,12 +30,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "carry-capital-shadow-v8"
     assert config.temporal.namespace == "shadow-capital-20260821-v8"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v16"
+    assert config.information.version == "information-intake-v17"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v12"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v4"
-    assert config.decision_state.delta_policy.version == "state-delta-v7"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v18"
+    assert config.decision_state.version == "portfolio-state-v13"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v5"
+    assert config.decision_state.delta_policy.version == "state-delta-v8"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v19"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v11"
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.official_fact_policy.affected_assets == (
@@ -43,6 +43,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETH",
     )
     assert config.assessment.mandate.required_risk_factors == (
+        "BTC_INSTITUTIONAL_HOLDINGS",
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",
         "US_DOLLAR",

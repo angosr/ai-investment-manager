@@ -34,7 +34,7 @@
 - Governor 正式输出 `decision + 可选 TriggerPlanPatch`，可以用 `NoChange + TriggerPlanPatch` 单独调整 AI 分析时机，不能借短链改变风控、执行或发布权限。
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
 - 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
-- 固定官方宏观指标适配器：TGA、Treasury 收益率、Fed 广义美元、RRP、SOMA、EFFR/SOFR 统一保存原始响应、语义修订、覆盖健康与高密度事实；历史异常度在程序侧计算，背景波动不占用 AI 主导因素注意力。
+- 固定一手状态适配器：TGA、Treasury 收益率、Fed 广义美元、RRP、SOMA、EFFR/SOFR 与 iShares IBIT 日持仓统一保存原始响应、语义修订与高密度事实；历史异常度在程序侧计算，背景波动不占用 AI 主导因素注意力。IBIT 只作为单基金部分观测，不冒充 ETF 合计净流入。
 - `DecisionPacket → ContextAssessmentWorkflow` 新链：每个 Packet 的指定视图、数量和可引用证据进入动态 Structured Output 约束，Codex 失败关闭且没有交易权限；旧 `AnalysisCycleWorkflow` 已退出 Trigger 调度，只保留迁移期回放代码。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。

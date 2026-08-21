@@ -137,6 +137,37 @@ class SqlOfficialInformationStore:
             raise KeyError(observation_id)
         return _record_from_payload(payload)
 
+    def metric_history(
+        self,
+        *,
+        source_id: str,
+        source_record_id: str,
+        as_of: datetime,
+        limit: int = 400,
+    ) -> tuple[OfficialMetricSnapshot, ...]:
+        """Return bounded point-in-time revisions for latest-only metric feeds."""
+
+        as_of = require_utc(as_of)
+        if not source_id or not source_record_id or not 1 <= limit <= 5_000:
+            raise ValueError("官方指标历史查询参数非法")
+        with self._engine.connect() as connection:
+            payloads = tuple(
+                connection.execute(
+                    select(source_observations.c.payload)
+                    .where(
+                        source_observations.c.source_id == source_id,
+                        source_observations.c.source_record_id == source_record_id,
+                        source_observations.c.observed_at <= as_of,
+                    )
+                    .order_by(source_observations.c.observed_at.desc())
+                    .limit(limit)
+                ).scalars()
+            )
+        records = tuple(_record_from_payload(payload) for payload in reversed(payloads))
+        if not all(isinstance(item, OfficialMetricSnapshot) for item in records):
+            raise ValueError("官方指标历史混入其他记录类型")
+        return records
+
     def records_as_of(
         self,
         *,

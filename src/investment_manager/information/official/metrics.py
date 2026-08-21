@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from datetime import UTC, date, datetime, time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
@@ -25,6 +26,7 @@ TREASURY_FISCAL_SOURCE_ID = "us-treasury-fiscal-data"
 TREASURY_RATES_SOURCE_ID = "us-treasury-rates"
 FED_H10_SOURCE_ID = "federal-reserve-h10"
 NYFED_MARKETS_SOURCE_ID = "new-york-fed-markets"
+ISHARES_SOURCE_ID = "ishares"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
@@ -32,6 +34,7 @@ FED_BROAD_DOLLAR_STREAM_ID = "fed-broad-dollar"
 NYFED_RRP_STREAM_ID = "nyfed-reverse-repo"
 NYFED_SOMA_STREAM_ID = "nyfed-soma-holdings"
 NYFED_RATES_STREAM_ID = "nyfed-reference-rates"
+IBIT_HOLDINGS_STREAM_ID = "ishares-ibit-holdings"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
@@ -39,6 +42,7 @@ FED_BROAD_DOLLAR_FACT_TYPE = "FED_BROAD_DOLLAR_SNAPSHOT"
 NYFED_RRP_FACT_TYPE = "NYFED_REVERSE_REPO_SNAPSHOT"
 NYFED_SOMA_FACT_TYPE = "NYFED_SOMA_SNAPSHOT"
 NYFED_RATES_FACT_TYPE = "NYFED_REFERENCE_RATES_SNAPSHOT"
+IBIT_HOLDINGS_FACT_TYPE = "IBIT_HOLDINGS_SNAPSHOT"
 
 OFFICIAL_METRIC_FACT_TYPES = frozenset(
     {
@@ -48,6 +52,7 @@ OFFICIAL_METRIC_FACT_TYPES = frozenset(
         NYFED_RRP_FACT_TYPE,
         NYFED_SOMA_FACT_TYPE,
         NYFED_RATES_FACT_TYPE,
+        IBIT_HOLDINGS_FACT_TYPE,
     }
 )
 OFFICIAL_METRIC_RISK_FACTORS = frozenset(
@@ -57,11 +62,17 @@ OFFICIAL_METRIC_RISK_FACTORS = frozenset(
         "US_INTEREST_RATES",
         "US_MONETARY_LIQUIDITY",
         "US_MONETARY_POLICY",
+        "BTC_INSTITUTIONAL_HOLDINGS",
     }
 )
 
 
 class OfficialMetricName(StrEnum):
+    IBIT_BTC_HOLDINGS = "ibit_btc_holdings"
+    IBIT_BTC_HOLDINGS_CHANGE_1D = "ibit_btc_holdings_change_1d"
+    IBIT_NET_ASSETS_USD_M = "ibit_net_assets_usd_m"
+    IBIT_SHARES_OUTSTANDING = "ibit_shares_outstanding"
+    IBIT_SHARES_OUTSTANDING_CHANGE_1D = "ibit_shares_outstanding_change_1d"
     TGA_BALANCE_USD_M = "tga_balance_usd_m"
     TGA_CHANGE_1D_USD_M = "tga_change_1d_usd_m"
     TGA_CHANGE_5D_USD_M = "tga_change_5d_usd_m"
@@ -85,6 +96,8 @@ class OfficialMetricName(StrEnum):
 
 
 class OfficialMetricUnit(StrEnum):
+    BITCOIN = "BITCOIN"
+    SHARES = "SHARES"
     USD_MILLIONS = "USD_MILLIONS"
     PERCENT = "PERCENT"
     BASIS_POINTS = "BASIS_POINTS"
@@ -148,6 +161,7 @@ class OfficialMetricSnapshot(FrozenModel):
             "home.treasury.gov",
             "www.federalreserve.gov",
             "markets.newyorkfed.org",
+            "www.ishares.com",
         }:
             raise ValueError("官方指标 URL 不在固定官方域名")
         names = tuple(item.name.value for item in self.metrics)
@@ -221,6 +235,7 @@ def parse_official_metric_document(
         NYFED_RRP_STREAM_ID: _parse_rrp,
         NYFED_SOMA_STREAM_ID: _parse_soma,
         NYFED_RATES_STREAM_ID: _parse_reference_rates,
+        IBIT_HOLDINGS_STREAM_ID: _parse_ibit_holdings,
     }
     parser = parsers.get(stream_id)
     if parser is None:
@@ -600,6 +615,151 @@ def _parse_reference_rates(
     )
 
 
+def _parse_ibit_holdings(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    try:
+        lines = content.decode("utf-8-sig").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError("IBIT holdings CSV 编码非法") from exc
+    if len(lines) < 10 or lines[0].strip() != "iShares Bitcoin Trust ETF":
+        raise ValueError("IBIT holdings CSV 缺少固定标题")
+    metadata: dict[str, str] = {}
+    header_index = None
+    for index, line in enumerate(lines[1:], start=1):
+        row = next(csv.reader((line,)))
+        if row and row[0] == "Ticker":
+            header_index = index
+            break
+        if len(row) >= 2:
+            metadata[row[0]] = row[1]
+    if header_index is None:
+        raise ValueError("IBIT holdings CSV 缺少持仓表头")
+    try:
+        effective_date = datetime.strptime(
+            metadata["Fund Holdings as of"], "%b %d, %Y"
+        ).date()
+        shares = _decimal(
+            metadata["Shares Outstanding"].replace(",", ""),
+            name="IBIT shares outstanding",
+        )
+    except KeyError as exc:
+        raise ValueError("IBIT holdings CSV 缺少基金元数据") from exc
+    holdings = tuple(csv.DictReader(lines[header_index:]))
+    bitcoin = next((row for row in holdings if row.get("Ticker") == "BTC"), None)
+    if bitcoin is None:
+        raise ValueError("IBIT holdings CSV 缺少 BTC 持仓")
+    btc_quantity = _decimal(
+        str(bitcoin.get("Quantity", "")).replace(",", ""),
+        name="IBIT BTC quantity",
+    )
+    market_value = _decimal(
+        str(bitcoin.get("Market Value", "")).replace(",", ""),
+        name="IBIT BTC market value",
+    )
+    return _snapshot(
+        source_id=ISHARES_SOURCE_ID,
+        stream_id=IBIT_HOLDINGS_STREAM_ID,
+        domain=CausalDomain.INSTITUTIONAL_FLOWS,
+        fact_type=IBIT_HOLDINGS_FACT_TYPE,
+        effective_date=effective_date,
+        headline="iShares Bitcoin Trust ETF daily holdings",
+        risk_factors=("BTC_INSTITUTIONAL_HOLDINGS",),
+        metrics=(
+            _metric(
+                OfficialMetricName.IBIT_BTC_HOLDINGS,
+                btc_quantity,
+                OfficialMetricUnit.BITCOIN,
+            ),
+            _metric(
+                OfficialMetricName.IBIT_NET_ASSETS_USD_M,
+                market_value / Decimal("1000000"),
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.IBIT_SHARES_OUTSTANDING,
+                shares,
+                OfficialMetricUnit.SHARES,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(effective_date, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def with_official_metric_history(
+    snapshot: OfficialMetricSnapshot,
+    history: tuple[OfficialMetricSnapshot, ...],
+) -> OfficialMetricSnapshot:
+    """Add revision-safe change context when a latest-only source has accumulated history."""
+
+    if snapshot.stream_id != IBIT_HOLDINGS_STREAM_ID:
+        return snapshot
+    by_date = {
+        item.effective_date: item
+        for item in history
+        if item.stream_id == snapshot.stream_id
+        and item.effective_date < snapshot.effective_date
+    }
+    ordered = tuple(by_date[key] for key in sorted(by_date))
+    if not ordered:
+        return snapshot
+    btc_history = tuple(
+        (item.effective_date, _metric_value(item, OfficialMetricName.IBIT_BTC_HOLDINGS))
+        for item in (*ordered, snapshot)
+    )
+    shares_history = tuple(
+        (
+            item.effective_date,
+            _metric_value(item, OfficialMetricName.IBIT_SHARES_OUTSTANDING),
+        )
+        for item in (*ordered, snapshot)
+    )
+    btc_change = btc_history[-1][1] - btc_history[-2][1]
+    shares_change = shares_history[-1][1] - shares_history[-2][1]
+    metrics = (
+        *snapshot.metrics,
+        _metric(
+            OfficialMetricName.IBIT_BTC_HOLDINGS_CHANGE_1D,
+            btc_change,
+            OfficialMetricUnit.BITCOIN,
+        ),
+        _metric(
+            OfficialMetricName.IBIT_SHARES_OUTSTANDING_CHANGE_1D,
+            shares_change,
+            OfficialMetricUnit.SHARES,
+        ),
+    )
+    context = _most_unusual_change_context(
+        btc_history,
+        candidates=(
+            (
+                OfficialMetricName.IBIT_BTC_HOLDINGS_CHANGE_1D,
+                1,
+                OfficialMetricUnit.BITCOIN,
+            ),
+        ),
+    )
+    return _snapshot(
+        source_id=snapshot.observation.source_id,
+        stream_id=snapshot.stream_id,
+        domain=snapshot.domain,
+        fact_type=snapshot.fact_type,
+        effective_date=snapshot.effective_date,
+        headline=snapshot.headline,
+        risk_factors=snapshot.risk_factors,
+        metrics=metrics,
+        change_context=context,
+        source_url=snapshot.source_url,
+        observed_at=snapshot.observation.observed_at,
+        source_published_at=snapshot.observation.source_published_at
+        or snapshot.observation.observed_at,
+        payload_ref=snapshot.observation.payload_ref,
+    )
+
+
 def _snapshot(
     *,
     source_id: str,
@@ -664,6 +824,8 @@ def _metric(
     unit: OfficialMetricUnit,
 ) -> OfficialMetricValue:
     precision = {
+        OfficialMetricUnit.BITCOIN: Decimal("0.00000001"),
+        OfficialMetricUnit.SHARES: Decimal("0.01"),
         OfficialMetricUnit.USD_MILLIONS: Decimal("0.001"),
         OfficialMetricUnit.PERCENT: Decimal("0.0001"),
         OfficialMetricUnit.BASIS_POINTS: Decimal("0.01"),
@@ -673,6 +835,16 @@ def _metric(
     plain = format(rounded, "f").rstrip("0").rstrip(".")
     compact = Decimal(plain or "0")
     return OfficialMetricValue(name=name, value=compact, unit=unit)
+
+
+def _metric_value(
+    snapshot: OfficialMetricSnapshot,
+    name: OfficialMetricName,
+) -> Decimal:
+    try:
+        return next(item.value for item in snapshot.metrics if item.name == name)
+    except StopIteration as exc:
+        raise ValueError(f"官方指标快照缺少 {name.value}") from exc
 
 
 def _most_unusual_change_context(
@@ -754,6 +926,8 @@ def _stream_source_id(stream_id: str) -> str:
         return TREASURY_RATES_SOURCE_ID
     if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
         return FED_H10_SOURCE_ID
+    if stream_id == IBIT_HOLDINGS_STREAM_ID:
+        return ISHARES_SOURCE_ID
     if stream_id in {NYFED_RRP_STREAM_ID, NYFED_SOMA_STREAM_ID, NYFED_RATES_STREAM_ID}:
         return NYFED_MARKETS_SOURCE_ID
     raise ValueError(f"未知官方指标流: {stream_id}")

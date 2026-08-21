@@ -7,6 +7,7 @@ import httpx
 
 from investment_manager.information.official.metrics import (
     FED_BROAD_DOLLAR_STREAM_ID,
+    IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
@@ -36,6 +37,10 @@ _NYFED_RRP_URL = (
 )
 _NYFED_SOMA_URL = "https://markets.newyorkfed.org/api/soma/summary.json"
 _NYFED_RATES_URL = "https://markets.newyorkfed.org/api/rates/all/latest.json"
+_IBIT_HOLDINGS_URL = (
+    "https://www.ishares.com/us/products/333011/"
+    "ishares-bitcoin-trust-etf/latest-holdings.csv"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +56,7 @@ class HttpOfficialMetricSource:
 
     stream_ids = (
         FED_BROAD_DOLLAR_STREAM_ID,
+        IBIT_HOLDINGS_STREAM_ID,
         NYFED_RATES_STREAM_ID,
         NYFED_RRP_STREAM_ID,
         NYFED_SOMA_STREAM_ID,
@@ -141,6 +147,8 @@ class HttpOfficialMetricSource:
             return str(url), "application/xml"
         if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
             return _FED_BROAD_DOLLAR_URL, "application/xml"
+        if stream_id == IBIT_HOLDINGS_STREAM_ID:
+            return _IBIT_HOLDINGS_URL, "text/csv"
         if stream_id == NYFED_RRP_STREAM_ID:
             start = (observed_at.date() - timedelta(days=370)).isoformat()
             url = httpx.URL(

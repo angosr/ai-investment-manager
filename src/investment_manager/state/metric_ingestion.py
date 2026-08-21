@@ -18,12 +18,14 @@ from investment_manager.information.models import (
 )
 from investment_manager.information.official.metrics import (
     FED_BROAD_DOLLAR_STREAM_ID,
+    IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
     parse_official_metric_document,
+    with_official_metric_history,
 )
 from investment_manager.information.official.repository import (
     OfficialRecordWrite,
@@ -47,12 +49,14 @@ OFFICIAL_METRIC_STREAM_DOMAINS = {
     TGA_STREAM_ID: CausalDomain.FISCAL_DEBT,
     TREASURY_YIELD_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
     FED_BROAD_DOLLAR_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
+    IBIT_HOLDINGS_STREAM_ID: CausalDomain.INSTITUTIONAL_FLOWS,
     NYFED_RRP_STREAM_ID: CausalDomain.MONETARY_INFLATION,
     NYFED_SOMA_STREAM_ID: CausalDomain.MONETARY_INFLATION,
     NYFED_RATES_STREAM_ID: CausalDomain.MONETARY_INFLATION,
 }
 SLOW_OFFICIAL_METRIC_STREAMS = {
     FED_BROAD_DOLLAR_STREAM_ID,
+    IBIT_HOLDINGS_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
 }
 
@@ -105,6 +109,14 @@ class SqlOfficialMetricFactIngestor:
             source_url=document.source_url,
             media_type=document.media_type,
             observed_at=observed_at,
+        )
+        snapshot = with_official_metric_history(
+            snapshot,
+            self._records.metric_history(
+                source_id=snapshot.observation.source_id,
+                source_record_id=snapshot.observation.source_record_id,
+                as_of=observed_at,
+            ),
         )
         raw = build_raw_source_payload(
             source_id=snapshot.observation.source_id,

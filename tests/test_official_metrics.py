@@ -2,6 +2,7 @@ import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -10,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from investment_manager.information.models import SourcePollStatus
 from investment_manager.information.official.metrics import (
     FED_BROAD_DOLLAR_STREAM_ID,
+    IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
@@ -154,6 +156,24 @@ def _documents() -> dict[str, OfficialMetricDocument]:
             ).encode(),
             "application/json",
         ),
+        IBIT_HOLDINGS_STREAM_ID: (
+            "https://www.ishares.com/us/products/333011/"
+            "ishares-bitcoin-trust-etf/latest-holdings.csv",
+            (
+                b"iShares Bitcoin Trust ETF\n"
+                b'Fund Holdings as of,"Aug 20, 2026"\n'
+                b'Inception Date,"Jan 05, 2024"\n'
+                b'Shares Outstanding,"1,333,840,000.00"\n'
+                b'Stock,"-"\nBond,"-"\nCash,"-"\nOther,"-"\n\n'
+                b"Ticker,Name,Sector,Asset Class,Market Value,Weight (%),"
+                b"Notional Value,Quantity,Market Currency,Accrual Date\n"
+                b'"BTC","BITCOIN","-","Alternative","55,223,236,415.06",'
+                b'"100.00","55,223,236,415.06","762,287.03650","BTC","-"\n'
+                b'"USD","USD CASH","-","Cash","13,366.70","0.00",'
+                b'"13,366.70","13,366.70000","USD","-"\n'
+            ),
+            "text/csv",
+        ),
     }
     return {
         stream_id: OfficialMetricDocument(
@@ -196,9 +216,13 @@ def test_all_fixed_first_party_metric_documents_parse_to_compact_snapshots() -> 
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 6
+    assert len({item.fact_type for item in snapshots}) == 7
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
+    ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)
+    assert {item.name.value: item.value for item in ibit.metrics}["ibit_btc_holdings"] == Decimal(
+        "762287.0365"
+    )
 
 
 def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> None:
@@ -260,6 +284,40 @@ def test_empirically_extreme_metric_change_becomes_material_candidate() -> None:
     assert (
         result.new_fact_revision.decision_materiality
         == FactDecisionMateriality.CANDIDATE
+    )
+
+
+def test_latest_only_issuer_feed_builds_honest_change_after_second_day() -> None:
+    engine = _engine()
+    ingestor = SqlOfficialMetricFactIngestor(engine, policy=METRIC_POLICY)
+    first_document = _documents()[IBIT_HOLDINGS_STREAM_ID]
+    first = ingestor.ingest(first_document, observed_at=OBSERVED_AT)
+    second_document = replace(
+        first_document,
+        content=(
+            first_document.content
+            .replace(b"Aug 20, 2026", b"Aug 21, 2026")
+            .replace(b"1,333,840,000.00", b"1,343,840,000.00")
+            .replace(b"762,287.03650", b"768,287.03650")
+        ),
+    )
+
+    second = ingestor.ingest(
+        second_document,
+        observed_at=OBSERVED_AT + timedelta(days=1),
+    )
+
+    assert first.new_fact_revision is not None
+    assert second.record is not None
+    values = {item.name.value: item.value for item in second.record.record.metrics}
+    assert values["ibit_btc_holdings_change_1d"] == 6_000
+    assert values["ibit_shares_outstanding_change_1d"] == 10_000_000
+    assert second.record.record.change_context is not None
+    assert second.record.record.change_context.sample_size == 1
+    assert second.new_fact_revision is not None
+    assert (
+        second.new_fact_revision.decision_materiality
+        == FactDecisionMateriality.BACKGROUND
     )
 
 
