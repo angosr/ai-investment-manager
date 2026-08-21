@@ -67,6 +67,7 @@ export function CapitalActionRow({ action }: { action: CapitalAction }) {
           ? RISK_LABELS[action.risk_outcome] ?? action.risk_outcome
           : "未进风控"}
         {action.order_count > 0 ? ` · ${action.order_count} 单` : ""}
+        {action.state_snapshot_id ? " · 认知已冻结" : " · 历史未绑定"}
       </span>
     </div>
   );

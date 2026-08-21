@@ -1,5 +1,4 @@
-import { api } from "../api/client";
-import { useLive } from "../hooks";
+import type { CapitalOverview } from "../api/types";
 import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
@@ -13,8 +12,7 @@ const REASON_LABELS: Record<string, string> = {
   PROGRAMMATIC_RISK_EXIT: "程序化风险退出",
 };
 
-export function Capital() {
-  const data = useLive(() => api.capital(), "capital");
+export function Capital({ data }: { data: CapitalOverview | null }) {
   const account = data?.account;
   const reasons = data?.decision.reason_codes ?? [];
 
@@ -37,12 +35,6 @@ export function Capital() {
             {account.reconciled ? "账户已重放" : "账户未对账"}
             {account.kill_switch_active ? " · Kill Switch" : ""}
           </div>
-          {account.positions.map((position) => (
-            <div className={styles.row} key={position.instrument}>
-              <span>{position.instrument}</span>
-              <b>{position.quantity} @ {position.average_price}</b>
-            </div>
-          ))}
         </>
       ) : (
         <p className={styles.empty}>尚无资本账户快照。</p>
@@ -70,6 +62,33 @@ export function Capital() {
           </div>
         ) : null}
       </div>
+    </Card>
+  );
+}
+
+export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
+  const positions = data?.account?.positions ?? [];
+  return (
+    <Card title="当前持仓" aside={`${positions.length} 条腿`} bodyPadded>
+      {positions.length === 0 ? (
+        <p className={styles.empty}>当前全部为现金，没有持仓。</p>
+      ) : (
+        positions.map((position) => {
+          const quantity = Number(position.quantity);
+          const direction = quantity > 0 ? "多" : quantity < 0 ? "空" : "零";
+          return (
+            <div className={styles.position} key={position.instrument}>
+              <div className={styles.positionHead}>
+                <b>{position.instrument}</b>
+                <span data-direction={direction}>{direction}</span>
+              </div>
+              <div className={styles.positionDetail}>
+                数量 <b>{position.quantity}</b> · 均价 <b>{position.average_price}</b>
+              </div>
+            </div>
+          );
+        })
+      )}
     </Card>
   );
 }

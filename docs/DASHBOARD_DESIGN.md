@@ -85,16 +85,19 @@
 
 ### 3.2 Capital 模式的信息层级
 
-Capital Release 不把旧 AnalysisCycle 当成当前资本决策。主列默认是 `CapitalCycleRecord` 行动记录，
-每个冻结 TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是否产生本轮订单”；右栏只保留
-账户权益、现金、费用后 PnL、回撤、当前持仓、最新决策与非终态执行。预测计数、主机资源和账号状态
-不在 Capital 首页争夺注意力。
+Capital Release 不把旧 AnalysisCycle 当成当前资本决策。首屏保留资本权威权益曲线；主列直接展示
+最新 `ContextAssessment` 形成的世界认知，再展示 `CapitalCycleRecord` 行动记录。每个冻结
+TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是否产生本轮订单”。右栏分成职责明确的
+资本账户、当前产品持仓、AI 账号余量和主机资源四块；这些属于运行必需信息，不能因 Capital 模式
+整体隐藏，也不能用旧交易链持仓代替产品账户持仓。
 
 主列只保留三个职责互斥的标签。默认“决策与行动”将 `CapitalCycleRecord` 与仍可追溯的旧
 `AnalysisCycle` 按时间倒序展示，并明确标注“资本复核 / 历史决策”；“AI 判断”只展示现役
 `ContextAssessment`，避免高频分析记录淹没实际资本行动；
 三类记录保持各自详情契约，不伪装成同一条资本链，也不从 AI 判断推断当前仓位或收益。
 “世界事件”合并主资本库的运行触发和 Assessment 库采集的新闻，按事实去重后展示。
+新 Capital 行动还必须引用同批触发先冻结的 `StateSnapshot`；旧 Release 未保存该引用时明确标为
+“历史未绑定”，禁止按时间接近关系伪造世界认知快照。
 
 ---
 

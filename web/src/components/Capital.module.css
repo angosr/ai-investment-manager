@@ -63,3 +63,43 @@
   color: var(--faint);
   font-size: 12px;
 }
+.position {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.position:last-child {
+  border-bottom: 0;
+}
+.positionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.positionHead b,
+.positionDetail b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.positionHead b {
+  font-size: 12px;
+}
+.positionHead span {
+  padding: 1px 7px;
+  border-radius: 2px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.positionHead span[data-direction="多"] {
+  color: var(--pos);
+  background: var(--pos-soft);
+}
+.positionHead span[data-direction="空"] {
+  color: var(--neg);
+  background: var(--neg-soft);
+}
+.positionDetail {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}

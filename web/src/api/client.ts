@@ -36,6 +36,10 @@ export const api = {
     getJson<{ assessments: AssessmentRecordRow[] }>(
       "/api/assessment/records?limit=100",
     ),
+  latestAssessment: () =>
+    getJson<{ assessments: AssessmentRecordRow[] }>(
+      "/api/assessment/records?limit=1",
+    ),
   assessmentRecord: (id: string) =>
     getJson<AssessmentRecordDetail>(
       `/api/assessment/records/${encodeURIComponent(id)}`,

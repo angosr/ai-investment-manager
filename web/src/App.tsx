@@ -2,13 +2,15 @@ import { useState } from "react";
 import { api } from "./api/client";
 import type { Snapshot } from "./api/types";
 import { Accounts } from "./components/Accounts";
-import { Capital } from "./components/Capital";
+import { Capital, CapitalPositions } from "./components/Capital";
+import { CapitalEquityHero } from "./components/CapitalEquityHero";
 import { EquityHero } from "./components/EquityHero";
 import { Masthead } from "./components/Masthead";
 import { Positions } from "./components/Positions";
 import { Resources } from "./components/Resources";
 import { SnapshotDrawer } from "./components/SnapshotDrawer";
 import { Timeline } from "./components/Timeline";
+import { WorldCognition } from "./components/WorldCognition";
 import { useLive, useTheme } from "./hooks";
 import styles from "./App.module.css";
 
@@ -24,29 +26,21 @@ export function App() {
         {health === null ? (
           <div className={styles.loading}>正在读取运行状态…</div>
         ) : (
-          <div className={styles.grid}>
-            <main className={styles.main}>
-              {health.capital_enabled ? (
-                <Timeline onOpenSnapshot={setSnapshot} capitalMode />
-              ) : (
-                <>
-                  <EquityHero />
-                  <Timeline onOpenSnapshot={setSnapshot} />
-                </>
-              )}
-            </main>
-            <aside className={styles.side}>
-              {health.capital_enabled ? (
-                <Capital />
-              ) : (
-                <>
-                  <Positions />
-                  <Accounts />
-                  <Resources />
-                </>
-              )}
-            </aside>
-          </div>
+          health.capital_enabled ? (
+            <CapitalDashboard onOpenSnapshot={setSnapshot} />
+          ) : (
+            <div className={styles.grid}>
+              <main className={styles.main}>
+                <EquityHero />
+                <Timeline onOpenSnapshot={setSnapshot} />
+              </main>
+              <aside className={styles.side}>
+                <Positions />
+                <Accounts />
+                <Resources />
+              </aside>
+            </div>
+          )
         )}
         {health ? (
           <footer className={styles.foot}>
@@ -60,5 +54,28 @@ export function App() {
       </div>
       <SnapshotDrawer snapshot={snapshot} onClose={() => setSnapshot(null)} />
     </>
+  );
+}
+
+function CapitalDashboard({
+  onOpenSnapshot,
+}: {
+  onOpenSnapshot: (snapshot: Snapshot) => void;
+}) {
+  const capital = useLive(() => api.capital(), "capital");
+  return (
+    <div className={styles.grid}>
+      <main className={styles.main}>
+        <CapitalEquityHero data={capital} />
+        <WorldCognition />
+        <Timeline onOpenSnapshot={onOpenSnapshot} capitalMode />
+      </main>
+      <aside className={styles.side}>
+        <Capital data={capital} />
+        <CapitalPositions data={capital} />
+        <Accounts />
+        <Resources />
+      </aside>
+    </div>
   );
 }

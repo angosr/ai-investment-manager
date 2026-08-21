@@ -67,6 +67,7 @@ export interface CapitalAction {
   trigger_types: string[];
   outcome: string;
   summary: string;
+  state_snapshot_id?: string | null;
   reason_codes: string[];
   risk_outcome: string | null;
   order_count: number;
