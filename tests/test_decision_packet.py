@@ -1000,6 +1000,15 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
         "revision-tga",
     )
     assert packet.omitted_fact_revision_ids == ()
+    projected_metric = decision_packet_analysis_projection(packet)["facts"][1]
+    assert tuple(projected_metric) == (
+        "revision_id",
+        "fact_type",
+        "event_time",
+        "claim",
+        "risk_factors",
+        "directly_triggered",
+    )
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:

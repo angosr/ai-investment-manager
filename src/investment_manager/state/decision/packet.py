@@ -91,6 +91,23 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
+    payload["facts"] = tuple(
+        (
+            {
+                "revision_id": item.revision_id,
+                "fact_type": item.fact_type,
+                "event_time": (
+                    item.event_time.isoformat() if item.event_time is not None else None
+                ),
+                "claim": item.claim,
+                "risk_factors": item.risk_factors,
+                "directly_triggered": item.directly_triggered,
+            }
+            if item.fact_type in OFFICIAL_METRIC_FACT_TYPES
+            else item.model_dump(mode="json")
+        )
+        for item in packet.facts
+    )
     previous = payload.get("previous_context")
     if previous is not None:
         for field_name in (
