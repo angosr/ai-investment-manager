@@ -19,6 +19,9 @@ from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
 )
+from investment_manager.information.official.treasury_buybacks import (
+    TREASURY_BUYBACK_URL,
+)
 from investment_manager.kernel.time import require_utc
 
 _TGA_API_URL = (
@@ -236,3 +239,49 @@ class HttpFedOfficialSource:
             validators["If-Modified-Since"] = modified
         self._validators[url] = validators
         return content.decode(response.encoding or "utf-8")
+
+
+class HttpTreasuryBuybackSource:
+    """Read the pinned Treasury tentative buyback calendar safely."""
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int,
+        maximum_bytes: int = 1_000_000,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if timeout_seconds < 1 or maximum_bytes < 1:
+            raise ValueError("Treasury buyback source timeout/size 必须为正数")
+        self._timeout_seconds = timeout_seconds
+        self._maximum_bytes = maximum_bytes
+        self._transport = transport
+        self._validators: dict[str, str] = {}
+
+    def fetch_calendar(self) -> bytes | None:
+        headers = {
+            "Accept": "application/xml, text/xml;q=0.9",
+            "User-Agent": "investment-manager-treasury-buybacks/1.0",
+            **self._validators,
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(TREASURY_BUYBACK_URL, headers=headers)
+        if response.status_code == 304:
+            return None
+        response.raise_for_status()
+        if str(response.url) != TREASURY_BUYBACK_URL:
+            raise ValueError("Treasury buyback source 响应 URL 与固定端点不一致")
+        content = response.content
+        if not content or len(content) > self._maximum_bytes:
+            raise ValueError("Treasury buyback source 响应为空或超过大小上限")
+        validators: dict[str, str] = {}
+        if etag := response.headers.get("etag"):
+            validators["If-None-Match"] = etag
+        if modified := response.headers.get("last-modified"):
+            validators["If-Modified-Since"] = modified
+        self._validators = validators
+        return content

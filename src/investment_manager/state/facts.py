@@ -19,6 +19,9 @@ from investment_manager.information.official.records import (
     MarketCalendarEventRevision,
     OfficialRecordKind,
 )
+from investment_manager.information.official.treasury_buybacks import (
+    TreasuryBuybackOperationRecord,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -35,6 +38,7 @@ from investment_manager.state.models import (
 FOMC_MEETING_FACT_TYPE = "FOMC_MEETING_SCHEDULE"
 FED_CHAIR_PUBLIC_EVENT_FACT_TYPE = "FED_CHAIR_PUBLIC_EVENT_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"
+TREASURY_BUYBACK_OPERATION_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_SCHEDULE"
 
 
 class OfficialFactProjectionPolicy(FrozenModel):
@@ -223,6 +227,60 @@ def project_fed_chair_public_event_fact(
     )
 
 
+def project_treasury_buyback_operation_fact(
+    record: TreasuryBuybackOperationRecord,
+    revision: MarketCalendarEventRevision,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    observation = record.observation
+    if (
+        revision.event_type != OfficialRecordKind.TREASURY_BUYBACK_OPERATION
+        or revision.source_record_id != observation.source_record_id
+    ):
+        raise ValueError("Treasury buyback 事实投影记录与日历修订不一致")
+    status = (
+        FactRevisionStatus.ACTIVE
+        if record.status == CalendarEventStatus.SCHEDULED
+        else FactRevisionStatus.CANCELLED
+    )
+    claim = (
+        "U.S. Treasury tentative buyback operation; "
+        f"window={record.operation_start_at.isoformat()}.."
+        f"{record.operation_end_at.isoformat()}; "
+        f"settlement={record.settlement_date.isoformat()}; "
+        f"operation_type={record.operation_type}; security_type={record.security_type}; "
+        f"maturity_bucket={record.maturity_bucket}; "
+        f"maturity_range={record.maturity_start.isoformat()}.."
+        f"{record.maturity_end.isoformat()}; "
+        f"scheduled_purchase_range_usd_m={record.minimum_purchase_usd_m}.."
+        f"{record.maximum_purchase_usd_m}; status={record.status.value}. "
+        "The maximum is a schedule ceiling, not an accepted purchase amount, "
+        "and this Treasury operation is not Federal Reserve QE."
+    )
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+            revision.event_id,
+        ),
+        projection_version=policy.version,
+        fact_type=TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+        status=status,
+        event_time=record.operation_start_at,
+        observed_at=observation.observed_at,
+        headline=(
+            "U.S. Treasury tentative buyback operation: "
+            f"{record.maturity_bucket}, up to ${record.maximum_purchase_usd_m}m"
+        ),
+        claim=claim,
+        affected_assets=policy.affected_assets,
+        risk_factors=revision.risk_factors,
+        decision_materiality=FactDecisionMateriality.BACKGROUND,
+        source_observation_ids=(observation.observation_id,),
+        previous=previous,
+    )
 def project_official_metric_fact(
     record: OfficialMetricSnapshot,
     *,

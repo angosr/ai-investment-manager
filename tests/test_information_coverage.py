@@ -10,6 +10,7 @@ from investment_manager.information.models import (
     CausalDomain,
     CoverageStatus,
     DomainCoverageSnapshot,
+    SourcePollRecord,
     SourcePollStatus,
 )
 from investment_manager.information.policy import CoverageRequirement
@@ -30,6 +31,21 @@ def test_empty_capability_fields_do_not_change_legacy_snapshot_identity() -> Non
 
     assert "covered_capabilities" not in payload
     assert "missing_capabilities" not in payload
+
+
+def test_empty_validity_does_not_change_legacy_poll_identity() -> None:
+    poll = build_source_poll_record(
+        source_stream_id="legacy-source",
+        domain=CausalDomain.FISCAL_DEBT,
+        status=SourcePollStatus.UNCHANGED,
+        started_at=AS_OF - timedelta(seconds=1),
+        completed_at=AS_OF,
+    )
+
+    payload = poll.model_dump(mode="json")
+
+    assert "valid_until" not in payload
+    assert SourcePollRecord.model_validate(payload) == poll
 
 
 def _store() -> SqlInformationCoverageStore:
@@ -137,6 +153,34 @@ def test_coverage_distinguishes_failed_source_from_no_recent_publication() -> No
     )
     assert by_domain[CausalDomain.ONCHAIN_SUPPLY].status == CoverageStatus.SOURCE_FAILED
     assert store.gap_codes(snapshots) == ("INFORMATION_ONCHAIN_SUPPLY_SOURCE_FAILED",)
+
+
+def test_calendar_validity_prevents_false_stale_publication() -> None:
+    store = _store()
+    store.put(
+        build_source_poll_record(
+            source_stream_id="official-calendar",
+            domain=CausalDomain.FISCAL_DEBT,
+            status=SourcePollStatus.UNCHANGED,
+            started_at=AS_OF - timedelta(seconds=21),
+            completed_at=AS_OF - timedelta(seconds=20),
+            latest_publication_at=AS_OF - timedelta(days=30),
+            valid_until=AS_OF + timedelta(days=30),
+        )
+    )
+
+    snapshot = store.snapshot(
+        as_of=AS_OF,
+        requirements=(
+            _requirement(
+                CausalDomain.FISCAL_DEBT,
+                ("official-calendar",),
+                publication_age=86_400,
+            ),
+        ),
+    )[0]
+
+    assert snapshot.status == CoverageStatus.CURRENT
 
 
 def test_coverage_is_point_in_time_and_ignores_future_recovery() -> None:

@@ -30,6 +30,14 @@ from investment_manager.information.official.records import (
 from investment_manager.information.official.records import (
     OfficialRecord as BaseOfficialRecord,
 )
+from investment_manager.information.official.treasury_buybacks import (
+    TREASURY_BUYBACK_SOURCE_ID,
+    TREASURY_BUYBACK_URL,
+    TreasuryBuybackOperationRecord,
+    build_treasury_buyback_calendar_revision,
+    build_treasury_buyback_cancellation,
+    parse_treasury_buyback_calendar,
+)
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
 from investment_manager.information.tables import (
@@ -41,8 +49,15 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
 
-OfficialRecord = BaseOfficialRecord | FedChairPublicEventRecord | OfficialMetricSnapshot
-CalendarOfficialRecord = FomcMeetingRecord | FedChairPublicEventRecord
+OfficialRecord = (
+    BaseOfficialRecord
+    | FedChairPublicEventRecord
+    | OfficialMetricSnapshot
+    | TreasuryBuybackOperationRecord
+)
+CalendarOfficialRecord = (
+    FomcMeetingRecord | FedChairPublicEventRecord | TreasuryBuybackOperationRecord
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +106,7 @@ class SqlOfficialInformationStore:
                 if latest.observation.payload_hash == observation.payload_hash:
                     revision = (
                         self._calendar_revision_for_observation(connection, latest)
-                        if isinstance(latest, (FomcMeetingRecord, FedChairPublicEventRecord))
+                        if isinstance(latest, CalendarOfficialRecord)
                         else None
                     )
                     return OfficialRecordWrite(
@@ -117,7 +132,7 @@ class SqlOfficialInformationStore:
             )
             revision = (
                 self._append_calendar_revision(connection, record)
-                if isinstance(record, (FomcMeetingRecord, FedChairPublicEventRecord))
+                if isinstance(record, CalendarOfficialRecord)
                 else None
             )
         return OfficialRecordWrite(
@@ -285,11 +300,17 @@ class SqlOfficialInformationStore:
             if previous_payload is not None
             else None
         )
-        revision = (
-            build_fomc_calendar_revision(record, previous=previous)
-            if isinstance(record, FomcMeetingRecord)
-            else build_fed_chair_calendar_revision(record, previous=previous)
-        )
+        if isinstance(record, FomcMeetingRecord):
+            revision = build_fomc_calendar_revision(record, previous=previous)
+        elif isinstance(record, FedChairPublicEventRecord):
+            revision = build_fed_chair_calendar_revision(record, previous=previous)
+        else:
+            revision = build_treasury_buyback_calendar_revision(
+                record,
+                previous=previous,
+            )
+        if previous is not None and revision.revision_id == previous.revision_id:
+            return previous
         connection.execute(
             insert(market_calendar_event_revisions).values(
                 revision_id=revision.revision_id,
@@ -414,6 +435,63 @@ class SqlFedOfficialInformationIngestor:
         )
 
 
+class SqlTreasuryBuybackInformationIngestor:
+    """Persist the official tentative buyback calendar and explicit removals."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._raw = SqlRawSourcePayloadStore(engine)
+        self._records = SqlOfficialInformationStore(engine)
+
+    def ingest_calendar(
+        self,
+        content: bytes,
+        *,
+        observed_at: datetime,
+    ) -> tuple[OfficialRecordWrite, ...]:
+        observed_at = require_utc(observed_at)
+        raw = build_raw_source_payload(
+            source_id=TREASURY_BUYBACK_SOURCE_ID,
+            source_url=TREASURY_BUYBACK_URL,
+            media_type="application/xml",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        snapshot = parse_treasury_buyback_calendar(content, observed_at=observed_at)
+        current = tuple(
+            record
+            for record in snapshot.records
+            if record.operation_end_at >= observed_at
+        )
+        current_ids = {item.observation.source_record_id for item in current}
+        previous = tuple(
+            record
+            for record in self._records.records_as_of(
+                as_of=observed_at,
+                source_id=TREASURY_BUYBACK_SOURCE_ID,
+            )
+            if (
+                isinstance(record, TreasuryBuybackOperationRecord)
+                and record.status == CalendarEventStatus.SCHEDULED
+                and record.operation_end_at > observed_at
+                and record.observation.observed_at < observed_at
+                and record.calendar_cycle == snapshot.calendar_cycle
+                and record.observation.source_record_id not in current_ids
+            )
+        )
+        cancellations = tuple(
+            build_treasury_buyback_cancellation(
+                record,
+                observed_at=observed_at,
+                payload_ref=raw.payload_id,
+            )
+            for record in previous
+        )
+        return tuple(
+            self._records.put(record) for record in (*current, *cancellations)
+        )
+
+
 def _record_from_payload(payload: dict) -> OfficialRecord:
     kind = payload.get("kind")
     if kind == OfficialRecordKind.FOMC_MEETING.value:
@@ -424,6 +502,8 @@ def _record_from_payload(payload: dict) -> OfficialRecord:
         return FedChairPublicEventRecord.model_validate(payload)
     if kind == OfficialRecordKind.OFFICIAL_METRIC_SNAPSHOT.value:
         return OfficialMetricSnapshot.model_validate(payload)
+    if kind == OfficialRecordKind.TREASURY_BUYBACK_OPERATION.value:
+        return TreasuryBuybackOperationRecord.model_validate(payload)
     raise ValueError("未知官方记录类型")
 
 

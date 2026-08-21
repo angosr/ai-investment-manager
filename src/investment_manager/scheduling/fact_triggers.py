@@ -18,6 +18,7 @@ from investment_manager.state.decision.packet import AnalysisMandate
 from investment_manager.state.facts import (
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
+    TREASURY_BUYBACK_OPERATION_FACT_TYPE,
     StateDeltaPolicy,
 )
 from investment_manager.state.models import (
@@ -37,6 +38,7 @@ _PRIORITY = {
 _SCHEDULED_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
+    TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
 
 
@@ -99,6 +101,12 @@ class CanonicalFactTriggerPublisher:
                 # Routine continuous observations remain in State but do not
                 # spend an event-driven AI call.  A later material event or
                 # explicit review still sees the latest background values.
+                self._published_revision_ids.add(fact.revision_id)
+                continue
+            if fact.fact_type == TREASURY_BUYBACK_OPERATION_FACT_TYPE:
+                # A Treasury calendar can contain many future operation rows.
+                # Keep them in State and wake at each operation rather than
+                # spending one immediate AI call per row on initial sync.
                 self._published_revision_ids.add(fact.revision_id)
                 continue
             unknown_assets = tuple(

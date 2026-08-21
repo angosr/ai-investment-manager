@@ -27,6 +27,7 @@ def build_source_poll_record(
     started_at: datetime,
     completed_at: datetime,
     latest_publication_at: datetime | None = None,
+    valid_until: datetime | None = None,
     observation_count: int = 0,
     new_fact_count: int = 0,
     error_class: str | None = None,
@@ -42,6 +43,8 @@ def build_source_poll_record(
         "new_fact_count": new_fact_count,
         "error_class": error_class,
     }
+    if valid_until is not None:
+        payload["valid_until"] = require_utc(valid_until)
     return SourcePollRecord(
         poll_id=stable_id("source_poll", content_hash(payload)),
         **payload,
@@ -98,6 +101,7 @@ class SqlInformationCoverageStore:
         latest_by_stream: dict[str, SourcePollRecord] = {}
         latest_success_by_stream: dict[str, SourcePollRecord] = {}
         latest_publication_by_stream: dict[str, SourcePollRecord] = {}
+        latest_validity_by_stream: dict[str, SourcePollRecord] = {}
         if stream_ids:
             with self._engine.connect() as connection:
                 rows = connection.execute(
@@ -124,6 +128,11 @@ class SqlInformationCoverageStore:
                                 poll.source_stream_id,
                                 poll,
                             )
+                        if poll.valid_until is not None:
+                            latest_validity_by_stream.setdefault(
+                                poll.source_stream_id,
+                                poll,
+                            )
         snapshots = tuple(
             self._domain_snapshot(
                 as_of=as_of,
@@ -131,6 +140,7 @@ class SqlInformationCoverageStore:
                 latest_by_stream=latest_by_stream,
                 latest_success_by_stream=latest_success_by_stream,
                 latest_publication_by_stream=latest_publication_by_stream,
+                latest_validity_by_stream=latest_validity_by_stream,
             )
             for requirement in requirements
         )
@@ -160,6 +170,7 @@ class SqlInformationCoverageStore:
         latest_by_stream: dict[str, SourcePollRecord],
         latest_success_by_stream: dict[str, SourcePollRecord],
         latest_publication_by_stream: dict[str, SourcePollRecord],
+        latest_validity_by_stream: dict[str, SourcePollRecord],
     ) -> DomainCoverageSnapshot:
         streams = requirement.source_stream_ids
         covered_capabilities = tuple(
@@ -220,14 +231,17 @@ class SqlInformationCoverageStore:
             status = CoverageStatus.SOURCE_FAILED
         elif len(successes) != len(streams) or latest_success < fresh_after:
             status = CoverageStatus.SOURCE_STALE
-        elif (
-            requirement.maximum_publication_age_seconds is not None
-            and (
-                len(publications) != len(streams)
-                or latest_publication
-                < as_of
-                - timedelta(seconds=requirement.maximum_publication_age_seconds)
+        elif requirement.maximum_publication_age_seconds is not None and any(
+            not _stream_has_current_publication_or_validity(
+                stream_id=stream_id,
+                as_of=as_of,
+                maximum_publication_age_seconds=(
+                    requirement.maximum_publication_age_seconds
+                ),
+                latest_publication_by_stream=latest_publication_by_stream,
+                latest_validity_by_stream=latest_validity_by_stream,
             )
+            for stream_id in streams
         ):
             status = CoverageStatus.NO_RECENT_PUBLICATION
         else:
@@ -247,3 +261,27 @@ class SqlInformationCoverageStore:
             latest_publication_at=latest_publication,
             latest_poll_refs=refs,
         )
+
+
+def _stream_has_current_publication_or_validity(
+    *,
+    stream_id: str,
+    as_of: datetime,
+    maximum_publication_age_seconds: int,
+    latest_publication_by_stream: dict[str, SourcePollRecord],
+    latest_validity_by_stream: dict[str, SourcePollRecord],
+) -> bool:
+    publication = latest_publication_by_stream.get(stream_id)
+    if (
+        publication is not None
+        and publication.latest_publication_at is not None
+        and publication.latest_publication_at
+        >= as_of - timedelta(seconds=maximum_publication_age_seconds)
+    ):
+        return True
+    validity = latest_validity_by_stream.get(stream_id)
+    return (
+        validity is not None
+        and validity.valid_until is not None
+        and validity.valid_until >= as_of
+    )

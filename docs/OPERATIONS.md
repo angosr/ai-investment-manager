@@ -109,6 +109,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让各自 cadence 的合格 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。当前只有月度 Carry Producer，月度规则不属于 Capital。Dispatcher 不实现业务防抖或批处理。
 - Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。
 - 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
+- Treasury 暂定回购日历每 6 小时检查一次，原文、操作修订和取消记录永久保留；首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核。计划上限不是实际接受金额，也不能视为 Fed QE；财政域在债务发行数据接入前仍应显示 `PARTIAL`。
 - IBIT 官方持仓是部分机构覆盖：首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；只接入单一发行人时 `INSTITUTIONAL_FLOWS` 必须显示 `PARTIAL`，主要发行人合计流量能力完成后才可显示 `CURRENT`。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。

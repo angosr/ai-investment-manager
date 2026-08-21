@@ -70,6 +70,7 @@ class OfficialRecordKind(StrEnum):
     FED_CHAIR_PUBLIC_EVENT = "FED_CHAIR_PUBLIC_EVENT"
     FED_MONETARY_RELEASE = "FED_MONETARY_RELEASE"
     OFFICIAL_METRIC_SNAPSHOT = "OFFICIAL_METRIC_SNAPSHOT"
+    TREASURY_BUYBACK_OPERATION = "TREASURY_BUYBACK_OPERATION"
 
 
 class CalendarEventStatus(StrEnum):
@@ -133,6 +134,7 @@ class MarketCalendarEventRevision(FrozenModel):
     event_type: Literal[
         OfficialRecordKind.FOMC_MEETING,
         OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT,
+        OfficialRecordKind.TREASURY_BUYBACK_OPERATION,
     ] = OfficialRecordKind.FOMC_MEETING
     status: CalendarEventStatus
     source_id: str

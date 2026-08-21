@@ -51,6 +51,10 @@ class SourcePollRecord(FrozenModel):
     started_at: datetime
     completed_at: datetime
     latest_publication_at: datetime | None = None
+    valid_until: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     observation_count: int = Field(default=0, ge=0)
     new_fact_count: int = Field(default=0, ge=0)
     error_class: str | None = Field(default=None, min_length=1, max_length=200)
@@ -58,6 +62,7 @@ class SourcePollRecord(FrozenModel):
     _utc_started_at = field_validator("started_at")(require_utc)
     _utc_completed_at = field_validator("completed_at")(require_utc)
     _utc_latest_publication_at = field_validator("latest_publication_at")(optional_utc)
+    _utc_valid_until = field_validator("valid_until")(optional_utc)
 
     @model_validator(mode="after")
     def outcome_must_be_consistent(self):
@@ -69,7 +74,12 @@ class SourcePollRecord(FrozenModel):
         ):
             raise ValueError("来源最新发布时间不能晚于轮询完成时间")
         if self.status == SourcePollStatus.FAILED:
-            if self.error_class is None or self.observation_count or self.new_fact_count:
+            if (
+                self.error_class is None
+                or self.observation_count
+                or self.new_fact_count
+                or self.valid_until is not None
+            ):
                 raise ValueError("失败轮询必须只记录错误类型")
         elif self.error_class is not None:
             raise ValueError("成功轮询不得记录错误类型")

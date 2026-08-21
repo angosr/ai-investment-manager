@@ -16,12 +16,18 @@ from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
 from investment_manager.information.official.records import (
+    CalendarEventStatus,
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
 )
 from investment_manager.information.official.repository import (
     OfficialRecordWrite,
     SqlFedOfficialInformationIngestor,
+    SqlTreasuryBuybackInformationIngestor,
+)
+from investment_manager.information.official.treasury_buybacks import (
+    TREASURY_BUYBACK_STREAM_ID,
+    TreasuryBuybackOperationRecord,
 )
 from investment_manager.kernel.time import require_utc
 from investment_manager.state.facts import (
@@ -29,6 +35,7 @@ from investment_manager.state.facts import (
     project_fed_chair_public_event_fact,
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
+    project_treasury_buyback_operation_fact,
 )
 from investment_manager.state.models import CanonicalFactRevision
 from investment_manager.state.repository import SqlFactStateStore
@@ -42,6 +49,10 @@ class FedOfficialSource(Protocol):
     def fetch_public_calendar(self) -> str | None: ...
 
     def fetch_monetary_rss(self) -> str | None: ...
+
+
+class TreasuryBuybackSource(Protocol):
+    def fetch_calendar(self) -> bytes | None: ...
 
 
 class SourcePollRecorder(Protocol):
@@ -380,4 +391,197 @@ class FedOfficialCollectorService:
         except Exception as exc:
             raise SourcePollAuditError(
                 f"Fed official {kind} 来源轮询事实无法持久化"
+            ) from exc
+
+
+class SqlTreasuryBuybackFactIngestor:
+    """Project the official Treasury buyback calendar into durable facts."""
+
+    def __init__(
+        self,
+        engine: Engine,
+        policy: OfficialFactProjectionPolicy,
+    ) -> None:
+        self._official = SqlTreasuryBuybackInformationIngestor(engine)
+        self._facts = SqlFactStateStore(engine)
+        self._policy = policy
+
+    def ingest_calendar(
+        self,
+        content: bytes,
+        *,
+        observed_at: datetime,
+    ) -> OfficialFactIngestionResult:
+        writes = self._official.ingest_calendar(content, observed_at=observed_at)
+        projected: list[CanonicalFactRevision] = []
+        for write in writes:
+            record = write.record
+            if not isinstance(record, TreasuryBuybackOperationRecord):
+                raise TypeError("Treasury buyback ingestor 收到非回购记录")
+            if write.calendar_revision is None:
+                raise ValueError("Treasury buyback 官方记录缺少 Calendar revision")
+            candidate = project_treasury_buyback_operation_fact(
+                record,
+                write.calendar_revision,
+                policy=self._policy,
+            )
+            previous = self._facts.latest_fact(candidate.fact_id)
+            if previous is not None and not write.inserted:
+                continue
+            if previous is not None and previous.revision_hash == candidate.revision_hash:
+                continue
+            fact = (
+                candidate
+                if previous is None
+                else project_treasury_buyback_operation_fact(
+                    record,
+                    write.calendar_revision,
+                    policy=self._policy,
+                    previous=previous,
+                )
+            )
+            stored = self._facts.put_fact(fact)
+            if previous is None or stored.revision_id != previous.revision_id:
+                projected.append(stored)
+        return OfficialFactIngestionResult(
+            records=writes,
+            new_fact_revisions=tuple(projected),
+        )
+
+
+@dataclass(slots=True)
+class TreasuryBuybackCollectorHealth:
+    poll_count: int = 0
+    new_fact_revision_count: int = 0
+    publication_count: int = 0
+    last_success_at: datetime | None = None
+    error_class: str | None = None
+    publication_error_class: str | None = None
+
+
+class TreasuryBuybackCollectorService:
+    """Poll the official buyback calendar and keep event wakeups synchronized."""
+
+    def __init__(
+        self,
+        *,
+        source: TreasuryBuybackSource,
+        ingestor: SqlTreasuryBuybackFactIngestor,
+        publish_recent: Callable[[datetime], None],
+        poll_seconds: int,
+        poll_recorder: SourcePollRecorder | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if poll_seconds < 1:
+            raise ValueError("Treasury buyback polling interval 必须为正数")
+        self._source = source
+        self._ingestor = ingestor
+        self._publish_recent = publish_recent
+        self._poll_seconds = poll_seconds
+        self._poll_recorder = poll_recorder
+        self._clock = clock
+        self.health = TreasuryBuybackCollectorHealth()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await self._poll()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
+
+    async def _poll(self) -> None:
+        started_at = require_utc(self._clock())
+        self.health.poll_count += 1
+        try:
+            content = await asyncio.to_thread(self._source.fetch_calendar)
+            result = (
+                OfficialFactIngestionResult(records=(), new_fact_revisions=())
+                if content is None
+                else await asyncio.to_thread(
+                    self._ingestor.ingest_calendar,
+                    content,
+                    observed_at=require_utc(self._clock()),
+                )
+            )
+            completed_at = max(require_utc(self._clock()), started_at)
+            self._record_poll(
+                status=(
+                    SourcePollStatus.CHANGED
+                    if any(item.inserted for item in result.records)
+                    else SourcePollStatus.UNCHANGED
+                ),
+                started_at=started_at,
+                completed_at=completed_at,
+                result=result,
+            )
+            self.health.new_fact_revision_count += len(result.new_fact_revisions)
+            self.health.last_success_at = completed_at
+            self.health.error_class = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.health.error_class != type(exc).__name__:
+                logger.exception("Treasury buyback collector failed")
+            self.health.error_class = type(exc).__name__
+            if isinstance(exc, SourcePollAuditError):
+                raise
+            self._record_poll(
+                status=SourcePollStatus.FAILED,
+                started_at=started_at,
+                completed_at=max(require_utc(self._clock()), started_at),
+                error_class=type(exc).__name__,
+            )
+            return
+        try:
+            await asyncio.to_thread(self._publish_recent, completed_at)
+            self.health.publication_count += 1
+            self.health.publication_error_class = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.health.publication_error_class != type(exc).__name__:
+                logger.exception("Treasury buyback fact publication failed")
+            self.health.publication_error_class = type(exc).__name__
+
+    def _record_poll(
+        self,
+        *,
+        status: SourcePollStatus,
+        started_at: datetime,
+        completed_at: datetime,
+        result: OfficialFactIngestionResult | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        if self._poll_recorder is None:
+            return
+        records = () if result is None else result.records
+        poll = build_source_poll_record(
+            source_stream_id=TREASURY_BUYBACK_STREAM_ID,
+            domain=CausalDomain.FISCAL_DEBT,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            latest_publication_at=max(
+                (item.record.observation.observed_at for item in records),
+                default=None,
+            ),
+            valid_until=max(
+                (
+                    item.record.operation_end_at
+                    for item in records
+                    if isinstance(item.record, TreasuryBuybackOperationRecord)
+                    and item.record.status == CalendarEventStatus.SCHEDULED
+                ),
+                default=None,
+            ),
+            observation_count=len(records),
+            new_fact_count=(
+                0 if result is None else len(result.new_fact_revisions)
+            ),
+            error_class=error_class,
+        )
+        try:
+            self._poll_recorder.put(poll)
+        except Exception as exc:
+            raise SourcePollAuditError(
+                "Treasury buyback 来源轮询事实无法持久化"
             ) from exc

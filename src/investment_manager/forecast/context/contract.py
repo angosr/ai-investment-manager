@@ -117,6 +117,10 @@ ASSESS_INSTRUCTIONS = (
     "只有累计到足够点时历史并成为 CANDIDATE 后，才可与其他发行人、现货响应"
     "和价格传导共同竞争 Driver。"
     "在主要发行人尚未覆盖前，INSTITUTIONAL_FLOWS 必须继续视为部分未知。",
+    "TREASURY_BUYBACK_OPERATION_SCHEDULE 是美国财政部公布的暂定回购操作窗口。"
+    "maximum_purchase_usd_m 只是该期限桶计划购买上限，不是实际接受金额；财政部回购也不是"
+    "美联储扩表或 QE。它可以作为财政流动性日程进入因果链，但必须结合实际操作结果、国债收益率、"
+    "美元及风险资产响应后才能推断方向，不得把相邻操作上限从 20 亿变成 40 亿机械解释为 BTC 利多。",
     "数据不足时使用 UNCERTAIN/UNKNOWN 并明确 data_gaps，不猜测缺失事实。",
 )
 
