@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from itertools import pairwise
 from typing import Literal
 
@@ -13,6 +14,62 @@ from investment_manager.kernel.types import (
     Money,
     PositiveDecimal,
 )
+
+
+class InstrumentProduct(StrEnum):
+    SPOT = "SPOT"
+    USD_M_PERPETUAL = "USD_M_PERPETUAL"
+    TRADFI_PERPETUAL = "TRADFI_PERPETUAL"
+
+
+class InstrumentId(FrozenModel):
+    """Product-qualified market identity; a symbol alone is never sufficient."""
+
+    venue: Literal["BINANCE"] = "BINANCE"
+    product: InstrumentProduct
+    symbol: str = Field(pattern=r"^[A-Z0-9._-]+$")
+    base_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
+    quote_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
+    settlement_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
+    contract_multiplier: PositiveDecimal = Decimal("1")
+
+    @model_validator(mode="after")
+    def product_contract_must_be_consistent(self):
+        if self.base_asset == self.quote_asset:
+            raise ValueError("Instrument base_asset 与 quote_asset 必须不同")
+        if self.symbol != f"{self.base_asset}{self.quote_asset}":
+            raise ValueError("Binance Instrument symbol 必须由 base_asset 与 quote_asset 组成")
+        if self.product == InstrumentProduct.SPOT:
+            if self.settlement_asset != self.quote_asset:
+                raise ValueError("Spot settlement_asset 必须等于 quote_asset")
+            if self.contract_multiplier != Decimal("1"):
+                raise ValueError("Spot contract_multiplier 必须为 1")
+        if self.product in {
+            InstrumentProduct.USD_M_PERPETUAL,
+            InstrumentProduct.TRADFI_PERPETUAL,
+        } and self.settlement_asset != self.quote_asset:
+            raise ValueError("Binance Perpetual settlement_asset 必须等于 quote_asset")
+        return self
+
+    @property
+    def key(self) -> str:
+        return f"{self.venue}:{self.product.value}:{self.symbol}"
+
+    @classmethod
+    def binance_spot(
+        cls,
+        *,
+        symbol: str,
+        base_asset: str,
+        quote_asset: str,
+    ) -> InstrumentId:
+        return cls(
+            product=InstrumentProduct.SPOT,
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            settlement_asset=quote_asset,
+        )
 
 
 class MarketBar(FrozenModel):

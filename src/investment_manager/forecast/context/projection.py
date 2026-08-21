@@ -12,7 +12,9 @@ from investment_manager.forecast.models import (
     ContextAssessment,
     ContextView,
     DirectionalView,
+    ForecastReferencePrice,
     ForecastRole,
+    ForecastTarget,
     PricedState,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -21,7 +23,7 @@ from investment_manager.kernel.types import (
     FrozenModel,
     Money,
 )
-from investment_manager.market.models import MarketTrade
+from investment_manager.market.models import InstrumentId, MarketTrade
 from investment_manager.state.decision.packet import DecisionPacket
 
 
@@ -265,15 +267,27 @@ class AssessmentForecastProjector:
             self._policy.maximum_age_seconds,
             view.horizon_minutes * 60,
         )
+        target = ForecastTarget.single_long(
+            InstrumentId.binance_spot(
+                symbol=calibration.symbol,
+                base_asset=calibration.asset,
+                quote_asset="USDT",
+            )
+        )
         payload = {
             "role": ForecastRole.AI_EVENT.value,
             "producer_id": self._policy.producer_id,
             "producer_version": self._policy.version,
             "forecast_family": self._policy.forecast_family,
-            "symbol": calibration.symbol,
+            "target": target.model_dump(mode="json"),
             "horizon_minutes": view.horizon_minutes,
             "direction": view.direction.value,
-            "reference_price": reference_trade.price,
+            "reference_prices": (
+                ForecastReferencePrice(
+                    instrument_id=target.legs[0].instrument.key,
+                    price=reference_trade.price,
+                ).model_dump(mode="json"),
+            ),
             "expected_edge_half_life_seconds": (
                 calibration.expected_edge_half_life_seconds
             ),

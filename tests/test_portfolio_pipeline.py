@@ -16,8 +16,11 @@ from investment_manager.execution.planner import (
 from investment_manager.forecast.models import (
     CalibratedForecast,
     DirectionalView,
+    ForecastReferencePrice,
     ForecastRole,
+    ForecastTarget,
 )
+from investment_manager.market.models import InstrumentId
 from investment_manager.portfolio.decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
@@ -65,16 +68,28 @@ def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
 
 
 def _asset() -> PortfolioAssetInput:
+    target = ForecastTarget.single_long(
+        InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        )
+    )
     forecast = CalibratedForecast(
         forecast_id="forecast-1",
         role=ForecastRole.PROGRAM_BASE,
         producer_id="program",
         producer_version="v1",
         forecast_family="trend",
-        symbol="BTCUSDT",
+        target=target,
         horizon_minutes=240,
         direction=DirectionalView.UP,
-        reference_price=Decimal("100"),
+        reference_prices=(
+            ForecastReferencePrice(
+                instrument_id=target.legs[0].instrument.key,
+                price=Decimal("100"),
+            ),
+        ),
         expected_edge_half_life_seconds=3600,
         available_at=NOW,
         valid_until=NOW + timedelta(hours=1),

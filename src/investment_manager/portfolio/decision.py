@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 from investment_manager.forecast.models import (
     CalibratedForecast,
     DirectionalView,
+    ExposureDirection,
     ForecastRole,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -18,6 +19,7 @@ from investment_manager.kernel.types import (
     PositiveDecimal,
     UnitInterval,
 )
+from investment_manager.market.models import InstrumentProduct
 from investment_manager.portfolio.models import (
     AssetTarget,
     PortfolioTarget,
@@ -55,9 +57,18 @@ class PortfolioAssetInput(FrozenModel):
     forecast: CalibratedForecast | None = None
 
     @model_validator(mode="after")
-    def forecast_symbol_must_match(self):
-        if self.forecast is not None and self.forecast.symbol != self.symbol:
-            raise ValueError("PortfolioAssetInput 与 Forecast symbol 不一致")
+    def forecast_target_must_match_current_spot_mvp(self):
+        if self.forecast is None:
+            return self
+        legs = self.forecast.target.legs
+        if (
+            len(legs) != 1
+            or legs[0].instrument.product != InstrumentProduct.SPOT
+            or legs[0].direction != ExposureDirection.LONG
+        ):
+            raise ValueError("当前 PortfolioAssetInput 只接受单腿 Spot Long ForecastTarget")
+        if legs[0].instrument.symbol != self.symbol:
+            raise ValueError("PortfolioAssetInput 与 ForecastTarget Instrument 不一致")
         return self
 
 
@@ -202,7 +213,7 @@ class PortfolioDecisionEngine:
             max(
                 Decimal("0"),
                 (
-                    item.current_price / item.forecast.reference_price
+                    item.current_price / item.forecast.reference_prices[0].price
                     - Decimal("1")
                 )
                 * Decimal("10000"),

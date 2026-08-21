@@ -7,9 +7,78 @@ from enum import StrEnum
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import Side
-from investment_manager.kernel.identity import SHA256_PATTERN, content_hash
+from investment_manager.kernel.identity import SHA256_PATTERN, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
+from investment_manager.market.models import InstrumentId, InstrumentProduct
+
+
+class ExposureDirection(StrEnum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class ForecastLeg(FrozenModel):
+    instrument: InstrumentId
+    direction: ExposureDirection
+    gross_weight: Decimal = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def directly_short_spot_is_not_a_supported_leg(self):
+        if (
+            self.instrument.product == InstrumentProduct.SPOT
+            and self.direction == ExposureDirection.SHORT
+        ):
+            raise ValueError("Spot ForecastLeg 不能表达未建模的直接做空")
+        return self
+
+
+class ForecastTarget(FrozenModel):
+    """Normalized return object; Portfolio, not Forecast, decides its capital size."""
+
+    target_id: str = Field(min_length=1)
+    legs: tuple[ForecastLeg, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def legs_and_identity_must_be_canonical(self):
+        keys = tuple(item.instrument.key for item in self.legs)
+        if tuple(sorted(set(keys))) != keys:
+            raise ValueError("ForecastTarget legs 必须按 Instrument 唯一且排序")
+        if sum((item.gross_weight for item in self.legs), Decimal("0")) != Decimal("1"):
+            raise ValueError("ForecastTarget gross_weight 绝对权重之和必须为 1")
+        expected = self.identity_for(self.legs)
+        if self.target_id != expected:
+            raise ValueError("ForecastTarget target_id 与规范化 Leg 内容不一致")
+        return self
+
+    @staticmethod
+    def identity_for(legs: tuple[ForecastLeg, ...]) -> str:
+        return stable_id(
+            "forecast_target",
+            content_hash({"legs": [item.model_dump(mode="json") for item in legs]}),
+        )
+
+    @classmethod
+    def create(cls, legs: tuple[ForecastLeg, ...]) -> ForecastTarget:
+        ordered = tuple(sorted(legs, key=lambda item: item.instrument.key))
+        return cls(target_id=cls.identity_for(ordered), legs=ordered)
+
+    @classmethod
+    def single_long(cls, instrument: InstrumentId) -> ForecastTarget:
+        return cls.create(
+            (
+                ForecastLeg(
+                    instrument=instrument,
+                    direction=ExposureDirection.LONG,
+                    gross_weight=Decimal("1"),
+                ),
+            )
+        )
+
+
+class ForecastReferencePrice(FrozenModel):
+    instrument_id: str = Field(min_length=1)
+    price: PositiveDecimal
 
 
 class DirectionalView(StrEnum):
@@ -164,7 +233,7 @@ class BaseForecast(FrozenModel):
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
-    symbol: str = Field(min_length=1)
+    target: ForecastTarget
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
     observed_at: datetime
@@ -193,10 +262,10 @@ class CalibratedForecast(FrozenModel):
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
-    symbol: str = Field(min_length=1)
+    target: ForecastTarget
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
-    reference_price: PositiveDecimal
+    reference_prices: tuple[ForecastReferencePrice, ...] = Field(min_length=1)
     expected_edge_half_life_seconds: int = Field(gt=0, le=604_800)
     available_at: datetime
     valid_until: datetime
@@ -221,6 +290,10 @@ class CalibratedForecast(FrozenModel):
             raise ValueError("保守收益不能高于均值")
         if self.non_overlapping_sample_size > self.calibration_sample_size:
             raise ValueError("非重叠样本不能超过总样本")
+        reference_ids = tuple(item.instrument_id for item in self.reference_prices)
+        target_ids = tuple(item.instrument.key for item in self.target.legs)
+        if reference_ids != target_ids:
+            raise ValueError("CalibratedForecast 参考价必须逐 Leg 唯一、排序且完整")
         required_refs = {
             ForecastRole.PROGRAM_BASE: (True, False),
             ForecastRole.AI_EVENT: (False, True),

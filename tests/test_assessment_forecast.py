@@ -330,8 +330,12 @@ def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
     assert len(result.forecasts) == 1
     forecast = result.forecasts[0]
     assert forecast.role == ForecastRole.AI_EVENT
-    assert forecast.symbol == "BTCUSDT"
-    assert forecast.reference_price == Decimal("70010")
+    assert tuple(item.instrument.key for item in forecast.target.legs) == (
+        "BINANCE:SPOT:BTCUSDT",
+    )
+    assert tuple(item.price for item in forecast.reference_prices) == (
+        Decimal("70010"),
+    )
     assert forecast.assessment_id == "assessment-1"
     assert forecast.base_forecast_id is None
     assert forecast.conservative_gross_bps == Decimal("7")

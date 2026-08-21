@@ -11,13 +11,18 @@ from investment_manager.forecast.models import (
     ContextAssessment,
     ContextView,
     DirectionalView,
+    ExposureDirection,
+    ForecastLeg,
+    ForecastReferencePrice,
     ForecastRole,
+    ForecastTarget,
     PricedState,
 )
 from investment_manager.information.models import (
     SourceObservation,
     SourceTier,
 )
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.portfolio.models import (
     AssetTarget,
     PortfolioTarget,
@@ -33,6 +38,86 @@ from investment_manager.state.models import (
 
 NOW = datetime(2026, 8, 20, 10, 30, tzinfo=UTC)
 HASH = "a" * 64
+
+
+def _spot_target() -> ForecastTarget:
+    return ForecastTarget.single_long(
+        InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        )
+    )
+
+
+def _spot_reference_prices() -> tuple[ForecastReferencePrice, ...]:
+    target = _spot_target()
+    return (
+        ForecastReferencePrice(
+            instrument_id=target.legs[0].instrument.key,
+            price=Decimal("100000"),
+        ),
+    )
+
+
+def test_instrument_identity_distinguishes_same_symbol_across_products() -> None:
+    spot = InstrumentId.binance_spot(
+        symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT"
+    )
+    perpetual = InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+    )
+
+    assert spot.key == "BINANCE:SPOT:BTCUSDT"
+    assert perpetual.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
+    assert spot.key != perpetual.key
+
+
+def test_multi_leg_forecast_target_is_normalized_canonical_and_content_addressed() -> None:
+    spot = InstrumentId.binance_spot(
+        symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT"
+    )
+    perpetual = InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+    )
+    spot_leg = ForecastLeg(
+        instrument=spot,
+        direction=ExposureDirection.LONG,
+        gross_weight=Decimal("0.5"),
+    )
+    perpetual_leg = ForecastLeg(
+        instrument=perpetual,
+        direction=ExposureDirection.SHORT,
+        gross_weight=Decimal("0.5"),
+    )
+
+    forward = ForecastTarget.create((spot_leg, perpetual_leg))
+    reversed_input = ForecastTarget.create((perpetual_leg, spot_leg))
+
+    assert forward == reversed_input
+    assert tuple(item.instrument.key for item in forward.legs) == (
+        "BINANCE:SPOT:BTCUSDT",
+        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+    )
+    with pytest.raises(ValidationError, match="绝对权重之和必须为 1"):
+        ForecastTarget.create(
+            (
+                spot_leg.model_copy(update={"gross_weight": Decimal("0.4")}),
+                perpetual_leg,
+            )
+        )
+    with pytest.raises(ValidationError, match="target_id"):
+        ForecastTarget.model_validate(
+            {**forward.model_dump(mode="json"), "target_id": "tampered"}
+        )
 
 
 def _source_observation() -> SourceObservation:
@@ -180,7 +265,7 @@ def test_base_forecast_rejects_free_analysis_latency() -> None:
             producer_id="trend",
             producer_version="v1",
             forecast_family="TREND",
-            symbol="BTCUSDT",
+            target=_spot_target(),
             horizon_minutes=240,
             direction=DirectionalView.UP,
             observed_at=NOW,
@@ -210,10 +295,10 @@ def test_calibrated_forecast_roles_have_one_unambiguous_provenance(
         producer_id="calibration",
         producer_version="v1",
         forecast_family="EVENT",
-        symbol="BTCUSDT",
+        target=_spot_target(),
         horizon_minutes=240,
         direction=DirectionalView.UP,
-        reference_price=Decimal("100000"),
+        reference_prices=_spot_reference_prices(),
         expected_edge_half_life_seconds=3600,
         available_at=NOW,
         valid_until=NOW + timedelta(hours=1),
@@ -239,10 +324,10 @@ def test_calibrated_forecast_rejects_role_reference_mismatch() -> None:
             producer_id="calibration",
             producer_version="v1",
             forecast_family="EVENT",
-            symbol="BTCUSDT",
+            target=_spot_target(),
             horizon_minutes=240,
             direction=DirectionalView.UP,
-            reference_price=Decimal("100000"),
+            reference_prices=_spot_reference_prices(),
             expected_edge_half_life_seconds=3600,
             available_at=NOW,
             valid_until=NOW + timedelta(hours=1),

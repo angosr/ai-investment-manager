@@ -6,8 +6,13 @@ import pytest
 from investment_manager.forecast.models import (
     CalibratedForecast,
     DirectionalView,
+    ExposureDirection,
+    ForecastLeg,
+    ForecastReferencePrice,
     ForecastRole,
+    ForecastTarget,
 )
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.portfolio.decision import (
     PortfolioAssetInput,
     PortfolioDecisionEngine,
@@ -28,16 +33,28 @@ def _forecast(
     available_at: datetime = NOW,
     valid_until: datetime = NOW + timedelta(hours=1),
 ) -> CalibratedForecast:
+    target = ForecastTarget.single_long(
+        InstrumentId.binance_spot(
+            symbol=symbol,
+            base_asset=symbol.removesuffix("USDT"),
+            quote_asset="USDT",
+        )
+    )
     return CalibratedForecast(
         forecast_id=forecast_id,
         role=ForecastRole.PROGRAM_BASE,
         producer_id="calibration",
         producer_version="v1",
         forecast_family="trend",
-        symbol=symbol,
+        target=target,
         horizon_minutes=240,
         direction=direction,
-        reference_price=Decimal(reference_price),
+        reference_prices=(
+            ForecastReferencePrice(
+                instrument_id=target.legs[0].instrument.key,
+                price=Decimal(reference_price),
+            ),
+        ),
         expected_edge_half_life_seconds=half_life_seconds,
         available_at=available_at,
         valid_until=valid_until,
@@ -91,6 +108,45 @@ def test_engine_is_off_by_default() -> None:
     )
 
     assert result is None
+
+
+def test_current_portfolio_mvp_rejects_multi_leg_target_instead_of_mispricing_it() -> None:
+    forecast = _forecast("BTCUSDT", forecast_id="carry-1")
+    spot = forecast.target.legs[0].instrument
+    perpetual = InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+    )
+    target = ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=spot,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("0.5"),
+            ),
+            ForecastLeg(
+                instrument=perpetual,
+                direction=ExposureDirection.SHORT,
+                gross_weight=Decimal("0.5"),
+            ),
+        )
+    )
+    multi_leg = CalibratedForecast.model_validate(
+        {
+            **forecast.model_dump(mode="json"),
+            "target": target.model_dump(mode="json"),
+            "reference_prices": [
+                {"instrument_id": item.instrument.key, "price": "100"}
+                for item in target.legs
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="只接受单腿 Spot Long"):
+        _asset("BTCUSDT", forecast=multi_leg)
 
 
 def test_engine_selects_positive_fee_adjusted_long_forecasts_only() -> None:

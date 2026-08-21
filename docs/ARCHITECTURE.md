@@ -143,10 +143,14 @@ NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue
 拒单必须独立处理；本项目据此把协调责任留在 Execution 状态机，不依赖抽象层的原子假设
 （[NautilusTrader advanced orders](https://github.com/nautechsystems/nautilus_trader/blob/2114cf6f761429e0adb5ca9596fcd7b895b16011/docs/concepts/orders/advanced.md)）。
 
-当前 `AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 是尚未接入生产的 long-only Spot MVP，
-只允许继续用于冻结测试和方向候选回放；它们不能承载 carry，也不能因为已有类名而获得资本权限。
-多腿迁移按一个纵向切片完成：先建立 Instrument 与双产品点时数据，再让 carry 只输出影子
-ForecastTarget，随后一次性接通 Sleeve Portfolio/Risk、grouped Execution、故障回放和统一评价。
+主线 Forecast 已使用产品级 `InstrumentId`、规范化 `ForecastTarget` 和逐 Leg 参考价；相同 Binance
+symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。当前 AI_EVENT 投影只生成单腿 Spot
+Target；`AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 仍是尚未接入生产的 long-only Spot MVP，
+并会显式拒绝多腿 Target，而不是错误定价或拆腿授权。行情、账户、订单和持仓尚未完成产品级硬迁移，
+因此 carry 仍不能进入资本路径。
+
+下一步先接通双产品点时 Market 数据和 carry 影子 ForecastTarget/结算，再一次性完成 Sleeve
+Portfolio/Risk、grouped Execution、故障回放和统一评价。
 在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
 
 评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
@@ -383,9 +387,9 @@ kernel/platform
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
 2. **投资对象与预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
-   完整性检查、always-UP 配对门禁和内容寻址结果，当前管理入口不再读取旧 Proposal；下一步先以
-   `InstrumentId + ForecastTarget` 冻结单腿/多腿投资对象，再让通过预登记评估的 ProgramBase 接入
-   Forecast 持久化与结算。两者未获权限时都不能影响资本。
+   完整性检查、always-UP 配对门禁和内容寻址结果；`InstrumentId + ForecastTarget` 已成为 Base 与
+   Calibrated Forecast 的单腿/多腿投资对象合同。下一步接入双产品点时 Market 数据，再让通过预登记
+   评估的 ProgramBase/carry 写入 Forecast 持久化与结算。两者未获权限时都不能影响资本。
 3. **组合与风险接线**：以同一冻结时点生成 Sleeve allocation，再统一推进
    `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；现金、拒绝、整组缩减和低于
    最小交易额都是完整终态。不得先保留 Spot-only 路径、再旁接一套 carry 组合器。

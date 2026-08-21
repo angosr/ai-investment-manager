@@ -654,7 +654,13 @@ def test_shared_kernel_primitives_are_not_imported_from_domain() -> None:
 
 
 def test_market_models_are_imported_from_their_domain_owner() -> None:
-    market_models = {"FeatureSnapshot", "MarketBar", "MarketSnapshot"}
+    market_models = {
+        "FeatureSnapshot",
+        "InstrumentId",
+        "InstrumentProduct",
+        "MarketBar",
+        "MarketSnapshot",
+    }
 
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
         if path == PACKAGE_ROOT / "domain.py":
@@ -825,7 +831,11 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "CalibratedForecast",
         "ContextAssessment",
         "ContextView",
+        "ExposureDirection",
+        "ForecastLeg",
+        "ForecastReferencePrice",
         "ForecastRole",
+        "ForecastTarget",
         "PricedState",
     }
     owned_tables = {
