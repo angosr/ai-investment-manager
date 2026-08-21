@@ -25,6 +25,11 @@ class DecisionPacketPolicy(FrozenModel):
         ge=3_600,
         le=2_592_000,
     )
+    maximum_calendar_context_distance_seconds: int = Field(
+        default=604_800,
+        ge=86_400,
+        le=2_592_000,
+    )
     maximum_intelligence_events: int = Field(default=8, ge=0, le=20)
     maximum_intelligence_characters: int = Field(default=3_000, ge=0, le=6_000)
     maximum_characters_per_intelligence_event: int = Field(

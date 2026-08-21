@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v16 冷启动保留诚实晚到的已发生回购，并让近期日历上下文进入有界 Packet。
-  version: portfolio-state-v16
+  # v17 按直接变化、异常候选、临近日历、常规背景分配有界 Packet 注意力。
+  version: portfolio-state-v17
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v7
@@ -68,12 +68,13 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v21
+    version: decision-packet-policy-v22
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
     maximum_background_fact_distance_seconds: 172800
+    maximum_calendar_context_distance_seconds: 604800
     maximum_intelligence_events: 8
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500

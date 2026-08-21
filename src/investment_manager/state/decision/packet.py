@@ -33,7 +33,11 @@ from investment_manager.market.models import (
     MarketSnapshot,
 )
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
-from investment_manager.state.facts import TREASURY_BUYBACK_OPERATION_FACT_TYPE
+from investment_manager.state.facts import (
+    FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+    FOMC_MEETING_FACT_TYPE,
+    TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+)
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -67,8 +71,9 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v11",
     "decision-packet-v12",
 }
-_ALWAYS_VISIBLE_BACKGROUND_FACT_TYPES = {
-    *OFFICIAL_METRIC_FACT_TYPES,
+_CALENDAR_CONTEXT_FACT_TYPES = {
+    FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+    FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
@@ -1174,7 +1179,12 @@ class DecisionPacketBuilder:
             )
             if (
                 item.fact.revision_id in direct_fact_ids
-                or item.fact.fact_type in _ALWAYS_VISIBLE_BACKGROUND_FACT_TYPES
+                or item.fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                or (
+                    item.fact.fact_type in _CALENDAR_CONTEXT_FACT_TYPES
+                    and distance
+                    <= self._policy.maximum_calendar_context_distance_seconds
+                )
                 or distance <= self._policy.maximum_background_fact_distance_seconds
             ):
                 eligible.append(item)
@@ -1183,6 +1193,8 @@ class DecisionPacketBuilder:
         eligible.sort(
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
+                item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
+                item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in OFFICIAL_METRIC_FACT_TYPES,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
