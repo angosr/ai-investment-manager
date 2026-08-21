@@ -13,7 +13,7 @@ def compose_metadata() -> MetaData:
 
     for owner in (
         "investment_manager.information.tables",
-        "investment_manager.market.repository",
+        "investment_manager.market.tables",
         "investment_manager.scheduling.tables",
         "investment_manager.state.tables",
         "investment_manager.forecast.tables",

@@ -21,7 +21,7 @@ from investment_manager.legacy.models import (
 )
 from investment_manager.legacy.repository import candidate_outcomes, signal_candidates
 from investment_manager.market.models import MarketTrade
-from investment_manager.market.repository import market_trades
+from investment_manager.market.tables import market_trades
 
 
 @dataclass(frozen=True, slots=True)

@@ -199,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 59
+    assert len(contract) == 61
     assert content_hash(contract) == (
-        "ac09f5d6b44b1941b4ad3d4a92674bda5b2804ae1abd4df74417b4745e2b7a25"
+        "5b3fa887e5f7b090bc727fbba59eb6112cce3100d5ca9b7a82eade420ebd4edb"
     )
 
 
@@ -325,6 +325,14 @@ def test_current_internal_module_graph_has_no_cycles() -> None:
 
 def test_dense_domains_group_independent_capabilities_without_reexports() -> None:
     root_modules = {
+        "market": {
+            "features.py",
+            "models.py",
+            "policy.py",
+            "repository.py",
+            "runtime.py",
+            "tables.py",
+        },
         "execution": {
             "account_repository.py",
             "contracts.py",
@@ -342,6 +350,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
         "forecast": {"codex", "context"},
         "governance": {"audit", "change", "evaluation", "release"},
         "information": {"official"},
+        "market": {"perpetual"},
         "state": {"decision"},
     }
 
@@ -676,6 +685,44 @@ def test_market_models_are_imported_from_their_domain_owner() -> None:
     assert not (PACKAGE_ROOT / "market_data.py").exists()
     assert not (PACKAGE_ROOT / "market_data_sql.py").exists()
     assert not (PACKAGE_ROOT / "features.py").exists()
+
+
+def test_market_tables_have_one_domain_owner_and_no_repository_reexports() -> None:
+    owned_tables = {
+        "funding_settlements",
+        "market_bars",
+        "market_quotes",
+        "market_trades",
+        "perpetual_market_states",
+    }
+    owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
+
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id in owned_tables
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "Table"
+                ):
+                    owners[target.id].append(path)
+        if path == PACKAGE_ROOT / "market" / "repository.py":
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "investment_manager.market.repository"
+            ):
+                assert not owned_tables.intersection(
+                    alias.name for alias in node.names
+                ), path
+
+    expected = PACKAGE_ROOT / "market" / "tables.py"
+    assert owners == {name: [expected] for name in owned_tables}
 
 
 def test_information_facts_are_imported_from_their_domain_owner() -> None:

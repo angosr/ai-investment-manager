@@ -36,7 +36,7 @@ from investment_manager.governance.tables import (
     governance_snapshots,
     release_manifests,
 )
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
@@ -148,7 +148,18 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
 
 def test_runtime_release_binds_complete_configuration_content() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
-    manifest = load_release_manifest("config/release-manifest.testnet-v3.yaml")
+    historical = load_release_manifest("config/release-manifest.testnet-v3.yaml")
+    component_versions = tuple(
+        (name, config.market_data.version if name == "market_data" else version)
+        for name, version in historical.component_versions
+    )
+    manifest = historical.model_copy(
+        update={
+            "manifest_id": "release-testnet-current-contract-test",
+            "component_versions": component_versions,
+            "configuration_hash": content_hash(config),
+        }
+    )
 
     validate_manifest_against_config(
         manifest,

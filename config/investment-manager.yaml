@@ -166,7 +166,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v2
+  version: binance-public-shadow-v3
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64
@@ -179,6 +179,24 @@ market_data:
   reconnect_maximum_seconds: 30
   quote_persist_interval_ms: 1000
   trade_persist_interval_ms: 1000
+  perpetual_instruments:
+    - venue: BINANCE
+      product: USD_M_PERPETUAL
+      symbol: BTCUSDT
+      base_asset: BTC
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+    - venue: BINANCE
+      product: USD_M_PERPETUAL
+      symbol: ETHUSDT
+      base_asset: ETH
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+  perpetual_rest_base_url: https://fapi.binance.com
+  perpetual_poll_seconds: 300
+  funding_history_lookback_hours: 24
 
 shadow:
   version: shadow-simulation-v1

@@ -6,26 +6,29 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from sqlalchemy import (
-    JSON,
-    BigInteger,
-    Column,
-    DateTime,
-    Index,
-    String,
-    Table,
-    insert,
-    select,
-)
+from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
     ClosedMarketBar,
+    InstrumentId,
     MarketQuote,
     MarketSnapshot,
     MarketTrade,
+)
+from investment_manager.market.perpetual.models import (
+    FundingSettlement,
+    PerpetualMarketState,
+)
+from investment_manager.market.tables import (
+    funding_settlements,
+    market_bars,
+    market_quotes,
+    market_tables,
+    market_trades,
+    perpetual_market_states,
 )
 from investment_manager.platform.database import metadata
 
@@ -38,6 +41,23 @@ class MarketDataStore(Protocol):
     def put_trade(self, trade: MarketTrade) -> bool: ...
 
     def put_bar(self, bar: ClosedMarketBar) -> bool: ...
+
+    def put_perpetual_state(self, state: PerpetualMarketState) -> bool: ...
+
+    def put_funding_settlement(self, settlement: FundingSettlement) -> bool: ...
+
+    def latest_perpetual_state(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualMarketState | None: ...
+
+    def funding_settlements(
+        self,
+        *,
+        instrument: InstrumentId,
+        start: datetime,
+        end: datetime,
+        visible_at: datetime,
+    ) -> tuple[FundingSettlement, ...]: ...
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade: ...
 
@@ -82,6 +102,14 @@ def _trade_market_facts(trade: MarketTrade) -> dict[str, Any]:
     return trade.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _perpetual_market_facts(state: PerpetualMarketState) -> dict[str, Any]:
+    return state.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
+def _funding_settlement_facts(settlement: FundingSettlement) -> dict[str, Any]:
+    return settlement.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
 def trade_at_or_before(
     engine: Engine,
     *,
@@ -113,6 +141,8 @@ class InMemoryMarketDataStore:
     _quotes: dict[str, MarketQuote] = field(default_factory=dict)
     _trades: dict[tuple[str, int], MarketTrade] = field(default_factory=dict)
     _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
+    _perpetual_states: dict[str, PerpetualMarketState] = field(default_factory=dict)
+    _funding_settlements: dict[str, FundingSettlement] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def put_quote(self, quote: MarketQuote) -> bool:
@@ -156,6 +186,75 @@ class InMemoryMarketDataStore:
                 return False
             self._bars[key] = bar
             return True
+
+    def put_perpetual_state(self, state: PerpetualMarketState) -> bool:
+        with self._lock:
+            existing = self._perpetual_states.get(state.state_id)
+            if existing is not None:
+                if _perpetual_market_facts(existing) != _perpetual_market_facts(state):
+                    raise ValueError("state_id 冲突且永续市场事实不一致")
+                return False
+            self._perpetual_states[state.state_id] = state
+            return True
+
+    def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
+        with self._lock:
+            existing = self._funding_settlements.get(settlement.settlement_id)
+            if existing is not None:
+                if _funding_settlement_facts(existing) != _funding_settlement_facts(settlement):
+                    raise ValueError("settlement_id 冲突且 Funding 事实不一致")
+                return False
+            self._funding_settlements[settlement.settlement_id] = settlement
+            return True
+
+    def latest_perpetual_state(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualMarketState | None:
+        visible_at = require_utc(as_of)
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._perpetual_states.values()
+                if item.instrument == instrument
+                and item.exchange_time <= visible_at
+                and item.observed_at <= visible_at
+            )
+        return max(
+            visible,
+            key=lambda item: (item.exchange_time, item.observed_at, item.state_id),
+            default=None,
+        )
+
+    def funding_settlements(
+        self,
+        *,
+        instrument: InstrumentId,
+        start: datetime,
+        end: datetime,
+        visible_at: datetime,
+    ) -> tuple[FundingSettlement, ...]:
+        start = require_utc(start)
+        end = require_utc(end)
+        visible_at = require_utc(visible_at)
+        if not start < end <= visible_at:
+            raise ValueError("Funding 查询时间边界非法")
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        item
+                        for item in self._funding_settlements.values()
+                        if item.instrument == instrument
+                        and start <= item.funding_time < end
+                        and item.observed_at <= visible_at
+                    ),
+                    key=lambda item: (
+                        item.funding_time,
+                        item.rate_type.value,
+                        item.settlement_id,
+                    ),
+                )
+            )
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
         as_of = require_utc(as_of)
@@ -220,47 +319,6 @@ class InMemoryMarketDataStore:
             bars=tuple(item.to_market_bar() for item in selected_bars),
             source=source,
         )
-
-
-market_quotes = Table(
-    "market_quotes",
-    metadata,
-    Column("quote_id", String(128), primary_key=True),
-    Column("symbol", String(32), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_market_quotes_symbol_observed", market_quotes.c.symbol, market_quotes.c.observed_at)
-
-market_trades = Table(
-    "market_trades",
-    metadata,
-    Column("symbol", String(32), primary_key=True),
-    Column("aggregate_trade_id", BigInteger, primary_key=True),
-    Column("event_time", DateTime(timezone=True), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_market_trades_symbol_event", market_trades.c.symbol, market_trades.c.event_time)
-
-market_bars = Table(
-    "market_bars",
-    metadata,
-    Column("symbol", String(32), primary_key=True),
-    Column("interval", String(16), primary_key=True),
-    Column("open_time", DateTime(timezone=True), primary_key=True),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index(
-    "ix_market_bars_symbol_interval_open",
-    market_bars.c.symbol,
-    market_bars.c.interval,
-    market_bars.c.open_time,
-)
-
-
-market_tables = (market_quotes, market_trades, market_bars)
 
 
 def create_market_schema(engine: Engine) -> None:
@@ -363,6 +421,112 @@ class SqlMarketDataStore:
                     return False
                 raise ValueError("已收盘 K 线唯一键冲突且事实不一致") from None
             return False
+
+    def put_perpetual_state(self, state: PerpetualMarketState) -> bool:
+        payload = state.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(perpetual_market_states).values(
+                        state_id=state.state_id,
+                        instrument_id=state.instrument.key,
+                        exchange_time=state.exchange_time,
+                        observed_at=state.observed_at,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(perpetual_market_states.c.payload).where(
+                        perpetual_market_states.c.state_id == state.state_id
+                    )
+                ).scalar_one()
+            if _perpetual_market_facts(
+                PerpetualMarketState.model_validate(existing)
+            ) != _perpetual_market_facts(state):
+                raise ValueError("state_id 冲突且永续市场事实不一致") from None
+            return False
+
+    def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
+        payload = settlement.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(funding_settlements).values(
+                        settlement_id=settlement.settlement_id,
+                        instrument_id=settlement.instrument.key,
+                        funding_time=settlement.funding_time,
+                        observed_at=settlement.observed_at,
+                        rate_type=settlement.rate_type.value,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(funding_settlements.c.payload).where(
+                        funding_settlements.c.settlement_id == settlement.settlement_id
+                    )
+                ).scalar_one()
+            if _funding_settlement_facts(
+                FundingSettlement.model_validate(existing)
+            ) != _funding_settlement_facts(settlement):
+                raise ValueError("settlement_id 冲突且 Funding 事实不一致") from None
+            return False
+
+    def latest_perpetual_state(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualMarketState | None:
+        as_of = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(perpetual_market_states.c.payload)
+                .where(
+                    perpetual_market_states.c.instrument_id == instrument.key,
+                    perpetual_market_states.c.exchange_time <= as_of,
+                    perpetual_market_states.c.observed_at <= as_of,
+                )
+                .order_by(
+                    perpetual_market_states.c.exchange_time.desc(),
+                    perpetual_market_states.c.observed_at.desc(),
+                    perpetual_market_states.c.state_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return PerpetualMarketState.model_validate(payload) if payload is not None else None
+
+    def funding_settlements(
+        self,
+        *,
+        instrument: InstrumentId,
+        start: datetime,
+        end: datetime,
+        visible_at: datetime,
+    ) -> tuple[FundingSettlement, ...]:
+        start = require_utc(start)
+        end = require_utc(end)
+        visible_at = require_utc(visible_at)
+        if not start < end <= visible_at:
+            raise ValueError("Funding 查询时间边界非法")
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(funding_settlements.c.payload)
+                .where(
+                    funding_settlements.c.instrument_id == instrument.key,
+                    funding_settlements.c.funding_time >= start,
+                    funding_settlements.c.funding_time < end,
+                    funding_settlements.c.observed_at <= visible_at,
+                )
+                .order_by(
+                    funding_settlements.c.funding_time,
+                    funding_settlements.c.rate_type,
+                    funding_settlements.c.settlement_id,
+                )
+            ).scalars()
+            return tuple(FundingSettlement.model_validate(item) for item in payloads)
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
         as_of = require_utc(as_of)

@@ -5,9 +5,10 @@ temporal:
   namespace: testnet-20260818
 
 market_data:
-  version: binance-public-testnet-v1
+  version: binance-public-testnet-v2
   rest_base_url: https://testnet.binance.vision
   websocket_base_url: wss://stream.testnet.binance.vision
+  perpetual_rest_base_url: https://testnet.binancefuture.com
 
 frequency:
   version: testnet-frequency-v3

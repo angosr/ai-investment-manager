@@ -149,8 +149,10 @@ Target；`AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 仍是尚未�
 并会显式拒绝多腿 Target，而不是错误定价或拆腿授权。行情、账户、订单和持仓尚未完成产品级硬迁移，
 因此 carry 仍不能进入资本路径。
 
-下一步先接通双产品点时 Market 数据和 carry 影子 ForecastTarget/结算，再一次性完成 Sleeve
-Portfolio/Risk、grouped Execution、故障回放和统一评价。
+主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、下一 funding 时间和已结算 funding
+点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留现有单流。
+下一步只用这些事实生成并结算 carry 影子 ForecastTarget，再一次性完成 Sleeve Portfolio/Risk、
+grouped Execution、故障回放和统一评价。
 在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
 
 评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
@@ -177,6 +179,8 @@ src/investment_manager/
     service.py                # Trigger Worker 的运行装配
 
   market/                     # 行情、Instrument、交易状态、Feature
+    tables.py                 # Market 表的唯一声明位置
+    perpetual/                # 永续 mark/index/funding 外部协议与轮询状态机
   information/                # 原始来源、新闻与规范化事件
     official/                 # 一手官方记录、解析、抓取和存储
   state/                      # Fact、State、Delta 与 Evidence
@@ -231,7 +235,11 @@ src/investment_manager/
 
 ### Market
 
-拥有 Instrument、Quote、Trade、Bar、MarketSnapshot、Feature、Binance 行情适配和市场流。交易所过滤器和数量步长以 Binance 官方规则为准。Market 不知道预测、组合和订单意图。
+拥有 Instrument、Quote、Trade、Bar、MarketSnapshot、Feature、Binance 行情适配和市场流。Spot
+连续报价仍由一个 WebSocket 流承载；低中频永续研究所需的 mark、index、premium、下一结算时间和
+已发生 funding 由 `market/perpetual` 通过可恢复 REST 轮询保存为点时事实，不复制第二套高频流。
+所有 Market 表只在 `market/tables.py` 声明。交易所过滤器和数量步长以 Binance 官方规则为准。
+Market 不知道预测、组合和订单意图。
 
 ### Information
 
@@ -388,7 +396,7 @@ kernel/platform
    契约，不能恢复旧分支。
 2. **投资对象与预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
    完整性检查、always-UP 配对门禁和内容寻址结果；`InstrumentId + ForecastTarget` 已成为 Base 与
-   Calibrated Forecast 的单腿/多腿投资对象合同。下一步接入双产品点时 Market 数据，再让通过预登记
+   Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实已接线。下一步让通过预登记
    评估的 ProgramBase/carry 写入 Forecast 持久化与结算。两者未获权限时都不能影响资本。
 3. **组合与风险接线**：以同一冻结时点生成 Sleeve allocation，再统一推进
    `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；现金、拒绝、整组缩减和低于

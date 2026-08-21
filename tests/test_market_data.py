@@ -9,11 +9,22 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine
 
+from investment_manager.governance.policy import DeploymentStage
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import (
     ClosedMarketBar,
+    InstrumentId,
+    InstrumentProduct,
     MarketQuote,
     MarketTrade,
 )
+from investment_manager.market.perpetual.client import BinanceUsdmRestClient
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+    PerpetualMarketState,
+)
+from investment_manager.market.perpetual.service import BinancePerpetualMarketService
 from investment_manager.market.repository import (
     InMemoryMarketDataStore,
     SqlMarketDataStore,
@@ -24,6 +35,7 @@ from investment_manager.market.runtime import (
     BinanceMessageParser,
     BinancePublicRestClient,
     BinanceWebSocketConnector,
+    HttpxPublicJsonTransport,
     MarketBootstrapper,
     MarketShockDetector,
     assemble_shadow_market_stream,
@@ -76,6 +88,58 @@ def _bar(open_time: datetime, *, observed_at: datetime = NOW) -> ClosedMarketBar
         low="98",
         close="100",
         volume="10",
+        source="test",
+    )
+
+
+def _perpetual_instrument() -> InstrumentId:
+    return InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+    )
+
+
+def _perpetual_state(*, observed_at: datetime = NOW) -> PerpetualMarketState:
+    instrument = _perpetual_instrument()
+    exchange_time = observed_at - timedelta(seconds=1)
+    return PerpetualMarketState(
+        state_id=stable_id(
+            "perpetual_market_state",
+            instrument.key,
+            exchange_time.isoformat(),
+        ),
+        instrument=instrument,
+        exchange_time=exchange_time,
+        observed_at=observed_at,
+        mark_price="100.2",
+        index_price="100",
+        estimated_settle_price="100.1",
+        last_funding_rate="0.0001",
+        interest_rate="0.0001",
+        next_funding_time=observed_at + timedelta(hours=4),
+        source="test",
+    )
+
+
+def _funding_settlement(*, observed_at: datetime = NOW) -> FundingSettlement:
+    instrument = _perpetual_instrument()
+    funding_time = NOW - timedelta(hours=4)
+    return FundingSettlement(
+        settlement_id=stable_id(
+            "funding_settlement",
+            instrument.key,
+            funding_time.isoformat(),
+            FundingRateType.REGULAR.value,
+        ),
+        instrument=instrument,
+        funding_time=funding_time,
+        observed_at=observed_at,
+        funding_rate="0.0001",
+        mark_price="99.8",
+        rate_type=FundingRateType.REGULAR,
         source="test",
     )
 
@@ -203,6 +267,122 @@ class FakeHttpTransport:
                 ],
             ]
         raise AssertionError(path)
+
+
+def test_http_transport_reuses_and_closes_one_connection_pool(monkeypatch) -> None:
+    clients = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.closed = False
+            self.calls = []
+            clients.append(self)
+
+        async def get(self, path, params):
+            self.calls.append((path, params))
+            return FakeResponse()
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr(
+        "investment_manager.market.runtime.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+
+    async def scenario():
+        transport = HttpxPublicJsonTransport("https://api.binance.com", 10)
+        assert await transport.get("/one", {"symbol": "BTCUSDT"}) == {"ok": True}
+        assert await transport.get("/two", {"symbol": "ETHUSDT"}) == {"ok": True}
+        await transport.aclose()
+
+    asyncio.run(scenario())
+    assert len(clients) == 1
+    assert len(clients[0].calls) == 2
+    assert clients[0].closed
+
+
+class FakePerpetualTransport:
+    def __init__(self, *, reverse_funding: bool = False) -> None:
+        self.reverse_funding = reverse_funding
+
+    async def get(self, path, params):
+        if path.endswith("premiumIndex"):
+            return {
+                "symbol": params["symbol"],
+                "markPrice": "100.2",
+                "indexPrice": "100",
+                "estimatedSettlePrice": "100.1",
+                "lastFundingRate": "0.0001",
+                "interestRate": "0.0001",
+                "nextFundingTime": _millis(NOW + timedelta(hours=4)),
+                "time": _millis(NOW - timedelta(seconds=1)),
+            }
+        if path.endswith("fundingRate"):
+            values = [
+                {
+                    "symbol": params["symbol"],
+                    "fundingTime": _millis(NOW - timedelta(hours=8)),
+                    "fundingRate": "0.0002",
+                    "markPrice": "99.1",
+                    "rateType": "Regular",
+                },
+                {
+                    "symbol": params["symbol"],
+                    "fundingTime": _millis(NOW - timedelta(hours=4)),
+                    "fundingRate": "0.0001",
+                    "markPrice": "99.8",
+                    "rateType": "Regular",
+                },
+            ]
+            return list(reversed(values)) if self.reverse_funding else values
+        raise AssertionError(path)
+
+
+def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
+    async def scenario():
+        client = BinanceUsdmRestClient(FakePerpetualTransport(), clock=lambda: NOW)
+        state = await client.fetch_market_state(_perpetual_instrument())
+        settlements = await client.fetch_funding_settlements(
+            _perpetual_instrument(),
+            start=NOW - timedelta(hours=12),
+            end=NOW,
+        )
+        return state, settlements
+
+    state, settlements = asyncio.run(scenario())
+    assert state.exchange_time == NOW - timedelta(seconds=1)
+    assert state.observed_at == NOW
+    assert state.premium_fraction == Decimal("0.002")
+    assert [item.funding_time for item in settlements] == [
+        NOW - timedelta(hours=8),
+        NOW - timedelta(hours=4),
+    ]
+    assert all(item.rate_type == FundingRateType.REGULAR for item in settlements)
+
+
+def test_usdm_rest_client_rejects_noncanonical_funding_history() -> None:
+    async def scenario() -> None:
+        client = BinanceUsdmRestClient(
+            FakePerpetualTransport(reverse_funding=True),
+            clock=lambda: NOW,
+        )
+        await client.fetch_funding_settlements(
+            _perpetual_instrument(),
+            start=NOW - timedelta(hours=12),
+            end=NOW,
+        )
+
+    with pytest.raises(ValueError, match="唯一且升序"):
+        asyncio.run(scenario())
 
 
 def test_rest_bootstrap_excludes_current_bar_and_builds_visible_snapshot(app_config) -> None:
@@ -468,6 +648,115 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
     assert snapshot.bars[-1].volume == Decimal("10")
 
 
+@pytest.mark.parametrize("backend", ["memory", "sql"])
+def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
+    if backend == "memory":
+        store = InMemoryMarketDataStore()
+    else:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        create_market_schema(engine)
+        store = SqlMarketDataStore(engine)
+    instrument = _perpetual_instrument()
+    state = _perpetual_state()
+    settlement = _funding_settlement()
+
+    assert store.put_perpetual_state(state)
+    assert store.put_funding_settlement(settlement)
+    assert not store.put_perpetual_state(
+        state.model_copy(
+            update={
+                "observed_at": NOW + timedelta(seconds=1),
+                "source": "recovered-rest",
+            }
+        )
+    )
+    assert not store.put_funding_settlement(
+        settlement.model_copy(
+            update={
+                "observed_at": NOW + timedelta(seconds=1),
+                "source": "recovered-rest",
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_perpetual_state(state.model_copy(update={"mark_price": Decimal("101")}))
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_funding_settlement(
+            settlement.model_copy(update={"funding_rate": Decimal("0.0002")})
+        )
+
+    assert (
+        store.latest_perpetual_state(
+            instrument=instrument,
+            as_of=NOW - timedelta(seconds=1),
+        )
+        is None
+    )
+    assert store.latest_perpetual_state(instrument=instrument, as_of=NOW) == state
+    assert (
+        store.funding_settlements(
+            instrument=instrument,
+            start=NOW - timedelta(hours=8),
+            end=NOW - timedelta(seconds=1),
+            visible_at=NOW - timedelta(seconds=1),
+        )
+        == ()
+    )
+    assert store.funding_settlements(
+        instrument=instrument,
+        start=NOW - timedelta(hours=8),
+        end=NOW,
+        visible_at=NOW,
+    ) == (settlement,)
+
+
+def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
+    app_config,
+) -> None:
+    class FakeClient:
+        history_calls = 0
+
+        async def fetch_market_state(self, instrument):
+            assert instrument == _perpetual_instrument()
+            return _perpetual_state()
+
+        async def fetch_funding_settlements(self, instrument, *, start, end):
+            assert instrument == _perpetual_instrument()
+            assert start == NOW - timedelta(hours=24)
+            assert end == NOW
+            self.history_calls += 1
+            return (_funding_settlement(),)
+
+    async def scenario():
+        client = FakeClient()
+        store = InMemoryMarketDataStore()
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (_perpetual_instrument(),)}
+        )
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=client,  # type: ignore[arg-type]
+            store=store,
+            clock=lambda: NOW,
+        )
+        await service.refresh()
+        await service.refresh()
+        return service, client, store
+
+    service, client, store = asyncio.run(scenario())
+    assert client.history_calls == 1
+    assert service.health.refresh_count == 2
+    assert service.health.state_count == 1
+    assert service.health.settlement_count == 1
+    assert (
+        store.latest_perpetual_state(
+            instrument=_perpetual_instrument(),
+            as_of=NOW,
+        )
+        == _perpetual_state()
+    )
+
+
 def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(
     app_config,
 ) -> None:
@@ -478,6 +767,21 @@ def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(
     assert "btcusdt@kline_5m" in uri
     with pytest.raises(ValueError, match="SHADOW"):
         assemble_shadow_market_stream(app_config, InMemoryMarketDataStore())
+    shadow_config = app_config.model_copy(
+        update={
+            "deployment": app_config.deployment.model_copy(
+                update={
+                    "stage": DeploymentStage.SHADOW,
+                    "shadow_market_data_enabled": True,
+                }
+            )
+        }
+    )
+    runtime = assemble_shadow_market_stream(
+        shadow_config,
+        InMemoryMarketDataStore(),
+    )
+    assert runtime.perpetual is not None
 
 
 def test_stream_service_bootstraps_and_recovers_after_disconnect(app_config) -> None:

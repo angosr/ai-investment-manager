@@ -6,7 +6,7 @@ import logging
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
@@ -23,6 +23,8 @@ from investment_manager.market.models import (
     MarketQuote,
     MarketTrade,
 )
+from investment_manager.market.perpetual.client import BinanceUsdmRestClient
+from investment_manager.market.perpetual.service import BinancePerpetualMarketService
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
@@ -274,16 +276,24 @@ class JsonHttpTransport(Protocol):
 class HttpxPublicJsonTransport:
     base_url: str
     timeout_seconds: int
+    _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     async def get(self, path: str, params: dict[str, Any]) -> Any:
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=self.timeout_seconds,
-            follow_redirects=False,
-        ) as client:
-            response = await client.get(path, params=params)
-            response.raise_for_status()
-            return response.json()
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+            )
+        response = await self._client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    async def aclose(self) -> None:
+        if self._client is None:
+            return
+        await self._client.aclose()
+        self._client = None
 
 
 @dataclass(slots=True)
@@ -537,12 +547,30 @@ class BinanceMarketStreamService:
         return True
 
 
+@dataclass(slots=True)
+class MarketRuntime:
+    spot: BinanceMarketStreamService
+    perpetual: BinancePerpetualMarketService | None = None
+    _transports: tuple[HttpxPublicJsonTransport, ...] = ()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        try:
+            if self.perpetual is None:
+                await self.spot.run(stop)
+                return
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(self.spot.run(stop))
+                tasks.create_task(self.perpetual.run(stop))
+        finally:
+            await asyncio.gather(*(transport.aclose() for transport in self._transports))
+
+
 def assemble_shadow_market_stream(
     config: AppConfig,
     store: MarketDataStore,
     *,
     market_observer: Callable[[MarketEvent], bool] | None = None,
-) -> BinanceMarketStreamService:
+) -> MarketRuntime:
     if (
         config.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}
         or not config.deployment.shadow_market_data_enabled
@@ -551,11 +579,29 @@ def assemble_shadow_market_stream(
     policy = config.market_data
     transport = HttpxPublicJsonTransport(policy.rest_base_url, policy.rest_timeout_seconds)
     client = BinancePublicRestClient(transport)
-    return BinanceMarketStreamService(
+    spot = BinanceMarketStreamService(
         policy=policy,
         bootstrapper=MarketBootstrapper(client, store, policy),
         connector=BinanceWebSocketConnector(policy),
         parser=BinanceMessageParser(),
         store=store,
         market_observer=market_observer,
+    )
+    perpetual = None
+    transports = [transport]
+    if policy.perpetual_instruments:
+        perpetual_transport = HttpxPublicJsonTransport(
+            policy.perpetual_rest_base_url,
+            policy.rest_timeout_seconds,
+        )
+        transports.append(perpetual_transport)
+        perpetual = BinancePerpetualMarketService(
+            policy=policy,
+            client=BinanceUsdmRestClient(perpetual_transport),
+            store=store,
+        )
+    return MarketRuntime(
+        spot=spot,
+        perpetual=perpetual,
+        _transports=tuple(transports),
     )

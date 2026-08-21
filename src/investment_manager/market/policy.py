@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 
 
 class FeaturePolicy(StrictConfig):
@@ -31,6 +32,10 @@ class MarketDataPolicy(StrictConfig):
     reconnect_maximum_seconds: int = Field(default=30, ge=1, le=300)
     quote_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
     trade_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
+    perpetual_instruments: tuple[InstrumentId, ...] = ()
+    perpetual_rest_base_url: str = "https://fapi.binance.com"
+    perpetual_poll_seconds: int = Field(default=300, ge=30, le=3600)
+    funding_history_lookback_hours: int = Field(default=24, ge=8, le=168)
 
     @property
     def interval_seconds(self) -> int:
@@ -59,4 +64,27 @@ class MarketDataPolicy(StrictConfig):
             raise ValueError("行情 REST 与 WebSocket 必须使用同一 Binance 官方环境")
         if self.reconnect_maximum_seconds < self.reconnect_initial_seconds:
             raise ValueError("行情最大重连间隔不得短于初始间隔")
+        if self.perpetual_rest_base_url not in {
+            "https://fapi.binance.com",
+            "https://testnet.binancefuture.com",
+        }:
+            raise ValueError("永续行情必须使用 Binance USD-M 官方 REST 环境")
+        expected_perpetual_url = {
+            "https://api.binance.com": "https://fapi.binance.com",
+            "https://testnet.binance.vision": "https://testnet.binancefuture.com",
+        }[self.rest_base_url]
+        if self.perpetual_rest_base_url != expected_perpetual_url:
+            raise ValueError("Spot 与 Perpetual 行情必须使用同一 Binance 环境")
+        instrument_keys = tuple(item.key for item in self.perpetual_instruments)
+        if tuple(sorted(set(instrument_keys))) != instrument_keys:
+            raise ValueError("perpetual_instruments 必须按产品身份唯一且排序")
+        if any(
+            item.product
+            not in {
+                InstrumentProduct.USD_M_PERPETUAL,
+                InstrumentProduct.TRADFI_PERPETUAL,
+            }
+            for item in self.perpetual_instruments
+        ):
+            raise ValueError("perpetual_instruments 只能包含 Binance Perpetual")
         return self

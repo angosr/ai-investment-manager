@@ -305,6 +305,39 @@ def test_health_ages_persisted_freshness_and_uses_real_kill_switch():
     assert result["overall"] == "bad"
 
 
+def test_health_includes_perpetual_freshness_when_capability_is_enabled() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        latest_perpetual_observed_at=lambda: now - timedelta(seconds=901),
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        market_data=SimpleNamespace(
+            perpetual_instruments=("BINANCE:USD_M_PERPETUAL:BTCUSDT",),
+            perpetual_poll_seconds=300,
+        ),
+        **_health_policy_extras(),
+    )
+
+    checks = {
+        item["key"]: item
+        for item in assemble_health(reader, config, now=now)["checks"]
+    }
+
+    assert checks["data_freshness"]["state"] == "bad"
+    assert "永续 901/900 秒" in checks["data_freshness"]["detail"]
+
+
 def test_health_reads_persisted_portfolio_kill_switch() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
     report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)

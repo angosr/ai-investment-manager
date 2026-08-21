@@ -96,16 +96,48 @@ def _freshness_check(
         return _check("data_freshness", "数据新鲜度", "unknown", "账户对账尚未就绪")
     market_age = (now - market_observed_at).total_seconds()
     account_age = (now - report.as_of).total_seconds()
-    if market_age < 0 or account_age < 0:
+    market_policy = getattr(config, "market_data", None)
+    perpetual_enabled = bool(
+        getattr(market_policy, "perpetual_instruments", ())
+    )
+    perpetual_age = None
+    if perpetual_enabled:
+        perpetual_observed_at = reader.latest_perpetual_observed_at()
+        if perpetual_observed_at is None:
+            return _check(
+                "data_freshness",
+                "数据新鲜度",
+                "unknown",
+                "永续市场状态尚未就绪",
+            )
+        perpetual_age = (now - perpetual_observed_at).total_seconds()
+    if market_age < 0 or account_age < 0 or (
+        perpetual_age is not None and perpetual_age < 0
+    ):
         return _check("data_freshness", "数据新鲜度", "bad", "观测时间晚于当前时间")
     market_limit = config.risk.maximum_market_age_seconds
     account_limit = config.risk.maximum_account_age_seconds
-    stale = market_age > market_limit or account_age > account_limit
+    perpetual_limit = (
+        market_policy.perpetual_poll_seconds * 3 if perpetual_enabled else None
+    )
+    stale = (
+        market_age > market_limit
+        or account_age > account_limit
+        or (
+            perpetual_age is not None
+            and perpetual_limit is not None
+            and perpetual_age > perpetual_limit
+        )
+    )
+    detail = f"行情 {int(market_age)}/{market_limit} 秒"
+    if perpetual_age is not None and perpetual_limit is not None:
+        detail += f" · 永续 {int(perpetual_age)}/{perpetual_limit} 秒"
+    detail += f" · 账户 {int(account_age)}/{account_limit} 秒"
     return _check(
         "data_freshness",
         "数据新鲜度",
         "bad" if stale else "ok",
-        f"行情 {int(market_age)}/{market_limit} 秒 · 账户 {int(account_age)}/{account_limit} 秒",
+        detail,
     )
 
 
