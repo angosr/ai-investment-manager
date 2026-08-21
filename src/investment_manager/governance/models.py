@@ -142,9 +142,7 @@ def build_evaluation_plan_invalidation(
         raise ValueError("EvaluationPlan 失效必须包含原因码和证据")
     return FailedExperiment(
         experiment_id=evaluation_plan_invalidation_id(plan_id),
-        hypothesis_fingerprint=content_hash(
-            {"invalidated_evaluation_plan": plan_id}
-        ),
+        hypothesis_fingerprint=content_hash({"invalidated_evaluation_plan": plan_id}),
         evidence_ids=(f"evaluation_plan:{plan_id}", *evidence_ids),
         rejected_at=require_utc(invalidated_at),
         reason_codes=("EVALUATION_PLAN_INVALIDATED", *reason_codes),
@@ -198,9 +196,7 @@ class EvaluationPlan(FrozenModel):
     hard_guardrails: tuple[str, ...] = Field(min_length=1)
     required_stages: tuple[EvaluationStage, ...] = Field(min_length=1)
     fixed_regression_suite_version: str
-    candidate_spec_hash: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
+    candidate_spec_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     candidate_spec_snapshot: dict[str, object] | None = None
     blind_query_budget: int = Field(default=0, ge=0)
 
@@ -630,44 +626,55 @@ def load_release_manifest(path: str | Path) -> ReleaseManifest:
         return ReleaseManifest.model_validate(yaml.safe_load(handle))
 
 
+_CONFIG_COMPONENT_NAMES = (
+    "feature",
+    "panel",
+    "decision_state",
+    "strategy",
+    "calibration",
+    "carry_forecast",
+    "dynamic_carry_forecast",
+    "capital",
+    "composition",
+    "frequency",
+    "risk",
+    "execution",
+    "reconciliation",
+    "outcome_evaluation",
+    "trigger",
+    "temporal",
+    "market_data",
+    "shadow",
+    "information",
+    "pipeline",
+    "proposal",
+    "codex_runtime",
+    "assessment",
+    "codex_accounts",
+    "binance_testnet",
+    "governance",
+)
+
+
+def validate_manifest_component_versions(
+    manifest: ReleaseManifest,
+    config: AppConfig,
+) -> None:
+    """Compare stable behavior versions without reinterpreting an old config hash."""
+
+    declared = dict(manifest.component_versions)
+    current = {name: getattr(config, name).version for name in _CONFIG_COMPONENT_NAMES}
+    if declared != current:
+        raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
+
+
 def validate_manifest_against_config(
     manifest: ReleaseManifest,
     config: AppConfig,
     *,
     require_configuration_hash: bool = False,
 ) -> None:
-    declared = dict(manifest.component_versions)
-    component_names = (
-        "feature",
-        "panel",
-        "decision_state",
-        "strategy",
-        "calibration",
-        "carry_forecast",
-        "dynamic_carry_forecast",
-        "capital",
-        "composition",
-        "frequency",
-        "risk",
-        "execution",
-        "reconciliation",
-        "outcome_evaluation",
-        "trigger",
-        "temporal",
-        "market_data",
-        "shadow",
-        "information",
-        "pipeline",
-        "proposal",
-        "codex_runtime",
-        "assessment",
-        "codex_accounts",
-        "binance_testnet",
-        "governance",
-    )
-    current = {name: getattr(config, name).version for name in component_names}
-    if declared != current:
-        raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
+    validate_manifest_component_versions(manifest, config)
     if config.capital.enabled:
         from investment_manager.forecast.carry import validate_carry_evidence
 

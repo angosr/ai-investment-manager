@@ -27,6 +27,7 @@ from investment_manager.governance.models import (
     load_release_manifest,
     validate_manifest_against_config,
     validate_manifest_code_version,
+    validate_manifest_component_versions,
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.governance.tables import (
@@ -157,10 +158,10 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
         *tuple(
             (name, getattr(config, name).version)
             for name, _version in historical.component_versions
-            ),
-            ("carry_forecast", config.carry_forecast.version),
-            ("dynamic_carry_forecast", config.dynamic_carry_forecast.version),
-            ("capital", config.capital.version),
+        ),
+        ("carry_forecast", config.carry_forecast.version),
+        ("dynamic_carry_forecast", config.dynamic_carry_forecast.version),
+        ("capital", config.capital.version),
     )
     manifest = historical.model_copy(
         update={
@@ -196,6 +197,27 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
             config,
             require_configuration_hash=True,
         )
+
+
+def test_read_only_component_validation_does_not_rehash_historical_config() -> None:
+    loaded = load_config("config/investment-manager.shadow.yaml")
+    config = loaded.model_copy(
+        update={"capital": loaded.capital.model_copy(update={"enabled": False})}
+    )
+    historical = load_release_manifest("config/release-manifest.yaml")
+    manifest = historical.model_copy(
+        update={
+            "component_versions": tuple(
+                (name, getattr(config, name).version)
+                for name, _version in historical.component_versions
+            ),
+            "configuration_hash": "0" * 64,
+        }
+    )
+
+    validate_manifest_component_versions(manifest, config)
+    with pytest.raises(ValueError, match="完整配置内容不一致"):
+        validate_manifest_against_config(manifest, config)
 
 
 def test_capital_release_binds_verified_carry_artifact() -> None:
@@ -386,9 +408,7 @@ def test_governance_repository_restores_long_term_state_without_chat_history() -
     restored = SqlGovernanceRepository(engine).get_snapshot(snapshot.snapshot_id)
     assert restored == snapshot
     assert SqlGovernanceRepository(engine).get_plan(plan.plan_id) == plan
-    assert SqlGovernanceRepository(engine).plans_for_manifest(
-        plan.base_manifest_id
-    ) == (plan,)
+    assert SqlGovernanceRepository(engine).plans_for_manifest(plan.base_manifest_id) == (plan,)
     assert SqlGovernanceRepository(engine).plans_for_manifest("other-release") == ()
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(governance_snapshots)) == 1

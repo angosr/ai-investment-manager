@@ -37,7 +37,10 @@ from investment_manager.governance.evaluation.performance import (
     OutcomeMetrics,
     calculate_outcome_metrics,
 )
-from investment_manager.governance.models import ReleaseManifest, validate_manifest_against_config
+from investment_manager.governance.models import (
+    ReleaseManifest,
+    validate_manifest_component_versions,
+)
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
@@ -83,9 +86,7 @@ _ASSESSMENT_QUALITY_WINDOW_HOURS = 24
 
 
 def _is_assessment_rejection(reason_code: str) -> bool:
-    return reason_code == "CODEX_SCHEMA_INVALID" or reason_code.startswith(
-        "ASSESSMENT_"
-    )
+    return reason_code == "CODEX_SCHEMA_INVALID" or reason_code.startswith("ASSESSMENT_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,26 +259,26 @@ class DashboardReader:
             query = query.where(context_assessments.c.available_at < before)
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
-        assessments = (
-            ContextAssessment.model_validate(payload) for payload in payloads
-        )
-        return [AssessmentRecord(assessment=assessment) for assessment in assessments][
-            :limit
-        ]
+        assessments = (ContextAssessment.model_validate(payload) for payload in payloads)
+        return [AssessmentRecord(assessment=assessment) for assessment in assessments][:limit]
 
     def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
         with self._engine.connect() as connection:
-            row = connection.execute(
-                select(
-                    context_assessments.c.payload.label("assessment_payload"),
-                    decision_packets.c.payload.label("packet_payload"),
+            row = (
+                connection.execute(
+                    select(
+                        context_assessments.c.payload.label("assessment_payload"),
+                        decision_packets.c.payload.label("packet_payload"),
+                    )
+                    .join(
+                        decision_packets,
+                        decision_packets.c.packet_id == context_assessments.c.packet_id,
+                    )
+                    .where(context_assessments.c.assessment_id == assessment_id)
                 )
-                .join(
-                    decision_packets,
-                    decision_packets.c.packet_id == context_assessments.c.packet_id,
-                )
-                .where(context_assessments.c.assessment_id == assessment_id)
-            ).mappings().one_or_none()
+                .mappings()
+                .one_or_none()
+            )
             if row is None:
                 return None
             outcome_payloads = (
@@ -339,8 +340,7 @@ class DashboardReader:
                 .where(
                     decision_packets.c.as_of >= cutoff,
                     decision_packets.c.as_of <= now,
-                    codex_runs.c.payload["analysis_behavior_hash"].as_string()
-                    == behavior_hash,
+                    codex_runs.c.payload["analysis_behavior_hash"].as_string() == behavior_hash,
                 )
                 .order_by(
                     codex_runs.c.payload["completed_at"].as_string().desc(),
@@ -354,8 +354,7 @@ class DashboardReader:
                     .where(
                         assessment_executions.c.completed_at >= cutoff,
                         assessment_executions.c.completed_at <= now,
-                        assessment_executions.c.analysis_behavior_hash
-                        == behavior_hash,
+                        assessment_executions.c.analysis_behavior_hash == behavior_hash,
                     )
                     .order_by(
                         assessment_executions.c.completed_at.desc(),
@@ -372,36 +371,25 @@ class DashboardReader:
                 latest_valid_at = database_utc(available_at)
 
         executions = tuple(
-            AssessmentExecution.model_validate(payload)
-            for payload in execution_payloads
+            AssessmentExecution.model_validate(payload) for payload in execution_payloads
         )
         measured = tuple(item for item in executions if not item.reused_authoritative)
         rejected_executions = tuple(
-            item
-            for item in measured
-            if item.status == AssessmentExecutionStatus.FAILED
+            item for item in measured if item.status == AssessmentExecutionStatus.FAILED
         )
-        rejected_attempts = [
-            row for row in attempt_rows if row.error_class == "SCHEMA_INVALID"
-        ]
+        rejected_attempts = [row for row in attempt_rows if row.error_class == "SCHEMA_INVALID"]
         reason_codes = tuple(
             sorted(
                 {
                     *(item.reason_code for item in rejected_executions),
-                    *(
-                        "CODEX_SCHEMA_INVALID"
-                        for _ in rejected_attempts
-                        if not executions
-                    ),
+                    *("CODEX_SCHEMA_INVALID" for _ in rejected_attempts if not executions),
                 }
             )
         )
         if executions:
             latest_execution = executions[0]
             latest_status = latest_execution.status.value
-            if latest_status == "FAILED" and _is_assessment_rejection(
-                latest_execution.reason_code
-            ):
+            if latest_status == "FAILED" and _is_assessment_rejection(latest_execution.reason_code):
                 latest_status = "REJECTED"
             return AssessmentQualityStatus(
                 latest_attempt_at=latest_execution.completed_at,
@@ -416,12 +404,10 @@ class DashboardReader:
                 rejection_reason_codes=reason_codes,
                 execution_count_24h=len(measured),
                 final_success_count_24h=sum(
-                    item.status == AssessmentExecutionStatus.SUCCEEDED
-                    for item in measured
+                    item.status == AssessmentExecutionStatus.SUCCEEDED for item in measured
                 ),
                 first_attempt_success_count_24h=sum(
-                    item.status == AssessmentExecutionStatus.SUCCEEDED
-                    and item.codex_attempts == 1
+                    item.status == AssessmentExecutionStatus.SUCCEEDED and item.codex_attempts == 1
                     for item in measured
                 ),
             )
@@ -448,9 +434,7 @@ class DashboardReader:
         return AssessmentQualityStatus(
             latest_attempt_at=latest_attempt_at,
             latest_attempt_status=latest_status,
-            latest_attempt_reason=(
-                None if latest.error_class is None else str(latest.error_class)
-            ),
+            latest_attempt_reason=(None if latest.error_class is None else str(latest.error_class)),
             latest_valid_at=latest_valid_at,
             rejected_attempt_count_24h=len(rejected_attempts),
             rejection_reason_codes=reason_codes,
@@ -620,9 +604,7 @@ class DashboardReader:
                 (
                     outcome
                     for payload in payloads
-                    if start
-                    <= (outcome := DecisionOutcome.model_validate(payload)).closed_at
-                    < now
+                    if start <= (outcome := DecisionOutcome.model_validate(payload)).closed_at < now
                 ),
                 key=lambda item: (item.closed_at, item.outcome_id),
             )
@@ -760,11 +742,7 @@ class DashboardReader:
                 + self._config.outcome_evaluation.poll_seconds * 2
             )
         )
-        behavior_hash = (
-            configured_assess_behavior_hash(self._config)
-            if assessment_mode
-            else None
-        )
+        behavior_hash = configured_assess_behavior_hash(self._config) if assessment_mode else None
         with self._engine.connect() as connection:
             if assessment_mode:
                 recent_rows = connection.execute(
@@ -776,8 +754,7 @@ class DashboardReader:
                     .where(
                         decision_packets.c.as_of >= recent_start,
                         decision_packets.c.as_of <= now,
-                        codex_runs.c.payload["analysis_behavior_hash"].as_string()
-                        == behavior_hash,
+                        codex_runs.c.payload["analysis_behavior_hash"].as_string() == behavior_hash,
                     )
                 ).all()
             else:
@@ -829,8 +806,7 @@ class DashboardReader:
                     )
                     .join(
                         decision_packets,
-                        decision_packets.c.packet_id
-                        == context_assessments.c.packet_id,
+                        decision_packets.c.packet_id == context_assessments.c.packet_id,
                     )
                     .outerjoin(
                         assessment_view_outcomes,
@@ -839,8 +815,7 @@ class DashboardReader:
                     )
                     .where(
                         decision_packets.c.as_of <= forecast_cutoff,
-                        context_assessments.c.analysis_behavior_hash
-                        == behavior_hash,
+                        context_assessments.c.analysis_behavior_hash == behavior_hash,
                     )
                     .group_by(
                         context_assessments.c.assessment_id,
@@ -860,9 +835,7 @@ class DashboardReader:
                     )
                 ).scalar_one_or_none()
                 if latest_assessment_completed is not None:
-                    latest_assessment_completed = database_utc(
-                        latest_assessment_completed
-                    )
+                    latest_assessment_completed = database_utc(latest_assessment_completed)
             else:
                 overdue_analyses = (
                     select(
@@ -871,8 +844,7 @@ class DashboardReader:
                     )
                     .join(
                         analysis_cycles,
-                        analysis_cycles.c.cycle_id
-                        == analysis_proposals.c.cycle_id,
+                        analysis_cycles.c.cycle_id == analysis_proposals.c.cycle_id,
                     )
                     .outerjoin(
                         analysis_forecast_outcomes,
@@ -912,8 +884,7 @@ class DashboardReader:
                         )
                         .join(
                             market_snapshots,
-                            market_snapshots.c.cycle_id
-                            == analysis_cycles.c.cycle_id,
+                            market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id,
                         )
                         .where(
                             analysis_cycles.c.pipeline_version == pipeline,
@@ -925,9 +896,7 @@ class DashboardReader:
                         .limit(1)
                     ).scalar_one_or_none()
                     completed = None
-                    if isinstance(payload, dict) and isinstance(
-                        payload.get("completed_at"), str
-                    ):
+                    if isinstance(payload, dict) and isinstance(payload.get("completed_at"), str):
                         try:
                             completed = database_utc(
                                 datetime.fromisoformat(payload["completed_at"])
@@ -945,9 +914,7 @@ class DashboardReader:
                         symbol=symbol,
                         latest_success_at=completed,
                         heartbeat_seconds=(
-                            heartbeat
-                            if isinstance(heartbeat, int) and heartbeat > 0
-                            else None
+                            heartbeat if isinstance(heartbeat, int) and heartbeat > 0 else None
                         ),
                     )
                 )
@@ -957,13 +924,12 @@ class DashboardReader:
         if not plan_rows or manifest_payload is None:
             release_aligned = None
         else:
-            release_aligned = (
-                actual_symbols == expected_symbols
-                and len(plan_rows) == len(expected_symbols)
+            release_aligned = actual_symbols == expected_symbols and len(plan_rows) == len(
+                expected_symbols
             )
             if release_aligned:
                 try:
-                    validate_manifest_against_config(
+                    validate_manifest_component_versions(
                         ReleaseManifest.model_validate(manifest_payload),
                         self._config,
                     )
@@ -1029,8 +995,7 @@ class DashboardReader:
                 .where(
                     decision_packets.c.as_of >= now - timedelta(hours=1),
                     decision_packets.c.as_of <= now,
-                    codex_runs.c.payload["analysis_behavior_hash"].as_string()
-                    == behavior_hash,
+                    codex_runs.c.payload["analysis_behavior_hash"].as_string() == behavior_hash,
                     codex_runs.c.status != "SUCCEEDED",
                     codex_runs.c.account_id.is_not(None),
                 )
