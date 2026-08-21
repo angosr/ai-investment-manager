@@ -13,15 +13,15 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v6 将高密度衍生品状态冻结为可回放证据；原始 Funding 历史不进入 AI 输入。
-  version: portfolio-state-v6
+  # v7 将完整事件状态与真正准入的材料变化分开，并保留高密度衍生品证据。
+  version: portfolio-state-v7
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: fed-official-fact-v2
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
   delta_policy:
-    version: state-delta-v4
+    version: state-delta-v5
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -41,7 +41,7 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v11
+    version: decision-packet-policy-v12
     schema_version: decision-packet-v8
     maximum_facts: 12
     maximum_fact_characters: 4000
