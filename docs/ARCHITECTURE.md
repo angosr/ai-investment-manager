@@ -152,8 +152,10 @@ Target；`AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 仍是尚未�
 主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
 现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
-下一步只用这些事实生成并结算 carry 影子 ForecastTarget，再一次性完成 Sleeve Portfolio/Risk、
-grouped Execution、故障回放和统一评价。
+统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
+每天只生成一份无资本权限的 BaseForecast，由现有 Trigger Activity 幂等推进并等待 30 日真实前向结算。
+下一步先在独立 Shadow 库验证完整生产、恢复和结算路径，再一次性完成 Sleeve Portfolio/Risk、grouped
+Execution、故障回放和统一评价。
 在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
 
 评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；

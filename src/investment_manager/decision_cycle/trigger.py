@@ -46,6 +46,10 @@ class TriggerBatchRecorder(Protocol):
     ) -> AnalysisCallAdmission: ...
 
 
+class ProgramForecastProducer(Protocol):
+    def produce(self, *, as_of: datetime) -> object: ...
+
+
 class AnalysisCallDeferred(Exception):
     def __init__(self, retry_at: datetime) -> None:
         self.retry_at = require_utc(retry_at)
@@ -61,6 +65,7 @@ class TriggerDispatchBuilder:
         config: AppConfig,
         packet_preparation: DecisionPacketPreparation | None = None,
         batch_recorder: TriggerBatchRecorder | None = None,
+        program_forecast_producers: tuple[ProgramForecastProducer, ...] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if config.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
@@ -70,10 +75,13 @@ class TriggerDispatchBuilder:
         self._config = config
         self._packet_preparation = packet_preparation
         self._batch_recorder = batch_recorder
+        self._program_forecast_producers = program_forecast_producers
         self._clock = clock
 
     def build(self, batch: TriggerBatch) -> tuple[AnalysisDispatchRequest, ...]:
         as_of = batch.created_at
+        for producer in self._program_forecast_producers:
+            producer.produce(as_of=as_of)
         trigger_types = {item.trigger_type for item in batch.triggers}
         intelligence_evidence_ids = tuple(
             sorted(
@@ -86,9 +94,7 @@ class TriggerDispatchBuilder:
             )
         )
         market_shock_symbols = (
-            (batch.symbol,)
-            if AnalysisTriggerType.MARKET_SHOCK in trigger_types
-            else ()
+            (batch.symbol,) if AnalysisTriggerType.MARKET_SHOCK in trigger_types else ()
         )
         reviews_by_id: dict[str, PacketReviewRequest] = {}
         for trigger in batch.triggers:
@@ -103,9 +109,7 @@ class TriggerDispatchBuilder:
                 evidence_ids=trigger.evidence_ids,
             )
             reviews_by_id[review.review_id] = review
-        review_requests = tuple(
-            reviews_by_id[item] for item in sorted(reviews_by_id)
-        )
+        review_requests = tuple(reviews_by_id[item] for item in sorted(reviews_by_id))
         dispatches: list[AnalysisDispatchRequest] = []
         if self._config.assessment.enabled:
             assert self._packet_preparation is not None
@@ -128,9 +132,7 @@ class TriggerDispatchBuilder:
                 )
                 assessment_request = AssessmentWorkflowRequest.create(
                     command=command,
-                    orchestration=OrchestrationPolicySnapshot.from_config(
-                        self._config.temporal
-                    ),
+                    orchestration=OrchestrationPolicySnapshot.from_config(self._config.temporal),
                     created_at=as_of,
                     deadline=batch.deadline,
                 )
@@ -188,6 +190,4 @@ class TriggerCoordinatorActivities:
                 "TriggerBatch 的行情或账户输入暂不可用",
                 type="TriggerInputUnavailable",
             ) from exc
-        return {
-            "workflow_dispatches": [item.model_dump(mode="json") for item in dispatches]
-        }
+        return {"workflow_dispatches": [item.model_dump(mode="json") for item in dispatches]}

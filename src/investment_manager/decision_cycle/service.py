@@ -10,8 +10,11 @@ from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
 )
+from investment_manager.forecast.carry import CarryForecastProducer
+from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.application import ensure_trigger_plans
 from investment_manager.scheduling.repository import (
@@ -63,6 +66,19 @@ def run_trigger_service(
                     else None
                 ),
                 batch_recorder=repository,
+                program_forecast_producers=(
+                    CarryForecastProducer(
+                        policy=config.carry_forecast,
+                        market=SqlMarketDataStore(engine),
+                        store=SqlForecastStore(engine),
+                        maximum_spot_age_seconds=(config.risk.maximum_market_age_seconds),
+                        maximum_perpetual_age_seconds=(
+                            config.market_data.perpetual_poll_seconds * 3
+                        ),
+                    ),
+                )
+                if config.carry_forecast.enabled
+                else (),
             )
         )
         dispatcher = TriggerOutboxDispatcherService(

@@ -23,6 +23,27 @@ class StrategyPolicy(StrictConfig):
     expected_edge_half_life_seconds: int = Field(default=900, ge=1, le=86400)
 
 
+class CarryForecastPolicy(StrictConfig):
+    version: str
+    enabled: bool = False
+    producer_id: str = "btc-spot-perp-carry"
+    forecast_family: str = "delta-neutral-funding-carry"
+    symbol: str = Field(default="BTCUSDT", pattern=r"^[A-Z0-9]{5,32}$")
+    base_asset: str = Field(default="BTC", pattern=r"^[A-Z0-9._-]+$")
+    quote_asset: str = Field(default="USDT", pattern=r"^[A-Z0-9._-]+$")
+    horizon_minutes: int = Field(default=43_200, ge=60, le=129_600)
+    production_interval_minutes: int = Field(default=1_440, ge=60, le=10_080)
+    funding_interval_hours: int = Field(default=8, ge=1, le=24)
+
+    @model_validator(mode="after")
+    def symbol_and_horizon_must_match(self):
+        if self.symbol != f"{self.base_asset}{self.quote_asset}":
+            raise ValueError("Carry Forecast symbol 必须匹配 base/quote asset")
+        if self.horizon_minutes < self.production_interval_minutes:
+            raise ValueError("Carry Forecast 预测周期不能短于生产间隔")
+        return self
+
+
 class CalibrationPolicy(StrictConfig):
     version: str
     minimum_non_overlapping_samples: int = Field(default=30, ge=2)

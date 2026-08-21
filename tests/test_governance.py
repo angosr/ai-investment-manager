@@ -113,10 +113,13 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
         lambda _root, *_arguments: next(observations),
     )
 
-    assert validate_manifest_code_version(
-        manifest,
-        repository_root=tmp_path,
-    ) == tmp_path.resolve()
+    assert (
+        validate_manifest_code_version(
+            manifest,
+            repository_root=tmp_path,
+        )
+        == tmp_path.resolve()
+    )
 
     monkeypatch.setattr(
         "investment_manager.governance.models._git_output",
@@ -149,9 +152,19 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
 def test_runtime_release_binds_complete_configuration_content() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
     historical = load_release_manifest("config/release-manifest.testnet-v3.yaml")
-    component_versions = tuple(
-        (name, config.market_data.version if name == "market_data" else version)
-        for name, version in historical.component_versions
+    component_versions = (
+        *tuple(
+            (
+                name,
+                config.market_data.version
+                if name == "market_data"
+                else config.outcome_evaluation.version
+                if name == "outcome_evaluation"
+                else version,
+            )
+            for name, version in historical.component_versions
+        ),
+        ("carry_forecast", config.carry_forecast.version),
     )
     manifest = historical.model_copy(
         update={
@@ -169,10 +182,7 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
     changed = config.model_copy(
         update={
             "frequency": config.frequency.model_copy(
-                update={
-                    "minimum_net_edge_bps": config.frequency.minimum_net_edge_bps
-                    + 1
-                }
+                update={"minimum_net_edge_bps": config.frequency.minimum_net_edge_bps + 1}
             )
         }
     )
@@ -390,9 +400,7 @@ def test_blind_evaluation_budget_is_claimed_once_and_exact_retry_is_idempotent()
         }
     )
     with pytest.raises(ValueError, match="恰好一次"):
-        EvaluationPlan.model_validate(
-            {**plan.model_dump(mode="json"), "blind_query_budget": 2}
-        )
+        EvaluationPlan.model_validate({**plan.model_dump(mode="json"), "blind_query_budget": 2})
     repository.register_plan(plan)
     blind_start = now - timedelta(days=365)
     blind_end = now - timedelta(days=1)

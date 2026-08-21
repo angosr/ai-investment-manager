@@ -16,6 +16,7 @@ from investment_manager.execution.policy import (
 from investment_manager.forecast.policy import (
     AiMode,
     CalibrationPolicy,
+    CarryForecastPolicy,
     CodexAccountRegistry,
     CodexRuntimePolicy,
     ContextAssessmentPolicy,
@@ -44,6 +45,7 @@ class AppConfig(StrictConfig):
     decision_state: DecisionStatePolicy
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
+    carry_forecast: CarryForecastPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
     risk: RiskPolicy
@@ -101,6 +103,14 @@ class AppConfig(StrictConfig):
             raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
+        if self.carry_forecast.enabled:
+            if self.carry_forecast.symbol not in self.market_data.symbols:
+                raise ValueError("Carry Forecast symbol 必须属于 Spot 行情 universe")
+            perpetual_symbols = {
+                item.symbol for item in self.market_data.perpetual_instruments
+            }
+            if self.carry_forecast.symbol not in perpetual_symbols:
+                raise ValueError("Carry Forecast 必须配置同 symbol 的 Perpetual 行情")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

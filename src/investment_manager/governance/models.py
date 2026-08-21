@@ -627,6 +627,7 @@ def validate_manifest_against_config(
         "decision_state",
         "strategy",
         "calibration",
+        "carry_forecast",
         "composition",
         "frequency",
         "risk",

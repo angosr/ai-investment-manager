@@ -69,6 +69,18 @@ calibration:
   lower_confidence_z: "1.96"
   artifacts: []
 
+carry_forecast:
+  version: btc-carry-shadow-v1
+  enabled: true
+  producer_id: btc-spot-perp-carry
+  forecast_family: delta-neutral-funding-carry
+  symbol: BTCUSDT
+  base_asset: BTC
+  quote_asset: USDT
+  horizon_minutes: 43200
+  production_interval_minutes: 1440
+  funding_interval_hours: 8
+
 composition:
   version: calibrated-net-edge-v1
 
@@ -111,9 +123,11 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v8
+  version: outcome-window-v9
   forecast_version: analysis-forecast-v3
+  target_forecast_version: forecast-target-outcome-v1
   assessment_version: context-assessment-outcome-v1
+  maximum_funding_gap_hours: 12
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300

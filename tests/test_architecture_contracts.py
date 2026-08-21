@@ -199,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 62
+    assert len(contract) == 64
     assert content_hash(contract) == (
-        "96753e0eebf6157ed65e628edfcb25147c491283b30b952a1ec4635de1f1dbbf"
+        "1bb1fe377c23909d5ad16755df398a279de8ba73393c813baca382675974bb1e"
     )
 
 
@@ -342,7 +342,14 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "policy.py",
             "tables.py",
         },
-        "forecast": {"models.py", "policy.py", "tables.py"},
+        "forecast": {
+            "carry.py",
+            "models.py",
+            "policy.py",
+            "repository.py",
+            "settlement.py",
+            "tables.py",
+        },
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
     capabilities = {
@@ -509,6 +516,7 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "DecisionStatePolicy": "state/policy.py",
         "StrategyPolicy": "forecast/policy.py",
         "CalibrationPolicy": "forecast/policy.py",
+        "CarryForecastPolicy": "forecast/policy.py",
         "AiMode": "forecast/policy.py",
         "PipelinePolicy": "forecast/policy.py",
         "ProposalPolicy": "forecast/policy.py",
@@ -892,6 +900,8 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "codex_account_leases",
         "codex_runs",
         "context_assessments",
+        "forecast_outcomes",
+        "forecasts",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

@@ -39,9 +39,7 @@ def _shadow_config(app_config) -> AppConfig:
         "manual_approval_ref": None,
     }
     raw["market_data"]["symbols"] = ("BTCUSDT",)
-    raw["assessment"]["mandate"]["assets"] = (
-        raw["assessment"]["mandate"]["assets"][0],
-    )
+    raw["assessment"]["mandate"]["assets"] = (raw["assessment"]["mandate"]["assets"][0],)
     raw["decision_state"]["official_fact_policy"]["affected_assets"] = ("BTC",)
     return AppConfig.model_validate(raw)
 
@@ -61,6 +59,15 @@ class RecordingPacketPreparation:
             reason_code="NO_MATERIAL_STATE_CHANGE",
             state_id="state-1",
         )
+
+
+class RecordingForecastProducer:
+    def __init__(self) -> None:
+        self.as_of = None
+
+    def produce(self, *, as_of):
+        self.as_of = as_of
+        return None
 
 
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
@@ -93,6 +100,44 @@ def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) ->
 
     assert config.strategy.enabled
     assert dispatches == ()
+
+
+def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=1,
+        dedup_key="heartbeat-1",
+    )
+    producer = RecordingForecastProducer()
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        program_forecast_producers=(producer,),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert dispatches == ()
+    assert producer.as_of == NOW
 
 
 def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:

@@ -19,6 +19,8 @@ from investment_manager.forecast.context.settlement import (
     AssessmentViewOutcomeSettler,
     SqlAssessmentViewOutcomeStore,
 )
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.settlement import ForecastOutcomeSettler
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
 from investment_manager.governance.evaluation.outcome_workflow import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
@@ -40,6 +42,7 @@ from investment_manager.legacy.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
 )
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.platform.temporal import SingleActivityWorker
@@ -229,6 +232,9 @@ class OutcomeEvaluationSupervisorHealth:
     forecast_settled: int = 0
     forecast_abstained: int = 0
     forecast_unscorable: int = 0
+    target_forecast_settled: int = 0
+    target_forecast_abstained: int = 0
+    target_forecast_unscorable: int = 0
     assessment_settled: int = 0
     assessment_abstained: int = 0
     assessment_unscorable: int = 0
@@ -236,6 +242,7 @@ class OutcomeEvaluationSupervisorHealth:
     last_error_class: str | None = None
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
+    last_target_forecast_error_class: str | None = None
     last_assessment_error_class: str | None = None
 
 
@@ -245,6 +252,7 @@ class OutcomeEvaluationSupervisor:
     config: AppConfig
     candidate_settler: CandidateOutcomeSettler
     forecast_settler: AnalysisForecastOutcomeSettler
+    target_forecast_settler: ForecastOutcomeSettler
     assessment_settler: AssessmentViewOutcomeSettler
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
@@ -268,9 +276,7 @@ class OutcomeEvaluationSupervisor:
                     logger.exception("candidate outcome settlement failed")
                 self.health.last_candidate_error_class = type(exc).__name__
             try:
-                forecast_result = await asyncio.to_thread(
-                    self.forecast_settler.settle, as_of=now
-                )
+                forecast_result = await asyncio.to_thread(self.forecast_settler.settle, as_of=now)
                 self.health.forecast_settled += forecast_result.settled
                 self.health.forecast_abstained += forecast_result.abstained
                 self.health.forecast_unscorable += forecast_result.unscorable
@@ -281,6 +287,21 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_forecast_error_class != type(exc).__name__:
                     logger.exception("analysis forecast settlement failed")
                 self.health.last_forecast_error_class = type(exc).__name__
+            try:
+                target_result = await asyncio.to_thread(
+                    self.target_forecast_settler.settle,
+                    as_of=now,
+                )
+                self.health.target_forecast_settled += target_result.settled
+                self.health.target_forecast_abstained += target_result.abstained
+                self.health.target_forecast_unscorable += target_result.unscorable
+                self.health.last_target_forecast_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_target_forecast_error_class != type(exc).__name__:
+                    logger.exception("target forecast settlement failed")
+                self.health.last_target_forecast_error_class = type(exc).__name__
             try:
                 assessment_result = await asyncio.to_thread(
                     self.assessment_settler.settle, as_of=now
@@ -365,14 +386,21 @@ def assemble_outcome_evaluation(
                 maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
                 settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
             ),
+            target_forecast_settler=ForecastOutcomeSettler(
+                market=SqlMarketDataStore(engine),
+                store=SqlForecastStore(engine),
+                evaluation_version=(config.outcome_evaluation.target_forecast_version),
+                maximum_spot_age_seconds=config.risk.maximum_market_age_seconds,
+                maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
+                maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
+                settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
+            ),
             assessment_settler=AssessmentViewOutcomeSettler(
                 engine=engine,
                 store=SqlAssessmentViewOutcomeStore(engine),
                 evaluation_version=config.outcome_evaluation.assessment_version,
                 maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
-                settlement_grace_minutes=(
-                    config.outcome_evaluation.settlement_grace_minutes
-                ),
+                settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
             ),
         ),
     )

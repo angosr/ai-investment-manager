@@ -14,6 +14,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
     ClosedMarketBar,
     InstrumentId,
+    InstrumentProduct,
     MarketQuote,
     MarketSnapshot,
     MarketTrade,
@@ -49,6 +50,14 @@ class MarketDataStore(Protocol):
     def put_perpetual_quote(self, quote: PerpetualQuote) -> bool: ...
 
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool: ...
+
+    def latest_spot_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> MarketQuote | None: ...
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime
@@ -233,6 +242,33 @@ class InMemoryMarketDataStore:
                 return False
             self._funding_settlements[settlement.settlement_id] = settlement
             return True
+
+    def latest_spot_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> MarketQuote | None:
+        evaluation_at = require_utc(evaluation_at)
+        visible_at = require_utc(visible_at)
+        if instrument.product != InstrumentProduct.SPOT:
+            raise ValueError("Spot 报价查询必须使用 Spot Instrument")
+        if evaluation_at > visible_at:
+            raise ValueError("Spot 报价评价时间不能晚于可见时间")
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._quotes.values()
+                if item.symbol == instrument.symbol
+                and item.observed_at <= evaluation_at
+                and item.observed_at <= visible_at
+            )
+        return max(
+            visible,
+            key=lambda item: (item.observed_at, item.quote_id),
+            default=None,
+        )
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime
@@ -555,6 +591,35 @@ class SqlMarketDataStore:
             ) != _funding_settlement_facts(settlement):
                 raise ValueError("settlement_id 冲突且 Funding 事实不一致") from None
             return False
+
+    def latest_spot_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> MarketQuote | None:
+        evaluation_at = require_utc(evaluation_at)
+        visible_at = require_utc(visible_at)
+        if instrument.product != InstrumentProduct.SPOT:
+            raise ValueError("Spot 报价查询必须使用 Spot Instrument")
+        if evaluation_at > visible_at:
+            raise ValueError("Spot 报价评价时间不能晚于可见时间")
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(market_quotes.c.payload)
+                .where(
+                    market_quotes.c.symbol == instrument.symbol,
+                    market_quotes.c.observed_at <= evaluation_at,
+                    market_quotes.c.observed_at <= visible_at,
+                )
+                .order_by(
+                    market_quotes.c.observed_at.desc(),
+                    market_quotes.c.quote_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return MarketQuote.model_validate(payload) if payload is not None else None
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime

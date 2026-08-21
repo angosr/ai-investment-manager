@@ -268,6 +268,12 @@ def test_base_forecast_rejects_free_analysis_latency() -> None:
             target=_spot_target(),
             horizon_minutes=240,
             direction=DirectionalView.UP,
+            reference_prices=(
+                ForecastReferencePrice(
+                    instrument_id=_spot_target().legs[0].instrument.key,
+                    price=Decimal("100"),
+                ),
+            ),
             observed_at=NOW,
             available_at=NOW - timedelta(seconds=1),
             valid_until=NOW + timedelta(hours=4),

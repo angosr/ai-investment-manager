@@ -118,3 +118,60 @@ Index(
     assessment_view_outcomes.c.horizon_minutes,
     assessment_view_outcomes.c.evaluation_at,
 )
+
+forecasts = Table(
+    "forecasts",
+    metadata,
+    Column("forecast_id", String(128), primary_key=True),
+    Column("kind", String(16), nullable=False),
+    Column("producer_id", String(128), nullable=False),
+    Column("producer_version", String(128), nullable=False),
+    Column("forecast_family", String(128), nullable=False),
+    Column("target_id", String(128), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=False),
+    Column("base_forecast_id", ForeignKey("forecasts.forecast_id"), nullable=True),
+    Column(
+        "assessment_id",
+        ForeignKey("context_assessments.assessment_id"),
+        nullable=True,
+    ),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_forecasts_pending_evaluation",
+    forecasts.c.evaluation_at,
+    forecasts.c.forecast_id,
+)
+Index(
+    "ix_forecasts_producer_target",
+    forecasts.c.producer_id,
+    forecasts.c.producer_version,
+    forecasts.c.target_id,
+    forecasts.c.available_at,
+)
+
+forecast_outcomes = Table(
+    "forecast_outcomes",
+    metadata,
+    Column("outcome_id", String(128), primary_key=True),
+    Column("forecast_id", ForeignKey("forecasts.forecast_id"), nullable=False),
+    Column("evaluation_version", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=False),
+    Column("gross_target_return_bps", Numeric(38, 18), nullable=True),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "forecast_id",
+        "evaluation_version",
+        name="uq_forecast_outcome_identity",
+    ),
+)
+Index(
+    "ix_forecast_outcomes_cohort",
+    forecast_outcomes.c.evaluation_version,
+    forecast_outcomes.c.evaluation_at,
+    forecast_outcomes.c.forecast_id,
+)

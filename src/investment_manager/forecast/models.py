@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
@@ -139,9 +139,7 @@ class EdgeCalibration(FrozenModel):
             < self.valid_until
         ):
             raise ValueError("校准训练、发布和有效时间顺序非法")
-        expected_hash = content_hash(
-            self.model_dump(mode="json", exclude={"artifact_hash"})
-        )
+        expected_hash = content_hash(self.model_dump(mode="json", exclude={"artifact_hash"}))
         if self.artifact_hash != expected_hash:
             raise ValueError("校准制品哈希与内容不一致")
         return self
@@ -177,6 +175,11 @@ class ForecastRole(StrEnum):
     AI_ADJUSTED = "AI_ADJUSTED"
 
 
+class ForecastKind(StrEnum):
+    BASE = "BASE"
+    CALIBRATED = "CALIBRATED"
+
+
 class ContextView(FrozenModel):
     asset: str = Field(min_length=1)
     horizon_minutes: int = Field(gt=0)
@@ -192,9 +195,7 @@ class ContextView(FrozenModel):
             raise ValueError("方向性 ContextView 必须引用证据")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("ContextView 不能重复引用证据")
-        if len(set(self.invalidation_conditions)) != len(
-            self.invalidation_conditions
-        ):
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
             raise ValueError("ContextView 不能重复失效条件")
         return self
 
@@ -236,6 +237,7 @@ class BaseForecast(FrozenModel):
     target: ForecastTarget
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
+    reference_prices: tuple[ForecastReferencePrice, ...] = Field(min_length=1)
     observed_at: datetime
     available_at: datetime
     valid_until: datetime
@@ -251,6 +253,7 @@ class BaseForecast(FrozenModel):
     def forecast_timing_and_refs_must_be_valid(self):
         if not self.observed_at <= self.available_at < self.valid_until:
             raise ValueError("BaseForecast 时间顺序非法")
+        _require_complete_reference_prices(self.target, self.reference_prices)
         if len(set(self.input_refs)) != len(self.input_refs):
             raise ValueError("BaseForecast 不能重复引用输入")
         return self
@@ -290,10 +293,7 @@ class CalibratedForecast(FrozenModel):
             raise ValueError("保守收益不能高于均值")
         if self.non_overlapping_sample_size > self.calibration_sample_size:
             raise ValueError("非重叠样本不能超过总样本")
-        reference_ids = tuple(item.instrument_id for item in self.reference_prices)
-        target_ids = tuple(item.instrument.key for item in self.target.legs)
-        if reference_ids != target_ids:
-            raise ValueError("CalibratedForecast 参考价必须逐 Leg 唯一、排序且完整")
+        _require_complete_reference_prices(self.target, self.reference_prices)
         required_refs = {
             ForecastRole.PROGRAM_BASE: (True, False),
             ForecastRole.AI_EVENT: (False, True),
@@ -306,4 +306,112 @@ class CalibratedForecast(FrozenModel):
             raise ValueError("ForecastRole 与 assessment_id 不匹配")
         if len(set(self.input_refs)) != len(self.input_refs):
             raise ValueError("CalibratedForecast 不能重复引用输入")
+        return self
+
+
+def _require_complete_reference_prices(
+    target: ForecastTarget,
+    reference_prices: tuple[ForecastReferencePrice, ...],
+) -> None:
+    reference_ids = tuple(item.instrument_id for item in reference_prices)
+    target_ids = tuple(item.instrument.key for item in target.legs)
+    if reference_ids != target_ids:
+        raise ValueError("Forecast 参考价必须逐 Leg 唯一、排序且完整")
+
+
+class ForecastLegOutcome(FrozenModel):
+    instrument_id: str = Field(min_length=1)
+    direction: ExposureDirection
+    gross_weight: Decimal = Field(gt=0, le=1)
+    reference_price: PositiveDecimal
+    exit_price: PositiveDecimal
+    price_return_bps: Decimal
+    funding_return_bps: Decimal = Decimal("0")
+    funding_settlement_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def funding_refs_must_be_unique(self):
+        if len(set(self.funding_settlement_ids)) != len(self.funding_settlement_ids):
+            raise ValueError("ForecastLegOutcome 不能重复引用 Funding 结算")
+        return self
+
+
+class ForecastOutcome(FrozenModel):
+    outcome_id: str = Field(min_length=1)
+    forecast_id: str = Field(min_length=1)
+    forecast_kind: ForecastKind
+    producer_id: str = Field(min_length=1)
+    producer_version: str = Field(min_length=1)
+    target_id: str = Field(min_length=1)
+    direction: DirectionalView
+    horizon_minutes: int = Field(gt=0)
+    evaluation_version: str = Field(min_length=1)
+    status: ForecastOutcomeStatus
+    available_at: datetime
+    evaluation_at: datetime
+    settled_at: datetime
+    legs: tuple[ForecastLegOutcome, ...] = ()
+    gross_target_return_bps: Decimal | None = None
+    directional_return_bps: Decimal | None = None
+    reason_code: str = Field(min_length=1)
+
+    _utc_available_at = field_validator("available_at")(require_utc)
+    _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+    _utc_settled_at = field_validator("settled_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_timing_and_returns_must_match(self):
+        expected_id = stable_id(
+            "forecast_outcome",
+            self.forecast_id,
+            self.evaluation_version,
+        )
+        if self.outcome_id != expected_id:
+            raise ValueError("ForecastOutcome outcome_id 不匹配")
+        if self.evaluation_at != self.available_at + timedelta(minutes=self.horizon_minutes):
+            raise ValueError("ForecastOutcome 评价时间与预测周期不一致")
+        if self.settled_at < self.evaluation_at:
+            raise ValueError("ForecastOutcome 不能提前结算")
+        if self.status == ForecastOutcomeStatus.UNSCORABLE:
+            if self.legs or any(
+                value is not None
+                for value in (
+                    self.gross_target_return_bps,
+                    self.directional_return_bps,
+                )
+            ):
+                raise ValueError("不可结算 ForecastOutcome 不能包含收益")
+            return self
+        if not self.legs or self.gross_target_return_bps is None:
+            raise ValueError("可结算 ForecastOutcome 必须包含逐 Leg 收益")
+        leg_ids = tuple(item.instrument_id for item in self.legs)
+        if tuple(sorted(set(leg_ids))) != leg_ids:
+            raise ValueError("ForecastOutcome Leg 必须唯一且排序")
+        if sum(
+            (item.gross_weight for item in self.legs),
+            Decimal("0"),
+        ) != Decimal("1"):
+            raise ValueError("ForecastOutcome Leg 权重之和必须为 1")
+        total = sum(
+            (item.price_return_bps + item.funding_return_bps for item in self.legs),
+            Decimal("0"),
+        )
+        if total != self.gross_target_return_bps:
+            raise ValueError("ForecastOutcome 总收益与逐 Leg 收益不一致")
+        if self.status == ForecastOutcomeStatus.ABSTAINED:
+            if (
+                self.direction != DirectionalView.UNCERTAIN
+                or self.directional_return_bps is not None
+            ):
+                raise ValueError("只有 UNCERTAIN Forecast 可以记为 ABSTAINED")
+            return self
+        if self.direction == DirectionalView.UNCERTAIN:
+            raise ValueError("UNCERTAIN Forecast 不能记为 SETTLED")
+        expected_directional = (
+            self.gross_target_return_bps
+            if self.direction == DirectionalView.UP
+            else -self.gross_target_return_bps
+        )
+        if self.directional_return_bps != expected_directional:
+            raise ValueError("ForecastOutcome 方向收益不一致")
         return self

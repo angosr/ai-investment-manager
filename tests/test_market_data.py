@@ -674,6 +674,31 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
     store.put_quote(_quote(NOW + timedelta(minutes=1), update_id=2))
     store.put_trade(_trade(NOW + timedelta(minutes=1), trade_id=2))
 
+    spot = InstrumentId.binance_spot(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+    )
+    assert store.latest_spot_quote(
+        instrument=spot,
+        evaluation_at=NOW,
+        visible_at=NOW,
+    ) == _quote()
+    assert (
+        store.latest_spot_quote(
+            instrument=spot,
+            evaluation_at=NOW - timedelta(seconds=1),
+            visible_at=NOW,
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="Spot Instrument"):
+        store.latest_spot_quote(
+            instrument=_perpetual_instrument(),
+            evaluation_at=NOW,
+            visible_at=NOW,
+        )
+
     snapshot = store.snapshot(
         cycle_id="visible-cycle",
         symbol="BTCUSDT",

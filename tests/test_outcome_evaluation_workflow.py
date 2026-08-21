@@ -211,6 +211,9 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
         stop = asyncio.Event()
         candidate = Settler(SimpleNamespace(settled=1, unscorable=2))
         forecast = Settler(SimpleNamespace(settled=3, abstained=4, unscorable=5))
+        target_forecast = Settler(
+            SimpleNamespace(settled=9, abstained=10, unscorable=11)
+        )
         assessment = Settler(SimpleNamespace(settled=6, abstained=7, unscorable=8))
         coordinator = Coordinator(stop)
         supervisor = OutcomeEvaluationSupervisor(
@@ -218,18 +221,28 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
             config=app_config,
             candidate_settler=candidate,
             forecast_settler=forecast,
+            target_forecast_settler=target_forecast,
             assessment_settler=assessment,
             clock=lambda: datetime(2026, 8, 20, 12, tzinfo=UTC),
         )
 
         await supervisor.run(stop)
 
-        assert len(candidate.calls) == len(forecast.calls) == len(assessment.calls) == 1
+        assert (
+            len(candidate.calls)
+            == len(forecast.calls)
+            == len(target_forecast.calls)
+            == len(assessment.calls)
+            == 1
+        )
         assert supervisor.health.candidate_settled == 1
         assert supervisor.health.candidate_unscorable == 2
         assert supervisor.health.forecast_settled == 3
         assert supervisor.health.forecast_abstained == 4
         assert supervisor.health.forecast_unscorable == 5
+        assert supervisor.health.target_forecast_settled == 9
+        assert supervisor.health.target_forecast_abstained == 10
+        assert supervisor.health.target_forecast_unscorable == 11
         assert supervisor.health.assessment_settled == 6
         assert supervisor.health.assessment_abstained == 7
         assert supervisor.health.assessment_unscorable == 8
