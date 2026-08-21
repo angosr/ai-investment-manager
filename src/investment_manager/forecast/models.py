@@ -114,11 +114,13 @@ class ContextView(FrozenModel):
     direction: DirectionalView
     already_priced: PricedState
     uncertainty: AssessmentUncertainty
-    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = ()
     invalidation_conditions: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def refs_must_be_unique(self):
+        if self.direction != DirectionalView.UNCERTAIN and not self.evidence_ids:
+            raise ValueError("方向性 ContextView 必须引用证据")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("ContextView 不能重复引用证据")
         if len(set(self.invalidation_conditions)) != len(

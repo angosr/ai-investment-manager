@@ -273,6 +273,51 @@ def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
         )
 
 
+@pytest.mark.parametrize("direction", ["UP", "DOWN"])
+def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
+    direction: str,
+) -> None:
+    output = AssessStructuredOutput.model_validate(
+        {
+            "assessment": {
+                "market_mechanism": "No visible evidence supports a direction.",
+                "views": [
+                    {
+                        "asset": "BTC",
+                        "horizon_minutes": 240,
+                        "direction": direction,
+                        "already_priced": "UNKNOWN",
+                        "uncertainty": "HIGH",
+                        "evidence_ids": [],
+                        "invalidation_conditions": ["new-evidence-arrives"],
+                    }
+                ],
+                "contradictions": [],
+                "data_gaps": [],
+            }
+        }
+    )
+
+    view = output.assessment.views[0]
+    assert view.direction == DirectionalView.UNCERTAIN
+    assert view.evidence_ids == ()
+    assert output.assessment.data_gaps == ("SYSTEM_VIEW_WITHOUT_EVIDENCE",)
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=_packet(),
+        analysis_behavior_hash="b" * 64,
+        available_at=NOW + timedelta(seconds=20),
+    )
+    assert assessment.views[0].direction == DirectionalView.UNCERTAIN
+    with pytest.raises(ValueError, match="必须引用证据"):
+        ContextView.model_validate(
+            {
+                **view.model_dump(),
+                "direction": direction,
+            }
+        )
+
+
 def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
     result = _projector().project(
         packet=_packet(),
