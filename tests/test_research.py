@@ -2231,3 +2231,51 @@ def test_evaluation_catalog_derives_canonical_semantics_and_rejects_ambiguity(
     assert ambiguous.attempt_count == 3
     assert ambiguous.canonical_evaluation_id is None
     assert ambiguous.ambiguity_reasons == ("DUPLICATE_TOP_SEMANTICS",)
+
+
+def test_evaluation_catalog_preserves_pre_rename_model_history(
+    app_config, tmp_path
+) -> None:
+    pytest.importorskip("nautilus_trader")
+    from investment_manager.research.evaluation_catalog import HistoricalEvaluationCatalog
+    from investment_manager.research.walk_forward import WalkForwardPlan, run_walk_forward
+
+    current = run_walk_forward(
+        dataset=_dataset(),
+        config=app_config,
+        plan=WalkForwardPlan(
+            plan_id="catalog-rename-compatibility-v1",
+            training_bars=128,
+            test_bars=100,
+            blind_bars=50,
+        ),
+    )
+    legacy = current.model_copy(
+        update={
+            "evaluation_id": stable_id("catalog-evaluation", "pre-rename"),
+            "folds": tuple(
+                fold.model_copy(
+                    update={
+                        "run": fold.run.model_copy(
+                            update={
+                                "run_id": stable_id(
+                                    "catalog-run", "pre-rename", fold.fold_id
+                                ),
+                                "backtest_model_version": "quant-core-bar-backtest-v10",
+                            }
+                        )
+                    }
+                )
+                for fold in current.folds
+            ),
+        }
+    )
+    catalog = HistoricalEvaluationCatalog(tmp_path)
+    catalog.store(legacy)
+    catalog.store(current)
+
+    summary = catalog.summaries()[0]
+    assert summary.canonical_evaluation_id == current.evaluation_id
+    assert summary.canonical_backtest_model_version == "investment-manager-bar-backtest-v11"
+    assert summary.superseded_evaluation_ids == (legacy.evaluation_id,)
+    assert not summary.ambiguity_reasons

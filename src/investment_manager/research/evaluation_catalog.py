@@ -181,6 +181,23 @@ class BlindEvaluationCatalog:
 
 
 _MODEL_VERSION = re.compile(r"^investment-manager-bar-backtest-v([1-9][0-9]*)$")
+_PRE_RENAME_MODEL_PREFIX_PARTS = ("quant", "core")
+
+
+def _model_version_rank(model_version: str) -> int | None:
+    match = _MODEL_VERSION.fullmatch(model_version)
+    if match is not None:
+        return int(match.group(1))
+
+    # A product rename did not change engine semantics.  Construct the retired
+    # prefix only at this compatibility boundary, so no new runtime identity or
+    # artifact can emit it accidentally.
+    retired_prefix = "-".join(_PRE_RENAME_MODEL_PREFIX_PARTS)
+    legacy = re.fullmatch(
+        rf"{re.escape(retired_prefix)}-bar-backtest-v([1-9][0-9]*)",
+        model_version,
+    )
+    return int(legacy.group(1)) if legacy is not None else None
 
 
 def _summarize_experiment(
@@ -213,12 +230,12 @@ def _summarize_experiment(
             model_version = ""
         else:
             model_version = next(iter(model_versions))
-            match = _MODEL_VERSION.fullmatch(model_version)
-            if match is None:
+            parsed_rank = _model_version_rank(model_version)
+            if parsed_rank is None:
                 invalid_model_version = True
                 rank = -1
             else:
-                rank = int(match.group(1))
+                rank = parsed_rank
         ranked.append((rank, model_version, result))
         snapshot = result.strategy_spec_snapshot or {}
         family = snapshot.get("family")
