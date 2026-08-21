@@ -464,9 +464,14 @@ def register_carry_forward_plan_command(
     symbol: Annotated[str, typer.Option()],
     observation_start: Annotated[str, typer.Option()],
     observation_end: Annotated[str, typer.Option()],
+    policy_version: Annotated[
+        str,
+        typer.Option(help="只允许精确登记的 carry 风险规格"),
+    ] = "spot-perp-monthly-50pct-v1",
 ) -> None:
     """在未来数据产生前冻结 carry forward 窗口、策略与全部门禁。"""
 
+    from investment_manager.research.carry_evaluation import resolve_carry_policy
     from investment_manager.research.carry_forward import (
         CarryForwardEvaluationSpec,
         build_carry_forward_evaluation_plan,
@@ -489,6 +494,7 @@ def register_carry_forward_plan_command(
             observation_end=_parse_utc_option(
                 observation_end, name="observation-end"
             ),
+            policy=resolve_carry_policy(policy_version),
         )
         plan = build_carry_forward_evaluation_plan(
             spec=spec,

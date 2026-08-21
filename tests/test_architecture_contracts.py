@@ -74,7 +74,7 @@ CLI_CONTRACT = {
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
     "register-carry-forward-plan": (
-        "database_url,plan_id,symbol,observation_start,observation_end"
+        "database_url,plan_id,symbol,observation_start,observation_end,policy_version"
     ),
     "replay-event-triggers": (
         "config,database_url,event_dataset_id,replay_start,replay_end,"
