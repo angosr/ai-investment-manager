@@ -41,7 +41,7 @@ decision_state:
         materiality: NORMAL
         reason_code: FOMC_SCHEDULE_REVISION
   packet_policy:
-    version: decision-packet-policy-v13
+    version: decision-packet-policy-v14
     schema_version: decision-packet-v9
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -395,7 +395,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v10
+  version: context-assessment-v11
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v1

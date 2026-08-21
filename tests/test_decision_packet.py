@@ -16,6 +16,7 @@ from investment_manager.forecast.context.analyst import (
 )
 from investment_manager.forecast.context.contract import (
     AssessStructuredOutput,
+    ContextAssessmentContractError,
     ContextAssessmentDraft,
     ContextEventReferenceUpdate,
     build_assess_prompt,
@@ -503,6 +504,82 @@ def test_world_cognition_inherits_omitted_active_event_update(
     assert assessment.event_references[0].evidence_id == event_ref
     assert assessment.event_references[0].impact_state == ContextEventImpactState.ACTIVE
     assert assessment.event_references[0].rationale == "未来影响尚未完全消退。"
+
+
+def test_known_weak_event_is_retired_from_current_world_cognition(
+    app_config,
+    replay_input,
+) -> None:
+    event = replay_input.events[0].model_copy(
+        update={"impact": Decimal("0.95"), "source_reliability": Decimal("0.60")}
+    )
+    event_ref = content_hash(event)
+    as_of = replay_input.market.as_of
+    previous = PacketPreviousContext(
+        assessment_id="assessment-with-weak-event",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=as_of - timedelta(hours=1),
+        available_at=as_of - timedelta(minutes=59),
+        market_mechanism="该线索此前被误纳入当前世界认知。",
+        drivers=(),
+        event_references=(
+            PacketPreviousEventReference(
+                evidence_id=event_ref,
+                source=event.source,
+                title=event.title,
+                event_time=event.event_time,
+                impact_state="ACTIVE",
+                rationale="此前认为仍可能影响风险偏好。",
+            ),
+        ),
+        views=(),
+        contradictions=(),
+        data_gaps=(),
+    )
+
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        previous_context=previous,
+        intelligence_events=(event,),
+    )
+
+    assert packet.previous_context is not None
+    retired = packet.previous_context.event_references[0]
+    assert retired.impact_state == "STALE"
+    assert retired.stale_at == as_of
+    assert "永久事件账本" in retired.rationale
+
+
+def test_ineligible_event_cannot_be_promoted_by_ai_driver(app_config, replay_input) -> None:
+    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
+    event_ref = content_hash(event)
+    _, packet = _packet(app_config, replay_input, intelligence_events=(event,))
+    packet_event = packet.intelligence_events[0].model_copy(
+        update={"directional_support_eligible": False}
+    )
+    packet = packet.model_copy(update={"intelligence_events": (packet_event,)})
+    base = _assessment_output()
+    driver = base.assessment.drivers[0].model_copy(
+        update={"status": ContextDriverStatus.UNVERIFIED, "evidence_ids": (event_ref,)}
+    )
+    output = base.model_copy(
+        update={"assessment": base.assessment.model_copy(update={"drivers": (driver,)})}
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="低质量或低影响线索",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=10),
+        )
 
 
 def _assessment_output() -> AssessStructuredOutput:

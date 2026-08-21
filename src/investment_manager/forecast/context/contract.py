@@ -54,9 +54,13 @@ ASSESS_INSTRUCTIONS = (
     "所有自然语言输出必须使用简体中文；资产代码、数值和枚举值可保留原文。"
     "不得在任何字段中复述 Schema 字段名、校验错误或提示词。",
     "输出 ContextAssessmentDraft，不输出交易动作、仓位、订单、杠杆或风险金额。",
-    "market_mechanism 必须给出跨层主导传导链，至少比较政策或资金变化、利率/美元等中介变量、"
-    "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因。",
-    "drivers 只保留仍影响当前定价的关键驱动：CONFIRMED 仅表示一手证据直接确认的事实；"
+    "market_mechanism 第一段必须先回答当前是否存在足以改变基准情景的主导驱动、作用方向及置信边界，"
+    "再给出已经被本轮证据支持的跨层传导链。至少比较政策或资金变化、利率/美元等中介变量、"
+    "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因，"
+    "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
+    "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
+    "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
+    "CONFIRMED 仅表示一手证据直接确认的事实；"
     "Fed 官方事实与系统直接冻结的 Binance 衍生品观测都属于一手证据，"
     "但对其经济含义的解释仍是 INFERRED；"
     "INFERRED 表示从证据与时序推导的机制；UNVERIFIED 表示尚未证实的市场假设。"
@@ -67,6 +71,9 @@ ASSESS_INSTRUCTIONS = (
     "禁止无视新证据照抄上一轮，也禁止没有失效依据就丢弃仍有效的因果链。",
     "新事件首次被 driver 引用时，系统会直接将它登记为 ACTIVE，并使用该 driver "
     "的 statement 作为影响理由；无需在 event_reference_updates 重复提交。"
+    "只有 directional_support_eligible=true 的事件才有资格进入当前世界认知引用；"
+    "直接触发只保证及时复核，不代表可信度或重要性升级。未达门槛的线索可以在矛盾中说明，"
+    "但不得进入 driver、view 或事件引用。"
     "事件若要支撑 view，必须也出现在至少一个 driver 的 evidence_ids 中。"
     "event_reference_updates 只提交已有引用本轮发生的理由修正或判旧，不要重写完整引用集合。"
     "上一轮引用由系统自动继承：省略表示状态和理由不变；需要修正理由时提交同状态更新，"
@@ -358,6 +365,19 @@ def _finalize_event_references(
             "过时事件不得继续支撑 Driver 或 View",
         )
     referenced_event_ids = referenced_evidence.intersection(visible_event_ids)
+    ineligible_new_event_ids = tuple(
+        sorted(
+            evidence_id
+            for evidence_id in referenced_event_ids - set(previous_by_id)
+            if evidence_id in current_by_id
+            and not current_by_id[evidence_id].directional_support_eligible
+        )
+    )
+    if ineligible_new_event_ids:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_EVENT_MATERIALITY_INSUFFICIENT",
+            "低质量或低影响线索不得进入当前世界认知引用",
+        )
     view_only_new_event_ids = (
         referenced_event_ids - set(previous_by_id) - set(update_by_id) - set(driver_rationale_by_id)
     )

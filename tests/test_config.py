@@ -35,7 +35,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v8"
     assert config.decision_state.official_fact_policy.version == "fed-official-fact-v2"
     assert config.decision_state.delta_policy.version == "state-delta-v5"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v13"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v14"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v9"
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.official_fact_policy.affected_assets == (

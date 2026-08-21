@@ -705,6 +705,12 @@ class DecisionPacketBuilder:
             direct_event_refs=direct_event_refs,
             as_of=state.as_of,
         )
+        context_reference_eligible_refs = frozenset(
+            content_hash(event)
+            for event in intelligence_events
+            if self._is_context_reference_eligible(event)
+        )
+        known_event_refs = frozenset(content_hash(event) for event in intelligence_events)
         market_by_symbol = {item.symbol: item for item in markets}
         feature_by_symbol = {item.symbol: item for item in features}
         asset_states = tuple(
@@ -748,6 +754,8 @@ class DecisionPacketBuilder:
             "previous_context": self._compact_previous_context(
                 previous_context,
                 as_of=state.as_of,
+                known_event_refs=known_event_refs,
+                eligible_event_refs=context_reference_eligible_refs,
             ),
             "information_coverage": information_coverage,
             "data_quality_codes": state.data_quality_codes,
@@ -973,30 +981,59 @@ class DecisionPacketBuilder:
                     novelty=event.novelty,
                     prompt_injection_suspected=True,
                     directly_triggered=evidence_ref in direct_event_refs,
-                    directional_support_eligible=(
-                        event.impact >= self._policy.minimum_background_intelligence_impact
-                        and event.source_reliability
-                        >= self._policy.minimum_background_source_reliability
-                    ),
+                    directional_support_eligible=self._is_context_reference_eligible(event),
                 )
             )
             used_characters += character_cost
         return tuple(selected), tuple(sorted(omitted))
+
+    def _is_context_reference_eligible(self, event: IntelligenceEvent) -> bool:
+        """Keep weak leads visible to a triggered review without promoting them.
+
+        Direct triggering is a latency decision, not an epistemic promotion.  A
+        lead must independently clear both materiality and source-quality gates
+        before it may persist in the current world model or support direction.
+        """
+
+        return (
+            event.impact >= self._policy.minimum_background_intelligence_impact
+            and event.source_reliability
+            >= self._policy.minimum_background_source_reliability
+        )
 
     def _compact_previous_context(
         self,
         context: PacketPreviousContext | None,
         *,
         as_of: datetime,
+        known_event_refs: frozenset[str],
+        eligible_event_refs: frozenset[str],
     ) -> PacketPreviousContext | None:
         if context is None:
             return None
+        event_references = tuple(
+            item.model_copy(
+                update={
+                    "impact_state": "STALE",
+                    "rationale": (
+                        "该线索未达到当前世界认知的来源质量与市场影响门槛，"
+                        "保留在永久事件账本中，但不再参与当前决策。"
+                    ),
+                    "stale_at": as_of,
+                }
+            )
+            if item.impact_state == "ACTIVE"
+            and item.evidence_id in known_event_refs
+            and item.evidence_id not in eligible_event_refs
+            else item
+            for item in context.event_references
+        )
         return context.model_copy(
             update={
                 "drivers": context.drivers[: self._policy.maximum_previous_context_drivers],
                 "event_references": tuple(
                     item
-                    for item in context.event_references
+                    for item in event_references
                     if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
                 ),
             }
