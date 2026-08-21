@@ -467,8 +467,9 @@ kernel/platform
    把已实现的产品账户点时投影接入唯一决策 Pipeline 与独立 Shadow。
 4. **执行接线（进行中）**：Execution 已直接消费已授权 `TradePlan`，并完成 group/Leg 幂等 Mock 订单、
    未知结果恢复、部分成交超时减险、补偿失败重试、点时订单观察和同 Sleeve 串行化；产品账户投影已
-   统一计算现金、费用、产品/Sleeve 持仓、权益和待完成组。下一步接入 Binance 产品 Venue、funding、
-   保护与主动对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
+   统一计算现金、费用、产品/Sleeve 持仓、权益和待完成组，恢复入口只接受已持久化 TradePlan 并以
+   group 状态内容生成幂等账户投影。下一步把该入口接入独立 Shadow，再接 Binance 产品 Venue、
+   funding、保护与主动对账；新链不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
 
 迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。

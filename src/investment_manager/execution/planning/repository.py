@@ -16,6 +16,8 @@ from investment_manager.risk.tables import portfolio_risk_decisions
 class TradePlanStore(Protocol):
     def record(self, plan: TradePlan) -> bool: ...
 
+    def plan(self, plan_id: str) -> TradePlan | None: ...
+
 
 class SqlTradePlanStore:
     """Immutable handoff ledger from Risk authorization to grouped Execution."""

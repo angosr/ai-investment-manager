@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine, func, insert, select
 
+from investment_manager.decision_cycle.portfolio import TradePlanExecutionPipeline
 from investment_manager.execution.group.accounting import (
     ProductAccountProjectionService,
     ProductAccountProjector,
@@ -23,6 +24,7 @@ from investment_manager.execution.planning.planner import (
     PlannedTradeGroup,
     TradePlan,
 )
+from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.tables import (
     mock_product_orders,
     product_order_observations,
@@ -45,6 +47,7 @@ from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
 )
+from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.risk.portfolio import ApprovedSleeve
 from investment_manager.schema import create_schema
 
@@ -266,6 +269,48 @@ def test_response_lost_after_accept_recovers_without_duplicate_after_restart() -
     assert recovered.status == ExecutionGroupStatus.HEDGED
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+
+
+def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> None:
+    plan = _plan(maximum_unhedged_notional="2000")
+    engine = _database(plan)
+    group_store = SqlExecutionGroupStore(engine)
+    observations = SqlProductOrderObservationStore(engine)
+    portfolio = SqlPortfolioStore(engine)
+    projector = ProductAccountProjector(
+        portfolio_id="primary",
+        settlement_asset="USDT",
+        initial_cash=Decimal("10000"),
+    )
+    pipeline = TradePlanExecutionPipeline(
+        plans=SqlTradePlanStore(engine),
+        groups=group_store,
+        engine=ExecutionGroupEngine(
+            store=group_store,
+            venue=SqlMockProductVenue(engine),
+            observations=observations,
+        ),
+        accounts=ProductAccountProjectionService(
+            projector=projector,
+            groups=group_store,
+            observations=observations,
+            risks=_ApprovedReader(plan.approved_target_id, _approved_sleeve(plan)),
+            accounts=portfolio,
+        ),
+        portfolio_store=portfolio,
+    )
+    as_of = NOW + timedelta(seconds=1)
+
+    result = pipeline.run(plan_id=plan.plan_id, as_of=as_of, quotes=_quotes(plan, as_of=as_of))
+    replayed = pipeline.run(plan_id=plan.plan_id, as_of=as_of, quotes=_quotes(plan, as_of=as_of))
+
+    assert replayed == result
+    assert result.groups[0].status == ExecutionGroupStatus.HEDGED
+    assert result.account.cash_balance == Decimal("8999")
+    assert result.account.equity == Decimal("9999")
+    assert result.account.daily_pnl == Decimal("-1")
+    assert len(result.account.positions) == 2
+    assert portfolio.account(result.account.snapshot_id) == result.account
 
 
 def test_response_lost_before_accept_retries_same_identity() -> None:

@@ -5,12 +5,17 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
+from investment_manager.execution.group.accounting import ProductAccountProjectionService
+from investment_manager.execution.group.engine import ExecutionGroupEngine
+from investment_manager.execution.group.models import ExecutionGroup
+from investment_manager.execution.group.repository import ExecutionGroupStore
 from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
     TradePlan,
     TradePlanner,
 )
 from investment_manager.execution.planning.repository import TradePlanStore
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import ExecutableQuote
@@ -168,3 +173,79 @@ class PortfolioDecisionPipeline:
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
+
+
+class TradePlanExecutionResult(FrozenModel):
+    plan_id: str = Field(min_length=1)
+    groups: tuple[ExecutionGroup, ...]
+    account: PortfolioAccountSnapshot
+
+    @model_validator(mode="after")
+    def result_must_match_plan_and_account_pending_groups(self):
+        group_ids = tuple(item.group_id for item in self.groups)
+        if len(group_ids) != len(set(group_ids)):
+            raise ValueError("TradePlanExecutionResult groups 不得重复")
+        nonterminal = tuple(sorted(item.group_id for item in self.groups if not item.terminal))
+        if not set(nonterminal).issubset(self.account.pending_execution_group_ids):
+            raise ValueError("执行后账户必须包含本 Plan 的非终态 groups")
+        return self
+
+
+class TradePlanExecutionPipeline:
+    """Recover one persisted TradePlan, advance its groups, then project one account fact."""
+
+    def __init__(
+        self,
+        *,
+        plans: TradePlanStore,
+        groups: ExecutionGroupStore,
+        engine: ExecutionGroupEngine,
+        accounts: ProductAccountProjectionService,
+        portfolio_store: PortfolioStore,
+    ) -> None:
+        self._plans = plans
+        self._groups = groups
+        self._engine = engine
+        self._accounts = accounts
+        self._portfolio_store = portfolio_store
+
+    def run(
+        self,
+        *,
+        plan_id: str,
+        as_of: datetime,
+        quotes: tuple[ExecutableQuote, ...],
+    ) -> TradePlanExecutionResult:
+        as_of = require_utc(as_of)
+        plan = self._plans.plan(plan_id)
+        if plan is None:
+            raise ValueError("TradePlan 不存在")
+        groups = []
+        for planned in plan.groups:
+            group = self._groups.group(planned.group_id)
+            if group is None:
+                group = self._engine.start(
+                    plan=plan,
+                    planned=planned,
+                    as_of=as_of,
+                )
+            group = self._engine.run_once(group.group_id, as_of=as_of)
+            groups.append(group)
+        runtime_groups = tuple(groups)
+        projection_cycle_id = stable_id(
+            "execution_account",
+            plan.cycle_id,
+            as_of.isoformat(),
+            content_hash(runtime_groups),
+        )
+        account = self._accounts.project(
+            cycle_id=projection_cycle_id,
+            as_of=as_of,
+            quotes=quotes,
+        )
+        self._portfolio_store.record_account(account)
+        return TradePlanExecutionResult(
+            plan_id=plan.plan_id,
+            groups=runtime_groups,
+            account=account,
+        )
