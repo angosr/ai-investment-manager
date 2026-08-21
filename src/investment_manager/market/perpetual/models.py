@@ -17,6 +17,43 @@ class FundingRateType(StrEnum):
     SPECIAL = "SPECIAL"
 
 
+class PerpetualQuote(FrozenModel):
+    quote_id: str = Field(min_length=1)
+    instrument: InstrumentId
+    exchange_time: datetime
+    observed_at: datetime
+    bid: PositiveDecimal
+    bid_quantity: Decimal = Field(ge=0)
+    ask: PositiveDecimal
+    ask_quantity: Decimal = Field(ge=0)
+    update_id: int | None = Field(default=None, ge=0)
+    source: str = Field(min_length=1)
+
+    _utc_exchange_time = field_validator("exchange_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def quote_identity_and_bounds_must_be_valid(self):
+        if self.instrument.product == InstrumentProduct.SPOT:
+            raise ValueError("PerpetualQuote 不能引用 Spot Instrument")
+        if self.exchange_time > self.observed_at:
+            raise ValueError("PerpetualQuote exchange_time 不能晚于 observed_at")
+        if self.ask < self.bid:
+            raise ValueError("PerpetualQuote ask 不能低于 bid")
+        marker: str | int = (
+            self.update_id
+            if self.update_id is not None
+            else self.exchange_time.isoformat()
+        )
+        if self.quote_id != stable_id(
+            "perpetual_quote",
+            self.instrument.key,
+            marker,
+        ):
+            raise ValueError("PerpetualQuote quote_id 与来源身份不一致")
+        return self
+
+
 class PerpetualMarketState(FrozenModel):
     state_id: str = Field(min_length=1)
     instrument: InstrumentId

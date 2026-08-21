@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 class PerpetualMarketHealth:
     refresh_count: int = 0
     state_count: int = 0
+    quote_count: int = 0
     settlement_count: int = 0
     last_refresh_at: datetime | None = None
     last_error_class: str | None = None
@@ -68,9 +69,14 @@ class BinancePerpetualMarketService:
         self.health.last_refresh_at = require_utc(self._clock())
 
     async def _refresh_instrument(self, instrument: InstrumentId) -> None:
-        state = await self._client.fetch_market_state(instrument)
+        state, quote = await asyncio.gather(
+            self._client.fetch_market_state(instrument),
+            self._client.fetch_quote(instrument),
+        )
         if self._store.put_perpetual_state(state):
             self.health.state_count += 1
+        if self._store.put_perpetual_quote(quote):
+            self.health.quote_count += 1
         previous_funding_at = self._expected_funding_at.get(instrument.key)
         history_due = previous_funding_at is None or state.observed_at >= previous_funding_at
         if history_due:

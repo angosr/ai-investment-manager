@@ -166,7 +166,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v3
+  version: binance-public-shadow-v4
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64

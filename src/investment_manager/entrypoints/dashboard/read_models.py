@@ -51,6 +51,7 @@ from investment_manager.market.tables import (
     market_quotes,
     market_trades,
     perpetual_market_states,
+    perpetual_quotes,
 )
 from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
@@ -403,7 +404,7 @@ class DashboardReader:
         return min(observed) if observed else None
 
     def latest_perpetual_observed_at(self) -> datetime | None:
-        """Return the oldest latest state across configured perpetual instruments."""
+        """Return the oldest latest state/quote across perpetual instruments."""
 
         instruments = self._config.market_data.perpetual_instruments
         if not instruments:
@@ -411,15 +412,21 @@ class DashboardReader:
         observed: list[datetime] = []
         with self._engine.connect() as connection:
             for instrument in instruments:
-                observed_at = connection.execute(
+                state_at = connection.execute(
                     select(perpetual_market_states.c.observed_at)
                     .where(perpetual_market_states.c.instrument_id == instrument.key)
                     .order_by(perpetual_market_states.c.exchange_time.desc())
                     .limit(1)
                 ).scalar_one_or_none()
-                if observed_at is None:
+                quote_at = connection.execute(
+                    select(perpetual_quotes.c.observed_at)
+                    .where(perpetual_quotes.c.instrument_id == instrument.key)
+                    .order_by(perpetual_quotes.c.exchange_time.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if state_at is None or quote_at is None:
                     return None
-                observed.append(database_utc(observed_at))
+                observed.extend((database_utc(state_at), database_utc(quote_at)))
         return min(observed)
 
     def portfolio_protection_active(self) -> bool | None:

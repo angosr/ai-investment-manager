@@ -23,6 +23,7 @@ from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualQuote,
 )
 from investment_manager.market.perpetual.service import BinancePerpetualMarketService
 from investment_manager.market.repository import (
@@ -120,6 +121,30 @@ def _perpetual_state(*, observed_at: datetime = NOW) -> PerpetualMarketState:
         last_funding_rate="0.0001",
         interest_rate="0.0001",
         next_funding_time=observed_at + timedelta(hours=4),
+        source="test",
+    )
+
+
+def _perpetual_quote(
+    *,
+    observed_at: datetime = NOW,
+    update_id: int | None = 42,
+) -> PerpetualQuote:
+    instrument = _perpetual_instrument()
+    exchange_time = observed_at - timedelta(seconds=1)
+    marker: str | int = (
+        update_id if update_id is not None else exchange_time.isoformat()
+    )
+    return PerpetualQuote(
+        quote_id=stable_id("perpetual_quote", instrument.key, marker),
+        instrument=instrument,
+        exchange_time=exchange_time,
+        observed_at=observed_at,
+        bid="100",
+        bid_quantity="2",
+        ask="100.1",
+        ask_quantity="3",
+        update_id=update_id,
         source="test",
     )
 
@@ -315,6 +340,16 @@ class FakePerpetualTransport:
         self.reverse_funding = reverse_funding
 
     async def get(self, path, params):
+        if path.endswith("bookTicker"):
+            return {
+                "symbol": params["symbol"],
+                "bidPrice": "100",
+                "bidQty": "2",
+                "askPrice": "100.1",
+                "askQty": "3",
+                "time": _millis(NOW - timedelta(seconds=1)),
+                "lastUpdateId": 42,
+            }
         if path.endswith("premiumIndex"):
             return {
                 "symbol": params["symbol"],
@@ -350,15 +385,20 @@ class FakePerpetualTransport:
 def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
     async def scenario():
         client = BinanceUsdmRestClient(FakePerpetualTransport(), clock=lambda: NOW)
+        quote = await client.fetch_quote(_perpetual_instrument())
         state = await client.fetch_market_state(_perpetual_instrument())
         settlements = await client.fetch_funding_settlements(
             _perpetual_instrument(),
             start=NOW - timedelta(hours=12),
             end=NOW,
         )
-        return state, settlements
+        return quote, state, settlements
 
-    state, settlements = asyncio.run(scenario())
+    quote, state, settlements = asyncio.run(scenario())
+    assert quote.model_dump(exclude={"source"}) == _perpetual_quote().model_dump(
+        exclude={"source"}
+    )
+    assert quote.source == "binance-usdm-book-ticker-rest"
     assert state.exchange_time == NOW - timedelta(seconds=1)
     assert state.observed_at == NOW
     assert state.premium_fraction == Decimal("0.002")
@@ -658,9 +698,11 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         store = SqlMarketDataStore(engine)
     instrument = _perpetual_instrument()
     state = _perpetual_state()
+    quote = _perpetual_quote()
     settlement = _funding_settlement()
 
     assert store.put_perpetual_state(state)
+    assert store.put_perpetual_quote(quote)
     assert store.put_funding_settlement(settlement)
     assert not store.put_perpetual_state(
         state.model_copy(
@@ -678,12 +720,22 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
             }
         )
     )
+    assert not store.put_perpetual_quote(
+        quote.model_copy(
+            update={
+                "observed_at": NOW + timedelta(seconds=1),
+                "source": "recovered-rest",
+            }
+        )
+    )
     with pytest.raises(ValueError, match="事实不一致"):
         store.put_perpetual_state(state.model_copy(update={"mark_price": Decimal("101")}))
     with pytest.raises(ValueError, match="事实不一致"):
         store.put_funding_settlement(
             settlement.model_copy(update={"funding_rate": Decimal("0.0002")})
         )
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_perpetual_quote(quote.model_copy(update={"ask": Decimal("100.2")}))
 
     assert (
         store.latest_perpetual_state(
@@ -693,6 +745,19 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         is None
     )
     assert store.latest_perpetual_state(instrument=instrument, as_of=NOW) == state
+    assert (
+        store.latest_perpetual_quote(
+            instrument=instrument,
+            evaluation_at=NOW - timedelta(seconds=1),
+            visible_at=NOW - timedelta(seconds=1),
+        )
+        is None
+    )
+    assert store.latest_perpetual_quote(
+        instrument=instrument,
+        evaluation_at=NOW,
+        visible_at=NOW,
+    ) == quote
     assert (
         store.funding_settlements(
             instrument=instrument,
@@ -719,6 +784,10 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         async def fetch_market_state(self, instrument):
             assert instrument == _perpetual_instrument()
             return _perpetual_state()
+
+        async def fetch_quote(self, instrument):
+            assert instrument == _perpetual_instrument()
+            return _perpetual_quote()
 
         async def fetch_funding_settlements(self, instrument, *, start, end):
             assert instrument == _perpetual_instrument()
@@ -747,6 +816,7 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
     assert client.history_calls == 1
     assert service.health.refresh_count == 2
     assert service.health.state_count == 1
+    assert service.health.quote_count == 1
     assert service.health.settlement_count == 1
     assert (
         store.latest_perpetual_state(
@@ -755,6 +825,11 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         )
         == _perpetual_state()
     )
+    assert store.latest_perpetual_quote(
+        instrument=_perpetual_instrument(),
+        evaluation_at=NOW,
+        visible_at=NOW,
+    ) == _perpetual_quote()
 
 
 def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(

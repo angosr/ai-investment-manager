@@ -21,6 +21,7 @@ from investment_manager.market.models import (
 from investment_manager.market.perpetual.models import (
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualQuote,
 )
 from investment_manager.market.tables import (
     funding_settlements,
@@ -29,6 +30,7 @@ from investment_manager.market.tables import (
     market_tables,
     market_trades,
     perpetual_market_states,
+    perpetual_quotes,
 )
 from investment_manager.platform.database import metadata
 
@@ -44,11 +46,21 @@ class MarketDataStore(Protocol):
 
     def put_perpetual_state(self, state: PerpetualMarketState) -> bool: ...
 
+    def put_perpetual_quote(self, quote: PerpetualQuote) -> bool: ...
+
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool: ...
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime
     ) -> PerpetualMarketState | None: ...
+
+    def latest_perpetual_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> PerpetualQuote | None: ...
 
     def funding_settlements(
         self,
@@ -106,6 +118,10 @@ def _perpetual_market_facts(state: PerpetualMarketState) -> dict[str, Any]:
     return state.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _perpetual_quote_facts(quote: PerpetualQuote) -> dict[str, Any]:
+    return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
 def _funding_settlement_facts(settlement: FundingSettlement) -> dict[str, Any]:
     return settlement.model_dump(exclude={"observed_at", "source"}, mode="json")
 
@@ -142,6 +158,7 @@ class InMemoryMarketDataStore:
     _trades: dict[tuple[str, int], MarketTrade] = field(default_factory=dict)
     _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
     _perpetual_states: dict[str, PerpetualMarketState] = field(default_factory=dict)
+    _perpetual_quotes: dict[str, PerpetualQuote] = field(default_factory=dict)
     _funding_settlements: dict[str, FundingSettlement] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -197,6 +214,16 @@ class InMemoryMarketDataStore:
             self._perpetual_states[state.state_id] = state
             return True
 
+    def put_perpetual_quote(self, quote: PerpetualQuote) -> bool:
+        with self._lock:
+            existing = self._perpetual_quotes.get(quote.quote_id)
+            if existing is not None:
+                if _perpetual_quote_facts(existing) != _perpetual_quote_facts(quote):
+                    raise ValueError("quote_id 冲突且永续报价事实不一致")
+                return False
+            self._perpetual_quotes[quote.quote_id] = quote
+            return True
+
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
         with self._lock:
             existing = self._funding_settlements.get(settlement.settlement_id)
@@ -222,6 +249,31 @@ class InMemoryMarketDataStore:
         return max(
             visible,
             key=lambda item: (item.exchange_time, item.observed_at, item.state_id),
+            default=None,
+        )
+
+    def latest_perpetual_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> PerpetualQuote | None:
+        evaluation_at = require_utc(evaluation_at)
+        visible_at = require_utc(visible_at)
+        if evaluation_at > visible_at:
+            raise ValueError("永续报价评价时间不能晚于可见时间")
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._perpetual_quotes.values()
+                if item.instrument == instrument
+                and item.exchange_time <= evaluation_at
+                and item.observed_at <= visible_at
+            )
+        return max(
+            visible,
+            key=lambda item: (item.exchange_time, item.observed_at, item.quote_id),
             default=None,
         )
 
@@ -449,6 +501,33 @@ class SqlMarketDataStore:
                 raise ValueError("state_id 冲突且永续市场事实不一致") from None
             return False
 
+    def put_perpetual_quote(self, quote: PerpetualQuote) -> bool:
+        payload = quote.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(perpetual_quotes).values(
+                        quote_id=quote.quote_id,
+                        instrument_id=quote.instrument.key,
+                        exchange_time=quote.exchange_time,
+                        observed_at=quote.observed_at,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(perpetual_quotes.c.payload).where(
+                        perpetual_quotes.c.quote_id == quote.quote_id
+                    )
+                ).scalar_one()
+            if _perpetual_quote_facts(
+                PerpetualQuote.model_validate(existing)
+            ) != _perpetual_quote_facts(quote):
+                raise ValueError("quote_id 冲突且永续报价事实不一致") from None
+            return False
+
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
         payload = settlement.model_dump(mode="json")
         try:
@@ -497,6 +576,34 @@ class SqlMarketDataStore:
                 .limit(1)
             ).scalar_one_or_none()
         return PerpetualMarketState.model_validate(payload) if payload is not None else None
+
+    def latest_perpetual_quote(
+        self,
+        *,
+        instrument: InstrumentId,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> PerpetualQuote | None:
+        evaluation_at = require_utc(evaluation_at)
+        visible_at = require_utc(visible_at)
+        if evaluation_at > visible_at:
+            raise ValueError("永续报价评价时间不能晚于可见时间")
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(perpetual_quotes.c.payload)
+                .where(
+                    perpetual_quotes.c.instrument_id == instrument.key,
+                    perpetual_quotes.c.exchange_time <= evaluation_at,
+                    perpetual_quotes.c.observed_at <= visible_at,
+                )
+                .order_by(
+                    perpetual_quotes.c.exchange_time.desc(),
+                    perpetual_quotes.c.observed_at.desc(),
+                    perpetual_quotes.c.quote_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return PerpetualQuote.model_validate(payload) if payload is not None else None
 
     def funding_settlements(
         self,

@@ -55,6 +55,22 @@ Index(
     perpetual_market_states.c.observed_at,
 )
 
+perpetual_quotes = Table(
+    "perpetual_quotes",
+    metadata,
+    Column("quote_id", String(128), primary_key=True),
+    Column("instrument_id", String(128), nullable=False),
+    Column("exchange_time", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_perpetual_quotes_instrument_time",
+    perpetual_quotes.c.instrument_id,
+    perpetual_quotes.c.exchange_time,
+    perpetual_quotes.c.observed_at,
+)
+
 funding_settlements = Table(
     "funding_settlements",
     metadata,
@@ -78,5 +94,6 @@ market_tables = (
     market_trades,
     market_bars,
     perpetual_market_states,
+    perpetual_quotes,
     funding_settlements,
 )

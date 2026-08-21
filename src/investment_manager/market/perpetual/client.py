@@ -13,6 +13,7 @@ from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualQuote,
 )
 
 
@@ -28,6 +29,32 @@ class JsonHttpTransport(Protocol):
 class BinanceUsdmRestClient:
     transport: JsonHttpTransport
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+    async def fetch_quote(self, instrument: InstrumentId) -> PerpetualQuote:
+        raw = await self.transport.get(
+            "/fapi/v1/ticker/bookTicker",
+            {"symbol": instrument.symbol},
+        )
+        observed_at = require_utc(self.clock())
+        if not isinstance(raw, dict) or str(raw.get("symbol")) != instrument.symbol:
+            raise ValueError("Binance USD-M bookTicker REST 响应非法")
+        exchange_time = _from_milliseconds(int(raw["time"]))
+        update_id = int(raw["lastUpdateId"]) if "lastUpdateId" in raw else None
+        marker: str | int = (
+            update_id if update_id is not None else exchange_time.isoformat()
+        )
+        return PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", instrument.key, marker),
+            instrument=instrument,
+            exchange_time=exchange_time,
+            observed_at=observed_at,
+            bid=Decimal(str(raw["bidPrice"])),
+            bid_quantity=Decimal(str(raw["bidQty"])),
+            ask=Decimal(str(raw["askPrice"])),
+            ask_quantity=Decimal(str(raw["askQty"])),
+            update_id=update_id,
+            source="binance-usdm-book-ticker-rest",
+        )
 
     async def fetch_market_state(self, instrument: InstrumentId) -> PerpetualMarketState:
         raw = await self.transport.get(

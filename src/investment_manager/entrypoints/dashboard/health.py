@@ -108,7 +108,7 @@ def _freshness_check(
                 "data_freshness",
                 "数据新鲜度",
                 "unknown",
-                "永续市场状态尚未就绪",
+                "永续市场状态或可成交报价尚未就绪",
             )
         perpetual_age = (now - perpetual_observed_at).total_seconds()
     if market_age < 0 or account_age < 0 or (
