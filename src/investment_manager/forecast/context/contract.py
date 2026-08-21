@@ -97,8 +97,10 @@ ASSESS_INSTRUCTIONS = (
     "NO_RECENT_PUBLICATION 表示来源正常但连续数据已过新鲜阈值；SOURCE_STALE/SOURCE_FAILED/"
     "NOT_CONFIGURED 表示信息基础设施缺口。必须据此区分‘没有新发布’与‘系统不知道’，"
     "并优先指出会截断关键传导链的缺口。",
-    "derivative_states 是程序化压缩且点时冻结的衍生品证据，包含基差、资金费率、"
-    "OI 变化、全市场多空账户占比与主动买卖量；trailing 与 positioning 指标都是窗口汇总。"
+    "derivative_states 是程序化压缩且点时冻结的现货与衍生品市场结构证据，"
+    "包含 Binance 现货主动买卖量、永续基差、资金费率、OI 变化、全市场多空账户占比与主动买卖量；"
+    "trailing、spot_flow 与 positioning 指标都是窗口汇总。Binance 现货主动成交只表示"
+    "单一交易场所的边际订单流，不等于 ETF 或机构净流入。"
     "多空账户比不等于多空名义仓位比，任一单项指标都不得被机械解释为方向信号；"
     "必须结合价格响应与其他资金层证据判断新增风险偏好还是拥挤/平仓。",
     "数据不足时使用 UNCERTAIN/UNKNOWN 并明确 data_gaps，不猜测缺失事实。",

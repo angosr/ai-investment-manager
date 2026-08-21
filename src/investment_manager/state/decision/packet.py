@@ -194,6 +194,31 @@ class PacketDerivativeState(FrozenModel):
     funding_settlement_count: int = Field(ge=0)
     funding_window_hours: int = Field(gt=0, le=168)
     next_funding_time: datetime
+    spot_flow_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    spot_flow_window_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1_440,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_buy_sell_ratio: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_buy_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_sell_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     positioning_observed_at: datetime | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -254,10 +279,24 @@ class PacketDerivativeState(FrozenModel):
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
+    _utc_spot_flow_observed = field_validator("spot_flow_observed_at")(optional_utc)
     _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
     def positioning_summary_must_be_complete(self):
+        spot_values = (
+            self.spot_flow_observed_at,
+            self.spot_flow_window_minutes,
+            self.spot_taker_buy_sell_ratio,
+            self.spot_taker_buy_volume,
+            self.spot_taker_sell_volume,
+        )
+        if any(value is not None for value in spot_values) and not all(
+            value is not None for value in spot_values
+        ):
+            raise ValueError("决策包现货主动成交摘要必须完整或全部缺省")
+        if self.spot_flow_observed_at is not None and self.spot_flow_observed_at > self.observed_at:
+            raise ValueError("决策包现货主动成交摘要不能晚于市场观察时间")
         values = (
             self.positioning_observed_at,
             self.positioning_window_minutes,
@@ -581,7 +620,11 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
-        if self.schema_version in {"decision-packet-v8", "decision-packet-v9"} and (
+        if self.schema_version in {
+            "decision-packet-v8",
+            "decision-packet-v9",
+            "decision-packet-v10",
+        } and (
             self.active_hypotheses or self.previous_assessment_refs
         ):
             raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
@@ -603,7 +646,11 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
-    if packet.schema_version not in {"decision-packet-v8", "decision-packet-v9"}:
+    if packet.schema_version not in {
+        "decision-packet-v8",
+        "decision-packet-v9",
+        "decision-packet-v10",
+    }:
         payload["active_hypotheses"] = packet.active_hypotheses
         payload["previous_assessment_refs"] = packet.previous_assessment_refs
     if (
@@ -630,12 +677,18 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
                 event.pop("url")
     if (
         packet.schema_version
-        not in {"decision-packet-v7", "decision-packet-v8", "decision-packet-v9"}
+        not in {
+            "decision-packet-v7",
+            "decision-packet-v8",
+            "decision-packet-v9",
+            "decision-packet-v10",
+        }
         and not packet.information_coverage
     ):
         payload.pop("information_coverage", None)
     if (
-        packet.schema_version not in {"decision-packet-v8", "decision-packet-v9"}
+        packet.schema_version
+        not in {"decision-packet-v8", "decision-packet-v9", "decision-packet-v10"}
         and not packet.derivative_states
     ):
         payload.pop("derivative_states", None)
@@ -1186,6 +1239,11 @@ class DecisionPacketBuilder:
             funding_settlement_count=snapshot.funding_settlement_count,
             funding_window_hours=snapshot.funding_window_hours,
             next_funding_time=snapshot.next_funding_time,
+            spot_flow_observed_at=snapshot.spot_flow_observed_at,
+            spot_flow_window_minutes=snapshot.spot_flow_window_minutes,
+            spot_taker_buy_sell_ratio=snapshot.spot_taker_buy_sell_ratio,
+            spot_taker_buy_volume=snapshot.spot_taker_buy_volume,
+            spot_taker_sell_volume=snapshot.spot_taker_sell_volume,
             positioning_observed_at=snapshot.positioning_observed_at,
             positioning_window_minutes=snapshot.positioning_window_minutes,
             open_interest=snapshot.open_interest,

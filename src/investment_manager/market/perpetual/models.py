@@ -224,6 +224,31 @@ class DerivativeContextSnapshot(FrozenModel):
     funding_settlement_count: int = Field(ge=0)
     funding_window_hours: int = Field(gt=0, le=168)
     next_funding_time: datetime
+    spot_flow_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    spot_flow_window_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1_440,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_buy_sell_ratio: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_buy_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    spot_taker_sell_volume: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     positioning_observed_at: datetime | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -286,6 +311,7 @@ class DerivativeContextSnapshot(FrozenModel):
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
+    _utc_spot_flow_observed = field_validator("spot_flow_observed_at")(optional_utc)
     _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
@@ -296,6 +322,19 @@ class DerivativeContextSnapshot(FrozenModel):
             raise ValueError("衍生品决策状态不能晚于 as_of")
         if tuple(sorted(set(self.input_refs))) != self.input_refs:
             raise ValueError("衍生品决策状态 input_refs 必须唯一且排序")
+        spot_flow_values = (
+            self.spot_flow_observed_at,
+            self.spot_flow_window_minutes,
+            self.spot_taker_buy_sell_ratio,
+            self.spot_taker_buy_volume,
+            self.spot_taker_sell_volume,
+        )
+        if any(item is not None for item in spot_flow_values) and not all(
+            item is not None for item in spot_flow_values
+        ):
+            raise ValueError("现货主动成交摘要必须完整或全部缺省")
+        if self.spot_flow_observed_at is not None and self.spot_flow_observed_at > self.as_of:
+            raise ValueError("现货主动成交摘要不能晚于 as_of")
         has_summary = (
             self.trailing_funding_rate_mean_bps is not None
             and self.trailing_funding_rate_sum_bps is not None

@@ -190,8 +190,23 @@ def test_market_interval_seconds_are_canonical(app_config, interval, seconds) ->
 
 
 def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> None:
+    bars = tuple(
+        item.model_copy(
+            update={
+                "quote_volume": item.volume * item.close,
+                "taker_buy_base_volume": item.volume * Decimal("0.60"),
+                "taker_buy_quote_volume": item.volume * item.close * Decimal("0.60"),
+            }
+        )
+        for item in replay_input.market.bars
+    )
     spot = replay_input.market.model_copy(
-        update={"cycle_id": "analysis-1", "as_of": NOW, "observed_at": NOW}
+        update={
+            "cycle_id": "analysis-1",
+            "as_of": NOW,
+            "observed_at": NOW,
+            "bars": bars,
+        }
     )
     settlement = _funding_settlement(observed_at=NOW - timedelta(seconds=1))
 
@@ -219,6 +234,8 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     assert snapshot.open_interest_change_fraction == Decimal("0.10")
     assert snapshot.global_long_short_account_ratio == Decimal("1.5")
     assert snapshot.taker_buy_sell_ratio == Decimal("1.25")
+    assert snapshot.spot_flow_window_minutes == 60
+    assert snapshot.spot_taker_buy_sell_ratio == Decimal("1.5")
     assert snapshot.input_refs == tuple(
         sorted(
             (
@@ -316,6 +333,9 @@ def test_official_websocket_contract_parses_quote_trade_and_only_closed_bar() ->
                 "l": "98",
                 "c": "100",
                 "v": "10",
+                "q": "1000",
+                "V": "6",
+                "Q": "600",
                 "x": False,
             },
         },
@@ -324,7 +344,9 @@ def test_official_websocket_contract_parses_quote_trade_and_only_closed_bar() ->
     assert isinstance(trade, MarketTrade)
     assert parser.parse(json.dumps(open_bar), observed_at=NOW) is None
     open_bar["data"]["k"]["x"] = True
-    assert isinstance(parser.parse(json.dumps(open_bar), observed_at=NOW), ClosedMarketBar)
+    closed_bar = parser.parse(json.dumps(open_bar), observed_at=NOW)
+    assert isinstance(closed_bar, ClosedMarketBar)
+    assert closed_bar.taker_buy_base_volume == Decimal("6")
 
 
 class FakeHttpTransport:
@@ -357,6 +379,11 @@ class FakeHttpTransport:
                     "99.5",
                     "10",
                     _millis(NOW - timedelta(minutes=5)) - 1,
+                    "995",
+                    20,
+                    "6",
+                    "597",
+                    "0",
                 ],
                 [
                     _millis(NOW - timedelta(minutes=5)),
@@ -366,6 +393,11 @@ class FakeHttpTransport:
                     "100",
                     "11",
                     _millis(NOW) - 1,
+                    "1100",
+                    22,
+                    "7",
+                    "700",
+                    "0",
                 ],
                 [
                     _millis(NOW),
@@ -375,6 +407,11 @@ class FakeHttpTransport:
                     "101",
                     "12",
                     _millis(NOW + timedelta(minutes=5)) - 1,
+                    "1212",
+                    24,
+                    "8",
+                    "808",
+                    "0",
                 ],
             ]
         raise AssertionError(path)

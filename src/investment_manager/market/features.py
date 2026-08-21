@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
 
@@ -108,6 +108,7 @@ def build_derivative_context_snapshot(
     rates_bps = tuple(item.funding_rate * Decimal("10000") for item in visible)
     rate_sum = sum(rates_bps, Decimal("0")) if rates_bps else None
     rate_mean = rate_sum / Decimal(len(rates_bps)) if rate_sum is not None else None
+    spot_flow = _spot_flow_summary(spot, window_minutes=60)
     return DerivativeContextSnapshot(
         cycle_id=cycle_id,
         asset=asset,
@@ -126,6 +127,7 @@ def build_derivative_context_snapshot(
         funding_settlement_count=len(rates_bps),
         funding_window_hours=funding_window_hours,
         next_funding_time=state.next_funding_time,
+        **spot_flow,
         positioning_observed_at=state.positioning_observed_at,
         positioning_window_minutes=state.positioning_window_minutes,
         open_interest=state.open_interest,
@@ -148,3 +150,36 @@ def build_derivative_context_snapshot(
             )
         ),
     )
+
+
+def _spot_flow_summary(
+    spot: MarketSnapshot,
+    *,
+    window_minutes: int,
+) -> dict[str, Decimal | datetime | int]:
+    window_start = spot.as_of - timedelta(minutes=window_minutes)
+    bars = tuple(
+        item
+        for item in spot.bars
+        if item.event_time >= window_start
+        and item.taker_buy_base_volume is not None
+        and item.quote_volume is not None
+        and item.taker_buy_quote_volume is not None
+    )
+    if not bars:
+        return {}
+    total_volume = sum((item.volume for item in bars), Decimal("0"))
+    buy_volume = sum(
+        (item.taker_buy_base_volume for item in bars if item.taker_buy_base_volume is not None),
+        Decimal("0"),
+    )
+    sell_volume = total_volume - buy_volume
+    if sell_volume <= 0 or buy_volume < 0:
+        return {}
+    return {
+        "spot_flow_observed_at": max(item.observed_at for item in bars),
+        "spot_flow_window_minutes": window_minutes,
+        "spot_taker_buy_sell_ratio": buy_volume / sell_volume,
+        "spot_taker_buy_volume": buy_volume,
+        "spot_taker_sell_volume": sell_volume,
+    }

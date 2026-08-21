@@ -139,8 +139,10 @@ Fact。这样可以跨事件维持多层传导链，同时避免无限上下文�
 基础设施缺口写入 `coverage_gap_codes`。它只回答“系统现在看得见什么”，不保存投资判断。Packet 原样继承这份
 点时快照，Assessment 必须降低被缺失域截断的结论等级；`CURRENT` 只证明采集路线正常，不证明方向，
 `NO_RECENT_PUBLICATION`、`SOURCE_STALE / SOURCE_FAILED` 与 `NOT_CONFIGURED` 具有不同语义。当前 Fed 货币
-政策发布流与 Binance 现货/衍生品流已形成真实健康账本，其余域显式为 `NOT_CONFIGURED`，不得用新闻覆盖面
-冒充一手结构化覆盖。
+政策发布流与 Binance 现货/衍生品流已形成真实健康账本：现货 K 线额外冻结窗口内主动买入与主动卖出量，
+永续侧冻结 basis、funding、OI、账户比例与主动成交。Binance 现货流只代表单一交易场所，不能冒充 ETF、
+基金或全市场机构净流入；机构资金流仍须保持 `NOT_CONFIGURED`，直到可核验的逐基金持仓或申赎来源接线。
+其余未接线领域同样显式为 `NOT_CONFIGURED`，不得用新闻覆盖面冒充一手结构化覆盖。
 
 Packet 不扫描全库或发送原始时间序列。以衍生品为例，程序先把同一时点可成交 Spot/Perpetual bid-ask、
 mark-index premium、最近资金费率和窗口内已结算 Funding 压缩为带精确输入引用的资产摘要，再冻结进 State；

@@ -255,6 +255,20 @@ class BinanceMessageParser:
                 raise ValueError("Binance kline 消息缺少 k 对象")
             if kline.get("x") is not True:
                 return None
+            flow_keys = ("q", "V", "Q")
+            if any(key in kline for key in flow_keys) and not all(
+                key in kline for key in flow_keys
+            ):
+                raise ValueError("Binance kline WebSocket 现货成交摘要不完整")
+            spot_flow = (
+                {
+                    "quote_volume": Decimal(str(kline["q"])),
+                    "taker_buy_base_volume": Decimal(str(kline["V"])),
+                    "taker_buy_quote_volume": Decimal(str(kline["Q"])),
+                }
+                if all(key in kline for key in flow_keys)
+                else {}
+            )
             return ClosedMarketBar(
                 symbol=symbol,
                 interval=str(kline["i"]),
@@ -266,6 +280,7 @@ class BinanceMessageParser:
                 low=Decimal(str(kline["l"])),
                 close=Decimal(str(kline["c"])),
                 volume=Decimal(str(kline["v"])),
+                **spot_flow,
                 source="binance-websocket",
             )
         raise ValueError("不支持的 Binance WebSocket 消息类型")
@@ -355,8 +370,19 @@ class BinancePublicRestClient:
         for item in raw:
             if not isinstance(item, list) or len(item) < 7:
                 raise ValueError("Binance kline REST 条目非法")
+            if 7 < len(item) < 11:
+                raise ValueError("Binance kline REST 现货成交摘要不完整")
             if int(item[6]) >= observed_ms:
                 continue
+            spot_flow = (
+                {
+                    "quote_volume": Decimal(str(item[7])),
+                    "taker_buy_base_volume": Decimal(str(item[9])),
+                    "taker_buy_quote_volume": Decimal(str(item[10])),
+                }
+                if len(item) >= 11
+                else {}
+            )
             bars.append(
                 ClosedMarketBar(
                     symbol=symbol,
@@ -369,6 +395,7 @@ class BinancePublicRestClient:
                     low=Decimal(str(item[3])),
                     close=Decimal(str(item[4])),
                     volume=Decimal(str(item[5])),
+                    **spot_flow,
                     source="binance-rest",
                 )
             )

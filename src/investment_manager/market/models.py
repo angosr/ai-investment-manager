@@ -80,6 +80,18 @@ class MarketBar(FrozenModel):
     low: PositiveDecimal
     close: PositiveDecimal
     volume: Money
+    quote_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_base_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_quote_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
@@ -234,6 +246,18 @@ class ClosedMarketBar(FrozenModel):
     low: PositiveDecimal
     close: PositiveDecimal
     volume: Money
+    quote_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_base_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    taker_buy_quote_volume: Money | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     source: str
 
     _utc_open_time = field_validator("open_time")(require_utc)
@@ -246,6 +270,23 @@ class ClosedMarketBar(FrozenModel):
             raise ValueError("K 线 close_time 必须晚于 open_time")
         if self.high < max(self.open, self.close) or self.low > min(self.open, self.close):
             raise ValueError("K 线 OHLC 范围非法")
+        flow_values = (
+            self.quote_volume,
+            self.taker_buy_base_volume,
+            self.taker_buy_quote_volume,
+        )
+        if any(item is not None for item in flow_values) and not all(
+            item is not None for item in flow_values
+        ):
+            raise ValueError("K 线现货成交摘要必须完整或全部缺省")
+        if self.taker_buy_base_volume is not None and self.taker_buy_base_volume > self.volume:
+            raise ValueError("K 线主动买入基础资产量不能超过总成交量")
+        if (
+            self.taker_buy_quote_volume is not None
+            and self.quote_volume is not None
+            and self.taker_buy_quote_volume > self.quote_volume
+        ):
+            raise ValueError("K 线主动买入报价资产量不能超过总成交额")
         return self
 
     def to_market_bar(self) -> MarketBar:
@@ -257,6 +298,9 @@ class ClosedMarketBar(FrozenModel):
             low=self.low,
             close=self.close,
             volume=self.volume,
+            quote_volume=self.quote_volume,
+            taker_buy_base_volume=self.taker_buy_base_volume,
+            taker_buy_quote_volume=self.taker_buy_quote_volume,
         )
 
 

@@ -105,14 +105,44 @@ def _bar_revision_only_changes_volume(
     """Recognize a provider's late volume finalization without rewriting history."""
 
     old = existing.model_dump(
-        exclude={"observed_at", "source", "volume"},
+        exclude={
+            "observed_at",
+            "source",
+            "volume",
+            "quote_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        },
         mode="json",
     )
     new = incoming.model_dump(
-        exclude={"observed_at", "source", "volume"},
+        exclude={
+            "observed_at",
+            "source",
+            "volume",
+            "quote_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        },
         mode="json",
     )
-    return old == new and existing.volume != incoming.volume
+    return old == new and existing.model_dump(
+        include={
+            "volume",
+            "quote_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        },
+        mode="json",
+    ) != incoming.model_dump(
+        include={
+            "volume",
+            "quote_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        },
+        mode="json",
+    )
 
 
 def _quote_market_facts(quote: MarketQuote) -> dict[str, Any]:
