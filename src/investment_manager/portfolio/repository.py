@@ -56,10 +56,14 @@ class SqlPortfolioStore:
                         snapshot_id=account.snapshot_id,
                         cycle_id=account.cycle_id,
                         portfolio_id=account.portfolio_id,
+                        revision=account.revision,
                         as_of=account.as_of,
                         observed_at=account.observed_at,
                         snapshot_hash=content_hash(account),
-                        payload=account.model_dump(mode="json"),
+                        payload={
+                            **account.model_dump(mode="json"),
+                            "revision": account.revision,
+                        },
                     )
                 )
             return True
@@ -112,6 +116,7 @@ class SqlPortfolioStore:
                 )
                 .order_by(
                     portfolio_account_snapshots.c.as_of.desc(),
+                    portfolio_account_snapshots.c.revision.desc(),
                     portfolio_account_snapshots.c.snapshot_id.desc(),
                 )
                 .limit(1)

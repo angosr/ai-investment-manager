@@ -174,6 +174,7 @@ class ProductAccountProjector:
         payload = {
             "cycle_id": cycle_id,
             "portfolio_id": self._portfolio_id,
+            "revision": previous.revision + 1 if previous is not None else 0,
             "as_of": as_of,
             "observed_at": as_of,
             "settlement_asset": self._settlement_asset,
@@ -530,6 +531,10 @@ class ProductAccountProjectionService:
         self._funding = funding
         self._risks = risks
         self._accounts = accounts
+
+    @property
+    def portfolio_id(self) -> str:
+        return self._projector.portfolio_id
 
     def project(
         self,

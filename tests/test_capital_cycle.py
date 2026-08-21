@@ -5,11 +5,16 @@ from sqlalchemy import create_engine, func, select
 
 from investment_manager.decision_cycle.capital import assemble_capital_cycle
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
+from investment_manager.entrypoints.dashboard.capital import (
+    CapitalDashboardReader,
+    serialize_capital_overview,
+)
 from investment_manager.execution.tables import mock_product_orders
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
 from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
@@ -81,6 +86,30 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert first.groups[0].terminal
     assert first.account.equity < Decimal("10000")
     assert first.account.equity == Decimal("9996.91685")
+    assert first.account.revision == 1
+    assert content_hash(first.account) == content_hash(
+        first.account.model_copy(update={"revision": 0})
+    )
     assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.014")}
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+
+    overview = CapitalDashboardReader(engine, config).overview(now=NOW)
+    assert (
+        SqlPortfolioStore(engine).latest_account(
+            portfolio_id=config.capital.decision.portfolio_id,
+            as_of=NOW,
+        )
+        == first.account
+    )
+    dto = serialize_capital_overview(overview)
+    assert dto["account"]["equity"] == "9996.91685"
+    assert dto["decision"]["risk_outcome"] == "APPROVED"
+    assert dto["decision"]["plan_group_count"] == 1
+    assert dto["execution"] == {
+        "active_group_count": 0,
+        "active_groups": [],
+        "total_order_count": 2,
+    }
+    assert dto["forecast"]["base_count"] == 1
+    assert dto["forecast"]["calibrated_count"] == 1

@@ -16,6 +16,7 @@ import pytest
 from investment_manager.entrypoints.cli.support import default_web_dist
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard import serializers as ser
+from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
@@ -275,6 +276,56 @@ def test_health_is_unknown_without_data_and_bad_on_mismatch():
     assert bad["overall"] == "bad"
     reconciliation = next(c for c in bad["checks"] if c["key"] == "reconciliation")
     assert reconciliation["state"] == "bad"
+
+
+def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> None:
+    now = datetime(2026, 8, 21, 6, 30, tzinfo=UTC)
+    overview = CapitalOverview(
+        enabled=True,
+        account=SimpleNamespace(
+            as_of=now,
+            equity=Decimal("10000"),
+            cash_balance=Decimal("10000"),
+            settlement_asset="USDT",
+            reconciled=True,
+            kill_switch_active=False,
+            drawdown_fraction=Decimal("0"),
+        ),
+        target=SimpleNamespace(
+            as_of=now,
+            reason_codes=("CASH_SELECTED_NO_ELIGIBLE_FORECAST",),
+        ),
+    )
+    reader = SimpleNamespace(
+        latest_market_observed_at=lambda: now,
+        latest_perpetual_observed_at=lambda: now,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        capital=SimpleNamespace(
+            enabled=True,
+            risk=SimpleNamespace(
+                kill_switch=False,
+                maximum_drawdown_fraction=Decimal("0.2"),
+                maximum_quote_age_seconds=60,
+            ),
+        ),
+        **_health_policy_extras(),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        capital_overview=overview,
+    )
+
+    checks = {item["key"]: item for item in result["checks"]}
+    assert result["overall"] == "ok"
+    assert checks["capital_account"]["state"] == "ok"
+    assert checks["capital_decision"]["state"] == "ok"
+    assert checks["capital_execution"]["state"] == "ok"
+    assert "reconciliation" not in checks
 
 
 def test_health_ages_persisted_freshness_and_uses_real_kill_switch():

@@ -13,7 +13,20 @@ const HINTS: Record<Tab, string> = {
   world: "系统采集到的新闻与行情事件",
 };
 
-export function Timeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
+export function Timeline({
+  onOpenSnapshot,
+  capitalMode = false,
+}: {
+  onOpenSnapshot: (snapshot: Snapshot) => void;
+  capitalMode?: boolean;
+}) {
+  if (capitalMode) {
+    return <WorldOnlyTimeline />;
+  }
+  return <LegacyTimeline onOpenSnapshot={onOpenSnapshot} />;
+}
+
+function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
   const [tab, setTab] = useState<Tab>("actions");
   const cycles = useLive(() => api.cycles(), "cycles");
   const events = useLive(() => api.events(), "events");
@@ -39,6 +52,21 @@ export function Timeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsh
       ) : (
         <WorldFeed events={events?.events ?? []} />
       )}
+    </section>
+  );
+}
+
+function WorldOnlyTimeline() {
+  const events = useLive(() => api.events(), "events");
+  return (
+    <section className={styles.card}>
+      <div className={styles.head}>
+        <div className={styles.tabs} role="tablist">
+          <span className={`${styles.tab} ${styles.on}`}>世界事件</span>
+        </div>
+        <span className={styles.hint}>{HINTS.world}</span>
+      </div>
+      <WorldFeed events={events?.events ?? []} />
     </section>
   );
 }

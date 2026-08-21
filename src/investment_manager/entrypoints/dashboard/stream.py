@@ -10,7 +10,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-FAST_TOPICS = ("health", "positions", "accounts", "resources")
+FAST_TOPICS = ("health", "capital", "positions", "accounts", "resources")
 SLOW_TOPICS = ("cycles", "events", "equity")
 
 

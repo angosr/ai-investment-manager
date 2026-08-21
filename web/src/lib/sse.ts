@@ -5,6 +5,7 @@ type Listener = () => void;
 type StatusListener = (connected: boolean) => void;
 export type RefreshTopic =
   | "health"
+  | "capital"
   | "cycles"
   | "events"
   | "positions"
@@ -84,7 +85,7 @@ function parseTopics(data: string): RefreshTopic[] {
 function isRefreshTopic(value: unknown): value is RefreshTopic {
   return (
     typeof value === "string" &&
-    ["health", "cycles", "events", "positions", "equity", "accounts", "resources"].includes(
+    ["health", "capital", "cycles", "events", "positions", "equity", "accounts", "resources"].includes(
       value,
     )
   );

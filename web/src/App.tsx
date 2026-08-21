@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "./api/client";
 import type { Snapshot } from "./api/types";
 import { Accounts } from "./components/Accounts";
+import { Capital } from "./components/Capital";
 import { EquityHero } from "./components/EquityHero";
 import { Masthead } from "./components/Masthead";
 import { Positions } from "./components/Positions";
@@ -22,17 +23,34 @@ export function App() {
       <div className={styles.wrap}>
         <div className={styles.grid}>
           <main className={styles.main}>
-            <EquityHero />
-            <Timeline onOpenSnapshot={setSnapshot} />
+            {health?.capital_enabled ? (
+              <>
+                <Capital />
+                <Timeline onOpenSnapshot={setSnapshot} capitalMode />
+              </>
+            ) : (
+              <>
+                <EquityHero />
+                <Timeline onOpenSnapshot={setSnapshot} />
+              </>
+            )}
           </main>
           <aside className={styles.side}>
-            <Positions />
-            <Accounts />
+            {!health?.capital_enabled ? (
+              <>
+                <Positions />
+                <Accounts />
+              </>
+            ) : null}
             <Resources />
           </aside>
         </div>
         <footer className={styles.foot}>
-          只读投影 · 指标口径以 <code>OutcomeWindowReport</code> 为准，前端不重算 · 实时经 SSE 推送
+          只读投影 · {health?.capital_enabled ? (
+            <>资本状态以产品账户账本为准，前端不重算</>
+          ) : (
+            <>指标口径以 <code>OutcomeWindowReport</code> 为准，前端不重算</>
+          )} · 实时经 SSE 推送
         </footer>
       </div>
       <SnapshotDrawer snapshot={snapshot} onClose={() => setSnapshot(null)} />

@@ -2,6 +2,7 @@
 
 import type {
   Accounts,
+  CapitalOverview,
   CycleDetail,
   CycleRow,
   Equity,
@@ -21,6 +22,7 @@ async function getJson<T>(path: string): Promise<T> {
 
 export const api = {
   health: () => getJson<Health>("/api/health"),
+  capital: () => getJson<CapitalOverview>("/api/capital"),
   cycles: () => getJson<{ cycles: CycleRow[] }>("/api/cycles"),
   cycle: (id: string) => getJson<CycleDetail>(`/api/cycles/${encodeURIComponent(id)}`),
   events: () => getJson<{ events: WorldEvent[] }>("/api/events"),

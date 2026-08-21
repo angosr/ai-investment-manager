@@ -5,7 +5,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "c5a8e2f7d410"
+DATABASE_SCHEMA_VERSION = "d1a4c7e9b205"
 
 
 def build_engine(database_url: str, *, echo: bool = False) -> Engine:

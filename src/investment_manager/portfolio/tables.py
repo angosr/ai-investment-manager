@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Table,
     UniqueConstraint,
@@ -19,6 +20,7 @@ portfolio_account_snapshots = Table(
     Column("snapshot_id", String(128), primary_key=True),
     Column("cycle_id", String(128), nullable=False),
     Column("portfolio_id", String(64), nullable=False),
+    Column("revision", Integer, nullable=False, default=0, server_default="0"),
     Column("as_of", DateTime(timezone=True), nullable=False),
     Column("observed_at", DateTime(timezone=True), nullable=False),
     Column("snapshot_hash", String(64), nullable=False, unique=True),
@@ -33,6 +35,7 @@ Index(
     "ix_portfolio_account_as_of",
     portfolio_account_snapshots.c.portfolio_id,
     portfolio_account_snapshots.c.as_of,
+    portfolio_account_snapshots.c.revision,
 )
 
 portfolio_targets = Table(

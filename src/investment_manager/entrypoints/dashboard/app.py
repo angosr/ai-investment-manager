@@ -18,6 +18,10 @@ from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
 from investment_manager.entrypoints.dashboard import serializers as ser
+from investment_manager.entrypoints.dashboard.capital import (
+    CapitalDashboardReader,
+    serialize_capital_overview,
+)
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.entrypoints.dashboard.resources import (
@@ -49,6 +53,7 @@ def create_app(
         raise ValueError("Dashboard 慢速刷新倍数必须至少为 1")
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
+    capital_reader = CapitalDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
     temporal_lock = asyncio.Lock()
@@ -90,10 +95,12 @@ def create_app(
         coordinator_facts = await coordinator_statuses()
 
         def read_health() -> dict:
+            capital_overview = capital_reader.overview(now=now)
             return assemble_health(
                 reader,
                 config,
                 now=now,
+                capital_overview=capital_overview,
                 host_resources=sample_host_resources(),
                 coordinator_statuses=coordinator_facts,
             )
@@ -103,10 +110,16 @@ def create_app(
             {
                 "stage": config.deployment.stage,
                 "pipeline_version": config.pipeline.version,
+                "capital_enabled": config.capital.enabled,
                 "server_time": now.isoformat(),
                 **data,
             }
         )
+
+    async def capital(_request: Request) -> JSONResponse:
+        now = datetime.now(UTC)
+        overview = await run_in_threadpool(capital_reader.overview, now=now)
+        return _json(serialize_capital_overview(overview))
 
     async def cycles(request: Request) -> JSONResponse:
         before = _parse_before(request)
@@ -201,6 +214,7 @@ def create_app(
         Route("/api/accounts", accounts),
         Route("/api/resources", resources),
         Route("/api/reconciliation", reconciliation),
+        Route("/api/capital", capital),
         Route("/api/stream", stream),
     ]
     app = Starlette(routes=routes)

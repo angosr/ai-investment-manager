@@ -69,6 +69,8 @@ class PortfolioAccountSnapshot(FrozenModel):
     snapshot_id: str = Field(min_length=1)
     cycle_id: str = Field(min_length=1)
     portfolio_id: str = Field(min_length=1)
+    # Ledger ordering is causal metadata, not part of the economic fact hash.
+    revision: int = Field(default=0, ge=0, exclude=True)
     as_of: datetime
     observed_at: datetime
     settlement_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.read_models import (
     AnalysisRuntimeStatus,
     DashboardReader,
@@ -24,21 +25,33 @@ def assemble_health(
     config,
     *,
     now: datetime,
+    capital_overview: CapitalOverview | None = None,
     host_resources: dict | None = None,
     coordinator_statuses: tuple[dict, ...] | None = None,
 ) -> dict:
-    report = reader.latest_reconciliation(now=now)  # 一次查询，供三项检查复用
     analysis = reader.analysis_runtime_status(now=now)
-    checks = [
-        _reconciliation_check(report, config, now),
-        _freeze_check(report, config, now),
-        _freshness_check(reader, report, config, now),
-        _kill_switch_check(reader, config),
-        _analysis_check(analysis, config, now),
-        _forecast_settlement_check(analysis, now),
-        _trigger_delivery_check(analysis, config, now),
-        _release_alignment_check(analysis),
-    ]
+    if getattr(getattr(config, "capital", None), "enabled", False):
+        checks = [
+            _capital_account_check(capital_overview, config),
+            _capital_freshness_check(reader, capital_overview, config, now),
+            _capital_decision_check(capital_overview, config, now),
+            _capital_execution_check(capital_overview, now),
+            _forecast_settlement_check(analysis, now),
+            _trigger_delivery_check(analysis, config, now),
+            _release_alignment_check(analysis),
+        ]
+    else:
+        report = reader.latest_reconciliation(now=now)  # 一次查询，供三项检查复用
+        checks = [
+            _reconciliation_check(report, config, now),
+            _freeze_check(report, config, now),
+            _freshness_check(reader, report, config, now),
+            _kill_switch_check(reader, config),
+            _analysis_check(analysis, config, now),
+            _forecast_settlement_check(analysis, now),
+            _trigger_delivery_check(analysis, config, now),
+            _release_alignment_check(analysis),
+        ]
     if coordinator_statuses is not None:
         checks.append(_trigger_coordinator_check(coordinator_statuses, now))
     if host_resources is not None:
@@ -54,6 +67,114 @@ def assemble_health(
     else:
         headline = f"{worst['name']}异常"
     return {"overall": overall, "headline": headline, "checks": checks}
+
+
+def _capital_account_check(
+    overview: CapitalOverview | None,
+    config,
+) -> dict:
+    account = overview.account if overview is not None else None
+    if account is None:
+        return _check("capital_account", "资本账户", "unknown", "等待首次账户快照")
+    if not account.reconciled:
+        return _check("capital_account", "资本账户", "bad", "账户未对账")
+    if account.kill_switch_active or config.capital.risk.kill_switch:
+        return _check("capital_account", "资本账户", "bad", "Kill Switch 已触发")
+    if account.drawdown_fraction > config.capital.risk.maximum_drawdown_fraction:
+        return _check(
+            "capital_account",
+            "资本账户",
+            "bad",
+            f"回撤 {account.drawdown_fraction} 超过限制",
+        )
+    return _check(
+        "capital_account",
+        "资本账户",
+        "ok",
+        f"权益 {account.equity} {account.settlement_asset} · 现金 {account.cash_balance}",
+    )
+
+
+def _capital_freshness_check(
+    reader: DashboardReader,
+    overview: CapitalOverview | None,
+    config,
+    now: datetime,
+) -> dict:
+    spot_at = reader.latest_market_observed_at()
+    perpetual_at = reader.latest_perpetual_observed_at()
+    account = overview.account if overview is not None else None
+    if spot_at is None or perpetual_at is None or account is None:
+        return _check("capital_freshness", "资本事实新鲜度", "unknown", "事实尚未齐备")
+    ages = (
+        (now - spot_at).total_seconds(),
+        (now - perpetual_at).total_seconds(),
+        (now - account.as_of).total_seconds(),
+    )
+    account_limit = (
+        config.trigger.heartbeat_minutes * 60
+        + config.shadow.analysis_deadline_seconds
+    )
+    limits = (
+        config.capital.risk.maximum_quote_age_seconds,
+        config.capital.risk.maximum_quote_age_seconds,
+        account_limit,
+    )
+    if any(age < 0 for age in ages):
+        return _check("capital_freshness", "资本事实新鲜度", "bad", "事实时间晚于当前时间")
+    stale = any(age > limit for age, limit in zip(ages, limits, strict=True))
+    return _check(
+        "capital_freshness",
+        "资本事实新鲜度",
+        "bad" if stale else "ok",
+        (
+            f"Spot {int(ages[0])}/{limits[0]} 秒 · "
+            f"Perpetual {int(ages[1])}/{limits[1]} 秒 · "
+            f"账户 {int(ages[2])}/{limits[2]} 秒"
+        ),
+    )
+
+
+def _capital_decision_check(
+    overview: CapitalOverview | None,
+    config,
+    now: datetime,
+) -> dict:
+    target = overview.target if overview is not None else None
+    if target is None:
+        return _check("capital_decision", "资本决策", "unknown", "等待首次决策")
+    age = (now - target.as_of).total_seconds()
+    limit = config.trigger.heartbeat_minutes * 60 + config.shadow.analysis_deadline_seconds
+    if age < 0 or age > limit * 2:
+        return _check("capital_decision", "资本决策", "bad", f"决策已过期（{int(age)} 秒）")
+    reasons = ", ".join(target.reason_codes)
+    return _check(
+        "capital_decision",
+        "资本决策",
+        "ok",
+        reasons,
+    )
+
+
+def _capital_execution_check(
+    overview: CapitalOverview | None,
+    now: datetime,
+) -> dict:
+    groups = overview.active_groups if overview is not None else ()
+    if not groups:
+        orders = overview.total_order_count if overview is not None else 0
+        return _check("capital_execution", "组合执行", "ok", f"无非终态组 · 累计订单 {orders}")
+    overdue = any(
+        (now - item.updated_at).total_seconds() > item.maximum_unhedged_seconds
+        and item.unhedged_notional > 0
+        for item in groups
+    )
+    return _check(
+        "capital_execution",
+        "组合执行",
+        "bad" if overdue else "warn",
+        f"{len(groups)} 个非终态 ExecutionGroup",
+    )
 
 
 def _reconciliation_check(report: ReconciliationReport | None, config, now: datetime) -> dict:

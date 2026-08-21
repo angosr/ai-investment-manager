@@ -12,10 +12,50 @@ export interface HealthCheck {
 export interface Health {
   stage: string;
   pipeline_version: string;
+  capital_enabled: boolean;
   server_time: string;
   overall: CheckState;
   headline: string;
   checks: HealthCheck[];
+}
+
+export interface CapitalOverview {
+  enabled: boolean;
+  entry_window: { start: string | null; end: string | null };
+  account: {
+    as_of: string;
+    cash_balance: string;
+    equity: string;
+    daily_pnl: string;
+    drawdown_fraction: string;
+    reconciled: boolean;
+    kill_switch_active: boolean;
+    positions: { instrument: string; quantity: string; average_price: string }[];
+  } | null;
+  decision: {
+    as_of: string | null;
+    reason_codes: string[];
+    target_sleeve_count: number;
+    risk_outcome: string | null;
+    plan_group_count: number;
+    plan_omission_count: number;
+  };
+  execution: {
+    active_group_count: number;
+    active_groups: {
+      group_id: string;
+      status: string;
+      updated_at: string;
+      unhedged_notional: string;
+    }[];
+    total_order_count: number;
+  };
+  forecast: {
+    base_count: number;
+    calibrated_count: number;
+    latest_available_at: string | null;
+    latest_valid_until: string | null;
+  };
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";
