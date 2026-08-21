@@ -175,6 +175,7 @@ class PacketIntelligenceEvent(FrozenModel):
     observed_at: datetime
     title: str = Field(min_length=1)
     body: str
+    url: str | None = None
     symbols: tuple[str, ...]
     relevance: Decimal
     impact: Decimal
@@ -415,6 +416,7 @@ class DecisionPacketBuilder:
         selected_events, omitted_events = self._select_intelligence_events(
             events=intelligence_events,
             direct_event_refs=direct_event_refs,
+            as_of=state.as_of,
         )
         market_by_symbol = {item.symbol: item for item in markets}
         feature_by_symbol = {item.symbol: item for item in features}
@@ -581,9 +583,22 @@ class DecisionPacketBuilder:
         *,
         events: tuple[IntelligenceEvent, ...],
         direct_event_refs: frozenset[str],
+        as_of: datetime,
     ) -> tuple[tuple[PacketIntelligenceEvent, ...], tuple[str, ...]]:
+        eligible: list[IntelligenceEvent] = []
+        omitted: list[str] = []
+        for event in events:
+            evidence_ref = content_hash(event)
+            age_seconds = (as_of - event.event_time).total_seconds()
+            if (
+                evidence_ref not in direct_event_refs
+                and age_seconds > self._policy.maximum_background_fact_distance_seconds
+            ):
+                omitted.append(evidence_ref)
+                continue
+            eligible.append(event)
         ordered = sorted(
-            events,
+            eligible,
             key=lambda item: (
                 content_hash(item) not in direct_event_refs,
                 -item.impact,
@@ -594,7 +609,6 @@ class DecisionPacketBuilder:
             ),
         )
         selected: list[PacketIntelligenceEvent] = []
-        omitted: list[str] = []
         used_characters = 0
         for event in ordered:
             evidence_ref = content_hash(event)
@@ -628,6 +642,7 @@ class DecisionPacketBuilder:
                     observed_at=event.observed_at,
                     title=title,
                     body=body,
+                    url=event.url,
                     symbols=event.symbols,
                     relevance=event.relevance,
                     impact=event.impact,

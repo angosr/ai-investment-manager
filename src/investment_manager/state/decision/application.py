@@ -71,6 +71,13 @@ class IntelligenceEventReader(Protocol):
         as_of: datetime,
     ) -> tuple[IntelligenceEvent, ...]: ...
 
+    def visible(
+        self,
+        *,
+        symbol: str,
+        as_of: datetime,
+    ) -> tuple[IntelligenceEvent, ...]: ...
+
 
 class DecisionPacketPreparation:
     """Build one portfolio Packet for a material change or explicit Agent review."""
@@ -135,9 +142,31 @@ class DecisionPacketPreparation:
             raise ValueError("review_requests 必须按 review_id 唯一且排序")
         if any(item.requested_at > as_of for item in review_requests):
             raise ValueError("review_requests 不能晚于 DecisionPacket as_of")
-        intelligence_events = self._event_reader.exact(
+        triggered_events = self._event_reader.exact(
             evidence_ids=intelligence_evidence_ids,
             as_of=as_of,
+        )
+        # A trigger explains why analysis runs; it is not the whole world state.
+        # Rebuild a bounded recent context from the reader for every mandate asset,
+        # then let DecisionPacketPolicy rank and cap what reaches the model.  The
+        # exact triggered items are merged back even when a reader's visible limit
+        # would otherwise omit them.
+        visible_by_id: dict[str, IntelligenceEvent] = {
+            event.evidence_id: event
+            for asset in mandate.assets
+            for event in self._event_reader.visible(
+                symbol=asset.market_symbol,
+                as_of=as_of,
+            )
+        }
+        for event in triggered_events:
+            existing = visible_by_id.get(event.evidence_id)
+            if existing is not None and existing != event:
+                raise ValueError("相同 evidence_id 的可见事件内容不一致")
+            visible_by_id[event.evidence_id] = event
+        intelligence_events = tuple(
+            visible_by_id[evidence_id]
+            for evidence_id in sorted(visible_by_id)
         )
         symbol_to_asset = {
             item.market_symbol: item.asset

@@ -429,7 +429,7 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
     assert recovered.packet.trigger_ids == (recovered.delta_id,)
 
 
-def test_packet_preparation_uses_only_exact_triggered_intelligence_event(
+def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_event(
     app_config,
     replay_input,
 ) -> None:
@@ -499,6 +499,15 @@ def test_packet_preparation_uses_only_exact_triggered_intelligence_event(
         novelty="0.9",
     )
     events.put(event)
+    background = event.model_copy(
+        update={
+            "evidence_id": "background-event-1",
+            "event_time": event_at - timedelta(minutes=1),
+            "observed_at": event_at - timedelta(minutes=1),
+            "title": "Earlier Bitcoin ETF flow context",
+        }
+    )
+    events.put(background)
     prepared = preparation.prepare(
         analysis_id="event-triggered",
         as_of=event_at,
@@ -524,6 +533,88 @@ def test_packet_preparation_uses_only_exact_triggered_intelligence_event(
     assert packet_event.prompt_injection_suspected is True
     assert len(packet_event.title) <= 240
     assert replayed.status == PacketPreparationStatus.NO_MATERIAL_DELTA
+
+
+def test_explicit_review_receives_recent_background_intelligence(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    events = InMemoryEventStore()
+    event_at = OBSERVED_AT + timedelta(minutes=1)
+    event = IntelligenceEvent(
+        evidence_id="background-event",
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="test-aggregator-v1",
+        event_time=event_at,
+        observed_at=event_at,
+        source="test:aggregator",
+        title="Treasury buyback size changed",
+        body="Long-end liquidity support operation size increased.",
+        symbols=("BTCUSDT",),
+        relevance="0.9",
+        impact="0.8",
+        source_reliability="0.7",
+        novelty="0.9",
+    )
+    events.put(event)
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        account_reader=_PointInTimeAccountReader(replay_input.account),
+        event_reader=events,
+        facts=SqlFactStateStore(engine),
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-review-context-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-review-context-v1",
+                schema_version="decision-packet-review-context-v1",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        initial_quote_balance=app_config.shadow.initial_quote_balance,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        clock=lambda: event_at,
+    )
+    mandate = AnalysisMandate(
+        version="crypto-review-context-v1",
+        analysis_scope="crypto-portfolio",
+        question="Assess the current portfolio context.",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("EXTERNAL_INFORMATION",),
+    )
+    review = PacketReviewRequest.create(
+        requested_at=event_at,
+        reason="复核当前市场背景",
+    )
+
+    prepared = preparation.prepare(
+        analysis_id="explicit-review-with-context",
+        as_of=event_at,
+        mandate=mandate,
+        review_requests=(review,),
+    )
+
+    assert prepared.status == PacketPreparationStatus.READY
+    assert prepared.packet is not None
+    assert tuple(item.evidence_id for item in prepared.packet.intelligence_events) == (
+        event.evidence_id,
+    )
+    assert prepared.packet.intelligence_events[0].directly_triggered is False
 
 
 def test_packet_preparation_promotes_only_explicit_market_shock(

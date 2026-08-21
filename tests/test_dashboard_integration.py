@@ -317,25 +317,24 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert detail.status_code == 200
     assert detail.json()["cycle_id"] == result.cycle_id
     assert assessment_rows.status_code == 200
-    assert assessment_rows.json()["assessments"][0]["assessment_id"] == (assessment.assessment_id)
+    assert [
+        item["assessment_id"]
+        for item in assessment_rows.json()["assessments"][:2]
+    ] == [bad_assessment.assessment_id, assessment.assessment_id]
     assert assessment_rows.json()["quality"] == {
         "latest_attempt_at": bad_assessment.available_at.isoformat(),
         "latest_attempt_status": "REJECTED",
         "latest_attempt_reason": "SCHEMA_INVALID",
         "latest_valid_at": assessment.available_at.isoformat(),
         "rejected_attempt_count_24h": 1,
-        "invalid_persisted_count_24h": 1,
-        "rejection_reasons": [
-            "输出未通过结构或内容校验",
-            "信息缺口含字段或提示残渣",
-            "核心判断含字段或提示残渣",
-        ],
+        "rejection_reasons": ["输出未通过结构校验"],
     }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
     assert assessment_detail.json()["input_snapshot"] == packet.model_dump(mode="json")
-    assert bad_assessment_detail.status_code == 404
+    assert bad_assessment_detail.status_code == 200
+    assert bad_assessment_detail.json()["mechanism"] == bad_assessment.market_mechanism
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": []}
     assert events.status_code == 200

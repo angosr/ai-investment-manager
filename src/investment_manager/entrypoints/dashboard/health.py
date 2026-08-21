@@ -76,14 +76,13 @@ def assemble_health(
 
 def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
     rejected = status.rejected_attempt_count_24h
-    historical = status.invalid_persisted_count_24h
     latest = status.latest_attempt_status
     if latest in {"REJECTED", "FAILED"}:
         state = "bad" if status.latest_valid_at is None else "warn"
-        detail = "最近一次输出未通过质量门禁"
+        detail = "最近一次模型调用未产生可持久化结果"
         if status.latest_attempt_reason:
             reason = {
-                "SCHEMA_INVALID": "结构或内容校验失败",
+                "SCHEMA_INVALID": "结构校验失败",
             }.get(status.latest_attempt_reason, "运行失败")
             detail += f"：{reason}"
     elif latest == "NO_ATTEMPT":
@@ -95,8 +94,6 @@ def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
     else:
         state = "ok"
         detail = "最近一次输出有效 · 当前行为过去 24 小时无质量拒绝"
-    if historical:
-        detail += f" · 历史记录按当前规则排除 {historical} 条"
     return _check("ai_output_quality", "AI 输出质量", state, detail)
 
 

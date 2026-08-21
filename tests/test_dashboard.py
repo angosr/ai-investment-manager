@@ -133,7 +133,7 @@ def _health_policy_extras() -> dict:
     }
 
 
-def test_health_exposes_current_output_rejection_without_treating_history_as_failure() -> None:
+def test_health_exposes_structural_output_failure_without_reclassifying_history() -> None:
     now = datetime(2026, 8, 21, 14, tzinfo=UTC)
     report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
     reader = SimpleNamespace(
@@ -157,7 +157,6 @@ def test_health_exposes_current_output_rejection_without_treating_history_as_fai
         latest_attempt_reason="SCHEMA_INVALID",
         latest_valid_at=now - timedelta(minutes=5),
         rejected_attempt_count_24h=1,
-        invalid_persisted_count_24h=32,
         rejection_reason_codes=("CODEX_SCHEMA_INVALID",),
     )
 
@@ -173,8 +172,7 @@ def test_health_exposes_current_output_rejection_without_treating_history_as_fai
 
     assert check["state"] == "warn"
     assert check["detail"] == (
-        "最近一次输出未通过质量门禁：结构或内容校验失败"
-        " · 历史记录按当前规则排除 32 条"
+        "最近一次模型调用未产生可持久化结果：结构校验失败"
     )
 
     clean = replace(

@@ -35,6 +35,12 @@ const PRICED: Record<string, string> = {
   UNKNOWN: "计价程度未知",
 };
 
+const DRIVER_STATUS: Record<string, string> = {
+  CONFIRMED: "已确认事实",
+  INFERRED: "有证据推断",
+  UNVERIFIED: "未验证假设",
+};
+
 export function AssessmentRow({ row }: { row: Row }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<AssessmentRecordDetail | null>(null);
@@ -121,6 +127,21 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
           <section>
             <div className={styles.h}>推理依据与传导链</div>
             <p className={styles.thesis}>{detail.mechanism}</p>
+            {detail.drivers.length > 0 ? (
+              <div className={styles.analysisBlock}>
+                <div className={styles.h}>当前关键驱动</div>
+                <ul className={styles.analysisList}>
+                  {detail.drivers.map((driver, index) => (
+                    <li key={`${index}-${driver.statement}`}>
+                      <b>{DRIVER_STATUS[driver.status] ?? driver.status}</b>
+                      {` · ${driver.statement}（${driver.evidence_count} 条证据）`}
+                      <div>{driver.transmission}</div>
+                      <div>证伪：{driver.invalidation_conditions.join("；")}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </section>
           <div>
             {detail.contradictions.length > 0 ? (

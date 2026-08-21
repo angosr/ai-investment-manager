@@ -19,10 +19,6 @@ from investment_manager.execution.reconciliation.engine import ReconciliationRep
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
 from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
-from investment_manager.forecast.context.contract import (
-    assessment_has_clean_chinese,
-    assessment_output_quality_issues,
-)
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
@@ -110,7 +106,6 @@ class AssessmentQualityStatus:
     latest_attempt_reason: str | None
     latest_valid_at: datetime | None
     rejected_attempt_count_24h: int
-    invalid_persisted_count_24h: int
     rejection_reason_codes: tuple[str, ...]
 
 
@@ -252,11 +247,9 @@ class DashboardReader:
         assessments = (
             ContextAssessment.model_validate(payload) for payload in payloads
         )
-        return [
-            AssessmentRecord(assessment=assessment)
-            for assessment in assessments
-            if assessment_has_clean_chinese(assessment)
-        ][:limit]
+        return [AssessmentRecord(assessment=assessment) for assessment in assessments][
+            :limit
+        ]
 
     def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
         with self._engine.connect() as connection:
@@ -286,8 +279,6 @@ class DashboardReader:
                 .all()
             )
         assessment = ContextAssessment.model_validate(row["assessment_payload"])
-        if not assessment_has_clean_chinese(assessment):
-            return None
         return AssessmentRecord(
             assessment=assessment,
             outcomes=tuple(
@@ -346,15 +337,9 @@ class DashboardReader:
             ).all()
 
         latest_valid_at = None
-        persisted_rejected_count = 0
-        persisted_issue_codes: list[str] = []
         for payload, available_at, row_behavior_hash in assessment_rows:
-            assessment = ContextAssessment.model_validate(payload)
-            issues = assessment_output_quality_issues(assessment)
-            if issues:
-                persisted_rejected_count += 1
-                persisted_issue_codes.extend(issues)
-            elif row_behavior_hash == behavior_hash and latest_valid_at is None:
+            ContextAssessment.model_validate(payload)
+            if row_behavior_hash == behavior_hash and latest_valid_at is None:
                 latest_valid_at = database_utc(available_at)
 
         rejected_attempts = [
@@ -363,7 +348,6 @@ class DashboardReader:
         reason_codes = tuple(
             sorted(
                 {
-                    *persisted_issue_codes,
                     *("CODEX_SCHEMA_INVALID" for _ in rejected_attempts),
                 }
             )
@@ -375,7 +359,6 @@ class DashboardReader:
                 latest_attempt_reason=None,
                 latest_valid_at=latest_valid_at,
                 rejected_attempt_count_24h=0,
-                invalid_persisted_count_24h=persisted_rejected_count,
                 rejection_reason_codes=reason_codes,
             )
 
@@ -397,7 +380,6 @@ class DashboardReader:
             ),
             latest_valid_at=latest_valid_at,
             rejected_attempt_count_24h=len(rejected_attempts),
-            invalid_persisted_count_24h=persisted_rejected_count,
             rejection_reason_codes=reason_codes,
         )
 

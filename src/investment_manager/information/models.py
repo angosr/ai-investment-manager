@@ -48,6 +48,7 @@ class IntelligenceEvent(FrozenModel):
     source: str
     title: str
     body: str
+    url: str | None = None
     symbols: tuple[str, ...]
     relevance: UnitInterval
     impact: UnitInterval

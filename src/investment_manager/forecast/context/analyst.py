@@ -45,6 +45,11 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     context_view = definitions["ContextView"]
     views = draft["properties"]["views"]
     evidence_ids = assessment_visible_evidence_ids(packet)
+    driver = definitions["ContextDriver"]
+    driver["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
+    drivers = draft["properties"]["drivers"]
+    drivers["minItems"] = 1
+    drivers["maxItems"] = 8
     branches: list[dict[str, object]] = []
     for required in packet.required_views:
         branch = deepcopy(context_view)

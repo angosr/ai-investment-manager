@@ -46,6 +46,7 @@ class RawIntelligenceItem(FrozenModel):
     title: str = Field(min_length=1, max_length=1_000)
     body: str = Field(default="", max_length=20_000)
     url: str | None = Field(default=None, max_length=2_000)
+    source_reliability: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
     rank: int | None = Field(default=None, ge=0)
 
     _utc_event_time = field_validator("event_time")(require_utc)
@@ -365,7 +366,6 @@ class EventNormalizer:
         version: str = "intelligence-normalizer-v4",
         universe: tuple[str, ...] = ("BTCUSDT", "ETHUSDT"),
         quote_asset: str = "USDT",
-        default_source_reliability: Decimal = Decimal("0.60"),
     ) -> None:
         if not universe or len(set(universe)) != len(universe):
             raise ValueError("事件路由 universe 必须非空且不重复")
@@ -374,7 +374,6 @@ class EventNormalizer:
         self._version = version
         self._universe = universe
         self._quote_asset = quote_asset
-        self._default_source_reliability = default_source_reliability
 
     def normalize(self, item: RawIntelligenceItem) -> IntelligenceEvent | None:
         if item.observed_at < item.event_time:
@@ -423,10 +422,11 @@ class EventNormalizer:
             source=item.source,
             title=item.title,
             body=item.body,
+            url=item.url,
             symbols=symbols,
             relevance=relevance,
             impact=rank_component * relevance,
-            source_reliability=self._default_source_reliability,
+            source_reliability=item.source_reliability,
             novelty=Decimal("1"),
         )
 

@@ -29,7 +29,7 @@ export function LatestAssessment() {
     >
       {quality && quality.latest_attempt_status !== "SUCCEEDED" ? (
         <p className={styles.warning}>
-          最近一次输出未通过质量门禁；下方显示的是最近一次有效判断。
+          最近一次模型调用未产生结构化结果；下方显示上一条已持久化判断。
         </p>
       ) : null}
       {row ? (
@@ -52,7 +52,7 @@ export function LatestAssessment() {
           </div>
         </div>
       ) : (
-        <p className={styles.empty}>尚无符合展示要求的市场判断。</p>
+        <p className={styles.empty}>尚无已持久化的市场判断。</p>
       )}
     </Card>
   );

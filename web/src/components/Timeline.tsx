@@ -114,9 +114,6 @@ function AssessmentQualityLine({ quality }: { quality: AssessmentQuality }) {
     ? `${hhmm(quality.latest_attempt_at)} 最近尝试${status}`
     : `最近尝试${status}`;
   const rejected = `当前行为 24 小时拒绝 ${quality.rejected_attempt_count_24h} 次`;
-  const historical = quality.invalid_persisted_count_24h > 0
-    ? ` · 按当前规则排除历史记录 ${quality.invalid_persisted_count_24h} 条`
-    : "";
   const reasons = quality.rejection_reasons.length > 0
     ? ` · ${quality.rejection_reasons.join("；")}`
     : "";
@@ -125,7 +122,7 @@ function AssessmentQualityLine({ quality }: { quality: AssessmentQuality }) {
   return (
     <div className={`${styles.quality} ${unhealthy ? styles.qualityWarn : ""}`}>
       <b>{latestAttempt}</b>
-      <span>{rejected}{historical}{reasons}</span>
+      <span>{rejected}{reasons}</span>
     </div>
   );
 }

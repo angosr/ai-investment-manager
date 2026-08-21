@@ -22,6 +22,8 @@ from investment_manager.forecast.context.contract import (
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
+    ContextDriver,
+    ContextDriverStatus,
     ContextView,
     DirectionalView,
     PricedState,
@@ -174,6 +176,15 @@ def _assessment_output() -> AssessStructuredOutput:
     return AssessStructuredOutput(
         assessment=ContextAssessmentDraft(
             market_mechanism="监管确定性变化可能改变市场要求的风险溢价。",
+            drivers=(
+                ContextDriver(
+                    statement="监管日程发生了可验证变化。",
+                    status=ContextDriverStatus.CONFIRMED,
+                    transmission="监管确定性可能经由风险溢价影响加密资产估值。",
+                    evidence_ids=("revision-1",),
+                    invalidation_conditions=("官方撤回或修订相关信息",),
+                ),
+            ),
             views=tuple(
                 ContextView(
                     asset=asset,

@@ -229,11 +229,32 @@ def _reference_trade(**updates) -> MarketTrade:
     return MarketTrade(**values)
 
 
+def _driver_payload(**updates) -> dict:
+    values = {
+        "statement": "政策变化正在影响市场对贴现率路径的理解。",
+        "status": "INFERRED",
+        "transmission": "政策信息先改变利率预期，再通过风险溢价影响 BTC 定价。",
+        "evidence_ids": ["delta-1"],
+        "invalidation_conditions": ["利率与风险资产响应不再支持该传导"],
+    }
+    values.update(updates)
+    return values
+
+
 def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
     output = AssessStructuredOutput.model_validate(
         {
             "assessment": {
                 "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
+                "drivers": [
+                    _driver_payload(
+                        evidence_ids=["delta-1", "delta-1"],
+                        invalidation_conditions=[
+                            "利率与风险资产响应不再支持该传导",
+                            "利率与风险资产响应不再支持该传导",
+                        ],
+                    )
+                ],
                 "views": [
                     {
                         "asset": "BTC",
@@ -257,6 +278,7 @@ def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
     view = output.assessment.views[0]
     assert view.evidence_ids == ("delta-1",)
     assert view.invalidation_conditions == ("政策方向发生反转",)
+    assert output.assessment.drivers[0].evidence_ids == ("delta-1",)
     assessment = finalize_context_assessment(
         output=output,
         packet=_packet(),
@@ -281,6 +303,12 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
         {
             "assessment": {
                 "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
+                "drivers": [
+                    _driver_payload(
+                        statement="当前只有价格与政策变化同时可见。",
+                        transmission="两者的因果方向尚未由跨市场响应确认。",
+                    )
+                ],
                 "views": [
                     {
                         "asset": "BTC",
@@ -325,10 +353,11 @@ def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
         "市场偏强，但 market_mechanism希望错误",
     ),
 )
-def test_assessment_output_rejects_non_chinese_or_schema_residue(text: str) -> None:
+def test_language_preference_does_not_reject_structurally_valid_output(text: str) -> None:
     payload = {
         "assessment": {
             "market_mechanism": text,
+            "drivers": [_driver_payload()],
             "views": [
                 {
                     "asset": "BTC",
@@ -345,8 +374,9 @@ def test_assessment_output_rejects_non_chinese_or_schema_residue(text: str) -> N
         }
     }
 
-    with pytest.raises(ValidationError, match=r"中文自然语言|Schema 或提示残片"):
-        AssessStructuredOutput.model_validate(payload)
+    output = AssessStructuredOutput.model_validate(payload)
+
+    assert output.assessment.market_mechanism == text
 
 
 def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:

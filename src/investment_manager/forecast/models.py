@@ -199,6 +199,12 @@ class AssessmentUncertainty(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class ContextDriverStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    INFERRED = "INFERRED"
+    UNVERIFIED = "UNVERIFIED"
+
+
 class ForecastRole(StrEnum):
     PROGRAM_BASE = "PROGRAM_BASE"
     AI_EVENT = "AI_EVENT"
@@ -230,6 +236,26 @@ class ContextView(FrozenModel):
         return self
 
 
+class ContextDriver(FrozenModel):
+    """One decision-relevant driver with an explicit epistemic boundary."""
+
+    statement: str = Field(min_length=1, max_length=600)
+    status: ContextDriverStatus
+    transmission: str = Field(min_length=1, max_length=1_200)
+    evidence_ids: tuple[str, ...] = ()
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def evidence_and_invalidation_must_be_unambiguous(self):
+        if self.status != ContextDriverStatus.UNVERIFIED and not self.evidence_ids:
+            raise ValueError("已确认事实或有证据推断必须引用证据")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("ContextDriver 不能重复引用证据")
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
+            raise ValueError("ContextDriver 不能重复失效条件")
+        return self
+
+
 class ContextAssessment(FrozenModel):
     assessment_id: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
@@ -240,6 +266,9 @@ class ContextAssessment(FrozenModel):
     decision_packet_hash: str = Field(pattern=SHA256_PATTERN)
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     market_mechanism: str = Field(min_length=1, max_length=2_000)
+    # Empty only preserves readability of immutable outputs produced before the
+    # reasoned-driver contract. New drafts require at least one driver.
+    drivers: tuple[ContextDriver, ...] = ()
     views: tuple[ContextView, ...] = Field(min_length=1)
     contradictions: tuple[str, ...] = ()
     data_gaps: tuple[str, ...] = ()
