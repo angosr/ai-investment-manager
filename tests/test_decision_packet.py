@@ -1141,6 +1141,93 @@ def test_finalize_assessment_accepts_confirmed_exchange_observation(
     assert assessment.drivers[0].status == ContextDriverStatus.CONFIRMED
 
 
+def test_packet_allows_independent_spot_and_perpetual_observation_times(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    derivative = PacketDerivativeState(
+        evidence_ref="f" * 64,
+        asset="BTC",
+        market_symbol="BTCUSDT",
+        observed_at=packet.as_of - timedelta(seconds=5),
+        mark_index_premium_bps=Decimal("1.2"),
+        executable_short_basis_bps=Decimal("0.8"),
+        perpetual_spread_bps=Decimal("0.4"),
+        last_funding_rate_bps=Decimal("0.1"),
+        trailing_funding_rate_mean_bps=None,
+        trailing_funding_rate_sum_bps=None,
+        funding_settlement_count=0,
+        funding_window_hours=24,
+        next_funding_time=packet.as_of + timedelta(hours=4),
+        spot_flow_observed_at=packet.as_of,
+        spot_flow_window_minutes=10,
+        spot_taker_buy_sell_ratio=Decimal("1.1"),
+        spot_taker_buy_volume=Decimal("10"),
+        spot_taker_sell_volume=Decimal("9"),
+    )
+    payload = {
+        name: getattr(packet, name)
+        for name in packet.__class__.model_fields
+        if name not in {"packet_id", "content_hash"}
+    }
+    payload["derivative_states"] = (
+        derivative,
+        derivative.model_copy(
+            update={
+                "evidence_ref": "e" * 64,
+                "asset": "ETH",
+                "market_symbol": "ETHUSDT",
+            }
+        ),
+    )
+
+    rebuilt = DecisionPacket.create(**payload)
+
+    assert rebuilt.derivative_states[0].spot_flow_observed_at == packet.as_of
+
+
+def test_packet_rejects_future_spot_flow_observation(app_config, replay_input) -> None:
+    _, packet = _packet(app_config, replay_input)
+    derivative = PacketDerivativeState(
+        evidence_ref="f" * 64,
+        asset="BTC",
+        market_symbol="BTCUSDT",
+        observed_at=packet.as_of,
+        mark_index_premium_bps=Decimal("1.2"),
+        executable_short_basis_bps=Decimal("0.8"),
+        perpetual_spread_bps=Decimal("0.4"),
+        last_funding_rate_bps=Decimal("0.1"),
+        trailing_funding_rate_mean_bps=None,
+        trailing_funding_rate_sum_bps=None,
+        funding_settlement_count=0,
+        funding_window_hours=24,
+        next_funding_time=packet.as_of + timedelta(hours=4),
+        spot_flow_observed_at=packet.as_of + timedelta(seconds=1),
+        spot_flow_window_minutes=10,
+        spot_taker_buy_sell_ratio=Decimal("1.1"),
+        spot_taker_buy_volume=Decimal("10"),
+        spot_taker_sell_volume=Decimal("9"),
+    )
+    payload = {
+        name: getattr(packet, name)
+        for name in packet.__class__.model_fields
+        if name not in {"packet_id", "content_hash"}
+    }
+    payload["derivative_states"] = (
+        derivative,
+        derivative.model_copy(
+            update={
+                "evidence_ref": "e" * 64,
+                "asset": "ETH",
+                "market_symbol": "ETHUSDT",
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="不能晚于 as_of"):
+        DecisionPacket.create(**payload)
+
+
 def test_finalize_assessment_rejects_derivative_only_direction(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     evidence_ref = "f" * 64

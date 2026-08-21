@@ -295,8 +295,6 @@ class PacketDerivativeState(FrozenModel):
             value is not None for value in spot_values
         ):
             raise ValueError("决策包现货主动成交摘要必须完整或全部缺省")
-        if self.spot_flow_observed_at is not None and self.spot_flow_observed_at > self.observed_at:
-            raise ValueError("决策包现货主动成交摘要不能晚于市场观察时间")
         values = (
             self.positioning_observed_at,
             self.positioning_window_minutes,
@@ -313,11 +311,6 @@ class PacketDerivativeState(FrozenModel):
             value is not None for value in values
         ):
             raise ValueError("决策包衍生品仓位摘要必须完整或全部缺省")
-        if (
-            self.positioning_observed_at is not None
-            and self.positioning_observed_at > self.observed_at
-        ):
-            raise ValueError("决策包仓位摘要不能晚于衍生品观察时间")
         return self
 
 
@@ -604,6 +597,17 @@ class DecisionPacket(FrozenModel):
             raise ValueError("DecisionPacket derivative_states 必须按资产唯一且排序")
         if self.derivative_states and set(derivative_keys) != set(asset_keys):
             raise ValueError("DecisionPacket derivative_states 与 asset_states 不一致")
+        for derivative in self.derivative_states:
+            observation_times = (
+                derivative.observed_at,
+                derivative.spot_flow_observed_at,
+                derivative.positioning_observed_at,
+            )
+            if any(
+                observed_at is not None and observed_at > self.as_of
+                for observed_at in observation_times
+            ):
+                raise ValueError("DecisionPacket 衍生品或成交摘要不能晚于 as_of")
         revision_ids = tuple(item.revision_id for item in self.facts)
         if len(set(revision_ids)) != len(revision_ids):
             raise ValueError("DecisionPacket facts revision_id 不得重复")
