@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -42,6 +43,11 @@ _LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS = {
     "decision-packet-v2",
     "decision-packet-v3",
 }
+PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
+PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
+PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS = 500
+PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS = 200
+PREVIOUS_CONTEXT_LIST_ITEMS = 3
 
 
 class DecisionPacketCapacityError(ValueError):
@@ -238,6 +244,58 @@ class PacketReviewRequest(FrozenModel):
         return self
 
 
+class PacketPreviousDriver(FrozenModel):
+    statement: str = Field(
+        min_length=1,
+        max_length=PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
+    )
+    status: Literal["CONFIRMED", "INFERRED", "UNVERIFIED"]
+    transmission: str = Field(
+        min_length=1,
+        max_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+    )
+    invalidation_condition: str = Field(
+        min_length=1,
+        max_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+    )
+
+
+class PacketPreviousView(FrozenModel):
+    asset: str = Field(min_length=1)
+    horizon_minutes: int = Field(gt=0)
+    direction: Literal["UP", "DOWN", "UNCERTAIN"]
+    already_priced: Literal["NOT_PRICED", "PARTIAL", "MOSTLY_PRICED", "UNKNOWN"]
+    uncertainty: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
+
+
+class PacketPreviousContext(FrozenModel):
+    """Latest inherited world model; derived evidence, never a first-party fact."""
+
+    assessment_id: str = Field(min_length=1)
+    as_of: datetime
+    available_at: datetime
+    market_mechanism: str = Field(
+        min_length=1,
+        max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
+    )
+    drivers: tuple[PacketPreviousDriver, ...] = Field(max_length=8)
+    views: tuple[PacketPreviousView, ...]
+    contradictions: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
+    data_gaps: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_available_at = field_validator("available_at")(require_utc)
+
+    @model_validator(mode="after")
+    def timeline_and_views_are_consistent(self):
+        if self.available_at < self.as_of:
+            raise ValueError("上一轮世界认知的可用时间不能早于分析时点")
+        keys = tuple((item.asset, item.horizon_minutes) for item in self.views)
+        if tuple(sorted(set(keys))) != keys:
+            raise ValueError("上一轮世界认知 views 必须唯一且排序")
+        return self
+
+
 class DecisionPacket(FrozenModel):
     packet_id: str
     schema_version: str
@@ -257,6 +315,7 @@ class DecisionPacket(FrozenModel):
     intelligence_events: tuple[PacketIntelligenceEvent, ...] = ()
     active_hypotheses: tuple[str, ...]
     previous_assessment_refs: tuple[str, ...]
+    previous_context: PacketPreviousContext | None = None
     data_quality_codes: tuple[str, ...]
     coverage_gap_codes: tuple[str, ...]
     missing_fact_revision_ids: tuple[str, ...]
@@ -342,6 +401,8 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         and not packet.review_requests
     ):
         payload.pop("review_requests", None)
+    if packet.schema_version != "decision-packet-v6" and packet.previous_context is None:
+        payload.pop("previous_context", None)
     return content_hash(payload)
 
 
@@ -370,6 +431,7 @@ class DecisionPacketBuilder:
         features: tuple[FeatureSnapshot, ...],
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
+        previous_context: PacketPreviousContext | None = None,
     ) -> DecisionPacket:
         ordered_deltas = tuple(
             sorted(deltas, key=lambda item: (item.observed_at, item.delta_id))
@@ -455,6 +517,7 @@ class DecisionPacketBuilder:
             "intelligence_events": selected_events,
             "active_hypotheses": active_hypotheses,
             "previous_assessment_refs": previous_assessment_refs,
+            "previous_context": self._compact_previous_context(previous_context),
             "data_quality_codes": state.data_quality_codes,
             "coverage_gap_codes": state.coverage_gap_codes,
             "missing_fact_revision_ids": missing_fact_ids,
@@ -654,6 +717,20 @@ class DecisionPacketBuilder:
             )
             used_characters += character_cost
         return tuple(selected), tuple(sorted(omitted))
+
+    def _compact_previous_context(
+        self,
+        context: PacketPreviousContext | None,
+    ) -> PacketPreviousContext | None:
+        if context is None:
+            return None
+        return context.model_copy(
+            update={
+                "drivers": context.drivers[
+                    : self._policy.maximum_previous_context_drivers
+                ],
+            }
+        )
 
     def _select_facts(
         self,

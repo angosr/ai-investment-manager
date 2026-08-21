@@ -188,6 +188,27 @@ export interface AssessmentInputSnapshot {
     directly_triggered: boolean;
   }[];
   active_hypotheses: string[];
+  previous_context: {
+    assessment_id: string;
+    as_of: string;
+    available_at: string;
+    market_mechanism: string;
+    drivers: {
+      statement: string;
+      status: "CONFIRMED" | "INFERRED" | "UNVERIFIED";
+      transmission: string;
+      invalidation_condition: string;
+    }[];
+    views: {
+      asset: string;
+      horizon_minutes: number;
+      direction: "UP" | "DOWN" | "UNCERTAIN";
+      already_priced: "NOT_PRICED" | "PARTIAL" | "MOSTLY_PRICED" | "UNKNOWN";
+      uncertainty: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
+    }[];
+    contradictions: string[];
+    data_gaps: string[];
+  } | null;
   data_quality_codes: string[];
   coverage_gap_codes: string[];
 }

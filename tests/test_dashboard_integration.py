@@ -327,7 +327,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         "latest_attempt_reason": "SCHEMA_INVALID",
         "latest_valid_at": assessment.available_at.isoformat(),
         "rejected_attempt_count_24h": 1,
-        "rejection_reasons": ["输出未通过结构校验"],
+        "rejection_reasons": ["输出未通过分析契约"],
     }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"

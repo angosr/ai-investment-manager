@@ -31,6 +31,7 @@ class DecisionPacketPolicy(FrozenModel):
     )
     maximum_packet_characters: int = Field(default=12_000, ge=2_000, le=16_000)
     maximum_active_hypotheses: int = Field(default=5, ge=0, le=20)
+    maximum_previous_context_drivers: int = Field(default=3, ge=0, le=8)
 
 
 class PanelPolicy(StrictConfig):

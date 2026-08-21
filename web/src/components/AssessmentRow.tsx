@@ -238,6 +238,18 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           (event) => `${event.source} · ${event.title}${event.body ? ` — ${event.body}` : ""}`,
         )}
       />
+      {snapshot.previous_context ? (
+        <SnapshotSection title="继承的上一轮世界认知">
+          <div className={styles.marketSnapshot}>
+            <b>{snapshot.previous_context.market_mechanism}</b>
+            {snapshot.previous_context.drivers.map((driver) => (
+              <span key={`${driver.status}-${driver.statement}`}>
+                {DRIVER_STATUS[driver.status] ?? driver.status} · {driver.statement} → {driver.transmission}
+              </span>
+            ))}
+          </div>
+        </SnapshotSection>
+      ) : null}
       <SnapshotList title="活跃假设" empty="没有活跃假设" items={snapshot.active_hypotheses} />
       <SnapshotList title="数据质量" empty="没有质量告警" items={snapshot.data_quality_codes} />
       <SnapshotList title="覆盖缺口" empty="没有已知覆盖缺口" items={snapshot.coverage_gap_codes} />

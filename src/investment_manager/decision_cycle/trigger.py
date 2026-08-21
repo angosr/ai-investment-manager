@@ -15,6 +15,7 @@ from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
     AssessmentWorkflowRequest,
 )
+from investment_manager.forecast.models import ContextAssessment
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -32,7 +33,18 @@ from investment_manager.state.decision.application import (
     DecisionPacketPreparationError,
     PacketPreparationStatus,
 )
-from investment_manager.state.decision.packet import PacketReviewRequest
+from investment_manager.state.decision.packet import (
+    PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+    PREVIOUS_CONTEXT_LIST_ITEMS,
+    PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
+    PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
+    PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+    PacketPreviousContext,
+    PacketPreviousDriver,
+    PacketPreviousView,
+    PacketReviewRequest,
+)
+from investment_manager.state.panel import sanitize_external_text
 
 
 class TriggerBatchRecorder(Protocol):
@@ -54,6 +66,15 @@ class ProgramBatchConsumer(Protocol):
     def consume(self, batch: TriggerBatch) -> object: ...
 
 
+class AssessmentHistoryReader(Protocol):
+    def latest_before(
+        self,
+        *,
+        analysis_scope: str,
+        as_of: datetime,
+    ) -> ContextAssessment | None: ...
+
+
 class AnalysisCallDeferred(Exception):
     def __init__(self, retry_at: datetime) -> None:
         self.retry_at = require_utc(retry_at)
@@ -68,6 +89,7 @@ class TriggerDispatchBuilder:
         *,
         config: AppConfig,
         packet_preparation: DecisionPacketPreparation | None = None,
+        assessment_history: AssessmentHistoryReader | None = None,
         batch_recorder: TriggerBatchRecorder | None = None,
         program_forecast_producers: tuple[ProgramForecastProducer, ...] = (),
         program_batch_consumers: tuple[ProgramBatchConsumer, ...] = (),
@@ -77,8 +99,11 @@ class TriggerDispatchBuilder:
             raise ValueError("Trigger 分析构建器只允许在 SHADOW 或 TESTNET 阶段启动")
         if config.assessment.enabled and packet_preparation is None:
             raise ValueError("启用 ContextAssessment 时必须装配 DecisionPacket preparation")
+        if config.assessment.enabled and assessment_history is None:
+            raise ValueError("启用 ContextAssessment 时必须装配上一轮认知读取器")
         self._config = config
         self._packet_preparation = packet_preparation
+        self._assessment_history = assessment_history
         self._batch_recorder = batch_recorder
         self._program_forecast_producers = program_forecast_producers
         self._program_batch_consumers = program_batch_consumers
@@ -121,6 +146,11 @@ class TriggerDispatchBuilder:
         dispatches: list[AnalysisDispatchRequest] = []
         if self._config.assessment.enabled:
             assert self._packet_preparation is not None
+            assert self._assessment_history is not None
+            previous = self._assessment_history.latest_before(
+                analysis_scope=self._config.assessment.mandate.analysis_scope,
+                as_of=as_of,
+            )
             prepared = self._packet_preparation.prepare(
                 analysis_id=stable_id("assessment_input", batch.batch_id),
                 as_of=as_of,
@@ -128,6 +158,7 @@ class TriggerDispatchBuilder:
                 intelligence_evidence_ids=intelligence_evidence_ids,
                 market_shock_symbols=market_shock_symbols,
                 review_requests=review_requests,
+                previous_context=_previous_context(previous),
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None
@@ -164,6 +195,64 @@ class TriggerDispatchBuilder:
                 raise AnalysisCallDeferred(admission.retry_at)
             self._batch_recorder.record_batch(batch, analysis_submitted_at=submitted_at)
         return tuple(dispatches)
+
+
+def _previous_context(
+    assessment: ContextAssessment | None,
+) -> PacketPreviousContext | None:
+    if assessment is None:
+        return None
+    return PacketPreviousContext(
+        assessment_id=assessment.assessment_id,
+        as_of=assessment.as_of,
+        available_at=assessment.available_at,
+        market_mechanism=sanitize_external_text(
+            assessment.market_mechanism,
+            maximum_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
+        )[0],
+        drivers=tuple(
+            PacketPreviousDriver(
+                statement=sanitize_external_text(
+                    item.statement,
+                    maximum_length=PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
+                )[0],
+                status=item.status.value,
+                transmission=sanitize_external_text(
+                    item.transmission,
+                    maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+                )[0],
+                invalidation_condition=sanitize_external_text(
+                    item.invalidation_conditions[0],
+                    maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                )[0],
+            )
+            for item in assessment.drivers
+        ),
+        views=tuple(
+            PacketPreviousView(
+                asset=item.asset,
+                horizon_minutes=item.horizon_minutes,
+                direction=item.direction.value,
+                already_priced=item.already_priced.value,
+                uncertainty=item.uncertainty.value,
+            )
+            for item in assessment.views
+        ),
+        contradictions=tuple(
+            sanitize_external_text(
+                item,
+                maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+            )[0]
+            for item in assessment.contradictions[:PREVIOUS_CONTEXT_LIST_ITEMS]
+        ),
+        data_gaps=tuple(
+            sanitize_external_text(
+                item,
+                maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+            )[0]
+            for item in assessment.data_gaps[:PREVIOUS_CONTEXT_LIST_ITEMS]
+        ),
+    )
 
 
 @dataclass(slots=True)

@@ -82,7 +82,7 @@ def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
         detail = "最近一次模型调用未产生可持久化结果"
         if status.latest_attempt_reason:
             reason = {
-                "SCHEMA_INVALID": "结构校验失败",
+                "SCHEMA_INVALID": "分析契约未通过",
             }.get(status.latest_attempt_reason, "运行失败")
             detail += f"：{reason}"
     elif latest == "NO_ATTEMPT":

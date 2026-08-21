@@ -14,6 +14,7 @@ from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
     DecisionPacketBuilder,
+    PacketPreviousContext,
     PacketReviewRequest,
     VisibleFact,
 )
@@ -60,6 +61,7 @@ class SqlDecisionPacketAssembler:
         review_requests: tuple[PacketReviewRequest, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
+        previous_context: PacketPreviousContext | None = None,
     ) -> DecisionPacket:
         if len(set(delta_ids)) != len(delta_ids):
             raise ValueError("DecisionPacket delta_ids 不得重复")
@@ -84,6 +86,7 @@ class SqlDecisionPacketAssembler:
             features=features,
             active_hypotheses=active_hypotheses,
             previous_assessment_refs=previous_assessment_refs,
+            previous_context=previous_context,
         )
 
     def _load_deltas(self, delta_ids: tuple[str, ...]) -> tuple[MaterialDelta, ...]:

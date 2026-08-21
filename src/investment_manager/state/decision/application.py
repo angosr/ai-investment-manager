@@ -17,6 +17,7 @@ from investment_manager.market.repository import MarketDataStore
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
+    PacketPreviousContext,
     PacketReviewRequest,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
@@ -128,6 +129,7 @@ class DecisionPacketPreparation:
         review_requests: tuple[PacketReviewRequest, ...] = (),
         active_hypotheses: tuple[str, ...] = (),
         previous_assessment_refs: tuple[str, ...] = (),
+        previous_context: PacketPreviousContext | None = None,
     ) -> DecisionPacketPreparationResult:
         if not analysis_id:
             raise ValueError("DecisionPacket analysis_id 不能为空")
@@ -269,6 +271,7 @@ class DecisionPacketPreparation:
                 review_requests=review_requests,
                 active_hypotheses=active_hypotheses,
                 previous_assessment_refs=previous_assessment_refs,
+                previous_context=previous_context,
             )
         except ValueError as exc:
             # Projection persists State/Delta before Packet assembly. Callers must

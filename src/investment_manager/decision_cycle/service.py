@@ -12,6 +12,7 @@ from investment_manager.decision_cycle.trigger import (
     TriggerDispatchBuilder,
 )
 from investment_manager.forecast.carry import CarryForecastProducer
+from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.evaluation.capital import (
     validate_capital_shadow_evaluation_plan,
@@ -82,6 +83,11 @@ def run_trigger_service(
                 config=config,
                 packet_preparation=(
                     assemble_decision_packet_preparation(config, engine)
+                    if config.assessment.enabled
+                    else None
+                ),
+                assessment_history=(
+                    SqlContextAssessmentStore(engine)
                     if config.assessment.enabled
                     else None
                 ),

@@ -70,6 +70,11 @@ class RecordingForecastProducer:
         return None
 
 
+class EmptyAssessmentHistory:
+    def latest_before(self, *, analysis_scope, as_of):
+        return None
+
+
 class RecordingBatchConsumer:
     def __init__(self) -> None:
         self.batch = None
@@ -190,6 +195,7 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
     TriggerDispatchBuilder(
         config=config,
         packet_preparation=preparation,
+        assessment_history=EmptyAssessmentHistory(),
     ).build(
         build_trigger_batch(
             plan=plan,
@@ -233,6 +239,7 @@ def test_trigger_builder_preserves_agent_review_reason(app_config) -> None:
     TriggerDispatchBuilder(
         config=config,
         packet_preparation=preparation,
+        assessment_history=EmptyAssessmentHistory(),
     ).build(
         build_trigger_batch(
             plan=plan,

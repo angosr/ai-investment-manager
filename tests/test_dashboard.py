@@ -172,7 +172,7 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
 
     assert check["state"] == "warn"
     assert check["detail"] == (
-        "最近一次模型调用未产生可持久化结果：结构校验失败"
+        "最近一次模型调用未产生可持久化结果：分析契约未通过"
     )
 
     clean = replace(

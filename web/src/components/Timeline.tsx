@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Snapshot } from "../api/types";
 import type { AssessmentQuality } from "../api/types";
-import { useLive } from "../hooks";
+import { useLive, usePagedLive } from "../hooks";
+import type { PagedLive } from "../hooks";
 import { hhmm } from "../lib/format";
 import { CycleRow } from "./CycleRow";
 import { CapitalDecisionFeed } from "./CapitalActions";
@@ -15,7 +16,7 @@ type Tab = "actions" | "analysis" | "world";
 const HINTS: Record<Tab, string> = {
   actions: "只突出资金、仓位或风险变化；重复例行检查自动归并",
   analysis: "AI 只提供风险与方向判断，不直接下单",
-  world: "系统采集到的新闻与行情事件",
+  world: "按发生时间浏览永久事件档案；是否进入世界认知以分析快照中的证据引用为准",
 };
 
 export function Timeline({
@@ -33,29 +34,41 @@ export function Timeline({
 
 function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
   const [tab, setTab] = useState<Tab>("actions");
-  const cycles = useLive(() => api.cycles(), "cycles");
-  const events = useLive(() => api.events(), "events");
+  const cycles = usePagedLive(
+    async (before) => (await api.cycles(before)).cycles,
+    "cycles",
+    (item) => item.at,
+  );
+  const events = usePagedLive(
+    async (before) => (await api.events(before)).events,
+    "events",
+    (item) => item.at,
+  );
 
   return (
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="决策与行动" count={cycles?.cycles.length} onPick={setTab} />
-          <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
+          <Tab id="actions" active={tab} label="决策与行动" onPick={setTab} />
+          <Tab id="world" active={tab} label="世界事件" onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
       {tab === "actions" ? (
         <div>
-          {(cycles?.cycles ?? []).map((row) => (
+          {cycles.items.map((row) => (
             <CycleRow key={row.cycle_id} row={row} onOpenSnapshot={onOpenSnapshot} />
           ))}
-          {cycles && cycles.cycles.length === 0 ? (
+          {cycles.items.length === 0 ? (
             <p className={styles.empty}>暂无决策记录。</p>
           ) : null}
+          <Pager feed={cycles} />
         </div>
       ) : (
-        <WorldFeed events={events?.events ?? []} />
+        <div>
+          <WorldFeed events={events.items} />
+          <Pager feed={events} />
+        </div>
       )}
     </section>
   );
@@ -63,43 +76,74 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
 
 function CapitalTimeline() {
   const [tab, setTab] = useState<Tab>("actions");
-  const actions = useLive(() => api.capitalActivity(), "cycles");
-  const assessmentRecords = useLive(() => api.assessmentRecords(), "cycles");
-  const events = useLive(() => api.events(), "events");
-  const capitalActions = actions?.actions ?? [];
+  const actions = usePagedLive(
+    async (before) => (await api.capitalActivity(before)).actions,
+    "cycles",
+    (item) => item.at,
+  );
+  const assessmentRecords = usePagedLive(
+    async (before) => (await api.assessmentRecords(before)).assessments,
+    "cycles",
+    (item) => item.at,
+  );
+  const assessmentStatus = useLive(() => api.latestAssessment(), "cycles");
+  const events = usePagedLive(
+    async (before) => (await api.events(before)).events,
+    "events",
+    (item) => item.at,
+  );
+  const capitalActions = actions.items;
   return (
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
           <Tab id="actions" active={tab} label="资金决策" onPick={setTab} />
-          <Tab id="analysis" active={tab} label="AI" count={assessmentRecords?.assessments.length} onPick={setTab} />
-          <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
+          <Tab id="analysis" active={tab} label="AI" onPick={setTab} />
+          <Tab id="world" active={tab} label="世界事件" onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
       {tab === "actions" ? (
         <div>
           <CapitalDecisionFeed actions={capitalActions} />
-          {actions && capitalActions.length === 0 ? (
+          {capitalActions.length === 0 ? (
             <p className={styles.empty}>尚无决策与行动记录。</p>
           ) : null}
+          <Pager feed={actions} />
         </div>
       ) : tab === "analysis" ? (
         <div>
-          {assessmentRecords?.quality ? (
-            <AssessmentQualityLine quality={assessmentRecords.quality} />
+          {assessmentStatus?.quality ? (
+            <AssessmentQualityLine quality={assessmentStatus.quality} />
           ) : null}
-          {(assessmentRecords?.assessments ?? []).map((row) => (
+          {assessmentRecords.items.map((row) => (
             <AssessmentRow key={row.assessment_id} row={row} />
           ))}
-          {assessmentRecords && assessmentRecords.assessments.length === 0 ? (
+          {assessmentRecords.items.length === 0 ? (
             <p className={styles.empty}>尚无 AI 判断。</p>
           ) : null}
+          <Pager feed={assessmentRecords} />
         </div>
       ) : (
-        <WorldFeed events={events?.events ?? []} />
+        <div>
+          <WorldFeed events={events.items} />
+          <Pager feed={events} />
+        </div>
       )}
     </section>
+  );
+}
+
+function Pager<T>({ feed }: { feed: PagedLive<T> }) {
+  if (!feed.hasPrevious && !feed.hasNext) return null;
+  return (
+    <nav className={styles.pager} aria-label="历史记录分页">
+      <button disabled={!feed.hasPrevious || feed.loading} onClick={feed.previous}>较新一页</button>
+      <span>第 {feed.page + 1} 页</span>
+      <button disabled={!feed.hasNext || feed.loading} onClick={feed.next}>
+        {feed.loading ? "载入中…" : "更早一页"}
+      </button>
+    </nav>
   );
 }
 

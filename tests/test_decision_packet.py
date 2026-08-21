@@ -38,6 +38,9 @@ from investment_manager.state.decision.packet import (
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
     MandateAsset,
+    PacketPreviousContext,
+    PacketPreviousDriver,
+    PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
 )
@@ -141,7 +144,7 @@ def _delta(as_of, *, delta_id: str = "delta-1", seconds: int = 0) -> MaterialDel
     )
 
 
-def _packet(app_config, replay_input):
+def _packet(app_config, replay_input, *, previous_context=None):
     market_btc = replay_input.market
     market_eth = replay_input.market.model_copy(update={"symbol": "ETHUSDT"})
     feature_btc = FeatureEngine(app_config.feature).compute(market_btc)
@@ -168,8 +171,74 @@ def _packet(app_config, replay_input):
         account=replay_input.account,
         markets=(market_eth, market_btc),
         features=(feature_eth, feature_btc),
+        previous_context=previous_context,
     )
     return builder, packet
+
+
+def test_packet_carries_latest_world_model_as_derived_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    previous = PacketPreviousContext(
+        assessment_id="assessment-prior-1",
+        as_of=replay_input.market.as_of - timedelta(hours=1),
+        available_at=replay_input.market.as_of - timedelta(minutes=59),
+        market_mechanism="财政流动性变化先影响长端利率，再改变风险资产贴现率。",
+        drivers=(
+            PacketPreviousDriver(
+                statement="长端流动性支持正在改变期限溢价预期。",
+                status="INFERRED",
+                transmission="期限溢价下降会缓解风险资产估值压力。",
+                invalidation_condition="长端收益率持续上行且流动性指标恶化",
+            ),
+        ),
+        views=tuple(
+            PacketPreviousView(
+                asset=asset,
+                horizon_minutes=horizon,
+                direction="UNCERTAIN",
+                already_priced="UNKNOWN",
+                uncertainty="HIGH",
+            )
+            for asset in ("BTC", "ETH")
+            for horizon in (60, 240)
+        ),
+        contradictions=(),
+        data_gaps=("缺少结构化 ETF 资金流",),
+    )
+
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+
+    assert packet.previous_context == previous
+    prompt = build_assess_prompt(packet)
+    assert previous.assessment_id in prompt
+    assert "上一轮仍可追溯的世界模型" in prompt
+
+    inherited_only = _assessment_output()
+    inherited_only = inherited_only.model_copy(
+        update={
+            "assessment": inherited_only.assessment.model_copy(
+                update={
+                    "drivers": (
+                        inherited_only.assessment.drivers[0].model_copy(
+                            update={
+                                "status": ContextDriverStatus.INFERRED,
+                                "evidence_ids": (previous.assessment_id,),
+                            }
+                        ),
+                    )
+                }
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="不能单独证明"):
+        finalize_context_assessment(
+            output=inherited_only,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
 
 
 def _assessment_output() -> AssessStructuredOutput:
@@ -894,6 +963,20 @@ def test_context_assessment_store_is_immutable_and_idempotent(app_config, replay
     assert store.record_assessment(packet.packet_id, assessment) == assessment
     assert store.packet(packet.packet_id) == packet
     assert store.assessment(assessment.assessment_id) == assessment
+    assert (
+        store.latest_before(
+            analysis_scope=assessment.analysis_scope,
+            as_of=assessment.available_at - timedelta(microseconds=1),
+        )
+        is None
+    )
+    assert (
+        store.latest_before(
+            analysis_scope=assessment.analysis_scope,
+            as_of=assessment.available_at,
+        )
+        == assessment
+    )
     assert (
         store.assessment_for(
             packet_id=packet.packet_id,

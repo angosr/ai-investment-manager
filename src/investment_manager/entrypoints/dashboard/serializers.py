@@ -124,7 +124,7 @@ def assessment_detail(record: AssessmentRecord) -> dict:
 
 def assessment_quality(status: AssessmentQualityStatus) -> dict:
     labels = {
-        "CODEX_SCHEMA_INVALID": "输出未通过结构校验",
+        "CODEX_SCHEMA_INVALID": "输出未通过分析契约",
     }
     return {
         "latest_attempt_at": fmt.iso(status.latest_attempt_at),

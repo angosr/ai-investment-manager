@@ -18,10 +18,7 @@ from investment_manager.forecast.context.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
-from investment_manager.forecast.context.contract import (
-    AssessStructuredOutput,
-    finalize_context_assessment,
-)
+from investment_manager.forecast.context.contract import AssessStructuredOutput
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
@@ -241,107 +238,71 @@ def _driver_payload(**updates) -> dict:
     return values
 
 
-def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
-    output = AssessStructuredOutput.model_validate(
-        {
-            "assessment": {
-                "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
-                "drivers": [
-                    _driver_payload(
-                        evidence_ids=["delta-1", "delta-1"],
-                        invalidation_conditions=[
-                            "利率与风险资产响应不再支持该传导",
-                            "利率与风险资产响应不再支持该传导",
-                        ],
-                    )
-                ],
-                "views": [
-                    {
-                        "asset": "BTC",
-                        "horizon_minutes": 240,
-                        "direction": "UP",
-                        "already_priced": "PARTIAL",
-                        "uncertainty": "MEDIUM",
-                        "evidence_ids": ["delta-1", "delta-1"],
-                        "invalidation_conditions": [
-                            "政策方向发生反转",
-                            "政策方向发生反转",
-                        ],
-                    }
-                ],
-                "contradictions": [],
-                "data_gaps": [],
-            }
-        }
-    )
-
-    view = output.assessment.views[0]
-    assert view.evidence_ids == ("delta-1",)
-    assert view.invalidation_conditions == ("政策方向发生反转",)
-    assert output.assessment.drivers[0].evidence_ids == ("delta-1",)
-    assessment = finalize_context_assessment(
-        output=output,
-        packet=_packet(),
-        analysis_behavior_hash="b" * 64,
-        available_at=NOW + timedelta(seconds=20),
-    )
-    assert assessment.views == (view,)
-    with pytest.raises(ValueError, match="不能重复引用证据"):
-        ContextView.model_validate(
+def test_assessment_output_boundary_rejects_duplicate_set_items() -> None:
+    with pytest.raises(ValidationError, match="不能重复引用证据"):
+        AssessStructuredOutput.model_validate(
             {
-                **view.model_dump(),
-                "evidence_ids": ("delta-1", "delta-1"),
+                "assessment": {
+                    "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
+                    "drivers": [
+                        _driver_payload(
+                            evidence_ids=["delta-1", "delta-1"],
+                            invalidation_conditions=[
+                                "利率与风险资产响应不再支持该传导",
+                                "利率与风险资产响应不再支持该传导",
+                            ],
+                        )
+                    ],
+                    "views": [
+                        {
+                            "asset": "BTC",
+                            "horizon_minutes": 240,
+                            "direction": "UP",
+                            "already_priced": "PARTIAL",
+                            "uncertainty": "MEDIUM",
+                            "evidence_ids": ["delta-1", "delta-1"],
+                            "invalidation_conditions": [
+                                "政策方向发生反转",
+                                "政策方向发生反转",
+                            ],
+                        }
+                    ],
+                    "contradictions": [],
+                    "data_gaps": [],
+                }
             }
         )
 
 
 @pytest.mark.parametrize("direction", ["UP", "DOWN"])
-def test_unsupported_direction_is_downgraded_instead_of_fabricating_evidence(
+def test_unsupported_direction_is_rejected_instead_of_silently_rewritten(
     direction: str,
 ) -> None:
-    output = AssessStructuredOutput.model_validate(
-        {
-            "assessment": {
-                "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
-                "drivers": [
-                    _driver_payload(
-                        statement="当前只有价格与政策变化同时可见。",
-                        transmission="两者的因果方向尚未由跨市场响应确认。",
-                    )
-                ],
-                "views": [
-                    {
-                        "asset": "BTC",
-                        "horizon_minutes": 240,
-                        "direction": direction,
-                        "already_priced": "UNKNOWN",
-                        "uncertainty": "HIGH",
-                        "evidence_ids": [],
-                        "invalidation_conditions": ["出现新的可靠方向证据"],
-                    }
-                ],
-                "contradictions": [],
-                "data_gaps": [],
-            }
-        }
-    )
-
-    view = output.assessment.views[0]
-    assert view.direction == DirectionalView.UNCERTAIN
-    assert view.evidence_ids == ()
-    assert output.assessment.data_gaps == ("系统给出的方向判断缺少可引用证据",)
-    assessment = finalize_context_assessment(
-        output=output,
-        packet=_packet(),
-        analysis_behavior_hash="b" * 64,
-        available_at=NOW + timedelta(seconds=20),
-    )
-    assert assessment.views[0].direction == DirectionalView.UNCERTAIN
-    with pytest.raises(ValueError, match="必须引用证据"):
-        ContextView.model_validate(
+    with pytest.raises(ValidationError, match="必须引用证据"):
+        AssessStructuredOutput.model_validate(
             {
-                **view.model_dump(),
-                "direction": direction,
+                "assessment": {
+                    "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
+                    "drivers": [
+                        _driver_payload(
+                            statement="当前只有价格与政策变化同时可见。",
+                            transmission="两者的因果方向尚未由跨市场响应确认。",
+                        )
+                    ],
+                    "views": [
+                        {
+                            "asset": "BTC",
+                            "horizon_minutes": 240,
+                            "direction": direction,
+                            "already_priced": "UNKNOWN",
+                            "uncertainty": "HIGH",
+                            "evidence_ids": [],
+                            "invalidation_conditions": ["出现新的可靠方向证据"],
+                        }
+                    ],
+                    "contradictions": [],
+                    "data_gaps": [],
+                }
             }
         )
 

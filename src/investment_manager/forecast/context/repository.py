@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import context_assessments
+from investment_manager.kernel.time import require_utc
 from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.tables import decision_packets
 
@@ -115,5 +118,28 @@ class SqlContextAssessmentStore:
                     context_assessments.c.analysis_behavior_hash
                     == analysis_behavior_hash,
                 )
+            ).scalar_one_or_none()
+        return None if payload is None else ContextAssessment.model_validate(payload)
+
+    def latest_before(
+        self,
+        *,
+        analysis_scope: str,
+        as_of: datetime,
+    ) -> ContextAssessment | None:
+        """Latest cognition that was actually available at the new decision time."""
+
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(context_assessments.c.payload)
+                .where(
+                    context_assessments.c.analysis_scope == analysis_scope,
+                    context_assessments.c.available_at <= require_utc(as_of),
+                )
+                .order_by(
+                    context_assessments.c.available_at.desc(),
+                    context_assessments.c.assessment_id.desc(),
+                )
+                .limit(1)
             ).scalar_one_or_none()
         return None if payload is None else ContextAssessment.model_validate(payload)

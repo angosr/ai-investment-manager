@@ -55,6 +55,107 @@ export function useLive<T>(
   return data;
 }
 
+export interface PagedLive<T> {
+  items: T[];
+  page: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  loading: boolean;
+  previous: () => void;
+  next: () => void;
+}
+
+/**
+ * 事实时间线的游标分页。每页只保留少量 DOM，但历史始终从服务端事实库读取；
+ * SSE 只刷新第一页，不会把用户正在查看的旧页清空。
+ */
+export function usePagedLive<T>(
+  fetchPage: (before?: string) => Promise<T[]>,
+  topic: RefreshTopic,
+  at: (item: T) => string,
+  pageSize = 30,
+): PagedLive<T> {
+  const [pages, setPages] = useState<T[][]>([]);
+  const [more, setMore] = useState<boolean[]>([]);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const fetchRef = useRef(fetchPage);
+  const atRef = useRef(at);
+  const pagesRef = useRef(pages);
+  const pageRef = useRef(page);
+  fetchRef.current = fetchPage;
+  atRef.current = at;
+  pagesRef.current = pages;
+  pageRef.current = page;
+
+  useEffect(() => {
+    let disposed = false;
+    let running = false;
+    let rerun = false;
+    const refreshFirst = async () => {
+      if (running) {
+        rerun = true;
+        return;
+      }
+      do {
+        running = true;
+        rerun = false;
+        try {
+          const first = await fetchRef.current();
+          if (!disposed) {
+            setPages((current) => [first, ...current.slice(1)]);
+            setMore((current) => [first.length === pageSize, ...current.slice(1)]);
+          }
+        } catch (err) {
+          console.error("时间线首页获取失败", err);
+        } finally {
+          running = false;
+        }
+      } while (rerun && !disposed);
+    };
+    void refreshFirst();
+    const unsubscribe = subscribeRefresh(topic, () => void refreshFirst());
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [pageSize, topic]);
+
+  const previous = useCallback(() => setPage((current) => Math.max(0, current - 1)), []);
+  const next = useCallback(() => {
+    if (loading) return;
+    const currentPage = pageRef.current;
+    const loaded = pagesRef.current;
+    if (loaded[currentPage + 1]) {
+      setPage(currentPage + 1);
+      return;
+    }
+    const current = loaded[currentPage] ?? [];
+    const last = current[current.length - 1];
+    if (!last || more[currentPage] === false) return;
+    setLoading(true);
+    void fetchRef.current(atRef.current(last))
+      .then((items) => {
+        setPages((existing) => [...existing, items]);
+        setMore((existing) => [...existing, items.length === pageSize]);
+        if (items.length > 0) setPage(currentPage + 1);
+      })
+      .catch((err) => console.error("更早的时间线记录获取失败", err))
+      .finally(() => setLoading(false));
+  }, [loading, more, pageSize]);
+
+  const items = pages[page] ?? [];
+  return {
+    items,
+    page,
+    hasPrevious: page > 0,
+    hasNext: Boolean(pages[page + 1]) || Boolean(more[page]),
+    loading,
+    previous,
+    next,
+  };
+}
+
 export function useClock(): string {
   const [text, setText] = useState(() => formatUtc(new Date()));
   useEffect(() => {

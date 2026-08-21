@@ -155,15 +155,8 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
     historical = load_release_manifest("config/release-manifest.testnet-v3.yaml")
     component_versions = (
         *tuple(
-            (
-                name,
-                config.market_data.version
-                if name == "market_data"
-                else config.outcome_evaluation.version
-                if name == "outcome_evaluation"
-                else version,
-            )
-            for name, version in historical.component_versions
+            (name, getattr(config, name).version)
+            for name, _version in historical.component_versions
         ),
         ("carry_forecast", config.carry_forecast.version),
         ("capital", config.capital.version),
