@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 
 from pydantic import Field, model_validator
 
@@ -21,6 +21,7 @@ from investment_manager.information.official.records import (
 )
 from investment_manager.information.official.treasury_buybacks import (
     TreasuryBuybackOperationRecord,
+    TreasuryBuybackResultRecord,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -39,6 +40,7 @@ FOMC_MEETING_FACT_TYPE = "FOMC_MEETING_SCHEDULE"
 FED_CHAIR_PUBLIC_EVENT_FACT_TYPE = "FED_CHAIR_PUBLIC_EVENT_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"
 TREASURY_BUYBACK_OPERATION_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_SCHEDULE"
+TREASURY_BUYBACK_RESULT_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_RESULT"
 
 
 class OfficialFactProjectionPolicy(FrozenModel):
@@ -281,6 +283,61 @@ def project_treasury_buyback_operation_fact(
         source_observation_ids=(observation.observation_id,),
         previous=previous,
     )
+
+
+def project_treasury_buyback_result_fact(
+    record: TreasuryBuybackResultRecord,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    utilization_pct = (
+        record.accepted_usd_m / record.maximum_purchase_usd_m * Decimal("100")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+    acceptance_pct = (
+        record.accepted_usd_m / record.offered_usd_m * Decimal("100")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            TREASURY_BUYBACK_RESULT_FACT_TYPE,
+            record.operation_start_at.isoformat(),
+        ),
+        projection_version=policy.version,
+        fact_type=TREASURY_BUYBACK_RESULT_FACT_TYPE,
+        status=FactRevisionStatus.ACTIVE,
+        event_time=record.operation_end_at,
+        observed_at=record.observation.observed_at,
+        headline=(
+            "U.S. Treasury buyback result: "
+            f"accepted ${record.accepted_usd_m}m of ${record.offered_usd_m}m offered"
+        ),
+        claim=(
+            "U.S. Treasury buyback operation result; "
+            f"window={record.operation_start_at.isoformat()}.."
+            f"{record.operation_end_at.isoformat()}; "
+            f"settlement={record.settlement_date.isoformat()}; "
+            f"operation_type={record.operation_type}; security_type={record.security_type}; "
+            f"maturity_bucket={record.maturity_bucket}; "
+            f"maximum_purchase_usd_m={record.maximum_purchase_usd_m}; "
+            f"offered_usd_m={record.offered_usd_m}; "
+            f"accepted_usd_m={record.accepted_usd_m}; "
+            f"maximum_utilization_pct={utilization_pct}; "
+            f"offer_acceptance_pct={acceptance_pct}; "
+            f"accepted_issues={record.accepted_issue_count}/"
+            f"{record.eligible_issue_count}. "
+            "This is the actual accepted Treasury redemption amount, not the "
+            "tentative ceiling and not Federal Reserve QE. Its asset-price effect "
+            "still requires synchronized yield, USD, cross-asset and spot-flow response."
+        ),
+        affected_assets=policy.affected_assets,
+        risk_factors=("US_FISCAL_LIQUIDITY",),
+        decision_materiality=FactDecisionMateriality.BACKGROUND,
+        source_observation_ids=(record.observation.observation_id,),
+        previous=previous,
+    )
+
+
 def project_official_metric_fact(
     record: OfficialMetricSnapshot,
     *,

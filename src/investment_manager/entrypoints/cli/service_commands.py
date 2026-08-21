@@ -561,6 +561,7 @@ def information_collector(
         ),
         publish_recent=fact_trigger_publisher.publish_recent,
         poll_seconds=policy.treasury_buyback_poll_seconds,
+        result_lookback_seconds=policy.treasury_buyback_result_lookback_seconds,
         poll_recorder=SqlInformationCoverageStore(engine),
     )
 

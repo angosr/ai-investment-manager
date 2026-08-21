@@ -31,12 +31,16 @@ from investment_manager.information.official.records import (
     OfficialRecord as BaseOfficialRecord,
 )
 from investment_manager.information.official.treasury_buybacks import (
+    TREASURY_BUYBACK_RESULT_SOURCE_ID,
     TREASURY_BUYBACK_SOURCE_ID,
     TREASURY_BUYBACK_URL,
     TreasuryBuybackOperationRecord,
+    TreasuryBuybackResultRecord,
     build_treasury_buyback_calendar_revision,
     build_treasury_buyback_cancellation,
     parse_treasury_buyback_calendar,
+    parse_treasury_buyback_result,
+    treasury_buyback_result_url,
 )
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
@@ -54,6 +58,7 @@ OfficialRecord = (
     | FedChairPublicEventRecord
     | OfficialMetricSnapshot
     | TreasuryBuybackOperationRecord
+    | TreasuryBuybackResultRecord
 )
 CalendarOfficialRecord = (
     FomcMeetingRecord | FedChairPublicEventRecord | TreasuryBuybackOperationRecord
@@ -490,6 +495,31 @@ class SqlTreasuryBuybackInformationIngestor:
             self._records.put(record) for record in (*current, *cancellations)
         )
 
+    def ingest_result(
+        self,
+        content: bytes,
+        *,
+        scheduled: TreasuryBuybackOperationRecord,
+        observed_at: datetime,
+    ) -> OfficialRecordWrite:
+        observed_at = require_utc(observed_at)
+        source_url = treasury_buyback_result_url(scheduled.operation_start_at)
+        raw = build_raw_source_payload(
+            source_id=TREASURY_BUYBACK_RESULT_SOURCE_ID,
+            source_url=source_url,
+            media_type="application/xml",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        return self._records.put(
+            parse_treasury_buyback_result(
+                content,
+                scheduled=scheduled,
+                observed_at=observed_at,
+            )
+        )
+
 
 def _record_from_payload(payload: dict) -> OfficialRecord:
     kind = payload.get("kind")
@@ -503,6 +533,8 @@ def _record_from_payload(payload: dict) -> OfficialRecord:
         return OfficialMetricSnapshot.model_validate(payload)
     if kind == OfficialRecordKind.TREASURY_BUYBACK_OPERATION.value:
         return TreasuryBuybackOperationRecord.model_validate(payload)
+    if kind == OfficialRecordKind.TREASURY_BUYBACK_RESULT.value:
+        return TreasuryBuybackResultRecord.model_validate(payload)
     raise ValueError("未知官方记录类型")
 
 

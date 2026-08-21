@@ -21,6 +21,8 @@ from investment_manager.information.official.records import (
 )
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_URL,
+    TreasuryBuybackOperationRecord,
+    treasury_buyback_result_url,
 )
 from investment_manager.kernel.time import require_utc
 
@@ -256,13 +258,13 @@ class HttpTreasuryBuybackSource:
         self._timeout_seconds = timeout_seconds
         self._maximum_bytes = maximum_bytes
         self._transport = transport
-        self._validators: dict[str, str] = {}
+        self._validators: dict[str, dict[str, str]] = {}
 
     def fetch_calendar(self) -> bytes | None:
         headers = {
             "Accept": "application/xml, text/xml;q=0.9",
             "User-Agent": "investment-manager-treasury-buybacks/1.0",
-            **self._validators,
+            **self._validators.get(TREASURY_BUYBACK_URL, {}),
         }
         with httpx.Client(
             timeout=self._timeout_seconds,
@@ -283,5 +285,37 @@ class HttpTreasuryBuybackSource:
             validators["If-None-Match"] = etag
         if modified := response.headers.get("last-modified"):
             validators["If-Modified-Since"] = modified
-        self._validators = validators
+        self._validators[TREASURY_BUYBACK_URL] = validators
+        return content
+
+    def fetch_result(
+        self,
+        scheduled: TreasuryBuybackOperationRecord,
+    ) -> bytes | None:
+        url = treasury_buyback_result_url(scheduled.operation_start_at)
+        headers = {
+            "Accept": "application/xml, text/xml;q=0.9",
+            "User-Agent": "investment-manager-treasury-buybacks/1.0",
+            **self._validators.get(url, {}),
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(url, headers=headers)
+        if response.status_code in {304, 404}:
+            return None
+        response.raise_for_status()
+        if str(response.url) != url:
+            raise ValueError("Treasury buyback result 响应 URL 与操作身份不一致")
+        content = response.content
+        if not content or len(content) > self._maximum_bytes:
+            raise ValueError("Treasury buyback result 响应为空或超过大小上限")
+        validators: dict[str, str] = {}
+        if etag := response.headers.get("etag"):
+            validators["If-None-Match"] = etag
+        if modified := response.headers.get("last-modified"):
+            validators["If-Modified-Since"] = modified
+        self._validators[url] = validators
         return content

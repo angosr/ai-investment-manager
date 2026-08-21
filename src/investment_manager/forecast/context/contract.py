@@ -63,6 +63,9 @@ ASSESS_INSTRUCTIONS = (
     "BACKGROUND 或 UNKNOWN 指标只能合并为简短背景/反证，不得逐项展开，不得单独构成 driver，"
     "也不得支持 UP/DOWN；只有 CANDIDATE 才表示量级足以进入主导因素竞争，"
     "但仍需与中介变量和市场响应共同验证因果。",
+    "财政部回购日程中的 maximum 只是计划上限；TREASURY_BUYBACK_OPERATION_RESULT "
+    "中的 accepted 才是实际接受额，两者都不是 Fed QE。实际结果可验证财政操作本身，"
+    "但在缺少收益率、美元、跨资产和现货资金响应时仍不得单独支持加密资产方向。",
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
     "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"

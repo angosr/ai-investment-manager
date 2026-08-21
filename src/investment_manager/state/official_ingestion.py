@@ -28,6 +28,7 @@ from investment_manager.information.official.repository import (
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_STREAM_ID,
     TreasuryBuybackOperationRecord,
+    TreasuryBuybackResultRecord,
 )
 from investment_manager.kernel.time import require_utc
 from investment_manager.state.facts import (
@@ -36,6 +37,7 @@ from investment_manager.state.facts import (
     project_fed_monetary_release_fact,
     project_fomc_calendar_fact,
     project_treasury_buyback_operation_fact,
+    project_treasury_buyback_result_fact,
 )
 from investment_manager.state.models import CanonicalFactRevision
 from investment_manager.state.repository import SqlFactStateStore
@@ -53,6 +55,11 @@ class FedOfficialSource(Protocol):
 
 class TreasuryBuybackSource(Protocol):
     def fetch_calendar(self) -> bytes | None: ...
+
+    def fetch_result(
+        self,
+        scheduled: TreasuryBuybackOperationRecord,
+    ) -> bytes | None: ...
 
 
 class SourcePollRecorder(Protocol):
@@ -448,6 +455,44 @@ class SqlTreasuryBuybackFactIngestor:
             new_fact_revisions=tuple(projected),
         )
 
+    def ingest_result(
+        self,
+        content: bytes,
+        *,
+        scheduled: TreasuryBuybackOperationRecord,
+        observed_at: datetime,
+    ) -> OfficialFactIngestionResult:
+        write = self._official.ingest_result(
+            content,
+            scheduled=scheduled,
+            observed_at=observed_at,
+        )
+        if not isinstance(write.record, TreasuryBuybackResultRecord):
+            raise TypeError("Treasury buyback result ingestor 收到非结果记录")
+        candidate = project_treasury_buyback_result_fact(
+            write.record,
+            policy=self._policy,
+        )
+        previous = self._facts.latest_fact(candidate.fact_id)
+        if not write.inserted or (
+            previous is not None and previous.revision_hash == candidate.revision_hash
+        ):
+            return OfficialFactIngestionResult(records=(write,), new_fact_revisions=())
+        fact = (
+            candidate
+            if previous is None
+            else project_treasury_buyback_result_fact(
+                write.record,
+                policy=self._policy,
+                previous=previous,
+            )
+        )
+        stored = self._facts.put_fact(fact)
+        return OfficialFactIngestionResult(
+            records=(write,),
+            new_fact_revisions=(stored,),
+        )
+
 
 @dataclass(slots=True)
 class TreasuryBuybackCollectorHealth:
@@ -469,17 +514,20 @@ class TreasuryBuybackCollectorService:
         ingestor: SqlTreasuryBuybackFactIngestor,
         publish_recent: Callable[[datetime], None],
         poll_seconds: int,
+        result_lookback_seconds: int,
         poll_recorder: SourcePollRecorder | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        if poll_seconds < 1:
-            raise ValueError("Treasury buyback polling interval 必须为正数")
+        if poll_seconds < 1 or result_lookback_seconds < 1:
+            raise ValueError("Treasury buyback polling/result lookback 必须为正数")
         self._source = source
         self._ingestor = ingestor
         self._publish_recent = publish_recent
         self._poll_seconds = poll_seconds
+        self._result_lookback_seconds = result_lookback_seconds
         self._poll_recorder = poll_recorder
         self._clock = clock
+        self._known_operations: dict[str, TreasuryBuybackOperationRecord] = {}
         self.health = TreasuryBuybackCollectorHealth()
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -493,7 +541,7 @@ class TreasuryBuybackCollectorService:
         self.health.poll_count += 1
         try:
             content = await asyncio.to_thread(self._source.fetch_calendar)
-            result = (
+            calendar_result = (
                 OfficialFactIngestionResult(records=(), new_fact_revisions=())
                 if content is None
                 else await asyncio.to_thread(
@@ -501,6 +549,43 @@ class TreasuryBuybackCollectorService:
                     content,
                     observed_at=require_utc(self._clock()),
                 )
+            )
+            for write in calendar_result.records:
+                if isinstance(write.record, TreasuryBuybackOperationRecord):
+                    self._known_operations[
+                        write.record.observation.source_record_id
+                    ] = write.record
+            result_records = list(calendar_result.records)
+            result_facts = list(calendar_result.new_fact_revisions)
+            result_window_start = started_at - timedelta(
+                seconds=self._result_lookback_seconds
+            )
+            for scheduled in sorted(
+                self._known_operations.values(),
+                key=lambda item: item.operation_end_at,
+            ):
+                if not (
+                    scheduled.status == CalendarEventStatus.SCHEDULED
+                    and result_window_start <= scheduled.operation_end_at <= started_at
+                ):
+                    continue
+                result_content = await asyncio.to_thread(
+                    self._source.fetch_result,
+                    scheduled,
+                )
+                if result_content is None:
+                    continue
+                result_part = await asyncio.to_thread(
+                    self._ingestor.ingest_result,
+                    result_content,
+                    scheduled=scheduled,
+                    observed_at=require_utc(self._clock()),
+                )
+                result_records.extend(result_part.records)
+                result_facts.extend(result_part.new_fact_revisions)
+            result = OfficialFactIngestionResult(
+                records=tuple(result_records),
+                new_fact_revisions=tuple(result_facts),
             )
             completed_at = max(require_utc(self._clock()), started_at)
             self._record_poll(

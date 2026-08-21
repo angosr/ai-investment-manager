@@ -23,6 +23,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 TREASURY_BUYBACK_SOURCE_ID = "us-treasury-buybacks"
+TREASURY_BUYBACK_RESULT_SOURCE_ID = "us-treasury-buyback-results"
 TREASURY_BUYBACK_STREAM_ID = "treasury-buyback-schedule"
 TREASURY_BUYBACK_URL = (
     "https://home.treasury.gov/system/files/221/Tentative-Buyback-Schedule.xml"
@@ -91,6 +92,57 @@ class TreasuryBuybackCalendarSnapshot(FrozenModel):
             raise ValueError("Treasury buyback calendar 逻辑事件身份冲突")
         if any(item.calendar_cycle != self.calendar_cycle for item in self.records):
             raise ValueError("Treasury buyback record 不属于声明的日历周期")
+        return self
+
+
+class TreasuryBuybackResultRecord(FrozenModel):
+    observation: SourceObservation
+    kind: Literal[OfficialRecordKind.TREASURY_BUYBACK_RESULT] = (
+        OfficialRecordKind.TREASURY_BUYBACK_RESULT
+    )
+    operation_start_at: datetime
+    operation_end_at: datetime
+    settlement_date: date
+    operation_type: str = Field(min_length=1, max_length=120)
+    security_type: str = Field(min_length=1, max_length=120)
+    maturity_bucket: str = Field(min_length=1, max_length=200)
+    maturity_start: date
+    maturity_end: date
+    maximum_purchase_usd_m: Decimal = Field(gt=0)
+    offered_usd_m: Decimal = Field(gt=0)
+    accepted_usd_m: Decimal = Field(ge=0)
+    eligible_issue_count: int = Field(gt=0)
+    accepted_issue_count: int = Field(ge=0)
+    source_url: str = Field(min_length=1, max_length=2_000)
+
+    _utc_start = field_validator("operation_start_at")(require_utc)
+    _utc_end = field_validator("operation_end_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_result_are_consistent(self):
+        if self.operation_end_at <= self.operation_start_at:
+            raise ValueError("Treasury buyback result 时间窗口非法")
+        if self.maturity_end < self.maturity_start:
+            raise ValueError("Treasury buyback result maturity 范围非法")
+        if self.accepted_usd_m > self.maximum_purchase_usd_m:
+            raise ValueError("Treasury buyback 实际接受金额超过操作上限")
+        if self.accepted_usd_m > self.offered_usd_m:
+            raise ValueError("Treasury buyback 实际接受金额超过报价金额")
+        if self.accepted_issue_count > self.eligible_issue_count:
+            raise ValueError("Treasury buyback 接受券数超过合资格券数")
+        if self.observation.source_id != TREASURY_BUYBACK_RESULT_SOURCE_ID:
+            raise ValueError("Treasury buyback result 必须引用固定财政部结果来源")
+        if self.observation.source_record_id != stable_id(
+            "treasury_buyback_result",
+            self.operation_start_at.isoformat(),
+        ):
+            raise ValueError("Treasury buyback result source_record_id 与操作身份不一致")
+        if self.source_url != treasury_buyback_result_url(self.operation_start_at):
+            raise ValueError("Treasury buyback result URL 与操作身份不一致")
+        validate_official_record_observation(
+            self.observation,
+            treasury_buyback_result_semantic_payload(self),
+        )
         return self
 
 
@@ -188,6 +240,108 @@ def parse_treasury_buyback_calendar(
         covered_start=covered_start,
         covered_end=covered_end,
         records=tuple(records),
+    )
+
+
+def treasury_buyback_result_url(operation_start_at: datetime) -> str:
+    operation_start_at = require_utc(operation_start_at)
+    stamp = operation_start_at.strftime("%Y%m%d%H%M%S")
+    return (
+        "https://www.treasurydirect.gov/instit/annceresult/press/preanre/"
+        f"{operation_start_at.year}/BBR_{stamp}.xml"
+    )
+
+
+def parse_treasury_buyback_result(
+    content: bytes,
+    *,
+    scheduled: TreasuryBuybackOperationRecord,
+    observed_at: datetime,
+) -> TreasuryBuybackResultRecord:
+    observed_at = require_utc(observed_at)
+    try:
+        root = ElementTree.fromstring(content)
+    except ElementTree.ParseError as exc:
+        raise ValueError("Treasury buyback result XML 非法") from exc
+    if root.tag != "buyback" or _required_text(root, "operationStatus") != "Results":
+        raise ValueError("Treasury buyback result 根节点或状态非法")
+    operation_start_at = _xml_datetime(root, "operationStartDTM")
+    operation_end_at = _xml_datetime(root, "operationCloseDTM")
+    settlement_date = _xml_date(root, "settlementDT")
+    maturity_start = _xml_date(root, "maturityDateRangeBegin")
+    maturity_end = _xml_date(root, "maturityDateRangeEnd")
+    maximum_purchase_usd_m = _usd_m(root, "maxParAmountRedeemed")
+    expected = (
+        operation_start_at == scheduled.operation_start_at,
+        operation_end_at == scheduled.operation_end_at,
+        settlement_date == scheduled.settlement_date,
+        scheduled.maturity_start <= maturity_start <= maturity_end
+        <= scheduled.maturity_end,
+        maximum_purchase_usd_m == scheduled.maximum_purchase_usd_m,
+    )
+    if not all(expected):
+        raise ValueError("Treasury buyback result 与已冻结操作日程不一致")
+    source_url = treasury_buyback_result_url(operation_start_at)
+    raw = build_raw_source_payload(
+        source_id=TREASURY_BUYBACK_RESULT_SOURCE_ID,
+        source_url=source_url,
+        media_type="application/xml",
+        observed_at=observed_at,
+        content=content,
+    )
+    source_record_id = stable_id(
+        "treasury_buyback_result",
+        operation_start_at.isoformat(),
+    )
+    values = {
+        "source_record_id": source_record_id,
+        "operation_start_at": operation_start_at.isoformat(),
+        "operation_end_at": operation_end_at.isoformat(),
+        "settlement_date": settlement_date.isoformat(),
+        "operation_type": scheduled.operation_type,
+        "security_type": scheduled.security_type,
+        "maturity_bucket": scheduled.maturity_bucket,
+        "maturity_start": maturity_start.isoformat(),
+        "maturity_end": maturity_end.isoformat(),
+        "maximum_purchase_usd_m": maximum_purchase_usd_m,
+        "offered_usd_m": _usd_m(root, "totalParAmountOffered"),
+        "accepted_usd_m": _usd_m(root, "totalParAmountAccepted"),
+        "eligible_issue_count": _integer(root, "numberIssuesEligible"),
+        "accepted_issue_count": _integer(root, "numberIssuesAccepted"),
+        "source_url": source_url,
+    }
+    payload_hash = content_hash(values)
+    observation = SourceObservation(
+        observation_id=stable_id(
+            "source_observation",
+            TREASURY_BUYBACK_RESULT_SOURCE_ID,
+            source_record_id,
+            payload_hash,
+            observed_at.isoformat(),
+        ),
+        source_id=TREASURY_BUYBACK_RESULT_SOURCE_ID,
+        source_tier=SourceTier.FIRST_PARTY,
+        source_record_id=source_record_id,
+        observed_at=observed_at,
+        payload_hash=payload_hash,
+        payload_ref=raw.payload_id,
+    )
+    return TreasuryBuybackResultRecord(
+        observation=observation,
+        operation_start_at=operation_start_at,
+        operation_end_at=operation_end_at,
+        settlement_date=settlement_date,
+        operation_type=scheduled.operation_type,
+        security_type=scheduled.security_type,
+        maturity_bucket=scheduled.maturity_bucket,
+        maturity_start=maturity_start,
+        maturity_end=maturity_end,
+        maximum_purchase_usd_m=maximum_purchase_usd_m,
+        offered_usd_m=values["offered_usd_m"],
+        accepted_usd_m=values["accepted_usd_m"],
+        eligible_issue_count=values["eligible_issue_count"],
+        accepted_issue_count=values["accepted_issue_count"],
+        source_url=source_url,
     )
 
 
@@ -298,6 +452,28 @@ def treasury_buyback_semantic_payload(record: TreasuryBuybackOperationRecord) ->
     }
 
 
+def treasury_buyback_result_semantic_payload(
+    record: TreasuryBuybackResultRecord,
+) -> dict:
+    return {
+        "source_record_id": record.observation.source_record_id,
+        "operation_start_at": record.operation_start_at.isoformat(),
+        "operation_end_at": record.operation_end_at.isoformat(),
+        "settlement_date": record.settlement_date.isoformat(),
+        "operation_type": record.operation_type,
+        "security_type": record.security_type,
+        "maturity_bucket": record.maturity_bucket,
+        "maturity_start": record.maturity_start.isoformat(),
+        "maturity_end": record.maturity_end.isoformat(),
+        "maximum_purchase_usd_m": record.maximum_purchase_usd_m,
+        "offered_usd_m": record.offered_usd_m,
+        "accepted_usd_m": record.accepted_usd_m,
+        "eligible_issue_count": record.eligible_issue_count,
+        "accepted_issue_count": record.accepted_issue_count,
+        "source_url": record.source_url,
+    }
+
+
 def _required_text(node: ElementTree.Element, name: str) -> str:
     value = " ".join((node.findtext(name) or "").split())
     if not value:
@@ -319,6 +495,16 @@ def _xml_time(node: ElementTree.Element, name: str) -> time:
         raise ValueError(f"Treasury buyback {name} 时间非法") from exc
 
 
+def _xml_datetime(node: ElementTree.Element, name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(_required_text(node, name))
+    except ValueError as exc:
+        raise ValueError(f"Treasury buyback {name} 时间非法") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"Treasury buyback {name} 缺少时区")
+    return parsed.astimezone(UTC)
+
+
 def _eastern_at(day: date, local_time: time) -> datetime:
     return datetime.combine(day, local_time, tzinfo=_EASTERN).astimezone(UTC)
 
@@ -328,3 +514,10 @@ def _usd_m(node: ElementTree.Element, name: str) -> Decimal:
         return Decimal(_required_text(node, name)) / Decimal("1000000")
     except InvalidOperation as exc:
         raise ValueError(f"Treasury buyback {name} 金额非法") from exc
+
+
+def _integer(node: ElementTree.Element, name: str) -> int:
+    try:
+        return int(_required_text(node, name))
+    except ValueError as exc:
+        raise ValueError(f"Treasury buyback {name} 整数非法") from exc
