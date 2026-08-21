@@ -281,12 +281,20 @@ def phase_a_audit(
 @app.command("shadow-audit")
 def shadow_audit(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ],
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
 ) -> None:
     """验证公开只读 Shadow；真实 Codex 隔离项仍保持 BLOCKED。"""
 
     loaded = load_config(config)
-    report = PhaseAAuditor(loaded, project_root.resolve()).run()
+    report = PhaseAAuditor(
+        loaded,
+        project_root.resolve(),
+        runtime_manifest=release_manifest.resolve(),
+    ).run()
     payload = report.model_dump(mode="json")
     payload["shadow_ready"] = report.shadow_ready
     payload["codex_ready"] = report.ready

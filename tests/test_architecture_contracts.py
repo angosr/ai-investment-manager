@@ -88,7 +88,7 @@ CLI_CONTRACT = {
         "event_catalog,spread_bps,minimum_non_overlapping_samples,"
         "minimum_net_return_bps_lower_bound,minimum_incremental_return_bps_lower_bound"
     ),
-    "shadow-audit": "config,project_root",
+    "shadow-audit": "config,release_manifest,project_root",
     "submit-analysis": "input_path,config,deadline_minutes",
     "submit-context-assessment": "input_path,config,deadline_minutes",
     "temporal-worker": "config,database_url,release_manifest",

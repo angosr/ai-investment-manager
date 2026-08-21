@@ -32,6 +32,68 @@ def test_phase_a_audit_reports_real_deployment_blockers_without_false_success(
     assert checks["ENABLED_ACCOUNT_DIRECTORIES_READY"].status == CheckStatus.BLOCKED
 
 
+def test_public_shadow_audit_binds_exact_runtime_release(
+    app_config,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    loaded = app_config.model_copy(
+        update={
+            "deployment": app_config.deployment.model_copy(
+                update={
+                    "stage": DeploymentStage.SHADOW,
+                    "shadow_market_data_enabled": True,
+                }
+            )
+        }
+    )
+    manifest = load_release_manifest(root / "config" / "release-manifest.yaml").model_copy(
+        update={"configuration_hash": content_hash(loaded)}
+    )
+    manifest_path = tmp_path / "release-manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(manifest.model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    validated = []
+    monkeypatch.setattr(
+        "investment_manager.governance.audit.acceptance.validate_manifest_code_version",
+        lambda manifest, *, repository_root: validated.append(
+            (manifest.manifest_id, repository_root)
+        ),
+    )
+
+    report = PhaseAAuditor(
+        loaded,
+        root,
+        runtime_manifest=manifest_path,
+    ).run()
+
+    checks = {item.check_id: item for item in report.checks}
+    assert report.shadow_ready
+    assert checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.PASS
+    assert validated == [(manifest.manifest_id, root)]
+
+    manifest_path.write_text(
+        yaml.safe_dump(
+            manifest.model_copy(update={"configuration_hash": "0" * 64}).model_dump(
+                mode="json"
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    failed = PhaseAAuditor(
+        loaded,
+        root,
+        runtime_manifest=manifest_path,
+    ).run()
+    failed_checks = {item.check_id: item for item in failed.checks}
+    assert not failed.shadow_ready
+    assert failed_checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.FAIL
+
+
 @pytest.mark.parametrize(
     ("ai_mode", "assessment_enabled"),
     ((AiMode.PROPOSE, False), (AiMode.OFF, True)),

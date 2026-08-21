@@ -80,7 +80,16 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 
 切换前必须查询旧 Coordinator，确认 `pending_count=0` 且 `active_batch_id=null`；否则等待其完成或由主 Agent 明确处理，不能把已绑定旧 pipeline 的触发/周期静默复制到新代际。本前提避免同一事件双跑和版本归因污染；当前没有运行证据支持引入跨代 pending 转移协议。
 
-使用 `config/investment-manager.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前运行 `shadow-audit`。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
+使用 `config/investment-manager.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前从精确冻结 checkout 运行：
+
+```bash
+PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager shadow-audit \
+  --config '<运行覆盖配置>' \
+  --release-manifest '<运行 ReleaseManifest>' \
+  --project-root '<冻结 checkout>'
+```
+
+公开 Shadow 审计也必须严格核对完整配置哈希、代码 SHA 和 checkout 洁净度，不能借用仓库默认 Manifest。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
 
 真实 Codex、Mock 交易的私有 Challenger 不能沿用公开 Shadow 的验收语义。冻结发布后必须从该提交的 checkout 执行专用验收，并显式传入同一运行配置、Manifest 和源码根：
 

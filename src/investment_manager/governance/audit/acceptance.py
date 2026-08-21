@@ -175,17 +175,18 @@ class PhaseAAuditor:
                 self._root / "config" / "release-manifest.yaml"
             )
             manifest = load_release_manifest(manifest_path)
-            strict_runtime = (
+            explicit_runtime = self._runtime_manifest is not None
+            if (
                 self._profile == AuditProfile.PRIVATE_CODEX_CHALLENGER
-            )
-            if strict_runtime and self._runtime_manifest is None:
+                and not explicit_runtime
+            ):
                 raise ValueError("私有 Challenger 必须显式指定运行 Manifest")
             validate_manifest_against_config(
                 manifest,
                 self._config,
-                require_configuration_hash=strict_runtime,
+                require_configuration_hash=explicit_runtime,
             )
-            if strict_runtime:
+            if explicit_runtime:
                 validate_manifest_code_version(
                     manifest,
                     repository_root=self._root,
