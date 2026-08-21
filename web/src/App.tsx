@@ -21,36 +21,42 @@ export function App() {
     <>
       <Masthead health={health} onToggleTheme={toggleTheme} />
       <div className={styles.wrap}>
-        <div className={styles.grid}>
-          <main className={styles.main}>
-            {health?.capital_enabled ? (
-              <Timeline onOpenSnapshot={setSnapshot} capitalMode />
+        {health === null ? (
+          <div className={styles.loading}>正在读取运行状态…</div>
+        ) : (
+          <div className={styles.grid}>
+            <main className={styles.main}>
+              {health.capital_enabled ? (
+                <Timeline onOpenSnapshot={setSnapshot} capitalMode />
+              ) : (
+                <>
+                  <EquityHero />
+                  <Timeline onOpenSnapshot={setSnapshot} />
+                </>
+              )}
+            </main>
+            <aside className={styles.side}>
+              {health.capital_enabled ? (
+                <Capital />
+              ) : (
+                <>
+                  <Positions />
+                  <Accounts />
+                  <Resources />
+                </>
+              )}
+            </aside>
+          </div>
+        )}
+        {health ? (
+          <footer className={styles.foot}>
+            只读投影 · {health.capital_enabled ? (
+              <>资本状态以产品账户账本为准，前端不重算</>
             ) : (
-              <>
-                <EquityHero />
-                <Timeline onOpenSnapshot={setSnapshot} />
-              </>
-            )}
-          </main>
-          <aside className={styles.side}>
-            {health?.capital_enabled ? (
-              <Capital />
-            ) : (
-              <>
-                <Positions />
-                <Accounts />
-                <Resources />
-              </>
-            )}
-          </aside>
-        </div>
-        <footer className={styles.foot}>
-          只读投影 · {health?.capital_enabled ? (
-            <>资本状态以产品账户账本为准，前端不重算</>
-          ) : (
-            <>指标口径以 <code>OutcomeWindowReport</code> 为准，前端不重算</>
-          )} · 实时经 SSE 推送
-        </footer>
+              <>指标口径以 <code>OutcomeWindowReport</code> 为准，前端不重算</>
+            )} · 实时经 SSE 推送
+          </footer>
+        ) : null}
       </div>
       <SnapshotDrawer snapshot={snapshot} onClose={() => setSnapshot(null)} />
     </>

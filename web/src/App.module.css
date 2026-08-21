@@ -17,6 +17,14 @@
   flex-direction: column;
   gap: 18px;
 }
+.loading {
+  padding: 28px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
 .foot {
   margin-top: 24px;
   font-size: 11px;
