@@ -71,7 +71,7 @@ def temporal_worker(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -95,7 +95,7 @@ def assessment_worker(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -169,7 +169,7 @@ def market_stream(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -202,7 +202,7 @@ def trigger_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -230,7 +230,7 @@ def trigger_now(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -271,7 +271,7 @@ def lifecycle_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -306,7 +306,7 @@ def reconciliation_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -336,7 +336,7 @@ def outcome_evaluation_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -366,7 +366,7 @@ def governance_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -399,7 +399,7 @@ def information_collector(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,
@@ -486,7 +486,7 @@ def dashboard_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     release_manifest: Annotated[
         Path,

@@ -74,10 +74,10 @@ class FakeTransport:
 
 def test_credentials_are_testnet_only_and_never_repr_secrets(app_config) -> None:
     values = {
-        "QUANT_CORE_BINANCE_ENVIRONMENT": "testnet",
-        "QUANT_CORE_BINANCE_API_KEY": "key-value",
-        "QUANT_CORE_BINANCE_API_SECRET": "secret-value",
-        "QUANT_CORE_BINANCE_ORDER_SUBMISSION_ENABLED": "true",
+        "INVESTMENT_MANAGER_BINANCE_ENVIRONMENT": "testnet",
+        "INVESTMENT_MANAGER_BINANCE_API_KEY": "key-value",
+        "INVESTMENT_MANAGER_BINANCE_API_SECRET": "secret-value",
+        "INVESTMENT_MANAGER_BINANCE_ORDER_SUBMISSION_ENABLED": "true",
     }
 
     credentials = BinanceCredentials.from_environment(
@@ -91,7 +91,7 @@ def test_credentials_are_testnet_only_and_never_repr_secrets(app_config) -> None
     with pytest.raises(ValueError, match="testnet"):
         BinanceCredentials.from_environment(
             app_config.binance_testnet,
-            environment={**values, "QUANT_CORE_BINANCE_ENVIRONMENT": "live"},
+            environment={**values, "INVESTMENT_MANAGER_BINANCE_ENVIRONMENT": "live"},
         )
 
 

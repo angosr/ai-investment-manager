@@ -180,7 +180,7 @@ class BlindEvaluationCatalog:
         return envelope.result
 
 
-_MODEL_VERSION = re.compile(r"^quant-core-bar-backtest-v([1-9][0-9]*)$")
+_MODEL_VERSION = re.compile(r"^investment-manager-bar-backtest-v([1-9][0-9]*)$")
 
 
 def _summarize_experiment(

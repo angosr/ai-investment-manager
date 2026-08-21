@@ -19,7 +19,7 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
     database_url = f"sqlite+pysqlite:///{tmp_path / 'migration.db'}"
     wrong_database = tmp_path / "inherited-runtime.db"
     monkeypatch.setenv(
-        "QUANT_CORE_DATABASE_URL",
+        "INVESTMENT_MANAGER_DATABASE_URL",
         f"sqlite+pysqlite:///{wrong_database}",
     )
     config = Config("alembic.ini")

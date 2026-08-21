@@ -1,4 +1,4 @@
-"""initial quant core schema
+"""initial investment manager schema
 
 Revision ID: e90def444b1f
 Revises:

@@ -49,7 +49,7 @@ def build_edge_calibration(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     producer_id: Annotated[str, typer.Option()],
     producer_version: Annotated[str, typer.Option()],
@@ -117,7 +117,7 @@ def diagnose_legacy_analysis_forecasts(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     window_start: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间（含）")],
     window_end: Annotated[str, typer.Option(help="带时区的 ISO-8601 时间（不含）")],
@@ -177,7 +177,7 @@ def diagnose_legacy_analysis_forecasts(
 def invalidate_evaluation_plan(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
     reason_code: Annotated[str, typer.Option()],
@@ -218,7 +218,7 @@ def reset_portfolio_protection(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
     reason: Annotated[str, typer.Option("--reason")],
     acknowledge_risk: Annotated[
@@ -475,7 +475,7 @@ def binance_testnet_audit(
                     and "SPOT" in account.get("permissions", [])
                     and quote_balance_present
                 ),
-                "environment": os.environ.get("QUANT_CORE_BINANCE_ENVIRONMENT"),
+                "environment": os.environ.get("INVESTMENT_MANAGER_BINANCE_ENVIRONMENT"),
                 "account_type": account.get("accountType"),
                 "can_trade": account.get("canTrade"),
                 "spot_permission": "SPOT" in account.get("permissions", []),

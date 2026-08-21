@@ -2172,7 +2172,7 @@ def test_evaluation_catalog_derives_canonical_semantics_and_rejects_ambiguity(
             }
         )
 
-    newer = revised("quant-core-bar-backtest-v99", "newer")
+    newer = revised("investment-manager-bar-backtest-v99", "newer")
     catalog.store(newer)
     summary = catalog.summaries()[0]
     assert summary.attempt_count == 2
@@ -2180,7 +2180,7 @@ def test_evaluation_catalog_derives_canonical_semantics_and_rejects_ambiguity(
     assert summary.superseded_evaluation_ids == (result.evaluation_id,)
     assert not summary.ambiguity_reasons
 
-    duplicate = revised("quant-core-bar-backtest-v99", "duplicate")
+    duplicate = revised("investment-manager-bar-backtest-v99", "duplicate")
     catalog.store(duplicate)
     ambiguous = catalog.summaries()[0]
     assert ambiguous.attempt_count == 3

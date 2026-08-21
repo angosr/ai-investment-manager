@@ -28,15 +28,15 @@ class TemporalPolicy(StrictConfig):
     version: str
     address: str = "127.0.0.1:7233"
     namespace: str = "default"
-    task_queue: str = "quant-core-analysis-v1"
+    task_queue: str = "investment-manager-analysis-v1"
     assessment_task_queue: str = "investment-manager-assessment-v1"
-    lifecycle_task_queue: str = "quant-core-lifecycle-v1"
-    reconciliation_task_queue: str = "quant-core-reconciliation-v1"
-    outcome_evaluation_task_queue: str = "quant-core-outcome-evaluation-v1"
-    governance_task_queue: str = "quant-core-governance-v1"
-    version_evaluation_task_queue: str = "quant-core-version-evaluation-v1"
-    release_task_queue: str = "quant-core-release-v1"
-    trigger_task_queue: str = "quant-core-trigger-v1"
+    lifecycle_task_queue: str = "investment-manager-lifecycle-v1"
+    reconciliation_task_queue: str = "investment-manager-reconciliation-v1"
+    outcome_evaluation_task_queue: str = "investment-manager-outcome-evaluation-v1"
+    governance_task_queue: str = "investment-manager-governance-v1"
+    version_evaluation_task_queue: str = "investment-manager-version-evaluation-v1"
+    release_task_queue: str = "investment-manager-release-v1"
+    trigger_task_queue: str = "investment-manager-trigger-v1"
     activity_start_to_close_seconds: int = Field(default=240, ge=10, le=900)
     activity_schedule_to_close_seconds: int = Field(default=600, ge=10, le=1800)
     retry_initial_seconds: int = Field(default=2, ge=1, le=60)

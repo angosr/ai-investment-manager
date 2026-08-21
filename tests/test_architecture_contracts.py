@@ -1154,6 +1154,32 @@ def test_old_package_and_console_entry_are_removed() -> None:
     assert not (PACKAGE_ROOT / "dashboard").exists()
 
 
+def test_current_runtime_identity_uses_product_name() -> None:
+    runtime_roots = (
+        PACKAGE_ROOT,
+        ROOT / "config",
+        ROOT / "migrations",
+    )
+    runtime_files = [
+        path
+        for root in runtime_roots
+        for path in root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    ]
+    runtime_files.extend((ROOT / ".env.example", ROOT / "docker-compose.yml"))
+
+    forbidden = ("quant_core", "quant-core", "QUANT_CORE")
+    violations = {
+        str(path.relative_to(ROOT)): token
+        for path in runtime_files
+        for token in forbidden
+        if token in str(path.relative_to(ROOT))
+        or token in path.read_text(encoding="utf-8")
+    }
+
+    assert violations == {}
+
+
 def test_package_root_contains_only_composition_entries() -> None:
     assert {
         path.name

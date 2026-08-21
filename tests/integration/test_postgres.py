@@ -90,11 +90,11 @@ def test_postgres_cycle_transaction_and_risk_budget(
     replay_input,
     request: pytest.FixtureRequest,
 ) -> None:
-    database_url = os.environ.get("QUANT_CORE_TEST_DATABASE_URL")
+    database_url = os.environ.get("INVESTMENT_MANAGER_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("未配置隔离的 PostgreSQL 测试数据库")
-    if "quant_core_test" not in database_url:
-        raise RuntimeError("集成测试只允许操作名称包含 quant_core_test 的专用数据库")
+    if "investment_manager_test" not in database_url:
+        raise RuntimeError("集成测试只允许操作名称包含 investment_manager_test 的专用数据库")
 
     engine = build_engine(database_url)
     request.addfinalizer(engine.dispose)

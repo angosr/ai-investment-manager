@@ -39,7 +39,7 @@ def register_assessment_forward_plan(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
     signal_window_start: Annotated[str, typer.Option()],
@@ -122,7 +122,7 @@ def register_assessment_forward_plan(
 def evaluate_assessment_forward_plan_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
     published_at: Annotated[str, typer.Option()],

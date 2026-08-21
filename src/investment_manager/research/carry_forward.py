@@ -187,7 +187,7 @@ def build_carry_forward_evaluation_plan(
             EvaluationStage.FIXED_REGRESSION,
             EvaluationStage.FORWARD,
         ),
-        fixed_regression_suite_version="quant-core-carry-forward-regression-v1",
+        fixed_regression_suite_version="investment-manager-carry-forward-regression-v1",
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
         blind_query_budget=0,

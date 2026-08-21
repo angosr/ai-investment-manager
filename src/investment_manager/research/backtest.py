@@ -44,7 +44,7 @@ from investment_manager.research.dataset import (
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.settings import AppConfig
 
-BACKTEST_MODEL_VERSION = "quant-core-bar-backtest-v11"
+BACKTEST_MODEL_VERSION = "investment-manager-bar-backtest-v11"
 
 
 class ResearchStrategy(Strategy, Protocol):
@@ -120,7 +120,7 @@ class BacktestRun(FrozenModel):
     artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     engine: str
     engine_version: str
-    backtest_model_version: str = "quant-core-bar-backtest-v1"
+    backtest_model_version: str = "investment-manager-bar-backtest-v1"
     symbol: str
     interval: str
     signal_start: datetime

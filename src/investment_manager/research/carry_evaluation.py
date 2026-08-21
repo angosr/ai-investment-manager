@@ -290,7 +290,7 @@ def build_carry_evaluation_plan(
             EvaluationStage.WALK_FORWARD,
             EvaluationStage.BLIND,
         ),
-        fixed_regression_suite_version="quant-core-carry-regression-v1",
+        fixed_regression_suite_version="investment-manager-carry-regression-v1",
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
         blind_query_budget=1,

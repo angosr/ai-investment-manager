@@ -826,7 +826,7 @@ def assemble_binance_testnet(
         deployment.stage != DeploymentStage.TESTNET
         or not deployment.testnet_order_submission_enabled
         or deployment.live_order_submission_enabled
-        or deployment.credential_profile != "env:QUANT_CORE_BINANCE"
+        or deployment.credential_profile != "env:INVESTMENT_MANAGER_BINANCE"
         or not deployment.manual_approval_ref
     ):
         raise ValueError("Binance Testnet 执行门禁未完整通过")

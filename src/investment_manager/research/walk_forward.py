@@ -29,7 +29,7 @@ from investment_manager.settings import AppConfig
 
 WALK_FORWARD_EVALUATION_SPEC_VERSION = "walk-forward-evaluation-spec-v2"
 BLIND_EVALUATION_VERSION = "blind-evaluation-v1"
-RESEARCH_REGRESSION_SUITE_VERSION = "quant-core-research-regression-v1"
+RESEARCH_REGRESSION_SUITE_VERSION = "investment-manager-research-regression-v1"
 
 
 class WalkForwardPlan(FrozenModel):

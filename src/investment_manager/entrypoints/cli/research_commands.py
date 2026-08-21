@@ -191,7 +191,7 @@ def fetch_binance_carry_history_command(
 def carry_walk_forward_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     carry_dataset_id: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option()],
@@ -313,7 +313,7 @@ def carry_walk_forward_command(
 def carry_blind_evaluate_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="一次性盲测事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="一次性盲测事实库"),
     ],
     source_evaluation_id: Annotated[str, typer.Option()],
     carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
@@ -452,7 +452,7 @@ def carry_blind_evaluate_command(
 def register_carry_forward_plan_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
     symbol: Annotated[str, typer.Option()],
@@ -509,7 +509,7 @@ def register_carry_forward_plan_command(
 def evaluate_carry_forward_plan_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     plan_id: Annotated[str, typer.Option()],
     carry_dataset_id: Annotated[str, typer.Option()],
@@ -674,7 +674,7 @@ def walk_forward_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     dataset_id: Annotated[str, typer.Option()],
     plan_id: Annotated[str, typer.Option()],
@@ -859,7 +859,7 @@ def blind_evaluate_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="EvaluationPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
     ],
     source_evaluation_id: Annotated[str, typer.Option()],
     catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
@@ -1038,7 +1038,7 @@ def blind_evaluate_command(
 def freeze_event_history_command(
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="点时事件事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="点时事件事实库"),
     ],
     start: Annotated[str, typer.Option(help="按 observed_at 过滤的含时区起点（含）")],
     end: Annotated[str, typer.Option(help="按 observed_at 过滤的含时区终点（不含）")],
@@ -1081,7 +1081,7 @@ def freeze_event_history_command(
         )
     dataset = freeze_historical_events(
         events=(IntelligenceEvent.model_validate(item) for item in rows),
-        source="quant-core-normalized-events",
+        source="investment-manager-normalized-events",
         requested_start=window_start,
         requested_end=window_end,
         collected_at=frozen_at,
@@ -1108,7 +1108,7 @@ def replay_event_triggers_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="冻结 TriggerPlan 事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="冻结 TriggerPlan 事实库"),
     ],
     event_dataset_id: Annotated[str, typer.Option()],
     replay_start: Annotated[str, typer.Option(help="带时区的回放起点（含）")],
@@ -1249,7 +1249,7 @@ def paired_decision_tape_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     database_url: Annotated[
         str,
-        typer.Option(envvar="QUANT_CORE_DATABASE_URL", help="前瞻决策带事实库"),
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="前瞻决策带事实库"),
     ],
     pipeline_version: Annotated[str, typer.Option()],
     symbol: Annotated[str, typer.Option()],

@@ -144,7 +144,7 @@ class CodexRuntimePolicy(StrictConfig):
     enabled: bool = False
     isolation_verified: bool = False
     binary: Path = Path("/usr/bin/codex")
-    bundle_root: Path = Path("/var/lib/quant-core/codex-runs")
+    bundle_root: Path = Path("/var/lib/investment-manager/codex-runs")
     expected_cli_version: str
     expected_binary_sha256: str | None = Field(
         default=None,

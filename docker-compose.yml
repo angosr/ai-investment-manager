@@ -8,11 +8,11 @@ services:
     ports:
       - "127.0.0.1:55432:5432"
     environment:
-      POSTGRES_DB: quant_core_test
-      POSTGRES_USER: quant_core
+      POSTGRES_DB: investment_manager_test
+      POSTGRES_USER: investment_manager
       POSTGRES_PASSWORD: local-mock-only
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quant_core -d quant_core_test"]
+      test: ["CMD-SHELL", "pg_isready -U investment_manager -d investment_manager_test"]
       interval: 5s
       timeout: 3s
       retries: 20

@@ -226,7 +226,7 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 ```bash
 investment-manager dashboard-service \
   --config config/investment-manager.yaml \
-  --database-url "$QUANT_CORE_DATABASE_URL" \
+  --database-url "$INVESTMENT_MANAGER_DATABASE_URL" \
   --host 127.0.0.1 --port 8090
 ```
 

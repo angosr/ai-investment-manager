@@ -162,15 +162,15 @@ temporal:
   version: temporal-analysis-v1
   address: 127.0.0.1:7233
   namespace: default
-  task_queue: quant-core-analysis-v1
+  task_queue: investment-manager-analysis-v1
   assessment_task_queue: investment-manager-assessment-v1
-  lifecycle_task_queue: quant-core-lifecycle-v1
-  reconciliation_task_queue: quant-core-reconciliation-v1
-  outcome_evaluation_task_queue: quant-core-outcome-evaluation-v1
-  governance_task_queue: quant-core-governance-v1
-  version_evaluation_task_queue: quant-core-version-evaluation-v1
-  release_task_queue: quant-core-release-v1
-  trigger_task_queue: quant-core-trigger-v1
+  lifecycle_task_queue: investment-manager-lifecycle-v1
+  reconciliation_task_queue: investment-manager-reconciliation-v1
+  outcome_evaluation_task_queue: investment-manager-outcome-evaluation-v1
+  governance_task_queue: investment-manager-governance-v1
+  version_evaluation_task_queue: investment-manager-version-evaluation-v1
+  release_task_queue: investment-manager-release-v1
+  trigger_task_queue: investment-manager-trigger-v1
   activity_start_to_close_seconds: 240
   activity_schedule_to_close_seconds: 600
   retry_initial_seconds: 2
@@ -253,7 +253,7 @@ codex_runtime:
   enabled: false
   isolation_verified: false
   binary: /usr/bin/codex
-  bundle_root: /var/lib/quant-core/codex-runs
+  bundle_root: /var/lib/investment-manager/codex-runs
   expected_cli_version: codex-cli 0.148.0
   expected_binary_sha256: null
   model: gpt-5.6-sol
@@ -305,7 +305,7 @@ binance_testnet:
   request_timeout_seconds: 10
   time_sync_ttl_seconds: 30
   quote_asset: USDT
-  credential_environment_prefix: QUANT_CORE_BINANCE
+  credential_environment_prefix: INVESTMENT_MANAGER_BINANCE
 
 deployment:
   version: deployment-v1

@@ -85,25 +85,25 @@ python3 -m venv .venv
   --config config/investment-manager.yaml --symbol BTCUSDT \
   --interval 1d \
   --start 2018-08-19T00:00:00Z --end 2026-08-19T00:00:00Z
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager freeze-event-history \
   --start 2026-08-01T00:00:00Z --end 2026-08-19T00:00:00Z
 .venv/bin/investment-manager screen-signals \
   --config config/investment-manager.yaml --dataset-id '<历史行情制品>' \
   --signal-start '<开发窗口起点>' --signal-end '<开发标签终点>' \
   --minimum-non-overlapping-samples 30
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager replay-event-triggers \
   --config '<冻结配置>' --event-dataset-id '<事件制品>' \
   --replay-start '<起点>' --replay-end '<终点>' \
   --analysis-duration-seconds '<冻结延迟假设>'
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager walk-forward \
   --config config/investment-manager.yaml --dataset-id '<上一步输出>' \
   --candidate configured \
   --plan-id '<已预登记计划>' --training-bars 1095 --test-bars 365 \
   --blind-bars 365
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager blind-evaluate \
   --config config/investment-manager.yaml \
   --source-evaluation-id '<已通过的 walk-forward 结果 ID>'
@@ -136,7 +136,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 前瞻方向标签到期后可按冻结 Pipeline、品种和周期生成去重叠评价：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager diagnose-legacy-analysis-forecasts \
   --config '<运行配置>' --pipeline-version '<冻结 Pipeline>' \
   --window-start '<含时区起点>' --window-end '<含时区终点>' \
@@ -150,7 +150,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 先登记门控计划；未来窗口结束并冻结覆盖完整区间的历史行情后，再用同一份前瞻决策带配对回放程序基线与 `Q+AI`。命令只读取 Proposal 与唯一成功 Codex Attempt 的完成事实，不读取方向结果表，也不会重新调用模型：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager paired-decision-tape \
   --config '<冻结配置>' \
   --pipeline-version '<冻结 Pipeline>' --symbol BTCUSDT \
@@ -176,7 +176,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 数据库初始化和升级使用版本化迁移：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
   .venv/bin/alembic upgrade head
 ```
 
@@ -184,11 +184,11 @@ PostgreSQL 契约测试使用独立 Mock 数据库：
 
 ```bash
 docker compose --profile quant up -d postgres
-QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_TEST_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/pytest tests/integration/test_postgres.py
 ```
 
-测试会重建名称包含 `quant_core_test` 的专用数据库 Schema，禁止把生产数据库 URL 传给该测试。
+测试会重建名称包含 `investment_manager_test` 的专用数据库 Schema，禁止把生产数据库 URL 传给该测试。
 
 ### 回放旧 Temporal Mock 闭环（迁移期诊断）
 
@@ -196,9 +196,9 @@ QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@12
 
 ```bash
 docker compose --profile quant up -d postgres temporal
-QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/alembic upgrade head
-QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/investment-manager temporal-worker --config config/investment-manager.yaml
 ```
 
@@ -227,22 +227,22 @@ QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0
 私有 Codex Challenger 使用 `challenger-audit`，并必须显式绑定冻结运行配置、ReleaseManifest 与对应代码 checkout；完整命令和失败语义见 [docs/OPERATIONS.md](./docs/OPERATIONS.md)。公开 `shadow-audit` 不能替代这项验收。
 
 ```bash
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   information-collector --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   market-stream --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   assessment-worker --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   trigger-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   reconciliation-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
-QUANT_CORE_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   outcome-evaluation-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 ```
@@ -278,7 +278,7 @@ cd web && npm install && npm run build && cd ..
 再启动只读服务（**单进程同时托管前端与 API**，无需另起前端；仅绑本机）：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow/只读数据库 URL>' .venv/bin/investment-manager \
   dashboard-service --config '<私有配置>' \
   --release-manifest '<同一运行 ReleaseManifest>' \
   --host 127.0.0.1 --port 8090

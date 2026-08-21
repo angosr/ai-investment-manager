@@ -2,7 +2,7 @@
 
 ## 当前运行边界
 
-仓库默认只运行冻结回放和 Mock/Shadow。Binance Spot Testnet 适配器与独立配置已经存在，但必须同时通过 `TESTNET` 类型化配置、本机 `QUANT_CORE_BINANCE_ORDER_SUBMISSION_ENABLED=true`、Testnet 凭证验收和人工批准；LIVE 仍无条件拒绝。`codex_runtime.enabled` 默认为 `false`，账号目录白名单仍是禁用占位符。
+仓库默认只运行冻结回放和 Mock/Shadow。Binance Spot Testnet 适配器与独立配置已经存在，但必须同时通过 `TESTNET` 类型化配置、本机 `INVESTMENT_MANAGER_BINANCE_ORDER_SUBMISSION_ENABLED=true`、Testnet 凭证验收和人工批准；LIVE 仍无条件拒绝。`codex_runtime.enabled` 默认为 `false`，账号目录白名单仍是禁用占位符。
 
 本阶段的安全结论只覆盖程序契约和 Mock 故障注入，不代表已启用账号的生产隔离已经完成。特别是 Codex `read-only` 沙箱主要约束写入；生产 Runner 还必须显式禁用全部本地、网络与扩展工具，并拒绝任何 stderr、工具/错误事件或多消息输出，不能把提示词服从当成隔离证明。
 
@@ -12,7 +12,7 @@
 cd market-intel
 .venv/bin/ruff check src tests migrations
 .venv/bin/pytest
-QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_TEST_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/pytest tests/integration/test_postgres.py
 .venv/bin/investment-manager phase-a-audit \
   --config config/investment-manager.yaml \
@@ -24,11 +24,11 @@ QUANT_CORE_TEST_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@12
 数据库只通过 Alembic 版本迁移初始化或升级；`create_schema` 仅保留给单元测试：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
   .venv/bin/alembic upgrade head
 ```
 
-升级前必须创建可恢复备份，并先在同版本副本执行迁移、完整回放和对账。所有读取运行事实的长期服务和运维命令在启动时都会只读核对单一 Alembic head；错库、漏迁移、缺失或多 head 均立即拒绝启动，服务不会自行迁移。禁止在生产数据库运行测试中的 `drop_all`；PostgreSQL 集成测试只接受数据库名包含 `quant_core_test` 的隔离 URL。
+升级前必须创建可恢复备份，并先在同版本副本执行迁移、完整回放和对账。所有读取运行事实的长期服务和运维命令在启动时都会只读核对单一 Alembic head；错库、漏迁移、缺失或多 head 均立即拒绝启动，服务不会自行迁移。禁止在生产数据库运行测试中的 `drop_all`；PostgreSQL 集成测试只接受数据库名包含 `investment_manager_test` 的隔离 URL。
 
 ## Temporal 编排
 
@@ -51,9 +51,9 @@ ExecutionWorkflow 的主重试耗尽或交易截止已过后会自动进入终�
 
 ```bash
 docker compose --profile quant up -d postgres temporal
-QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/alembic upgrade head
-QUANT_CORE_DATABASE_URL='postgresql+psycopg://quant_core:local-mock-only@127.0.0.1:55432/quant_core_test' \
+INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
   .venv/bin/investment-manager assessment-worker --config '<已启用且冻结的 Assessment 配置>' \
   --release-manifest '<匹配的冻结 ReleaseManifest>'
 ```
@@ -125,7 +125,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 行为版本冻结后、首个计划内预测生成前登记方向评价窗口：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager register-assessment-forward-plan \
   --config '<冻结运行配置>' --plan-id '<唯一计划 ID>' \
   --signal-window-start '<未来 UTC 起点>' \
@@ -140,7 +140,7 @@ QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
 BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未来数据产生前登记：
 
 ```bash
-QUANT_CORE_DATABASE_URL='<由部署 Secret 注入>' \
+INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager register-carry-forward-plan \
   --plan-id '<唯一计划 ID>' --symbol BTCUSDT \
   --observation-start '<未来月初 UTC>' \
@@ -252,7 +252,7 @@ AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。�
 额度探测和分析执行都使用一次性隔离 CODEX_HOME，只链接对应槽位的认证文件，不加载账号目录中的配置、插件、MCP、Skill 或历史会话。“已登录”不等于可轮换：槽位必须同时通过官方额度协议与 `codex-isolation-audit`；低余量、超时或协议不可用的槽位保持禁用。
 
 ```bash
-QUANT_CORE_DATABASE_URL='<治理数据库 URL>' .venv/bin/investment-manager \
+INVESTMENT_MANAGER_DATABASE_URL='<治理数据库 URL>' .venv/bin/investment-manager \
   governance-service --config '<私有配置>' --project-root .
 ```
 

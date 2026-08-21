@@ -115,7 +115,7 @@ def test_position_lifecycle_workflow_persists_progress_and_closes_after_timeout(
     async def scenario() -> LifecycleWorkflowExecution:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             policy = app_config.temporal.model_copy(
-                update={"lifecycle_task_queue": "quant-core-lifecycle-test"}
+                update={"lifecycle_task_queue": "investment-manager-lifecycle-test"}
             )
             request = build_lifecycle_workflow_request(
                 OpenLifecycleRecord(

@@ -1,6 +1,6 @@
 extends: investment-manager.shadow.yaml
 
-# Testnet 使用独立事实库（由 QUANT_CORE_DATABASE_URL 指定）和 Temporal namespace。
+# Testnet 使用独立事实库（由 INVESTMENT_MANAGER_DATABASE_URL 指定）和 Temporal namespace。
 temporal:
   namespace: testnet-20260818
 
@@ -37,5 +37,5 @@ deployment:
   shadow_market_data_enabled: true
   testnet_order_submission_enabled: true
   live_order_submission_enabled: false
-  credential_profile: env:QUANT_CORE_BINANCE
+  credential_profile: env:INVESTMENT_MANAGER_BINANCE
   manual_approval_ref: user-approval-20260818

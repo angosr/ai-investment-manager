@@ -44,7 +44,7 @@ def test_temporal_replay_and_deadline(app_config, replay_input) -> None:
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             policy = app_config.temporal.model_copy(
-                update={"task_queue": "quant-core-analysis-test"}
+                update={"task_queue": "investment-manager-analysis-test"}
             )
             cycle = AnalysisCycle.create(app_config)
             coordinator = TemporalAnalysisCoordinator(env.client, policy)
@@ -118,7 +118,7 @@ def test_temporal_activity_retries_transient_failure(app_config, replay_input) -
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             policy = app_config.temporal.model_copy(
-                update={"task_queue": "quant-core-analysis-retry-test"}
+                update={"task_queue": "investment-manager-analysis-retry-test"}
             )
             retry_input = replay_input.model_copy(
                 update={
@@ -168,7 +168,7 @@ def test_execution_activity_recovers_after_submit_before_commit_crash(
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             policy = app_config.temporal.model_copy(
-                update={"task_queue": "quant-core-execution-crash-test"}
+                update={"task_queue": "investment-manager-execution-crash-test"}
             )
             cycle_input = replay_input.model_copy(
                 update={
@@ -224,7 +224,7 @@ def test_execution_recovery_outlives_primary_retry_budget(app_config, replay_inp
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             policy = app_config.temporal.model_copy(
-                update={"task_queue": "quant-core-execution-recovery-test"}
+                update={"task_queue": "investment-manager-execution-recovery-test"}
             )
             cycle_input = replay_input.model_copy(
                 update={

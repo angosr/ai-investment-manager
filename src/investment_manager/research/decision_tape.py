@@ -433,7 +433,7 @@ def build_forecast_gate_evaluation_plan(
             EvaluationStage.WALK_FORWARD,
             EvaluationStage.SHADOW,
         ),
-        fixed_regression_suite_version="quant-core-paired-context-regression-v1",
+        fixed_regression_suite_version="investment-manager-paired-context-regression-v1",
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
         blind_query_budget=0,
