@@ -18,6 +18,10 @@ from investment_manager.forecast.context.calibration import (
     AssessmentCalibrationBuilder,
     AssessmentCalibrationBuildSpec,
 )
+from investment_manager.forecast.context.contract import (
+    AssessStructuredOutput,
+    finalize_context_assessment,
+)
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
@@ -223,6 +227,50 @@ def _reference_trade(**updates) -> MarketTrade:
     }
     values.update(updates)
     return MarketTrade(**values)
+
+
+def test_assessment_output_boundary_canonicalizes_duplicate_set_items() -> None:
+    output = AssessStructuredOutput.model_validate(
+        {
+            "assessment": {
+                "market_mechanism": "A policy revision changes discount rates.",
+                "views": [
+                    {
+                        "asset": "BTC",
+                        "horizon_minutes": 240,
+                        "direction": "UP",
+                        "already_priced": "PARTIAL",
+                        "uncertainty": "MEDIUM",
+                        "evidence_ids": ["delta-1", "delta-1"],
+                        "invalidation_conditions": [
+                            "policy-reversal",
+                            "policy-reversal",
+                        ],
+                    }
+                ],
+                "contradictions": [],
+                "data_gaps": [],
+            }
+        }
+    )
+
+    view = output.assessment.views[0]
+    assert view.evidence_ids == ("delta-1",)
+    assert view.invalidation_conditions == ("policy-reversal",)
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=_packet(),
+        analysis_behavior_hash="b" * 64,
+        available_at=NOW + timedelta(seconds=20),
+    )
+    assert assessment.views == (view,)
+    with pytest.raises(ValueError, match="不能重复引用证据"):
+        ContextView.model_validate(
+            {
+                **view.model_dump(),
+                "evidence_ids": ("delta-1", "delta-1"),
+            }
+        )
 
 
 def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
