@@ -83,6 +83,11 @@ class RegressionSuite(FrozenModel):
         return self
 
 
+class ReleaseArtifact(FrozenModel):
+    artifact_id: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ReleaseManifest(FrozenModel):
     manifest_id: str
     created_at: datetime
@@ -94,11 +99,22 @@ class ReleaseManifest(FrozenModel):
         exclude_if=lambda value: value is None,
     )
     component_versions: tuple[tuple[str, str], ...]
+    artifacts: tuple[ReleaseArtifact, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
     constitution_version: str
     parent_manifest_id: str | None = None
     complexity_score: int = Field(default=0, ge=0)
 
     _utc_created_at = field_validator("created_at")(require_utc)
+
+    @model_validator(mode="after")
+    def artifacts_are_unique_and_sorted(self):
+        ids = tuple(item.artifact_id for item in self.artifacts)
+        if ids != tuple(sorted(set(ids))):
+            raise ValueError("ReleaseManifest 制品必须按唯一 ID 排序")
+        return self
 
 
 class FailedExperiment(FrozenModel):
@@ -651,6 +667,19 @@ def validate_manifest_against_config(
     current = {name: getattr(config, name).version for name in component_names}
     if declared != current:
         raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
+    if config.capital.enabled:
+        from investment_manager.forecast.carry import validate_carry_evidence
+
+        evidence = config.carry_forecast.evidence
+        if evidence is None:
+            raise ValueError("Capital Release 缺少 Carry evidence")
+        expected_artifact = ReleaseArtifact(
+            artifact_id=evidence.source_evaluation_id,
+            sha256=evidence.source_artifact_sha256,
+        )
+        if expected_artifact not in manifest.artifacts:
+            raise ValueError("Capital ReleaseManifest 未绑定 Carry evidence 制品")
+        validate_carry_evidence(evidence)
     if manifest.configuration_hash is None:
         if require_configuration_hash:
             raise ValueError("运行 ReleaseManifest 缺少完整配置哈希")

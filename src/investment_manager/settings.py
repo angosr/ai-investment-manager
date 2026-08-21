@@ -134,6 +134,20 @@ class AppConfig(StrictConfig):
                 != self.carry_forecast.rebalance_policy_version
             ):
                 raise ValueError("Capital 与 Carry Forecast 必须绑定同一再平衡行为版本")
+            evidence_gross = (
+                self.carry_forecast.evidence.evaluated_gross_exposure_fraction
+            )
+            if (
+                self.capital.decision.maximum_total_exposure_fraction
+                != evidence_gross
+                or self.capital.decision.maximum_single_sleeve_fraction
+                != evidence_gross
+                or self.capital.risk.maximum_gross_exposure_fraction
+                != evidence_gross
+                or self.capital.risk.maximum_instrument_fraction * 2
+                != evidence_gross
+            ):
+                raise ValueError("Carry 研究、组合与风控仓位尺寸必须完全一致")
             instruments = tuple(
                 item.instrument for item in self.capital.execution_specs
             )

@@ -72,7 +72,7 @@ calibration:
 carry_forecast:
   version: btc-carry-monthly-first-open-v2
   rebalance_policy_version: monthly-first-open-v2
-  evaluated_policy_version: btc-spot-perp-monthly-50pct-v1
+  evaluated_policy_version: spot-perp-monthly-risk-30pct-v2
   enabled: true
   producer_id: btc-spot-perp-carry
   forecast_family: delta-neutral-funding-carry
@@ -84,16 +84,21 @@ carry_forecast:
   funding_interval_hours: 8
   expected_edge_half_life_seconds: 31536000
   evidence:
-    version: carry-walk-forward-shadow-v1
-    source_evaluation_id: carry_walk_forward_5f581777f8c71f8847dc
-    source_result_hash: cff91c7c6144100b2fdf3c284a30a62e8ab126d2f04275121b1db265daa4d296
-    evaluated_policy_version: btc-spot-perp-monthly-50pct-v1
-    expected_annualized_net_fraction: "0.07333513498528742968863269244"
-    conservative_annualized_net_fraction: "0.02882739996977980281080245300"
+    version: carry-walk-forward-risk-30pct-v2
+    source_evaluation_id: carry_walk_forward_de969ed82f588ccc343a
+    source_result_hash: 4afbca5712c60030b941182d154efb3ee1eea2141d72342afca25f2ced256e2a
+    source_evaluation_spec_hash: 7707bea607dd014abe68707a87cf5a20ecae78a4200def61d20e286d44f64b24
+    source_dataset_id: historical_carry_dataset_e605f49c521fdc68e910
+    source_artifact_path: config/evidence/carry_walk_forward_de969ed82f588ccc343a.json
+    source_artifact_sha256: 10aff6597580cd5149528322dffe7053e50788a350a5b52a556f6f6447da15e6
+    evaluated_policy_version: spot-perp-monthly-risk-30pct-v2
+    evaluated_gross_exposure_fraction: "0.30"
+    expected_annualized_net_fraction: "0.0211048136714328200889592583"
+    conservative_annualized_net_fraction: "0.00845795837588403158427061391"
     independent_sample_count: 5
     round_trip_cost_bps: "20"
-    published_at: 2026-08-21T00:00:00Z
-    valid_from: 2026-08-21T00:00:00Z
+    published_at: 2026-08-21T08:47:00Z
+    valid_from: 2026-08-21T08:47:00Z
     valid_until: 2027-08-01T00:00:00Z
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 

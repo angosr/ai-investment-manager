@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 
 from investment_manager.forecast.carry import (
     CarryForecastProducer,
     ReleasedCarryForecastProducer,
+    validate_carry_evidence,
 )
 from investment_manager.forecast.models import DirectionalView, ForecastRole
 from investment_manager.forecast.repository import SqlForecastStore
@@ -28,6 +31,38 @@ def _perpetual() -> InstrumentId:
         quote_asset="USDT",
         settlement_asset="USDT",
     )
+
+
+def test_carry_evidence_rejects_tampered_source_artifact(
+    app_config,
+    tmp_path,
+) -> None:
+    evidence = app_config.carry_forecast.evidence
+    assert evidence is not None
+    source = Path(evidence.source_artifact_path)
+    copied = tmp_path / source.name
+    copied.write_bytes(source.read_bytes() + b" ")
+    copied_evidence = evidence.model_copy(
+        update={"source_artifact_path": Path(source.name)}
+    )
+
+    with pytest.raises(ValueError, match="文件哈希不匹配"):
+        validate_carry_evidence(copied_evidence, repository_root=tmp_path)
+
+
+def test_carry_evidence_rejects_copied_metric_drift(app_config) -> None:
+    evidence = app_config.carry_forecast.evidence
+    assert evidence is not None
+    changed = evidence.model_copy(
+        update={
+            "expected_annualized_net_fraction": (
+                evidence.expected_annualized_net_fraction + Decimal("0.001")
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="配置与源评价事实不一致"):
+        validate_carry_evidence(changed)
 
 
 def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(

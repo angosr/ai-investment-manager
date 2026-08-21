@@ -143,6 +143,7 @@ BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未�
 INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   .venv/bin/investment-manager register-carry-forward-plan \
   --plan-id '<唯一计划 ID>' --symbol BTCUSDT \
+  --policy-version 'spot-perp-monthly-risk-30pct-v2' \
   --observation-start '<未来月初 UTC>' \
   --observation-end '<至少十二个完整日历月后的月初 UTC>'
 ```

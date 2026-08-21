@@ -19,7 +19,12 @@ class CarryEvidencePolicy(StrictConfig):
     version: str
     source_evaluation_id: str
     source_result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_dataset_id: str
+    source_artifact_path: Path
+    source_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluated_policy_version: str
+    evaluated_gross_exposure_fraction: Decimal = Field(gt=0, le=1)
     expected_annualized_net_fraction: Decimal = Field(gt=0)
     conservative_annualized_net_fraction: Decimal = Field(gt=0)
     independent_sample_count: int = Field(gt=1)
@@ -29,6 +34,15 @@ class CarryEvidencePolicy(StrictConfig):
     valid_until: datetime
     blind_status: str = Field(pattern=r"^UNAVAILABLE_[A-Z0-9_]+$")
 
+    @field_validator("source_artifact_path")
+    @classmethod
+    def artifact_path_is_portable_and_identity_bound(cls, value: Path) -> Path:
+        if value.is_absolute() or ".." in value.parts:
+            raise ValueError("Carry evidence 制品路径必须是仓库内相对路径")
+        if value.name != f"{value.stem}.json" or value.stem == "":
+            raise ValueError("Carry evidence 制品必须是 JSON 文件")
+        return value
+
     @model_validator(mode="after")
     def evidence_is_bounded_and_explicitly_not_live_authorized(self):
         if self.conservative_annualized_net_fraction > (
@@ -37,6 +51,8 @@ class CarryEvidencePolicy(StrictConfig):
             raise ValueError("Carry 保守年化净收益不能高于均值")
         if not self.published_at <= self.valid_from < self.valid_until:
             raise ValueError("Carry evidence 发布和有效时间顺序非法")
+        if self.source_artifact_path.name != f"{self.source_evaluation_id}.json":
+            raise ValueError("Carry evidence 制品文件名必须绑定评价 ID")
         return self
 
 

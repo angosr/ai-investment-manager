@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from investment_manager.forecast.models import (
     BaseForecast,
@@ -240,6 +243,9 @@ class ReleasedCarryForecastProducer:
     evidence: CarryEvidencePolicy
     store: SqlForecastStore
 
+    def __post_init__(self) -> None:
+        validate_carry_evidence(self.evidence)
+
     def produce(self, *, as_of: datetime) -> CalibratedForecast | None:
         base = self.base.produce(as_of=as_of)
         if base is None:
@@ -298,3 +304,83 @@ class ReleasedCarryForecastProducer:
         )
         self.store.record(forecast)
         return forecast
+
+
+def validate_carry_evidence(
+    evidence: CarryEvidencePolicy,
+    *,
+    repository_root: Path | None = None,
+) -> Path:
+    """Fail closed unless copied release facts equal the immutable source result."""
+
+    root = (repository_root or Path.cwd()).resolve()
+    artifact = (root / evidence.source_artifact_path).resolve()
+    if not artifact.is_relative_to(root):
+        raise ValueError("Carry evidence 制品必须位于仓库内")
+    try:
+        raw_bytes = artifact.read_bytes()
+        envelope = json.loads(raw_bytes)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Carry evidence 源制品不可读取") from exc
+    if hashlib.sha256(raw_bytes).hexdigest() != evidence.source_artifact_sha256:
+        raise ValueError("Carry evidence 源制品文件哈希不匹配")
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("result"), dict):
+        raise ValueError("Carry evidence 源制品结构非法")
+    result = envelope["result"]
+    result_hash = envelope.get("result_hash")
+    if result_hash != content_hash(result):
+        raise ValueError("Carry evidence 源结果内容哈希不匹配")
+
+    policy = result.get("policy")
+    metrics = result.get("metrics")
+    folds = result.get("folds")
+    if not isinstance(policy, dict) or not isinstance(metrics, dict):
+        raise ValueError("Carry evidence 源评价缺少策略或指标")
+    if not isinstance(folds, list) or not folds:
+        raise ValueError("Carry evidence 源评价缺少开发折")
+    try:
+        derived_gross = Decimal(str(policy["leg_equity_fraction"])) * 2
+        derived_cost = Decimal(str(policy["spot_cost_bps"])) + Decimal(
+            str(policy["futures_cost_bps"])
+        )
+        source_facts = (
+            result["evaluation_id"],
+            result["evaluation_spec_hash"],
+            result["dataset_id"],
+            result_hash,
+            policy["version"],
+            derived_gross,
+            len(folds),
+            derived_cost,
+            Decimal(str(metrics["average_annualized_return_fraction"])),
+            Decimal(str(metrics["annualized_return_lower_bound"])),
+        )
+    except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Carry evidence 源评价事实非法") from exc
+    expected_facts = (
+        evidence.source_evaluation_id,
+        evidence.source_evaluation_spec_hash,
+        evidence.source_dataset_id,
+        evidence.source_result_hash,
+        evidence.evaluated_policy_version,
+        evidence.evaluated_gross_exposure_fraction,
+        evidence.independent_sample_count,
+        evidence.round_trip_cost_bps,
+        evidence.expected_annualized_net_fraction,
+        evidence.conservative_annualized_net_fraction,
+    )
+    if source_facts != expected_facts:
+        raise ValueError("Carry evidence 配置与源评价事实不一致")
+    if result.get("passed") is not True or result.get("reason_codes") != []:
+        raise ValueError("Carry evidence 源评价未通过门禁")
+    if any(
+        not isinstance(fold, dict)
+        or not isinstance(fold.get("run"), dict)
+        or fold["run"].get("completed") is not True
+        or fold["run"].get("reason_codes") != []
+        or fold["run"].get("dataset_id") != evidence.source_dataset_id
+        or fold["run"].get("policy") != policy
+        for fold in folds
+    ):
+        raise ValueError("Carry evidence 开发折与汇总策略不一致")
+    return artifact

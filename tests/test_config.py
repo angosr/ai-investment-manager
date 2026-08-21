@@ -48,6 +48,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
 
 
+def test_capital_sizing_cannot_drift_from_released_carry_evidence() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["capital"]["risk"]["maximum_gross_exposure_fraction"] = Decimal("0.29")
+
+    with pytest.raises(ValidationError, match="仓位尺寸必须完全一致"):
+        type(config).model_validate(payload)
+
+
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
     root = Path(__file__).resolve().parents[1]
 

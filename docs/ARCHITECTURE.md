@@ -207,9 +207,11 @@ first-writer-wins 方式冻结自然月、决策时点、统一截止时间和�
 ExecutionGroup 与追加账户/绩效事实，不重新计算目标；错过窗口时本月 `NO_CHANGE`，空仓继续现金、旧仓
 继续持有。最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
 Shadow-only
-发布器把已通过的五折 walk-forward 制品投影成 `PROGRAM_BASE` CalibratedForecast；由于历史 blind
-窗口已被其他候选消耗，配置必须显式记录 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝
-装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
+发布器只把与运行同为 15%/leg、30% gross 的 BTC 五折 walk-forward 制品投影成 `PROGRAM_BASE`
+CalibratedForecast；源文件 SHA-256、内部结果哈希、评价规格、数据集、策略、成本、样本与收益统计在
+装配时逐项校验，Capital ReleaseManifest 再绑定该制品哈希。研究、Portfolio 单 Sleeve 上限与 Risk
+gross/单产品上限必须满足同一尺寸恒等式。由于历史 blind 窗口已被其他候选消耗，配置必须显式记录
+`UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
 Venue 与账户投影；错过月初窗口时不产生新的经济目标，不为制造交易改变行为。月内主动风险退出仍须在
 首次持仓前以独立、可恢复的 Risk Review 合同补齐，不能借恢复路径重新开放 allocation。
 研究入口还保留一个精确的总敞口 30% ETH 规格；它的 walk-forward 和唯一 blind
