@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from pydantic import TypeAdapter
@@ -20,6 +21,7 @@ from investment_manager.forecast.codex.runtime import (
 from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
+    assessment_visible_evidence_ids,
     build_assess_prompt,
     finalize_context_assessment,
 )
@@ -28,7 +30,31 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v1"
+ASSESS_INPUT_VERSION = "assess-input-v2"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v1"
+
+
+def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
+    """Constrain packet-dependent semantics before Codex sampling."""
+
+    schema = strict_output_schema(AssessStructuredOutput.model_json_schema())
+    definitions = schema["$defs"]
+    draft = definitions["ContextAssessmentDraft"]
+    context_view = definitions["ContextView"]
+    views = draft["properties"]["views"]
+    evidence_ids = assessment_visible_evidence_ids(packet)
+    branches: list[dict[str, object]] = []
+    for required in packet.required_views:
+        branch = deepcopy(context_view)
+        properties = branch["properties"]
+        properties["asset"]["enum"] = [required.asset]
+        properties["horizon_minutes"]["enum"] = [required.horizon_minutes]
+        properties["evidence_ids"]["items"]["enum"] = list(evidence_ids)
+        branches.append(branch)
+    views["items"] = {"anyOf": branches}
+    views["minItems"] = len(packet.required_views)
+    views["maxItems"] = len(packet.required_views)
+    return schema
 
 
 def assess_behavior_hash(
@@ -44,6 +70,11 @@ def assess_behavior_hash(
             "input_schema": DecisionPacket.model_json_schema(),
             "output_schema": strict_output_schema(
                 AssessStructuredOutput.model_json_schema()
+            ),
+            "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
+            "mandate_version": packet.mandate_version,
+            "required_views": tuple(
+                (item.asset, item.horizon_minutes) for item in packet.required_views
             ),
             "execution_contract": codex_execution_contract(),
             "model": runtime.model,
@@ -71,6 +102,7 @@ class AssessRunBundleBuilder:
     def build(self, packet: DecisionPacket, target: Path) -> RunBundle:
         prompt = build_assess_prompt(packet)
         behavior_hash = self.behavior_hash(packet)
+        output_schema = assess_output_schema(packet)
         if len(prompt) > self._runtime.maximum_prompt_characters:
             raise ValueError("ASSESS DecisionPacket 超过 Codex 提示容量上限")
         return write_run_bundle(
@@ -81,7 +113,7 @@ class AssessRunBundleBuilder:
                 "decision_packet.json": canonical_json(packet) + "\n",
                 "analyst_prompt.md": prompt + "\n",
                 "output.schema.json": json.dumps(
-                    strict_output_schema(AssessStructuredOutput.model_json_schema()),
+                    output_schema,
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -98,6 +130,8 @@ class AssessRunBundleBuilder:
                 "code_version": self._code_version,
                 "configuration_hash": self._configuration_hash,
                 "analysis_behavior_hash": behavior_hash,
+                "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
+                "output_schema_hash": content_hash(output_schema),
             },
         )
 

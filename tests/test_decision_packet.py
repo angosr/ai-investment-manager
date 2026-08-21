@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import pytest
@@ -5,7 +6,11 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 from investment_manager.forecast.codex.runtime import AnalystResult, verify_bundle
-from investment_manager.forecast.context.analyst import AssessRunBundleBuilder, CodexContextAnalyst
+from investment_manager.forecast.context.analyst import (
+    AssessRunBundleBuilder,
+    CodexContextAnalyst,
+    assess_output_schema,
+)
 from investment_manager.forecast.context.contract import (
     AssessStructuredOutput,
     ContextAssessmentDraft,
@@ -400,13 +405,37 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
-    schema = canonical_json(AssessStructuredOutput.model_json_schema())
+    schema = canonical_json(assess_output_schema(packet))
     prompt = build_assess_prompt(packet)
 
     assert "suggested_action" not in schema
     assert "order_type" not in schema
     assert "target_notional" not in schema
+    assert 'required_views_output_order_json=[{"asset":"BTC","horizon_minutes":60}' in prompt
+    assert 'allowed_evidence_ids_json=["delta-1","delta-2","feature-btc"' in prompt
     assert "decision_packet_json=" in prompt
+
+
+def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_input) -> None:
+    _, packet = _packet(app_config, replay_input)
+    schema = assess_output_schema(packet)
+    views = schema["$defs"]["ContextAssessmentDraft"]["properties"]["views"]
+
+    assert views["minItems"] == 4
+    assert views["maxItems"] == 4
+    branches = views["items"]["anyOf"]
+    assert tuple(
+        (
+            branch["properties"]["asset"]["enum"][0],
+            branch["properties"]["horizon_minutes"]["enum"][0],
+        )
+        for branch in branches
+    ) == (("BTC", 60), ("BTC", 240), ("ETH", 60), ("ETH", 240))
+    assert all(
+        branch["properties"]["evidence_ids"]["items"]["enum"]
+        == ["delta-1", "delta-2", "feature-btc", "feature-eth", "revision-1"]
+        for branch in branches
+    )
 
 
 def test_finalize_assessment_binds_authoritative_runtime_metadata(
@@ -502,6 +531,7 @@ def test_assess_bundle_reuses_generic_locked_runner_contract(
     schema = (bundle.path / "output.schema.json").read_text(encoding="utf-8")
     assert "suggested_action" not in schema
     assert "target_notional" not in schema
+    assert json.loads(schema) == assess_output_schema(packet)
 
 
 def test_assessment_behavior_hash_includes_schema_retry_contract(
