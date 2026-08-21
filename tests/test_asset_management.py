@@ -389,6 +389,7 @@ def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
             account_snapshot_hash=HASH,
             considered_forecast_ids=("forecast-1",),
             quotes=(_spot_quote(),),
+            reason_codes=("TEST_TARGET",),
             sleeves=(
                 _sleeve_target().model_copy(
                     update={"desired_gross_notional": Decimal("10001")}
@@ -409,6 +410,7 @@ def test_portfolio_target_rejects_leverage_and_duplicate_sleeves() -> None:
             account_snapshot_hash=HASH,
             considered_forecast_ids=("forecast-1",),
             quotes=(_spot_quote(),),
+            reason_codes=("TEST_TARGET",),
             sleeves=(_sleeve_target(), _sleeve_target()),
         )
 
@@ -433,6 +435,7 @@ def test_portfolio_target_can_represent_all_cash() -> None:
         account_snapshot_id="account-1",
         account_snapshot_hash=HASH,
         quotes=(),
+        reason_codes=("CASH_SELECTED",),
     )
 
     assert target.sleeves == ()

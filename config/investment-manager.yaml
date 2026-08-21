@@ -71,6 +71,7 @@ calibration:
 
 carry_forecast:
   version: btc-carry-shadow-v1
+  evaluated_policy_version: btc-spot-perp-monthly-50pct-v1
   enabled: true
   producer_id: btc-spot-perp-carry
   forecast_family: delta-neutral-funding-carry
@@ -78,8 +79,85 @@ carry_forecast:
   base_asset: BTC
   quote_asset: USDT
   horizon_minutes: 43200
-  production_interval_minutes: 1440
+  maximum_monthly_entry_delay_minutes: 30
   funding_interval_hours: 8
+  expected_edge_half_life_seconds: 31536000
+  evidence:
+    version: carry-walk-forward-shadow-v1
+    source_evaluation_id: carry_walk_forward_5f581777f8c71f8847dc
+    source_result_hash: cff91c7c6144100b2fdf3c284a30a62e8ab126d2f04275121b1db265daa4d296
+    evaluated_policy_version: btc-spot-perp-monthly-50pct-v1
+    expected_annualized_net_fraction: "0.07333513498528742968863269244"
+    conservative_annualized_net_fraction: "0.02882739996977980281080245300"
+    independent_sample_count: 5
+    round_trip_cost_bps: "20"
+    published_at: 2026-08-21T00:00:00Z
+    valid_from: 2026-08-21T00:00:00Z
+    valid_until: 2027-08-01T00:00:00Z
+    blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
+
+capital:
+  version: carry-capital-shadow-v1
+  enabled: false
+  settlement_asset: USDT
+  decision:
+    version: carry-portfolio-v1
+    portfolio_id: primary
+    enabled: true
+    eligible_forecast_roles: [PROGRAM_BASE]
+    minimum_conservative_net_bps: "5"
+    maximum_total_exposure_fraction: "0.30"
+    maximum_single_sleeve_fraction: "0.30"
+    minimum_rebalance_notional: "25"
+    target_validity_minutes: 30
+  risk:
+    version: carry-portfolio-risk-v1
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+    maximum_quote_age_seconds: 300
+    maximum_account_age_seconds: 60
+    maximum_daily_loss: "200"
+    maximum_drawdown_fraction: "0.05"
+    maximum_gross_exposure_fraction: "0.30"
+    maximum_net_delta_fraction: "0.02"
+    maximum_instrument_fraction: "0.15"
+    maximum_margin_fraction: "0.30"
+    maximum_stress_loss_fraction: "0.01"
+    maximum_spread_bps: "20"
+    maximum_unhedged_fraction: "0.05"
+    maximum_unhedged_seconds: 10
+    kill_switch: false
+  planner:
+    version: carry-trade-planner-v1
+    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+  execution_specs:
+    - instrument:
+        venue: BINANCE
+        product: SPOT
+        symbol: BTCUSDT
+        base_asset: BTC
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.00001"
+      minimum_order_notional: "5"
+      fee_bps: "12.5"
+    - instrument:
+        venue: BINANCE
+        product: USD_M_PERPETUAL
+        symbol: BTCUSDT
+        base_asset: BTC
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.001"
+      minimum_order_notional: "100"
+      fee_bps: "7.5"
+  sleeve_risk:
+    version: carry-sleeve-risk-v1
+    basis_stress_bps: "100"
+    funding_stress_bps: "30"
+    execution_stress_bps: "100"
+    derivative_initial_margin_fraction: "0.10"
 
 composition:
   version: calibrated-net-edge-v1

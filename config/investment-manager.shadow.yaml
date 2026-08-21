@@ -4,9 +4,15 @@ extends: investment-manager.yaml
 strategy:
   enabled: false
 
+capital:
+  enabled: true
+
+pipeline:
+  version: carry-capital-shadow-v1
+
 temporal:
-  # Shadow 与 Mock/测试隔离，避免相同稳定 Workflow ID 绑定到另一套事实库。
-  namespace: shadow-20260818
+  # 本配置只服务独立 Capital Shadow；冻结发布时必须与事实库一一对应。
+  namespace: shadow-capital-20260821
 
 deployment:
   stage: SHADOW

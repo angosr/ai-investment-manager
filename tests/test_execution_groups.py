@@ -47,6 +47,11 @@ from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
 )
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+)
+from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.risk.portfolio import ApprovedSleeve
 from investment_manager.schema import create_schema
@@ -277,6 +282,7 @@ def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> No
     group_store = SqlExecutionGroupStore(engine)
     observations = SqlProductOrderObservationStore(engine)
     portfolio = SqlPortfolioStore(engine)
+    market = InMemoryMarketDataStore()
     projector = ProductAccountProjector(
         portfolio_id="primary",
         settlement_asset="USDT",
@@ -294,6 +300,7 @@ def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> No
             projector=projector,
             groups=group_store,
             observations=observations,
+            funding=market,
             risks=_ApprovedReader(plan.approved_target_id, _approved_sleeve(plan)),
             accounts=portfolio,
         ),
@@ -311,6 +318,38 @@ def test_persisted_trade_plan_executes_and_projects_account_idempotently() -> No
     assert result.account.daily_pnl == Decimal("-1")
     assert len(result.account.positions) == 2
     assert portfolio.account(result.account.snapshot_id) == result.account
+
+    perpetual = next(
+        leg.instrument
+        for leg in plan.groups[0].legs
+        if leg.instrument.product == InstrumentProduct.USD_M_PERPETUAL
+    )
+    funding_time = NOW + timedelta(seconds=2)
+    market.put_funding_settlement(
+        FundingSettlement(
+            settlement_id=stable_id(
+                "funding_settlement",
+                perpetual.key,
+                funding_time.isoformat(),
+                FundingRateType.REGULAR.value,
+            ),
+            instrument=perpetual,
+            funding_time=funding_time,
+            observed_at=NOW + timedelta(seconds=3),
+            funding_rate=Decimal("0.001"),
+            mark_price=Decimal("100"),
+            rate_type=FundingRateType.REGULAR,
+            source="test",
+        )
+    )
+    after_funding = pipeline.run(
+        plan_id=plan.plan_id,
+        as_of=NOW + timedelta(seconds=4),
+        quotes=_quotes(plan, as_of=NOW + timedelta(seconds=4)),
+    )
+    assert after_funding.account.cash_balance == Decimal("9000")
+    assert after_funding.account.equity == Decimal("10000")
+    assert after_funding.account.daily_pnl == Decimal("0")
 
 
 def test_response_lost_before_accept_retries_same_identity() -> None:
@@ -407,8 +446,17 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
             as_of=NOW + timedelta(seconds=2),
         )
 
-    completed = executor.run_once(group.group_id, as_of=NOW + timedelta(seconds=11))
+    recovery = TradePlanExecutionPipeline(
+        plans=SimpleNamespace(),
+        groups=store,
+        engine=executor,
+        accounts=SimpleNamespace(),
+        portfolio_store=SimpleNamespace(),
+    )
+    recovered = recovery.recover_pending(as_of=NOW + timedelta(seconds=11))
+    completed = recovered[0]
 
+    assert tuple(item.group_id for item in recovered) == (group.group_id,)
     assert completed.status == ExecutionGroupStatus.FLAT
     assert completed.residual_quantities == {}
     visible_at_partial = observations.for_group(
@@ -427,7 +475,13 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         cycle_id="projection-partial",
         as_of=NOW + timedelta(seconds=1),
         groups=(completed,),
-        observations_by_group={group.group_id: visible_at_partial},
+        observation_history_by_group={
+            group.group_id: observations.history_for_groups(
+                (group.group_id,),
+                as_of=NOW + timedelta(seconds=1),
+            )[group.group_id]
+        },
+        funding_settlements=(),
         approved_sleeves=(_approved_sleeve(plan),),
         quotes=_quotes(plan, as_of=NOW + timedelta(seconds=1)),
     )
@@ -435,6 +489,7 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         projector=projector,
         groups=store,
         observations=observations,
+        funding=InMemoryMarketDataStore(),
         risks=_ApprovedReader(plan.approved_target_id, _approved_sleeve(plan)),
         accounts=_EmptyAccountHistory(),
     ).project(
@@ -446,12 +501,13 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         cycle_id="projection-flat",
         as_of=NOW + timedelta(seconds=11),
         groups=(completed,),
-        observations_by_group={
-            group.group_id: observations.for_group(
-                group.group_id,
+        observation_history_by_group={
+            group.group_id: observations.history_for_groups(
+                (group.group_id,),
                 as_of=NOW + timedelta(seconds=11),
-            )
+            )[group.group_id]
         },
+        funding_settlements=(),
         approved_sleeves=(_approved_sleeve(plan),),
         quotes=_quotes(plan, as_of=NOW + timedelta(seconds=11)),
         previous=partial_account,

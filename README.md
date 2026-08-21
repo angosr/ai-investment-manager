@@ -49,7 +49,9 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-尚未完成且不能由仓库自行假定完成：接入真正 PUSH/STREAM 的低延迟新闻源、按延迟桶聚合 p50/p95/p99 与净收益、持续数周的事件驱动样本和 Alpha 衰减证据；完成通过样本外门禁的 ProgramBase、`CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan` 生产接线，以及由独立可信环境提供的校准制品。私有 Challenger 正在运行真实 Codex ContextAssessment、多账号独占租约和严格失败关闭；每次成功 Assessment 同时冻结 BTC/ETH 的 60 与 240 分钟不可交易视图，以 Codex 完成时刻作为真实可用时间并分别到期结算。已被历史 walk-forward 证伪的程序策略不再在 Shadow 产生候选。当前 TriggerPlan 的 Heartbeat 每 60 分钟推进一次 State，但无新 Delta 时不调用 AI；资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析，全部触发只受事件去重、合并、冷却、single-flight 与 15 秒全局防重复间隔约束，不设置 AI 小时预算。尚无通过校准和组合门禁的 Forecast，因此当前保持 10,000 USDT 现金、无持仓；Spot Testnet 交易闭环与 LIVE 权限均未启用。
+主线已经完成首条 `CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 资本切片：唯一候选是 BTC Spot Long / USD-M Perpetual Short 的月度同数量 carry，依据通过的五折 walk-forward 结果获得有限 Shadow 权限；历史 blind 窗口因重叠不可再用，所以 Testnet/LIVE 仍严格禁用。策略只允许 UTC 月首 30 分钟入场，错过窗口时正式记录现金决策，不为增加交易次数追单。产品账户可按累计订单观察、逐产品手续费和实际 funding 点时事实重放，下一轮决策会先恢复历史非终态 group。
+
+尚未完成且不能由仓库自行假定完成：独立 Capital Shadow 的长期费用后结果、组合级 Outcome 与统一观测，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，以及真正 PUSH/STREAM 的低延迟新闻源和 AI 方向增量证据。私有 Challenger 仍以真实 Codex ContextAssessment 冻结 BTC/ETH 的 60 与 240 分钟不可交易视图；AI 没有绕过校准、Portfolio、Risk 或 Execution 的资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
@@ -121,7 +123,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 每个来源月档必须通过同目录官方 SHA-256，标准化观察值固定在结算 60 秒后才可见；下载时间、全部来源摘要与规范化内容共同冻结，旧制品不原地更新。首个“28 日动量 + SMA200 + 资金费率拥挤否决”候选已按 BTC/ETH 分别预登记：ETH 未通过 walk-forward 保守下界，BTC 虽通过 walk-forward，但在一次性盲区中同时未达到交易数、盈利因子和保守下界门槛，因此已经从活动注册表退役，没有接入 Shadow，也没有为迁就结果搜索阈值。不可变评价制品保留失败身份；资金费率数据合同和 `--funding-dataset-id` 组合能力保留给结构不同的新假设。
 
-方向独立的现货/永续 carry 使用单独且受限的研究入口。`fetch-binance-carry-history` 引用同窗口的现货与 SHA 校验资金费率制品，再内容寻址冻结 USD-M 合约成交、标记、指数、溢价日线、结算前 8 小时标记价收盘和当前合约规则；REST 费率必须与官方月档逐条匹配。`carry-walk-forward` 只评价固定的同数量双腿、每腿 50% 权益、月度再平衡策略，并冻结双腿成本、10% 保守维持保证金和 100 bps 单腿失败压力；`carry-blind-evaluate` 复用全局一次性盲区锁，在认领成功前不读取尾窗标签。BTC 开发折的年化收益保守下界为正、最大回撤低于 1%，但其 2025-08 至 2026-08 盲区已被更早候选消费，系统拒绝再次揭示；完全相同的通用规则在事前登记的 ETH 与 BNB walk-forward 中均触发强平边界和保证金门槛，BNB 还同时未通过收益保守下界、正收益折比例和最大回撤门槛，两者均未揭盲。`register-carry-forward-plan` 因而只允许在未来窗口开始前冻结至少十二个完整 UTC 日历月；成熟后的 `evaluate-carry-forward-plan` 才读取精确同窗口、窗口结束后收集的现货、官方资金费率和 carry 三件内容寻址制品，逐条复核资金结算，复用同一双腿账本并同时报告连续费用后净收益与采用保守 Newey-West 方差的逐月收益下界。该候选没有交易资格，没有接入 Shadow，也没有据此创建生产期货适配器。
+方向独立的现货/永续 carry 使用单独且受限的研究入口。`fetch-binance-carry-history` 引用同窗口的现货与 SHA 校验资金费率制品，再内容寻址冻结 USD-M 合约成交、标记、指数、溢价日线、结算前 8 小时标记价收盘和当前合约规则；REST 费率必须与官方月档逐条匹配。`carry-walk-forward` 只评价固定的同数量双腿、每腿 50% 权益、月度再平衡策略，并冻结双腿成本、10% 保守维持保证金和 100 bps 单腿失败压力；`carry-blind-evaluate` 复用全局一次性盲区锁，在认领成功前不读取尾窗标签。BTC 开发折的年化收益保守下界为正、最大回撤低于 1%，但其 2025-08 至 2026-08 盲区已被更早候选消费，系统拒绝再次揭示；完全相同的通用规则在事前登记的 ETH 与 BNB walk-forward 中均触发强平边界和保证金门槛，BNB 还同时未通过收益保守下界、正收益折比例和最大回撤门槛，两者均未揭盲。`register-carry-forward-plan` 因而只允许在未来窗口开始前冻结至少十二个完整 UTC 日历月；成熟后的 `evaluate-carry-forward-plan` 才读取精确同窗口、窗口结束后收集的现货、官方资金费率和 carry 三件内容寻址制品，逐条复核资金结算，复用同一双腿账本并同时报告连续费用后净收益与采用保守 Newey-West 方差的逐月收益下界。历史结果本身不授予权限；当前只通过显式发布制品获得持久化 Mock Shadow 资格，仍没有 Testnet/LIVE 交易资格，也没有真实期货下单适配器。
 
 `screen-signals` 是正式回测前的廉价拒绝层：复用生产特征、候选接口和统一往返成本，以收盘信号、下一根开盘和固定持有周期计算原始机会，只用非重叠样本，并与采用相同成本的周期性现货多头比较。读取器流式校验完整历史制品哈希，但只物化显式开发窗口与特征预热；任何结果标签都不得跨越 `--signal-end`，因此该终点必须位于预留盲区之前。它不回放止损、程序退出、仓位、频率、风控或回撤，只能淘汰/排序弱假设；`promising_for_exact_backtest=true` 也不能登记为通过、不能校准边际或获得交易资格。
 

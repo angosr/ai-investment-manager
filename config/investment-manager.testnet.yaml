@@ -4,6 +4,10 @@ extends: investment-manager.shadow.yaml
 temporal:
   namespace: testnet-20260818
 
+# 当前 Product Capital 链只拥有 Mock Shadow 权限，不继承到真实 Testnet 下单。
+capital:
+  enabled: false
+
 market_data:
   version: binance-public-testnet-v3
   rest_base_url: https://testnet.binance.vision

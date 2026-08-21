@@ -8,7 +8,7 @@ from decimal import Decimal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import OrderType, Side
-from investment_manager.forecast.models import ExposureDirection
+from investment_manager.forecast.models import ExposureDirection, ForecastQuantityMode
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
@@ -44,6 +44,7 @@ class InstrumentExecutionSpec(FrozenModel):
     instrument: InstrumentId
     quantity_step: PositiveDecimal
     minimum_order_notional: Money
+    fee_bps: Money = Decimal("0")
 
 
 class SleeveTargetDelta(FrozenModel):
@@ -306,23 +307,18 @@ class TradePlanner:
             item.instrument.key: item.quantity
             for item in current.legs
         } if current is not None else {}
+        desired_quantities = self._desired_quantities(
+            sleeve=sleeve,
+            quote_by_instrument=quote_by_instrument,
+            spec_by_instrument=spec_by_instrument,
+        )
         trades: list[PlannedLegTrade] = []
         opening_leg_below_minimum = False
         reducing_leg_below_minimum = False
         for leg in target_legs:
             quote = quote_by_instrument[leg.instrument.key]
             spec = spec_by_instrument[leg.instrument.key]
-            sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
-            entry_price = quote.ask if sign > 0 else quote.bid
-            desired_quantity = sign * floor_to_step(
-                (
-                    sleeve.approved_gross_notional
-                    * leg.gross_weight
-                    / entry_price
-                    / leg.instrument.contract_multiplier
-                ),
-                spec.quantity_step,
-            )
+            desired_quantity = desired_quantities[leg.instrument.key]
             current_quantity = current_quantities.get(leg.instrument.key, Decimal("0"))
             delta_quantity = desired_quantity - current_quantity
             if delta_quantity == 0:
@@ -385,6 +381,67 @@ class TradePlanner:
             ),
             "GROUP_PLANNED",
         )
+
+    @staticmethod
+    def _desired_quantities(
+        *,
+        sleeve: ApprovedSleeve,
+        quote_by_instrument: dict[str, ExecutableQuote],
+        spec_by_instrument: dict[str, InstrumentExecutionSpec],
+    ) -> dict[str, Decimal]:
+        target = sleeve.forecast_target
+        if target.quantity_mode == ForecastQuantityMode.INDEPENDENT_NOTIONAL:
+            return {
+                leg.instrument.key: (
+                    Decimal("1")
+                    if leg.direction == ExposureDirection.LONG
+                    else Decimal("-1")
+                )
+                * floor_to_step(
+                    sleeve.approved_gross_notional
+                    * leg.gross_weight
+                    / (
+                        quote_by_instrument[leg.instrument.key].ask
+                        if leg.direction == ExposureDirection.LONG
+                        else quote_by_instrument[leg.instrument.key].bid
+                    )
+                    / leg.instrument.contract_multiplier,
+                    spec_by_instrument[leg.instrument.key].quantity_step,
+                )
+                for leg in target.legs
+            }
+        steps = tuple(
+            spec_by_instrument[leg.instrument.key].quantity_step
+            for leg in target.legs
+        )
+        common_step = max(steps)
+        if any(common_step % step != 0 for step in steps):
+            raise ValueError("SAME_BASE_QUANTITY 的数量步长没有共同可执行倍数")
+        gross_per_unit = sum(
+            (
+                (
+                    quote_by_instrument[leg.instrument.key].ask
+                    if leg.direction == ExposureDirection.LONG
+                    else quote_by_instrument[leg.instrument.key].bid
+                )
+                * leg.instrument.contract_multiplier
+                for leg in target.legs
+            ),
+            Decimal("0"),
+        )
+        common_quantity = floor_to_step(
+            sleeve.approved_gross_notional / gross_per_unit,
+            common_step,
+        )
+        return {
+            leg.instrument.key: common_quantity
+            * (
+                Decimal("1")
+                if leg.direction == ExposureDirection.LONG
+                else Decimal("-1")
+            )
+            for leg in target.legs
+        }
 
     @staticmethod
     def _unique_quotes(

@@ -53,6 +53,13 @@ class ProductOrderObservationStore(Protocol):
         as_of: datetime,
     ) -> dict[str, tuple[ProductOrderObservation, ...]]: ...
 
+    def history_for_groups(
+        self,
+        group_ids: tuple[str, ...],
+        *,
+        as_of: datetime,
+    ) -> dict[str, tuple[ProductOrderObservation, ...]]: ...
+
 
 class SqlProductOrderObservationStore:
     """Keep the earliest system visibility time for each distinct venue fact."""
@@ -102,6 +109,21 @@ class SqlProductOrderObservationStore:
         *,
         as_of: datetime,
     ) -> dict[str, tuple[ProductOrderObservation, ...]]:
+        history = self.history_for_groups(group_ids, as_of=as_of)
+        result: dict[str, tuple[ProductOrderObservation, ...]] = {}
+        for group_id, observations in history.items():
+            latest: dict[str, ProductOrderObservation] = {}
+            for observation in observations:
+                latest[observation.order.client_order_id] = observation
+            result[group_id] = tuple(latest[key] for key in sorted(latest))
+        return result
+
+    def history_for_groups(
+        self,
+        group_ids: tuple[str, ...],
+        *,
+        as_of: datetime,
+    ) -> dict[str, tuple[ProductOrderObservation, ...]]:
         as_of = require_utc(as_of)
         group_ids = tuple(sorted(set(group_ids)))
         if not group_ids:
@@ -124,18 +146,30 @@ class SqlProductOrderObservationStore:
                     product_order_observations.c.observation_id,
                 )
             ).all()
-        latest: dict[str, dict[str, ProductOrderObservation]] = {
-            group_id: {} for group_id in group_ids
+        history: dict[str, list[ProductOrderObservation]] = {
+            group_id: [] for group_id in group_ids
         }
         for row in rows:
             order = ProductOrder.model_validate(row.payload)
-            latest[row.group_id][order.client_order_id] = ProductOrderObservation(
-                observation_id=row.observation_id,
-                observation_hash=row.observation_hash,
-                available_at=database_utc(row.available_at),
-                order=order,
+            history[row.group_id].append(
+                ProductOrderObservation(
+                    observation_id=row.observation_id,
+                    observation_hash=row.observation_hash,
+                    available_at=database_utc(row.available_at),
+                    order=order,
+                )
             )
         return {
-            group_id: tuple(values[key] for key in sorted(values))
-            for group_id, values in latest.items()
+            group_id: tuple(
+                sorted(
+                    observations,
+                    key=lambda item: (
+                        item.available_at,
+                        item.order.observed_at,
+                        item.order.filled_quantity,
+                        item.observation_id,
+                    ),
+                )
+            )
+            for group_id, observations in history.items()
         }

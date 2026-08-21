@@ -27,6 +27,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
+    assert config.pipeline.version == "carry-capital-shadow-v1"
+    assert config.temporal.namespace == "shadow-capital-20260821"
+    assert config.capital.enabled
     assert config.information.version == "information-intake-v10"
     assert config.information.normalizer_version == "trendradar-collector-v7"
     assert config.decision_state.version == "portfolio-state-v2"
@@ -53,6 +56,7 @@ def test_testnet_config_uses_the_same_official_environment_for_market_and_orders
     assert config.deployment.stage == DeploymentStage.TESTNET
     assert config.market_data.rest_base_url == "https://testnet.binance.vision"
     assert config.market_data.websocket_base_url == "wss://stream.testnet.binance.vision"
+    assert not config.capital.enabled
 
 
 def test_config_inheritance_rejects_cycles(tmp_path) -> None:

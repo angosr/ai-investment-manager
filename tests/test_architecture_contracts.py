@@ -405,7 +405,7 @@ def test_decision_cycle_is_the_minimal_one_way_cross_domain_layer() -> None:
     package = PACKAGE_ROOT / "decision_cycle"
     assert {
         path.name for path in package.glob("*.py")
-    } == {"__init__.py", "portfolio.py", "service.py", "trigger.py"}
+    } == {"__init__.py", "capital.py", "portfolio.py", "service.py", "trigger.py"}
 
     init_tree = ast.parse((package / "__init__.py").read_text())
     assert not any(

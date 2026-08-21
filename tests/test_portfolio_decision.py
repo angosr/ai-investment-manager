@@ -292,7 +292,8 @@ def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
         quotes=_quotes(),
     )
 
-    assert result is None
+    assert result is not None
+    assert "REBALANCE_BELOW_MINIMUM" in result.reason_codes
 
 
 def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
@@ -304,7 +305,9 @@ def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
         quotes=_quotes(spot_bid="100.50"),
     )
 
-    assert result is None
+    assert result is not None
+    assert result.sleeves == ()
+    assert "CASH_SELECTED_NO_ELIGIBLE_FORECAST" in result.reason_codes
 
 
 def test_engine_requires_complete_product_quotes() -> None:
@@ -340,4 +343,6 @@ def test_engine_never_opens_from_unavailable_forecast(
         quotes=_quotes(),
     )
 
-    assert result is None
+    assert result is not None
+    assert result.sleeves == ()
+    assert "CASH_SELECTED_NO_ELIGIBLE_FORECAST" in result.reason_codes

@@ -32,8 +32,13 @@ from investment_manager.governance.policy import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
-from investment_manager.portfolio.policy import CompositionPolicy, FrequencyPolicy
+from investment_manager.portfolio.policy import (
+    CapitalPolicy,
+    CompositionPolicy,
+    FrequencyPolicy,
+)
 from investment_manager.risk.policy import RiskPolicy
 from investment_manager.scheduling.policy import TemporalPolicy, TriggerPolicy
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
@@ -46,6 +51,7 @@ class AppConfig(StrictConfig):
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
     carry_forecast: CarryForecastPolicy
+    capital: CapitalPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
     risk: RiskPolicy
@@ -111,6 +117,30 @@ class AppConfig(StrictConfig):
             }
             if self.carry_forecast.symbol not in perpetual_symbols:
                 raise ValueError("Carry Forecast 必须配置同 symbol 的 Perpetual 行情")
+        if self.capital.enabled:
+            if self.deployment.stage != DeploymentStage.SHADOW:
+                raise ValueError("当前 Capital 候选权限只允许 SHADOW Mock")
+            if not self.carry_forecast.enabled or self.carry_forecast.evidence is None:
+                raise ValueError("Capital 必须绑定已发布的 Carry Shadow evidence")
+            if self.capital.settlement_asset != self.carry_forecast.quote_asset:
+                raise ValueError("Capital 与 Shadow 结算资产必须一致")
+            instruments = tuple(
+                item.instrument for item in self.capital.execution_specs
+            )
+            if (
+                {item.product for item in instruments}
+                != {
+                    InstrumentProduct.SPOT,
+                    InstrumentProduct.USD_M_PERPETUAL,
+                }
+                or any(
+                    item.symbol != self.carry_forecast.symbol
+                    or item.base_asset != self.carry_forecast.base_asset
+                    or item.quote_asset != self.carry_forecast.quote_asset
+                    for item in instruments
+                )
+            ):
+                raise ValueError("Capital Instruments 必须精确匹配 Carry 双产品目标")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

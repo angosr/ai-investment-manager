@@ -40,12 +40,16 @@ class SqlMockProductVenue:
         engine: Engine,
         *,
         fee_bps: Decimal = Decimal("5"),
+        fee_bps_by_instrument: Mapping[str, Decimal] | None = None,
         submit_behaviors: Mapping[str, tuple[MockSubmitBehavior, ...]] | None = None,
     ) -> None:
         if fee_bps < 0:
             raise ValueError("Mock fee_bps 不能为负")
         self._engine = engine
         self._fee_bps = fee_bps
+        self._fee_bps_by_instrument = dict(fee_bps_by_instrument or {})
+        if any(value < 0 for value in self._fee_bps_by_instrument.values()):
+            raise ValueError("Mock Instrument fee_bps 不能为负")
         self._behaviors = {key: list(values) for key, values in (submit_behaviors or {}).items()}
 
     def query(self, client_order_id: str) -> ProductOrder | None:
@@ -129,7 +133,7 @@ class SqlMockProductVenue:
                         stored.requested_quantity
                         * (stored.average_fill_price or Decimal("0"))
                         * stored.instrument.contract_multiplier
-                        * self._fee_bps
+                        * self._fee_bps_for(stored.instrument.key)
                         / _BPS
                     ),
                     "observed_at": observed_at,
@@ -171,7 +175,7 @@ class SqlMockProductVenue:
             filled
             * (price or Decimal("0"))
             * leg.instrument.contract_multiplier
-            * self._fee_bps
+            * self._fee_bps_for(leg.instrument.key)
             / _BPS
         )
         return ProductOrder(
@@ -188,6 +192,14 @@ class SqlMockProductVenue:
             fee=fee,
             observed_at=observed_at,
         )
+
+    def _fee_bps_for(self, instrument_key: str) -> Decimal:
+        if (
+            self._fee_bps_by_instrument
+            and instrument_key not in self._fee_bps_by_instrument
+        ):
+            raise ValueError("Mock Instrument 缺少显式 fee_bps")
+        return self._fee_bps_by_instrument.get(instrument_key, self._fee_bps)
 
     def _insert(self, order: ProductOrder) -> ProductOrder:
         try:

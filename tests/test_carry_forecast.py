@@ -5,8 +5,11 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
-from investment_manager.forecast.carry import CarryForecastProducer
-from investment_manager.forecast.models import DirectionalView
+from investment_manager.forecast.carry import (
+    CarryForecastProducer,
+    ReleasedCarryForecastProducer,
+)
+from investment_manager.forecast.models import DirectionalView, ForecastRole
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
@@ -14,7 +17,7 @@ from investment_manager.market.perpetual.models import PerpetualMarketState, Per
 from investment_manager.market.repository import InMemoryMarketDataStore
 from investment_manager.schema import create_schema
 
-NOW = datetime(2026, 8, 21, 3, 20, tzinfo=UTC)
+NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
 
 
 def _perpetual() -> InstrumentId:
@@ -27,7 +30,7 @@ def _perpetual() -> InstrumentId:
     )
 
 
-def test_carry_producer_creates_one_point_in_time_daily_shadow_forecast(
+def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(
     app_config,
 ) -> None:
     market = InMemoryMarketDataStore()
@@ -103,6 +106,52 @@ def test_carry_producer_creates_one_point_in_time_daily_shadow_forecast(
         evaluation_version="forecast-target-outcome-v1",
         limit=10,
     ) == (first,)
+
+    assert app_config.carry_forecast.evidence is not None
+    released = ReleasedCarryForecastProducer(
+        base=producer,
+        evidence=app_config.carry_forecast.evidence,
+        store=store,
+    ).produce(as_of=NOW + timedelta(minutes=1))
+    assert released is not None
+    assert released.role == ForecastRole.PROGRAM_BASE
+    assert released.base_forecast_id == first.forecast_id
+    assert released.conservative_gross_bps > Decimal("20")
+    assert released.calibration_ref == (
+        app_config.carry_forecast.evidence.source_evaluation_id
+    )
+
+
+def test_carry_producer_does_not_enter_late_in_month(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    producer = CarryForecastProducer(
+        policy=app_config.carry_forecast,
+        market=InMemoryMarketDataStore(),
+        store=SqlForecastStore(engine),
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        clock=lambda: datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    assert producer.produce(as_of=datetime(2026, 8, 21, tzinfo=UTC)) is None
+
+
+def test_carry_producer_does_not_use_an_on_time_request_processed_late(
+    app_config,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    producer = CarryForecastProducer(
+        policy=app_config.carry_forecast,
+        market=InMemoryMarketDataStore(),
+        store=SqlForecastStore(engine),
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        clock=lambda: NOW + timedelta(minutes=31),
+    )
+
+    assert producer.produce(as_of=NOW) is None
 
 
 def test_disabled_carry_producer_does_not_write(app_config) -> None:

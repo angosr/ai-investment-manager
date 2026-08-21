@@ -249,3 +249,17 @@ class TradePlanExecutionPipeline:
             groups=runtime_groups,
             account=account,
         )
+
+    def recover_pending(self, *, as_of: datetime) -> tuple[ExecutionGroup, ...]:
+        """Advance every visible nonterminal group before admitting a new decision."""
+
+        as_of = require_utc(as_of)
+        pending = tuple(
+            item
+            for item in self._groups.visible(as_of=as_of)
+            if not item.terminal
+        )
+        return tuple(
+            self._engine.run_once(item.group_id, as_of=as_of)
+            for item in pending
+        )

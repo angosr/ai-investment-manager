@@ -18,6 +18,11 @@ class ExposureDirection(StrEnum):
     SHORT = "SHORT"
 
 
+class ForecastQuantityMode(StrEnum):
+    INDEPENDENT_NOTIONAL = "INDEPENDENT_NOTIONAL"
+    SAME_BASE_QUANTITY = "SAME_BASE_QUANTITY"
+
+
 class ForecastLeg(FrozenModel):
     instrument: InstrumentId
     direction: ExposureDirection
@@ -38,6 +43,7 @@ class ForecastTarget(FrozenModel):
 
     target_id: str = Field(min_length=1)
     legs: tuple[ForecastLeg, ...] = Field(min_length=1)
+    quantity_mode: ForecastQuantityMode = ForecastQuantityMode.INDEPENDENT_NOTIONAL
 
     @model_validator(mode="after")
     def legs_and_identity_must_be_canonical(self):
@@ -46,22 +52,46 @@ class ForecastTarget(FrozenModel):
             raise ValueError("ForecastTarget legs 必须按 Instrument 唯一且排序")
         if sum((item.gross_weight for item in self.legs), Decimal("0")) != Decimal("1"):
             raise ValueError("ForecastTarget gross_weight 绝对权重之和必须为 1")
-        expected = self.identity_for(self.legs)
+        if self.quantity_mode == ForecastQuantityMode.SAME_BASE_QUANTITY and (
+                len(self.legs) < 2
+                or len({item.instrument.base_asset for item in self.legs}) != 1
+                or len({item.instrument.contract_multiplier for item in self.legs}) != 1
+                or len({item.gross_weight for item in self.legs}) != 1
+        ):
+            raise ValueError("SAME_BASE_QUANTITY 要求同基础资产、乘数和等权多腿")
+        expected = self.identity_for(self.legs, self.quantity_mode)
         if self.target_id != expected:
             raise ValueError("ForecastTarget target_id 与规范化 Leg 内容不一致")
         return self
 
     @staticmethod
-    def identity_for(legs: tuple[ForecastLeg, ...]) -> str:
+    def identity_for(
+        legs: tuple[ForecastLeg, ...],
+        quantity_mode: ForecastQuantityMode = ForecastQuantityMode.INDEPENDENT_NOTIONAL,
+    ) -> str:
         return stable_id(
             "forecast_target",
-            content_hash({"legs": [item.model_dump(mode="json") for item in legs]}),
+            content_hash(
+                {
+                    "legs": [item.model_dump(mode="json") for item in legs],
+                    "quantity_mode": quantity_mode.value,
+                }
+            ),
         )
 
     @classmethod
-    def create(cls, legs: tuple[ForecastLeg, ...]) -> ForecastTarget:
+    def create(
+        cls,
+        legs: tuple[ForecastLeg, ...],
+        *,
+        quantity_mode: ForecastQuantityMode = ForecastQuantityMode.INDEPENDENT_NOTIONAL,
+    ) -> ForecastTarget:
         ordered = tuple(sorted(legs, key=lambda item: item.instrument.key))
-        return cls(target_id=cls.identity_for(ordered), legs=ordered)
+        return cls(
+            target_id=cls.identity_for(ordered, quantity_mode),
+            legs=ordered,
+            quantity_mode=quantity_mode,
+        )
 
     @classmethod
     def single_long(cls, instrument: InstrumentId) -> ForecastTarget:
@@ -269,7 +299,7 @@ class CalibratedForecast(FrozenModel):
     horizon_minutes: int = Field(gt=0)
     direction: DirectionalView
     reference_prices: tuple[ForecastReferencePrice, ...] = Field(min_length=1)
-    expected_edge_half_life_seconds: int = Field(gt=0, le=604_800)
+    expected_edge_half_life_seconds: int = Field(gt=0, le=31_536_000)
     available_at: datetime
     valid_until: datetime
     base_forecast_id: str | None = Field(default=None, min_length=1)

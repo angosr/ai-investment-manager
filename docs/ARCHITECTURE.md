@@ -193,17 +193,23 @@ symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。纯�
 notional 比较单腿/多腿机会，Risk 整组缩放，Planner 对任一不可交易的新增风险 Leg 整组省略，不再
 保留 `AssetTarget/ApprovedAssetTarget` Spot MVP 或兼容 alias。账户快照、Target、RiskDecision 与
 TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序持久化，唯一 Pipeline 不允许跳过
-交接账本。当前尚未完成产品级账户运行投影和 grouped Execution 恢复状态机，因此 carry 仍不能进入
-资本路径。
+交接账本。产品级账户现从累计订单观察、实际手续费、逐次 funding、产品/Sleeve 持仓和可成交报价
+重放现金与权益；grouped Execution 在每次资本决策前先推进历史非终态组，未知提交、部分成交、超时
+和补偿仍由同一状态机恢复。该能力只获得持久化 Mock Shadow 权限，尚不代表交易所账户已对账。
 
 主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
 现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
 统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
-每天只生成一份无资本权限的 BaseForecast，由现有 Trigger Activity 幂等推进并等待 30 日真实前向结算。
-下一步先在独立 Shadow 库验证完整生产、恢复和结算路径，再一次性完成 Sleeve Portfolio/Risk、grouped
-Execution、故障回放和统一评价。
-在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
+只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略。Shadow-only
+发布器把已通过的五折 walk-forward 制品投影成 `PROGRAM_BASE` CalibratedForecast；由于历史 blind
+窗口已被其他候选消耗，配置必须显式记录 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝
+装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
+Venue 与账户投影；错过月初窗口时正式选择现金，不为制造交易改变行为。
+
+下一步是在独立事实库持续验证恢复、费用后账户和 30 日结算，并补产品级 PortfolioOutcome 与运行观测；
+随后才实现 Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器
+或双路径。
 
 评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
 `SHADOW` 必须在数据实时可见时生成并保存当时的 Forecast、Portfolio、Risk 和模拟 Execution 结果。
@@ -461,15 +467,15 @@ kernel/platform
    完整性检查、always-UP 配对门禁和内容寻址结果；`InstrumentId + ForecastTarget` 已成为 Base 与
    Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
    可成交价/funding 结算和 carry ProgramBase 生产已接线。ProgramBase/carry 未获权限时仍不能影响资本。
-3. **组合与风险接线（进行中）**：产品级账户、Sleeve allocation、整组 Risk 缩放和 grouped TradePlan
-   已完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果，Spot MVP 不再并存。账户、
-   `PortfolioTarget → RiskDecision → TradePlan` 已按领域持久化并由唯一 Pipeline 强制依赖顺序；下一步
-   把已实现的产品账户点时投影接入唯一决策 Pipeline 与独立 Shadow。
-4. **执行接线（进行中）**：Execution 已直接消费已授权 `TradePlan`，并完成 group/Leg 幂等 Mock 订单、
+3. **组合与风险接线（已完成 Mock Shadow 切片）**：产品级账户、Sleeve allocation、整组 Risk 缩放和
+   grouped TradePlan 已完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果。账户、
+   `PortfolioTarget → RiskDecision → TradePlan` 已按领域持久化，并由 `CapitalCycleService` 接入独立
+   Shadow 装配；尚未把这项状态称为真实 Venue 能力。
+4. **执行接线（Mock Shadow 已完成，真实 Venue 未开始）**：Execution 已直接消费已授权 `TradePlan`，并完成 group/Leg 幂等 Mock 订单、
    未知结果恢复、部分成交超时减险、补偿失败重试、点时订单观察和同 Sleeve 串行化；产品账户投影已
-   统一计算现金、费用、产品/Sleeve 持仓、权益和待完成组，恢复入口只接受已持久化 TradePlan 并以
-   group 状态内容生成幂等账户投影。下一步把该入口接入独立 Shadow，再接 Binance 产品 Venue、
-   funding、保护与主动对账；新链不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
+   统一计算现金、费用、funding、产品/Sleeve 持仓、权益和待完成组；资本入口先恢复旧非终态 group，
+   再允许新决策。下一步接 Binance 产品 Venue、保证金/资金流水和主动对账；新链不再接收
+   `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
 
 迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。

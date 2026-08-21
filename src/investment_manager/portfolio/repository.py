@@ -27,6 +27,13 @@ class PortfolioStore(Protocol):
 
     def record_target(self, target: PortfolioTarget) -> bool: ...
 
+    def account_for_cycle(
+        self,
+        *,
+        cycle_id: str,
+        portfolio_id: str,
+    ) -> PortfolioAccountSnapshot | None: ...
+
     def latest_account(
         self,
         *,

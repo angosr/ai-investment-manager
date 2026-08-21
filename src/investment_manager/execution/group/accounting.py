@@ -26,6 +26,7 @@ from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
 )
+from investment_manager.market.perpetual.models import FundingSettlement
 from investment_manager.portfolio.models import (
     InstrumentPosition,
     PortfolioAccountSnapshot,
@@ -48,6 +49,17 @@ class ApprovedTargetReader(Protocol):
         self,
         approved_target_ids: tuple[str, ...],
     ) -> dict[str, PortfolioRiskDecision]: ...
+
+
+class FundingSettlementReader(Protocol):
+    def funding_settlements(
+        self,
+        *,
+        instrument: InstrumentId,
+        start: datetime,
+        end: datetime,
+        visible_at: datetime,
+    ) -> tuple[FundingSettlement, ...]: ...
 
 
 @dataclass(slots=True)
@@ -85,7 +97,10 @@ class ProductAccountProjector:
         cycle_id: str,
         as_of: datetime,
         groups: tuple[ExecutionGroup, ...],
-        observations_by_group: Mapping[str, tuple[ProductOrderObservation, ...]],
+        observation_history_by_group: Mapping[
+            str, tuple[ProductOrderObservation, ...]
+        ],
+        funding_settlements: tuple[FundingSettlement, ...],
         approved_sleeves: tuple[ApprovedSleeve, ...],
         quotes: tuple[ExecutableQuote, ...],
         previous: PortfolioAccountSnapshot | None = None,
@@ -95,11 +110,12 @@ class ProductAccountProjector:
         groups = self._groups(groups, as_of=as_of)
         sleeve_by_id = self._sleeves(approved_sleeves)
         quote_by_instrument = self._quotes(quotes, as_of=as_of)
-        orders = self._visible_orders(
+        history = self._visible_order_history(
             groups,
-            observations_by_group=observations_by_group,
+            observations_by_group=observation_history_by_group,
             as_of=as_of,
         )
+        orders = self._latest_orders(history)
         product_states: dict[str, _PositionState] = {}
         sleeve_states: dict[str, dict[str, _PositionState]] = {}
         cash = self._initial_cash
@@ -117,6 +133,11 @@ class ProductAccountProjector:
                 sleeve_states.setdefault(group.sleeve_id, {}),
                 order,
             )
+        cash += self._funding_pnl(
+            history,
+            settlements=funding_settlements,
+            as_of=as_of,
+        )
         positions = self._positions(product_states)
         sleeves = self._sleeve_positions(
             sleeve_states,
@@ -203,7 +224,7 @@ class ProductAccountProjector:
         return {item.instrument.key: item for item in quotes}
 
     @staticmethod
-    def _visible_orders(
+    def _visible_order_history(
         groups: tuple[ExecutionGroup, ...],
         *,
         observations_by_group: Mapping[str, tuple[ProductOrderObservation, ...]],
@@ -211,11 +232,12 @@ class ProductAccountProjector:
     ) -> tuple[ProductOrderObservation, ...]:
         leg_by_client = {}
         group_ids = {item.group_id for item in groups}
+        if set(observations_by_group) != group_ids:
+            raise ValueError("订单观察必须精确覆盖全部可见 ExecutionGroup")
         for group in groups:
             for leg in (*group.target_legs, *group.compensation_legs):
                 leg_by_client[leg.client_order_id] = leg
         observations: list[ProductOrderObservation] = []
-        seen_clients: set[str] = set()
         for group_id, values in observations_by_group.items():
             if group_id not in group_ids:
                 raise ValueError("订单观察引用不可见 ExecutionGroup")
@@ -235,11 +257,8 @@ class ProductAccountProjector:
                     or order.requested_quantity != leg.requested_quantity
                 ):
                     raise ValueError("产品订单观察与 ExecutionLeg 合同不一致")
-                if order.client_order_id in seen_clients:
-                    raise ValueError("每个 client_order_id 只能提供一个最新点时事实")
-                seen_clients.add(order.client_order_id)
                 observations.append(observation)
-        return tuple(
+        ordered = tuple(
             sorted(
                 observations,
                 key=lambda item: (
@@ -250,6 +269,112 @@ class ProductAccountProjector:
                     else 1,
                     item.order.client_order_id,
                 ),
+            )
+        )
+        previous_by_client: dict[str, ProductOrder] = {}
+        for observation in ordered:
+            order = observation.order
+            previous = previous_by_client.get(order.client_order_id)
+            if previous is not None and (
+                order.observed_at < previous.observed_at
+                or order.filled_quantity < previous.filled_quantity
+                or order.fee < previous.fee
+            ):
+                raise ValueError("产品订单观察的时间、累计成交或累计费用发生倒退")
+            previous_by_client[order.client_order_id] = order
+        return ordered
+
+    @staticmethod
+    def _latest_orders(
+        history: tuple[ProductOrderObservation, ...],
+    ) -> tuple[ProductOrderObservation, ...]:
+        latest: dict[str, ProductOrderObservation] = {}
+        for observation in history:
+            latest[observation.order.client_order_id] = observation
+        return tuple(
+            sorted(
+                latest.values(),
+                key=lambda item: (
+                    item.order.observed_at,
+                    item.available_at,
+                    item.order.client_order_id,
+                ),
+            )
+        )
+
+    @classmethod
+    def _funding_pnl(
+        cls,
+        history: tuple[ProductOrderObservation, ...],
+        *,
+        settlements: tuple[FundingSettlement, ...],
+        as_of: datetime,
+    ) -> Decimal:
+        settlement_keys = tuple(
+            (item.funding_time, item.rate_type.value, item.settlement_id)
+            for item in settlements
+        )
+        if tuple(sorted(set(settlement_keys))) != settlement_keys or any(
+            item.observed_at > as_of or item.funding_time >= as_of
+            for item in settlements
+        ):
+            raise ValueError("Funding 结算必须唯一、有序且在账户时点可见")
+        fills = cls._incremental_fills(history)
+        positions: dict[str, _PositionState] = {}
+        cursor = 0
+        pnl = Decimal("0")
+        for settlement in settlements:
+            while cursor < len(fills) and fills[cursor].observed_at <= settlement.funding_time:
+                cls._apply_position(positions, fills[cursor])
+                cursor += 1
+            position = positions.get(settlement.instrument.key)
+            if position is None:
+                continue
+            pnl -= (
+                position.quantity
+                * settlement.mark_price
+                * settlement.instrument.contract_multiplier
+                * settlement.funding_rate
+            )
+        return pnl
+
+    @staticmethod
+    def _incremental_fills(
+        history: tuple[ProductOrderObservation, ...],
+    ) -> tuple[ProductOrder, ...]:
+        previous_by_client: dict[str, ProductOrder] = {}
+        fills: list[ProductOrder] = []
+        for observation in history:
+            order = observation.order
+            previous = previous_by_client.get(order.client_order_id)
+            previous_quantity = (
+                previous.filled_quantity if previous is not None else Decimal("0")
+            )
+            delta_quantity = order.filled_quantity - previous_quantity
+            if delta_quantity > 0:
+                assert order.average_fill_price is not None
+                previous_notional = (
+                    previous.filled_quantity * (previous.average_fill_price or Decimal("0"))
+                    if previous is not None
+                    else Decimal("0")
+                )
+                cumulative_notional = order.filled_quantity * order.average_fill_price
+                delta_price = (cumulative_notional - previous_notional) / delta_quantity
+                fills.append(
+                    order.model_copy(
+                        update={
+                            "filled_quantity": delta_quantity,
+                            "requested_quantity": delta_quantity,
+                            "average_fill_price": delta_price,
+                            "fee": order.fee - (previous.fee if previous is not None else 0),
+                        }
+                    )
+                )
+            previous_by_client[order.client_order_id] = order
+        return tuple(
+            sorted(
+                fills,
+                key=lambda item: (item.observed_at, item.client_order_id),
             )
         )
 
@@ -395,12 +520,14 @@ class ProductAccountProjectionService:
         projector: ProductAccountProjector,
         groups: ExecutionGroupStore,
         observations: ProductOrderObservationStore,
+        funding: FundingSettlementReader,
         risks: ApprovedTargetReader,
         accounts: PortfolioAccountHistory,
     ) -> None:
         self._projector = projector
         self._groups = groups
         self._observations = observations
+        self._funding = funding
         self._risks = risks
         self._accounts = accounts
 
@@ -414,7 +541,7 @@ class ProductAccountProjectionService:
     ) -> PortfolioAccountSnapshot:
         as_of = require_utc(as_of)
         groups = self._groups.visible(as_of=as_of)
-        observations = self._observations.for_groups(
+        observation_history = self._observations.history_for_groups(
             tuple(group.group_id for group in groups),
             as_of=as_of,
         )
@@ -444,11 +571,41 @@ class ProductAccountProjectionService:
             portfolio_id=self._projector.portfolio_id,
             as_of=as_of,
         )
+        perpetual_instruments = {
+            leg.instrument.key: leg.instrument
+            for group in groups
+            for leg in (*group.target_legs, *group.compensation_legs)
+            if leg.instrument.product != InstrumentProduct.SPOT
+        }
+        funding_settlements: list[FundingSettlement] = []
+        if groups:
+            start = min(item.started_at for item in groups)
+            if start < as_of:
+                for key in sorted(perpetual_instruments):
+                    funding_settlements.extend(
+                        self._funding.funding_settlements(
+                            instrument=perpetual_instruments[key],
+                            start=start,
+                            end=as_of,
+                            visible_at=as_of,
+                        )
+                    )
+        ordered_settlements = tuple(
+            sorted(
+                funding_settlements,
+                key=lambda item: (
+                    item.funding_time,
+                    item.rate_type.value,
+                    item.settlement_id,
+                ),
+            )
+        )
         return self._projector.project(
             cycle_id=cycle_id,
             as_of=as_of,
             groups=groups,
-            observations_by_group=observations,
+            observation_history_by_group=observation_history,
+            funding_settlements=ordered_settlements,
             approved_sleeves=tuple(sleeves[key] for key in sorted(sleeves)),
             quotes=quotes,
             previous=previous,

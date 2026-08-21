@@ -171,8 +171,13 @@ class PortfolioDecisionEngine:
             )
             for item in sleeves
         )
+        reason_codes = set()
+        if not eligible:
+            reason_codes.add("CASH_SELECTED_NO_ELIGIBLE_FORECAST")
+        else:
+            reason_codes.add("POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED")
         if turnover < self._policy.minimum_rebalance_notional:
-            return None
+            reason_codes.add("REBALANCE_BELOW_MINIMUM")
 
         valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
         if eligible:
@@ -191,6 +196,7 @@ class PortfolioDecisionEngine:
             ),
             "quotes": [item.model_dump(mode="json") for item in quotes],
             "sleeves": [item.model_dump(mode="json") for item in targets],
+            "reason_codes": tuple(sorted(reason_codes)),
         }
         return PortfolioTarget(
             target_id=stable_id("portfolio_target", content_hash(payload)),

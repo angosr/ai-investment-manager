@@ -170,6 +170,7 @@ class PortfolioTarget(FrozenModel):
     considered_forecast_ids: tuple[str, ...] = ()
     quotes: tuple[ExecutableQuote, ...] = ()
     sleeves: tuple[SleeveTarget, ...] = ()
+    reason_codes: tuple[str, ...] = Field(min_length=1)
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_valid_until = field_validator("valid_until")(require_utc)
@@ -204,6 +205,8 @@ class PortfolioTarget(FrozenModel):
             raise ValueError("PortfolioTarget quotes 必须覆盖全部 Sleeve Legs")
         if any(item.as_of != self.as_of for item in self.quotes):
             raise ValueError("PortfolioTarget quotes 必须冻结在目标 as_of")
+        if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
+            raise ValueError("PortfolioTarget reason_codes 必须唯一且排序")
         for sleeve in self.sleeves:
             expected_id = SleeveTarget.identity_for(
                 portfolio_id=self.portfolio_id,

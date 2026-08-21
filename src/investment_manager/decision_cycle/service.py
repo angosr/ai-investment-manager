@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from temporalio.client import Client
 
+from investment_manager.decision_cycle.capital import assemble_capital_cycle
 from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
@@ -67,7 +68,9 @@ def run_trigger_service(
                 ),
                 batch_recorder=repository,
                 program_forecast_producers=(
-                    CarryForecastProducer(
+                    assemble_capital_cycle(config, engine)
+                    if config.capital.enabled
+                    else CarryForecastProducer(
                         policy=config.carry_forecast,
                         market=SqlMarketDataStore(engine),
                         store=SqlForecastStore(engine),

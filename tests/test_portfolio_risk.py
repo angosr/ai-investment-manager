@@ -110,6 +110,7 @@ def _target(
         considered_forecast_ids=("forecast-1",),
         quotes=quotes,
         sleeves=(sleeve,),
+        reason_codes=("TEST_TARGET",),
     )
 
 
