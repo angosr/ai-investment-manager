@@ -47,6 +47,7 @@ class CarryForecastProducer:
             return None
         requested_at = require_utc(as_of)
         slot_start, slot_end = self._slot(requested_at)
+        horizon_minutes = int((slot_end - slot_start).total_seconds() // 60)
         available_at = max(require_utc(self.clock()), requested_at)
         entry_window_end = slot_start + timedelta(
             minutes=self.policy.maximum_monthly_entry_delay_minutes
@@ -112,6 +113,7 @@ class CarryForecastProducer:
             perpetual_entry=perpetual_entry,
             mark_price=state.mark_price,
             last_funding_rate=state.last_funding_rate,
+            horizon_minutes=horizon_minutes,
         )
         direction = (
             DirectionalView.UP
@@ -126,7 +128,7 @@ class CarryForecastProducer:
             producer_version=self.policy.version,
             forecast_family=self.policy.forecast_family,
             target=target,
-            horizon_minutes=self.policy.horizon_minutes,
+            horizon_minutes=horizon_minutes,
             direction=direction,
             reference_prices=(
                 ForecastReferencePrice(
@@ -202,8 +204,9 @@ class CarryForecastProducer:
         perpetual_entry: Decimal,
         mark_price: Decimal,
         last_funding_rate: Decimal,
+        horizon_minutes: int,
     ) -> Decimal:
-        funding_periods = Decimal(self.policy.horizon_minutes) / Decimal(
+        funding_periods = Decimal(horizon_minutes) / Decimal(
             self.policy.funding_interval_hours * 60
         )
         projected_funding = (
@@ -257,11 +260,13 @@ class ReleasedCarryForecastProducer:
             self.evidence.expected_annualized_net_fraction
             * horizon_fraction
             * _BPS
+            / self.evidence.evaluated_gross_exposure_fraction
         )
         conservative_net_bps = (
             self.evidence.conservative_annualized_net_fraction
             * horizon_fraction
             * _BPS
+            / self.evidence.evaluated_gross_exposure_fraction
         )
         payload = {
             "role": ForecastRole.PROGRAM_BASE,

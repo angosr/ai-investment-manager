@@ -33,6 +33,57 @@ def _perpetual() -> InstrumentId:
     )
 
 
+def _market(as_of: datetime) -> InMemoryMarketDataStore:
+    market = InMemoryMarketDataStore()
+    market.put_quote(
+        MarketQuote(
+            quote_id=stable_id("spot_quote", as_of),
+            symbol="BTCUSDT",
+            observed_at=as_of,
+            bid=Decimal("99990"),
+            bid_quantity=Decimal("1"),
+            ask=Decimal("100000"),
+            ask_quantity=Decimal("1"),
+            source="test",
+        )
+    )
+    perpetual = _perpetual()
+    update_id = int(as_of.timestamp())
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", perpetual.key, update_id),
+            instrument=perpetual,
+            exchange_time=as_of,
+            observed_at=as_of,
+            bid=Decimal("100300"),
+            bid_quantity=Decimal("1"),
+            ask=Decimal("100310"),
+            ask_quantity=Decimal("1"),
+            update_id=update_id,
+            source="test",
+        )
+    )
+    market.put_perpetual_state(
+        PerpetualMarketState(
+            state_id=stable_id(
+                "perpetual_market_state",
+                perpetual.key,
+                as_of.isoformat(),
+            ),
+            instrument=perpetual,
+            exchange_time=as_of,
+            observed_at=as_of,
+            mark_price=Decimal("100300"),
+            index_price=Decimal("100000"),
+            last_funding_rate=Decimal("0.0001"),
+            interest_rate=Decimal("0.0001"),
+            next_funding_time=as_of + timedelta(hours=8),
+            source="test",
+        )
+    )
+    return market
+
+
 def test_carry_evidence_rejects_tampered_source_artifact(
     app_config,
     tmp_path,
@@ -68,52 +119,7 @@ def test_carry_evidence_rejects_copied_metric_drift(app_config) -> None:
 def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(
     app_config,
 ) -> None:
-    market = InMemoryMarketDataStore()
-    market.put_quote(
-        MarketQuote(
-            quote_id="spot-quote-1",
-            symbol="BTCUSDT",
-            observed_at=NOW,
-            bid=Decimal("99990"),
-            bid_quantity=Decimal("1"),
-            ask=Decimal("100000"),
-            ask_quantity=Decimal("1"),
-            source="test",
-        )
-    )
-    perpetual = _perpetual()
-    market.put_perpetual_quote(
-        PerpetualQuote(
-            quote_id=stable_id("perpetual_quote", perpetual.key, 1),
-            instrument=perpetual,
-            exchange_time=NOW,
-            observed_at=NOW,
-            bid=Decimal("100300"),
-            bid_quantity=Decimal("1"),
-            ask=Decimal("100310"),
-            ask_quantity=Decimal("1"),
-            update_id=1,
-            source="test",
-        )
-    )
-    market.put_perpetual_state(
-        PerpetualMarketState(
-            state_id=stable_id(
-                "perpetual_market_state",
-                perpetual.key,
-                NOW.isoformat(),
-            ),
-            instrument=perpetual,
-            exchange_time=NOW,
-            observed_at=NOW,
-            mark_price=Decimal("100300"),
-            index_price=Decimal("100000"),
-            last_funding_rate=Decimal("0.0001"),
-            interest_rate=Decimal("0.0001"),
-            next_funding_time=NOW + timedelta(hours=4),
-            source="test",
-        )
-    )
+    market = _market(NOW)
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     store = SqlForecastStore(engine)
@@ -152,8 +158,20 @@ def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(
     assert released.role == ForecastRole.PROGRAM_BASE
     assert released.base_forecast_id == first.forecast_id
     assert released.conservative_gross_bps > Decimal("20")
+    evidence = app_config.carry_forecast.evidence
+    expected_conservative_net_bps = (
+        evidence.conservative_annualized_net_fraction
+        * Decimal(first.horizon_minutes)
+        / Decimal("525960")
+        * Decimal("10000")
+        / evidence.evaluated_gross_exposure_fraction
+    )
+    assert (
+        released.conservative_gross_bps - evidence.round_trip_cost_bps
+        == expected_conservative_net_bps
+    )
     assert released.calibration_ref == (
-        app_config.carry_forecast.evidence.source_evaluation_id
+        evidence.source_evaluation_id
     )
 
 
@@ -170,6 +188,34 @@ def test_carry_producer_does_not_enter_late_in_month(app_config) -> None:
     )
 
     assert producer.produce(as_of=datetime(2026, 8, 21, tzinfo=UTC)) is None
+
+
+@pytest.mark.parametrize(
+    ("as_of", "expected_horizon_minutes"),
+    (
+        (datetime(2027, 2, 1, tzinfo=UTC), 28 * 24 * 60),
+        (datetime(2027, 3, 1, tzinfo=UTC), 31 * 24 * 60),
+    ),
+)
+def test_carry_forecast_horizon_matches_the_exact_calendar_month(
+    app_config,
+    as_of,
+    expected_horizon_minutes,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    forecast = CarryForecastProducer(
+        policy=app_config.carry_forecast,
+        market=_market(as_of),
+        store=SqlForecastStore(engine),
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        clock=lambda: as_of,
+    ).produce(as_of=as_of)
+
+    assert forecast is not None
+    assert forecast.horizon_minutes == expected_horizon_minutes
+    assert forecast.valid_until == as_of.replace(month=as_of.month + 1)
 
 
 def test_carry_producer_does_not_use_an_on_time_request_processed_late(

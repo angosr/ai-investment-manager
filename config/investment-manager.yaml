@@ -71,7 +71,7 @@ calibration:
   artifacts: []
 
 carry_forecast:
-  version: btc-carry-monthly-first-open-v3
+  version: btc-carry-monthly-first-open-v4
   rebalance_policy_version: monthly-first-open-v2
   evaluated_policy_version: spot-perp-calendar-month-risk-30pct-v3
   enabled: true
@@ -80,7 +80,6 @@ carry_forecast:
   symbol: BTCUSDT
   base_asset: BTC
   quote_asset: USDT
-  horizon_minutes: 43200
   maximum_monthly_entry_delay_minutes: 30
   funding_interval_hours: 8
   expected_edge_half_life_seconds: 31536000
