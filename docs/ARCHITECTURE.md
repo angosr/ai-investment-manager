@@ -223,6 +223,12 @@ Venue 与账户投影；错过月初窗口时不产生新的经济目标，不�
 权威权益核对，Dashboard 不再从订单数量推断盈利。它是组合级费用后证据带，不伪造暂时无法可靠
 拆分的 basis/funding/滑点归因。
 
+Capital 的前瞻评价不建立第二套收益账本。`CapitalShadowEvaluationSpec` 在首笔订单前绑定精确
+Release、配置哈希、组件版本、Evidence 制品、资本行为哈希和未来十二个自然月，并把现金与源研究策略
+冻结为双基线；运行完整率、晚开、重复 group、未对冲/恢复时限以及全部成本维度进入同一个通用
+`EvaluationPlan` 快照。任何绑定身份变化都截断 cohort，未来 evaluator 只能从 Account、Performance、
+Forecast、RebalancePeriod 与 ExecutionGroup 权威事实派生结果。
+
 下一步是在独立事实库持续验证恢复、绩效区间和 30 日结算，并补 Sleeve 级可核对归因；随后才实现
 Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器或双路径。
 

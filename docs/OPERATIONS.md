@@ -150,6 +150,20 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 窗口结束并经过七天结算宽限后，先用现有冻结命令生成精确同窗口的现货、资金费率和 carry 内容寻址数据，再从预登记的精确 Git 提交及 Python/Pydantic 环境运行 `evaluate-carry-forward-plan --plan-id ... --carry-dataset-id ...`。评价命令在读取调用方指定的数据制品前先校验成熟时间、代码版本和最小依赖环境，随后按 carry 引用加载现货与官方资金费率制品并逐条复核结算；数据窗口、来源、采集时间、资金费率身份或预登记规格任一不符都会失败关闭。连续账本费用后净收益不为正，或采用固定三个月滞后的保守 Newey-West 月度收益下界不为正，均不能通过。它只产生研究结果和失败实验事实，不创建永续适配器、订单或权限。
 
+每个 Capital Shadow Release 必须在首个月度窗口前，向它自己的事实库登记一次运行评价合同；命令从冻结配置与 Manifest 派生全部行为身份、证据、基线、成本维度和故障门槛，调用方只能选择计划 ID 与未来自然月窗口：
+
+```bash
+INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
+  .venv/bin/investment-manager register-capital-shadow-plan \
+  --config '<冻结 Capital 配置>' \
+  --release-manifest '<冻结 Capital Manifest>' \
+  --plan-id '<唯一计划 ID>' \
+  --observation-start '2026-09-01T00:00:00Z' \
+  --observation-end '2027-09-01T00:00:00Z'
+```
+
+计划以现金和同策略研究账本为双基线，要求十二个月决策完整、至少十一个月 Forecast 可用、禁止晚开与重复 group，并冻结未对冲/恢复时限、费用后权益、资本占用、fee、spread、funding、basis 和 compensation loss。任一绑定的代码、配置、组件、Evidence 或行为身份变化都截断 cohort；不得把不同 Release 的月份拼接后晋级。
+
 部署私有配置必须满足：
 
 ```yaml

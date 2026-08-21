@@ -69,6 +69,9 @@ CLI_CONTRACT = {
     ),
     "phase-a-audit": "config,project_root",
     "reconciliation-service": "config,database_url,release_manifest",
+    "register-capital-shadow-plan": (
+        "config,database_url,release_manifest,plan_id,observation_start,observation_end"
+    ),
     "register-assessment-forward-plan": (
         "config,database_url,plan_id,signal_window_start,signal_window_end,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
@@ -220,6 +223,9 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         "entrypoints/cli/assessment_commands.py": {
             "evaluate-assessment-forward-plan",
             "register-assessment-forward-plan",
+        },
+        "entrypoints/cli/capital_commands.py": {
+            "register-capital-shadow-plan",
         },
         "entrypoints/cli/commands.py": {
             "build-edge-calibration",
