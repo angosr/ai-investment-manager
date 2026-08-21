@@ -27,9 +27,13 @@ from investment_manager.portfolio.decision import (
 )
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
+    PortfolioPerformanceKind,
     SleeveTarget,
 )
-from investment_manager.portfolio.repository import SqlPortfolioStore
+from investment_manager.portfolio.repository import (
+    SqlPortfolioPerformanceStore,
+    SqlPortfolioStore,
+)
 from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
@@ -240,3 +244,133 @@ def test_handoff_stores_reject_missing_authoritative_parent() -> None:
         SqlPortfolioRiskStore(engine).record(decision)
     with pytest.raises(ValueError, match="Risk 授权"):
         SqlTradePlanStore(engine).record(plan)
+
+
+def test_portfolio_performance_records_same_time_execution_once() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    accounts = SqlPortfolioStore(engine)
+    performance = SqlPortfolioPerformanceStore(engine)
+    start = PortfolioAccountSnapshot(
+        snapshot_id="account-before-execution",
+        cycle_id="cycle-before-execution",
+        portfolio_id="primary",
+        revision=0,
+        as_of=NOW,
+        observed_at=NOW,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000"),
+        equity=Decimal("10000"),
+        equity_high_water=Decimal("10000"),
+    )
+    end = PortfolioAccountSnapshot(
+        snapshot_id="account-after-execution",
+        cycle_id="cycle-after-execution",
+        portfolio_id="primary",
+        revision=1,
+        as_of=NOW,
+        observed_at=NOW,
+        settlement_asset="USDT",
+        cash_balance=Decimal("9996.5"),
+        equity=Decimal("9996.5"),
+        equity_high_water=Decimal("10000"),
+        daily_pnl=Decimal("-3.5"),
+        drawdown_fraction=Decimal("0.00035"),
+    )
+
+    assert accounts.record_account(start)
+    assert performance.record(start) is None
+    assert accounts.record_account(end)
+    interval = performance.record(end)
+
+    assert interval is not None
+    assert interval.kind == PortfolioPerformanceKind.EXECUTION
+    assert interval.net_pnl == Decimal("-3.5")
+    assert interval.return_fraction == Decimal("-0.00035")
+    assert performance.record(end) == interval
+    assert performance.count(portfolio_id="primary") == 1
+    assert performance.latest(portfolio_id="primary") == interval
+
+    later = end.model_copy(
+        update={
+            "snapshot_id": "account-next-mark",
+            "cycle_id": "cycle-next-mark",
+            "revision": 2,
+            "as_of": NOW + timedelta(minutes=30),
+            "observed_at": NOW + timedelta(minutes=30),
+            "cash_balance": Decimal("9997"),
+            "equity": Decimal("9997"),
+            "daily_pnl": Decimal("-3"),
+            "drawdown_fraction": Decimal("0.0003"),
+        }
+    )
+    assert accounts.record_account(later)
+    mark_interval = performance.record(later)
+    assert mark_interval is not None
+    assert mark_interval.kind == PortfolioPerformanceKind.MARK_TO_MARKET
+    assert mark_interval.net_pnl == Decimal("0.5")
+    assert performance.count(portfolio_id="primary") == 2
+    assert performance.latest(portfolio_id="primary") == mark_interval
+
+    with pytest.raises(ValueError, match="权威账户事实"):
+        performance.record(
+            later.model_copy(
+                update={"equity": Decimal("1"), "cash_balance": Decimal("1")}
+            )
+        )
+
+
+def test_portfolio_performance_repairs_a_crash_gap_before_appending() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    accounts = SqlPortfolioStore(engine)
+    performance = SqlPortfolioPerformanceStore(engine)
+    baseline = PortfolioAccountSnapshot(
+        snapshot_id="account-r0",
+        cycle_id="cycle-r0",
+        portfolio_id="primary",
+        revision=0,
+        as_of=NOW,
+        observed_at=NOW,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000"),
+        equity=Decimal("10000"),
+        equity_high_water=Decimal("10000"),
+    )
+    missed = baseline.model_copy(
+        update={
+            "snapshot_id": "account-r1",
+            "cycle_id": "cycle-r1",
+            "revision": 1,
+            "as_of": NOW + timedelta(minutes=1),
+            "observed_at": NOW + timedelta(minutes=1),
+            "cash_balance": Decimal("9999"),
+            "equity": Decimal("9999"),
+            "daily_pnl": Decimal("-1"),
+            "drawdown_fraction": Decimal("0.0001"),
+        }
+    )
+    current = missed.model_copy(
+        update={
+            "snapshot_id": "account-r2",
+            "cycle_id": "cycle-r2",
+            "revision": 2,
+            "as_of": NOW + timedelta(minutes=2),
+            "observed_at": NOW + timedelta(minutes=2),
+            "cash_balance": Decimal("10001"),
+            "equity": Decimal("10001"),
+            "equity_high_water": Decimal("10001"),
+            "daily_pnl": Decimal("1"),
+            "drawdown_fraction": Decimal("0"),
+        }
+    )
+
+    assert accounts.record_account(baseline)
+    assert accounts.record_account(missed)  # Simulate exit before interval persistence.
+    assert accounts.record_account(current)
+    latest = performance.record(current)
+
+    assert latest is not None
+    assert latest.start_snapshot_id == missed.snapshot_id
+    assert latest.net_pnl == Decimal("2")
+    assert performance.count(portfolio_id="primary") == current.revision

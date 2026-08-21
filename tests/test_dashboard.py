@@ -325,7 +325,19 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
     assert checks["capital_account"]["state"] == "ok"
     assert checks["capital_decision"]["state"] == "ok"
     assert checks["capital_execution"]["state"] == "ok"
+    assert checks["capital_performance"]["state"] == "ok"
     assert "reconciliation" not in checks
+
+    overview.account.revision = 1
+    broken = assemble_health(
+        reader,
+        config,
+        now=now,
+        capital_overview=overview,
+    )
+    broken_checks = {item["key"]: item for item in broken["checks"]}
+    assert broken["overall"] == "unknown"
+    assert broken_checks["capital_performance"]["state"] == "unknown"
 
 
 def test_health_ages_persisted_freshness_and_uses_real_kill_switch():

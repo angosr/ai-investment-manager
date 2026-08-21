@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from itertools import pairwise
 from typing import Protocol
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -13,10 +14,12 @@ from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
+    PortfolioPerformanceInterval,
     PortfolioTarget,
 )
 from investment_manager.portfolio.tables import (
     portfolio_account_snapshots,
+    portfolio_performance_intervals,
     portfolio_target_forecasts,
     portfolio_targets,
 )
@@ -233,3 +236,204 @@ class SqlPortfolioStore:
                 for forecast_id in sleeve.forecast_ids
             ):
                 raise ValueError("PortfolioTarget Sleeve 与权威 Forecast 身份不一致")
+
+
+class SqlPortfolioPerformanceStore:
+    """Append one causal net-equity interval for every account snapshot after inception."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def record(
+        self,
+        end: PortfolioAccountSnapshot,
+    ) -> PortfolioPerformanceInterval | None:
+        persisted_end = self._account(end.snapshot_id)
+        if persisted_end != end:
+            raise ValueError("Portfolio Performance end snapshot 不是权威账户事实")
+        existing = self.for_end_snapshot(end.snapshot_id)
+        if existing is not None:
+            return existing
+        if end.revision == 0:
+            return None
+        if not self._is_latest(end):
+            raise ValueError("Portfolio Performance 只允许按账户因果顺序追加")
+        snapshots = self._unrecorded_snapshots(end)
+        intervals = tuple(
+            PortfolioPerformanceInterval.between(start, finish)
+            for start, finish in pairwise(snapshots)
+        )
+        if not intervals:
+            return None
+        try:
+            with self._engine.begin() as connection:
+                for interval in intervals:
+                    self._require_snapshots(connection, interval)
+                    connection.execute(
+                        insert(portfolio_performance_intervals).values(
+                            interval_id=interval.interval_id,
+                            portfolio_id=interval.portfolio_id,
+                            start_snapshot_id=interval.start_snapshot_id,
+                            end_snapshot_id=interval.end_snapshot_id,
+                            start_as_of=interval.start_as_of,
+                            end_as_of=interval.end_as_of,
+                            start_revision=interval.start_revision,
+                            end_revision=interval.end_revision,
+                            kind=interval.kind.value,
+                            net_pnl=interval.net_pnl,
+                            return_fraction=interval.return_fraction,
+                            interval_hash=content_hash(interval),
+                            payload=interval.model_dump(mode="json"),
+                        )
+                    )
+        except IntegrityError:
+            existing = self.for_end_snapshot(end.snapshot_id)
+            if existing != intervals[-1]:
+                raise ValueError(
+                    "Portfolio Performance end snapshot 已存在且内容不同"
+                ) from None
+        return intervals[-1]
+
+    def _account(self, snapshot_id: str) -> PortfolioAccountSnapshot | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_account_snapshots.c.payload).where(
+                    portfolio_account_snapshots.c.snapshot_id == snapshot_id
+                )
+            ).scalar_one_or_none()
+        return (
+            None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
+        )
+
+    def _is_latest(self, end: PortfolioAccountSnapshot) -> bool:
+        with self._engine.connect() as connection:
+            snapshot_id = connection.execute(
+                select(portfolio_account_snapshots.c.snapshot_id)
+                .where(
+                    portfolio_account_snapshots.c.portfolio_id == end.portfolio_id
+                )
+                .order_by(
+                    portfolio_account_snapshots.c.as_of.desc(),
+                    portfolio_account_snapshots.c.revision.desc(),
+                    portfolio_account_snapshots.c.snapshot_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return snapshot_id == end.snapshot_id
+
+    def for_end_snapshot(
+        self,
+        snapshot_id: str,
+    ) -> PortfolioPerformanceInterval | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_performance_intervals.c.payload).where(
+                    portfolio_performance_intervals.c.end_snapshot_id == snapshot_id
+                )
+            ).scalar_one_or_none()
+        return (
+            None
+            if payload is None
+            else PortfolioPerformanceInterval.model_validate(payload)
+        )
+
+    def latest(
+        self,
+        *,
+        portfolio_id: str,
+    ) -> PortfolioPerformanceInterval | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_performance_intervals.c.payload)
+                .where(portfolio_performance_intervals.c.portfolio_id == portfolio_id)
+                .order_by(
+                    portfolio_performance_intervals.c.end_as_of.desc(),
+                    portfolio_performance_intervals.c.end_revision.desc(),
+                    portfolio_performance_intervals.c.interval_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return (
+            None
+            if payload is None
+            else PortfolioPerformanceInterval.model_validate(payload)
+        )
+
+    def count(self, *, portfolio_id: str) -> int:
+        with self._engine.connect() as connection:
+            return int(
+                connection.scalar(
+                    select(func.count())
+                    .select_from(portfolio_performance_intervals)
+                    .where(
+                        portfolio_performance_intervals.c.portfolio_id
+                        == portfolio_id
+                    )
+                )
+                or 0
+            )
+
+    def _unrecorded_snapshots(
+        self,
+        end: PortfolioAccountSnapshot,
+    ) -> tuple[PortfolioAccountSnapshot, ...]:
+        with self._engine.connect() as connection:
+            boundary_payload = connection.execute(
+                select(portfolio_performance_intervals.c.payload)
+                .where(
+                    portfolio_performance_intervals.c.portfolio_id == end.portfolio_id
+                )
+                .order_by(
+                    portfolio_performance_intervals.c.end_revision.desc(),
+                    portfolio_performance_intervals.c.interval_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            boundary = (
+                None
+                if boundary_payload is None
+                else PortfolioPerformanceInterval.model_validate(boundary_payload)
+            )
+            start_revision = boundary.end_revision if boundary is not None else 0
+            payloads = connection.execute(
+                select(portfolio_account_snapshots.c.payload)
+                .where(
+                    portfolio_account_snapshots.c.portfolio_id == end.portfolio_id,
+                    portfolio_account_snapshots.c.revision >= start_revision,
+                    portfolio_account_snapshots.c.revision <= end.revision,
+                )
+                .order_by(portfolio_account_snapshots.c.revision)
+            ).scalars()
+            snapshots = tuple(
+                PortfolioAccountSnapshot.model_validate(payload) for payload in payloads
+            )
+        if boundary is not None and (
+            not snapshots or snapshots[0].snapshot_id != boundary.end_snapshot_id
+        ):
+            raise ValueError("Portfolio Performance 账本边界与账户历史不一致")
+        if boundary is None and snapshots and snapshots[0].revision != 0:
+            raise ValueError("Portfolio Performance 缺少 revision 0 账户基线")
+        if not snapshots or snapshots[-1] != end:
+            raise ValueError("Portfolio Performance 无法定位当前权威账户")
+        return snapshots
+
+    @staticmethod
+    def _require_snapshots(
+        connection: Connection,
+        interval: PortfolioPerformanceInterval,
+    ) -> None:
+        rows = connection.execute(
+            select(
+                portfolio_account_snapshots.c.snapshot_id,
+                portfolio_account_snapshots.c.portfolio_id,
+            ).where(
+                portfolio_account_snapshots.c.snapshot_id.in_(
+                    (interval.start_snapshot_id, interval.end_snapshot_id)
+                )
+            )
+        ).all()
+        if {row.snapshot_id for row in rows} != {
+            interval.start_snapshot_id,
+            interval.end_snapshot_id,
+        } or any(row.portfolio_id != interval.portfolio_id for row in rows):
+            raise ValueError("Portfolio Performance 缺少匹配的权威账户快照")

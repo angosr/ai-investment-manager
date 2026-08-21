@@ -4,6 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
@@ -120,6 +121,103 @@ class PortfolioAccountSnapshot(FrozenModel):
             for key, value in sorted(quantities.items())
             if value != 0
         }
+
+
+class PortfolioPerformanceKind(StrEnum):
+    EXECUTION = "EXECUTION"
+    MARK_TO_MARKET = "MARK_TO_MARKET"
+
+
+class PortfolioPerformanceInterval(FrozenModel):
+    """Net, fee-inclusive equity change between two causal account facts."""
+
+    interval_id: str = Field(min_length=1)
+    portfolio_id: str = Field(min_length=1)
+    start_snapshot_id: str = Field(min_length=1)
+    end_snapshot_id: str = Field(min_length=1)
+    start_as_of: datetime
+    end_as_of: datetime
+    start_revision: int = Field(ge=0)
+    end_revision: int = Field(ge=0)
+    kind: PortfolioPerformanceKind
+    start_equity: PositiveDecimal
+    end_equity: Decimal
+    net_pnl: Decimal
+    return_fraction: Decimal
+
+    _utc_start_as_of = field_validator("start_as_of")(require_utc)
+    _utc_end_as_of = field_validator("end_as_of")(require_utc)
+
+    @classmethod
+    def between(
+        cls,
+        start: PortfolioAccountSnapshot,
+        end: PortfolioAccountSnapshot,
+    ) -> PortfolioPerformanceInterval:
+        if start.portfolio_id != end.portfolio_id:
+            raise ValueError("Portfolio Performance 快照必须属于同一账户")
+        same_time = start.as_of == end.as_of
+        if (
+            start.snapshot_id == end.snapshot_id
+            or end.as_of < start.as_of
+            or end.revision != start.revision + 1
+        ):
+            raise ValueError("Portfolio Performance 快照因果顺序非法")
+        payload = {
+            "portfolio_id": end.portfolio_id,
+            "start_snapshot_id": start.snapshot_id,
+            "end_snapshot_id": end.snapshot_id,
+            "start_as_of": start.as_of,
+            "end_as_of": end.as_of,
+            "start_revision": start.revision,
+            "end_revision": end.revision,
+            "kind": (
+                PortfolioPerformanceKind.EXECUTION
+                if same_time
+                else PortfolioPerformanceKind.MARK_TO_MARKET
+            ),
+            "start_equity": start.equity,
+            "end_equity": end.equity,
+            "net_pnl": end.equity - start.equity,
+            "return_fraction": (end.equity - start.equity) / start.equity,
+        }
+        return cls(
+            interval_id=stable_id(
+                "portfolio_performance",
+                start.snapshot_id,
+                end.snapshot_id,
+            ),
+            **payload,
+        )
+
+    @model_validator(mode="after")
+    def economics_and_identity_must_reconcile(self):
+        same_time = self.start_as_of == self.end_as_of
+        if (
+            self.start_snapshot_id == self.end_snapshot_id
+            or self.end_as_of < self.start_as_of
+            or self.end_revision != self.start_revision + 1
+        ):
+            raise ValueError("Portfolio Performance 时间或 revision 顺序非法")
+        expected_kind = (
+            PortfolioPerformanceKind.EXECUTION
+            if same_time
+            else PortfolioPerformanceKind.MARK_TO_MARKET
+        )
+        if self.kind != expected_kind:
+            raise ValueError("Portfolio Performance 类型与时点不一致")
+        expected_pnl = self.end_equity - self.start_equity
+        if self.net_pnl != expected_pnl or self.return_fraction != (
+            expected_pnl / self.start_equity
+        ):
+            raise ValueError("Portfolio Performance 净收益无法与权益核对")
+        if self.interval_id != stable_id(
+            "portfolio_performance",
+            self.start_snapshot_id,
+            self.end_snapshot_id,
+        ):
+            raise ValueError("Portfolio Performance identity 不一致")
+        return self
 
 
 class SleeveTarget(FrozenModel):

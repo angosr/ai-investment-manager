@@ -51,7 +51,7 @@
 
 主线已经完成首条 `CalibratedForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 资本切片：唯一候选是 BTC Spot Long / USD-M Perpetual Short 的月度同数量 carry，依据通过的五折 walk-forward 结果获得有限 Shadow 权限；历史 blind 窗口因重叠不可再用，所以 Testnet/LIVE 仍严格禁用。策略只允许 UTC 月首 30 分钟入场，错过窗口时正式记录现金决策，不为增加交易次数追单。产品账户可按累计订单观察、逐产品手续费和实际 funding 点时事实重放，下一轮决策会先恢复历史非终态 group。
 
-尚未完成且不能由仓库自行假定完成：独立 Capital Shadow 的长期费用后结果、组合级 Outcome 与统一观测，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，以及真正 PUSH/STREAM 的低延迟新闻源和 AI 方向增量证据。私有 Challenger 仍以真实 Codex ContextAssessment 冻结 BTC/ETH 的 60 与 240 分钟不可交易视图；AI 没有绕过校准、Portfolio、Risk 或 Execution 的资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：独立 Capital Shadow 的长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，以及真正 PUSH/STREAM 的低延迟新闻源和 AI 方向增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。私有 Challenger 仍以真实 Codex ContextAssessment 冻结 BTC/ETH 的 60 与 240 分钟不可交易视图；AI 没有绕过校准、Portfolio、Risk 或 Execution 的资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 

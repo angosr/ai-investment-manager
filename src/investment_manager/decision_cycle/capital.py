@@ -37,7 +37,10 @@ from investment_manager.portfolio.decision import (
     PortfolioSleeveInput,
 )
 from investment_manager.portfolio.models import SleeveTarget
-from investment_manager.portfolio.repository import SqlPortfolioStore
+from investment_manager.portfolio.repository import (
+    SqlPortfolioPerformanceStore,
+    SqlPortfolioStore,
+)
 from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
     SleeveRiskProfile,
@@ -59,6 +62,7 @@ class CapitalCycleService:
         forecasts: SqlForecastStore,
         producer: ReleasedCarryForecastProducer,
         portfolio: SqlPortfolioStore,
+        performance: SqlPortfolioPerformanceStore,
         accounts: ProductAccountProjectionService,
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
@@ -69,6 +73,7 @@ class CapitalCycleService:
         self._forecasts = forecasts
         self._producer = producer
         self._portfolio = portfolio
+        self._performance = performance
         self._accounts = accounts
         self._decisions = decisions
         self._execution = execution
@@ -120,6 +125,7 @@ class CapitalCycleService:
                 quotes=quotes,
             )
             self._portfolio.record_account(account)
+        self._performance.record(account)
 
         if forecast is None:
             logger.info(
@@ -178,6 +184,7 @@ class CapitalCycleService:
             as_of=as_of,
             quotes=quotes,
         )
+        self._performance.record(result.account)
         logger.info(
             "capital cycle executed mock trade plan",
             extra={
@@ -247,6 +254,7 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     portfolio = SqlPortfolioStore(engine)
+    performance = SqlPortfolioPerformanceStore(engine)
     risks = SqlPortfolioRiskStore(engine)
     plans = SqlTradePlanStore(engine)
     groups = SqlExecutionGroupStore(engine)
@@ -293,6 +301,7 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
         forecasts=forecasts,
         producer=producer,
         portfolio=portfolio,
+        performance=performance,
         accounts=account_projection,
         decisions=PortfolioDecisionPipeline(
             decision=PortfolioDecisionEngine(config.capital.decision),

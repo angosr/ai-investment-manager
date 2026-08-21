@@ -26,8 +26,9 @@ export function Capital() {
           <div className={styles.metrics}>
             <Metric label="现金" value={account.cash_balance} />
             <Metric label="当日 PnL" value={account.daily_pnl} />
+            <Metric label="累计净 PnL" value={data?.performance.cumulative_net_pnl ?? "0"} />
             <Metric label="回撤" value={account.drawdown_fraction} />
-            <Metric label="持仓腿" value={String(account.positions.length)} />
+            <Metric label="绩效区间" value={String(data?.performance.interval_count ?? 0)} />
           </div>
           <div className={styles.state}>
             <span className={styles.dot} data-ok={account.reconciled && !account.kill_switch_active} />
@@ -66,6 +67,14 @@ export function Capital() {
           <span>Forecast</span>
           <b>
             Base {data?.forecast.base_count ?? 0} · Calibrated {data?.forecast.calibrated_count ?? 0}
+          </b>
+        </div>
+        <div className={styles.row}>
+          <span>最近费用后变化</span>
+          <b>
+            {data?.performance.latest
+              ? `${data.performance.latest.net_pnl} · ${data.performance.latest.kind}`
+              : "等待第二个账户快照"}
           </b>
         </div>
       </div>

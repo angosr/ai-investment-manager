@@ -50,6 +50,17 @@ export interface CapitalOverview {
     }[];
     total_order_count: number;
   };
+  performance: {
+    interval_count: number;
+    cumulative_net_pnl: string;
+    latest: {
+      kind: "EXECUTION" | "MARK_TO_MARKET";
+      start_as_of: string;
+      end_as_of: string;
+      net_pnl: string;
+      return_fraction: string;
+    } | null;
+  };
   forecast: {
     base_count: number;
     calibrated_count: number;

@@ -15,6 +15,7 @@ from investment_manager.market.models import InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.repository import SqlPortfolioStore
+from investment_manager.portfolio.tables import portfolio_performance_intervals
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
@@ -93,6 +94,12 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.014")}
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(portfolio_performance_intervals)
+            )
+            == 1
+        )
 
     overview = CapitalDashboardReader(engine, config).overview(now=NOW)
     assert (
@@ -111,5 +118,9 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
         "active_groups": [],
         "total_order_count": 2,
     }
+    assert dto["performance"]["interval_count"] == 1
+    assert dto["performance"]["cumulative_net_pnl"] == "-3.08315"
+    assert dto["performance"]["latest"]["kind"] == "EXECUTION"
+    assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
     assert dto["forecast"]["base_count"] == 1
     assert dto["forecast"]["calibrated_count"] == 1

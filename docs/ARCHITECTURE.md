@@ -207,9 +207,13 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
 Venue 与账户投影；错过月初窗口时正式选择现金，不为制造交易改变行为。
 
-下一步是在独立事实库持续验证恢复、费用后账户和 30 日结算，并补产品级 PortfolioOutcome 与运行观测；
-随后才实现 Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器
-或双路径。
+账户账本把每个相邻权威快照追加为 `PortfolioPerformanceInterval`：同一时点较高 revision 记录成交后
+费用变化，跨时点记录 funding、已实现和可成交价盯市共同形成的净权益变化；累计净 PnL 直接由首尾
+权威权益核对，Dashboard 不再从订单数量推断盈利。它是组合级费用后证据带，不伪造暂时无法可靠
+拆分的 basis/funding/滑点归因。
+
+下一步是在独立事实库持续验证恢复、绩效区间和 30 日结算，并补 Sleeve 级可核对归因；随后才实现
+Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器或双路径。
 
 评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
 `SHADOW` 必须在数据实时可见时生成并保存当时的 Forecast、Portfolio、Risk 和模拟 Execution 结果。

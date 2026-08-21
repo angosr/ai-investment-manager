@@ -36,6 +36,7 @@ def assemble_health(
             _capital_freshness_check(reader, capital_overview, config, now),
             _capital_decision_check(capital_overview, config, now),
             _capital_execution_check(capital_overview, now),
+            _capital_performance_check(capital_overview),
             _forecast_settlement_check(analysis, now),
             _trigger_delivery_check(analysis, config, now),
             _release_alignment_check(analysis),
@@ -174,6 +175,44 @@ def _capital_execution_check(
         "组合执行",
         "bad" if overdue else "warn",
         f"{len(groups)} 个非终态 ExecutionGroup",
+    )
+
+
+def _capital_performance_check(
+    overview: CapitalOverview | None,
+) -> dict:
+    account = overview.account if overview is not None else None
+    if account is None:
+        return _check("capital_performance", "资本绩效", "unknown", "等待账户基线")
+    revision = int(getattr(account, "revision", 0))
+    count = overview.performance_interval_count if overview is not None else 0
+    latest = overview.latest_performance if overview is not None else None
+    if revision > 0 and count == 0:
+        return _check(
+            "capital_performance",
+            "资本绩效",
+            "unknown",
+            "等待绩效账本启用后的下一个账户快照",
+        )
+    if count != revision:
+        return _check(
+            "capital_performance",
+            "资本绩效",
+            "bad",
+            f"绩效区间 {count} 与账户 revision {revision} 不一致",
+        )
+    if latest is not None and latest.end_snapshot_id != account.snapshot_id:
+        return _check(
+            "capital_performance",
+            "资本绩效",
+            "bad",
+            f"最新账户 revision {revision} 尚无匹配绩效区间",
+        )
+    return _check(
+        "capital_performance",
+        "资本绩效",
+        "ok",
+        f"{count} 个费用后净权益区间 · 累计 {overview.cumulative_net_pnl}",
     )
 
 

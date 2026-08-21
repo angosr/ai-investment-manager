@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
@@ -20,10 +21,12 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.platform.time import database_utc
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
+    PortfolioPerformanceInterval,
     PortfolioTarget,
 )
 from investment_manager.portfolio.tables import (
     portfolio_account_snapshots,
+    portfolio_performance_intervals,
     portfolio_targets,
 )
 from investment_manager.risk.portfolio import PortfolioRiskDecision
@@ -46,6 +49,9 @@ class CapitalOverview:
     total_order_count: int = 0
     entry_window_start: datetime | None = None
     entry_window_end: datetime | None = None
+    performance_interval_count: int = 0
+    cumulative_net_pnl: Decimal = Decimal("0")
+    latest_performance: PortfolioPerformanceInterval | None = None
 
 
 class CapitalDashboardReader:
@@ -123,6 +129,52 @@ class CapitalDashboardReader:
                 connection.scalar(select(func.count()).select_from(mock_product_orders))
                 or 0
             )
+            performance_count = int(
+                connection.scalar(
+                    select(func.count())
+                    .select_from(portfolio_performance_intervals)
+                    .where(
+                        portfolio_performance_intervals.c.portfolio_id
+                        == self._config.capital.decision.portfolio_id
+                    )
+                )
+                or 0
+            )
+            first_account_payload = connection.execute(
+                select(portfolio_account_snapshots.c.payload)
+                .where(
+                    portfolio_account_snapshots.c.portfolio_id
+                    == self._config.capital.decision.portfolio_id
+                )
+                .order_by(
+                    portfolio_account_snapshots.c.as_of,
+                    portfolio_account_snapshots.c.revision,
+                    portfolio_account_snapshots.c.snapshot_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            first_account = (
+                None
+                if first_account_payload is None
+                else PortfolioAccountSnapshot.model_validate(first_account_payload)
+            )
+            cumulative_net_pnl = (
+                Decimal("0")
+                if account is None or first_account is None
+                else account.equity - first_account.equity
+            )
+            latest_performance = self._latest_payload(
+                connection,
+                portfolio_performance_intervals.c.payload,
+                portfolio_performance_intervals.c.end_as_of,
+                portfolio_performance_intervals.c.interval_id,
+                PortfolioPerformanceInterval,
+                secondary_order=portfolio_performance_intervals.c.end_revision,
+                where_clause=(
+                    portfolio_performance_intervals.c.portfolio_id
+                    == self._config.capital.decision.portfolio_id
+                ),
+            )
         window_start, window_end = self._entry_window(now)
         return CapitalOverview(
             enabled=True,
@@ -146,6 +198,9 @@ class CapitalDashboardReader:
             total_order_count=order_count,
             entry_window_start=window_start,
             entry_window_end=window_end,
+            performance_interval_count=performance_count,
+            cumulative_net_pnl=cumulative_net_pnl,
+            latest_performance=latest_performance,
         )
 
     @staticmethod
@@ -157,15 +212,17 @@ class CapitalDashboardReader:
         model,
         *,
         secondary_order=None,
+        where_clause=None,
     ):
         ordering = [time_column.desc()]
         if secondary_order is not None:
             ordering.append(secondary_order.desc())
         ordering.append(id_column.desc())
+        statement = select(payload_column)
+        if where_clause is not None:
+            statement = statement.where(where_clause)
         payload = connection.execute(
-            select(payload_column)
-            .order_by(*ordering)
-            .limit(1)
+            statement.order_by(*ordering).limit(1)
         ).scalar_one_or_none()
         return None if payload is None else model.model_validate(payload)
 
@@ -197,6 +254,7 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
     target = overview.target
     risk = overview.risk
     plan = overview.plan
+    performance = overview.latest_performance
     return {
         "enabled": overview.enabled,
         "entry_window": {
@@ -242,6 +300,19 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 for item in overview.active_groups
             ],
             "total_order_count": overview.total_order_count,
+        },
+        "performance": {
+            "interval_count": overview.performance_interval_count,
+            "cumulative_net_pnl": str(overview.cumulative_net_pnl),
+            "latest": None
+            if performance is None
+            else {
+                "kind": performance.kind.value,
+                "start_as_of": _iso(performance.start_as_of),
+                "end_as_of": _iso(performance.end_as_of),
+                "net_pnl": str(performance.net_pnl),
+                "return_fraction": str(performance.return_fraction),
+            },
         },
         "forecast": {
             "base_count": overview.base_forecast_count,

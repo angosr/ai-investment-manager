@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Table,
     UniqueConstraint,
@@ -36,6 +37,40 @@ Index(
     portfolio_account_snapshots.c.portfolio_id,
     portfolio_account_snapshots.c.as_of,
     portfolio_account_snapshots.c.revision,
+)
+
+portfolio_performance_intervals = Table(
+    "portfolio_performance_intervals",
+    metadata,
+    Column("interval_id", String(128), primary_key=True),
+    Column("portfolio_id", String(64), nullable=False),
+    Column(
+        "start_snapshot_id",
+        ForeignKey("portfolio_account_snapshots.snapshot_id"),
+        nullable=False,
+    ),
+    Column(
+        "end_snapshot_id",
+        ForeignKey("portfolio_account_snapshots.snapshot_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("start_as_of", DateTime(timezone=True), nullable=False),
+    Column("end_as_of", DateTime(timezone=True), nullable=False),
+    Column("start_revision", Integer, nullable=False),
+    Column("end_revision", Integer, nullable=False),
+    Column("kind", String(32), nullable=False),
+    Column("net_pnl", Numeric(38, 18), nullable=False),
+    Column("return_fraction", Numeric(38, 18), nullable=False),
+    Column("interval_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_portfolio_performance_end",
+    portfolio_performance_intervals.c.portfolio_id,
+    portfolio_performance_intervals.c.end_as_of,
+    portfolio_performance_intervals.c.end_revision,
+    portfolio_performance_intervals.c.interval_id,
 )
 
 portfolio_targets = Table(
