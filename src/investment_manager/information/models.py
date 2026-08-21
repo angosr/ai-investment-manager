@@ -84,8 +84,14 @@ class DomainCoverageSnapshot(FrozenModel):
     status: CoverageStatus
     as_of: datetime
     source_stream_ids: tuple[str, ...] = ()
-    covered_capabilities: tuple[str, ...] = ()
-    missing_capabilities: tuple[str, ...] = ()
+    covered_capabilities: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
+    missing_capabilities: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
     latest_success_at: datetime | None = None
     latest_publication_at: datetime | None = None
     latest_poll_refs: tuple[str, ...] = ()

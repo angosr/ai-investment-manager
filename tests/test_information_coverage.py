@@ -9,12 +9,27 @@ from investment_manager.information.coverage import (
 from investment_manager.information.models import (
     CausalDomain,
     CoverageStatus,
+    DomainCoverageSnapshot,
     SourcePollStatus,
 )
 from investment_manager.information.policy import CoverageRequirement
 from investment_manager.schema import create_schema
 
 AS_OF = datetime(2026, 8, 21, 16, tzinfo=UTC)
+
+
+def test_empty_capability_fields_do_not_change_legacy_snapshot_identity() -> None:
+    snapshot = DomainCoverageSnapshot(
+        domain=CausalDomain.MONETARY_INFLATION,
+        status=CoverageStatus.CURRENT,
+        as_of=AS_OF,
+        source_stream_ids=("legacy-source",),
+    )
+
+    payload = snapshot.model_dump(mode="json")
+
+    assert "covered_capabilities" not in payload
+    assert "missing_capabilities" not in payload
 
 
 def _store() -> SqlInformationCoverageStore:
