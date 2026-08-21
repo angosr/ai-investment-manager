@@ -50,7 +50,7 @@ Observation
 |---|---|---|
 | Observation | 保存来源原文、来源时间和本地可见时间 | 直接形成交易倾向 |
 | Fact/State | 规范化事实、解决修订、形成点时状态 | 预测收益或决定仓位 |
-| Forecast | 在固定时域预测方向、收益分布和不确定性 | 决定下单数量 |
+| Forecast | 对冻结的单腿或多腿投资对象预测收益分布和不确定性 | 决定资本规模或下单数量 |
 | Portfolio | 比较现金与全部资产，形成组合目标 | 绕过成本与风险权限 |
 | Risk | 对冻结目标和账户授予、缩减或拒绝风险 | 创造收益预测 |
 | Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
@@ -107,6 +107,47 @@ State 和 Delta 身份幂等处理，不另建第二条市场分析链。
 `DecisionPacket`，其请求时间、理由和证据引用进入不可变 Packet 与行为哈希；它不伪装成市场或
 事实变化，也不能绕过 Portfolio、Risk、Execution 和发布权限。相同语义的跨品种触发产生相同
 review identity，由 portfolio Packet 身份和全局准入共同抑制重复调用。
+
+### 3.4 投资对象与多腿边界
+
+`symbol` 不是长期的投资对象身份。它不能区分 Spot、USDⓈ-M Futures 和 TradFi Perpetual，
+也不能表达现货—永续 carry 等多腿收益来源。主线统一把可分配资本的对象建模为 **Sleeve**：
+单资产方向策略是一条腿的 Sleeve，相对价值或 carry 是多条腿的 Sleeve，不再维护两套决策链。
+
+各层只增加完成这条语义所需的最小合同：
+
+- Market 拥有 `InstrumentId`，显式包含 venue、产品、底层资产、结算资产和合约身份；行情、账户、
+  订单和持仓最终都引用它，禁止以同名 symbol 合并不同产品。
+- Forecast 拥有不可变 `ForecastTarget`：由一个或多个归一化 Leg 及 hedge ratio 定义收益对象。
+  Leg 的方向和比例只定义“一单位机会是什么”，不携带账户资本或订单数量；`BaseForecast` 和
+  `CalibratedForecast` 对该 target 的费用前收益及不确定性负责。
+- Portfolio 是唯一 allocation 所有者。它把现金、单腿和多腿机会放在同一约束下比较，并输出
+  Sleeve 级资本目标；各 Leg 的目标暴露只能由冻结定义和 allocation 确定。
+- Risk 对整个 Sleeve 原子授权或整体缩减，同时用 Leg 展开后的 gross/net、delta、集中度、保证金、
+  funding 压力和最坏单腿失配检查组合。不得只批准其中一条新增风险 Leg。
+- Execution 将一个已授权 Sleeve 转换为带稳定 group identity 的多 Leg `TradePlan`。group 不是对
+  交易所原子性的虚假承诺；每条 Leg 独立提交、成交和对账，状态机必须限制未对冲名义金额与持续
+  时间，并在拒单、未知结果或部分成交后继续补齐、补偿或减险。
+- Evaluation 以 Sleeve 为结算单位，统一计入每条 Leg 的成交价、手续费、滑点、funding、basis、
+  保证金占用和失配损失；只看某一 Leg 的收益不得形成权限证据。
+
+Binance 的 Spot 新单与 USDⓈ-M Futures 新单是两个独立接口，系统必须假定两腿会独立成功、失败或
+部分成交，不能把客户端并发请求当作原子成交（[Spot New Order](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints)、
+[USDⓈ-M New Order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order)）。
+Funding 的时间、费率和对应 mark price 是独立结算事实，必须进入点时数据与收益核算
+（[Binance Funding Rate History](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History)）。
+Hummingbot 的 funding-rate 示例同样把两侧建成独立 executor 并以共同身份跟踪，但其源码明确仍需
+处理先成交一腿的问题，因此只借鉴 group ownership，不复用其策略或恢复实现
+（[Hummingbot funding-rate example](https://github.com/hummingbot/hummingbot/blob/2bfaccc48dd49e71a5b6d9b3011808e127dd00cd/scripts/v2_funding_rate_arb.py)）。
+NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue 和 adapter，且每条 Leg 的
+拒单必须独立处理；本项目据此把协调责任留在 Execution 状态机，不依赖抽象层的原子假设
+（[NautilusTrader advanced orders](https://github.com/nautechsystems/nautilus_trader/blob/2114cf6f761429e0adb5ca9596fcd7b895b16011/docs/concepts/orders/advanced.md)）。
+
+当前 `AssetTarget`、`PortfolioRiskEngine` 和 `TradePlanner` 是尚未接入生产的 long-only Spot MVP，
+只允许继续用于冻结测试和方向候选回放；它们不能承载 carry，也不能因为已有类名而获得资本权限。
+多腿迁移按一个纵向切片完成：先建立 Instrument 与双产品点时数据，再让 carry 只输出影子
+ForecastTarget，随后一次性接通 Sleeve Portfolio/Risk、grouped Execution、故障回放和统一评价。
+在前向证据与恢复验收通过前不启用资本；迁移完成后删除 Spot MVP 的旧合同，不保留适配器或双路径。
 
 ## 4. 目标目录
 
@@ -337,9 +378,15 @@ kernel/platform
 1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
-2. **预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算完整性检查、always-UP 配对门禁和内容寻址结果，当前管理入口不再读取旧 Proposal；下一步将通过预登记评估的 ProgramBase 接入 Forecast 的持久化与结算。两者未获权限时都不能影响资本。
-3. **组合接线**：以同一冻结时点生成 `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；空仓、拒绝和低于最小交易额都是完整终态。
-4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成幂等订单、未知结果恢复、部分成交、保护与对账，不再接收 `TradeIntent`。
+2. **投资对象与预测接线（进行中）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
+   完整性检查、always-UP 配对门禁和内容寻址结果，当前管理入口不再读取旧 Proposal；下一步先以
+   `InstrumentId + ForecastTarget` 冻结单腿/多腿投资对象，再让通过预登记评估的 ProgramBase 接入
+   Forecast 持久化与结算。两者未获权限时都不能影响资本。
+3. **组合与风险接线**：以同一冻结时点生成 Sleeve allocation，再统一推进
+   `PortfolioTarget → RiskDecision → TradePlan`，持久化每个交接身份；现金、拒绝、整组缩减和低于
+   最小交易额都是完整终态。不得先保留 Spot-only 路径、再旁接一套 carry 组合器。
+4. **执行接线**：Execution 直接消费已授权 `TradePlan`，完成 group/Leg 幂等订单、未知结果恢复、
+   部分成交、失配减险、保护与对账，不再接收 `TradeIntent`，也不假定交易所提供跨产品原子成交。
 5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
 
 迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。
