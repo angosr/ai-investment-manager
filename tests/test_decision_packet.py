@@ -19,6 +19,7 @@ from investment_manager.forecast.context.contract import (
     ContextAssessmentContractError,
     ContextAssessmentDraft,
     ContextEventReferenceUpdate,
+    assessment_visible_evidence_ids,
     build_assess_prompt,
     finalize_context_assessment,
 )
@@ -413,6 +414,17 @@ def test_world_cognition_event_reference_becomes_stale_then_leaves_future_contex
             ),
         }
     )
+    _, within_grace = _packet(
+        app_config,
+        replay_input,
+        previous_context=stale_previous,
+        as_of=second_as_of + timedelta(hours=12),
+    )
+    projected_previous = decision_packet_analysis_projection(within_grace)[
+        "previous_context"
+    ]
+    assert projected_previous["event_references"] == ()
+    assert event_ref not in assessment_visible_evidence_ids(within_grace)
     _, after_grace = _packet(
         app_config,
         replay_input,
@@ -963,6 +975,32 @@ def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_i
         == ["delta-1", "delta-2", "feature-btc", "feature-eth", "revision-1"]
         for branch in branches
     )
+    drivers = schema["$defs"]["ContextAssessmentDraft"]["properties"]["drivers"]
+    assert drivers["minItems"] == 0
+    assert drivers["maxItems"] == 8
+
+
+def test_assessment_accepts_no_driver_when_all_views_are_uncertain(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    base = _assessment_output()
+    output = base.model_copy(
+        update={
+            "assessment": base.assessment.model_copy(
+                update={"drivers": ()}
+            )
+        }
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.drivers == ()
 
 
 def test_historical_packet_payloads_remain_readable_after_context_provenance(
@@ -1084,7 +1122,7 @@ def test_finalize_assessment_rejects_unknown_evidence(app_config, replay_input) 
         )
 
 
-def test_finalize_assessment_accepts_confirmed_exchange_observation(
+def test_finalize_assessment_rejects_derivative_state_as_only_driver(
     app_config, replay_input
 ) -> None:
     _, packet = _packet(app_config, replay_input)
@@ -1131,14 +1169,16 @@ def test_finalize_assessment_accepts_confirmed_exchange_observation(
         update={"assessment": output.assessment.model_copy(update={"drivers": (driver,)})}
     )
 
-    assessment = finalize_context_assessment(
-        output=output,
-        packet=derivative_packet,
-        analysis_behavior_hash=HASH,
-        available_at=packet.as_of + timedelta(seconds=20),
-    )
-
-    assert assessment.drivers[0].status == ContextDriverStatus.CONFIRMED
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="不得单独冒充为主导驱动",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=derivative_packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
 
 
 def test_packet_allows_independent_spot_and_perpetual_observation_times(

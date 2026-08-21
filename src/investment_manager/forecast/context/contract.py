@@ -38,7 +38,7 @@ class ContextEventReferenceUpdate(FrozenModel):
 
 class ContextAssessmentDraft(FrozenModel):
     market_mechanism: str = Field(min_length=1, max_length=2_000)
-    drivers: tuple[ContextDriver, ...] = Field(min_length=1, max_length=8)
+    drivers: tuple[ContextDriver, ...] = Field(default=(), max_length=8)
     event_reference_updates: tuple[ContextEventReferenceUpdate, ...] = ()
     views: tuple[ContextView, ...] = Field(min_length=1)
     contradictions: tuple[str, ...] = ()
@@ -60,6 +60,8 @@ ASSESS_INSTRUCTIONS = (
     "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
+    "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"
+    "仓位或数据缺口冒充为驱动。"
     "CONFIRMED 仅表示一手证据直接确认的事实；"
     "Fed 官方事实与系统直接冻结的 Binance 衍生品观测都属于一手证据，"
     "但对其经济含义的解释仍是 INFERRED；"
@@ -151,7 +153,11 @@ def assessment_visible_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
                     else ()
                 ),
                 *(
-                    (item.evidence_id for item in packet.previous_context.event_references)
+                    (
+                        item.evidence_id
+                        for item in packet.previous_context.event_references
+                        if item.impact_state == ContextEventImpactState.ACTIVE.value
+                    )
                     if packet.previous_context is not None
                     else ()
                 ),
@@ -166,7 +172,11 @@ def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
             {
                 *(item.evidence_ref for item in packet.intelligence_events),
                 *(
-                    (item.evidence_id for item in packet.previous_context.event_references)
+                    (
+                        item.evidence_id
+                        for item in packet.previous_context.event_references
+                        if item.impact_state == ContextEventImpactState.ACTIVE.value
+                    )
                     if packet.previous_context is not None
                     else ()
                 ),
@@ -248,6 +258,18 @@ def finalize_context_assessment(
             "ASSESSMENT_CONFIRMED_EVIDENCE_INVALID",
             "CONFIRMED driver 必须且只能引用直接采集的一手证据",
         )
+    derivative_evidence = {item.evidence_ref for item in packet.derivative_states}
+    derivative_only_drivers = tuple(
+        driver.statement
+        for driver in output.assessment.drivers
+        if driver.evidence_ids
+        and set(driver.evidence_ids).issubset(derivative_evidence)
+    )
+    if derivative_only_drivers:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_DERIVATIVE_ONLY_DRIVER",
+            "现货与衍生品市场结构不得单独冒充为主导驱动",
+        )
     directional_support = {
         *(
             item.revision_id
@@ -277,6 +299,22 @@ def finalize_context_assessment(
         raise ContextAssessmentContractError(
             "ASSESSMENT_DIRECTIONAL_CAUSE_MISSING",
             "方向观点缺少衍生品状态之外的当前因果证据",
+        )
+    driver_evidence = {
+        evidence_id
+        for driver in output.assessment.drivers
+        for evidence_id in driver.evidence_ids
+    }
+    unexplained_directional_views = tuple(
+        (view.asset, view.horizon_minutes)
+        for view in ordered_views
+        if view.direction.value != "UNCERTAIN"
+        and not set(view.evidence_ids).intersection(driver_evidence)
+    )
+    if unexplained_directional_views:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_DIRECTIONAL_DRIVER_MISSING",
+            "方向观点必须由当前主导驱动解释传导链",
         )
     event_references = _finalize_event_references(
         output=output,

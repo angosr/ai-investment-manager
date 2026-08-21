@@ -34,8 +34,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v13"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v6"
+ASSESS_INPUT_VERSION = "assess-input-v14"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v7"
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -50,7 +50,7 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     driver = definitions["ContextDriver"]
     driver["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
     drivers = draft["properties"]["drivers"]
-    drivers["minItems"] = 1
+    drivers["minItems"] = 0
     drivers["maxItems"] = 8
     event_reference = definitions["ContextEventReferenceUpdate"]
     visible_event_ids = assessment_visible_event_ids(packet)

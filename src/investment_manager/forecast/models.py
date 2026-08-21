@@ -295,8 +295,8 @@ class ContextAssessment(FrozenModel):
     decision_packet_hash: str = Field(pattern=SHA256_PATTERN)
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     market_mechanism: str = Field(min_length=1, max_length=2_000)
-    # Empty only preserves readability of immutable outputs produced before the
-    # reasoned-driver contract. New drafts require at least one driver.
+    # Empty is a first-class result when no baseline-changing driver is known.
+    # Market state must not be promoted merely to fill a narrative slot.
     drivers: tuple[ContextDriver, ...] = ()
     event_references: tuple[ContextEventReference, ...] = ()
     views: tuple[ContextView, ...] = Field(min_length=1)

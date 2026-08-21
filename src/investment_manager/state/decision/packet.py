@@ -80,11 +80,30 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "omitted_intelligence_event_count": len(packet.omitted_intelligence_event_refs),
     }
     for field_name in (
+        "content_hash",
         "missing_fact_revision_ids",
         "omitted_fact_revision_ids",
         "omitted_intelligence_event_refs",
+        "policy_version",
+        "schema_version",
+        "state_id",
+        "trigger_ids",
     ):
         payload.pop(field_name)
+    previous = payload.get("previous_context")
+    if previous is not None:
+        for field_name in (
+            "analysis_behavior_hash",
+            "analysis_scope",
+            "decision_packet_hash",
+            "mandate_version",
+        ):
+            previous.pop(field_name)
+        previous["event_references"] = tuple(
+            item
+            for item in previous["event_references"]
+            if item["impact_state"] == "ACTIVE"
+        )
     payload["information_coverage"] = tuple(
         {
             "domain": item.domain.value,
