@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -289,6 +292,57 @@ def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> No
         "deferred_until": (NOW + timedelta(seconds=10)).isoformat(),
         "retry_frozen_batch": True,
     }
+
+
+def test_trigger_activity_serializes_single_portfolio_state_projection() -> None:
+    class TrackingBuilder:
+        def __init__(self) -> None:
+            self.active = 0
+            self.maximum_active = 0
+            self.lock = Lock()
+
+        def build(self, _batch):
+            with self.lock:
+                self.active += 1
+                self.maximum_active = max(self.maximum_active, self.active)
+            time.sleep(0.02)
+            with self.lock:
+                self.active -= 1
+            return ()
+
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=None,
+    )
+    event = build_trigger_event(
+        trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+        review_reason="并发组合复核",
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=100,
+        dedup_key="concurrent-build",
+    )
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(event,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    ).model_dump(mode="json")
+    builder = TrackingBuilder()
+    activities = TriggerCoordinatorActivities(builder=builder)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            executor.map(activities.build_analysis_dispatches, (batch, batch))
+        )
+
+    assert results == ({"workflow_dispatches": []},) * 2
+    assert builder.maximum_active == 1
 
 
 def test_trigger_signal_can_arrive_before_workflow_run_initializes_settings(

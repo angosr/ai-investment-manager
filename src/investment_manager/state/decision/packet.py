@@ -39,6 +39,7 @@ from investment_manager.state.facts import (
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+    TREASURY_BUYBACK_RESULT_FACT_TYPE,
 )
 from investment_manager.state.models import (
     CanonicalFactRevision,
@@ -78,6 +79,10 @@ _CALENDAR_CONTEXT_FACT_TYPES = {
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
+_RESULT_CONTEXT_FACT_TYPES = {TREASURY_BUYBACK_RESULT_FACT_TYPE}
+_EXTENDED_CONTEXT_FACT_TYPES = (
+    _CALENDAR_CONTEXT_FACT_TYPES | _RESULT_CONTEXT_FACT_TYPES
+)
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
 PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS = 500
@@ -1189,7 +1194,7 @@ class DecisionPacketBuilder:
                 item.fact.revision_id in direct_fact_ids
                 or item.fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
                 or (
-                    item.fact.fact_type in _CALENDAR_CONTEXT_FACT_TYPES
+                    item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
                     and distance
                     <= self._policy.maximum_calendar_context_distance_seconds
                 )
@@ -1202,6 +1207,7 @@ class DecisionPacketBuilder:
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
                 item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
+                item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in OFFICIAL_METRIC_FACT_TYPES,
                 _SOURCE_RANK[item.highest_source_tier],

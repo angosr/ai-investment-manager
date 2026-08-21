@@ -58,7 +58,10 @@ from investment_manager.state.decision.packet import (
     VisibleFact,
     decision_packet_analysis_projection,
 )
-from investment_manager.state.facts import TREASURY_BUYBACK_OPERATION_FACT_TYPE
+from investment_manager.state.facts import (
+    TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+    TREASURY_BUYBACK_RESULT_FACT_TYPE,
+)
 from investment_manager.state.models import (
     CanonicalFactRevision,
     DeltaCategory,
@@ -1143,6 +1146,12 @@ def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
             fact_type="US_TREASURY_YIELD_CURVE_SNAPSHOT",
             hours=-24,
         ),
+        background_fact(
+            revision_id="revision-buyback-result",
+            fact_id="fact-buyback-result",
+            fact_type=TREASURY_BUYBACK_RESULT_FACT_TYPE,
+            hours=-72,
+        ),
     )
     state = _state(
         market.as_of,
@@ -1155,7 +1164,7 @@ def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
         DecisionPacketPolicy(
             version="packet-policy-diversity-v1",
             schema_version="decision-packet-v12",
-            maximum_facts=3,
+            maximum_facts=4,
         )
     ).build(
         mandate=AnalysisMandate(
@@ -1187,6 +1196,7 @@ def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
 
     assert {item.fact_type for item in packet.facts} == {
         TREASURY_BUYBACK_OPERATION_FACT_TYPE,
+        TREASURY_BUYBACK_RESULT_FACT_TYPE,
         "US_TREASURY_CASH_SNAPSHOT",
         "US_TREASURY_YIELD_CURVE_SNAPSHOT",
     }

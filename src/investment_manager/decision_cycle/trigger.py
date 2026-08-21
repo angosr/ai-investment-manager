@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Lock
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -275,12 +276,18 @@ def _previous_context(
 @dataclass(slots=True)
 class TriggerCoordinatorActivities:
     builder: TriggerDispatchBuilder
+    _build_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
     def build_analysis_dispatches(self, raw_batch: dict[str, Any]) -> dict[str, Any]:
         try:
             batch = TriggerBatch.model_validate(raw_batch)
-            dispatches = self.builder.build(batch)
+            # Every batch projects the same portfolio State chain. Temporal may
+            # execute synchronous activities on multiple threads, but parallel
+            # builds would race the single previous_state_id and create no useful
+            # latency advantage. Keep the read/project/admit boundary serial.
+            with self._build_lock:
+                dispatches = self.builder.build(batch)
         except ValidationError as exc:
             raise ApplicationError(
                 "TriggerBatch 未通过契约校验",
