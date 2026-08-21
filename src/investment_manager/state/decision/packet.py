@@ -94,6 +94,11 @@ class DecisionPacketCapacityError(ValueError):
     pass
 
 
+def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, object]:
+    payload = item.model_dump(mode="json")
+    return {name: payload[name] for name in names if name in payload}
+
+
 def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     """Return the dense model-facing projection of an auditable packet.
 
@@ -119,6 +124,51 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
+    payload["asset_states"] = tuple(
+        _analysis_fields(
+            item,
+            (
+                "asset",
+                "market_symbol",
+                "observed_at",
+                "last",
+                "return_fraction",
+                "realized_volatility",
+                "atr",
+                "spread_bps",
+                "volume_ratio",
+                "regime",
+            ),
+        )
+        for item in packet.asset_states
+    )
+    payload["derivative_states"] = tuple(
+        _analysis_fields(
+            item,
+            (
+                "asset",
+                "evidence_ref",
+                "observed_at",
+                "mark_index_premium_bps",
+                "executable_short_basis_bps",
+                "perpetual_spread_bps",
+                "last_funding_rate_bps",
+                "trailing_funding_rate_mean_bps",
+                "funding_settlement_count",
+                "funding_window_hours",
+                "next_funding_time",
+                "spot_flow_observed_at",
+                "spot_flow_window_minutes",
+                "spot_taker_buy_sell_ratio",
+                "positioning_observed_at",
+                "positioning_window_minutes",
+                "open_interest_change_fraction",
+                "global_long_account_fraction",
+                "taker_buy_sell_ratio",
+            ),
+        )
+        for item in packet.derivative_states
+    )
     payload["facts"] = tuple(
         (
             {
@@ -151,6 +201,12 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
             for item in previous["event_references"]
             if item["impact_state"] == "ACTIVE"
         )
+        # Historical contradictions and gaps describe the old evidence cut.
+        # Sending them again competes with the current facts and can anchor the
+        # analyst on a gap that the new packet has already closed.  They remain
+        # in the immutable packet and assessment audit trail.
+        previous.pop("contradictions", None)
+        previous.pop("data_gaps", None)
     payload["information_coverage"] = tuple(
         {
             "domain": item.domain.value,
@@ -1208,8 +1264,8 @@ class DecisionPacketBuilder:
                 item.fact.revision_id not in direct_fact_ids,
                 item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
                 item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
-                item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in OFFICIAL_METRIC_FACT_TYPES,
+                item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
                 abs(((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()),
@@ -1217,12 +1273,11 @@ class DecisionPacketBuilder:
                 item.fact.revision_id,
             )
         )
-        # A calendar commonly produces several adjacent rows while a continuous
-        # indicator produces one snapshot.  Pure rank ordering therefore lets a
-        # single schedule consume the whole bounded Packet and evict the
-        # transmission evidence needed to interpret it.  Preserve the existing
-        # epistemic rank, but take one fact per type before taking a second fact
-        # of any type within the same mandatory/materiality class.
+        # Preserve causal coverage inside each epistemic class.  Pure recency
+        # ranking lets several fiscal rows consume the bounded Packet and evict
+        # the dollar, rates, liquidity or institutional-flow intermediaries
+        # needed to test transmission.  Take one risk-factor channel per round;
+        # repeated facts from a channel remain available in later rounds.
         diversified: list[VisibleFact] = []
 
         def epistemic_rank(item: VisibleFact) -> tuple[bool, bool]:
@@ -1234,14 +1289,15 @@ class DecisionPacketBuilder:
         for _, ranked_items in groupby(eligible, key=epistemic_rank):
             remaining = list(ranked_items)
             while remaining:
-                seen_types: set[str] = set()
+                seen_channels: set[tuple[str, ...]] = set()
                 next_round: list[VisibleFact] = []
                 for item in remaining:
-                    if item.fact.fact_type in seen_types:
+                    channel = item.fact.risk_factors
+                    if channel in seen_channels:
                         next_round.append(item)
                         continue
                     diversified.append(item)
-                    seen_types.add(item.fact.fact_type)
+                    seen_channels.add(channel)
                 remaining = next_round
         eligible = diversified
         direct_count = sum(item.fact.revision_id in direct_fact_ids for item in eligible)

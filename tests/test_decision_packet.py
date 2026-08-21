@@ -1087,7 +1087,7 @@ def test_packet_keeps_treasury_calendar_context_beyond_event_window(
     assert packet.omitted_fact_revision_ids == ()
 
 
-def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
+def test_packet_preserves_transmission_evidence_before_repeating_calendar_rows(
     app_config,
     replay_input,
 ) -> None:
@@ -1206,6 +1206,117 @@ def test_packet_preserves_fact_type_diversity_before_repeating_calendar_rows(
     }.issubset(packet.omitted_fact_revision_ids)
 
 
+def test_packet_round_robins_causal_channels_before_repeating_one_channel(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+
+    def background_fact(
+        *, revision_id: str, fact_type: str, risk_factor: str, minutes: int
+    ) -> VisibleFact:
+        visible = _fact(
+            market.as_of,
+            revision_id=revision_id,
+            fact_id=f"fact-{revision_id}",
+            event_time=market.as_of - timedelta(minutes=minutes),
+            observation_id=f"obs-{revision_id}",
+        )
+        return visible.model_copy(
+            update={
+                "fact": visible.fact.model_copy(
+                    update={
+                        "fact_type": fact_type,
+                        "risk_factors": (risk_factor,),
+                        "decision_materiality": FactDecisionMateriality.BACKGROUND,
+                    }
+                )
+            }
+        )
+
+    facts = (
+        background_fact(
+            revision_id="fiscal-result",
+            fact_type=TREASURY_BUYBACK_RESULT_FACT_TYPE,
+            risk_factor="US_FISCAL_LIQUIDITY",
+            minutes=1,
+        ),
+        background_fact(
+            revision_id="fiscal-cash",
+            fact_type="US_TREASURY_CASH_SNAPSHOT",
+            risk_factor="US_FISCAL_LIQUIDITY",
+            minutes=2,
+        ),
+        background_fact(
+            revision_id="institutional-flow",
+            fact_type="IBIT_HOLDINGS_SNAPSHOT",
+            risk_factor="BTC_INSTITUTIONAL_HOLDINGS",
+            minutes=3,
+        ),
+        background_fact(
+            revision_id="rates",
+            fact_type="US_TREASURY_YIELD_CURVE_SNAPSHOT",
+            risk_factor="US_INTEREST_RATES",
+            minutes=4,
+        ),
+        background_fact(
+            revision_id="dollar",
+            fact_type="FED_BROAD_DOLLAR_SNAPSHOT",
+            risk_factor="US_DOLLAR",
+            minutes=5,
+        ),
+    )
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
+
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-causal-diversity-v1",
+            schema_version="decision-packet-v12",
+            maximum_facts=4,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess current causal transmission.",
+            assets=(
+                MandateAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=("REGULATION",),
+        ),
+        state=state,
+        deltas=(),
+        review_requests=(
+            PacketReviewRequest.create(
+                requested_at=market.as_of,
+                reason="Validate causal-channel diversity.",
+            ),
+        ),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert tuple(item.revision_id for item in packet.facts) == (
+        "fiscal-result",
+        "institutional-flow",
+        "rates",
+        "dollar",
+    )
+    assert packet.omitted_fact_revision_ids == ("fiscal-cash",)
+
+
 def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
     app_config,
     replay_input,
@@ -1233,6 +1344,71 @@ def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
             "missing_capabilities": ("DEBT_ISSUANCE",),
         },
     )
+
+
+def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
+    app_config,
+    replay_input,
+) -> None:
+    previous = PacketPreviousContext(
+        assessment_id="assessment-prior-dense",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=replay_input.market.as_of - timedelta(hours=1),
+        available_at=replay_input.market.as_of - timedelta(minutes=59),
+        market_mechanism="上一轮仍有效的因果基准。",
+        drivers=(),
+        views=(),
+        contradictions=("上一时点矛盾",),
+        data_gaps=("上一时点缺口",),
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    derivative = PacketDerivativeState(
+        evidence_ref="f" * 64,
+        asset="BTC",
+        market_symbol="BTCUSDT",
+        observed_at=packet.as_of,
+        mark_index_premium_bps=Decimal("1.2"),
+        executable_short_basis_bps=Decimal("0.8"),
+        perpetual_spread_bps=Decimal("0.4"),
+        last_funding_rate_bps=Decimal("0.1"),
+        trailing_funding_rate_mean_bps=Decimal("0.08"),
+        trailing_funding_rate_sum_bps=Decimal("0.24"),
+        funding_settlement_count=3,
+        funding_window_hours=24,
+        next_funding_time=packet.as_of + timedelta(hours=4),
+        spot_flow_observed_at=packet.as_of,
+        spot_flow_window_minutes=60,
+        spot_taker_buy_sell_ratio=Decimal("1.1"),
+        spot_taker_buy_volume=Decimal("110"),
+        spot_taker_sell_volume=Decimal("100"),
+        positioning_observed_at=packet.as_of,
+        positioning_window_minutes=60,
+        open_interest=Decimal("1000"),
+        open_interest_value=Decimal("100000"),
+        open_interest_change_fraction=Decimal("0.02"),
+        global_long_short_account_ratio=Decimal("1.5"),
+        global_long_account_fraction=Decimal("0.6"),
+        global_short_account_fraction=Decimal("0.4"),
+        taker_buy_sell_ratio=Decimal("0.9"),
+        taker_buy_volume=Decimal("90"),
+        taker_sell_volume=Decimal("100"),
+    )
+    projected = decision_packet_analysis_projection(
+        packet.model_copy(update={"derivative_states": (derivative,)})
+    )
+
+    assert projected["packet_id"] == packet.packet_id
+    assert "bid" not in projected["asset_states"][0]
+    assert "ask" not in projected["asset_states"][0]
+    assert "spot_taker_buy_volume" not in projected["derivative_states"][0]
+    assert "spot_taker_sell_volume" not in projected["derivative_states"][0]
+    assert "global_short_account_fraction" not in projected["derivative_states"][0]
+    assert "global_long_short_account_ratio" not in projected["derivative_states"][0]
+    assert "contradictions" not in projected["previous_context"]
+    assert "data_gaps" not in projected["previous_context"]
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:
