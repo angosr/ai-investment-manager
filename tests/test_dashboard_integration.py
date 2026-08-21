@@ -114,6 +114,24 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 payload=assessment.model_dump(mode="json"),
             )
         )
+    SqlEventStore(
+        archive_engine,
+        pipeline_id=app_config.pipeline.version,
+    ).put(
+        IntelligenceEvent(
+            evidence_id="dashboard-assessment-news",
+            event_time=assessment.as_of,
+            observed_at=assessment.available_at,
+            source="official-calendar",
+            title="Assessment 库中的一手事件",
+            body="用于确认 Capital 观测台读取正确的情报事实库。",
+            symbols=("BTCUSDT",),
+            relevance=Decimal("0.8"),
+            impact=Decimal("0.7"),
+            source_reliability=Decimal("0.9"),
+            novelty=Decimal("0.8"),
+        )
+    )
 
     application = create_app(
         app_config,
@@ -132,9 +150,12 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 client.get("/api/assessment/records"),
                 client.get(f"/api/assessment/records/{assessment.assessment_id}"),
                 client.get("/api/capital/activity"),
+                client.get("/api/events"),
             )
 
-    rows, detail, assessment_rows, assessment_detail, capital_rows = asyncio.run(read_endpoints())
+    rows, detail, assessment_rows, assessment_detail, capital_rows, events = asyncio.run(
+        read_endpoints()
+    )
 
     assert rows.status_code == 200
     assert [item["cycle_id"] for item in rows.json()["cycles"]] == [result.cycle_id]
@@ -147,6 +168,11 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert assessment_detail.json()["views"][0]["outcome"] is None
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": []}
+    assert events.status_code == 200
+    assert any(
+        item["title"] == "Assessment 库中的一手事件"
+        for item in events.json()["events"]
+    )
 
 
 def test_reader_and_serializer_render_a_real_persisted_cycle(app_config, replay_input) -> None:

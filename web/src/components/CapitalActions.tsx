@@ -39,43 +39,35 @@ const RISK_LABELS: Record<string, string> = {
   REJECTED: "风控拒绝",
 };
 
-export function CapitalActions({ actions }: { actions: CapitalAction[] }) {
-  if (actions.length === 0) {
-    return <p className={styles.empty}>尚无资本行动记录。</p>;
-  }
+export function CapitalActionRow({ action }: { action: CapitalAction }) {
+  const reasons = action.reason_codes.map(
+    (reason) => REASON_LABELS[reason] ?? reason,
+  );
+  const triggers = action.trigger_types.map(
+    (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
+  );
   return (
-    <div>
-      {actions.map((action) => {
-        const reasons = action.reason_codes.map(
-          (reason) => REASON_LABELS[reason] ?? reason,
-        );
-        const triggers = action.trigger_types.map(
-          (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
-        );
-        return (
-          <div className={styles.row} key={action.activity_id}>
-            <span className={styles.time}>{hhmm(action.at)}</span>
-            <div className={styles.body}>
-              <div className={styles.line}>
-                <span className={styles.outcome} data-outcome={action.outcome}>
-                  {OUTCOME_LABELS[action.outcome] ?? action.outcome}
-                </span>
-                <b>{action.summary}</b>
-              </div>
-              <span className={styles.detail}>
-                {action.symbol} · {triggers.join(" + ") || "系统复核"}
-                {reasons.length > 0 ? ` · ${reasons.join("；")}` : ""}
-              </span>
-            </div>
-            <span className={styles.result}>
-              {action.risk_outcome
-                ? RISK_LABELS[action.risk_outcome] ?? action.risk_outcome
-                : "未进风控"}
-              {action.order_count > 0 ? ` · ${action.order_count} 单` : ""}
-            </span>
-          </div>
-        );
-      })}
+    <div className={styles.row}>
+      <span className={styles.time}>{hhmm(action.at)}</span>
+      <div className={styles.body}>
+        <div className={styles.line}>
+          <span className={styles.source}>资本复核</span>
+          <span className={styles.outcome} data-outcome={action.outcome}>
+            {OUTCOME_LABELS[action.outcome] ?? action.outcome}
+          </span>
+          <b>{action.summary}</b>
+        </div>
+        <span className={styles.detail}>
+          {action.symbol} · {triggers.join(" + ") || "系统复核"}
+          {reasons.length > 0 ? ` · ${reasons.join("；")}` : ""}
+        </span>
+      </div>
+      <span className={styles.result}>
+        {action.risk_outcome
+          ? RISK_LABELS[action.risk_outcome] ?? action.risk_outcome
+          : "未进风控"}
+        {action.order_count > 0 ? ` · ${action.order_count} 单` : ""}
+      </span>
     </div>
   );
 }

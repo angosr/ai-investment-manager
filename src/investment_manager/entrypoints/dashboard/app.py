@@ -195,7 +195,19 @@ def create_app(
     async def events(request: Request) -> JSONResponse:
         before = _parse_before(request)
         limit = _parse_limit(request)
-        found = await run_in_threadpool(reader.list_events, before=before, limit=limit)
+        primary, assessment = await asyncio.gather(
+            run_in_threadpool(reader.list_events, before=before, limit=limit),
+            (
+                run_in_threadpool(
+                    assessment_reader.list_events,
+                    before=before,
+                    limit=limit,
+                )
+                if assessment_reader is not None
+                else asyncio.sleep(0, result=[])
+            ),
+        )
+        found = _merge_events(primary, assessment, limit=limit)
         return _json({"events": [ser.world_event(event) for event in found]})
 
     async def positions(_request: Request) -> JSONResponse:
@@ -312,6 +324,16 @@ def _parse_before(request: Request) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _merge_events(primary, assessment, *, limit: int):
+    """Merge the capital and assessment ledgers without duplicating shared facts."""
+
+    unique = {
+        (event.kind, event.at, event.source, event.title, event.symbols): event
+        for event in (*primary, *assessment)
+    }
+    return sorted(unique.values(), key=lambda event: event.at, reverse=True)[:limit]
 
 
 def _json(payload, *, status_code: int = 200) -> JSONResponse:

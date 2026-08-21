@@ -9,12 +9,14 @@ interface CycleRowProps {
   row: Row;
   onOpenSnapshot: (snapshot: Snapshot) => void;
   loadDetail?: (cycleId: string) => Promise<CycleDetail>;
+  sourceLabel?: string;
 }
 
 export function CycleRow({
   row,
   onOpenSnapshot,
   loadDetail = api.cycle,
+  sourceLabel,
 }: CycleRowProps) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<CycleDetail | null>(null);
@@ -37,7 +39,10 @@ export function CycleRow({
     <div className={`${styles.cyc} ${styles[row.category]} ${open ? styles.open : ""}`}>
       <button className={styles.row} aria-expanded={open} onClick={toggle}>
         <span className={styles.time}>{hhmm(row.at)}</span>
-        <span className={styles.sym}>{row.symbol}</span>
+        <span className={styles.sym}>
+          {sourceLabel ? <small>{sourceLabel}</small> : null}
+          {row.symbol}
+        </span>
         <span className={styles.mid}>
           <span className={styles.summary}>{row.summary}</span>
           {row.reason ? <span className={styles.reason}>{row.reason}</span> : null}

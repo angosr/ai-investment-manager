@@ -3,16 +3,15 @@ import { api } from "../api/client";
 import type { Snapshot } from "../api/types";
 import { useLive } from "../hooks";
 import { CycleRow } from "./CycleRow";
-import { CapitalActions } from "./CapitalActions";
+import { CapitalActionRow } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
 import styles from "./Timeline.module.css";
 
-type Tab = "actions" | "assessment" | "world";
+type Tab = "activity" | "world";
 
 const HINTS: Record<Tab, string> = {
-  actions: "点任意一条，看 AI 完整分析与决策过程",
-  assessment: "实时 AI 风险倾向与保留的旧版判断；只读，不直接下单",
+  activity: "资本复核、AI 分析与历史决策，按时间倒序",
   world: "系统采集到的新闻与行情事件",
 };
 
@@ -30,7 +29,7 @@ export function Timeline({
 }
 
 function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
-  const [tab, setTab] = useState<Tab>("actions");
+  const [tab, setTab] = useState<Tab>("activity");
   const cycles = useLive(() => api.cycles(), "cycles");
   const events = useLive(() => api.events(), "events");
 
@@ -38,12 +37,12 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="决策记录" count={cycles?.cycles.length} onPick={setTab} />
+          <Tab id="activity" active={tab} label="运行记录" count={cycles?.cycles.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
         <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
-      {tab === "actions" ? (
+      {tab === "activity" ? (
         <div>
           {(cycles?.cycles ?? []).map((row) => (
             <CycleRow key={row.cycle_id} row={row} onOpenSnapshot={onOpenSnapshot} />
@@ -64,7 +63,7 @@ function CapitalTimeline({
 }: {
   onOpenSnapshot: (snapshot: Snapshot) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("actions");
+  const [tab, setTab] = useState<Tab>("activity");
   const actions = useLive(() => api.capitalActivity(), "cycles");
   const assessmentRecords = useLive(() => api.assessmentRecords(), "cycles");
   const assessments = useLive(() => api.assessmentCycles(), "cycles");
@@ -83,24 +82,30 @@ function CapitalTimeline({
       row,
     })),
   ].sort((left, right) => right.at.localeCompare(left.at));
+  const activity = [
+    ...(actions?.actions ?? []).map((row) => ({
+      kind: "capital" as const,
+      id: row.activity_id,
+      at: row.at,
+      row,
+    })),
+    ...assessmentHistory,
+  ].sort((left, right) => right.at.localeCompare(left.at));
   return (
     <section className={styles.card}>
       <div className={styles.head}>
         <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="行动记录" count={actions?.actions.length} onPick={setTab} />
-          <Tab id="assessment" active={tab} label="AI 分析" count={assessmentHistory.length} onPick={setTab} />
+          <Tab id="activity" active={tab} label="运行记录" count={activity.length} onPick={setTab} />
           <Tab id="world" active={tab} label="世界事件" count={events?.events.length} onPick={setTab} />
         </div>
-        <span className={styles.hint}>
-          {tab === "actions" ? "每次触发后的判断、风控与执行结果" : HINTS[tab]}
-        </span>
+        <span className={styles.hint}>{HINTS[tab]}</span>
       </div>
-      {tab === "actions" ? (
-        <CapitalActions actions={actions?.actions ?? []} />
-      ) : tab === "assessment" ? (
+      {tab === "activity" ? (
         <div>
-          {assessmentHistory.map((item) =>
-            item.kind === "assessment" ? (
+          {activity.map((item) =>
+            item.kind === "capital" ? (
+              <CapitalActionRow key={item.id} action={item.row} />
+            ) : item.kind === "assessment" ? (
               <AssessmentRow key={item.id} row={item.row} />
             ) : (
               <CycleRow
@@ -108,11 +113,12 @@ function CapitalTimeline({
                 row={item.row}
                 onOpenSnapshot={onOpenSnapshot}
                 loadDetail={api.assessmentCycle}
+                sourceLabel="历史决策"
               />
             ),
           )}
-          {assessmentRecords && assessments && assessmentHistory.length === 0 ? (
-            <p className={styles.empty}>尚无 AI 分析记录。</p>
+          {actions && assessmentRecords && assessments && activity.length === 0 ? (
+            <p className={styles.empty}>尚无运行记录。</p>
           ) : null}
         </div>
       ) : (

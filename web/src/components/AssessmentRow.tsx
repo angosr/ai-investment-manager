@@ -41,7 +41,10 @@ export function AssessmentRow({ row }: { row: Row }) {
     <div className={`${styles.cyc} ${styles[category]} ${open ? styles.open : ""}`}>
       <button className={styles.row} aria-expanded={open} onClick={toggle}>
         <span className={styles.time}>{hhmm(row.at)}</span>
-        <span className={styles.sym}>组合 AI</span>
+        <span className={styles.sym}>
+          <small>AI 分析</small>
+          组合
+        </span>
         <span className={styles.mid}>
           <span className={styles.summary}>{row.summary}</span>
           <span className={styles.reason}>{row.mechanism}</span>
