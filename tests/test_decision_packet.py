@@ -33,7 +33,13 @@ from investment_manager.forecast.models import (
     DirectionalView,
     PricedState,
 )
-from investment_manager.information.models import IntelligenceEvent, SourceTier
+from investment_manager.information.models import (
+    CausalDomain,
+    CoverageStatus,
+    DomainCoverageSnapshot,
+    IntelligenceEvent,
+    SourceTier,
+)
 from investment_manager.kernel.identity import canonical_json, content_hash
 from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
@@ -1076,6 +1082,35 @@ def test_packet_keeps_treasury_calendar_context_beyond_event_window(
         "revision-buyback",
     )
     assert packet.omitted_fact_revision_ids == ()
+
+
+def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    coverage = DomainCoverageSnapshot(
+        domain=CausalDomain.FISCAL_DEBT,
+        status=CoverageStatus.PARTIAL,
+        as_of=packet.as_of,
+        source_stream_ids=("treasury-buyback-schedule",),
+        covered_capabilities=("DEBT_REPURCHASE",),
+        missing_capabilities=("DEBT_ISSUANCE",),
+        latest_success_at=packet.as_of,
+        latest_publication_at=packet.as_of,
+        latest_poll_refs=("source-poll-1",),
+    )
+    projected = decision_packet_analysis_projection(
+        packet.model_copy(update={"information_coverage": (coverage,)})
+    )
+
+    assert projected["information_coverage"] == (
+        {
+            "domain": "FISCAL_DEBT",
+            "status": "PARTIAL",
+            "missing_capabilities": ("DEBT_ISSUANCE",),
+        },
+    )
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:

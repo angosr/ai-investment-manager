@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import AccountSnapshot
 from investment_manager.information.models import (
+    CoverageStatus,
     DomainCoverageSnapshot,
     IntelligenceEvent,
     SourceTier,
@@ -148,16 +149,22 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         {
             "domain": item.domain.value,
             "status": item.status.value,
-            "source_stream_ids": item.source_stream_ids,
-            "covered_capabilities": item.covered_capabilities,
             "missing_capabilities": item.missing_capabilities,
-            "latest_success_at": (
-                item.latest_success_at.isoformat() if item.latest_success_at is not None else None
-            ),
-            "latest_publication_at": (
-                item.latest_publication_at.isoformat()
-                if item.latest_publication_at is not None
-                else None
+            **(
+                {}
+                if item.status in {CoverageStatus.CURRENT, CoverageStatus.PARTIAL}
+                else {
+                    "latest_success_at": (
+                        item.latest_success_at.isoformat()
+                        if item.latest_success_at is not None
+                        else None
+                    ),
+                    "latest_publication_at": (
+                        item.latest_publication_at.isoformat()
+                        if item.latest_publication_at is not None
+                        else None
+                    ),
+                }
             ),
         }
         for item in packet.information_coverage

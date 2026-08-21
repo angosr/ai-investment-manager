@@ -13,8 +13,8 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v17 按直接变化、异常候选、临近日历、常规背景分配有界 Packet 注意力。
-  version: portfolio-state-v17
+  # v18 覆盖投影只发送状态、缺失能力及异常时间，释放容量给因果证据。
+  version: portfolio-state-v18
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v7
@@ -68,7 +68,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v22
+    version: decision-packet-policy-v23
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
