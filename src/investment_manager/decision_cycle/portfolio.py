@@ -305,17 +305,20 @@ class TradePlanExecutionPipeline:
             as_of.isoformat(),
             content_hash(runtime_groups),
         )
-        account = self._portfolio_store.account_for_cycle(
-            cycle_id=projection_cycle_id,
-            portfolio_id=self._accounts.portfolio_id,
-        )
-        if account is None:
-            account = self._accounts.project(
+        with self._portfolio_store.account_projection_lock(
+            portfolio_id=self._accounts.portfolio_id
+        ):
+            account = self._portfolio_store.account_for_cycle(
                 cycle_id=projection_cycle_id,
-                as_of=as_of,
-                quotes=quotes,
+                portfolio_id=self._accounts.portfolio_id,
             )
-            self._portfolio_store.record_account(account)
+            if account is None:
+                account = self._accounts.project(
+                    cycle_id=projection_cycle_id,
+                    as_of=as_of,
+                    quotes=quotes,
+                )
+                self._portfolio_store.record_account(account)
         return TradePlanExecutionResult(
             plan_id=plan.plan_id,
             groups=runtime_groups,

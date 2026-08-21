@@ -50,6 +50,8 @@ from investment_manager.legacy.repository import (
 from investment_manager.market.models import MarketSnapshot, MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
+from investment_manager.portfolio.models import PortfolioAccountSnapshot
+from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
@@ -108,6 +110,36 @@ def test_postgres_cycle_transaction_and_risk_budget(
     migration_config.set_main_option("sqlalchemy.url", database_url)
     migration_config.attributes["database_url"] = database_url
     command.upgrade(migration_config, "head")
+    portfolio_store = SqlPortfolioStore(engine)
+    account_barrier = Barrier(2)
+
+    def project_account(index: int) -> PortfolioAccountSnapshot:
+        account_barrier.wait()
+        with portfolio_store.account_projection_lock(portfolio_id="lock-test"):
+            previous = portfolio_store.latest_account(
+                portfolio_id="lock-test",
+                as_of=datetime(2026, 8, 20, 11, tzinfo=UTC),
+            )
+            revision = 0 if previous is None else previous.revision + 1
+            account = PortfolioAccountSnapshot(
+                snapshot_id=f"postgres-lock-account-{index}",
+                cycle_id=f"postgres-lock-cycle-{index}",
+                portfolio_id="lock-test",
+                revision=revision,
+                as_of=datetime(2026, 8, 20, 11, tzinfo=UTC),
+                observed_at=datetime(2026, 8, 20, 11, tzinfo=UTC),
+                settlement_asset="USDT",
+                cash_balance=Decimal("10000"),
+                equity=Decimal("10000"),
+                equity_high_water=Decimal("10000"),
+            )
+            portfolio_store.record_account(account)
+            return account
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        accounts = tuple(pool.map(project_account, (1, 2)))
+    assert sorted(item.revision for item in accounts) == [0, 1]
+
     official_store = SqlOfficialInformationStore(engine)
     raw_store = SqlRawSourcePayloadStore(engine)
     observed_at = datetime(2026, 8, 20, 12, tzinfo=UTC)

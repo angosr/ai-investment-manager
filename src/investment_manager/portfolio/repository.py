@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime
 from itertools import pairwise
 from typing import Protocol
@@ -12,6 +14,7 @@ from investment_manager.forecast.models import CalibratedForecast, ForecastKind
 from investment_manager.forecast.tables import forecasts
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
+from investment_manager.platform.locking import advisory_xact_lock
 from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     PortfolioPerformanceInterval,
@@ -31,6 +34,12 @@ class PortfolioStore(Protocol):
     def record_account(self, account: PortfolioAccountSnapshot) -> bool: ...
 
     def record_target(self, target: PortfolioTarget) -> bool: ...
+
+    def account_projection_lock(
+        self,
+        *,
+        portfolio_id: str,
+    ) -> AbstractContextManager[None]: ...
 
     def account_for_cycle(
         self,
@@ -65,6 +74,22 @@ class SqlPortfolioStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+
+    @contextmanager
+    def account_projection_lock(
+        self,
+        *,
+        portfolio_id: str,
+    ) -> Iterator[None]:
+        """Serialize latest-account projection across processes on PostgreSQL."""
+
+        with self._engine.begin() as connection:
+            advisory_xact_lock(
+                connection,
+                "portfolio_account_projection",
+                portfolio_id,
+            )
+            yield
 
     def record_account(self, account: PortfolioAccountSnapshot) -> bool:
         try:

@@ -52,11 +52,47 @@ from investment_manager.market.perpetual.models import (
     FundingSettlement,
 )
 from investment_manager.market.repository import InMemoryMarketDataStore
+from investment_manager.portfolio.models import PortfolioAccountSnapshot
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.risk.portfolio import ApprovedSleeve
 from investment_manager.schema import create_schema
 
 NOW = datetime(2026, 8, 21, 5, 10, tzinfo=UTC)
+
+
+def test_first_utc_day_snapshot_keeps_the_overnight_equity_change() -> None:
+    projector = ProductAccountProjector(
+        portfolio_id="primary",
+        settlement_asset="USDT",
+        initial_cash=Decimal("10000"),
+    )
+    previous_at = datetime(2026, 8, 20, 23, 45, tzinfo=UTC)
+    previous = PortfolioAccountSnapshot(
+        snapshot_id="previous-account",
+        cycle_id="previous-cycle",
+        portfolio_id="primary",
+        as_of=previous_at,
+        observed_at=previous_at,
+        settlement_asset="USDT",
+        cash_balance=Decimal("9990"),
+        equity=Decimal("9990"),
+        equity_high_water=Decimal("10000"),
+        daily_pnl=Decimal("-10"),
+        drawdown_fraction=Decimal("0.001"),
+    )
+    current = projector.project(
+        cycle_id="new-utc-day",
+        as_of=datetime(2026, 8, 21, 0, 15, tzinfo=UTC),
+        groups=(),
+        observation_history_by_group={},
+        funding_settlements=(),
+        approved_sleeves=(),
+        quotes=(),
+        previous=previous,
+    )
+
+    assert current.equity == Decimal("10000")
+    assert current.daily_pnl == Decimal("10")
 
 
 class _ApprovedReader:

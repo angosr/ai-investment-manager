@@ -223,7 +223,9 @@ Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新�
 账户账本把每个相邻权威快照追加为 `PortfolioPerformanceInterval`：同一时点较高 revision 记录成交后
 费用变化，跨时点记录 funding、已实现和可成交价盯市共同形成的净权益变化；累计净 PnL 直接由首尾
 权威权益核对，Dashboard 不再从订单数量推断盈利。它是组合级费用后证据带，不伪造暂时无法可靠
-拆分的 basis/funding/滑点归因。
+拆分的 basis/funding/滑点归因。账户投影以 portfolio 级 PostgreSQL advisory transaction lock 串行化
+“读取前序→投影→持久化”，并由 `(portfolio_id, revision)` 唯一约束兜底；跨 UTC 日的首个快照把与
+上一权威快照之间的权益差计入新日，而不是重置为零后永久漏记。
 
 Capital 的前瞻评价不建立第二套收益账本。`CapitalShadowEvaluationSpec` 在首笔订单前绑定精确
 Release、配置哈希、组件版本、Evidence 制品、资本行为哈希和未来十二个自然月，并把现金与源研究策略

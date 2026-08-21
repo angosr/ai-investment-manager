@@ -386,17 +386,19 @@ class CapitalCycleService:
         as_of: datetime,
         quotes: tuple[ExecutableQuote, ...],
     ) -> PortfolioAccountSnapshot:
-        account = self._portfolio.account_for_cycle(
-            cycle_id=cycle_id,
-            portfolio_id=self._config.capital.decision.portfolio_id,
-        )
-        if account is None:
-            account = self._accounts.project(
+        portfolio_id = self._config.capital.decision.portfolio_id
+        with self._portfolio.account_projection_lock(portfolio_id=portfolio_id):
+            account = self._portfolio.account_for_cycle(
                 cycle_id=cycle_id,
-                as_of=as_of,
-                quotes=quotes,
+                portfolio_id=portfolio_id,
             )
-            self._portfolio.record_account(account)
+            if account is None:
+                account = self._accounts.project(
+                    cycle_id=cycle_id,
+                    as_of=as_of,
+                    quotes=quotes,
+                )
+                self._portfolio.record_account(account)
         self._performance.record(account)
         return account
 

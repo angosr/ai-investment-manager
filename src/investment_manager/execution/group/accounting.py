@@ -156,7 +156,9 @@ class ProductAccountProjector:
         elif previous.as_of.date() == as_of.date():
             daily_pnl = previous.daily_pnl + equity - previous.equity
         else:
-            daily_pnl = Decimal("0")
+            # Attribute the overnight gap to the new UTC day; resetting to zero
+            # would permanently drop the change between adjacent account facts.
+            daily_pnl = equity - previous.equity
         equity_high_water = max(
             equity,
             previous.equity_high_water if previous is not None else self._initial_cash,
