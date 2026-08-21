@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
@@ -73,11 +74,7 @@ class SleeveRiskProfile(FrozenModel):
 
     @property
     def total_stress_bps(self) -> Decimal:
-        return (
-            self.basis_stress_bps
-            + self.funding_stress_bps
-            + self.execution_stress_bps
-        )
+        return self.basis_stress_bps + self.funding_stress_bps + self.execution_stress_bps
 
     @model_validator(mode="after")
     def profile_must_define_nonzero_stress(self):
@@ -85,6 +82,78 @@ class SleeveRiskProfile(FrozenModel):
             raise ValueError("SleeveRiskProfile 必须定义正的压力损失")
         if self.derivative_initial_margin_fraction <= 0:
             raise ValueError("衍生品初始保证金比例必须为正数")
+        return self
+
+
+class HoldingRiskOutcome(StrEnum):
+    HOLD = "HOLD"
+    EXIT = "EXIT"
+    DEFER = "DEFER"
+
+
+class PortfolioHoldingRiskReview(FrozenModel):
+    review_id: str = Field(min_length=1)
+    portfolio_id: str = Field(min_length=1)
+    policy_version: str = Field(min_length=1)
+    reviewed_at: datetime
+    account_snapshot_id: str = Field(min_length=1)
+    account_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quote_hashes: tuple[str, ...]
+    risk_profile_hashes: tuple[str, ...]
+    outcome: HoldingRiskOutcome
+    rule_results: tuple[RuleResult, ...] = Field(min_length=1)
+
+    _utc_reviewed_at = field_validator("reviewed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def outcome_and_identity_match_rules(self):
+        for values in (self.quote_hashes, self.risk_profile_hashes):
+            if tuple(sorted(set(values))) != values:
+                raise ValueError("Holding Risk 输入哈希必须唯一且排序")
+        required_rule_ids = (
+            "account-reconciled",
+            "execution-clear",
+            "input-freshness",
+            "kill-switch",
+            "daily-loss",
+            "drawdown",
+            "gross-exposure",
+            "net-delta",
+            "instrument-exposure",
+            "margin",
+            "stress-loss",
+        )
+        rule_ids = tuple(item.rule_id for item in self.rule_results)
+        if rule_ids != required_rule_ids:
+            raise ValueError("Holding Risk 必须完整且按固定顺序记录全部规则")
+        by_id = {item.rule_id: item for item in self.rule_results}
+        defer = any(
+            by_id[item].state != GuardState.PASS
+            for item in ("account-reconciled", "execution-clear", "input-freshness")
+        )
+        risk_failed = any(
+            item.state == GuardState.FAIL
+            for item in self.rule_results
+            if item.rule_id not in {"account-reconciled", "execution-clear", "input-freshness"}
+        )
+        expected = (
+            HoldingRiskOutcome.DEFER
+            if defer
+            else HoldingRiskOutcome.EXIT
+            if risk_failed
+            else HoldingRiskOutcome.HOLD
+        )
+        if self.outcome != expected:
+            raise ValueError("Holding Risk outcome 与规则不一致")
+        expected_id = stable_id(
+            "portfolio_holding_risk_review",
+            self.account_snapshot_id,
+            self.policy_version,
+            self.reviewed_at.isoformat(),
+            content_hash(self.rule_results),
+        )
+        if self.review_id != expected_id:
+            raise ValueError("Holding Risk review identity 不一致")
         return self
 
 
@@ -144,9 +213,7 @@ class ApprovedPortfolioTarget(FrozenModel):
         sleeve_ids = tuple(item.sleeve_id for item in self.sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("ApprovedPortfolioTarget Sleeves 必须唯一且排序")
-        if sum(item.approved_gross_notional for item in self.sleeves) > (
-            self.reference_equity
-        ):
+        if sum(item.approved_gross_notional for item in self.sleeves) > (self.reference_equity):
             raise ValueError("ApprovedPortfolioTarget 不得引入隐含杠杆")
         for values, label in (
             (self.quote_hashes, "quote_hashes"),
@@ -179,22 +246,14 @@ class PortfolioRiskDecision(FrozenModel):
         profile_ids = tuple(item.sleeve_id for item in self.risk_profiles)
         if tuple(sorted(set(profile_ids))) != profile_ids:
             raise ValueError("RiskDecision profiles 必须按 sleeve_id 唯一且排序")
-        if (self.approved_target is not None) != (
-            self.outcome == RiskOutcome.APPROVED
-        ):
+        if (self.approved_target is not None) != (self.outcome == RiskOutcome.APPROVED):
             raise ValueError("Risk outcome 与 ApprovedPortfolioTarget 不一致")
-        if (
-            self.approved_target is not None
-            and self.approved_target.target_id != self.target_id
-        ):
+        if self.approved_target is not None and self.approved_target.target_id != self.target_id:
             raise ValueError("RiskDecision 与 ApprovedPortfolioTarget target_id 不一致")
-        expected_profile_hashes = tuple(
-            sorted(content_hash(item) for item in self.risk_profiles)
-        )
+        expected_profile_hashes = tuple(sorted(content_hash(item) for item in self.risk_profiles))
         if self.approved_target is not None and (
             self.approved_target.target_hash != self.target_hash
-            or self.approved_target.account_snapshot_hash
-            != self.account_snapshot_hash
+            or self.approved_target.account_snapshot_hash != self.account_snapshot_hash
             or self.approved_target.quote_hashes != self.quote_hashes
             or self.approved_target.risk_profile_hashes != expected_profile_hashes
         ):
@@ -226,9 +285,7 @@ class PortfolioRiskEngine:
         if missing_exits:
             raise ValueError("PortfolioTarget 必须显式包含全部当前 Sleeve 的零目标")
         required_quote_keys = {
-            leg.instrument.key
-            for sleeve in target.sleeves
-            for leg in sleeve.forecast_target.legs
+            leg.instrument.key for sleeve in target.sleeves for leg in sleeve.forecast_target.legs
         }
         if set(quote_by_instrument) != required_quote_keys:
             raise ValueError("Risk quotes 必须精确覆盖 PortfolioTarget Instruments")
@@ -255,9 +312,13 @@ class PortfolioRiskEngine:
             )
 
         equity = min(target.reference_equity, account.equity)
-        force_cash = self._policy.kill_switch or account.kill_switch_active or (
-            account.daily_pnl < -self._policy.maximum_daily_loss
-            or account.drawdown_fraction > self._policy.maximum_drawdown_fraction
+        force_cash = (
+            self._policy.kill_switch
+            or account.kill_switch_active
+            or (
+                account.daily_pnl < -self._policy.maximum_daily_loss
+                or account.drawdown_fraction > self._policy.maximum_drawdown_fraction
+            )
         )
         requested_after_gates: dict[str, Decimal] = {}
         reasons: dict[str, set[str]] = {}
@@ -314,9 +375,7 @@ class PortfolioRiskEngine:
                     forecast_target=sleeve.forecast_target,
                     requested_gross_notional=requested,
                     approved_gross_notional=approved,
-                    sleeve_scale=(
-                        approved / requested if requested > 0 else Decimal("0")
-                    ),
+                    sleeve_scale=(approved / requested if requested > 0 else Decimal("0")),
                     risk_profile_version=profile_by_sleeve[sleeve.sleeve_id].version,
                     maximum_unhedged_notional=min(
                         approved,
@@ -344,6 +403,194 @@ class PortfolioRiskEngine:
             as_of=as_of,
             rules=rules,
             approved=approved_target,
+        )
+
+    def review_holding(
+        self,
+        *,
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
+        risk_profiles: tuple[SleeveRiskProfile, ...],
+        as_of: datetime,
+    ) -> PortfolioHoldingRiskReview:
+        """Review current exposure without granting any new allocation authority."""
+
+        as_of = require_utc(as_of)
+        quote_by_instrument = self._unique_quotes(quotes)
+        profile_by_sleeve = self._unique_profiles(risk_profiles)
+        if {item.instrument.key for item in account.positions} != set(quote_by_instrument):
+            raise ValueError("Holding Risk quotes 必须精确覆盖当前持仓")
+        if {item.sleeve_id for item in account.sleeves} != set(profile_by_sleeve):
+            raise ValueError("Holding Risk profiles 必须精确覆盖当前 Sleeves")
+
+        gross = Decimal("0")
+        margin = Decimal("0")
+        stress = Decimal("0")
+        net_by_asset: defaultdict[str, Decimal] = defaultdict(Decimal)
+        instrument_gross: defaultdict[str, Decimal] = defaultdict(Decimal)
+        for sleeve in account.sleeves:
+            profile = profile_by_sleeve[sleeve.sleeve_id]
+            sleeve_gross = Decimal("0")
+            for position in sleeve.legs:
+                quote = quote_by_instrument[position.instrument.key]
+                price = quote.bid if position.quantity > 0 else quote.ask
+                notional = abs(position.quantity) * price * position.instrument.contract_multiplier
+                sleeve_gross += notional
+                gross += notional
+                instrument_gross[position.instrument.key] += notional
+                net_by_asset[position.instrument.base_asset] += (
+                    notional if position.quantity > 0 else -notional
+                )
+                margin += notional * (
+                    Decimal("1")
+                    if position.instrument.product == InstrumentProduct.SPOT
+                    else profile.derivative_initial_margin_fraction
+                )
+            stress += sleeve_gross * profile.total_stress_bps / _BPS
+        equity = account.equity
+        net = sum((abs(value) for value in net_by_asset.values()), Decimal("0"))
+        maximum_instrument = max(instrument_gross.values(), default=Decimal("0"))
+        fresh = self._fresh(
+            account.observed_at,
+            as_of,
+            self._policy.maximum_account_age_seconds,
+        ) and all(
+            self._fresh(
+                quote.observed_at,
+                as_of,
+                self._policy.maximum_quote_age_seconds,
+            )
+            for quote in quotes
+        )
+        checks = (
+            (
+                "account-reconciled",
+                account.reconciled,
+                "ACCOUNT_RECONCILED",
+                "ACCOUNT_UNRECONCILED",
+                None,
+                None,
+            ),
+            (
+                "execution-clear",
+                not account.pending_execution_group_ids,
+                "EXECUTION_CLEAR",
+                "EXECUTION_PENDING",
+                None,
+                None,
+            ),
+            ("input-freshness", fresh, "HOLDING_INPUTS_FRESH", "HOLDING_INPUTS_STALE", None, None),
+            (
+                "kill-switch",
+                not (self._policy.kill_switch or account.kill_switch_active),
+                "KILL_SWITCH_CLEAR",
+                "KILL_SWITCH_ACTIVE",
+                None,
+                None,
+            ),
+            (
+                "daily-loss",
+                account.daily_pnl >= -self._policy.maximum_daily_loss,
+                "DAILY_LOSS_WITHIN_LIMIT",
+                "DAILY_LOSS_LIMIT_EXCEEDED",
+                account.daily_pnl,
+                -self._policy.maximum_daily_loss,
+            ),
+            (
+                "drawdown",
+                account.drawdown_fraction <= self._policy.maximum_drawdown_fraction,
+                "DRAWDOWN_WITHIN_LIMIT",
+                "DRAWDOWN_LIMIT_EXCEEDED",
+                account.drawdown_fraction,
+                self._policy.maximum_drawdown_fraction,
+            ),
+            (
+                "gross-exposure",
+                gross <= equity * self._policy.maximum_gross_exposure_fraction,
+                "GROSS_EXPOSURE_WITHIN_LIMIT",
+                "GROSS_EXPOSURE_LIMIT_EXCEEDED",
+                gross,
+                equity * self._policy.maximum_gross_exposure_fraction,
+            ),
+            (
+                "net-delta",
+                net <= equity * self._policy.maximum_net_delta_fraction,
+                "NET_DELTA_WITHIN_LIMIT",
+                "NET_DELTA_LIMIT_EXCEEDED",
+                net,
+                equity * self._policy.maximum_net_delta_fraction,
+            ),
+            (
+                "instrument-exposure",
+                maximum_instrument <= equity * self._policy.maximum_instrument_fraction,
+                "INSTRUMENT_EXPOSURE_WITHIN_LIMIT",
+                "INSTRUMENT_EXPOSURE_LIMIT_EXCEEDED",
+                maximum_instrument,
+                equity * self._policy.maximum_instrument_fraction,
+            ),
+            (
+                "margin",
+                margin <= equity * self._policy.maximum_margin_fraction,
+                "MARGIN_WITHIN_LIMIT",
+                "MARGIN_LIMIT_EXCEEDED",
+                margin,
+                equity * self._policy.maximum_margin_fraction,
+            ),
+            (
+                "stress-loss",
+                stress <= equity * self._policy.maximum_stress_loss_fraction,
+                "STRESS_LOSS_WITHIN_LIMIT",
+                "STRESS_LOSS_LIMIT_EXCEEDED",
+                stress,
+                equity * self._policy.maximum_stress_loss_fraction,
+            ),
+        )
+        rules = tuple(
+            RuleResult(
+                rule_id=rule_id,
+                rule_version="portfolio-holding-risk-v1",
+                state=GuardState.PASS if passed else GuardState.FAIL,
+                reason_code=pass_code if passed else fail_code,
+                observed=None if observed is None else str(observed),
+                limit=None if limit is None else str(limit),
+            )
+            for rule_id, passed, pass_code, fail_code, observed, limit in checks
+        )
+        gating_failed = any(
+            item.state != GuardState.PASS
+            for item in rules
+            if item.rule_id in {"account-reconciled", "execution-clear", "input-freshness"}
+        )
+        risk_failed = any(
+            item.state == GuardState.FAIL
+            for item in rules
+            if item.rule_id not in {"account-reconciled", "execution-clear", "input-freshness"}
+        )
+        outcome = (
+            HoldingRiskOutcome.DEFER
+            if gating_failed
+            else HoldingRiskOutcome.EXIT
+            if risk_failed
+            else HoldingRiskOutcome.HOLD
+        )
+        review_id = stable_id(
+            "portfolio_holding_risk_review",
+            account.snapshot_id,
+            self._policy.version,
+            as_of.isoformat(),
+            content_hash(rules),
+        )
+        return PortfolioHoldingRiskReview(
+            review_id=review_id,
+            portfolio_id=account.portfolio_id,
+            policy_version=self._policy.version,
+            reviewed_at=as_of,
+            account_snapshot_id=account.snapshot_id,
+            account_snapshot_hash=content_hash(account),
+            quote_hashes=tuple(sorted(content_hash(item) for item in quotes)),
+            risk_profile_hashes=tuple(sorted(content_hash(item) for item in risk_profiles)),
+            outcome=outcome,
+            rule_results=rules,
         )
 
     def _new_risk_allowed(
@@ -440,11 +687,7 @@ class PortfolioRiskEngine:
             stress_loss += requested * profile.total_stress_bps / _BPS
             for leg in sleeve.forecast_target.legs:
                 leg_notional = requested * leg.gross_weight
-                sign = (
-                    Decimal("1")
-                    if leg.direction == ExposureDirection.LONG
-                    else Decimal("-1")
-                )
+                sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
                 net_by_asset[leg.instrument.base_asset] += sign * leg_notional
                 instrument_gross[leg.instrument.key] += leg_notional
                 margin += leg_notional * (
@@ -539,9 +782,7 @@ class PortfolioRiskEngine:
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "quote_hashes": tuple(sorted(content_hash(item) for item in quotes)),
-            "risk_profile_hashes": tuple(
-                sorted(content_hash(item) for item in profiles)
-            ),
+            "risk_profile_hashes": tuple(sorted(content_hash(item) for item in profiles)),
             "sleeves": sleeves,
         }
         return ApprovedPortfolioTarget(

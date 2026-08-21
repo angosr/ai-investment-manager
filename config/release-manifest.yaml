@@ -12,7 +12,7 @@ component_versions:
   - [strategy, price-trend-v4]
   - [calibration, edge-calibration-v1]
   - [carry_forecast, btc-carry-monthly-first-open-v2]
-  - [capital, carry-capital-monthly-v2]
+  - [capital, carry-capital-monthly-v3]
   - [composition, calibrated-net-edge-v1]
   - [frequency, frequency-v4]
   - [risk, risk-v1]

@@ -110,11 +110,7 @@ class CapitalCycleService:
                     "reason_codes": period.reason_codes,
                 },
             )
-            self._observe(as_of=requested_at)
-            return PortfolioPipelineResult(
-                cycle_id=period.cycle_id,
-                outcome=PortfolioPipelineOutcome.NO_CHANGE,
-            )
+            return self._observe(as_of=requested_at)
 
         assert period.candidate_forecast_id is not None
         loaded = self._forecasts.forecast(period.candidate_forecast_id)
@@ -149,9 +145,7 @@ class CapitalCycleService:
             basis_stress_bps=template.basis_stress_bps,
             funding_stress_bps=template.funding_stress_bps,
             execution_stress_bps=template.execution_stress_bps,
-            derivative_initial_margin_fraction=(
-                template.derivative_initial_margin_fraction
-            ),
+            derivative_initial_margin_fraction=(template.derivative_initial_margin_fraction),
         )
         decision = self._decisions.run(
             cycle_id=cycle_id,
@@ -173,11 +167,7 @@ class CapitalCycleService:
         result = self._execution.run(
             plan_id=plan.plan_id,
             as_of=max(as_of, requested_at),
-            quotes=(
-                quotes
-                if requested_at <= as_of
-                else self._quotes(as_of=requested_at)
-            ),
+            quotes=(quotes if requested_at <= as_of else self._quotes(as_of=requested_at)),
         )
         self._performance.record(result.account)
         logger.info(
@@ -229,9 +219,7 @@ class CapitalCycleService:
             period_end=period_end,
             entry_window_end=entry_window_end,
             decision_at=decision_at,
-            candidate_forecast_id=(
-                forecast.forecast_id if forecast is not None else None
-            ),
+            candidate_forecast_id=(forecast.forecast_id if forecast is not None else None),
         )
         return self._portfolio.claim_rebalance_period(proposed)
 
@@ -256,11 +244,7 @@ class CapitalCycleService:
             )
             if requested_at <= period.decision_at:
                 return result
-            self._observe(as_of=requested_at)
-            return PortfolioPipelineResult(
-                cycle_id=period.cycle_id,
-                outcome=PortfolioPipelineOutcome.NO_CHANGE,
-            )
+            return self._observe(as_of=requested_at)
         plan = self._plans.for_cycle(period.cycle_id)
         if plan is None:
             return None
@@ -279,11 +263,7 @@ class CapitalCycleService:
             result = self._execution_result(plan, groups=groups, as_of=period.decision_at)
             if result is not None:
                 return result
-        self._observe(as_of=requested_at)
-        return PortfolioPipelineResult(
-            cycle_id=period.cycle_id,
-            outcome=PortfolioPipelineOutcome.NO_CHANGE,
-        )
+        return self._observe(as_of=requested_at)
 
     def _execution_result(
         self,
@@ -322,7 +302,11 @@ class CapitalCycleService:
                 },
             )
 
-    def _observe(self, *, as_of: datetime) -> None:
+    def _observe(
+        self,
+        *,
+        as_of: datetime,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         cycle_id = stable_id(
             "capital_observation",
             self._config.capital.version,
@@ -331,7 +315,69 @@ class CapitalCycleService:
         )
         self._recover(as_of=as_of, cycle_id=cycle_id)
         quotes = self._quotes(as_of=as_of)
-        self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
+        account = self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
+        if not account.sleeves:
+            return PortfolioPipelineResult(
+                cycle_id=cycle_id,
+                outcome=PortfolioPipelineOutcome.NO_CHANGE,
+            )
+        sleeves = []
+        profiles = []
+        template = self._config.capital.sleeve_risk
+        for position in account.sleeves:
+            forecast = self._forecasts.latest_calibrated_for_target(
+                target_id=position.target.target_id,
+                forecast_family=position.forecast_family,
+                as_of=as_of,
+            )
+            if forecast is None:
+                raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
+            sleeves.append(
+                PortfolioSleeveInput(
+                    sleeve_id=position.sleeve_id,
+                    estimated_variable_cost_bps=self._estimated_variable_cost_bps,
+                    forecast=forecast,
+                )
+            )
+            profiles.append(
+                SleeveRiskProfile(
+                    sleeve_id=position.sleeve_id,
+                    version=template.version,
+                    basis_stress_bps=template.basis_stress_bps,
+                    funding_stress_bps=template.funding_stress_bps,
+                    execution_stress_bps=template.execution_stress_bps,
+                    derivative_initial_margin_fraction=(
+                        template.derivative_initial_margin_fraction
+                    ),
+                )
+            )
+        protected = self._decisions.protect(
+            cycle_id=cycle_id,
+            as_of=as_of,
+            sleeves=tuple(sleeves),
+            account=account,
+            quotes=quotes,
+            risk_profiles=tuple(profiles),
+            execution_specs=self._config.capital.execution_specs,
+        )
+        plan = protected.trade_plan
+        if plan is None or not plan.groups:
+            return protected
+        result = self._execution.run(
+            plan_id=plan.plan_id,
+            as_of=as_of,
+            quotes=quotes,
+        )
+        self._performance.record(result.account)
+        logger.warning(
+            "capital holding risk triggered programmatic exit",
+            extra={
+                "cycle_id": cycle_id,
+                "plan_id": plan.plan_id,
+                "equity": str(result.account.equity),
+            },
+        )
+        return result
 
     def _account(
         self,
@@ -420,8 +466,7 @@ def assemble_capital_cycle(config: AppConfig, engine) -> CapitalCycleService:
     venue = SqlMockProductVenue(
         engine,
         fee_bps_by_instrument={
-            item.instrument.key: item.fee_bps
-            for item in config.capital.execution_specs
+            item.instrument.key: item.fee_bps for item in config.capital.execution_specs
         },
     )
     account_projection = ProductAccountProjectionService(

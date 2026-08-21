@@ -28,8 +28,9 @@ from investment_manager.portfolio.models import (
     PortfolioTarget,
 )
 from investment_manager.portfolio.repository import PortfolioStore
-from investment_manager.risk.models import RiskOutcome
+from investment_manager.risk.models import GuardState, RiskOutcome
 from investment_manager.risk.portfolio import (
+    HoldingRiskOutcome,
     PortfolioRiskDecision,
     PortfolioRiskEngine,
     SleeveRiskProfile,
@@ -129,10 +130,7 @@ class PortfolioDecisionPipeline:
             as_of=as_of,
         )
         self._risk_store.record(risk_decision)
-        if (
-            risk_decision.outcome != RiskOutcome.APPROVED
-            or risk_decision.approved_target is None
-        ):
+        if risk_decision.outcome != RiskOutcome.APPROVED or risk_decision.approved_target is None:
             return PortfolioPipelineResult(
                 cycle_id=cycle_id,
                 outcome=PortfolioPipelineOutcome.RISK_REJECTED,
@@ -153,6 +151,73 @@ class PortfolioDecisionPipeline:
             target=target,
             risk_decision=risk_decision,
             trade_plan=trade_plan,
+        )
+
+    def protect(
+        self,
+        *,
+        cycle_id: str,
+        as_of: datetime,
+        sleeves: tuple[PortfolioSleeveInput, ...],
+        account: PortfolioAccountSnapshot,
+        quotes: tuple[ExecutableQuote, ...],
+        risk_profiles: tuple[SleeveRiskProfile, ...],
+        execution_specs: tuple[InstrumentExecutionSpec, ...],
+    ) -> PortfolioPipelineResult:
+        """Persist one holding review and route EXIT through the normal target chain."""
+
+        review = self._risk.review_holding(
+            account=account,
+            quotes=quotes,
+            risk_profiles=risk_profiles,
+            as_of=as_of,
+        )
+        self._risk_store.record_holding_review(review)
+        if review.outcome != HoldingRiskOutcome.EXIT:
+            return PortfolioPipelineResult(
+                cycle_id=cycle_id,
+                outcome=PortfolioPipelineOutcome.NO_CHANGE,
+            )
+        target = self._decision.force_cash(
+            cycle_id=cycle_id,
+            as_of=as_of,
+            account=account,
+            sleeves=sleeves,
+            quotes=quotes,
+            reason_codes=tuple(
+                item.reason_code for item in review.rule_results if item.state == GuardState.FAIL
+            ),
+        )
+        self._portfolio_store.record_target(target)
+        risk_decision = self._risk.evaluate(
+            target=target,
+            account=account,
+            quotes=quotes,
+            risk_profiles=risk_profiles,
+            as_of=as_of,
+        )
+        self._risk_store.record(risk_decision)
+        if risk_decision.approved_target is None:
+            return PortfolioPipelineResult(
+                cycle_id=cycle_id,
+                outcome=PortfolioPipelineOutcome.RISK_REJECTED,
+                target=target,
+                risk_decision=risk_decision,
+            )
+        plan = self._planner.plan(
+            approved=risk_decision.approved_target,
+            account=account,
+            quotes=quotes,
+            specs=execution_specs,
+            as_of=as_of,
+        )
+        self._plan_store.record(plan)
+        return PortfolioPipelineResult(
+            cycle_id=cycle_id,
+            outcome=PortfolioPipelineOutcome.PLANNED,
+            target=target,
+            risk_decision=risk_decision,
+            trade_plan=plan,
         )
 
     @classmethod
@@ -261,12 +326,5 @@ class TradePlanExecutionPipeline:
         """Advance every visible nonterminal group before admitting a new decision."""
 
         as_of = require_utc(as_of)
-        pending = tuple(
-            item
-            for item in self._groups.visible(as_of=as_of)
-            if not item.terminal
-        )
-        return tuple(
-            self._engine.run_once(item.group_id, as_of=as_of)
-            for item in pending
-        )
+        pending = tuple(item for item in self._groups.visible(as_of=as_of) if not item.terminal)
+        return tuple(self._engine.run_once(item.group_id, as_of=as_of) for item in pending)

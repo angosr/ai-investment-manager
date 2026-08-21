@@ -103,14 +103,14 @@ carry_forecast:
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
 capital:
-  version: carry-capital-monthly-v2
+  version: carry-capital-monthly-v3
   enabled: false
   settlement_asset: USDT
   rebalance:
     version: monthly-first-open-v2
     maximum_entry_delay_minutes: 30
   decision:
-    version: carry-portfolio-monthly-v2
+    version: carry-portfolio-monthly-v3
     portfolio_id: primary
     enabled: true
     eligible_forecast_roles: [PROGRAM_BASE]
@@ -120,7 +120,7 @@ capital:
     minimum_rebalance_notional: "25"
     target_validity_minutes: 30
   risk:
-    version: carry-portfolio-risk-v1
+    version: carry-portfolio-risk-v2
     instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
     maximum_quote_age_seconds: 300
     maximum_account_age_seconds: 60

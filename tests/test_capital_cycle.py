@@ -20,7 +20,11 @@ from investment_manager.portfolio.tables import (
     portfolio_rebalance_periods,
     portfolio_targets,
 )
-from investment_manager.risk.tables import portfolio_risk_decisions
+from investment_manager.risk.portfolio import HoldingRiskOutcome, PortfolioHoldingRiskReview
+from investment_manager.risk.tables import (
+    portfolio_holding_risk_reviews,
+    portfolio_risk_decisions,
+)
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
@@ -115,9 +119,7 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
         assert (
-            connection.scalar(
-                select(func.count()).select_from(portfolio_performance_intervals)
-            )
+            connection.scalar(select(func.count()).select_from(portfolio_performance_intervals))
             == 1
         )
 
@@ -187,16 +189,8 @@ def test_capital_cycle_freezes_one_monthly_decision_and_holds_after_missed_windo
     assert after_restart.outcome.value == "NO_CHANGE"
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
-        assert (
-            connection.scalar(select(func.count()).select_from(mock_product_orders))
-            == 2
-        )
-        assert (
-            connection.scalar(
-                select(func.count()).select_from(portfolio_rebalance_periods)
-            )
-            == 2
-        )
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+        assert connection.scalar(select(func.count()).select_from(portfolio_rebalance_periods)) == 2
 
 
 def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
@@ -206,11 +200,7 @@ def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
     config = loaded.model_copy(
         update={
             "capital": loaded.capital.model_copy(
-                update={
-                    "risk": loaded.capital.risk.model_copy(
-                        update={"kill_switch": True}
-                    )
-                }
+                update={"risk": loaded.capital.risk.model_copy(update={"kill_switch": True})}
             )
         }
     )
@@ -229,14 +219,36 @@ def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
     assert held.outcome.value == "NO_CHANGE"
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
-        assert (
-            connection.scalar(
-                select(func.count()).select_from(portfolio_risk_decisions)
-            )
-            == 1
-        )
+        assert connection.scalar(select(func.count()).select_from(portfolio_risk_decisions)) == 1
         assert connection.scalar(select(func.count()).select_from(trade_plans)) == 1
-        assert (
-            connection.scalar(select(func.count()).select_from(mock_product_orders))
-            == 0
-        )
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
+
+
+def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    loaded = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, loaded, at=NOW, sequence=20)
+    opened = assemble_capital_cycle(loaded, engine).produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+    assert opened.account.positions
+
+    protected = loaded.model_copy(
+        update={
+            "capital": loaded.capital.model_copy(
+                update={"risk": loaded.capital.risk.model_copy(update={"kill_switch": True})}
+            )
+        }
+    )
+    heartbeat = NOW + timedelta(minutes=15)
+    _put_market(market, protected, at=heartbeat, sequence=21)
+    exited = assemble_capital_cycle(protected, engine).produce(as_of=heartbeat)
+
+    assert isinstance(exited, TradePlanExecutionResult)
+    assert not exited.account.positions
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 4
+        payload = connection.execute(select(portfolio_holding_risk_reviews.c.payload)).scalar_one()
+    review = PortfolioHoldingRiskReview.model_validate(payload)
+    assert review.outcome == HoldingRiskOutcome.EXIT

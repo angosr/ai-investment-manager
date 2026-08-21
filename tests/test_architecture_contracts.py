@@ -202,9 +202,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 74
+    assert len(contract) == 75
     assert content_hash(contract) == (
-        "44b75852cc70ff05b65f2a608a36e78f397def37fdc1ad1d31734d6e9e00756e"
+        "1527aa2f7a1eab096aea79f64139139db116b75294614adb84fe8d0dcb54d44f"
     )
 
 

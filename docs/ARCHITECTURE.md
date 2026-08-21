@@ -212,8 +212,10 @@ CalibratedForecast；源文件 SHA-256、内部结果哈希、评价规格、数
 装配时逐项校验，Capital ReleaseManifest 再绑定该制品哈希。研究、Portfolio 单 Sleeve 上限与 Risk
 gross/单产品上限必须满足同一尺寸恒等式。由于历史 blind 窗口已被其他候选消耗，配置必须显式记录
 `UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
-Venue 与账户投影；错过月初窗口时不产生新的经济目标，不为制造交易改变行为。月内主动风险退出仍须在
-首次持仓前以独立、可恢复的 Risk Review 合同补齐，不能借恢复路径重新开放 allocation。
+Venue 与账户投影；错过月初窗口时不产生新的经济目标，不为制造交易改变行为。月内主动风险退出在每次
+账户观察后形成显式 `PortfolioHoldingRiskReview`：正常持有为 `HOLD`，未对账、旧输入或未完成 group
+为 `DEFER`，账户/敞口/保证金/压力越界为 `EXIT`。EXIT 只能由 Portfolio 生成零暴露 Target，再走原有
+Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新开放 allocation，也不存在紧急下单旁路。
 研究入口还保留一个精确的总敞口 30% ETH 规格；它的 walk-forward 和唯一 blind
 均为正，但 blind 费用后年收益仅 0.281%，在同一资本上限下被 BTC 候选支配。因此它不进入运行
 配置，也不为一个被支配的 sleeve 引入多生产者装配层。

@@ -108,6 +108,30 @@ class SqlForecastStore:
             ).scalar_one_or_none()
         return None if payload is None else CalibratedForecast.model_validate(payload)
 
+    def latest_calibrated_for_target(
+        self,
+        *,
+        target_id: str,
+        forecast_family: str,
+        as_of: datetime,
+    ) -> CalibratedForecast | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(forecasts.c.payload)
+                .where(
+                    forecasts.c.kind == ForecastKind.CALIBRATED.value,
+                    forecasts.c.target_id == target_id,
+                    forecasts.c.forecast_family == forecast_family,
+                    forecasts.c.available_at <= require_utc(as_of),
+                )
+                .order_by(
+                    forecasts.c.available_at.desc(),
+                    forecasts.c.forecast_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return None if payload is None else CalibratedForecast.model_validate(payload)
+
     def pending(
         self,
         *,

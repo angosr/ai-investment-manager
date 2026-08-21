@@ -31,6 +31,11 @@ portfolio_account_snapshots = Table(
         "portfolio_id",
         name="uq_portfolio_account_cycle",
     ),
+    UniqueConstraint(
+        "portfolio_id",
+        "revision",
+        name="uq_portfolio_account_revision",
+    ),
 )
 Index(
     "ix_portfolio_account_as_of",

@@ -25,6 +25,7 @@ from investment_manager.portfolio.models import (
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     ApprovedSleeve,
+    HoldingRiskOutcome,
     PortfolioRiskEngine,
     PortfolioRiskPolicy,
     SleeveRiskProfile,
@@ -286,11 +287,40 @@ def test_kill_switch_forces_whole_sleeve_to_cash() -> None:
     assert decision.approved_target.sleeves[0].approved_gross_notional == 0
 
 
+def test_holding_risk_review_distinguishes_hold_exit_and_defer() -> None:
+    engine = PortfolioRiskEngine(_policy())
+    holding = engine.review_holding(
+        account=_account(gross="1000"),
+        quotes=_quotes(),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+    exiting = engine.review_holding(
+        account=_account(gross="1000", kill_switch=True),
+        quotes=_quotes(),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+    deferred = engine.review_holding(
+        account=_account(
+            gross="1000",
+            kill_switch=True,
+            pending=("group-1",),
+        ),
+        quotes=_quotes(),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+
+    assert holding.outcome == HoldingRiskOutcome.HOLD
+    assert exiting.outcome == HoldingRiskOutcome.EXIT
+    assert deferred.outcome == HoldingRiskOutcome.DEFER
+    assert any(item.reason_code == "KILL_SWITCH_ACTIVE" for item in exiting.rule_results)
+
+
 def test_expired_target_is_rejected() -> None:
     target_as_of = NOW - timedelta(hours=1)
-    account = _account().model_copy(
-        update={"as_of": target_as_of, "observed_at": target_as_of}
-    )
+    account = _account().model_copy(update={"as_of": target_as_of, "observed_at": target_as_of})
     quotes = tuple(
         item.model_copy(update={"as_of": target_as_of, "observed_at": target_as_of})
         for item in _quotes()

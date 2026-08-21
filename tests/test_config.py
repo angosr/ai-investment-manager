@@ -27,8 +27,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "carry-capital-shadow-v2"
-    assert config.temporal.namespace == "shadow-capital-20260821-v2"
+    assert config.pipeline.version == "carry-capital-shadow-v4"
+    assert config.temporal.namespace == "shadow-capital-20260821-v4"
     assert config.capital.enabled
     assert config.information.version == "information-intake-v10"
     assert config.information.normalizer_version == "trendradar-collector-v7"
