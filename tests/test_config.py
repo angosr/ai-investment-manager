@@ -9,7 +9,7 @@ from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.portfolio.policy import FrequencyPolicy
 from investment_manager.settings import load_config
-from investment_manager.state.policy import PanelPolicy
+from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
 
 
 def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> None:
@@ -64,6 +64,24 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "US_MONETARY_POLICY",
     )
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
+
+
+def test_historical_state_policy_does_not_require_future_source_rules() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.yaml")
+    payload = config.decision_state.model_dump(mode="json")
+    payload["delta_policy"]["rules"] = [
+        item
+        for item in payload["delta_policy"]["rules"]
+        if item["fact_type"] != "US_DIGITAL_ASSET_RULEMAKING"
+    ]
+
+    restored = DecisionStatePolicy.model_validate(payload)
+
+    assert all(
+        item.fact_type != "US_DIGITAL_ASSET_RULEMAKING"
+        for item in restored.delta_policy.rules
+    )
 
 
 def test_capital_sizing_cannot_drift_from_released_carry_evidence() -> None:

@@ -8,7 +8,6 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.state.facts import (
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FED_MONETARY_RELEASE_FACT_TYPE,
-    FEDERAL_REGISTER_RULEMAKING_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     OfficialFactProjectionPolicy,
     StateDeltaPolicy,
@@ -76,7 +75,6 @@ class DecisionStatePolicy(StrictConfig):
         if not self.official_fact_policy.affected_assets:
             raise ValueError("OfficialFact projection 必须声明受影响资产")
         required = {
-            FEDERAL_REGISTER_RULEMAKING_FACT_TYPE,
             FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
             FED_MONETARY_RELEASE_FACT_TYPE,
             FOMC_MEETING_FACT_TYPE,
