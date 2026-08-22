@@ -21,35 +21,40 @@ def upgrade() -> None:
     # snapshot and assign a deterministic causal order per portfolio. Keep the
     # JSON fact projection aligned with the indexed column because repositories
     # reconstruct the model from payload.
-    op.execute(
-        sa.text(
-            """
-            WITH ranked AS (
-                SELECT
-                    snapshot_id,
-                    CAST(
-                        ROW_NUMBER() OVER (
-                            PARTITION BY portfolio_id
-                            ORDER BY as_of, observed_at, snapshot_id
-                        ) - 1
-                        AS INTEGER
-                    ) AS backfilled_revision
-                FROM portfolio_account_snapshots
-            )
-            UPDATE portfolio_account_snapshots AS snapshot
-            SET
-                revision = ranked.backfilled_revision,
-                payload = jsonb_set(
-                    snapshot.payload::jsonb,
-                    '{revision}',
-                    to_jsonb(ranked.backfilled_revision),
-                    true
-                )::json
-            FROM ranked
-            WHERE snapshot.snapshot_id = ranked.snapshot_id
-            """
-        )
+    snapshots = sa.table(
+        "portfolio_account_snapshots",
+        sa.column("snapshot_id", sa.String),
+        sa.column("portfolio_id", sa.String),
+        sa.column("as_of", sa.DateTime(timezone=True)),
+        sa.column("observed_at", sa.DateTime(timezone=True)),
+        sa.column("revision", sa.Integer),
+        sa.column("payload", sa.JSON),
     )
+    connection = op.get_bind()
+    rows = connection.execute(
+        sa.select(
+            snapshots.c.snapshot_id,
+            snapshots.c.portfolio_id,
+            snapshots.c.payload,
+        ).order_by(
+            snapshots.c.portfolio_id,
+            snapshots.c.as_of,
+            snapshots.c.observed_at,
+            snapshots.c.snapshot_id,
+        )
+    ).mappings()
+    next_revision: dict[str, int] = {}
+    for row in rows:
+        portfolio_id = row["portfolio_id"]
+        revision = next_revision.get(portfolio_id, 0)
+        payload = dict(row["payload"])
+        payload["revision"] = revision
+        connection.execute(
+            sa.update(snapshots)
+            .where(snapshots.c.snapshot_id == row["snapshot_id"])
+            .values(revision=revision, payload=payload)
+        )
+        next_revision[portfolio_id] = revision + 1
     with op.batch_alter_table("portfolio_account_snapshots") as batch_op:
         batch_op.create_unique_constraint(
             "uq_portfolio_account_revision",
