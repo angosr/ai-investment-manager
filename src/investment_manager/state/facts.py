@@ -19,6 +19,9 @@ from investment_manager.information.official.records import (
     MarketCalendarEventRevision,
     OfficialRecordKind,
 )
+from investment_manager.information.official.regulation import (
+    FederalRegisterRulemakingRecord,
+)
 from investment_manager.information.official.treasury_buybacks import (
     TreasuryBuybackOperationRecord,
     TreasuryBuybackResultRecord,
@@ -41,6 +44,7 @@ FED_CHAIR_PUBLIC_EVENT_FACT_TYPE = "FED_CHAIR_PUBLIC_EVENT_SCHEDULE"
 FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"
 TREASURY_BUYBACK_OPERATION_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_SCHEDULE"
 TREASURY_BUYBACK_RESULT_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_RESULT"
+FEDERAL_REGISTER_RULEMAKING_FACT_TYPE = "US_DIGITAL_ASSET_RULEMAKING"
 
 
 class OfficialFactProjectionPolicy(FrozenModel):
@@ -175,6 +179,61 @@ def project_fed_monetary_release_fact(
         source_observation_ids=(observation.observation_id,),
         previous=previous,
     )
+
+
+def project_federal_register_rulemaking_fact(
+    record: FederalRegisterRulemakingRecord,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    """Project an official digital-asset rulemaking without predicting its effect."""
+
+    legal_status = {
+        "Notice": "notice-only",
+        "Proposed Rule": "proposal-not-final",
+        "Rule": "final-rule",
+    }[record.document_type]
+    dates = [f"published={record.publication_date.isoformat()}"]
+    if record.effective_at is not None:
+        dates.append(f"effective={record.effective_at.date().isoformat()}")
+    if record.comments_close_at is not None:
+        dates.append(f"comments_close={record.comments_close_at.date().isoformat()}")
+    claim = (
+        f"Federal Register {record.document_type}; legal_status={legal_status}; "
+        f"document={record.document_number}; agencies={','.join(record.agencies)}; "
+        f"{'; '.join(dates)}; action={record.action[:120] or 'not stated'}; "
+        f"abstract={_head_tail(record.abstract, maximum=320)}."
+    )
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            FEDERAL_REGISTER_RULEMAKING_FACT_TYPE,
+            record.document_number,
+        ),
+        projection_version=policy.version,
+        fact_type=FEDERAL_REGISTER_RULEMAKING_FACT_TYPE,
+        status=FactRevisionStatus.ACTIVE,
+        event_time=datetime.combine(record.publication_date, time.min, tzinfo=UTC),
+        observed_at=record.observation.observed_at,
+        headline=record.title,
+        claim=claim,
+        affected_assets=policy.affected_assets,
+        risk_factors=("REGULATION_LEGISLATION",),
+        decision_materiality=FactDecisionMateriality.CANDIDATE,
+        source_observation_ids=(record.observation.observation_id,),
+        previous=previous,
+    )
+
+
+def _head_tail(value: str, *, maximum: int) -> str:
+    """Preserve both scope and concluding clause in a bounded official summary."""
+
+    compact = " ".join(value.split())
+    if len(compact) <= maximum:
+        return compact
+    tail = maximum // 3
+    return compact[: maximum - tail - 3].rstrip() + "..." + compact[-tail:].lstrip()
 
 
 def project_fed_chair_public_event_fact(

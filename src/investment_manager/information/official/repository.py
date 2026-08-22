@@ -30,6 +30,11 @@ from investment_manager.information.official.records import (
 from investment_manager.information.official.records import (
     OfficialRecord as BaseOfficialRecord,
 )
+from investment_manager.information.official.regulation import (
+    FEDERAL_REGISTER_SOURCE_ID,
+    FederalRegisterRulemakingRecord,
+    parse_federal_register_rulemaking,
+)
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_RESULT_SOURCE_ID,
     TREASURY_BUYBACK_SOURCE_ID,
@@ -57,6 +62,7 @@ OfficialRecord = (
     BaseOfficialRecord
     | FedChairPublicEventRecord
     | OfficialMetricSnapshot
+    | FederalRegisterRulemakingRecord
     | TreasuryBuybackOperationRecord
     | TreasuryBuybackResultRecord
 )
@@ -521,12 +527,47 @@ class SqlTreasuryBuybackInformationIngestor:
         )
 
 
+class SqlFederalRegisterInformationIngestor:
+    """Persist relevant SEC/CFTC register publications and their raw response."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._raw = SqlRawSourcePayloadStore(engine)
+        self._records = SqlOfficialInformationStore(engine)
+
+    def ingest(
+        self,
+        content: bytes,
+        *,
+        source_url: str,
+        observed_at: datetime,
+    ) -> tuple[OfficialRecordWrite, ...]:
+        observed_at = require_utc(observed_at)
+        raw = build_raw_source_payload(
+            source_id=FEDERAL_REGISTER_SOURCE_ID,
+            source_url=source_url,
+            media_type="application/json",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        return tuple(
+            self._records.put(record)
+            for record in parse_federal_register_rulemaking(
+                content,
+                source_url=source_url,
+                observed_at=observed_at,
+            )
+        )
+
+
 def _record_from_payload(payload: dict) -> OfficialRecord:
     kind = payload.get("kind")
     if kind == OfficialRecordKind.FOMC_MEETING.value:
         return FomcMeetingRecord.model_validate(payload)
     if kind == OfficialRecordKind.FED_MONETARY_RELEASE.value:
         return FedMonetaryReleaseRecord.model_validate(payload)
+    if kind == OfficialRecordKind.FEDERAL_REGISTER_RULEMAKING.value:
+        return FederalRegisterRulemakingRecord.model_validate(payload)
     if kind == OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT.value:
         return FedChairPublicEventRecord.model_validate(payload)
     if kind == OfficialRecordKind.OFFICIAL_METRIC_SNAPSHOT.value:

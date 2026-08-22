@@ -54,6 +54,7 @@ from investment_manager.information.coverage import (
 )
 from investment_manager.information.models import CausalDomain, SourcePollStatus
 from investment_manager.information.official.source import (
+    HttpFederalRegisterSource,
     HttpFedOfficialSource,
     HttpOfficialMetricSource,
     HttpTreasuryBuybackSource,
@@ -81,6 +82,8 @@ from investment_manager.state.metric_ingestion import (
 )
 from investment_manager.state.official_ingestion import (
     FedOfficialCollectorService,
+    RegulatoryOfficialCollectorService,
+    SqlFederalRegisterFactIngestor,
     SqlFedFactIngestor,
     SqlTreasuryBuybackFactIngestor,
     TreasuryBuybackCollectorService,
@@ -551,6 +554,18 @@ def information_collector(
         slow_poll_seconds=policy.official_metric_slow_poll_seconds,
         poll_recorder=SqlInformationCoverageStore(engine),
     )
+    regulatory_service = RegulatoryOfficialCollectorService(
+        source=HttpFederalRegisterSource(
+            timeout_seconds=policy.request_timeout_seconds,
+        ),
+        ingestor=SqlFederalRegisterFactIngestor(
+            engine,
+            loaded.decision_state.official_fact_policy,
+        ),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        poll_seconds=policy.regulatory_poll_seconds,
+        poll_recorder=SqlInformationCoverageStore(engine),
+    )
     treasury_buyback_service = TreasuryBuybackCollectorService(
         source=HttpTreasuryBuybackSource(
             timeout_seconds=policy.request_timeout_seconds,
@@ -571,6 +586,7 @@ def information_collector(
             service.run(stop),
             official_service.run(stop),
             metric_service.run(stop),
+            regulatory_service.run(stop),
             treasury_buyback_service.run(stop),
         )
 

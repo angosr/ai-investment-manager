@@ -178,6 +178,28 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
             "source": event.source,
             "at": fmt.iso(event.event_time),
         }
+    for state in packet.derivative_states:
+        details = (
+            ("永续溢价", state.mark_index_premium_bps, "bps"),
+            ("可执行空头基差", state.executable_short_basis_bps, "bps"),
+            ("最近资金费率", state.last_funding_rate_bps, "bps"),
+            ("现货主动买卖比", state.spot_taker_buy_sell_ratio, ""),
+            ("OI 变化", state.open_interest_change_fraction, ""),
+            ("多头账户占比", state.global_long_account_fraction, ""),
+            ("永续主动买卖比", state.taker_buy_sell_ratio, ""),
+        )
+        catalog[state.evidence_ref] = {
+            "evidence_id": state.evidence_ref,
+            "kind": "MARKET_STRUCTURE",
+            "title": f"{state.asset} 现货与衍生品结构",
+            "detail": "；".join(
+                f"{label} {value}{unit}"
+                for label, value, unit in details
+                if value is not None
+            ),
+            "source": "BINANCE_MARKET",
+            "at": fmt.iso(state.observed_at),
+        }
     for delta in packet.deltas:
         catalog[delta.delta_id] = {
             "evidence_id": delta.delta_id,

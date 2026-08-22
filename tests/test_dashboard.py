@@ -61,6 +61,36 @@ def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
     return AnalysisRuntimeStatus(**values)
 
 
+def test_assessment_evidence_catalog_resolves_derivative_state() -> None:
+    now = datetime(2026, 8, 21, 23, tzinfo=UTC)
+    evidence_ref = "d" * 64
+    state = SimpleNamespace(
+        evidence_ref=evidence_ref,
+        asset="BTC",
+        observed_at=now,
+        mark_index_premium_bps=Decimal("1.2"),
+        executable_short_basis_bps=Decimal("2.3"),
+        last_funding_rate_bps=Decimal("0.4"),
+        spot_taker_buy_sell_ratio=Decimal("1.1"),
+        open_interest_change_fraction=Decimal("0.02"),
+        global_long_account_fraction=Decimal("0.53"),
+        taker_buy_sell_ratio=Decimal("0.9"),
+    )
+    packet = SimpleNamespace(
+        facts=(),
+        intelligence_events=(),
+        derivative_states=(state,),
+        deltas=(),
+        previous_context=None,
+    )
+
+    catalog = ser._assessment_evidence_catalog(packet)
+
+    assert catalog[evidence_ref]["kind"] == "MARKET_STRUCTURE"
+    assert catalog[evidence_ref]["title"] == "BTC 现货与衍生品结构"
+    assert "OI 变化 0.02" in catalog[evidence_ref]["detail"]
+
+
 def test_health_uses_authoritative_per_scope_heartbeat() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
     report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)

@@ -20,11 +20,17 @@ from investment_manager.information.official.records import (
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
 )
+from investment_manager.information.official.regulation import (
+    FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
+    FederalRegisterRulemakingRecord,
+)
 from investment_manager.information.official.repository import (
     OfficialRecordWrite,
+    SqlFederalRegisterInformationIngestor,
     SqlFedOfficialInformationIngestor,
     SqlTreasuryBuybackInformationIngestor,
 )
+from investment_manager.information.official.source import OfficialRegulatoryDocument
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_STREAM_ID,
     TreasuryBuybackOperationRecord,
@@ -35,6 +41,7 @@ from investment_manager.state.facts import (
     OfficialFactProjectionPolicy,
     project_fed_chair_public_event_fact,
     project_fed_monetary_release_fact,
+    project_federal_register_rulemaking_fact,
     project_fomc_calendar_fact,
     project_treasury_buyback_operation_fact,
     project_treasury_buyback_result_fact,
@@ -60,6 +67,10 @@ class TreasuryBuybackSource(Protocol):
         self,
         scheduled: TreasuryBuybackOperationRecord,
     ) -> bytes | None: ...
+
+
+class FederalRegisterSource(Protocol):
+    def fetch(self, *, observed_at: datetime) -> OfficialRegulatoryDocument | None: ...
 
 
 class SourcePollRecorder(Protocol):
@@ -198,6 +209,197 @@ class SqlFedFactIngestor:
                 previous=previous,
             )
         raise TypeError(f"不支持的 Fed 官方记录类型: {type(record).__name__}")
+
+
+class SqlFederalRegisterFactIngestor:
+    """Project relevant official rulemaking into the canonical fact ledger."""
+
+    def __init__(self, engine: Engine, policy: OfficialFactProjectionPolicy) -> None:
+        self._official = SqlFederalRegisterInformationIngestor(engine)
+        self._facts = SqlFactStateStore(engine)
+        self._policy = policy
+
+    def ingest(
+        self,
+        document: OfficialRegulatoryDocument,
+        *,
+        observed_at: datetime,
+    ) -> OfficialFactIngestionResult:
+        if document.stream_id != FEDERAL_REGISTER_RULEMAKING_STREAM_ID:
+            raise ValueError("Federal Register document stream identity 不一致")
+        writes = self._official.ingest(
+            document.content,
+            source_url=document.source_url,
+            observed_at=observed_at,
+        )
+        projected: list[CanonicalFactRevision] = []
+        for write in writes:
+            record = write.record
+            if not isinstance(record, FederalRegisterRulemakingRecord):
+                raise TypeError("Federal Register ingestor 收到非规则制定记录")
+            candidate = project_federal_register_rulemaking_fact(
+                record,
+                policy=self._policy,
+            )
+            previous = self._facts.latest_fact(candidate.fact_id)
+            if previous is not None and not write.inserted:
+                continue
+            if previous is not None and previous.revision_hash == candidate.revision_hash:
+                continue
+            fact = (
+                candidate
+                if previous is None
+                else project_federal_register_rulemaking_fact(
+                    record,
+                    policy=self._policy,
+                    previous=previous,
+                )
+            )
+            stored = self._facts.put_fact(fact)
+            if previous is None or stored.revision_id != previous.revision_id:
+                projected.append(stored)
+        return OfficialFactIngestionResult(
+            records=writes,
+            new_fact_revisions=tuple(projected),
+        )
+
+
+@dataclass(slots=True)
+class RegulatoryOfficialCollectorHealth:
+    poll_count: int = 0
+    new_fact_revision_count: int = 0
+    publication_count: int = 0
+    last_success_at: datetime | None = None
+    error_class: str | None = None
+    publication_error_class: str | None = None
+
+
+class RegulatoryOfficialCollectorService:
+    """Poll one bounded official rulemaking stream and publish material revisions."""
+
+    def __init__(
+        self,
+        *,
+        source: FederalRegisterSource,
+        ingestor: SqlFederalRegisterFactIngestor,
+        publish_recent: Callable[[datetime], None],
+        poll_seconds: int,
+        poll_recorder: SourcePollRecorder | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if poll_seconds < 1:
+            raise ValueError("官方监管轮询周期必须为正数")
+        self._source = source
+        self._ingestor = ingestor
+        self._publish_recent = publish_recent
+        self._poll_seconds = poll_seconds
+        self._poll_recorder = poll_recorder
+        self._clock = clock
+        self.health = RegulatoryOfficialCollectorHealth()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await self._poll()
+            await self._publish()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
+
+    async def _publish(self) -> None:
+        try:
+            await asyncio.to_thread(self._publish_recent, require_utc(self._clock()))
+            self.health.publication_count += 1
+            self.health.publication_error_class = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.health.publication_error_class != type(exc).__name__:
+                logger.exception("official regulation trigger publication failed")
+            self.health.publication_error_class = type(exc).__name__
+
+    async def _poll(self) -> None:
+        started_at = require_utc(self._clock())
+        self.health.poll_count += 1
+        try:
+            document = await asyncio.to_thread(
+                self._source.fetch,
+                observed_at=started_at,
+            )
+            result = (
+                OfficialFactIngestionResult(records=(), new_fact_revisions=())
+                if document is None
+                else await asyncio.to_thread(
+                    self._ingestor.ingest,
+                    document,
+                    observed_at=require_utc(self._clock()),
+                )
+            )
+            completed_at = max(require_utc(self._clock()), started_at)
+            self._record_poll(
+                status=(
+                    SourcePollStatus.CHANGED
+                    if any(item.inserted for item in result.records)
+                    else SourcePollStatus.UNCHANGED
+                ),
+                started_at=started_at,
+                completed_at=completed_at,
+                result=result,
+            )
+            self.health.new_fact_revision_count += len(result.new_fact_revisions)
+            self.health.last_success_at = completed_at
+            self.health.error_class = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.health.error_class != type(exc).__name__:
+                logger.exception("official regulation collector failed")
+            self.health.error_class = type(exc).__name__
+            if isinstance(exc, SourcePollAuditError):
+                raise
+            self._record_poll(
+                status=SourcePollStatus.FAILED,
+                started_at=started_at,
+                completed_at=max(require_utc(self._clock()), started_at),
+                error_class=type(exc).__name__,
+            )
+
+    def _record_poll(
+        self,
+        *,
+        status: SourcePollStatus,
+        started_at: datetime,
+        completed_at: datetime,
+        result: OfficialFactIngestionResult | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        if self._poll_recorder is None:
+            return
+        records = () if result is None else result.records
+        poll = build_source_poll_record(
+            source_stream_id=FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
+            domain=CausalDomain.REGULATION_LEGISLATION,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            latest_publication_at=max(
+                (
+                    item.record.observation.source_published_at
+                    for item in records
+                    if item.record.observation.source_published_at is not None
+                ),
+                default=None,
+            ),
+            observation_count=len(records),
+            new_fact_count=(
+                0 if result is None else len(result.new_fact_revisions)
+            ),
+            error_class=error_class,
+        )
+        try:
+            self._poll_recorder.put(poll)
+        except Exception as exc:
+            raise SourcePollAuditError(
+                "Federal Register 来源轮询事实无法持久化"
+            ) from exc
 
 
 @dataclass(slots=True)

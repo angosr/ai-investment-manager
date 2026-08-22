@@ -67,6 +67,9 @@ ASSESS_INSTRUCTIONS = (
     "财政部回购日程中的 maximum 只是计划上限；TREASURY_BUYBACK_OPERATION_RESULT "
     "中的 accepted 才是实际接受额，两者都不是 Fed QE。实际结果可验证财政操作本身，"
     "但在缺少收益率、美元、跨资产和现货资金响应时仍不得单独支持加密资产方向。",
+    "US_DIGITAL_ASSET_RULEMAKING 是 Federal Register 的一手监管发布。必须区分 Notice、"
+    "Proposed Rule 与 Rule，并核对 effective/comments_close 日期；提案不等于已通过或已生效。"
+    "只有在适用范围、实施时点、市场预期差和价格/资金响应形成可证伪传导链时，才可支持方向。",
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
     "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"
@@ -78,6 +81,7 @@ ASSESS_INSTRUCTIONS = (
     "INFERRED 表示从证据与时序推导的机制；UNVERIFIED 表示尚未证实的市场假设。"
     "每项必须说明传导路径和可证伪条件，按当前决策影响从高到低排列，不得把推断或传闻升级为事实。",
     "previous_context 是上一轮仍可追溯的世界模型，不是独立事实。逐项判断它应继续、修正还是失效；"
+    "若 decision_packet_json 中没有 previous_context，表示没有决策相关的既有认知，不是信息缺口。"
     "可以引用其 assessment_id 支撑 INFERRED/UNVERIFIED 延续，但 CONFIRMED 必须引用本轮一手事实。"
     "INFERRED 或方向判断若引用上一轮，还必须同时引用至少一项本轮证据，禁止循环自证。"
     "禁止无视新证据照抄上一轮，也禁止没有失效依据就丢弃仍有效的因果链。",

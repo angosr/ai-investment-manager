@@ -13,18 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  # v21 保持同一 State 语义；Packet 单独提升因果证据密度。
-  version: portfolio-state-v21
+  version: portfolio-state-v22
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v8
+    version: official-fact-v9
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v10
+    version: state-delta-v11
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -64,6 +63,9 @@ decision_state:
       - fact_type: TREASURY_BUYBACK_OPERATION_SCHEDULE
         materiality: NORMAL
         reason_code: TREASURY_BUYBACK_SCHEDULE_REVISION
+      - fact_type: US_DIGITAL_ASSET_RULEMAKING
+        materiality: HIGH
+        reason_code: US_DIGITAL_ASSET_RULEMAKING_REVISION
       - fact_type: US_TREASURY_CASH_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_CASH_REVISION
@@ -351,7 +353,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v21
+  version: information-intake-v22
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -366,6 +368,7 @@ information:
   fed_calendar_poll_seconds: 21600
   treasury_buyback_poll_seconds: 21600
   treasury_buyback_result_lookback_seconds: 604800
+  regulatory_poll_seconds: 300
   official_metric_poll_seconds: 300
   official_metric_slow_poll_seconds: 900
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
@@ -389,9 +392,12 @@ information:
       maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
     - domain: REGULATION_LEGISLATION
-      source_stream_ids: []
+      source_stream_ids: [federal-register-digital-assets]
       required_capabilities: [AGENCY_RULEMAKING, LEGISLATION_STATUS, OFFICIAL_EVENT_CALENDAR]
-      maximum_poll_age_seconds: 300
+      source_capabilities:
+        federal-register-digital-assets: [AGENCY_RULEMAKING]
+      maximum_poll_age_seconds: 900
+      maximum_publication_age_seconds: 604800
     - domain: INSTITUTIONAL_FLOWS
       # IBIT 仅证明一只基金的日持仓，不能满足 ETF 合计流量能力。
       source_stream_ids: [ishares-ibit-holdings]

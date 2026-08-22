@@ -19,6 +19,10 @@ from investment_manager.information.official.records import (
     FED_FOMC_CALENDAR_URL,
     FED_MONETARY_RSS_URL,
 )
+from investment_manager.information.official.regulation import (
+    FEDERAL_REGISTER_API_ROOT,
+    FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
+)
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_URL,
     TreasuryBuybackOperationRecord,
@@ -54,6 +58,85 @@ class OfficialMetricDocument:
     source_url: str
     media_type: str
     content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class OfficialRegulatoryDocument:
+    stream_id: str
+    source_url: str
+    content: bytes
+
+
+class HttpFederalRegisterSource:
+    """Poll a bounded SEC/CFTC catalog from the official Federal Register API."""
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int,
+        lookback_days: int = 7,
+        maximum_bytes: int = 2_000_000,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if timeout_seconds < 1 or not 1 <= lookback_days <= 30 or maximum_bytes < 1:
+            raise ValueError("Federal Register source 配置非法")
+        self._timeout_seconds = timeout_seconds
+        self._lookback_days = lookback_days
+        self._maximum_bytes = maximum_bytes
+        self._transport = transport
+        self._validators_by_url: dict[str, dict[str, str]] = {}
+
+    def fetch(self, *, observed_at: datetime) -> OfficialRegulatoryDocument | None:
+        observed_at = require_utc(observed_at)
+        start = (observed_at.date() - timedelta(days=self._lookback_days)).isoformat()
+        url = str(
+            httpx.URL(
+                FEDERAL_REGISTER_API_ROOT,
+                params=(
+                    ("per_page", "100"),
+                    ("order", "newest"),
+                    ("conditions[publication_date][gte]", start),
+                    (
+                        "conditions[agencies][]",
+                        "commodity-futures-trading-commission",
+                    ),
+                    (
+                        "conditions[agencies][]",
+                        "securities-and-exchange-commission",
+                    ),
+                ),
+            )
+        )
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "investment-manager-official-regulation/1.0",
+            **self._validators_by_url.get(url, {}),
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(url, headers=headers)
+        if response.status_code == 304:
+            return None
+        response.raise_for_status()
+        if str(response.url) != url:
+            raise ValueError("Federal Register 响应 URL 与固定请求不一致")
+        content = response.content
+        if not content or len(content) > self._maximum_bytes:
+            raise ValueError("Federal Register 响应为空或超过大小上限")
+        validators: dict[str, str] = {}
+        if etag := response.headers.get("etag"):
+            validators["If-None-Match"] = etag
+        if modified := response.headers.get("last-modified"):
+            validators["If-Modified-Since"] = modified
+        self._validators_by_url = {url: validators}
+        return OfficialRegulatoryDocument(
+            stream_id=FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
+            source_url=url,
+            content=content,
+        )
 
 
 class HttpOfficialMetricSource:
