@@ -67,6 +67,15 @@ from investment_manager.research.carry_forward import (
     run_carry_forward_evaluation,
     validate_carry_forward_evaluation_plan,
 )
+from investment_manager.research.cross_sectional_carry import (
+    CarryBundle,
+    CrossSectionalCarryCatalog,
+    CrossSectionalCarryEvaluationSpec,
+    CrossSectionalCarryPlan,
+    CrossSectionalCarryPolicy,
+    run_cross_sectional_carry_backtest,
+    run_cross_sectional_carry_screen,
+)
 from investment_manager.research.dataset import (
     FundingRateObservation,
     FundingSourceArtifact,
@@ -948,6 +957,7 @@ def test_carry_history_rejects_untrusted_source() -> None:
 def _carry_dataset(
     *,
     count: int = 200,
+    symbol: str = "BTCUSDT",
     mark_high: Decimal = Decimal("101"),
     spot_source: str = "test-history",
     funding_rate: Decimal = Decimal("0.0002"),
@@ -958,6 +968,7 @@ def _carry_dataset(
         raise ValueError("settlements_per_day 必须是 24 的正整数因子")
     if daily_funding_rates is not None and len(daily_funding_rates) != count:
         raise ValueError("daily_funding_rates 必须与 carry 日数一致")
+    base_asset = symbol.removesuffix("USDT")
     spot = _dataset(
         count=count,
         interval="1d",
@@ -965,10 +976,13 @@ def _carry_dataset(
         initial_price=Decimal("100"),
         price_step=Decimal("1"),
         source=spot_source,
+        instrument=_instrument().model_copy(
+            update={"symbol": symbol, "base_asset": base_asset}
+        ),
     )
     days = tuple(
         CarryMarketDay(
-            symbol="BTCUSDT",
+            symbol=symbol,
             open_time=bar.open_time,
             close_time=bar.close_time,
             contract_open=Decimal("100"),
@@ -993,7 +1007,7 @@ def _carry_dataset(
     funding_interval_hours = 24 // settlements_per_day
     settlements = tuple(
         CarryFundingSettlement(
-            symbol="BTCUSDT",
+            symbol=symbol,
             funding_time=(
                 bar.open_time + timedelta(hours=funding_interval_hours * index)
             ),
@@ -1025,8 +1039,8 @@ def _carry_dataset(
     funding_artifacts = tuple(
         FundingSourceArtifact(
             archive_key=(
-                "data/futures/um/monthly/fundingRate/BTCUSDT/"
-                f"BTCUSDT-fundingRate-{year:04d}-{month:02d}.zip"
+                f"data/futures/um/monthly/fundingRate/{symbol}/"
+                f"{symbol}-fundingRate-{year:04d}-{month:02d}.zip"
             ),
             sha256=f"{index + 1:064x}",
         )
@@ -1041,7 +1055,7 @@ def _carry_dataset(
     funding_identity = (
         "historical-funding-rates-v1",
         "binance-public-data-usdm-funding-rate",
-        "BTCUSDT",
+        symbol,
         "BINANCE_USDM",
         60,
         spot.manifest.requested_start,
@@ -1052,7 +1066,7 @@ def _carry_dataset(
     funding = HistoricalFundingDataset(
         manifest=HistoricalFundingDatasetManifest(
             dataset_id=stable_id("historical_funding_dataset", *funding_identity),
-            symbol="BTCUSDT",
+            symbol=symbol,
             collected_at=spot.manifest.requested_end,
             requested_start=spot.manifest.requested_start,
             requested_end=spot.manifest.requested_end,
@@ -1065,9 +1079,9 @@ def _carry_dataset(
         observations=funding_observations,
     )
     instrument = CarryInstrumentSpec(
-        symbol="BTCUSDT",
-        pair="BTCUSDT",
-        base_asset="BTC",
+        symbol=symbol,
+        pair=symbol,
+        base_asset=base_asset,
         quote_asset="USDT",
         margin_asset="USDT",
         onboarded_at=spot.manifest.requested_start - timedelta(days=1),
@@ -1082,7 +1096,7 @@ def _carry_dataset(
     identity = (
         "historical-binance-carry-v1",
         "binance-usdm-rest-carry",
-        "BTCUSDT",
+        symbol,
         "1d",
         spot.manifest.requested_start,
         spot.manifest.requested_end,
@@ -1095,7 +1109,7 @@ def _carry_dataset(
     )
     manifest = HistoricalCarryDatasetManifest(
         dataset_id=stable_id("historical_carry_dataset", *identity),
-        symbol="BTCUSDT",
+        symbol=symbol,
         collected_at=spot.manifest.requested_end,
         requested_start=spot.manifest.requested_start,
         requested_end=spot.manifest.requested_end,
@@ -1226,6 +1240,72 @@ def test_carry_policy_profiles_freeze_risk_sizing() -> None:
     assert calendar_aligned.version == "spot-perp-calendar-month-risk-30pct-v3"
     with pytest.raises(ValueError, match="未登记"):
         resolve_carry_policy("arbitrary-curve-fit")
+
+
+def test_cross_sectional_carry_uses_visible_funding_and_full_switch_cost(
+    tmp_path,
+) -> None:
+    count = 800
+    btc_rates = tuple(
+        Decimal("0.0002") if index < 300 else Decimal("0.00005")
+        for index in range(count)
+    )
+    eth_rates = tuple(
+        Decimal("0.00005") if index < 300 else Decimal("0.0002")
+        for index in range(count)
+    )
+    btc_spot, _, btc_carry = _carry_dataset(
+        count=count,
+        symbol="BTCUSDT",
+        spot_source="test-btc-carry",
+        daily_funding_rates=btc_rates,
+    )
+    eth_spot, _, eth_carry = _carry_dataset(
+        count=count,
+        symbol="ETHUSDT",
+        spot_source="test-eth-carry",
+        daily_funding_rates=eth_rates,
+    )
+    bundles = {
+        "BTCUSDT": CarryBundle(carry=btc_carry, spot=btc_spot),
+        "ETHUSDT": CarryBundle(carry=eth_carry, spot=eth_spot),
+    }
+    policy = CrossSectionalCarryPolicy()
+    assert policy.round_trip_cost_bps == Decimal("40")
+    assert policy.switch_cost_bps == Decimal("40")
+
+    run = run_cross_sectional_carry_backtest(
+        bundles=bundles,
+        policy=policy,
+        starting_equity=Decimal("10000"),
+        start=btc_carry.days[0].open_time,
+        end=btc_carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+    assert run.completed
+    assert run.metrics.entry_count == 1
+    assert run.metrics.switch_count == 1
+    assert tuple(action.to_symbol for action in run.actions) == (
+        "BTCUSDT",
+        "ETHUSDT",
+    )
+    assert all(action.at.weekday() == 0 for action in run.actions)
+    assert run.actions[0].at >= btc_carry.days[28].open_time
+    assert run.actions[1].projected_advantage_bps > policy.switch_cost_bps
+    assert run.metrics.funding_pnl > run.metrics.modeled_cost
+
+    spec = CrossSectionalCarryEvaluationSpec.freeze(
+        bundles=bundles,
+        evaluator_code_version="a" * 40,
+        evaluator_environment=current_carry_evaluator_environment(),
+        policy=policy,
+        plan=CrossSectionalCarryPlan(plan_id="cross-sectional-carry-test-v1"),
+    )
+    result = run_cross_sectional_carry_screen(bundles=bundles, spec=spec)
+    assert result.passed_rejection_screen
+    assert result.blind_start == btc_carry.days[-365].open_time
+    catalog = CrossSectionalCarryCatalog(tmp_path)
+    catalog.store(result)
+    assert catalog.load(result.evaluation_id) == result
 
 
 def test_calendar_month_carry_waits_for_month_first_when_fold_starts_midmonth() -> None:
