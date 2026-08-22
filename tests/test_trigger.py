@@ -215,9 +215,9 @@ def test_trigger_service_validates_capital_contract_before_plan_bootstrap(
                     "mock_candidate_authorizations": (
                         MockCandidateAuthorization(
                             version="trigger-test-authorization-v1",
-                            producer_id="trigger-test-candidate",
-                            producer_version="trigger-test-candidate-v1",
-                            forecast_family="trigger-test-family",
+                            producer_id=app_config.carry_forecast.producer_id,
+                            producer_version=app_config.carry_forecast.version,
+                            forecast_family=app_config.carry_forecast.forecast_family,
                             hypothesis_fingerprint="d" * 64,
                             evaluation_plan_id="trigger-test-plan",
                             valid_from=datetime(2026, 1, 1, tzinfo=UTC),
@@ -334,6 +334,114 @@ def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
     )
     assert created[0].event_rules[0].minimum_priority == 0
     assert created[0].event_rules[1].minimum_priority == 80
+
+
+def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_plan(
+    app_config, replay_input,
+) -> None:
+    now = replay_input.market.as_of
+    official = ScheduledWakeup(
+        wakeup_id="official-release",
+        wake_at=now + timedelta(days=1),
+        expires_at=now + timedelta(days=1, minutes=15),
+        reason="官方数据发布时间",
+    )
+    candidate = ScheduledWakeup(
+        wakeup_id="candidate-natural-window",
+        wake_at=now + timedelta(days=2),
+        expires_at=now + timedelta(days=2, minutes=30),
+        reason="候选自然信号窗口",
+    )
+    initial = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now - timedelta(hours=1),
+        heartbeat_seconds=900,
+    ).model_copy(update={"scheduled_wakeups": (official,)})
+
+    class Repository:
+        def __init__(self):
+            self.plan = initial
+            self.patch_count = 0
+
+        def current_plans_for_symbols(self, _symbols):
+            return (self.plan,)
+
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            assert (symbol, pipeline_id) == ("BTCUSDT", "pipeline-v1")
+            return self.plan
+
+        def create_plan(self, _plan):
+            raise AssertionError("existing plan must be reused")
+
+        def apply_patch(self, patch, *, now, current_manifest_id):
+            self.patch_count += 1
+            result = TriggerPlanGate(app_config.trigger).apply(
+                self.plan,
+                patch,
+                now=now,
+                current_manifest_id=current_manifest_id,
+            )
+            self.plan = result.plan
+            return result
+
+    repository = Repository()
+    kwargs = {
+        "repository": repository,
+        "symbols": ("BTCUSDT",),
+        "pipeline_id": "pipeline-v1",
+        "manifest_id": "manifest-v1",
+        "heartbeat_seconds": 900,
+        "high_impact_threshold": app_config.trigger.high_impact_threshold,
+        "debounce_seconds": 30,
+        "now": now,
+        "scheduled_wakeups_by_symbol": {"BTCUSDT": (candidate,)},
+    }
+
+    ensure_trigger_plans(**kwargs)
+    ensure_trigger_plans(**kwargs)
+
+    assert repository.patch_count == 1
+    assert repository.plan.scheduled_wakeups == (official, candidate)
+
+
+def test_authorized_capital_candidate_materializes_every_future_natural_window(
+    app_config,
+) -> None:
+    permission = MockCandidateAuthorization(
+        version="calendar-carry-test-authorization-v1",
+        producer_id=app_config.carry_forecast.producer_id,
+        producer_version=app_config.carry_forecast.version,
+        forecast_family=app_config.carry_forecast.forecast_family,
+        hypothesis_fingerprint="d" * 64,
+        evaluation_plan_id="calendar-carry-forward-test",
+        valid_from=datetime(2026, 9, 1, tzinfo=UTC),
+        valid_until=datetime(2027, 9, 1, tzinfo=UTC),
+        maximum_allocation_fraction=Decimal("0.3"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    configured = app_config.model_copy(
+        update={
+            "capital": app_config.capital.model_copy(
+                update={"enabled": True, "mock_candidate_authorizations": (permission,)}
+            )
+        }
+    )
+
+    scheduled = trigger_runtime.capital_candidate_wakeups(
+        configured,
+        now=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    wakeups = scheduled[app_config.carry_forecast.symbol]
+    assert len(wakeups) == 12
+    assert wakeups[0].wake_at == datetime(2026, 9, 1, tzinfo=UTC)
+    assert wakeups[0].expires_at == datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
+    assert wakeups[-1].wake_at == datetime(2027, 8, 1, tzinfo=UTC)
+    assert len({item.wakeup_id for item in wakeups}) == 12
+    assert all("自然月首信号窗口" in item.reason for item in wakeups)
 
 
 def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(

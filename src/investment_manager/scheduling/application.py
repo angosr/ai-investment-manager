@@ -4,8 +4,10 @@ from datetime import datetime
 from decimal import Decimal
 
 from investment_manager.scheduling.models import (
+    AddWakeup,
     AnalysisEventRule,
     AnalysisTriggerType,
+    ScheduledWakeup,
     TriggerNow,
     TriggerPlanApplyResult,
     build_initial_trigger_plan,
@@ -25,9 +27,14 @@ def ensure_trigger_plans(
     high_impact_threshold: Decimal,
     debounce_seconds: int,
     now: datetime,
+    scheduled_wakeups_by_symbol: dict[str, tuple[ScheduledWakeup, ...]] | None = None,
 ) -> None:
     """Create or verify one durable trigger plan per configured symbol and release."""
 
+    desired_by_symbol = scheduled_wakeups_by_symbol or {}
+    unknown_symbols = set(desired_by_symbol) - set(symbols)
+    if unknown_symbols:
+        raise ValueError("计划唤醒点只能属于当前行情 symbol")
     previous_plans = repository.current_plans_for_symbols(symbols)
     for symbol in symbols:
         try:
@@ -80,11 +87,31 @@ def ensure_trigger_plans(
                     ),
                 )
             repository.create_plan(plan)
-            continue
+            current = plan
         if current.manifest_id != manifest_id:
             raise ValueError(
                 f"{symbol} 当前 TriggerPlan 的 manifest 与 release 不一致；"
                 "必须升级 pipeline version 完成切换"
+            )
+        desired = desired_by_symbol.get(symbol, ())
+        existing = {item.wakeup_id: item for item in current.scheduled_wakeups}
+        additions = tuple(item for item in desired if item.wakeup_id not in existing)
+        conflicts = tuple(
+            item
+            for item in desired
+            if item.wakeup_id in existing and existing[item.wakeup_id] != item
+        )
+        if conflicts:
+            raise ValueError("同一计划唤醒身份绑定了不同内容")
+        if additions:
+            repository.apply_patch(
+                build_trigger_plan_patch(
+                    plan=current,
+                    submitted_at=now,
+                    operations=tuple(AddWakeup(wakeup=item) for item in additions),
+                ),
+                now=now,
+                current_manifest_id=manifest_id,
             )
 
 

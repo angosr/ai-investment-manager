@@ -372,11 +372,16 @@ Producer 返回的 Forecast ID 集合形成幂等机会周期；PortfolioTarget 
 Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账本。后续不同 cadence 的 Producer
 可以在同一组合链协作，且不能绕过统一 Portfolio、Risk 和 grouped Execution。没有新机会时仅重放账户、
 恢复非终态组并检查持仓风险；最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
+已授权 Mock Producer 的未来自然信号窗口在 Trigger Service 启动时物化为同一 `TriggerPlan` 的持久化
+`ScheduledWakeup`，有效期直接取 Producer 的入场窗口。它与官方日历及主 Agent 唤醒共存，不依赖
+Heartbeat 相位碰巧命中，也不允许在窗口结束后补单；授权、Producer 身份或自然 cadence 变化都必须产生
+新的 Release/行为身份。
 每个冻结 TriggerBatch 还以自身 batch ID 作为 cause 追加一条 `CapitalCycleRecord`，直接保存品种、触发类型、
 账户快照、Forecast/Target 引用与终态；因此无 Target 的无机会/保持也是权威事实，多品种同一时刻触发不会
 依赖时间近似关联或互相覆盖。Dashboard 只投影该记录，不从“缺少 Target”反推行动。
-月度 carry 的历史制品仅保留为研究和 counterfactual，不进入主动资本链。`CapitalCycleService` 允许零个
-合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
+月度 carry 的历史制品本身仅是研究和 counterfactual，不自动进入主动资本链；只有绑定精确 Producer
+身份、有效期、资本上限和前向评价计划的 Mock authorization 才能暂时装配该候选。`CapitalCycleService`
+允许零个合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
 未来候选必须以显式 `CapitalForecastSource` 接入同一 Portfolio、Risk、TradePlan、持久化 Mock Product Venue
 与账户投影，并绑定事前登记的 Mock authorization。持仓主动风险退出在每次
 账户观察后形成显式 `PortfolioHoldingRiskReview`：正常持有为 `HOLD`，未对账、旧输入或未完成 group
@@ -431,8 +436,9 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
 并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。calendar carry 的不可变历史 Evidence 只作为点时 counterfactual，不进入主动资本链、也不占用组合容量。
-主动链同时最多装配一个机制明确、事前登记的 challenger；当前没有合格候选，因此保持现金。已经失败的
+结论。calendar carry 的不可变历史 Evidence 不会单独获得资本权限；它只作为点时 counterfactual，或由精确的
+事前 Mock authorization 支撑同一候选收集前向证据。主动链同时最多装配一个机制明确、事前登记的
+challenger；没有授权或没有自然信号时保持现金。已经失败的
 `dynamic-carry-point-in-time-v2` 生产代码和装配已删除，只保留内容寻址失败制品与不可变计划失效事实。新候选
 必须在结构和信息来源上与它不同，先完成低成本拒绝型回放，再进入同一模拟资本链，避免在同一标签上调参。
 
