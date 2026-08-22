@@ -10,6 +10,9 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from investment_manager.governance.evaluation.statistics import (
+    conservative_newey_west_lower_bound,
+)
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -259,7 +262,7 @@ def run_carry_forward_evaluation(
     metrics = CarryForwardMetrics(
         average_annualized_return_fraction=sum(annualized, Decimal("0"))
         / len(annualized),
-        annualized_return_lower_bound=_conservative_newey_west_lower_bound(
+        annualized_return_lower_bound=conservative_newey_west_lower_bound(
             annualized,
             z=spec.lower_confidence_z,
             lag=spec.newey_west_lag_months,
@@ -445,33 +448,6 @@ def _is_month_boundary(value: datetime) -> bool:
         and value.second == 0
         and value.microsecond == 0
     )
-
-
-def _conservative_newey_west_lower_bound(
-    values: tuple[Decimal, ...], *, z: Decimal, lag: int
-) -> Decimal:
-    if len(values) < 2:
-        raise ValueError("carry forward 保守下界至少需要两个独立月份")
-    if lag < 1 or lag >= len(values):
-        raise ValueError("carry forward Newey-West lag 必须小于月份数")
-    count = Decimal(len(values))
-    mean = sum(values, Decimal("0")) / count
-    residuals = tuple(item - mean for item in values)
-    gamma_zero = sum((item**2 for item in residuals), Decimal("0")) / count
-    long_run_variance = gamma_zero
-    for offset in range(1, lag + 1):
-        covariance = sum(
-            (
-                residuals[index] * residuals[index - offset]
-                for index in range(offset, len(residuals))
-            ),
-            Decimal("0"),
-        ) / count
-        weight = Decimal(1) - Decimal(offset) / Decimal(lag + 1)
-        long_run_variance += Decimal(2) * weight * covariance
-    # 负自相关不能让证据门槛比独立月份假设更宽松。
-    conservative_variance = max(gamma_zero, long_run_variance, Decimal("0"))
-    return mean - z * (conservative_variance / count).sqrt()
 
 
 def current_carry_evaluator_environment() -> tuple[tuple[str, str], ...]:

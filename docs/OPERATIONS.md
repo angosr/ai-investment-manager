@@ -173,6 +173,22 @@ INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
 计划以现金和同策略研究账本为双基线，要求十二个月决策完整、至少十一个月 Forecast 可用、禁止晚开与重复 group，并冻结未对冲/恢复时限、费用后权益、资本占用、fee、spread、funding、basis 和 compensation loss。任一绑定的代码、配置、组件、Evidence 或行为身份变化都截断 cohort；不得把不同 Release 的月份拼接后晋级。
 Trigger Service 启动时会在创建任何触发计划前重新派生完整合同，并要求该 Manifest 恰好匹配一个已登记计划；缺失、篡改、重复或晚于服务启动时间登记都会拒绝启动。
 
+评价必须从该 Release 的精确代码 checkout 运行；命令会同时核验 Git、配置、Manifest、预登记 spec 和行为哈希。
+在窗口或七天结算宽限期成熟前执行只会生成明确的 `INCOMPLETE` 内容寻址制品；成熟后才投影完整账本，且精确
+自然月账户边界、Trigger 决策、点时可成交报价或 Funding 任一缺失都会失败关闭：
+
+```bash
+INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
+  .venv/bin/investment-manager evaluate-capital-shadow-plan \
+  --config '<冻结 Capital 配置>' \
+  --release-manifest '<冻结 Capital Manifest>' \
+  --plan-id '<已登记计划 ID>' \
+  --published-at '<固定 UTC 评价时点>' \
+  --evaluation-catalog '.runtime/capital-shadow-evaluations'
+```
+
+同一 `published-at` 与同一事实账本重试会得到同一结果 ID 和同一制品；调用方不能重传月份、收益、基线或门槛。
+
 部署私有配置必须满足：
 
 ```yaml

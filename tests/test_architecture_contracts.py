@@ -52,6 +52,9 @@ CLI_CONTRACT = {
         "database_url,plan_id,carry_dataset_id,carry_catalog,spot_catalog,funding_catalog,"
         "evaluation_catalog"
     ),
+    "evaluate-capital-shadow-plan": (
+        "config,database_url,release_manifest,plan_id,published_at,evaluation_catalog"
+    ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
@@ -228,6 +231,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "register-assessment-forward-plan",
         },
         "entrypoints/cli/capital_commands.py": {
+            "evaluate-capital-shadow-plan",
             "register-capital-shadow-plan",
         },
         "entrypoints/cli/commands.py": {

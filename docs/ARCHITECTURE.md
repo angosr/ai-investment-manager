@@ -423,6 +423,13 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 组合容量；主动链只装配一个 dynamic challenger。新增收益来源仍一次只接入一个机制不同的 challenger，避免并行
 试错把选择偏差伪装成盈利能力。
 
+Capital evaluator 与候选 Release 同时冻结，不在结果出现后补写裁判。它从不可变 `CapitalCycleRecord`、Forecast、
+Target、Risk、TradePlan、ExecutionGroup、订单观察和相邻账户绩效区间投影一份内容寻址账本：自然月收益使用每个
+UTC 月界最早的权威账户 revision，费用后净权益必须与 price、funding 和 fee 加法归因一致，slippage 与
+compensation 只作诊断而不重复计入 PnL。calendar counterfactual 复用候选的 Trigger 时点、当时可见可成交报价、
+Funding、费用、数量精度和 30% 容量，但不写 Forecast、Target、订单或账户。观察窗和结算宽限期未成熟时只能输出
+`INCOMPLETE`；成熟后缺少精确月界、决策链或点时事实会失败关闭，不能用插值或事后行情补齐。
+
 ## 4. 目标目录
 
 ```text
