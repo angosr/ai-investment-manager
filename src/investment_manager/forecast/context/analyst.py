@@ -35,8 +35,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v20"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v10"
+ASSESS_INPUT_VERSION = "assess-input-v21"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v11"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -49,7 +49,6 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     schema = strict_output_schema(AssessStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
     draft = definitions["ContextAssessmentDraft"]
-    context_view = definitions["ContextView"]
     views = draft["properties"]["views"]
     evidence_ids = assessment_visible_evidence_ids(packet)
     mechanism_evidence = draft["properties"]["mechanism_evidence_ids"]
@@ -67,17 +66,41 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
         event_reference["properties"]["evidence_id"]["enum"] = list(visible_event_ids)
     event_reference_updates = draft["properties"]["event_reference_updates"]
     event_reference_updates["maxItems"] = len(visible_event_ids)
-    branches: list[dict[str, object]] = []
-    for required in packet.required_views:
-        branch = deepcopy(context_view)
-        properties = branch["properties"]
-        properties["asset"]["enum"] = [required.asset]
-        properties["horizon_minutes"]["enum"] = [required.horizon_minutes]
-        properties["evidence_ids"]["items"]["enum"] = list(evidence_ids)
-        branches.append(branch)
-    views["items"] = {"anyOf": branches}
-    views["minItems"] = len(packet.required_views)
-    views["maxItems"] = len(packet.required_views)
+    if packet.capital_objective is not None:
+        draft["properties"].pop("views")
+        draft["required"].remove("views")
+        capital = definitions["ContextCapitalRelevance"]
+        draft["properties"]["capital_relevance"] = {
+            "$ref": "#/$defs/ContextCapitalRelevance"
+        }
+        capital["properties"]["objective_id"]["enum"] = [
+            packet.capital_objective.objective_id
+        ]
+        capital["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
+        capital["properties"]["evidence_ids"]["minItems"] = 1
+        capital["properties"]["evidence_ids"]["maxItems"] = 12
+        capital["properties"]["invalidation_conditions"]["minItems"] = 1
+        capital["properties"]["invalidation_conditions"]["maxItems"] = 8
+        for unused in (
+            "AssessmentUncertainty",
+            "ContextView",
+            "DirectionalView",
+            "PricedState",
+        ):
+            definitions.pop(unused, None)
+    else:
+        context_view = definitions["ContextView"]
+        branches: list[dict[str, object]] = []
+        for required in packet.required_views:
+            branch = deepcopy(context_view)
+            properties = branch["properties"]
+            properties["asset"]["enum"] = [required.asset]
+            properties["horizon_minutes"]["enum"] = [required.horizon_minutes]
+            properties["evidence_ids"]["items"]["enum"] = list(evidence_ids)
+            branches.append(branch)
+        views["items"] = {"anyOf": branches}
+        views["minItems"] = len(packet.required_views)
+        views["maxItems"] = len(packet.required_views)
     return schema
 
 
@@ -91,6 +114,11 @@ def assess_behavior_hash(
         packet_policy_version=packet.policy_version,
         mandate_version=packet.mandate_version,
         required_views=tuple((item.asset, item.horizon_minutes) for item in packet.required_views),
+        capital_objective=(
+            packet.capital_objective.model_dump(mode="json")
+            if packet.capital_objective is not None
+            else None
+        ),
     )
 
 
@@ -106,6 +134,11 @@ def configured_assess_behavior_hash(config: AppConfig) -> str:
         required_views=tuple(
             (asset.asset, horizon) for asset in mandate.assets for horizon in asset.horizons_minutes
         ),
+        capital_objective=(
+            mandate.capital_objective.model_dump(mode="json")
+            if mandate.capital_objective is not None
+            else None
+        ),
     )
 
 
@@ -116,6 +149,7 @@ def _assess_behavior_hash(
     packet_policy_version: str,
     mandate_version: str,
     required_views: tuple[tuple[str, int], ...],
+    capital_objective: dict[str, object] | None,
 ) -> str:
     return content_hash(
         {
@@ -128,6 +162,7 @@ def _assess_behavior_hash(
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
             "required_views": required_views,
+            "capital_objective": capital_objective,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,

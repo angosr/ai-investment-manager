@@ -1612,10 +1612,22 @@ def test_capital_objective_replaces_redundant_direction_views(
     assert assessment.capital_relevance == capital
     assert assessment.views == ()
     projected = decision_packet_analysis_projection(packet)
+    schema = assess_output_schema(packet)
+    draft_schema = schema["$defs"]["ContextAssessmentDraft"]
+    capital_schema = schema["$defs"]["ContextCapitalRelevance"]
     assert projected["capital_objective"]["objective_id"] == (
         "btc-calendar-carry-entry-veto-v1"
     )
     assert "required_views" not in projected
+    assert "views" not in draft_schema["properties"]
+    assert "ContextView" not in schema["$defs"]
+    assert draft_schema["properties"]["capital_relevance"] == {
+        "$ref": "#/$defs/ContextCapitalRelevance"
+    }
+    assert capital_schema["properties"]["objective_id"]["enum"] == [
+        "btc-calendar-carry-entry-veto-v1"
+    ]
+    assert len(canonical_json(schema)) < 7_500
 
 
 def test_new_optional_capital_fields_do_not_change_legacy_packet_identity(
