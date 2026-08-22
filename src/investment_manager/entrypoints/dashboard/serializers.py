@@ -75,6 +75,11 @@ def cycle_detail(facts: CycleFacts) -> dict:
 def assessment_row(record: AssessmentRecord) -> dict:
     assessment = record.assessment
     directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
+    cited_evidence_ids = {
+        evidence_id
+        for item in (*assessment.drivers, *assessment.views)
+        for evidence_id in item.evidence_ids
+    }
     return {
         "assessment_id": assessment.assessment_id,
         "at": fmt.iso(assessment.available_at),
@@ -82,6 +87,7 @@ def assessment_row(record: AssessmentRecord) -> dict:
         "summary": _assessment_summary(assessment),
         "mechanism": assessment.market_mechanism,
         "driver_count": len(assessment.drivers),
+        "evidence_count": len(cited_evidence_ids),
         "directional_view_count": len(directional),
         "view_count": len(assessment.views),
     }

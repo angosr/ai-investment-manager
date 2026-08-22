@@ -393,6 +393,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         "rejection_reasons": ["AI 输出格式不符合契约"],
     }
     assert assessment_detail.status_code == 200
+    assert assessment_detail.json()["evidence_count"] == 1
     assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
     assert assessment_detail.json()["views"][0]["outcome"] is None
     assert assessment_detail.json()["drivers"][0]["evidence"] == [

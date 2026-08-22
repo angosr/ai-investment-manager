@@ -79,6 +79,7 @@ export interface AssessmentRecordRow {
   summary: string;
   mechanism: string;
   driver_count: number;
+  evidence_count: number;
   directional_view_count: number;
   view_count: number;
 }
