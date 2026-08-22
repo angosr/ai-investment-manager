@@ -45,6 +45,7 @@ def capital_behavior_hash(config: AppConfig) -> str:
         {
             "carry_forecast": config.carry_forecast.model_dump(mode="json"),
             "capital": config.capital.model_dump(mode="json"),
+            "frequency": config.frequency.model_dump(mode="json"),
             "market_data": config.market_data.model_dump(mode="json"),
             "trigger": config.trigger.model_dump(mode="json"),
             "temporal": config.temporal.model_dump(mode="json"),

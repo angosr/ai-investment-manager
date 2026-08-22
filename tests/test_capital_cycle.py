@@ -317,6 +317,55 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert activity.reason_codes == ("NO_ACTIVE_CAPITAL_OPPORTUNITY",)
 
 
+def test_capital_cycle_assembles_the_exact_configured_mock_carry_candidate() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    carry = config.carry_forecast
+    authorization = MockCandidateAuthorization(
+        version="test-carry-mock-authorization-v1",
+        producer_id=carry.producer_id,
+        producer_version=carry.version,
+        forecast_family=carry.forecast_family,
+        hypothesis_fingerprint="b" * 64,
+        evaluation_plan_id="test-carry-capital-plan",
+        valid_from=datetime(2026, 9, 1, tzinfo=UTC),
+        valid_until=datetime(2027, 9, 1, tzinfo=UTC),
+        maximum_allocation_fraction=Decimal("0.30"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    configured = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={"mock_candidate_authorizations": (authorization,)}
+            )
+        }
+    )
+    market = SqlMarketDataStore(engine)
+    _put_market(market, configured, at=NOW, sequence=7)
+
+    result = assemble_capital_cycle(configured, engine).produce(
+        as_of=NOW,
+        cause_id="configured-carry-candidate-batch",
+        trigger_batch_id="configured-carry-candidate-batch",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert len(result.groups) == 1
+    assert len(result.groups[0].target_legs) == 2
+    account = SqlPortfolioStore(engine).latest_account(
+        portfolio_id=configured.capital.decision.portfolio_id,
+        as_of=NOW,
+    )
+    assert account is not None
+    assert account.positions
+    target = result.account.sleeves[0]
+    assert target.forecast_family == carry.forecast_family
+
+
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

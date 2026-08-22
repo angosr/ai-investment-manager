@@ -9,6 +9,7 @@ from investment_manager.governance.evaluation.capital import (
     CapitalShadowEvaluationSpec,
     CapitalShadowEvaluationStatus,
     build_capital_shadow_evaluation_plan,
+    capital_behavior_hash,
     evaluate_capital_shadow_plan,
     validate_capital_shadow_evaluation_plan,
 )
@@ -103,6 +104,14 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
     assert "AUTHORITATIVE_ACCOUNT_BOUNDARIES_WITHIN_DELAY" in plan.hard_guardrails
     assert plan.fixed_regression_suite_version.endswith("v3")
     assert plan.candidate_spec_hash == content_hash(spec)
+    changed_cost = config.model_copy(
+        update={
+            "frequency": config.frequency.model_copy(
+                update={"latency_bps": config.frequency.latency_bps + Decimal("0.1")}
+            )
+        }
+    )
+    assert capital_behavior_hash(changed_cost) != spec.capital_behavior_hash
 
 
 def test_capital_shadow_plan_rejects_short_or_retrospective_windows() -> None:
