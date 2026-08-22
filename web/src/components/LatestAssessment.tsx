@@ -20,6 +20,12 @@ const EVIDENCE_KIND: Record<string, string> = {
   PREVIOUS_CONTEXT: "上一轮认知",
 };
 
+const CAPITAL_STATUS: Record<string, string> = {
+  BASE_UNCHANGED: "程序基线不变",
+  ENTRY_VETO_CANDIDATE: "入场否决研究候选",
+  INSUFFICIENT_EVIDENCE: "证据不足，不改变基线",
+};
+
 /** Latest immutable world-cognition snapshot plus the current update status. */
 export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
@@ -75,6 +81,17 @@ export function LatestAssessment() {
             <div className={styles.summary}>
               {currentRow.summary}
             </div>
+            {detail?.capital_relevance ? (
+              <div className={styles.capital}>
+                <b>
+                  {CAPITAL_STATUS[detail.capital_relevance.status]
+                    ?? detail.capital_relevance.status}
+                </b>
+                <span>{detail.capital_relevance.thesis}</span>
+                <span>{detail.capital_relevance.transmission}</span>
+                <small>研究旁路 · 资本权限：无</small>
+              </div>
+            ) : null}
             <p className={styles.mechanism}>
               {detail?.mechanism ?? currentRow.mechanism}
             </p>

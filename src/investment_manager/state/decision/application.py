@@ -118,7 +118,7 @@ class DecisionPacketPreparation:
             raise ValueError("DecisionPacket market interval/source 不能为空")
         if market_bar_window < 2 or maximum_market_age_seconds < 1:
             raise ValueError("DecisionPacket market window/age 配置非法")
-        if not 8 <= funding_history_lookback_hours <= 168:
+        if not 8 <= funding_history_lookback_hours <= 720:
             raise ValueError("DecisionPacket Funding 窗口配置非法")
         if maximum_perpetual_age_seconds < 1:
             raise ValueError("DecisionPacket Perpetual age 配置非法")

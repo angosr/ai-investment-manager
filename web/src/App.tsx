@@ -67,8 +67,8 @@ function CapitalDashboard({
     <div className={styles.grid}>
       <main className={styles.main}>
         <CapitalEquityHero data={capital} />
-        <LatestAssessment />
         <Timeline onOpenSnapshot={onOpenSnapshot} capitalMode />
+        <LatestAssessment />
       </main>
       <aside className={styles.side}>
         <Capital data={capital} />

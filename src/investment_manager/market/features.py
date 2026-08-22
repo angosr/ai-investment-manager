@@ -89,8 +89,8 @@ def build_derivative_context_snapshot(
 ) -> DerivativeContextSnapshot:
     """Project executable basis and funding history into one dense, replayable fact."""
 
-    if not 1 <= funding_window_hours <= 168:
-        raise ValueError("Funding 汇总窗口必须在 1..168 小时")
+    if not 1 <= funding_window_hours <= 720:
+        raise ValueError("Funding 汇总窗口必须在 1..720 小时")
     if maximum_quote_skew_seconds < 1:
         raise ValueError("跨市场报价时间偏差上限必须为正数")
     if state.instrument != quote.instrument or state.instrument.symbol != spot.symbol:
@@ -120,6 +120,20 @@ def build_derivative_context_snapshot(
     rates_bps = tuple(item.funding_rate * Decimal("10000") for item in visible)
     rate_sum = sum(rates_bps, Decimal("0")) if rates_bps else None
     rate_mean = rate_sum / Decimal(len(rates_bps)) if rate_sum is not None else None
+    if rate_mean is None:
+        rate_stddev = None
+        positive_fraction = None
+        rate_min = None
+    else:
+        variance = sum(
+            ((rate - rate_mean) ** 2 for rate in rates_bps),
+            Decimal("0"),
+        ) / Decimal(len(rates_bps))
+        rate_stddev = variance.sqrt()
+        positive_fraction = Decimal(
+            sum(1 for rate in rates_bps if rate > 0)
+        ) / Decimal(len(rates_bps))
+        rate_min = min(rates_bps)
     spot_flow = _spot_flow_summary(spot, window_minutes=60)
     return DerivativeContextSnapshot(
         cycle_id=cycle_id,
@@ -139,6 +153,9 @@ def build_derivative_context_snapshot(
         last_funding_rate_bps=state.last_funding_rate * Decimal("10000"),
         trailing_funding_rate_mean_bps=rate_mean,
         trailing_funding_rate_sum_bps=rate_sum,
+        trailing_funding_rate_stddev_bps=rate_stddev,
+        trailing_funding_positive_fraction=positive_fraction,
+        trailing_funding_rate_min_bps=rate_min,
         funding_settlement_count=len(rates_bps),
         funding_window_hours=funding_window_hours,
         next_funding_time=state.next_funding_time,

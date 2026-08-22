@@ -141,6 +141,15 @@ class AppConfig(StrictConfig):
             raise ValueError("启用 ContextAssessment 前必须启用受控 Codex runtime")
         if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
             raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
+        objective = self.assessment.mandate.capital_objective
+        if self.assessment.enabled and objective is None:
+            raise ValueError("启用 ContextAssessment 时必须绑定一个明确资本问题")
+        if objective is not None and (
+            objective.producer_id != self.carry_forecast.producer_id
+            or objective.producer_version != self.carry_forecast.version
+            or objective.forecast_family != self.carry_forecast.forecast_family
+        ):
+            raise ValueError("ContextAssessment 资本问题必须绑定当前 Carry producer 身份")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
         if self.carry_forecast.enabled:

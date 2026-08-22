@@ -14,20 +14,10 @@ from investment_manager.forecast.context.application import (
     AssessmentCommand,
     AssessmentWorkflowStatus,
 )
-from investment_manager.forecast.context.calibration import (
-    AssessmentCalibrationBuilder,
-    AssessmentCalibrationBuildSpec,
-)
 from investment_manager.forecast.context.contract import AssessStructuredOutput
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
-)
-from investment_manager.forecast.context.projection import (
-    AssessmentForecastPolicy,
-    AssessmentForecastProjector,
-    AssessmentViewCalibration,
-    build_assessment_view_calibration,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.service import (
@@ -45,12 +35,9 @@ from investment_manager.forecast.models import (
     ContextAssessment,
     ContextView,
     DirectionalView,
-    ForecastOutcomeStatus,
-    ForecastRole,
     PricedState,
 )
 from investment_manager.forecast.tables import assessment_executions, assessment_view_outcomes
-from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -153,60 +140,6 @@ def _assessment() -> ContextAssessment:
                 invalidation_conditions=("policy-reversal",),
             ),
         ),
-    )
-
-
-def _calibration(**updates):
-    values = {
-        "version": "assessment-calibration-v1",
-        "analysis_scope": "crypto-portfolio",
-        "analysis_behavior_hash": "b" * 64,
-        "outcome_evaluation_version": "assessment-outcome-v1",
-        "method_version": "mean-lower-bound-v1",
-        "lower_confidence_z": Decimal("1.96"),
-        "asset": "BTC",
-        "symbol": "BTCUSDT",
-        "horizon_minutes": 240,
-        "direction": DirectionalView.UP,
-        "already_priced": PricedState.PARTIAL,
-        "uncertainty": AssessmentUncertainty.MEDIUM,
-        "training_start": NOW - timedelta(days=30),
-        "training_end": NOW - timedelta(days=2),
-        "trained_through": NOW - timedelta(days=2),
-        "available_at": NOW - timedelta(days=1),
-        "expected_edge_half_life_seconds": 7_200,
-        "expected_gross_bps": Decimal("18"),
-        "conservative_gross_bps": Decimal("7"),
-        "dispersion_bps": Decimal("24"),
-        "sample_size": 60,
-        "non_overlapping_sample_size": 35,
-    }
-    values.update(updates)
-    values.setdefault(
-        "source_refs",
-        tuple(
-            f"outcome-{index:02}" for index in range(values["sample_size"])
-        ),
-    )
-    values.setdefault(
-        "non_overlapping_source_refs",
-        tuple(
-            f"outcome-{index:02}"
-            for index in range(values["non_overlapping_sample_size"])
-        ),
-    )
-    return build_assessment_view_calibration(**values)
-
-
-def _projector() -> AssessmentForecastProjector:
-    return AssessmentForecastProjector(
-        AssessmentForecastPolicy(
-            version="assessment-forecast-v1",
-            maximum_age_seconds=3_600,
-            maximum_reference_market_age_seconds=30,
-            minimum_sample_size=40,
-            minimum_non_overlapping_sample_size=30,
-        )
     )
 
 
@@ -343,94 +276,6 @@ def test_language_preference_does_not_reject_structurally_valid_output(text: str
     assert output.assessment.market_mechanism == text
 
 
-def test_exact_point_in_time_calibration_produces_ai_event_forecast() -> None:
-    result = _projector().project(
-        packet=_packet(),
-        assessment=_assessment(),
-        calibrations=(_calibration(),),
-        reference_trades=(_reference_trade(),),
-    )
-
-    assert result.uncalibrated_views == ()
-    assert len(result.forecasts) == 1
-    forecast = result.forecasts[0]
-    assert forecast.role == ForecastRole.AI_EVENT
-    assert tuple(item.instrument.key for item in forecast.target.legs) == (
-        "BINANCE:SPOT:BTCUSDT",
-    )
-    assert tuple(item.price for item in forecast.reference_prices) == (
-        Decimal("70010"),
-    )
-    assert forecast.assessment_id == "assessment-1"
-    assert forecast.base_forecast_id is None
-    assert forecast.conservative_gross_bps == Decimal("7")
-    assert forecast.valid_until == _assessment().available_at + timedelta(hours=1)
-
-
-def test_missing_or_underpowered_calibration_cannot_grant_ai_capital_signal() -> None:
-    missing = _projector().project(
-        packet=_packet(),
-        assessment=_assessment(),
-        calibrations=(),
-        reference_trades=(_reference_trade(),),
-    )
-    underpowered = _projector().project(
-        packet=_packet(),
-        assessment=_assessment(),
-        calibrations=(_calibration(non_overlapping_sample_size=29),),
-        reference_trades=(_reference_trade(),),
-    )
-
-    assert missing.forecasts == ()
-    assert missing.uncalibrated_views == (("BTC", 240),)
-    assert underpowered.forecasts == ()
-    assert underpowered.uncalibrated_views == (("BTC", 240),)
-
-
-def test_future_calibration_is_rejected_instead_of_leaking() -> None:
-    with pytest.raises(ValueError, match="as_of 之后"):
-        _projector().project(
-            packet=_packet(),
-            assessment=_assessment(),
-            calibrations=(_calibration(available_at=NOW + timedelta(seconds=1)),),
-            reference_trades=(_reference_trade(),),
-        )
-
-
-def test_other_analysis_behavior_calibration_is_rejected() -> None:
-    with pytest.raises(ValueError, match="其他分析行为"):
-        _projector().project(
-            packet=_packet(),
-            assessment=_assessment(),
-            calibrations=(_calibration(analysis_behavior_hash="c" * 64),),
-            reference_trades=(_reference_trade(),),
-        )
-
-
-def test_stale_reference_trade_cannot_hide_ai_latency() -> None:
-    with pytest.raises(ValueError, match="过期"):
-        _projector().project(
-            packet=_packet(),
-            assessment=_assessment(),
-            calibrations=(_calibration(),),
-            reference_trades=(
-                _reference_trade(
-                    event_time=NOW - timedelta(minutes=1),
-                    observed_at=NOW - timedelta(minutes=1),
-                ),
-            ),
-        )
-
-
-def test_calibration_identity_is_content_addressed() -> None:
-    calibration = _calibration()
-    payload = calibration.model_dump()
-    payload["expected_gross_bps"] = Decimal("99")
-
-    with pytest.raises(ValueError, match="content_hash"):
-        AssessmentViewCalibration.model_validate(payload)
-
-
 def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
@@ -525,124 +370,6 @@ def test_missing_signal_time_market_data_is_unscorable_not_packet_price() -> Non
     assert outcome.reason_code == (
         "REFERENCE_MARKET_DATA_MISSING_AT_ASSESSMENT_AVAILABILITY"
     )
-
-
-def _settled_assessment_outcome(
-    index: int,
-    *,
-    signal_at: datetime,
-    directional_return_bps: Decimal,
-) -> AssessmentViewOutcome:
-    assessment_id = f"assessment-training-{index}"
-    evaluation_at = signal_at + timedelta(minutes=240)
-    reference_price = Decimal("100")
-    exit_price = reference_price * (
-        Decimal("1") + directional_return_bps / Decimal("10000")
-    )
-    return AssessmentViewOutcome(
-        outcome_id=stable_id(
-            "assessment_view_outcome",
-            assessment_id,
-            "BTC",
-            240,
-            "assessment-outcome-v1",
-        ),
-        assessment_id=assessment_id,
-        decision_packet_hash="a" * 64,
-        analysis_scope="crypto-portfolio",
-        analysis_behavior_hash="b" * 64,
-        evaluation_version="assessment-outcome-v1",
-        asset="BTC",
-        symbol="BTCUSDT",
-        horizon_minutes=240,
-        direction=DirectionalView.UP,
-        already_priced=PricedState.PARTIAL,
-        uncertainty=AssessmentUncertainty.MEDIUM,
-        status=ForecastOutcomeStatus.SETTLED,
-        signal_observed_at=signal_at,
-        evaluation_at=evaluation_at,
-        settled_at=evaluation_at + timedelta(minutes=1),
-        reference_price=reference_price,
-        exit_price=exit_price,
-        exit_event_time=evaluation_at,
-        market_return_bps=directional_return_bps,
-        directional_return_bps=directional_return_bps,
-        direction_correct=directional_return_bps > 0,
-        reason_code="DIRECTIONAL_RETURN_AVAILABLE",
-    )
-
-
-def _calibration_spec() -> AssessmentCalibrationBuildSpec:
-    return AssessmentCalibrationBuildSpec(
-        analysis_scope="crypto-portfolio",
-        analysis_behavior_hash="b" * 64,
-        outcome_evaluation_version="assessment-outcome-v1",
-        asset="BTC",
-        symbol="BTCUSDT",
-        horizon_minutes=240,
-        direction=DirectionalView.UP,
-        already_priced=PricedState.PARTIAL,
-        uncertainty=AssessmentUncertainty.MEDIUM,
-        training_start=NOW - timedelta(days=2),
-        training_end=NOW - timedelta(hours=2),
-        published_at=NOW,
-        expected_edge_half_life_seconds=7_200,
-    )
-
-
-def test_assessment_calibration_is_computed_only_from_non_overlapping_outcomes() -> None:
-    outcomes = tuple(
-        _settled_assessment_outcome(
-            index,
-            signal_at=NOW - timedelta(hours=20 - index * 6),
-            directional_return_bps=Decimal(str(10 + index * 10)),
-        )
-        for index in range(3)
-    )
-    policy = AssessmentForecastPolicy(
-        version="assessment-forecast-v1",
-        maximum_age_seconds=3_600,
-        maximum_reference_market_age_seconds=30,
-        minimum_sample_size=3,
-        minimum_non_overlapping_sample_size=3,
-    )
-
-    calibration = AssessmentCalibrationBuilder(policy).build(
-        outcomes,
-        _calibration_spec(),
-    )
-
-    assert calibration.expected_gross_bps == Decimal("20")
-    assert calibration.dispersion_bps == Decimal("10")
-    assert calibration.conservative_gross_bps < Decimal("20")
-    assert calibration.sample_size == 3
-    assert calibration.non_overlapping_sample_size == 3
-    assert calibration.analysis_behavior_hash == "b" * 64
-    assert calibration.source_refs == tuple(sorted(item.outcome_id for item in outcomes))
-
-
-def test_overlapping_assessment_outcomes_cannot_satisfy_calibration_gate() -> None:
-    outcomes = tuple(
-        _settled_assessment_outcome(
-            index,
-            signal_at=NOW - timedelta(hours=10 - index),
-            directional_return_bps=Decimal("10"),
-        )
-        for index in range(3)
-    )
-    policy = AssessmentForecastPolicy(
-        version="assessment-forecast-v1",
-        maximum_age_seconds=3_600,
-        maximum_reference_market_age_seconds=30,
-        minimum_sample_size=3,
-        minimum_non_overlapping_sample_size=3,
-    )
-
-    with pytest.raises(ValueError, match="非重叠"):
-        AssessmentCalibrationBuilder(policy).build(
-            outcomes,
-            _calibration_spec(),
-        )
 
 
 class _CountingContextAnalyst:

@@ -11,6 +11,10 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ForecastOutcomeStatus
+from investment_manager.governance.evaluation.context_capital import (
+    ContextCapitalForwardSpec,
+    validate_context_capital_runtime_plan,
+)
 from investment_manager.governance.models import (
     EvaluationPlan,
     EvaluationStage,
@@ -33,9 +37,7 @@ class AssessmentEvaluationScope(FrozenModel):
 class AssessmentForwardEvaluationSpec(FrozenModel):
     """Immutable, result-before-known contract for ContextAssessment outcomes."""
 
-    version: Literal["context-assessment-forward-spec-v1"] = (
-        "context-assessment-forward-spec-v1"
-    )
+    version: Literal["context-assessment-forward-spec-v1"] = "context-assessment-forward-spec-v1"
     plan_id: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -57,9 +59,7 @@ class AssessmentForwardEvaluationSpec(FrozenModel):
     def scope_and_window_are_canonical_and_feasible(self):
         if not self.signal_window_start < self.signal_window_end:
             raise ValueError("ContextAssessment 前向窗口起点必须早于终点")
-        keys = tuple(
-            (item.asset, item.symbol, item.horizon_minutes) for item in self.scopes
-        )
+        keys = tuple((item.asset, item.symbol, item.horizon_minutes) for item in self.scopes)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("ContextAssessment 前向作用域必须唯一且排序")
         required_span = timedelta(
@@ -164,12 +164,8 @@ class AssessmentForwardEvaluationCatalog:
         )
 
     def load(self, result_id: str) -> AssessmentForwardEvaluationResult:
-        raw = json.loads(
-            (self._root / f"{result_id}.json").read_text(encoding="utf-8")
-        )
-        if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(
-            raw.get("result")
-        ):
+        raw = json.loads((self._root / f"{result_id}.json").read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(raw.get("result")):
             raise ValueError("ContextAssessment 前向评价制品内容哈希不匹配")
         envelope = _AssessmentForwardEnvelope.model_validate(raw)
         if envelope.result.result_id != result_id:
@@ -191,18 +187,14 @@ def build_assessment_forward_plan(
         registered_at=registered,
         base_manifest_id=base_manifest_id,
         primary_metric="return_delta_bps_lower_bound_vs_always_up_each_scope",
-        minimum_sample_size=(
-            spec.minimum_non_overlapping_samples * len(spec.scopes)
-        ),
+        minimum_sample_size=(spec.minimum_non_overlapping_samples * len(spec.scopes)),
         hard_guardrails=(
             "NON_OVERLAPPING_SCOREABLE_SAMPLE_SUFFICIENT_EACH_SCOPE",
             "PAIRED_RETURN_DELTA_LOWER_BOUND_POSITIVE_EACH_SCOPE",
             "NO_PENDING_ASSESSMENT_IN_SIGNAL_WINDOW",
         ),
         required_stages=(EvaluationStage.SHADOW,),
-        fixed_regression_suite_version=(
-            "context-assessment-forward-regression-v1"
-        ),
+        fixed_regression_suite_version=("context-assessment-forward-regression-v1"),
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
     )
@@ -224,8 +216,7 @@ def validate_assessment_forward_plan(
     if plan != expected:
         raise ValueError("ContextAssessment EvaluationPlan 与预登记合同不一致")
     complete_after = spec.signal_window_end + timedelta(
-        minutes=max(item.horizon_minutes for item in spec.scopes)
-        + spec.settlement_grace_minutes
+        minutes=max(item.horizon_minutes for item in spec.scopes) + spec.settlement_grace_minutes
     )
     if published < complete_after:
         raise ValueError("ContextAssessment 前向窗口尚未完整到期并经过结算宽限")
@@ -237,8 +228,16 @@ def validate_assessment_runtime_plan(
     manifest: ReleaseManifest,
     plans: tuple[EvaluationPlan, ...],
     started_at: datetime,
-) -> tuple[AssessmentForwardEvaluationSpec, EvaluationPlan]:
+) -> tuple[AssessmentForwardEvaluationSpec | ContextCapitalForwardSpec, EvaluationPlan]:
     """Require one exact preregistered Context behavior before worker startup."""
+
+    if config.assessment.mandate.capital_objective is not None:
+        return validate_context_capital_runtime_plan(
+            config=config,
+            manifest=manifest,
+            plans=plans,
+            started_at=started_at,
+        )
 
     from investment_manager.forecast.context.analyst import (
         configured_assess_behavior_hash,
@@ -281,10 +280,8 @@ def validate_assessment_runtime_plan(
         if (
             spec.analysis_scope != mandate.analysis_scope
             or spec.analysis_behavior_hash != configured_assess_behavior_hash(config)
-            or spec.outcome_evaluation_version
-            != config.outcome_evaluation.assessment_version
-            or spec.settlement_grace_minutes
-            != config.outcome_evaluation.settlement_grace_minutes
+            or spec.outcome_evaluation_version != config.outcome_evaluation.assessment_version
+            or spec.settlement_grace_minutes != config.outcome_evaluation.settlement_grace_minutes
             or spec.scopes != expected_scopes
         ):
             raise ValueError("ContextAssessment EvaluationPlan 与当前行为不一致")
@@ -305,33 +302,23 @@ def evaluate_assessment_forward_plan(
     published_at: datetime,
 ) -> AssessmentForwardEvaluationResult:
     published = require_utc(published_at)
-    scope_keys = {
-        (item.asset, item.symbol, item.horizon_minutes) for item in spec.scopes
-    }
+    scope_keys = {(item.asset, item.symbol, item.horizon_minutes) for item in spec.scopes}
     if any(
         item.analysis_scope != spec.analysis_scope
         or item.analysis_behavior_hash != spec.analysis_behavior_hash
         or item.evaluation_version != spec.outcome_evaluation_version
         or (item.asset, item.symbol, item.horizon_minutes) not in scope_keys
-        or not spec.signal_window_start
-        <= item.signal_observed_at
-        < spec.signal_window_end
+        or not spec.signal_window_start <= item.signal_observed_at < spec.signal_window_end
         or item.settled_at > published
         for item in outcomes
     ):
         raise ValueError("ContextAssessment 前向评价包含预登记作用域外结果")
     outcome_ids = tuple(item.outcome_id for item in outcomes)
-    view_keys = tuple(
-        (item.assessment_id, item.asset, item.horizon_minutes) for item in outcomes
-    )
-    if len(set(outcome_ids)) != len(outcome_ids) or len(set(view_keys)) != len(
-        view_keys
-    ):
+    view_keys = tuple((item.assessment_id, item.asset, item.horizon_minutes) for item in outcomes)
+    if len(set(outcome_ids)) != len(outcome_ids) or len(set(view_keys)) != len(view_keys):
         raise ValueError("ContextAssessment 前向评价结果不得重复")
 
-    ordered = tuple(
-        sorted(outcomes, key=lambda item: (item.signal_observed_at, item.outcome_id))
-    )
+    ordered = tuple(sorted(outcomes, key=lambda item: (item.signal_observed_at, item.outcome_id)))
     metrics = tuple(
         _scope_metrics(
             scope,
@@ -365,9 +352,7 @@ def evaluate_assessment_forward_plan(
     else:
         outcome = AssessmentForwardOutcome.PASSED
         reason_codes = ()
-    source_hash = content_hash(
-        [item.model_dump(mode="json") for item in ordered]
-    )
+    source_hash = content_hash([item.model_dump(mode="json") for item in ordered])
     spec_hash = content_hash(spec)
     limitations = (
         "DIRECTIONAL_ASSESSMENT_ONLY_NOT_TRADABLE_PNL",
@@ -415,9 +400,7 @@ def failed_assessment_forward_experiment(
             "failed_context_assessment_forward",
             result.result_id,
         ),
-        hypothesis_fingerprint=content_hash(
-            {"hypothesis": hypothesis.strip().lower()}
-        ),
+        hypothesis_fingerprint=content_hash({"hypothesis": hypothesis.strip().lower()}),
         evidence_ids=(f"hypothesis:{hypothesis}", result.result_id),
         rejected_at=require_utc(rejected_at),
         reason_codes=("CONTEXT_ASSESSMENT_FORWARD_FAILED", *result.reason_codes),
@@ -435,8 +418,7 @@ def _scope_metrics(
     scoreable = tuple(
         item
         for item in outcomes
-        if item.status
-        in (ForecastOutcomeStatus.SETTLED, ForecastOutcomeStatus.ABSTAINED)
+        if item.status in (ForecastOutcomeStatus.SETTLED, ForecastOutcomeStatus.ABSTAINED)
     )
     independent = _non_overlapping(scoreable)
     strategy_returns = tuple(_strategy_return(item) for item in independent)
@@ -449,9 +431,7 @@ def _scope_metrics(
             strict=True,
         )
     )
-    settled = tuple(
-        item for item in independent if item.status == ForecastOutcomeStatus.SETTLED
-    )
+    settled = tuple(item for item in independent if item.status == ForecastOutcomeStatus.SETTLED)
     correct = sum(item.direction_correct is True for item in settled)
     return AssessmentScopeMetrics(
         asset=scope.asset,
@@ -462,17 +442,11 @@ def _scope_metrics(
         settled_direction_count=sum(
             item.status == ForecastOutcomeStatus.SETTLED for item in outcomes
         ),
-        abstained_count=sum(
-            item.status == ForecastOutcomeStatus.ABSTAINED for item in outcomes
-        ),
-        unscorable_count=sum(
-            item.status == ForecastOutcomeStatus.UNSCORABLE for item in outcomes
-        ),
+        abstained_count=sum(item.status == ForecastOutcomeStatus.ABSTAINED for item in outcomes),
+        unscorable_count=sum(item.status == ForecastOutcomeStatus.UNSCORABLE for item in outcomes),
         non_overlapping_scoreable_count=len(independent),
         correct_direction_count=correct,
-        directional_accuracy=(
-            Decimal(correct) / Decimal(len(settled)) if settled else None
-        ),
+        directional_accuracy=(Decimal(correct) / Decimal(len(settled)) if settled else None),
         abstention_fraction=(
             Decimal(sum(item.status == ForecastOutcomeStatus.ABSTAINED for item in scoreable))
             / Decimal(len(scoreable))
@@ -508,10 +482,7 @@ def _non_overlapping(
             item.outcome_id,
         ),
     ):
-        if (
-            last_evaluation_at is not None
-            and outcome.signal_observed_at < last_evaluation_at
-        ):
+        if last_evaluation_at is not None and outcome.signal_observed_at < last_evaluation_at:
             continue
         selected.append(outcome)
         last_evaluation_at = outcome.evaluation_at
@@ -547,7 +518,5 @@ def _mean_lower_bound(
         return None
     count = Decimal(len(values))
     mean = sum(values, Decimal("0")) / count
-    variance = sum(((item - mean) ** 2 for item in values), Decimal("0")) / (
-        count - 1
-    )
+    variance = sum(((item - mean) ** 2 for item in values), Decimal("0")) / (count - 1)
     return mean - z * (variance / count).sqrt()

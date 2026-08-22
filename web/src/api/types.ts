@@ -58,6 +58,22 @@ export interface CapitalOverview {
       return_fraction: string;
     } | null;
   };
+  candidate: {
+    symbol: string;
+    base_asset: string;
+    quote_asset: string;
+    producer_id: string;
+    producer_version: string;
+    forecast_family: string;
+    authorization_status: "NOT_AUTHORIZED" | "NOT_YET_VALID" | "ACTIVE" | "EXPIRED";
+    authorization_valid_from: string | null;
+    authorization_valid_until: string | null;
+    maximum_allocation_fraction: string | null;
+    next_entry_at: string | null;
+    next_entry_expires_at: string | null;
+    conservative_annualized_net_fraction: string | null;
+    real_order_authorized: false;
+  } | null;
 }
 
 export interface CapitalAction {
@@ -90,6 +106,7 @@ export interface AssessmentRecordRow {
   evidence_count: number;
   directional_view_count: number;
   view_count: number;
+  capital_status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE" | null;
 }
 
 export interface AssessmentQuality {
@@ -117,6 +134,15 @@ export interface Page<T> {
 
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
   as_of: string;
+  capital_relevance: {
+    objective_id: string;
+    status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE";
+    thesis: string;
+    transmission: string;
+    evidence: AssessmentEvidence[];
+    invalidation_conditions: string[];
+    capital_authority: "NONE";
+  } | null;
   drivers: {
     statement: string;
     status: "CONFIRMED" | "INFERRED" | "UNVERIFIED";
@@ -173,6 +199,14 @@ export interface AssessmentInputSnapshot {
   as_of: string;
   policy_version: string;
   question: string;
+  capital_objective?: {
+    objective_id: string;
+    decision_kind: "CARRY_ENTRY_VETO";
+    producer_id: string;
+    producer_version: string;
+    forecast_family: string;
+    base_decision_inputs: string[];
+  };
   portfolio: {
     quote_balance: string;
     equity: string | null;
@@ -197,6 +231,25 @@ export interface AssessmentInputSnapshot {
     volume_ratio: string;
     regime: string;
     market_age_seconds: number;
+  }[];
+  derivative_states: {
+    asset: string;
+    evidence_ref: string;
+    observed_at: string;
+    mark_index_premium_bps: string;
+    executable_short_basis_bps: string;
+    perpetual_spread_bps: string;
+    last_funding_rate_bps: string;
+    trailing_funding_rate_mean_bps?: string;
+    trailing_funding_rate_stddev_bps?: string;
+    trailing_funding_positive_fraction?: string;
+    trailing_funding_rate_min_bps?: string;
+    funding_settlement_count: number;
+    funding_window_hours: number;
+    next_funding_time: string;
+    open_interest_change_fraction?: string;
+    global_long_account_fraction?: string;
+    taker_buy_sell_ratio?: string;
   }[];
   deltas: {
     delta_id: string;
@@ -232,6 +285,13 @@ export interface AssessmentInputSnapshot {
     as_of: string;
     available_at: string;
     market_mechanism: string;
+    capital_relevance?: {
+      objective_id: string;
+      status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE";
+      thesis: string;
+      transmission: string;
+      invalidation_condition: string;
+    };
     drivers: {
       statement: string;
       status: "CONFIRMED" | "INFERRED" | "UNVERIFIED";

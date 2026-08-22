@@ -242,6 +242,9 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     assert snapshot.last_funding_rate_bps == Decimal("1")
     assert snapshot.trailing_funding_rate_sum_bps == Decimal("1")
     assert snapshot.trailing_funding_rate_mean_bps == Decimal("1")
+    assert snapshot.trailing_funding_rate_stddev_bps == Decimal("0")
+    assert snapshot.trailing_funding_positive_fraction == Decimal("1")
+    assert snapshot.trailing_funding_rate_min_bps == Decimal("1")
     assert snapshot.funding_settlement_count == 1
     assert snapshot.positioning_observed_at == NOW - timedelta(minutes=5)
     assert snapshot.positioning_window_minutes == 60
@@ -351,6 +354,9 @@ def test_derivative_context_without_visible_funding_keeps_empty_summary(
     assert snapshot.funding_settlement_count == 0
     assert snapshot.trailing_funding_rate_sum_bps is None
     assert snapshot.trailing_funding_rate_mean_bps is None
+    assert snapshot.trailing_funding_rate_stddev_bps is None
+    assert snapshot.trailing_funding_positive_fraction is None
+    assert snapshot.trailing_funding_rate_min_bps is None
     assert len(snapshot.input_refs) == 4
 
 
@@ -1086,7 +1092,7 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
 
         async def fetch_funding_settlements(self, instrument, *, start, end):
             assert instrument == _perpetual_instrument()
-            assert start == NOW - timedelta(hours=24)
+            assert start == NOW - timedelta(hours=720)
             assert end == NOW
             self.history_calls += 1
             return (_funding_settlement(),)

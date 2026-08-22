@@ -85,8 +85,8 @@
 
 ### 3.2 Capital 模式的信息层级
 
-Capital Release 不把旧 AnalysisCycle 当成当前资本决策。首屏保留资本权威权益曲线；主列直接展示
-最新 `ContextAssessment` 的世界认知，再展示 `CapitalCycleRecord` 行动记录。它是对永久事实链的
+Capital Release 不把旧 AnalysisCycle 当成当前资本决策。首屏保留资本权威权益曲线；主列先展示
+`CapitalCycleRecord` 行动记录，再展示最新 `ContextAssessment` 的世界认知研究旁路。它是对永久事实链的
 点时、可评价投影，不是原始新闻摘要：每轮继承上一轮结构化认知，再由当前证据延续、修正或推翻；页面
 不得用 Packet facts、原始新闻或宽泛 `state_id` 另拼第二份“世界认知”。每个冻结
 TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是否产生本轮订单”。右栏分成职责明确的
@@ -100,7 +100,10 @@ TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是�
 失败次数和运行错误；失败不得被伪装成“没有发生”，也不得用会随词表变化的规则隐藏已持久化判断；
 三类记录保持各自详情契约，不伪装成同一条资本链，也不从 AI 判断推断当前仓位或收益。
 每条 AI 记录必须提供两个独立入口：“AI 输入快照”只展示该次冻结 Packet；“当时世界认知”只展示该次
-不可变 `ContextAssessment`，包括主导机制、Driver、事件引用及影响状态、竞争证据、缺口、View 和失效条件。
+不可变 `ContextAssessment`，包括主导机制、Driver、事件引用及影响状态、竞争证据、缺口、资本相关性和失效条件；
+历史 View 仍可读，新行为不再产生与 carry 目标错位的短周期方向 View。资本相关性必须展示绑定的任务、
+`BASE_UNCHANGED / ENTRY_VETO_CANDIDATE / INSUFFICIENT_EVIDENCE` 和“研究旁路、资本权限：无”，不能让相邻布局
+暗示它已经改变当前行动。
 最新世界认知是最新合法 Assessment 的直接投影，不能改名为“市场判断”，也不能由附近新闻重新拼装引用。
 “世界事件”合并主资本库的运行触发和 Assessment 库采集的新闻，按事实去重后展示。
 
@@ -252,12 +255,17 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 
 ```bash
 investment-manager dashboard-service \
-  --config config/investment-manager.yaml \
+  --config '<Dashboard 当前构建配置>' \
+  --release-manifest '<Dashboard 当前 ReleaseManifest>' \
+  --capital-config '<资本事实生产者冻结配置>' \
+  --capital-release-manifest '<资本事实生产者冻结 ReleaseManifest>' \
   --database-url "$INVESTMENT_MANAGER_DATABASE_URL" \
   --host 127.0.0.1 --port 8090
 ```
 
 - 仅绑 `127.0.0.1`（与其余服务一致，不对外暴露）。
+- Dashboard 构建身份与资本事实生产者身份分离；主资本健康只使用冻结 `--capital-*`
+  身份解释和校验，不能用 composite Release 制造假一致或永久红灯。
 - 复用既有 `build_engine` 与只读取数类；不新建 ORM。数据库只补读取热路径索引，不增加业务表或写路径。
 
 ### 7.2 依赖

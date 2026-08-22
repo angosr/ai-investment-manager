@@ -36,7 +36,7 @@ class MarketDataPolicy(StrictConfig):
     perpetual_instruments: tuple[InstrumentId, ...] = ()
     perpetual_rest_base_url: str = "https://fapi.binance.com"
     perpetual_poll_seconds: int = Field(default=300, ge=30, le=3600)
-    funding_history_lookback_hours: int = Field(default=24, ge=8, le=168)
+    funding_history_lookback_hours: int = Field(default=720, ge=8, le=720)
 
     @property
     def interval_seconds(self) -> int:

@@ -40,6 +40,7 @@ from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
     PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
     PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+    PacketPreviousCapitalRelevance,
     PacketPreviousContext,
     PacketPreviousDriver,
     PacketPreviousEventReference,
@@ -245,6 +246,26 @@ def _previous_context(
                 stale_at=item.stale_at,
             )
             for item in assessment.event_references
+        ),
+        capital_relevance=(
+            PacketPreviousCapitalRelevance(
+                objective_id=assessment.capital_relevance.objective_id,
+                status=assessment.capital_relevance.status.value,
+                thesis=sanitize_external_text(
+                    assessment.capital_relevance.thesis,
+                    maximum_length=800,
+                )[0],
+                transmission=sanitize_external_text(
+                    assessment.capital_relevance.transmission,
+                    maximum_length=1_200,
+                )[0],
+                invalidation_condition=sanitize_external_text(
+                    assessment.capital_relevance.invalidation_conditions[0],
+                    maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                )[0],
+            )
+            if assessment.capital_relevance is not None
+            else None
         ),
         views=tuple(
             PacketPreviousView(

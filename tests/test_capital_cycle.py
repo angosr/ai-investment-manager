@@ -439,6 +439,10 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert dto["performance"]["cumulative_net_pnl"] == "-3.08315"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
     assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
+    assert dto["candidate"]["symbol"] == "BTCUSDT"
+    assert dto["candidate"]["base_asset"] == "BTC"
+    assert dto["candidate"]["quote_asset"] == "USDT"
+    assert dto["candidate"]["real_order_authorized"] is False
     activity = CapitalDashboardReader(engine, config).activity()
     assert len(activity) == 2
     activity_by_symbol = {item.symbol: item for item in activity}

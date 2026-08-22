@@ -662,6 +662,24 @@ def dashboard_service(
             help="Assessment 历史库对应的 ReleaseManifest",
         ),
     ] = None,
+    capital_config: Annotated[
+        Path,
+        typer.Option(
+            "--capital-config",
+            exists=True,
+            dir_okay=False,
+            help="主资本事实库对应的冻结生产者配置",
+        ),
+    ] = ...,
+    capital_release_manifest: Annotated[
+        Path,
+        typer.Option(
+            "--capital-release-manifest",
+            exists=True,
+            dir_okay=False,
+            help="主资本事实库对应的冻结生产者 ReleaseManifest",
+        ),
+    ] = ...,
     release_manifest: Annotated[
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
@@ -683,8 +701,12 @@ def dashboard_service(
     if resolved_dist is None:
         typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
         typer.echo("先运行：cd web && npm install && npm run build")
-    loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded)
+    load_runtime_release(config, release_manifest)
+    capital_loaded, _ = load_read_only_release_identity(
+        capital_config,
+        capital_release_manifest,
+    )
+    require_runtime_database(database_url, config=capital_loaded)
     assessment_loaded = None
     assessment_identity_args = (
         assessment_database_url,
@@ -705,7 +727,7 @@ def dashboard_service(
         )
         require_runtime_database(assessment_database_url, config=assessment_loaded)
     application = create_app(
-        loaded,
+        capital_loaded,
         database_url,
         assessment_database_url=assessment_database_url,
         assessment_config=assessment_loaded,

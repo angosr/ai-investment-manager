@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v30
+  version: portfolio-state-v31
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v12
@@ -94,8 +94,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v31
-    schema_version: decision-packet-v12
+    version: decision-packet-policy-v32
+    schema_version: decision-packet-v13
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -322,7 +322,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v8
+  version: binance-public-shadow-v9
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64
@@ -353,7 +353,7 @@ market_data:
       contract_multiplier: "1"
   perpetual_rest_base_url: https://fapi.binance.com
   perpetual_poll_seconds: 300
-  funding_history_lookback_hours: 24
+  funding_history_lookback_hours: 720
 
 shadow:
   version: shadow-simulation-v1
@@ -478,12 +478,19 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v26
+  version: context-assessment-v27
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v5
+    version: primary-portfolio-mandate-v6
     analysis_scope: primary-portfolio
-    question: 维护当前世界认知，识别相对上一轮的实质变化、竞争解释、已验证传导及其资本含义。
+    question: 判断程序化 BTC 现货与永续 carry 基线之外，是否出现足以否决下一次入场的外生或跨市场风险，并维护支持该判断的当前世界认知。
+    capital_objective:
+      objective_id: btc-calendar-carry-entry-veto-v1
+      decision_kind: CARRY_ENTRY_VETO
+      producer_id: btc-spot-perp-carry
+      producer_version: btc-carry-monthly-first-open-v4
+      forecast_family: delta-neutral-funding-carry
+      base_decision_inputs: [BASIS, COSTS, FUNDING, LIQUIDITY, MARGIN, VENUE]
     assets:
       - asset: BTC
         market_symbol: BTCUSDT

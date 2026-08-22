@@ -221,8 +221,15 @@ class DerivativeContextSnapshot(FrozenModel):
     last_funding_rate_bps: Decimal
     trailing_funding_rate_mean_bps: Decimal | None = None
     trailing_funding_rate_sum_bps: Decimal | None = None
+    trailing_funding_rate_stddev_bps: Decimal | None = None
+    trailing_funding_positive_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    trailing_funding_rate_min_bps: Decimal | None = None
     funding_settlement_count: int = Field(ge=0)
-    funding_window_hours: int = Field(gt=0, le=168)
+    funding_window_hours: int = Field(gt=0, le=720)
     next_funding_time: datetime
     spot_flow_observed_at: datetime | None = Field(
         default=None,
@@ -341,6 +348,17 @@ class DerivativeContextSnapshot(FrozenModel):
         )
         if has_summary != (self.funding_settlement_count > 0):
             raise ValueError("Funding 汇总与结算样本数不一致")
+        extended_summary = (
+            self.trailing_funding_rate_stddev_bps,
+            self.trailing_funding_positive_fraction,
+            self.trailing_funding_rate_min_bps,
+        )
+        if any(item is not None for item in extended_summary) and not all(
+            item is not None for item in extended_summary
+        ):
+            raise ValueError("扩展 Funding 汇总必须完整或全部缺省")
+        if any(item is not None for item in extended_summary) and not has_summary:
+            raise ValueError("扩展 Funding 汇总不能脱离基础汇总")
         positioning_values = (
             self.positioning_observed_at,
             self.positioning_window_minutes,

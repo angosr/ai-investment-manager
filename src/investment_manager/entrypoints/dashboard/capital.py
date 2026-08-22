@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -55,6 +55,24 @@ class CapitalOverview:
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
+    candidate: CapitalCandidateStatus | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalCandidateStatus:
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    producer_id: str
+    producer_version: str
+    forecast_family: str
+    authorization_status: str
+    authorization_valid_from: datetime | None
+    authorization_valid_until: datetime | None
+    maximum_allocation_fraction: Decimal | None
+    next_entry_at: datetime | None
+    next_entry_expires_at: datetime | None
+    conservative_annualized_net_fraction: Decimal | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +224,7 @@ class CapitalDashboardReader:
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
+            candidate=_capital_candidate_status(self._config, now=now),
         )
 
     def activity(
@@ -562,6 +581,7 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
     target = overview.target
     risk = overview.risk
     performance = overview.latest_performance
+    candidate = overview.candidate
     return {
         "enabled": overview.enabled,
         "account": None
@@ -633,6 +653,40 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 "return_fraction": str(performance.return_fraction),
             },
         },
+        "candidate": (
+            None
+            if candidate is None
+            else {
+                "symbol": candidate.symbol,
+                "base_asset": candidate.base_asset,
+                "quote_asset": candidate.quote_asset,
+                "producer_id": candidate.producer_id,
+                "producer_version": candidate.producer_version,
+                "forecast_family": candidate.forecast_family,
+                "authorization_status": candidate.authorization_status,
+                "authorization_valid_from": _iso(
+                    candidate.authorization_valid_from
+                ),
+                "authorization_valid_until": _iso(
+                    candidate.authorization_valid_until
+                ),
+                "maximum_allocation_fraction": (
+                    None
+                    if candidate.maximum_allocation_fraction is None
+                    else str(candidate.maximum_allocation_fraction)
+                ),
+                "next_entry_at": _iso(candidate.next_entry_at),
+                "next_entry_expires_at": _iso(
+                    candidate.next_entry_expires_at
+                ),
+                "conservative_annualized_net_fraction": (
+                    None
+                    if candidate.conservative_annualized_net_fraction is None
+                    else str(candidate.conservative_annualized_net_fraction)
+                ),
+                "real_order_authorized": False,
+            }
+        ),
     }
 
 
@@ -670,3 +724,90 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _capital_candidate_status(
+    config: AppConfig,
+    *,
+    now: datetime,
+) -> CapitalCandidateStatus | None:
+    policy = config.carry_forecast
+    if not policy.enabled:
+        return None
+    permission = next(
+        (
+            item
+            for item in config.capital.mock_candidate_authorizations
+            if (
+                item.producer_id,
+                item.producer_version,
+                item.forecast_family,
+            )
+            == (policy.producer_id, policy.version, policy.forecast_family)
+        ),
+        None,
+    )
+    if permission is None:
+        status = "NOT_AUTHORIZED"
+        next_entry = next_expiry = None
+    else:
+        status = (
+            "NOT_YET_VALID"
+            if now < permission.valid_from
+            else "ACTIVE"
+            if now < permission.valid_until
+            else "EXPIRED"
+        )
+        next_entry, next_expiry = _next_entry_window(
+            now=now,
+            valid_from=permission.valid_from,
+            valid_until=permission.valid_until,
+            window_minutes=policy.maximum_monthly_entry_delay_minutes,
+        )
+    evidence = policy.evidence
+    return CapitalCandidateStatus(
+        symbol=policy.symbol,
+        base_asset=policy.base_asset,
+        quote_asset=policy.quote_asset,
+        producer_id=policy.producer_id,
+        producer_version=policy.version,
+        forecast_family=policy.forecast_family,
+        authorization_status=status,
+        authorization_valid_from=(permission.valid_from if permission else None),
+        authorization_valid_until=(permission.valid_until if permission else None),
+        maximum_allocation_fraction=(
+            permission.maximum_allocation_fraction if permission else None
+        ),
+        next_entry_at=next_entry,
+        next_entry_expires_at=next_expiry,
+        conservative_annualized_net_fraction=(
+            evidence.conservative_annualized_net_fraction if evidence else None
+        ),
+    )
+
+
+def _next_entry_window(
+    *,
+    now: datetime,
+    valid_from: datetime,
+    valid_until: datetime,
+    window_minutes: int,
+) -> tuple[datetime | None, datetime | None]:
+    cursor = datetime(valid_from.year, valid_from.month, 1, tzinfo=UTC)
+    if cursor < valid_from:
+        cursor = _next_month(cursor)
+    while cursor < valid_until:
+        expires_at = min(
+            cursor + timedelta(minutes=window_minutes),
+            valid_until,
+        )
+        if now < expires_at:
+            return cursor, expires_at
+        cursor = _next_month(cursor)
+    return None, None
+
+
+def _next_month(value: datetime) -> datetime:
+    if value.month == 12:
+        return value.replace(year=value.year + 1, month=1)
+    return value.replace(month=value.month + 1)

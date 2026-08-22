@@ -41,6 +41,12 @@ const DRIVER_STATUS: Record<string, string> = {
   UNVERIFIED: "未验证假设",
 };
 
+const CAPITAL_STATUS: Record<string, string> = {
+  BASE_UNCHANGED: "程序基线不变",
+  ENTRY_VETO_CANDIDATE: "入场否决研究候选",
+  INSUFFICIENT_EVIDENCE: "证据不足，不改变基线",
+};
+
 const COVERAGE_STATUS: Record<string, string> = {
   CURRENT: "完整",
   PARTIAL: "部分覆盖",
@@ -109,7 +115,10 @@ export function AssessmentRow({ row }: { row: Row }) {
     }
   }, [detail, open, row.assessment_id]);
 
-  const category = row.directional_view_count > 0 ? "pending" : "no-action";
+  const category = row.capital_status === "ENTRY_VETO_CANDIDATE"
+    || row.directional_view_count > 0
+    ? "pending"
+    : "no-action";
   return (
     <div className={`${styles.cyc} ${styles[category]} ${open ? styles.open : ""}`}>
       <button
@@ -123,7 +132,9 @@ export function AssessmentRow({ row }: { row: Row }) {
           <span className={styles.reason}>{row.mechanism}</span>
         </span>
         <span className={`${styles.pill} ${styles[category]}`}>
-          {row.directional_view_count > 0
+          {row.capital_status
+            ? CAPITAL_STATUS[row.capital_status]
+            : row.directional_view_count > 0
             ? `${row.directional_view_count} 个方向判断`
             : "无可靠方向"}
         </span>
@@ -187,6 +198,29 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
       <SnapshotSection title="结构性基准与主导传导链">
         <p className={styles.thesis}>{detail.mechanism}</p>
       </SnapshotSection>
+      {detail.capital_relevance ? (
+        <SnapshotSection title="对当前资本任务的增量判断">
+          <ul className={styles.analysisList}>
+            <li>
+              <b>
+                {CAPITAL_STATUS[detail.capital_relevance.status]
+                  ?? detail.capital_relevance.status}
+              </b>
+              {` · ${detail.capital_relevance.thesis}`}
+              <div>{detail.capital_relevance.transmission}</div>
+              {detail.capital_relevance.evidence.map((item) => (
+                <div key={item.evidence_id}>
+                  引用：{hhmm(item.at)} · {item.source} · {item.title}
+                </div>
+              ))}
+              <div>
+                证伪：{detail.capital_relevance.invalidation_conditions.join("；")}
+              </div>
+              <div>研究旁路 · 资本权限：无</div>
+            </li>
+          </ul>
+        </SnapshotSection>
+      ) : null}
       <SnapshotSection title="关键驱动及引用">
         {detail.drivers.length > 0 ? (
           <ul className={styles.analysisList}>
@@ -206,7 +240,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
           </ul>
         ) : <p className={styles.snapshotEmpty}>当前没有足以改变结构性基准的主导变化</p>}
       </SnapshotSection>
-      <SnapshotSection title="资产与时域判断">
+      {detail.views.length > 0 ? <SnapshotSection title="资产与时域判断">
         <div className={styles.viewGrid}>
           {detail.views.map((view) => (
             <div className={styles.viewCard} key={`${view.asset}-${view.horizon_minutes}`}>
@@ -235,7 +269,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
             </div>
           ))}
         </div>
-      </SnapshotSection>
+      </SnapshotSection> : null}
       <SnapshotList title="反向证据" empty="无" items={detail.contradictions} />
       <SnapshotList title="尚缺信息" empty="无" items={detail.data_gaps} />
       <SnapshotSection title="关联事件及经济影响状态">
@@ -299,6 +333,20 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
     <div className={styles.snapshotPanel}>
       <SnapshotHeader title="AI 输入快照" stateId={snapshot.state_id} asOf={snapshot.as_of} />
       <div className={styles.snapshotQuestion}>{snapshot.question}</div>
+      {snapshot.capital_objective ? (
+        <SnapshotSection title="本轮唯一资本问题">
+          <div className={styles.marketSnapshot}>
+            <b>{snapshot.capital_objective.objective_id}</b>
+            <span>
+              {snapshot.capital_objective.producer_id} · {snapshot.capital_objective.producer_version}
+            </span>
+            <span>
+              程序基线已覆盖：{snapshot.capital_objective.base_decision_inputs.join("、")}
+            </span>
+            <span>AI 仅判断增量入场风险，不具有资本权限</span>
+          </div>
+        </SnapshotSection>
+      ) : null}
       <div className={styles.snapshotGrid}>
         <SnapshotSection title="组合状态">
           <dl className={styles.snapshotKv}>
@@ -330,6 +378,24 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           ))}
         </SnapshotSection>
       </div>
+      <SnapshotSection title="现货与永续结构">
+        {snapshot.derivative_states.length > 0 ? (
+          snapshot.derivative_states.map((state) => (
+            <div className={styles.marketSnapshot} key={state.evidence_ref}>
+              <b>{state.asset} · {state.funding_window_hours} 小时资金费率窗口</b>
+              <span>
+                可执行空头基差 {state.executable_short_basis_bps} bp · 永续价差 {state.perpetual_spread_bps} bp
+              </span>
+              <span>
+                最近/均值/波动/最低 funding：{state.last_funding_rate_bps} / {state.trailing_funding_rate_mean_bps ?? "—"} / {state.trailing_funding_rate_stddev_bps ?? "—"} / {state.trailing_funding_rate_min_bps ?? "—"} bp
+              </span>
+              <span>
+                正值占比 {state.trailing_funding_positive_fraction ?? "—"} · 样本 {state.funding_settlement_count}
+              </span>
+            </div>
+          ))
+        ) : <p className={styles.snapshotEmpty}>本次没有可用的衍生品结构快照</p>}
+      </SnapshotSection>
       <SnapshotList
         title="触发变化"
         empty="没有结构化变化"
@@ -358,6 +424,12 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
                 {DRIVER_STATUS[driver.status] ?? driver.status} · {driver.statement} → {driver.transmission}
               </span>
             ))}
+            {snapshot.previous_context.capital_relevance ? (
+              <span>
+                上轮资本判断：{CAPITAL_STATUS[snapshot.previous_context.capital_relevance.status]
+                  ?? snapshot.previous_context.capital_relevance.status} · {snapshot.previous_context.capital_relevance.thesis}
+              </span>
+            ) : null}
           </div>
         </SnapshotSection>
       ) : null}

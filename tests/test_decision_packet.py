@@ -27,6 +27,8 @@ from investment_manager.forecast.context.contract import (
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
+    ContextCapitalRelevance,
+    ContextCapitalRelevanceStatus,
     ContextDriver,
     ContextDriverStatus,
     ContextEventImpactState,
@@ -49,6 +51,7 @@ from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
+    CapitalContextObjective,
     DecisionPacket,
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
@@ -183,6 +186,7 @@ def _packet(
     intelligence_events: tuple[IntelligenceEvent, ...] = (),
     as_of=None,
     packet_schema_version: str = "decision-packet-v1",
+    mandate: AnalysisMandate | None = None,
 ):
     market_btc = replay_input.market
     state_as_of = market_btc.as_of if as_of is None else as_of
@@ -196,7 +200,7 @@ def _packet(
         )
     )
     packet = builder.build(
-        mandate=_mandate(),
+        mandate=mandate or _mandate(),
         state=_state(
             state_as_of,
             account=replay_input.account,
@@ -1547,9 +1551,117 @@ def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> N
     assert "suggested_action" not in schema
     assert "order_type" not in schema
     assert "target_notional" not in schema
-    assert 'required_views_output_order_json=[{"asset":"BTC","horizon_minutes":60}' in prompt
+    assert "capital_objective 是本轮唯一需要评价的资本问题" in prompt
+    assert "views 必须为空" in prompt
+    assert "required_views_output_order_json" not in prompt
     assert "allowed_evidence_ids_json=" not in prompt
     assert "decision_packet_json=" in prompt
+
+
+def test_capital_objective_replaces_redundant_direction_views(
+    app_config,
+    replay_input,
+) -> None:
+    mandate = _mandate().model_copy(
+        update={
+            "capital_objective": CapitalContextObjective(
+                objective_id="btc-calendar-carry-entry-veto-v1",
+                producer_id="btc-spot-perp-carry",
+                producer_version="btc-carry-monthly-first-open-v4",
+                forecast_family="delta-neutral-funding-carry",
+                base_decision_inputs=(
+                    "BASIS",
+                    "COSTS",
+                    "FUNDING",
+                    "LIQUIDITY",
+                    "MARGIN",
+                    "VENUE",
+                ),
+            )
+        }
+    )
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        packet_schema_version="decision-packet-v13",
+        mandate=mandate,
+    )
+    capital = ContextCapitalRelevance(
+        objective_id="btc-calendar-carry-entry-veto-v1",
+        status=ContextCapitalRelevanceStatus.BASE_UNCHANGED,
+        thesis="本轮未发现程序基线之外足以否决下一次入场的增量风险。",
+        transmission="当前外生证据没有形成破坏 funding、basis 或双腿执行的新增链条。",
+        evidence_ids=("revision-1",),
+        invalidation_conditions=("出现可追溯的交易场所或双腿流动性冲击",),
+    )
+    output = _assessment_output().model_copy(
+        update={
+            "assessment": _assessment_output().assessment.model_copy(
+                update={"capital_relevance": capital, "views": ()}
+            )
+        }
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.capital_relevance == capital
+    assert assessment.views == ()
+    projected = decision_packet_analysis_projection(packet)
+    assert projected["capital_objective"]["objective_id"] == (
+        "btc-calendar-carry-entry-veto-v1"
+    )
+    assert "required_views" not in projected
+
+
+def test_capital_objective_rejects_directional_output(app_config, replay_input) -> None:
+    mandate = _mandate().model_copy(
+        update={
+            "capital_objective": CapitalContextObjective(
+                objective_id="btc-calendar-carry-entry-veto-v1",
+                producer_id="btc-spot-perp-carry",
+                producer_version="btc-carry-monthly-first-open-v4",
+                forecast_family="delta-neutral-funding-carry",
+                base_decision_inputs=("FUNDING",),
+            )
+        }
+    )
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        packet_schema_version="decision-packet-v13",
+        mandate=mandate,
+    )
+    output = _assessment_output().model_copy(
+        update={
+            "assessment": _assessment_output().assessment.model_copy(
+                update={
+                    "capital_relevance": ContextCapitalRelevance(
+                        objective_id="btc-calendar-carry-entry-veto-v1",
+                        status=ContextCapitalRelevanceStatus.BASE_UNCHANGED,
+                        thesis="没有发现新的入场否决风险。",
+                        transmission="程序基线继续有效。",
+                        invalidation_conditions=("出现新的场所风险",),
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="不得同时产生短周期方向观点",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
 
 
 def test_assess_contract_is_dense_and_not_patched_for_named_market_events() -> None:

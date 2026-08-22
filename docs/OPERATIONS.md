@@ -118,16 +118,16 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - `temporal-worker` 是旧 AnalysisCycle 的迁移期诊断入口，不属于现役 Shadow 服务；主线不得重新向它派发 Trigger。
 - `lifecycle-service` 仅在新 TradePlan 执行链接通且可能产生持仓后启动；空仓 Assessment Shadow 不运行无消费者的生命周期进程。
 - `reconciliation-service`：按稳定时间桶运行主动对账；从独立 Mock 交易所账本和业务事实分别重建状态，报告非 `MATCHED` 或过期时冻结新增风险。
-- `outcome-evaluation-service`：唯一的前瞻结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，并分别结算不可交易的候选反事实、旧 Proposal 方向预测和新 `ContextAssessment` view；不为新判断另建重复服务。每项方向判断以真实可用时间和当时可见成交为共同起点并独立到期，`UNCERTAIN` 记为弃权而非命中，缺少时点行情记为不可评分。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
+- `outcome-evaluation-service`：唯一的 Forecast 与历史结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，结算程序 Forecast，并继续收尾旧 Proposal 与旧 `ContextAssessment` Directional View；现役资本目标 Assessment 不产生 View，不为它新增逐次方向结算服务。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 
 ### 前瞻证据稳定窗口
 
-- 已预登记的 `AssessmentForwardEvaluationSpec.analysis_behavior_hash` 是证据带不可变身份。在其 `signal_window_end` 前，不得改变 DecisionPacket 契约、Assessment mandate、模型、提示词、输出 Schema 或 Codex 执行契约；不影响该行为哈希的运维变更可以独立发布。
+- 已预登记的 `ContextCapitalForwardSpec.analysis_behavior_hash` 是证据带不可变身份。在其 `signal_window_end` 前，不得改变 DecisionPacket 契约、Assessment mandate、模型、提示词、输出 Schema 或 Codex 执行契约；不影响该行为哈希的运维变更可以独立发布。
 - 前瞻结果只有 `PASSED`、`FAILED`、`INCONCLUSIVE` 三态。缺少作用域或非重叠样本不足只能是 `INCONCLUSIVE`；只有样本充分且配对增量下界未过门槛才进入 `FailedExperiment`，禁止把证据不足写成负面知识。
 - 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
 - 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
 
-行为版本冻结后、首个计划内预测生成前登记方向评价窗口：
+行为版本冻结后、首个自然 carry 机会前登记资本配对评价窗口：
 
 ```bash
 INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
@@ -137,14 +137,20 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
   --plan-id '<唯一计划 ID>' \
   --signal-window-start '<未来 UTC 起点>' \
   --signal-window-end '<固定 UTC 终点>' \
-  --minimum-non-overlapping-samples 30
+  --minimum-capital-opportunities 12
 ```
 
 登记命令先逐项核对冻结配置、ReleaseManifest、代码提交和 checkout 洁净度，再从语义行为制品自行计算
 `analysis_behavior_hash`；计划直接绑定该运行 Manifest，不借用全局 Champion。调用方不需要也不能替换行为身份；
 可选参数只用于显式核对，传入值不一致会失败关闭。
 
-只有终点、最长预测周期和配置中的结算宽限全部过去后，才运行 `evaluate-assessment-forward-plan --plan-id ... --published-at '<当前 UTC>'`。该命令从计划读取全部窗口和统计口径，拒绝调用方重传或修改；任一预登记作用域缺失、仍有未结算 Assessment、独立可评分样本不足或相对 always-UP 的配对收益增量下界不为正，都不会通过增量门禁。`UP`/`DOWN` 使用方向收益，`UNCERTAIN` 在同一可评分时点使用现金收益 0；缺行情的终态单独计为 `UNSCORABLE`。结果始终写入内容寻址制品；失败同时登记稳定的负面治理事实，通过结果仍需由后续显式变更提案引用，不能自行晋级。
+只有终点、最后一个自然 Forecast 周期和七天结算宽限全部过去后，才运行
+`evaluate-assessment-forward-plan --plan-id ... --published-at '<当前 UTC>' --capital-database-url '<资本事实库>'`。
+命令从 Context 事实库读取冻结行为的 Assessment，从角色隔离的 Capital 事实库读取同一 Producer 的 BaseForecast
+及权威 Outcome。每个机会只配对机会出现前 24 小时内最新认知；缺失、过期或失败自动保持 Program Base，不能删样本。
+`ENTRY_VETO_CANDIDATE` 只形成现金反事实，其他状态保持基线；两侧使用同一实际 Forecast Outcome，并从基线扣除
+冻结的完整往返成本。自然机会少于 12、仍有未结算 Forecast 或费用后配对收益增量保守下界不为正都不能通过。
+结果进入内容寻址制品；样本充分但失败才登记负面治理事实，通过仍需显式变更提案和新 Mock 授权，不能自行接入资本。
 
 BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未来数据产生前登记：
 

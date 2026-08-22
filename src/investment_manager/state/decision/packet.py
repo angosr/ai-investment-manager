@@ -73,6 +73,7 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v10",
     "decision-packet-v11",
     "decision-packet-v12",
+    "decision-packet-v13",
 }
 _CALENDAR_CONTEXT_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
@@ -185,6 +186,11 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
+    if packet.capital_objective is not None:
+        # Monitoring horizons remain in the immutable packet for Delta and
+        # settlement compatibility.  They are not a request for redundant
+        # short-horizon direction calls when the mandate names a capital task.
+        payload.pop("required_views", None)
     payload["asset_states"] = tuple(
         _analysis_fields(
             item,
@@ -215,6 +221,9 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 "perpetual_spread_bps",
                 "last_funding_rate_bps",
                 "trailing_funding_rate_mean_bps",
+                "trailing_funding_rate_stddev_bps",
+                "trailing_funding_positive_fraction",
+                "trailing_funding_rate_min_bps",
                 "funding_settlement_count",
                 "funding_window_hours",
                 "next_funding_time",
@@ -300,12 +309,30 @@ class MandateAsset(FrozenModel):
         return self
 
 
+class CapitalContextObjective(FrozenModel):
+    """One research-only capital question; never an order or allocation permission."""
+
+    objective_id: str = Field(min_length=1)
+    decision_kind: Literal["CARRY_ENTRY_VETO"] = "CARRY_ENTRY_VETO"
+    producer_id: str = Field(min_length=1)
+    producer_version: str = Field(min_length=1)
+    forecast_family: str = Field(min_length=1)
+    base_decision_inputs: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def base_inputs_are_canonical(self):
+        if tuple(sorted(set(self.base_decision_inputs))) != self.base_decision_inputs:
+            raise ValueError("资本上下文目标的程序输入必须唯一且排序")
+        return self
+
+
 class AnalysisMandate(FrozenModel):
     version: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     question: str = Field(min_length=1, max_length=500)
     assets: tuple[MandateAsset, ...] = Field(min_length=1)
     required_risk_factors: tuple[str, ...] = Field(min_length=1)
+    capital_objective: CapitalContextObjective | None = None
 
     @model_validator(mode="after")
     def mandate_identity_must_be_unique_and_sorted(self):
@@ -376,8 +403,15 @@ class PacketDerivativeState(FrozenModel):
     last_funding_rate_bps: Decimal
     trailing_funding_rate_mean_bps: Decimal | None
     trailing_funding_rate_sum_bps: Decimal | None
+    trailing_funding_rate_stddev_bps: Decimal | None = None
+    trailing_funding_positive_fraction: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    trailing_funding_rate_min_bps: Decimal | None = None
     funding_settlement_count: int = Field(ge=0)
-    funding_window_hours: int = Field(gt=0, le=168)
+    funding_window_hours: int = Field(gt=0, le=720)
     next_funding_time: datetime
     spot_flow_observed_at: datetime | None = Field(
         default=None,
@@ -640,6 +674,18 @@ class PacketPreviousView(FrozenModel):
     uncertainty: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
 
 
+class PacketPreviousCapitalRelevance(FrozenModel):
+    objective_id: str = Field(min_length=1)
+    status: Literal[
+        "BASE_UNCHANGED",
+        "ENTRY_VETO_CANDIDATE",
+        "INSUFFICIENT_EVIDENCE",
+    ]
+    thesis: str = Field(min_length=1, max_length=800)
+    transmission: str = Field(min_length=1, max_length=1_200)
+    invalidation_condition: str = Field(min_length=1, max_length=200)
+
+
 class PacketPreviousEventReference(FrozenModel):
     evidence_id: str = Field(pattern=SHA256_PATTERN)
     source: str = Field(min_length=1, max_length=128)
@@ -684,6 +730,7 @@ class PacketPreviousContext(FrozenModel):
     )
     drivers: tuple[PacketPreviousDriver, ...] = Field(max_length=8)
     event_references: tuple[PacketPreviousEventReference, ...] = ()
+    capital_relevance: PacketPreviousCapitalRelevance | None = None
     views: tuple[PacketPreviousView, ...]
     contradictions: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
     data_gaps: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
@@ -713,6 +760,7 @@ class DecisionPacket(FrozenModel):
     as_of: datetime
     state_id: str
     question: str
+    capital_objective: CapitalContextObjective | None = None
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     portfolio: PacketPortfolioState
@@ -814,6 +862,8 @@ class DecisionPacket(FrozenModel):
             self.active_hypotheses or self.previous_assessment_refs
         ):
             raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
+        if self.schema_version == "decision-packet-v13" and self.capital_objective is None:
+            raise ValueError("DecisionPacket v13 必须绑定一个明确资本问题")
         coverage_domains = tuple(item.domain.value for item in self.information_coverage)
         if tuple(sorted(set(coverage_domains))) != coverage_domains:
             raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
@@ -981,6 +1031,7 @@ class DecisionPacketBuilder:
             "as_of": state.as_of,
             "state_id": state.state_id,
             "question": mandate.question,
+            "capital_objective": mandate.capital_objective,
             "trigger_ids": trigger_ids,
             "required_views": required_views,
             "portfolio": self._portfolio_state(account),
@@ -1477,6 +1528,13 @@ class DecisionPacketBuilder:
             last_funding_rate_bps=snapshot.last_funding_rate_bps,
             trailing_funding_rate_mean_bps=snapshot.trailing_funding_rate_mean_bps,
             trailing_funding_rate_sum_bps=snapshot.trailing_funding_rate_sum_bps,
+            trailing_funding_rate_stddev_bps=(
+                snapshot.trailing_funding_rate_stddev_bps
+            ),
+            trailing_funding_positive_fraction=(
+                snapshot.trailing_funding_positive_fraction
+            ),
+            trailing_funding_rate_min_bps=snapshot.trailing_funding_rate_min_bps,
             funding_settlement_count=snapshot.funding_settlement_count,
             funding_window_hours=snapshot.funding_window_hours,
             next_funding_time=snapshot.next_funding_time,

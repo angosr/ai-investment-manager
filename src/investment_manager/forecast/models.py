@@ -210,6 +210,38 @@ class ContextEventImpactState(StrEnum):
     STALE = "STALE"
 
 
+class ContextCapitalRelevanceStatus(StrEnum):
+    """Research stance relative to the program decision, never capital authority."""
+
+    BASE_UNCHANGED = "BASE_UNCHANGED"
+    ENTRY_VETO_CANDIDATE = "ENTRY_VETO_CANDIDATE"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
+class ContextCapitalRelevance(FrozenModel):
+    objective_id: str = Field(min_length=1)
+    status: ContextCapitalRelevanceStatus
+    thesis: str = Field(min_length=1, max_length=800)
+    transmission: str = Field(min_length=1, max_length=1_200)
+    evidence_ids: tuple[str, ...] = ()
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def evidence_and_invalidation_are_canonical(self):
+        if (
+            self.status == ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE
+            and not self.evidence_ids
+        ):
+            raise ValueError("入场否决候选必须引用当前证据")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("资本相关性不能重复引用证据")
+        if len(set(self.invalidation_conditions)) != len(
+            self.invalidation_conditions
+        ):
+            raise ValueError("资本相关性不能重复失效条件")
+        return self
+
+
 class ContextEventReference(FrozenModel):
     """Derived event relevance in one immutable world-cognition snapshot."""
 
@@ -302,7 +334,10 @@ class ContextAssessment(FrozenModel):
     # Market state must not be promoted merely to fill a narrative slot.
     drivers: tuple[ContextDriver, ...] = ()
     event_references: tuple[ContextEventReference, ...] = ()
-    views: tuple[ContextView, ...] = Field(min_length=1)
+    capital_relevance: ContextCapitalRelevance | None = None
+    # Directional views remain readable for immutable historical assessments.
+    # Capital-objective behavior no longer produces them.
+    views: tuple[ContextView, ...] = ()
     contradictions: tuple[str, ...] = ()
     data_gaps: tuple[str, ...] = ()
 

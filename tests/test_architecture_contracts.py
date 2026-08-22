@@ -39,14 +39,15 @@ CLI_CONTRACT = {
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": (
         "config,database_url,assessment_database_url,assessment_config,"
-        "assessment_release_manifest,release_manifest,host,port,web_dist"
+        "assessment_release_manifest,capital_config,capital_release_manifest,"
+        "release_manifest,host,port,web_dist"
     ),
     "diagnose-legacy-analysis-forecasts": (
         "config,database_url,window_start,window_end,published_at,pipeline_version,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
     "evaluate-assessment-forward-plan": (
-        "database_url,plan_id,published_at,evaluation_catalog"
+        "database_url,plan_id,published_at,capital_database_url,evaluation_catalog"
     ),
     "evaluate-carry-forward-plan": (
         "database_url,plan_id,carry_dataset_id,carry_catalog,spot_catalog,funding_catalog,"
@@ -84,7 +85,7 @@ CLI_CONTRACT = {
     ),
     "register-assessment-forward-plan": (
         "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
-        "analysis_behavior_hash,minimum_non_overlapping_samples"
+        "analysis_behavior_hash,minimum_non_overlapping_samples,minimum_capital_opportunities"
     ),
     "register-carry-forward-plan": (
         "database_url,plan_id,symbol,observation_start,observation_end,policy_version"

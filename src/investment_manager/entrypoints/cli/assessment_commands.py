@@ -31,6 +31,16 @@ from investment_manager.governance.evaluation.assessment import (
     failed_assessment_forward_experiment,
     validate_assessment_forward_plan,
 )
+from investment_manager.governance.evaluation.context_capital import (
+    ContextCapitalForwardCatalog,
+    ContextCapitalForwardOutcome,
+    ContextCapitalForwardSpec,
+    build_context_capital_forward_plan,
+    evaluate_context_capital_forward_plan,
+    failed_context_capital_experiment,
+    load_context_capital_inputs,
+    validate_context_capital_forward_plan,
+)
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash
 from investment_manager.platform.fact_store import FactStoreRole
@@ -52,55 +62,70 @@ def register_assessment_forward_plan(
     signal_window_end: Annotated[str, typer.Option()],
     analysis_behavior_hash: Annotated[str | None, typer.Option()] = None,
     minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
+    minimum_capital_opportunities: Annotated[int, typer.Option(min=3)] = 12,
 ) -> None:
-    """在首个结果发生前冻结 ContextAssessment 前向评价窗口。"""
+    """在首个结果发生前冻结当前 Context 行为的前向评价窗口。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
     expected_behavior_hash = configured_assess_behavior_hash(loaded)
-    if (
-        analysis_behavior_hash is not None
-        and analysis_behavior_hash != expected_behavior_hash
-    ):
+    if analysis_behavior_hash is not None and analysis_behavior_hash != expected_behavior_hash:
         raise typer.BadParameter(
             "analysis-behavior-hash 与所加载配置的实际行为哈希不一致",
             param_hint="analysis-behavior-hash",
         )
     registered_at = datetime.now(UTC)
     try:
-        spec = AssessmentForwardEvaluationSpec(
-            plan_id=plan_id,
-            analysis_scope=loaded.assessment.mandate.analysis_scope,
-            analysis_behavior_hash=expected_behavior_hash,
-            outcome_evaluation_version=loaded.outcome_evaluation.assessment_version,
-            signal_window_start=parse_utc_option(
-                signal_window_start, name="signal-window-start"
-            ),
-            signal_window_end=parse_utc_option(
-                signal_window_end, name="signal-window-end"
-            ),
-            scopes=tuple(
-                sorted(
-                    (
-                        AssessmentEvaluationScope(
-                            asset=asset.asset,
-                            symbol=asset.market_symbol,
-                            horizon_minutes=horizon,
-                        )
-                        for asset in loaded.assessment.mandate.assets
-                        for horizon in asset.horizons_minutes
-                    ),
-                    key=lambda item: (
-                        item.asset,
-                        item.symbol,
-                        item.horizon_minutes,
-                    ),
-                )
-            ),
-            minimum_non_overlapping_samples=minimum_non_overlapping_samples,
-            settlement_grace_minutes=(
-                loaded.outcome_evaluation.settlement_grace_minutes
-            ),
-        )
+        start = parse_utc_option(signal_window_start, name="signal-window-start")
+        end = parse_utc_option(signal_window_end, name="signal-window-end")
+        objective = loaded.assessment.mandate.capital_objective
+        if objective is not None:
+            evidence = loaded.carry_forecast.evidence
+            if evidence is None:
+                raise ValueError("Context Capital 前向评价缺少已冻结 Carry 成本证据")
+            spec = ContextCapitalForwardSpec(
+                plan_id=plan_id,
+                analysis_scope=loaded.assessment.mandate.analysis_scope,
+                analysis_behavior_hash=expected_behavior_hash,
+                objective_id=objective.objective_id,
+                producer_id=objective.producer_id,
+                producer_version=objective.producer_version,
+                forecast_family=objective.forecast_family,
+                forecast_evaluation_version=(loaded.outcome_evaluation.forecast_version),
+                signal_window_start=start,
+                signal_window_end=end,
+                minimum_opportunity_count=minimum_capital_opportunities,
+                round_trip_cost_bps=evidence.round_trip_cost_bps,
+                lower_confidence_z=loaded.calibration.lower_confidence_z,
+            )
+        else:
+            spec = AssessmentForwardEvaluationSpec(
+                plan_id=plan_id,
+                analysis_scope=loaded.assessment.mandate.analysis_scope,
+                analysis_behavior_hash=expected_behavior_hash,
+                outcome_evaluation_version=(loaded.outcome_evaluation.assessment_version),
+                signal_window_start=start,
+                signal_window_end=end,
+                scopes=tuple(
+                    sorted(
+                        (
+                            AssessmentEvaluationScope(
+                                asset=asset.asset,
+                                symbol=asset.market_symbol,
+                                horizon_minutes=horizon,
+                            )
+                            for asset in loaded.assessment.mandate.assets
+                            for horizon in asset.horizons_minutes
+                        ),
+                        key=lambda item: (
+                            item.asset,
+                            item.symbol,
+                            item.horizon_minutes,
+                        ),
+                    )
+                ),
+                minimum_non_overlapping_samples=minimum_non_overlapping_samples,
+                settlement_grace_minutes=(loaded.outcome_evaluation.settlement_grace_minutes),
+            )
         engine = runtime_engine(
             database_url,
             fact_store_role=configured_fact_store_role(loaded),
@@ -108,10 +133,18 @@ def register_assessment_forward_plan(
         )
         governance = SqlGovernanceRepository(engine)
         governance.record_release(manifest)
-        plan = build_assessment_forward_plan(
-            spec=spec,
-            base_manifest_id=manifest.manifest_id,
-            registered_at=registered_at,
+        plan = (
+            build_context_capital_forward_plan(
+                spec=spec,
+                base_manifest_id=manifest.manifest_id,
+                registered_at=registered_at,
+            )
+            if isinstance(spec, ContextCapitalForwardSpec)
+            else build_assessment_forward_plan(
+                spec=spec,
+                base_manifest_id=manifest.manifest_id,
+                registered_at=registered_at,
+            )
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -120,8 +153,8 @@ def register_assessment_forward_plan(
         json.dumps(
             {
                 "evaluation_plan": plan.model_dump(mode="json"),
-                "assessment_spec": spec.model_dump(mode="json"),
-                "assessment_spec_hash": content_hash(spec),
+                "context_spec": spec.model_dump(mode="json"),
+                "context_spec_hash": content_hash(spec),
             },
             ensure_ascii=False,
             indent=2,
@@ -137,6 +170,13 @@ def evaluate_assessment_forward_plan_command(
     ],
     plan_id: Annotated[str, typer.Option()],
     published_at: Annotated[str, typer.Option()],
+    capital_database_url: Annotated[
+        str | None,
+        typer.Option(
+            envvar="INVESTMENT_MANAGER_CAPITAL_DATABASE_URL",
+            help="资本事实库；Context Capital 计划必填",
+        ),
+    ] = None,
     evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/context-assessment-forward-evaluations"
     ),
@@ -156,18 +196,59 @@ def evaluate_assessment_forward_plan_command(
     if plan is None or plan.candidate_spec_snapshot is None:
         raise typer.BadParameter("前向预测 EvaluationPlan 不存在", param_hint="plan-id")
     reject_invalidated_evaluation_plan(governance, plan_id)
+    snapshot = plan.candidate_spec_snapshot
     try:
-        spec = AssessmentForwardEvaluationSpec.model_validate(
-            plan.candidate_spec_snapshot
-        )
-        validate_assessment_forward_plan(
-            spec=spec,
-            plan=plan,
-            champion_manifest_id=governance.get_champion().manifest_id,
-            published_at=publication,
-        )
+        if snapshot.get("version") == "context-capital-forward-spec-v1":
+            spec = ContextCapitalForwardSpec.model_validate(snapshot)
+            validate_context_capital_forward_plan(
+                spec=spec,
+                plan=plan,
+                base_manifest_id=plan.base_manifest_id,
+                published_at=publication,
+            )
+        else:
+            spec = AssessmentForwardEvaluationSpec.model_validate(snapshot)
+            validate_assessment_forward_plan(
+                spec=spec,
+                plan=plan,
+                champion_manifest_id=governance.get_champion().manifest_id,
+                published_at=publication,
+            )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    if isinstance(spec, ContextCapitalForwardSpec):
+        if capital_database_url is None:
+            raise typer.BadParameter(
+                "Context Capital 计划必须显式提供资本事实库",
+                param_hint="capital-database-url",
+            )
+        capital_engine = runtime_engine(
+            capital_database_url,
+            fact_store_role=FactStoreRole.CAPITAL,
+            claim_fact_store=False,
+        )
+        paired_inputs, assessments, incomplete = load_context_capital_inputs(
+            context_engine=engine,
+            capital_engine=capital_engine,
+            spec=spec,
+            published_at=publication,
+        )
+        result = evaluate_context_capital_forward_plan(
+            spec=spec,
+            forecasts_and_outcomes=paired_inputs,
+            assessments=assessments,
+            incomplete_forecast_ids=incomplete,
+            published_at=publication,
+        )
+        result_path = ContextCapitalForwardCatalog(evaluation_catalog).store(result)
+        if result.outcome == ContextCapitalForwardOutcome.FAILED:
+            governance.record_failed_experiment(
+                failed_context_capital_experiment(result, rejected_at=publication)
+            )
+        payload = result.model_dump(mode="json")
+        payload["result_path"] = str(result_path)
+        typer.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+        return
     store = SqlAssessmentViewOutcomeStore(engine)
     pending = store.pending_assessment_count(
         analysis_behavior_hash=spec.analysis_behavior_hash,
@@ -192,9 +273,7 @@ def evaluate_assessment_forward_plan_command(
         outcomes=outcomes,
         published_at=publication,
     )
-    result_path = AssessmentForwardEvaluationCatalog(evaluation_catalog).store(
-        result
-    )
+    result_path = AssessmentForwardEvaluationCatalog(evaluation_catalog).store(result)
     if result.outcome == AssessmentForwardOutcome.FAILED:
         governance.record_failed_experiment(
             failed_assessment_forward_experiment(result, rejected_at=publication)

@@ -80,6 +80,8 @@ def assessment_row(record: AssessmentRecord) -> dict:
         for item in (*assessment.drivers, *assessment.views)
         for evidence_id in item.evidence_ids
     }
+    if assessment.capital_relevance is not None:
+        cited_evidence_ids.update(assessment.capital_relevance.evidence_ids)
     return {
         "assessment_id": assessment.assessment_id,
         "at": fmt.iso(assessment.available_at),
@@ -90,6 +92,11 @@ def assessment_row(record: AssessmentRecord) -> dict:
         "evidence_count": len(cited_evidence_ids),
         "directional_view_count": len(directional),
         "view_count": len(assessment.views),
+        "capital_status": (
+            None
+            if assessment.capital_relevance is None
+            else assessment.capital_relevance.status.value
+        ),
     }
 
 
@@ -105,6 +112,11 @@ def assessment_detail(record: AssessmentRecord) -> dict:
                     evidence_id
                     for item in (*assessment.drivers, *assessment.views)
                     for evidence_id in item.evidence_ids
+                ),
+                *(
+                    assessment.capital_relevance.evidence_ids
+                    if assessment.capital_relevance is not None
+                    else ()
                 ),
             )
         )
@@ -138,6 +150,24 @@ def assessment_detail(record: AssessmentRecord) -> dict:
             }
             for item in assessment.event_references
         ],
+        "capital_relevance": (
+            None
+            if assessment.capital_relevance is None
+            else {
+                "objective_id": assessment.capital_relevance.objective_id,
+                "status": assessment.capital_relevance.status.value,
+                "thesis": assessment.capital_relevance.thesis,
+                "transmission": assessment.capital_relevance.transmission,
+                "evidence": _resolve_assessment_evidence(
+                    assessment.capital_relevance.evidence_ids,
+                    evidence_catalog,
+                ),
+                "invalidation_conditions": list(
+                    assessment.capital_relevance.invalidation_conditions
+                ),
+                "capital_authority": "NONE",
+            }
+        ),
         "views": [
             {
                 "asset": view.asset,
@@ -198,6 +228,14 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
             ("永续溢价", state.mark_index_premium_bps, "bps"),
             ("可执行空头基差", state.executable_short_basis_bps, "bps"),
             ("最近资金费率", state.last_funding_rate_bps, "bps"),
+            ("窗口资金费率均值", getattr(state, "trailing_funding_rate_mean_bps", None), "bps"),
+            ("窗口资金费率波动", getattr(state, "trailing_funding_rate_stddev_bps", None), "bps"),
+            (
+                "窗口资金费率为正占比",
+                getattr(state, "trailing_funding_positive_fraction", None),
+                "",
+            ),
+            ("窗口资金费率最低值", getattr(state, "trailing_funding_rate_min_bps", None), "bps"),
             ("现货主动买卖比", state.spot_taker_buy_sell_ratio, ""),
             ("OI 变化", state.open_interest_change_fraction, ""),
             ("多头账户占比", state.global_long_account_fraction, ""),
@@ -208,9 +246,7 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
             "kind": "MARKET_STRUCTURE",
             "title": f"{state.asset} 现货与衍生品结构",
             "detail": "；".join(
-                f"{label} {value}{unit}"
-                for label, value, unit in details
-                if value is not None
+                f"{label} {value}{unit}" for label, value, unit in details if value is not None
             ),
             "source": "BINANCE_MARKET",
             "at": fmt.iso(state.observed_at),
@@ -273,8 +309,7 @@ def assessment_quality(status: AssessmentQualityStatus) -> dict:
         "final_success_count_24h": status.final_success_count_24h,
         "first_attempt_success_count_24h": status.first_attempt_success_count_24h,
         "rejection_reasons": [
-            fmt.assessment_reason_plain(code)
-            for code in status.rejection_reason_codes
+            fmt.assessment_reason_plain(code) for code in status.rejection_reason_codes
         ],
     }
 
@@ -423,6 +458,14 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
+    if assessment.capital_relevance is not None:
+        labels = {
+            "BASE_UNCHANGED": "未发现需要否决下一次 BTC carry 入场的额外风险",
+            "ENTRY_VETO_CANDIDATE": "发现需要配对验证的 BTC carry 入场风险",
+            "INSUFFICIENT_EVIDENCE": "关键证据不足，暂不改变程序基线",
+        }
+        status = assessment.capital_relevance.status.value
+        return labels.get(status, status)
     direction_labels = {"UP": "看涨", "DOWN": "看跌", "UNCERTAIN": "方向不明"}
     by_asset: dict[str, list] = {}
     for view in assessment.views:
@@ -440,8 +483,7 @@ def _assessment_summary(assessment) -> str:
         summaries.append(
             f"{asset} "
             + "、".join(
-                f"{view.horizon_minutes} 分钟"
-                f"{direction_labels.get(view.direction, view.direction)}"
+                f"{view.horizon_minutes} 分钟{direction_labels.get(view.direction, view.direction)}"
                 for view in views
             )
         )

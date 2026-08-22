@@ -36,8 +36,8 @@ Observation
   → CanonicalFactRevision
   → StateSnapshot / MaterialDelta
   → DecisionPacket
-  → BaseForecast + ContextAssessment
-  → Mock-authorized BaseForecast / CalibratedForecast
+  → Program BaseForecast + research-only ContextAssessment
+  → Mock-authorized Program BaseForecast
   → PortfolioTarget
   → RiskDecision
   → TradePlan
@@ -58,10 +58,12 @@ Observation
 | Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
 | Evaluation | 结算结果并更新机制权限证据 | 读取盲区后改写原计划 |
 
-AI 和程序机制使用同一 Forecast 契约与结算口径。AI 当前产生 `ContextAssessment`，只有绑定明确投资对象、参考价、
-时域和输入身份后才能投影为 Forecast；程序机制直接产生 `BaseForecast`。二者都必须先取得显式 Mock 候选授权才
-能进入模拟 Portfolio，取得真实订单权限则必须进一步形成合格 `CalibratedForecast`。只有 Portfolio 能决定经济
-目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
+程序机制直接产生 `BaseForecast`，当前唯一候选是 BTC 现货与永续的月度 carry。AI 只产生研究态
+`ContextAssessment`，回答一个绑定精确 Producer 身份的资本问题：程序化 funding、basis、成本、流动性、保证金和
+交易场所检查之外，是否出现足以否决下一次入场的增量风险。它不能产生 Forecast、仓位或订单，也不能直接改变
+Program Base。只有在未来窗口中冻结同一程序基线与确定性 `Program + Context` 规则、完成逐次配对评价并取得显式
+Mock 授权后，一个新版本的确定性门控才可进入 Portfolio；Assessment 本身永远不是资本权限。只有 Portfolio 能决定
+经济目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
 
 现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
 `TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
@@ -98,32 +100,35 @@ Assessment 区分已确认事实、有证据推断与未验证假设。Dashboard
 门禁”隐藏。历史 Assessment 不原地修改，当前投影可随事实修订替换；交易和评价仍只走 §3 的唯一链。
 
 认知连续性采用单步、可追溯的滚动更新，不把历史新闻重新塞给模型。每个新 Packet 只继承在其 `as_of`
-之前已经可用的上一份 `ContextAssessment` 的压缩结构（主导机制、最重要 Driver、方向、反证和缺口），
+之前已经可用的上一份 `ContextAssessment` 的压缩结构（主导机制、最重要 Driver、资本相关性、历史方向、反证和缺口），
 并要求新一轮逐项延续、修正或判失效。上一份 Assessment 是派生证据，只能支持
 `INFERRED / UNVERIFIED`，不能把旧推断升级为 `CONFIRMED`；一手事实仍必须引用本轮可见的官方
 Fact。这样可以跨事件维持多层传导链，同时避免无限上下文、无来源记忆和历史错误自我强化。
-世界认知与即时方向信号分层但不另建账本：`market_mechanism` 持续维护由当前一手事实支持的结构性基准，
-`drivers` 只记录足以改变该基准的重大变化，`views` 才表达按资产和时域结算的方向。没有 Driver 或全部 View
-均为 `UNCERTAIN` 时，世界认知仍必须保留当前结构性基准；但不得把缺口说明、普通快讯、价格趋势或衍生品仓位
-包装成主导原因。上一份认知只有在仍含有可追溯结构性基准时才增量继承；本轮一手事实负责确认、修正或推翻它，
-禁止凭旧 Assessment 循环自证。
+现役世界认知不再承担与资本目标错位的 BTC/ETH 60/240 分钟方向任务：`market_mechanism` 维护由当前一手事实支持的
+结构性基准，`drivers` 只记录足以改变该基准的重大变化，`capital_relevance` 则只回答冻结的 carry 入场风险问题。
+状态只有 `BASE_UNCHANGED / ENTRY_VETO_CANDIDATE / INSUFFICIENT_EVIDENCE`；否决候选必须说明程序基线未覆盖的增量
+风险、完整传导、当前证据和证伪条件，且仍无资本权限。历史 `views` 继续可读、可结算，但新资本目标行为必须输出
+空 `views`，不再浪费模型注意力制造短周期涨跌观点。没有 Driver 时仍维护结构性基准；不得把缺口说明、普通快讯、
+价格趋势或衍生品仓位包装成主导原因。上一份认知只有在仍含有可追溯结构性基准时才增量继承；本轮一手事实负责
+确认、修正或推翻它，禁止凭旧 Assessment 循环自证。
 
 事件引用属于每份 `ContextAssessment` 的派生认知，不修改 `IntelligenceEvent`。每个引用必须记录
 `ACTIVE / STALE`、经济作用理由和首次判旧时间：`STALE` 只表示该事件对未来经济与定价的边际影响已经
 完全消退、被证伪或被新事实替代，禁止按发布时间机械衰减。维护采用**状态继承、增量修改**：程序默认继承
 上一轮全部引用；新事件首次被 Driver 引用即登记为 `ACTIVE`，并直接以该 Driver 的判断冻结影响理由；AI 只对已有
 引用额外提交理由修正或判旧。省略不等于删除，避免每轮复述相同状态造成输出膨胀和
-结构失败。已判旧事件不能恢复，也不能继续支撑 Driver/View。判旧未满 24 小时的引用仍随认知保留以便审计
+结构失败。已判旧事件不能恢复，也不能继续支撑 Driver、资本相关性或历史 View。判旧未满 24 小时的引用仍随认知保留以便审计
 过渡，满 24 小时后由程序只从后续认知引用集合移除；原始事件、历史 Packet、历史 Assessment 及当时引用
 永久保留。
 事件被观测不等于它是重要变化：所有观测永久入库，只有 TriggerPlan 实际准入的事件引用才能进入 MaterialDelta。
 人工或定时复核不得把期间积累的低优先级新闻自动提升为材料；普通背景事件还必须同时通过版本化的影响度与来源可靠性门槛才能进入 Packet。
 新闻触发优先级必须同时纳入影响度和来源可靠性；低可靠聚合消息只作为待核验线索永久保存，不直接唤醒 AI。
 触发准入只回答“是否值得尽快看一眼”，不是证据晋级。即使弱线索因显式评审而进入 Packet，它也必须独立通过
-影响度与来源质量门槛才能进入当前 Driver、View 或事件引用；否则只可作为待核验矛盾。旧版本误纳入的引用在
+影响度与来源质量门槛才能进入当前 Driver、资本相关性或事件引用；否则只可作为待核验矛盾。旧版本误纳入的引用在
 原始事件仍可重建时由同一门槛判为 `STALE`，保留一天审计过渡后退出后续认知，原事件仍永久保存。
-衍生品与 `MARKET_SHOCK` 证据只确认价格响应、仓位、成本与拥挤状态，本身不是上涨/下跌原因；方向观点必须同时
-具备当前外生因果证据和现货、价格或衍生品响应。任何一侧缺失都只能保持 `UNCERTAIN`。
+衍生品与 `MARKET_SHOCK` 证据只确认价格响应、仓位、成本与拥挤状态，本身不是外生原因。它们已属于 Program Base
+输入，不能单独构成 AI 入场否决候选；否决必须同时有当前外生或跨市场因果证据，以及它将破坏 funding 持续性、
+basis 收敛、双腿流动性、保证金或场所完整性的可证伪传导。普通波动、单一仓位读数或信息缺口不能机械否决。
 
 信息完整性由**因果域覆盖合同**而不是人名、单次行情或关键词列表定义。每个 Release 必须冻结当前 Mandate
 所需的最小覆盖域、每域允许来源、权威等级、采集路线、正常发布节奏、可接受延迟和失明条件。初始覆盖域为：
@@ -211,7 +216,8 @@ BTC/ETH 合计净流量使用 ByKaranteli 的固定公开 JSON 数据集作为�
 但不得因“一手”身份自动成为大盘驱动。
 
 Packet 不扫描全库或发送原始时间序列。以衍生品为例，程序先把同一时点可成交 Spot/Perpetual bid-ask、
-mark-index premium、最近资金费率和窗口内已结算 Funding 压缩为带精确输入引用的资产摘要，再冻结进 State；
+mark-index premium、最近资金费率和最近 30 天已结算 Funding 压缩为均值、累计值、波动、正值占比、最低值与样本数，
+形成带精确输入引用的资产摘要后再冻结进 State；
 AI 只看到该高密度摘要和证据身份，不读取原始 Funding 历史。其他域同样先完成共指、修订合并、发布滞后、滚动流量、异常、
 价格响应、仓位放大器与跨域时序对齐，再按以下顺序分配容量：本次材料变化、仍有效的主导驱动、反证、
 即将发生的日程、组合风险、其余背景。每条入选内容保留稳定证据引用；被省略内容和覆盖缺口显式留痕。
@@ -234,7 +240,8 @@ Packet 为审计保留全部 omitted/missing 内容地址，但这些不可读�
    也不能用脱离当前证据的通用经济学链条填充；
 2. 不超过八项仍影响定价的 Driver，每项标注 `CONFIRMED / INFERRED / UNVERIFIED`、证据、传导与证伪条件；
 3. 竞争证据、缺失域以及未来会改变判断的已知日程；
-4. 按资产和时域结算的 Directional View。
+4. 对冻结 `capital_objective` 的增量判断：程序基线不变、入场否决研究候选或证据不足，以及该判断的证据、
+   传导与证伪条件。现役行为不再产生 Directional View；历史 View 只为不可变事实兼容和旧计划收尾而保留。
 
 只有一手事实可以支撑 `CONFIRMED`；时序吻合不自动等于因果，资金提前交易也不自动证明内幕信息。
 Assessment 行为变化生成新 identity 并进入同口径前向评价。世界认知的晋级依据不是文字深度，而是点时事实
@@ -242,7 +249,7 @@ Assessment 行为变化生成新 identity 并进入同口径前向评价。世�
 
 AI 可靠性按“冻结 Packet 的最终成功率、首次结构成功率、端到端完成延迟、输入/输出密度和不可用原因”分别
 计量，不能用重试后的成功掩盖首次结构失败，也不能把中文、文风或关键词当作投资正确性。结构契约只校验
-机器必须依赖的不变量（完整资产/时域、证据可见性、时间、枚举和引用关系）；表达质量进入可观察评价，不用
+机器必须依赖的不变量（资本目标身份、证据可见性、时间、枚举和引用关系）；表达质量进入可观察评价，不用
 不断增长的字符串规则阻断有效结果。运行失败不产生伪 Assessment，重试仍绑定同一 Packet 和 behavior，超过
 截止时间则显式不可用。优化顺序固定为输入事实与投影质量、输出合同最小化、Prompt、模型/运行路由，禁止
 先通过增加重试掩盖根因。
@@ -529,7 +536,8 @@ src/investment_manager/
   governance/                 # 治理事实、Policy 与存储
     change/                   # 治理 Agent 和变更周期
     evaluation/               # 预登记计划、统计门禁与版本评价
-      assessment.py           # ContextAssessment 前向评价；只读 Forecast 结果
+      assessment.py           # 历史 Directional View 前向计划与收尾评价
+      context_capital.py      # Program Base 与 Context 否决的费用后配对评价
     release/                  # 发布验证、审批和可恢复切换
     audit/                    # 架构及 Codex 隔离审计
 
@@ -590,7 +598,7 @@ Market 不知道预测、组合和订单意图。
 
 ### Forecast
 
-拥有 BaseForecast、ContextAssessment、CalibratedForecast、校准制品和预测结果。程序、AI 或混合预测者通过明确 producer identity 注册；行为、输入投影、工具或提示词实质变化即产生新版本。未校准或无权限的预测只能进入影子结算。
+拥有 BaseForecast、ContextAssessment、CalibratedForecast、校准制品和预测结果。程序 Forecast 通过明确 producer identity 注册；ContextAssessment 是绑定资本问题的研究事实，不再投影为单腿 AI Forecast。行为、输入投影、工具或提示词实质变化即产生新版本。未获权限的 Program Forecast 只能进入影子结算；Context 只有通过同机会费用后配对评价后，才可由一个新的确定性门控候选申请 Mock 权限。
 
 ### Portfolio
 
@@ -734,8 +742,9 @@ kernel/platform
 1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
-2. **投资对象与预测接线（已完成）**：ContextAssessment 已拥有独立的 signal-time 预登记、结算
-   完整性检查、always-UP 配对门禁和内容寻址结果；`InstrumentId + ForecastTarget` 已成为 Base 与
+2. **投资对象与预测接线（已完成）**：ContextAssessment 已绑定精确 carry Producer 与唯一资本问题，并拥有
+   自然机会前向预登记、Program fallback、同机会费用后配对门禁和内容寻址结果；旧方向计划只收尾历史 View。
+   `InstrumentId + ForecastTarget` 已成为 Base 与
    Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
    可成交价/funding 结算和 carry ProgramBase 生产已接线。ProgramBase/carry 未获权限时仍不能影响资本。
 3. **组合与风险接线（已完成 Mock Shadow 切片）**：产品级账户、Sleeve allocation、整组 Risk 缩放和
