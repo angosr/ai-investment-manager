@@ -102,6 +102,26 @@ def test_capital_can_observe_cash_without_an_active_candidate() -> None:
     assert config.capital.mock_candidate_authorizations == ()
 
 
+def test_retired_dynamic_carry_is_read_only_and_cannot_be_reenabled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.yaml")
+    payload = config.model_dump(mode="python")
+    payload["dynamic_carry_forecast"] = {
+        "version": "dynamic-carry-point-in-time-v2",
+        "enabled": False,
+    }
+
+    historical = type(config).model_validate(payload)
+    assert historical.dynamic_carry_forecast == {
+        "version": "dynamic-carry-point-in-time-v2",
+        "enabled": False,
+    }
+
+    payload["dynamic_carry_forecast"]["enabled"] = True
+    with pytest.raises(ValidationError, match="只允许只读解析已禁用历史身份"):
+        type(config).model_validate(payload)
+
+
 def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "investment-manager.shadow.yaml")

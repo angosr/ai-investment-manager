@@ -663,6 +663,12 @@ def validate_manifest_component_versions(
 
     declared = dict(manifest.component_versions)
     current = {name: getattr(config, name).version for name in _CONFIG_COMPONENT_NAMES}
+    retired_dynamic = config.dynamic_carry_forecast
+    if retired_dynamic is not None:
+        version = retired_dynamic.get("version")
+        if not isinstance(version, str) or not version:
+            raise ValueError("退役 Dynamic Carry 历史配置缺少版本身份")
+        current["dynamic_carry_forecast"] = version
     if declared != current:
         raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
 

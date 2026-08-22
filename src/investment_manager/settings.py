@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 from investment_manager.execution.policy import (
@@ -54,6 +54,13 @@ class AppConfig(StrictConfig):
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
     carry_forecast: CarryForecastPolicy
+    # Read-only identity compatibility for frozen releases created before the
+    # rejected Dynamic Carry candidate was retired. Current runtime composition
+    # has no producer or policy path for this payload.
+    dynamic_carry_forecast: dict[str, Any] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     capital: CapitalPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
@@ -77,6 +84,9 @@ class AppConfig(StrictConfig):
 
     @model_validator(mode="after")
     def cross_domain_invariants_hold(self):
+        retired_dynamic = self.dynamic_carry_forecast
+        if retired_dynamic is not None and retired_dynamic.get("enabled") is not False:
+            raise ValueError("退役 Dynamic Carry 配置只允许只读解析已禁用历史身份")
         if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:
             raise ValueError("DecisionState 与 Assessment mandate scope 必须一致")
         mandate_symbols = tuple(
