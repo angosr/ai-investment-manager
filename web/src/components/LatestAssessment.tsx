@@ -19,6 +19,7 @@ export function LatestAssessment() {
     row && quality?.latest_valid_at && row.at === quality.latest_valid_at,
   );
   const currentRow = currentSnapshot ? row : null;
+  const hasWorldCognition = Boolean(currentRow && currentRow.driver_count > 0);
   const detail = useLive(
     () => currentRow
       ? api.assessmentRecord(currentRow.assessment_id)
@@ -47,7 +48,9 @@ export function LatestAssessment() {
   return (
     <Card
       title="最新世界认知"
-      aside={currentRow ? `${hhmm(currentRow.at)} UTC` : "尚未建立"}
+      aside={hasWorldCognition && currentRow
+        ? `${hhmm(currentRow.at)} UTC`
+        : "尚未建立"}
       bodyPadded
     >
       {quality && !currentSnapshot ? (
@@ -57,18 +60,14 @@ export function LatestAssessment() {
             : "系统不会用无效输出填充。"}
         </p>
       ) : null}
-      {currentRow ? (
+      {currentRow && hasWorldCognition ? (
         <div className={styles.layout}>
           <div>
             <div className={styles.summary}>
-              {currentRow.evidence_count > 0
-                ? currentRow.summary
-                : "当前没有达到决策门槛的主导因果"}
+              {currentRow.summary}
             </div>
             <p className={styles.mechanism}>
-              {currentRow.evidence_count > 0
-                ? (detail?.mechanism ?? currentRow.mechanism)
-                : "本轮不产生收益方向；该结论只限制风险，不作为开仓依据。"}
+              {detail?.mechanism ?? currentRow.mechanism}
             </p>
             {detail && detail.drivers.length > 0 ? (
               <div className={styles.drivers}>
@@ -103,6 +102,13 @@ export function LatestAssessment() {
               </div>
             ) : null}
           </div>
+        </div>
+      ) : currentRow ? (
+        <div>
+          <p className={styles.empty}>当前尚未形成能改变基准情景的有效世界认知。</p>
+          <p className={styles.warning}>
+            最近一次 AI 复核只否定了现有证据的方向解释；完整依据保留在 AI 分析历史，不作为世界认知或开仓依据。
+          </p>
         </div>
       ) : (
         <p className={styles.empty}>等待具备主导因果证据的分析通过门禁。</p>
