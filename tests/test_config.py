@@ -32,12 +32,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.capital.enabled
     assert config.information.version == "information-intake-v25"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v28"
+    assert config.decision_state.version == "portfolio-state-v29"
     assert config.decision_state.official_fact_policy.version == "official-fact-v11"
     assert config.decision_state.delta_policy.version == "state-delta-v13"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v29"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v30"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.decision_state.packet_policy.maximum_packet_characters == 12_000
+    assert config.decision_state.packet_policy.maximum_packet_characters == 11_300
     assert config.assessment.version == "context-assessment-v24"
     regulation = next(
         item

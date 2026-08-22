@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v28
+  version: portfolio-state-v29
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v11
@@ -85,7 +85,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v29
+    version: decision-packet-policy-v30
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -99,7 +99,7 @@ decision_state:
     minimum_background_intelligence_impact: "0.80"
     minimum_background_source_reliability: "0.70"
     # AI 投影的上限；为固定分析指令预留约 5K，最终完整提示仍由 runtime 的 16K 门禁复核。
-    maximum_packet_characters: 12000
+    maximum_packet_characters: 11300
     maximum_previous_context_drivers: 3
 
 strategy:

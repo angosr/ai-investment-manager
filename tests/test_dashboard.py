@@ -232,6 +232,10 @@ def test_direction_label_maps_side():
 def test_reason_plain_falls_back_to_raw_code():
     assert fmt.reason_plain("INSUFFICIENT_NET_EDGE") == "扣掉成本后优势不足"
     assert fmt.reason_plain("SOME_NEW_CODE") == "SOME_NEW_CODE"
+    assert (
+        fmt.assessment_reason_plain("CODEX_PROMPT_CAPACITY_EXCEEDED")
+        == "AI 输入超过容量上限"
+    )
 
 
 def test_thesis_gist_truncates_and_prefixes():

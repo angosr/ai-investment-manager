@@ -109,7 +109,10 @@ def reason_plain(reason_code: str) -> str:
 
 
 def assessment_reason_plain(reason_code: str) -> str:
-    return ASSESSMENT_REASON_PLAIN.get(reason_code, "AI 分析运行失败")
+    return ASSESSMENT_REASON_PLAIN.get(
+        reason_code,
+        REASON_PLAIN.get(reason_code, "AI 分析运行失败"),
+    )
 
 
 def rule_plain(rule_id: str) -> str:
