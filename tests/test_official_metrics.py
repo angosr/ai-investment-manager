@@ -19,6 +19,7 @@ from investment_manager.information.official.metrics import (
     NYFED_SOMA_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
+    OfficialMetricName,
     parse_official_metric_document,
 )
 from investment_manager.information.official.source import OfficialMetricDocument
@@ -279,6 +280,22 @@ def test_all_fixed_first_party_metric_documents_parse_to_compact_snapshots() -> 
     bitb_values = {item.name.value: item.value for item in bitb.metrics}
     assert bitb_values["btc_etp_holdings"] == Decimal("37871.96676424")
     assert bitb_values["btc_etp_shares_outstanding"] == Decimal("69780000")
+
+
+def test_pre_v10_ibit_metric_name_remains_readable_but_is_not_emitted() -> None:
+    snapshot = parse_official_metric_document(
+        IBIT_HOLDINGS_STREAM_ID,
+        _documents()[IBIT_HOLDINGS_STREAM_ID].content,
+        source_url=_documents()[IBIT_HOLDINGS_STREAM_ID].source_url,
+        media_type="text/csv",
+        observed_at=OBSERVED_AT,
+    )
+
+    assert OfficialMetricName("ibit_net_assets_usd_m") == OfficialMetricName.IBIT_NET_ASSETS_USD_M
+    assert "ibit_net_assets_usd_m" not in {item.name.value for item in snapshot.metrics}
+    assert "ibit_holdings_market_value_usd_m" in {
+        item.name.value for item in snapshot.metrics
+    }
 
 
 def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> None:

@@ -80,6 +80,9 @@ class OfficialMetricName(StrEnum):
     IBIT_BTC_HOLDINGS = "ibit_btc_holdings"
     IBIT_BTC_HOLDINGS_CHANGE_1D = "ibit_btc_holdings_change_1d"
     IBIT_HOLDINGS_MARKET_VALUE_USD_M = "ibit_holdings_market_value_usd_m"
+    # Immutable observations emitted before official-fact-v10 remain readable;
+    # new parsers never emit this mislabelled historical name.
+    IBIT_NET_ASSETS_USD_M = "ibit_net_assets_usd_m"
     IBIT_SHARES_OUTSTANDING = "ibit_shares_outstanding"
     IBIT_SHARES_OUTSTANDING_CHANGE_1D = "ibit_shares_outstanding_change_1d"
     BTC_ETP_HOLDINGS = "btc_etp_holdings"
