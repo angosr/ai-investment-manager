@@ -30,15 +30,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "cash-observation-shadow-v1"
     assert config.temporal.namespace == "shadow-capital-20260821-v9"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v25"
+    assert config.information.version == "information-intake-v26"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v29"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v11"
-    assert config.decision_state.delta_policy.version == "state-delta-v13"
+    assert config.decision_state.version == "portfolio-state-v30"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v12"
+    assert config.decision_state.delta_policy.version == "state-delta-v14"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v30"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
     assert config.decision_state.packet_policy.maximum_packet_characters == 11_300
-    assert config.assessment.version == "context-assessment-v24"
+    assert config.assessment.version == "context-assessment-v25"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -76,7 +76,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",
         "US_DOLLAR",
+        "US_ENERGY_INFLATION",
+        "US_EQUITY_RISK_APPETITE",
         "US_FISCAL_LIQUIDITY",
+        "US_HIGH_YIELD_CREDIT_RISK",
         "US_INTEREST_RATES",
         "US_MONETARY_LIQUIDITY",
         "US_MONETARY_POLICY",

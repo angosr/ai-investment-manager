@@ -1,18 +1,21 @@
 import asyncio
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
-from investment_manager.information.models import SourcePollStatus
+from investment_manager.information.models import SourcePollStatus, SourceTier
 from investment_manager.information.official.metrics import (
     ARKB_HOLDINGS_STREAM_ID,
     BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
+    FRED_HIGH_YIELD_OAS_STREAM_ID,
+    FRED_SP500_STREAM_ID,
+    FRED_WTI_STREAM_ID,
     IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
@@ -43,6 +46,15 @@ METRIC_POLICY = OfficialFactProjectionPolicy(
 
 
 def _documents() -> dict[str, OfficialMetricDocument]:
+    def fred_csv(series_id: str, start: Decimal, step: Decimal) -> bytes:
+        first_date = date(2026, 7, 17)
+        rows = [f"observation_date,{series_id}"]
+        rows.extend(
+            f"{(first_date + timedelta(days=index)).isoformat()},{start + step * index}"
+            for index in range(35)
+        )
+        return ("\n".join(rows) + "\n").encode()
+
     treasury_xml = b"""<feed xmlns="http://www.w3.org/2005/Atom"
       xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"
       xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices">
@@ -100,6 +112,21 @@ def _documents() -> dict[str, OfficialMetricDocument]:
             "https://www.federalreserve.gov/feeds/data/H10_H10_JRXWTFB_N.B.xml",
             dollar_xml,
             "application/xml",
+        ),
+        FRED_SP500_STREAM_ID: (
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500",
+            fred_csv("SP500", Decimal("7400"), Decimal("5")),
+            "text/csv",
+        ),
+        FRED_HIGH_YIELD_OAS_STREAM_ID: (
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2",
+            fred_csv("BAMLH0A0HYM2", Decimal("3.10"), Decimal("-0.01")),
+            "text/csv",
+        ),
+        FRED_WTI_STREAM_ID: (
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DCOILWTICO",
+            fred_csv("DCOILWTICO", Decimal("70"), Decimal("0.5")),
+            "text/csv",
         ),
         NYFED_RRP_STREAM_ID: (
             "https://markets.newyorkfed.org/api/rp/reverserepo/propositions/search.json",
@@ -245,7 +272,7 @@ def _engine():
     return engine
 
 
-def test_all_fixed_first_party_metric_documents_parse_to_compact_snapshots() -> None:
+def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     snapshots = []
     for document in _documents().values():
         snapshot = parse_official_metric_document(
@@ -265,7 +292,17 @@ def test_all_fixed_first_party_metric_documents_parse_to_compact_snapshots() -> 
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 9
+    assert len({item.fact_type for item in snapshots}) == 12
+    assert {
+        item.observation.source_tier
+        for item in snapshots
+        if item.stream_id.startswith("fred-")
+    } == {SourceTier.AGGREGATOR}
+    assert all(
+        item.observation.source_tier == SourceTier.FIRST_PARTY
+        for item in snapshots
+        if not item.stream_id.startswith("fred-")
+    )
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
     ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)

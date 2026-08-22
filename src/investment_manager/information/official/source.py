@@ -9,6 +9,9 @@ from investment_manager.information.official.metrics import (
     ARKB_HOLDINGS_STREAM_ID,
     BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
+    FRED_HIGH_YIELD_OAS_STREAM_ID,
+    FRED_SP500_STREAM_ID,
+    FRED_WTI_STREAM_ID,
     IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
@@ -57,6 +60,12 @@ _ARKB_HOLDINGS_URL = (
     "ARK_21SHARES_BITCOIN_ETF_ARKB_HOLDINGS.csv"
 )
 _BITB_HOLDINGS_URL = "https://bitbetf.com/"
+_FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+_FRED_SERIES_BY_STREAM = {
+    FRED_SP500_STREAM_ID: "SP500",
+    FRED_HIGH_YIELD_OAS_STREAM_ID: "BAMLH0A0HYM2",
+    FRED_WTI_STREAM_ID: "DCOILWTICO",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,12 +171,15 @@ class HttpFederalRegisterSource:
 
 
 class HttpOfficialMetricSource:
-    """Fetch a small fixed catalog of public first-party macro data feeds."""
+    """Fetch a small fixed catalog of public structured metric feeds."""
 
     stream_ids = (
         ARKB_HOLDINGS_STREAM_ID,
         BITB_HOLDINGS_STREAM_ID,
         FED_BROAD_DOLLAR_STREAM_ID,
+        FRED_HIGH_YIELD_OAS_STREAM_ID,
+        FRED_SP500_STREAM_ID,
+        FRED_WTI_STREAM_ID,
         IBIT_HOLDINGS_STREAM_ID,
         NYFED_RATES_STREAM_ID,
         NYFED_RRP_STREAM_ID,
@@ -259,6 +271,16 @@ class HttpOfficialMetricSource:
             return str(url), "application/xml"
         if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
             return _FED_BROAD_DOLLAR_URL, "application/xml"
+        if series_id := _FRED_SERIES_BY_STREAM.get(stream_id):
+            url = httpx.URL(
+                _FRED_CSV_URL,
+                params={
+                    "id": series_id,
+                    "cosd": (observed_at.date() - timedelta(days=370)).isoformat(),
+                    "coed": observed_at.date().isoformat(),
+                },
+            )
+            return str(url), "text/csv"
         if stream_id == IBIT_HOLDINGS_STREAM_ID:
             return _IBIT_HOLDINGS_URL, "text/csv"
         if stream_id == ARKB_HOLDINGS_STREAM_ID:

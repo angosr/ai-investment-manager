@@ -30,6 +30,7 @@ NYFED_MARKETS_SOURCE_ID = "new-york-fed-markets"
 ISHARES_SOURCE_ID = "ishares"
 ARK_SOURCE_ID = "ark-invest"
 BITWISE_SOURCE_ID = "bitwise"
+FRED_SOURCE_ID = "federal-reserve-bank-st-louis-fred"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
@@ -40,6 +41,9 @@ NYFED_RATES_STREAM_ID = "nyfed-reference-rates"
 IBIT_HOLDINGS_STREAM_ID = "ishares-ibit-holdings"
 ARKB_HOLDINGS_STREAM_ID = "ark-arkb-holdings"
 BITB_HOLDINGS_STREAM_ID = "bitwise-bitb-holdings"
+FRED_SP500_STREAM_ID = "fred-sp500"
+FRED_HIGH_YIELD_OAS_STREAM_ID = "fred-us-high-yield-oas"
+FRED_WTI_STREAM_ID = "fred-wti"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
@@ -50,6 +54,9 @@ NYFED_RATES_FACT_TYPE = "NYFED_REFERENCE_RATES_SNAPSHOT"
 IBIT_HOLDINGS_FACT_TYPE = "IBIT_HOLDINGS_SNAPSHOT"
 ARKB_HOLDINGS_FACT_TYPE = "ARKB_HOLDINGS_SNAPSHOT"
 BITB_HOLDINGS_FACT_TYPE = "BITB_HOLDINGS_SNAPSHOT"
+US_EQUITY_MARKET_FACT_TYPE = "US_EQUITY_MARKET_SNAPSHOT"
+US_HIGH_YIELD_CREDIT_FACT_TYPE = "US_HIGH_YIELD_CREDIT_SNAPSHOT"
+US_WTI_OIL_FACT_TYPE = "US_WTI_OIL_SNAPSHOT"
 
 OFFICIAL_METRIC_FACT_TYPES = frozenset(
     {
@@ -62,6 +69,9 @@ OFFICIAL_METRIC_FACT_TYPES = frozenset(
         IBIT_HOLDINGS_FACT_TYPE,
         ARKB_HOLDINGS_FACT_TYPE,
         BITB_HOLDINGS_FACT_TYPE,
+        US_EQUITY_MARKET_FACT_TYPE,
+        US_HIGH_YIELD_CREDIT_FACT_TYPE,
+        US_WTI_OIL_FACT_TYPE,
     }
 )
 OFFICIAL_METRIC_RISK_FACTORS = frozenset(
@@ -71,6 +81,9 @@ OFFICIAL_METRIC_RISK_FACTORS = frozenset(
         "US_INTEREST_RATES",
         "US_MONETARY_LIQUIDITY",
         "US_MONETARY_POLICY",
+        "US_EQUITY_RISK_APPETITE",
+        "US_HIGH_YIELD_CREDIT_RISK",
+        "US_ENERGY_INFLATION",
         "BTC_INSTITUTIONAL_HOLDINGS",
     }
 )
@@ -115,6 +128,12 @@ class OfficialMetricName(StrEnum):
     FED_TARGET_LOWER_PCT = "fed_target_lower_pct"
     FED_TARGET_UPPER_PCT = "fed_target_upper_pct"
     SOFR_EFFR_SPREAD_BPS = "sofr_effr_spread_bps"
+    SP500_INDEX = "sp500_index"
+    SP500_CHANGE_1D_PCT = "sp500_change_1d_pct"
+    US_HIGH_YIELD_OAS_PCT = "us_high_yield_oas_pct"
+    US_HIGH_YIELD_OAS_CHANGE_1D_BPS = "us_high_yield_oas_change_1d_bps"
+    WTI_USD_PER_BARREL = "wti_usd_per_barrel"
+    WTI_CHANGE_1D_PCT = "wti_change_1d_pct"
 
 
 class OfficialMetricUnit(StrEnum):
@@ -124,6 +143,7 @@ class OfficialMetricUnit(StrEnum):
     PERCENT = "PERCENT"
     BASIS_POINTS = "BASIS_POINTS"
     INDEX = "INDEX"
+    USD_PER_BARREL = "USD_PER_BARREL"
 
 
 class OfficialMetricValue(FrozenModel):
@@ -157,7 +177,12 @@ class OfficialMetricChangeContext(FrozenModel):
 
 
 class OfficialMetricSnapshot(FrozenModel):
-    """One compact, revision-safe observation from a pinned first-party feed."""
+    """One compact, revision-safe observation from a pinned metric feed.
+
+    The historical class name is retained for durable-record compatibility.
+    Evidence tier remains explicit: a trusted aggregator must never be presented
+    as the first-party producer of the underlying series.
+    """
 
     observation: SourceObservation
     kind: Literal[OfficialRecordKind.OFFICIAL_METRIC_SNAPSHOT] = (
@@ -175,8 +200,11 @@ class OfficialMetricSnapshot(FrozenModel):
 
     @model_validator(mode="after")
     def identity_and_metrics_must_be_consistent(self):
-        if self.observation.source_tier != SourceTier.FIRST_PARTY:
-            raise ValueError("官方指标必须是一手来源")
+        if self.observation.source_tier not in {
+            SourceTier.FIRST_PARTY,
+            SourceTier.AGGREGATOR,
+        }:
+            raise ValueError("结构化指标必须是一手来源或明确标注的聚合来源")
         parsed = urlparse(self.source_url)
         if parsed.scheme != "https" or parsed.hostname not in {
             "api.fiscaldata.treasury.gov",
@@ -186,8 +214,9 @@ class OfficialMetricSnapshot(FrozenModel):
             "www.ishares.com",
             "assets.ark-funds.com",
             "bitbetf.com",
+            "fred.stlouisfed.org",
         }:
-            raise ValueError("官方指标 URL 不在固定官方域名")
+            raise ValueError("结构化指标 URL 不在固定可信域名")
         names = tuple(item.name.value for item in self.metrics)
         if tuple(sorted(set(names))) != names:
             raise ValueError("官方指标必须按名称唯一且排序")
@@ -262,6 +291,9 @@ def parse_official_metric_document(
         IBIT_HOLDINGS_STREAM_ID: _parse_ibit_holdings,
         ARKB_HOLDINGS_STREAM_ID: _parse_arkb_holdings,
         BITB_HOLDINGS_STREAM_ID: _parse_bitb_holdings,
+        FRED_SP500_STREAM_ID: _parse_fred_sp500,
+        FRED_HIGH_YIELD_OAS_STREAM_ID: _parse_fred_high_yield_oas,
+        FRED_WTI_STREAM_ID: _parse_fred_wti,
     }
     parser = parsers.get(stream_id)
     if parser is None:
@@ -481,6 +513,148 @@ def _parse_broad_dollar(
         source_url=source_url,
         observed_at=observed_at,
         source_published_at=min(_datetime(channel_date, name="H10 channel date"), observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_fred_sp500(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    return _parse_fred_series(
+        content,
+        series_id="SP500",
+        stream_id=FRED_SP500_STREAM_ID,
+        fact_type=US_EQUITY_MARKET_FACT_TYPE,
+        headline="FRED-hosted S&P 500 daily close",
+        risk_factor="US_EQUITY_RISK_APPETITE",
+        level_name=OfficialMetricName.SP500_INDEX,
+        level_unit=OfficialMetricUnit.INDEX,
+        change_name=OfficialMetricName.SP500_CHANGE_1D_PCT,
+        change_unit=OfficialMetricUnit.PERCENT,
+        percentage_change=True,
+        source_url=source_url,
+        observed_at=observed_at,
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_fred_high_yield_oas(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    return _parse_fred_series(
+        content,
+        series_id="BAMLH0A0HYM2",
+        stream_id=FRED_HIGH_YIELD_OAS_STREAM_ID,
+        fact_type=US_HIGH_YIELD_CREDIT_FACT_TYPE,
+        headline="FRED-hosted U.S. high-yield option-adjusted spread",
+        risk_factor="US_HIGH_YIELD_CREDIT_RISK",
+        level_name=OfficialMetricName.US_HIGH_YIELD_OAS_PCT,
+        level_unit=OfficialMetricUnit.PERCENT,
+        change_name=OfficialMetricName.US_HIGH_YIELD_OAS_CHANGE_1D_BPS,
+        change_unit=OfficialMetricUnit.BASIS_POINTS,
+        change_multiplier=Decimal("100"),
+        source_url=source_url,
+        observed_at=observed_at,
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_fred_wti(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    return _parse_fred_series(
+        content,
+        series_id="DCOILWTICO",
+        stream_id=FRED_WTI_STREAM_ID,
+        fact_type=US_WTI_OIL_FACT_TYPE,
+        headline="FRED-hosted WTI spot price",
+        risk_factor="US_ENERGY_INFLATION",
+        level_name=OfficialMetricName.WTI_USD_PER_BARREL,
+        level_unit=OfficialMetricUnit.USD_PER_BARREL,
+        change_name=OfficialMetricName.WTI_CHANGE_1D_PCT,
+        change_unit=OfficialMetricUnit.PERCENT,
+        percentage_change=True,
+        source_url=source_url,
+        observed_at=observed_at,
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_fred_series(
+    content: bytes,
+    *,
+    series_id: str,
+    stream_id: str,
+    fact_type: str,
+    headline: str,
+    risk_factor: str,
+    level_name: OfficialMetricName,
+    level_unit: OfficialMetricUnit,
+    change_name: OfficialMetricName,
+    change_unit: OfficialMetricUnit,
+    source_url: str,
+    observed_at: datetime,
+    payload_ref: str,
+    change_multiplier: Decimal = Decimal("1"),
+    percentage_change: bool = False,
+) -> OfficialMetricSnapshot:
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"FRED {series_id} CSV 编码非法") from exc
+    reader = csv.DictReader(text.splitlines())
+    if reader.fieldnames != ["observation_date", series_id]:
+        raise ValueError(f"FRED {series_id} CSV 表头与固定合同不一致")
+    values: dict[date, Decimal] = {}
+    for row in reader:
+        raw_value = (row.get(series_id) or "").strip()
+        if not raw_value or raw_value == ".":
+            continue
+        effective_date = _date(
+            row.get("observation_date"),
+            name=f"FRED {series_id} observation_date",
+        )
+        if effective_date > observed_at.date():
+            raise ValueError(f"FRED {series_id} 包含未来观测")
+        values[effective_date] = _decimal(raw_value, name=f"FRED {series_id} value")
+    observations = tuple(sorted(values.items()))
+    if len(observations) < 30:
+        raise ValueError(f"FRED {series_id} 缺少至少 30 条有效观测")
+    latest_date, latest = observations[-1]
+    previous = observations[-2][1]
+    latest_change = (
+        (latest / previous - 1) * Decimal("100")
+        if percentage_change
+        else (latest - previous) * change_multiplier
+    )
+    return _snapshot(
+        source_id=FRED_SOURCE_ID,
+        source_tier=SourceTier.AGGREGATOR,
+        stream_id=stream_id,
+        domain=CausalDomain.CROSS_ASSET_EXTERNAL,
+        fact_type=fact_type,
+        effective_date=latest_date,
+        headline=headline,
+        risk_factors=(risk_factor,),
+        metrics=(
+            _metric(level_name, latest, level_unit),
+            _metric(change_name, latest_change, change_unit),
+        ),
+        change_context=_most_unusual_change_context(
+            observations,
+            candidates=(
+                (
+                    change_name,
+                    1,
+                    change_unit,
+                    Decimal("100") if percentage_change else change_multiplier,
+                    percentage_change,
+                ),
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(latest_date, observed_at),
         payload_ref=payload_ref,
     )
 
@@ -975,6 +1149,7 @@ def with_official_metric_history(
 def _snapshot(
     *,
     source_id: str,
+    source_tier: SourceTier = SourceTier.FIRST_PARTY,
     stream_id: str,
     domain: CausalDomain,
     fact_type: str,
@@ -994,7 +1169,7 @@ def _snapshot(
         observation=SourceObservation.model_construct(
             observation_id="pending",
             source_id=source_id,
-            source_tier=SourceTier.FIRST_PARTY,
+            source_tier=source_tier,
             source_record_id=f"official-metric:{fact_type.lower()}",
             observed_at=observed_at,
             source_published_at=source_published_at,
@@ -1042,6 +1217,7 @@ def _metric(
         OfficialMetricUnit.PERCENT: Decimal("0.0001"),
         OfficialMetricUnit.BASIS_POINTS: Decimal("0.01"),
         OfficialMetricUnit.INDEX: Decimal("0.0001"),
+        OfficialMetricUnit.USD_PER_BARREL: Decimal("0.01"),
     }[unit]
     rounded = value.quantize(precision, rounding=ROUND_HALF_EVEN)
     plain = format(rounded, "f").rstrip("0").rstrip(".")
@@ -1138,6 +1314,12 @@ def _stream_source_id(stream_id: str) -> str:
         return TREASURY_RATES_SOURCE_ID
     if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
         return FED_H10_SOURCE_ID
+    if stream_id in {
+        FRED_SP500_STREAM_ID,
+        FRED_HIGH_YIELD_OAS_STREAM_ID,
+        FRED_WTI_STREAM_ID,
+    }:
+        return FRED_SOURCE_ID
     if stream_id == IBIT_HOLDINGS_STREAM_ID:
         return ISHARES_SOURCE_ID
     if stream_id == ARKB_HOLDINGS_STREAM_ID:

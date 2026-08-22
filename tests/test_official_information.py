@@ -8,6 +8,9 @@ from investment_manager.information.official.metrics import (
     ARKB_HOLDINGS_STREAM_ID,
     BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
+    FRED_HIGH_YIELD_OAS_STREAM_ID,
+    FRED_SP500_STREAM_ID,
+    FRED_WTI_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
@@ -167,6 +170,41 @@ def test_issuer_holdings_sources_use_fixed_first_party_endpoints(
     assert document is not None
     assert str(requests[0].url) == expected_url
     assert requests[0].headers["accept"] == expected_accept
+
+
+@pytest.mark.parametrize(
+    ("stream_id", "series_id"),
+    (
+        (FRED_SP500_STREAM_ID, "SP500"),
+        (FRED_HIGH_YIELD_OAS_STREAM_ID, "BAMLH0A0HYM2"),
+        (FRED_WTI_STREAM_ID, "DCOILWTICO"),
+    ),
+)
+def test_fred_aggregator_streams_use_bounded_single_series_csv(
+    stream_id: str,
+    series_id: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b"observation_date,value\n")
+
+    source = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    document = source.fetch(stream_id, observed_at=OBSERVED_AT)
+
+    assert document is not None
+    assert document.media_type == "text/csv"
+    assert len(requests) == 1
+    query = requests[0].url.params
+    assert requests[0].url.host == "fred.stlouisfed.org"
+    assert query["id"] == series_id
+    assert query["cosd"] == "2025-08-15"
+    assert query["coed"] == "2026-08-20"
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:

@@ -4,7 +4,7 @@
 
 投资与工程原则见 [AGENTS.md](./AGENTS.md)，权威结构和迁移方案见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。设计与代码出现冲突时必须先修正文档或实现，不能形成第二套隐含架构。
 
-架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；固定一手源另行采集 Fed 日历/政策发布、Treasury TGA/收益率曲线、Fed 广义美元、New York Fed 的 RRP/SOMA/EFFR/SOFR 与 iShares IBIT 日持仓。原始响应永久保留，程序只把带有效日期和变化量的紧凑快照投影成 CanonicalFact；连续指标再按同源点时历史的绝对变化分位数区分背景与主导候选，普通更新只刷新 State，不触发 AI。事实修订和未来正式发布时间分别同步为即时 Trigger 与持久 Wakeup。每次官方轮询还会永久记录 `CHANGED / UNCHANGED / FAILED`；同域全部配置源健康且冻结的决策能力全集齐备才可标记 `CURRENT`，能力不全时明确标记 `PARTIAL`。State/DecisionPacket 据此冻结七个因果域的点时覆盖。新闻路径复用同一平台事实身份和数据库唯一约束，避免重复证据。所有来源仍是明确轮询而非伪装成 PUSH/STREAM；新触发通过 Outbox + PostgreSQL NOTIFY 唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
+架构与代码现已使用事务型事件触发和主 Agent TriggerPlan。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 中两个原生 2 分钟财经快讯源；固定一手源另行采集 Fed 日历/政策发布、Treasury TGA/收益率曲线、Fed 广义美元、New York Fed 的 RRP/SOMA/EFFR/SOFR 与 ETF 发行人日持仓。S&P 500、美国高收益信用利差和 WTI 通过明确标注为 `AGGREGATOR` 的 FRED 日频流补足跨资产传导验证，绝不冒充一手或盘中行情。原始响应永久保留，程序只把带有效日期和变化量的紧凑快照投影成 CanonicalFact；连续指标再按同源点时历史的绝对变化分位数区分背景与主导候选，普通更新只刷新 State，不触发 AI。事实修订和未来正式发布时间分别同步为即时 Trigger 与持久 Wakeup。每次来源轮询还会永久记录 `CHANGED / UNCHANGED / FAILED`；同域全部配置源健康且冻结的决策能力全集齐备才可标记 `CURRENT`，能力不全时明确标记 `PARTIAL`。State/DecisionPacket 据此冻结七个因果域的点时覆盖。新闻路径复用同一平台事实身份和数据库唯一约束，避免重复证据。所有来源仍是明确轮询而非伪装成 PUSH/STREAM；新触发通过 Outbox + PostgreSQL NOTIFY 唤醒唯一 TriggerCoordinator，不再使用 5 秒 Shadow Scheduler 扫描。
 
 ## 当前实现状态
 

@@ -13,17 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v29
+  version: portfolio-state-v30
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v11
+    version: official-fact-v12
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v13
+    version: state-delta-v14
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -78,12 +78,21 @@ decision_state:
       - fact_type: US_DIGITAL_ASSET_RULEMAKING
         materiality: HIGH
         reason_code: US_DIGITAL_ASSET_RULEMAKING_REVISION
+      - fact_type: US_EQUITY_MARKET_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_EQUITY_MARKET_REVISION
+      - fact_type: US_HIGH_YIELD_CREDIT_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_HIGH_YIELD_CREDIT_REVISION
       - fact_type: US_TREASURY_CASH_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_CASH_REVISION
       - fact_type: US_TREASURY_YIELD_CURVE_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
+      - fact_type: US_WTI_OIL_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_WTI_OIL_REVISION
   packet_policy:
     version: decision-packet-policy-v30
     schema_version: decision-packet-v12
@@ -353,7 +362,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v25
+  version: information-intake-v26
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -423,10 +432,14 @@ information:
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 3600
     - domain: CROSS_ASSET_EXTERNAL
-      source_stream_ids: [fed-broad-dollar, treasury-yield-curve]
+      # FRED 三项是明确标注的日频聚合证据，只用于宏观传导验证，不冒充一手或盘中行情。
+      source_stream_ids: [fed-broad-dollar, fred-sp500, fred-us-high-yield-oas, fred-wti, treasury-yield-curve]
       required_capabilities: [CREDIT, ENERGY, EQUITIES, GOLD, USD, UST_YIELD_CURVE]
       source_capabilities:
         fed-broad-dollar: [USD]
+        fred-sp500: [EQUITIES]
+        fred-us-high-yield-oas: [CREDIT]
+        fred-wti: [ENERGY]
         treasury-yield-curve: [UST_YIELD_CURVE]
       maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
@@ -465,10 +478,10 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v24
+  version: context-assessment-v25
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v3
+    version: primary-portfolio-mandate-v4
     analysis_scope: primary-portfolio
     question: Assess accepted material evidence and its portfolio implications.
     assets:
@@ -478,7 +491,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [BTC_INSTITUTIONAL_FLOW, BTC_INSTITUTIONAL_HOLDINGS, ETH_INSTITUTIONAL_FLOW, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
+    required_risk_factors: [BTC_INSTITUTIONAL_FLOW, BTC_INSTITUTIONAL_HOLDINGS, ETH_INSTITUTIONAL_FLOW, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_ENERGY_INFLATION, US_EQUITY_RISK_APPETITE, US_FISCAL_LIQUIDITY, US_HIGH_YIELD_CREDIT_RISK, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2
