@@ -9,6 +9,7 @@ import typer
 
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
+    configured_fact_store_role,
     load_runtime_release,
     parse_utc_option,
     reject_invalidated_evaluation_plan,
@@ -32,6 +33,7 @@ from investment_manager.governance.evaluation.assessment import (
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash
+from investment_manager.platform.fact_store import FactStoreRole
 
 
 @app.command("register-assessment-forward-plan")
@@ -99,7 +101,11 @@ def register_assessment_forward_plan(
                 loaded.outcome_evaluation.settlement_grace_minutes
             ),
         )
-        engine = runtime_engine(database_url)
+        engine = runtime_engine(
+            database_url,
+            fact_store_role=configured_fact_store_role(loaded),
+            claim_fact_store=True,
+        )
         governance = SqlGovernanceRepository(engine)
         governance.record_release(manifest)
         plan = build_assessment_forward_plan(
@@ -140,7 +146,11 @@ def evaluate_assessment_forward_plan_command(
     publication = parse_utc_option(published_at, name="published-at")
     if publication > datetime.now(UTC):
         raise typer.BadParameter("published-at 不能晚于当前时间")
-    engine = runtime_engine(database_url)
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=FactStoreRole.CONTEXT,
+        claim_fact_store=False,
+    )
     governance = SqlGovernanceRepository(engine)
     plan = governance.get_plan(plan_id)
     if plan is None or plan.candidate_spec_snapshot is None:
