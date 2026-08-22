@@ -3,7 +3,7 @@ import type { CapitalAction } from "../api/types";
 import { hhmm } from "../lib/format";
 import styles from "./CapitalActions.module.css";
 
-const ROUTINE_OUTCOMES = new Set(["NO_OPPORTUNITY", "HOLD"]);
+const ROUTINE_OUTCOMES = new Set(["NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
 
 const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
   NO_OPPORTUNITY: { badge: "未下单", title: "保持现金" },
@@ -84,6 +84,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
     (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
   );
   const repeated = group.actions.length > 1;
+  const candidate = action.candidate_economics[0];
   const zeroImpact = new Set([
     "NO_OPPORTUNITY",
     "HOLD",
@@ -102,7 +103,9 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             {repeated ? <em>{group.actions.length} 次相同检查已归并</em> : null}
           </span>
           <span className={styles.summary}>
-            {reasons[0] ?? action.summary}
+            {candidate && zeroImpact
+              ? `费用后预期 ${formatBps(candidate.net_bps)} bp，入场至少需要 ${formatBps(candidate.entry_threshold_bps)} bp`
+              : reasons[0] ?? action.summary}
           </span>
         </span>
         <span className={styles.outcome} data-outcome={action.outcome}>{copy.badge}</span>
@@ -117,6 +120,15 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dd>{triggers.join("；") || "系统状态变化"}</dd>
             <dt>判断依据</dt>
             <dd>{reasons.join("；") || action.summary}</dd>
+            {candidate ? (
+              <>
+                <dt>候选经济性</dt>
+                <dd>
+                  毛收益 {formatBps(candidate.gross_bps)} bp − 完整开平仓成本 {formatBps(candidate.estimated_round_trip_cost_bps)} bp
+                  = 费用后 {formatBps(candidate.net_bps)} bp；入场门槛 {formatBps(candidate.entry_threshold_bps)} bp
+                </dd>
+              </>
+            ) : null}
             <dt>资金影响</dt>
             <dd>
               {zeroImpact
@@ -139,6 +151,11 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
       ) : null}
     </div>
   );
+}
+
+function formatBps(value: string): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
 }
 
 function riskStatus(action: CapitalAction): string {

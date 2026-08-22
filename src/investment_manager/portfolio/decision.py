@@ -73,6 +73,42 @@ class PortfolioSleeveInput(FrozenModel):
         return self
 
 
+def remaining_forecast_gross_bps(
+    forecast: BaseForecast | CalibratedForecast,
+    *,
+    quote_by_instrument: dict[str, ExecutableQuote],
+    as_of: datetime,
+) -> Decimal:
+    """Return the exact unconsumed gross edge used by the capital decision."""
+
+    if isinstance(forecast, CalibratedForecast):
+        age_seconds = Decimal(
+            str(max(0, (require_utc(as_of) - forecast.available_at).total_seconds()))
+        )
+        decay = max(
+            Decimal("0"),
+            Decimal("1")
+            - age_seconds
+            / (Decimal("2") * forecast.expected_edge_half_life_seconds),
+        )
+        forecast_gross_bps = forecast.conservative_gross_bps * decay
+    else:
+        forecast_gross_bps = forecast.raw_score
+    references = {item.instrument_id: item.price for item in forecast.reference_prices}
+    consumed_bps = Decimal("0")
+    for leg in forecast.target.legs:
+        quote = quote_by_instrument[leg.instrument.key]
+        exit_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+        sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
+        consumed_bps += (
+            sign
+            * leg.gross_weight
+            * (exit_price / references[leg.instrument.key] - Decimal("1"))
+            * Decimal("10000")
+        )
+    return forecast_gross_bps - max(Decimal("0"), consumed_bps)
+
+
 class PortfolioDecisionEngine:
     """The sole economic target owner; default OFF until replay evidence promotes it."""
 
@@ -226,7 +262,9 @@ class PortfolioDecisionEngine:
             )
             for item in sleeves
         )
-        below_rebalance_minimum = turnover < self._policy.minimum_rebalance_notional
+        below_rebalance_minimum = (
+            Decimal("0") < turnover < self._policy.minimum_rebalance_notional
+        )
         if below_rebalance_minimum:
             # Preserve the current economic target exactly.  A reason code without
             # changing the target would still let Planner emit an uneconomic order.
@@ -420,33 +458,11 @@ class PortfolioDecisionEngine:
         quote_by_instrument: dict[str, ExecutableQuote],
         as_of: datetime,
     ) -> Decimal:
-        forecast = item.forecast
-        if isinstance(forecast, CalibratedForecast):
-            age_seconds = Decimal(
-                str(max(0, (as_of - forecast.available_at).total_seconds()))
-            )
-            decay = max(
-                Decimal("0"),
-                Decimal("1")
-                - age_seconds
-                / (Decimal("2") * forecast.expected_edge_half_life_seconds),
-            )
-            forecast_gross_bps = forecast.conservative_gross_bps * decay
-        else:
-            forecast_gross_bps = forecast.raw_score
-        references = {item.instrument_id: item.price for item in forecast.reference_prices}
-        consumed_bps = Decimal("0")
-        for leg in forecast.target.legs:
-            quote = quote_by_instrument[leg.instrument.key]
-            exit_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
-            sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
-            consumed_bps += (
-                sign
-                * leg.gross_weight
-                * (exit_price / references[leg.instrument.key] - Decimal("1"))
-                * Decimal("10000")
-            )
-        return forecast_gross_bps - max(Decimal("0"), consumed_bps)
+        return remaining_forecast_gross_bps(
+            item.forecast,
+            quote_by_instrument=quote_by_instrument,
+            as_of=as_of,
+        )
 
     @classmethod
     def _target(

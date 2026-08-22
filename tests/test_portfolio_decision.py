@@ -455,6 +455,7 @@ def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
     assert result is not None
     assert result.sleeves == ()
     assert "CASH_SELECTED_NO_ELIGIBLE_FORECAST" in result.reason_codes
+    assert "REBALANCE_BELOW_MINIMUM" not in result.reason_codes
 
 
 def test_engine_requires_complete_product_quotes() -> None:

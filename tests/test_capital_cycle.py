@@ -7,6 +7,7 @@ from investment_manager.decision_cycle.capital import assemble_capital_cycle
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
+    serialize_capital_activity,
     serialize_capital_overview,
 )
 from investment_manager.execution.tables import mock_product_orders, trade_plans
@@ -122,13 +123,19 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
         )
 
 
-def _put_funding_history(market: SqlMarketDataStore, config, *, at: datetime) -> None:
+def _put_funding_history(
+    market: SqlMarketDataStore,
+    config,
+    *,
+    at: datetime,
+    rates: tuple[str, str, str] = ("0.0003", "0.0002", "0.0001"),
+) -> None:
     perpetual = next(
         item.instrument
         for item in config.capital.execution_specs
         if item.instrument.product == InstrumentProduct.USD_M_PERPETUAL
     )
-    for hours, rate in ((24, "0.0003"), (16, "0.0002"), (8, "0.0001")):
+    for hours, rate in zip((24, 16, 8), rates, strict=True):
         funding_at = at - timedelta(hours=hours)
         market.put_funding_settlement(
             FundingSettlement(
@@ -257,6 +264,41 @@ def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain(
     assert target.sleeves[0].desired_gross_notional == Decimal("3000")
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+
+
+def test_unprofitable_dynamic_candidate_explains_cash_without_fake_rebalance() -> None:
+    at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=at, sequence=71)
+    _put_funding_history(
+        market,
+        config,
+        at=at,
+        rates=("0.00001", "0.00001", "0.00001"),
+    )
+
+    result = assemble_capital_cycle(config, engine, forecast_clock=lambda: at).produce(
+        as_of=at,
+        cause_id="unprofitable-dynamic-carry-batch",
+        trigger_batch_id="unprofitable-dynamic-carry-batch",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert result.trade_plan is not None
+    assert result.trade_plan.groups == ()
+    activity = CapitalDashboardReader(engine, config).activity()[0]
+    assert activity.reason_codes == ("CASH_SELECTED_NO_ELIGIBLE_FORECAST",)
+    assert len(activity.candidate_economics) == 1
+    economics = activity.candidate_economics[0]
+    assert economics.net_bps < economics.entry_threshold_bps
+    serialized = serialize_capital_activity((activity,))["actions"][0]
+    assert serialized["candidate_economics"][0]["net_bps"] == str(
+        economics.net_bps
+    )
 
 
 def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -> None:

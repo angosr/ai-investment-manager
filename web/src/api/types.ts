@@ -70,6 +70,14 @@ export interface CapitalAction {
   reason_codes: string[];
   risk_outcome: string | null;
   order_count: number;
+  candidate_economics: {
+    producer_id: string;
+    forecast_family: string;
+    gross_bps: string;
+    estimated_round_trip_cost_bps: string;
+    net_bps: string;
+    entry_threshold_bps: string;
+  }[];
 }
 
 export interface AssessmentRecordRow {

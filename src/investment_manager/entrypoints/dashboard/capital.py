@@ -16,7 +16,14 @@ from investment_manager.execution.tables import (
     mock_product_orders,
     trade_plans,
 )
+from investment_manager.forecast.models import (
+    BaseForecast,
+    CalibratedForecast,
+    ForecastKind,
+)
+from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.kernel.time import require_utc
+from investment_manager.portfolio.decision import remaining_forecast_gross_bps
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
@@ -50,6 +57,16 @@ class CapitalOverview:
 
 
 @dataclass(frozen=True, slots=True)
+class CapitalCandidateEconomics:
+    producer_id: str
+    forecast_family: str
+    gross_bps: Decimal
+    estimated_round_trip_cost_bps: Decimal
+    net_bps: Decimal
+    entry_threshold_bps: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class CapitalActivity:
     activity_id: str
     at: datetime
@@ -60,6 +77,7 @@ class CapitalActivity:
     reason_codes: tuple[str, ...] = ()
     risk_outcome: str | None = None
     order_count: int = 0
+    candidate_economics: tuple[CapitalCandidateEconomics, ...] = ()
 
 
 class CapitalDashboardReader:
@@ -219,6 +237,33 @@ class CapitalDashboardReader:
             records = tuple(
                 CapitalCycleRecord.model_validate(item.payload) for item in rows
             )
+            forecast_ids = tuple(
+                sorted(
+                    {
+                        forecast_id
+                        for item in records
+                        for forecast_id in item.forecast_ids
+                    }
+                )
+            )
+            loaded_forecasts = (
+                {
+                    item.forecast_id: (
+                        BaseForecast.model_validate(item.payload)
+                        if ForecastKind(item.kind) == ForecastKind.BASE
+                        else CalibratedForecast.model_validate(item.payload)
+                    )
+                    for item in connection.execute(
+                        select(
+                            forecast_records.c.forecast_id,
+                            forecast_records.c.kind,
+                            forecast_records.c.payload,
+                        ).where(forecast_records.c.forecast_id.in_(forecast_ids))
+                    )
+                }
+                if forecast_ids
+                else {}
+            )
             target_ids = tuple(
                 item.target_id for item in records if item.target_id is not None
             )
@@ -313,12 +358,13 @@ class CapitalDashboardReader:
                 plans=plans,
                 groups_by_plan=groups_by_plan,
                 order_counts=order_counts,
+                forecasts=loaded_forecasts,
             )
             for record in records
         )
 
-    @staticmethod
     def _activity_row(
+        self,
         *,
         record: CapitalCycleRecord,
         target: PortfolioTarget | None,
@@ -326,7 +372,13 @@ class CapitalDashboardReader:
         plans: dict[str, TradePlan],
         groups_by_plan: dict[str, list[ExecutionGroup]],
         order_counts: dict[str, int],
+        forecasts: dict[str, BaseForecast | CalibratedForecast],
     ) -> CapitalActivity:
+        candidate_economics = self._candidate_economics(
+            record=record,
+            target=target,
+            forecasts=forecasts,
+        )
         if record.outcome in {
             CapitalCycleOutcome.NO_OPPORTUNITY,
             CapitalCycleOutcome.HOLD,
@@ -357,6 +409,7 @@ class CapitalDashboardReader:
                 outcome="PENDING",
                 summary="组合目标已生成，等待风险审核",
                 reason_codes=target.reason_codes,
+                candidate_economics=candidate_economics,
             )
         if risk.approved_target is None:
             return CapitalActivity(
@@ -368,6 +421,7 @@ class CapitalDashboardReader:
                 summary="组合目标被程序化风控拒绝",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics=candidate_economics,
             )
         if record.outcome == CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED:
             return CapitalActivity(
@@ -379,6 +433,7 @@ class CapitalDashboardReader:
                 summary="同一经济机会已决策，本轮未重复下单",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics=candidate_economics,
             )
         plan = plans.get(risk.approved_target.approved_target_id)
         if plan is None:
@@ -391,6 +446,7 @@ class CapitalDashboardReader:
                 summary="风险审核通过，等待交易计划",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics=candidate_economics,
             )
         groups = tuple(groups_by_plan.get(plan.plan_id, ()))
         order_count = order_counts.get(plan.plan_id, 0)
@@ -413,7 +469,59 @@ class CapitalDashboardReader:
             reason_codes=target.reason_codes,
             risk_outcome=risk.outcome.value,
             order_count=order_count,
+            candidate_economics=candidate_economics,
         )
+
+    def _candidate_economics(
+        self,
+        *,
+        record: CapitalCycleRecord,
+        target: PortfolioTarget | None,
+        forecasts: dict[str, BaseForecast | CalibratedForecast],
+    ) -> tuple[CapitalCandidateEconomics, ...]:
+        if target is None or self._config.carry_forecast.evidence is None:
+            return ()
+        quote_by_instrument = {item.instrument.key: item for item in target.quotes}
+        cost_bps = self._config.carry_forecast.evidence.round_trip_cost_bps
+        candidates = []
+        for forecast_id in record.forecast_ids:
+            forecast = forecasts.get(forecast_id)
+            if forecast is None or not {
+                item.instrument.key for item in forecast.target.legs
+            }.issubset(quote_by_instrument):
+                continue
+            if isinstance(forecast, BaseForecast):
+                permission = next(
+                    (
+                        item
+                        for item in self._config.capital.mock_candidate_authorizations
+                        if item.producer_id == forecast.producer_id
+                        and item.producer_version == forecast.producer_version
+                        and item.forecast_family == forecast.forecast_family
+                    ),
+                    None,
+                )
+                if permission is None:
+                    continue
+                threshold = permission.minimum_entry_net_bps
+            else:
+                threshold = self._config.capital.decision.minimum_conservative_net_bps
+            gross_bps = remaining_forecast_gross_bps(
+                forecast,
+                quote_by_instrument=quote_by_instrument,
+                as_of=target.as_of,
+            )
+            candidates.append(
+                CapitalCandidateEconomics(
+                    producer_id=forecast.producer_id,
+                    forecast_family=forecast.forecast_family,
+                    gross_bps=gross_bps,
+                    estimated_round_trip_cost_bps=cost_bps,
+                    net_bps=gross_bps - cost_bps,
+                    entry_threshold_bps=threshold,
+                )
+            )
+        return tuple(candidates)
 
     @staticmethod
     def _latest_payload(
@@ -536,6 +644,19 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "reason_codes": list(item.reason_codes),
                 "risk_outcome": item.risk_outcome,
                 "order_count": item.order_count,
+                "candidate_economics": [
+                    {
+                        "producer_id": candidate.producer_id,
+                        "forecast_family": candidate.forecast_family,
+                        "gross_bps": str(candidate.gross_bps),
+                        "estimated_round_trip_cost_bps": str(
+                            candidate.estimated_round_trip_cost_bps
+                        ),
+                        "net_bps": str(candidate.net_bps),
+                        "entry_threshold_bps": str(candidate.entry_threshold_bps),
+                    }
+                    for candidate in item.candidate_economics
+                ],
             }
             for item in items
         ]
