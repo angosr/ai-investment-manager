@@ -10,6 +10,15 @@ const DIRECTION: Record<string, string> = {
   UNCERTAIN: "方向不明",
 };
 
+const EVIDENCE_KIND: Record<string, string> = {
+  FIRST_PARTY_FACT: "一手事实",
+  INTELLIGENCE_EVENT: "事件",
+  MARKET_STRUCTURE: "市场结构",
+  MATERIAL_DELTA: "重大变化",
+  MARKET_FEATURE: "市场特征",
+  PREVIOUS_CONTEXT: "上一轮认知",
+};
+
 /** Latest immutable world-cognition snapshot plus the current update status. */
 export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
@@ -36,14 +45,7 @@ export function LatestAssessment() {
         title: item.title,
       }))
     : [];
-  const visibleEvents = activeEvents.length > 0
-    ? activeEvents
-    : (detail?.cited_evidence ?? []).filter(
-      (item) => item.kind === "INTELLIGENCE_EVENT",
-    );
-  const eventHeading = activeEvents.length > 0
-    ? "当前仍影响未来的事件"
-    : "本次认知引用的事件（影响状态未评估）";
+  const citedEvidence = detail?.cited_evidence ?? [];
   return (
     <Card
       title="最新世界认知"
@@ -90,12 +92,22 @@ export function LatestAssessment() {
             {detail && detail.data_gaps.length > 0 ? (
               <div className={styles.gaps}>仍缺：{detail.data_gaps.join("；")}</div>
             ) : null}
-            {visibleEvents.length > 0 ? (
+            {activeEvents.length > 0 ? (
               <div className={styles.evidence}>
-                <b>{eventHeading}</b>
-                {visibleEvents.slice(0, 6).map((item) => (
+                <b>当前仍影响未来的事件</b>
+                {activeEvents.map((item) => (
                   <span key={item.evidence_id}>
                     {hhmm(item.at)} · {item.source} · {item.title}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {citedEvidence.length > 0 ? (
+              <div className={styles.evidence}>
+                <b>本次世界认知实际引用 · {citedEvidence.length} 条</b>
+                {citedEvidence.map((item) => (
+                  <span key={item.evidence_id}>
+                    {hhmm(item.at)} · {EVIDENCE_KIND[item.kind] ?? item.kind} · {item.title}
                   </span>
                 ))}
               </div>
