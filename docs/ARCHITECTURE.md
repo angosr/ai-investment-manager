@@ -419,8 +419,9 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
 并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。calendar carry 继续作为原冻结 cohort 的 baseline，不因当前月份无订单而改 cadence；新增收益来源一次只
-接入一个机制不同的 challenger，避免并行试错把选择偏差伪装成盈利能力。
+结论。calendar carry 的不可变历史 Evidence 只作为新 cohort 的点时 counterfactual，不进入主动资本链、也不占用
+组合容量；主动链只装配一个 dynamic challenger。新增收益来源仍一次只接入一个机制不同的 challenger，避免并行
+试错把选择偏差伪装成盈利能力。
 
 ## 4. 目标目录
 

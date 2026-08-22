@@ -106,7 +106,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 - `information-collector`：采集本机 TrendRadar/NewsNow 事件流和配置中固定的一手官方端点；聚合事件与官方记录分别进入各自事实边界，再统一投影到 State。
 - `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
-- `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让各自 cadence 的合格 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。当前只有月度 Carry Producer，月度规则不属于 Capital。Dispatcher 不实现业务防抖或批处理。
+- `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让唯一 dynamic carry 主动 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。月度 calendar carry 只供 evaluator 构建点时 counterfactual，不进入主动链。Dispatcher 不实现业务防抖或批处理。
 - Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。
 - 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
 - Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。

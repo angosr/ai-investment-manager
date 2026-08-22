@@ -156,12 +156,13 @@ def _put_funding_history(
         )
 
 
-def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade() -> None:
+def test_capital_cycle_turns_dynamic_carry_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=7)
+    _put_funding_history(market, config, at=NOW)
     service = assemble_capital_cycle(config, engine)
 
     first = service.produce(
@@ -192,7 +193,7 @@ def test_capital_cycle_turns_monthly_released_carry_into_idempotent_mock_trade()
     assert same_time_other_batch == first
     assert len(first.groups) == 1
     assert first.groups[0].terminal
-    assert first.groups[0].valid_until == NOW.replace(minute=30)
+    assert first.groups[0].valid_until == NOW + timedelta(minutes=30)
     assert first.account.equity < Decimal("10000")
     assert first.account.equity == Decimal("9996.91685")
     assert first.account.revision == 1
@@ -307,6 +308,7 @@ def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=8)
+    _put_funding_history(market, config, at=NOW)
     available_at = NOW + timedelta(seconds=5)
     service = assemble_capital_cycle(
         config,
@@ -337,25 +339,13 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=1)
+    _put_funding_history(market, config, at=NOW)
     service = assemble_capital_cycle(config, engine)
 
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
 
-    heartbeat = NOW + timedelta(minutes=15)
-    _put_market(
-        market,
-        config,
-        at=heartbeat,
-        sequence=2,
-        spot_bid="105000",
-        spot_ask="105010",
-        perpetual_bid="105310",
-        perpetual_ask="105320",
-    )
-    held = service.produce(as_of=heartbeat)
-
-    missed = datetime(2026, 10, 1, 0, 31, tzinfo=UTC)
+    missed = NOW + timedelta(hours=25)
     _put_market(
         market,
         config,
@@ -375,7 +365,6 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     )
     _put_trigger_batch(engine, config, at=missed, sequence=2)
 
-    assert held.outcome.value == "NO_CHANGE"
     assert after_restart.outcome.value == "NO_CHANGE"
     overview = CapitalDashboardReader(engine, config).overview(now=missed)
     dto = serialize_capital_overview(overview)
@@ -393,7 +382,7 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     assert activity[0].reason_codes == ("NO_NEW_OPPORTUNITY_HOLDING_REVIEWED",)
 
 
-def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
+def test_dynamic_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     loaded = load_config("config/investment-manager.shadow.yaml")
@@ -406,17 +395,16 @@ def test_risk_forced_cash_is_not_retried_later_in_the_month() -> None:
     )
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=10)
+    _put_funding_history(market, config, at=NOW)
     service = assemble_capital_cycle(config, engine)
 
     forced_cash = service.produce(as_of=NOW)
-    later = NOW + timedelta(minutes=15)
-    _put_market(market, config, at=later, sequence=11)
-    held = service.produce(as_of=later)
+    replay = service.produce(as_of=NOW)
 
     assert forced_cash.outcome.value == "PLANNED"
     assert forced_cash.trade_plan is not None
     assert forced_cash.trade_plan.groups == ()
-    assert held.outcome.value == "NO_CHANGE"
+    assert replay == forced_cash
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
         assert connection.scalar(select(func.count()).select_from(portfolio_risk_decisions)) == 1
@@ -430,6 +418,7 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
     loaded = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, loaded, at=NOW, sequence=20)
+    _put_funding_history(market, loaded, at=NOW)
     opened = assemble_capital_cycle(loaded, engine).produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
     assert opened.account.positions
@@ -441,7 +430,7 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
             )
         }
     )
-    heartbeat = NOW + timedelta(minutes=15)
+    heartbeat = NOW + timedelta(hours=25)
     _put_market(market, protected, at=heartbeat, sequence=21)
     exited = assemble_capital_cycle(protected, engine).produce(as_of=heartbeat)
 

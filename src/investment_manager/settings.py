@@ -141,6 +141,8 @@ class AppConfig(StrictConfig):
                 raise ValueError("当前 Capital 候选权限只允许 SHADOW Mock")
             if not self.carry_forecast.enabled or self.carry_forecast.evidence is None:
                 raise ValueError("Capital 必须绑定已发布的 Carry Shadow evidence")
+            if not self.dynamic_carry_forecast.enabled:
+                raise ValueError("Capital 主动链必须且只能启用 Dynamic Carry 候选")
             if self.capital.settlement_asset != self.carry_forecast.quote_asset:
                 raise ValueError("Capital 与 Shadow 结算资产必须一致")
             evidence_gross = (

@@ -27,8 +27,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "carry-capital-shadow-v8"
-    assert config.temporal.namespace == "shadow-capital-20260821-v8"
+    assert config.pipeline.version == "carry-capital-shadow-v9"
+    assert config.temporal.namespace == "shadow-capital-20260821-v9"
     assert config.capital.enabled
     assert config.information.version == "information-intake-v23"
     assert config.information.normalizer_version == "trendradar-collector-v8"
@@ -101,6 +101,17 @@ def test_capital_sizing_cannot_drift_from_released_carry_evidence() -> None:
     payload["capital"]["risk"]["maximum_gross_exposure_fraction"] = Decimal("0.29")
 
     with pytest.raises(ValidationError, match="仓位尺寸必须完全一致"):
+        type(config).model_validate(payload)
+
+
+def test_capital_active_chain_requires_dynamic_candidate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["dynamic_carry_forecast"]["enabled"] = False
+    payload["capital"]["mock_candidate_authorizations"] = ()
+
+    with pytest.raises(ValidationError, match="只能启用 Dynamic Carry"):
         type(config).model_validate(payload)
 
 

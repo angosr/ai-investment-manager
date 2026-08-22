@@ -28,9 +28,7 @@ from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
 from investment_manager.forecast.carry import (
-    CarryForecastProducer,
     DynamicCarryForecastProducer,
-    ReleasedCarryForecastProducer,
 )
 from investment_manager.forecast.repository import Forecast, SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
@@ -750,58 +748,38 @@ def assemble_capital_cycle(
         risks=risks,
         accounts=portfolio,
     )
-    base = CarryForecastProducer(
-        policy=config.carry_forecast,
-        market=market,
-        store=forecasts,
-        maximum_spot_age_seconds=config.capital.risk.maximum_quote_age_seconds,
-        maximum_perpetual_age_seconds=config.capital.risk.maximum_quote_age_seconds,
-        clock=forecast_clock,
-    )
-    producer = ReleasedCarryForecastProducer(
-        base=base,
-        evidence=evidence,
-        store=forecasts,
-    )
     group_engine = ExecutionGroupEngine(
         store=groups,
         venue=venue,
         observations=observations,
     )
-    forecast_sources = [
+    if not config.dynamic_carry_forecast.enabled:
+        raise ValueError("Capital cycle 必须绑定唯一 Dynamic Carry 主动候选")
+    forecast_sources = (
         CapitalForecastSource(
-            forecast_family=config.carry_forecast.forecast_family,
-            producer=producer,
+            forecast_family=config.dynamic_carry_forecast.forecast_family,
+            producer=DynamicCarryForecastProducer(
+                policy=config.dynamic_carry_forecast,
+                market=market,
+                store=forecasts,
+                maximum_spot_age_seconds=(
+                    config.capital.risk.maximum_quote_age_seconds
+                ),
+                maximum_perpetual_age_seconds=(
+                    config.capital.risk.maximum_quote_age_seconds
+                ),
+                clock=forecast_clock,
+            ),
             estimated_variable_cost_bps=evidence.round_trip_cost_bps,
             risk_template=config.capital.sleeve_risk,
-        )
-    ]
-    if config.dynamic_carry_forecast.enabled:
-        forecast_sources.append(
-            CapitalForecastSource(
-                forecast_family=config.dynamic_carry_forecast.forecast_family,
-                producer=DynamicCarryForecastProducer(
-                    policy=config.dynamic_carry_forecast,
-                    market=market,
-                    store=forecasts,
-                    maximum_spot_age_seconds=(
-                        config.capital.risk.maximum_quote_age_seconds
-                    ),
-                    maximum_perpetual_age_seconds=(
-                        config.capital.risk.maximum_quote_age_seconds
-                    ),
-                    clock=forecast_clock,
-                ),
-                estimated_variable_cost_bps=evidence.round_trip_cost_bps,
-                risk_template=config.capital.sleeve_risk,
-                mock_authorization=config.capital.mock_candidate_authorizations[0],
-            )
-        )
+            mock_authorization=config.capital.mock_candidate_authorizations[0],
+        ),
+    )
     return CapitalCycleService(
         config=config,
         market=market,
         forecasts=forecasts,
-        forecast_sources=tuple(forecast_sources),
+        forecast_sources=forecast_sources,
         portfolio=portfolio,
         performance=performance,
         risks=risks,

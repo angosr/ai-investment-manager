@@ -159,7 +159,7 @@ dynamic_carry_forecast:
   signal_validity_minutes: 30
 
 capital:
-  version: product-capital-v4
+  version: product-capital-v5
   enabled: false
   settlement_asset: USDT
   decision:
