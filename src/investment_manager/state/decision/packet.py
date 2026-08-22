@@ -74,6 +74,7 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v11",
     "decision-packet-v12",
     "decision-packet-v13",
+    "decision-packet-v14",
 }
 _CALENDAR_CONTEXT_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
@@ -81,9 +82,7 @@ _CALENDAR_CONTEXT_FACT_TYPES = {
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
 _RESULT_CONTEXT_FACT_TYPES = {TREASURY_BUYBACK_RESULT_FACT_TYPE}
-_EXTENDED_CONTEXT_FACT_TYPES = (
-    _CALENDAR_CONTEXT_FACT_TYPES | _RESULT_CONTEXT_FACT_TYPES
-)
+_EXTENDED_CONTEXT_FACT_TYPES = _CALENDAR_CONTEXT_FACT_TYPES | _RESULT_CONTEXT_FACT_TYPES
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
 PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
 PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS = 500
@@ -103,9 +102,7 @@ def _analysis_decimal(value: Decimal) -> str:
 
     if value == 0:
         return "0"
-    quantum = Decimal(1).scaleb(
-        value.copy_abs().adjusted() - _ANALYSIS_SIGNIFICANT_DIGITS + 1
-    )
+    quantum = Decimal(1).scaleb(value.copy_abs().adjusted() - _ANALYSIS_SIGNIFICANT_DIGITS + 1)
     text = format(value.quantize(quantum, rounding=ROUND_HALF_EVEN), "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
@@ -119,9 +116,7 @@ def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, obj
         if name not in payload:
             continue
         raw = getattr(item, name)
-        projected[name] = (
-            _analysis_decimal(raw) if isinstance(raw, Decimal) else payload[name]
-        )
+        projected[name] = _analysis_decimal(raw) if isinstance(raw, Decimal) else payload[name]
     return projected
 
 
@@ -131,9 +126,7 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
     projected: dict[str, object] = {
         "revision_id": item.revision_id,
         "fact_type": item.fact_type,
-        "event_time": (
-            item.event_time.isoformat() if item.event_time is not None else None
-        ),
+        "event_time": (item.event_time.isoformat() if item.event_time is not None else None),
         "claim": item.claim,
         "risk_factors": item.risk_factors,
         "decision_materiality": item.decision_materiality.value,
@@ -177,9 +170,13 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     }
     for field_name in (
         "content_hash",
+        "coverage_gap_codes",
+        "data_quality_codes",
         "missing_fact_revision_ids",
+        "mandate_version",
         "omitted_fact_revision_ids",
         "omitted_intelligence_event_refs",
+        "packet_id",
         "policy_version",
         "schema_version",
         "state_id",
@@ -241,22 +238,28 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     )
     payload["facts"] = tuple(_analysis_fact(item) for item in packet.facts)
     previous = payload.get("previous_context")
-    if previous is not None and not previous_context_is_decision_relevant(
-        packet.previous_context
-    ):
+    if previous is not None and not previous_context_is_decision_relevant(packet.previous_context):
         payload.pop("previous_context")
     elif previous is not None:
+        if packet.previous_context.schema_version == "legacy-context-assessment-v1":
+            payload["previous_context"] = {
+                "schema_version": "legacy-context-assessment-v1",
+                "event_references": tuple(
+                    item
+                    for item in previous["event_references"]
+                    if item["impact_state"] == "ACTIVE"
+                ),
+            }
+            previous = payload["previous_context"]
         for field_name in (
             "analysis_behavior_hash",
             "analysis_scope",
             "decision_packet_hash",
             "mandate_version",
         ):
-            previous.pop(field_name)
+            previous.pop(field_name, None)
         previous["event_references"] = tuple(
-            item
-            for item in previous["event_references"]
-            if item["impact_state"] == "ACTIVE"
+            item for item in previous["event_references"] if item["impact_state"] == "ACTIVE"
         )
         # Historical contradictions and gaps describe the old evidence cut.
         # Sending them again competes with the current facts and can anchor the
@@ -264,7 +267,9 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         # in the immutable packet and assessment audit trail.
         previous.pop("contradictions", None)
         previous.pop("data_gaps", None)
-    payload["information_coverage"] = tuple(
+    if not packet.review_requests:
+        payload.pop("review_requests", None)
+    payload["capability_summary"] = tuple(
         {
             "domain": item.domain.value,
             "status": item.status.value,
@@ -292,6 +297,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         }
         for item in packet.information_coverage
     )
+    payload.pop("information_coverage", None)
     return payload
 
 
@@ -718,10 +724,56 @@ class PacketPreviousEventReference(FrozenModel):
         return self
 
 
+class PacketPreviousCausalNode(FrozenModel):
+    statement: str = Field(min_length=1, max_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS)
+    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def evidence_must_be_unique(self):
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("上一轮因果节点不能重复引用证据")
+        return self
+
+
+class PacketPreviousHypothesis(FrozenModel):
+    hypothesis_id: str = Field(min_length=1)
+    continuity_ref: str | None = Field(default=None, min_length=1)
+    role: Literal["PRIMARY", "ALTERNATIVE", "TAIL_RISK"]
+    claim: str = Field(min_length=1, max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS)
+    horizon_hours: int = Field(gt=0, le=4_380)
+    causal_chain: tuple[PacketPreviousCausalNode, ...] = Field(min_length=2, max_length=5)
+    conflicting_evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
+    next_observation: str = Field(min_length=1, max_length=500)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
+    next_review_at: datetime
+
+    _utc_next_review_at = field_validator("next_review_at")(require_utc)
+
+
+class PacketPreviousCapitalImplication(FrozenModel):
+    objective_id: str = Field(min_length=1)
+    effect: Literal["SUPPORT", "NEUTRAL", "CAUTION", "OPPOSE", "INSUFFICIENT"]
+    incremental_reason: str = Field(min_length=1, max_length=800)
+    transmission: str = Field(min_length=1, max_length=1_200)
+    evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
+
+
+class PacketPreviousDecisionBlocker(FrozenModel):
+    question: str = Field(min_length=1, max_length=500)
+    action_if_yes: str = Field(min_length=1, max_length=500)
+    action_if_no: str = Field(min_length=1, max_length=500)
+    observation_needed: str = Field(min_length=1, max_length=500)
+
+
 class PacketPreviousContext(FrozenModel):
     """Latest inherited world model; derived evidence, never a first-party fact."""
 
     assessment_id: str = Field(min_length=1)
+    schema_version: Literal[
+        "legacy-context-assessment-v1",
+        "world-model-assessment-v1",
+    ] = "legacy-context-assessment-v1"
     analysis_scope: str | None = Field(default=None, min_length=1)
     mandate_version: str | None = Field(default=None, min_length=1)
     analysis_behavior_hash: str | None = Field(
@@ -734,19 +786,29 @@ class PacketPreviousContext(FrozenModel):
     )
     as_of: datetime
     available_at: datetime
-    market_mechanism: str = Field(
+    market_mechanism: str | None = Field(
+        default=None,
         min_length=1,
         max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
     )
-    drivers: tuple[PacketPreviousDriver, ...] = Field(max_length=8)
+    drivers: tuple[PacketPreviousDriver, ...] = Field(default=(), max_length=8)
     event_references: tuple[PacketPreviousEventReference, ...] = ()
     capital_relevance: PacketPreviousCapitalRelevance | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    views: tuple[PacketPreviousView, ...]
-    contradictions: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
-    data_gaps: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
+    views: tuple[PacketPreviousView, ...] = ()
+    contradictions: tuple[str, ...] = Field(default=(), max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
+    data_gaps: tuple[str, ...] = Field(default=(), max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
+    hypotheses: tuple[PacketPreviousHypothesis, ...] = Field(default=(), max_length=3)
+    capital_implication: PacketPreviousCapitalImplication | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    decision_blockers: tuple[PacketPreviousDecisionBlocker, ...] = Field(
+        default=(),
+        max_length=2,
+    )
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -761,6 +823,25 @@ class PacketPreviousContext(FrozenModel):
         event_ids = tuple(item.evidence_id for item in self.event_references)
         if len(set(event_ids)) != len(event_ids):
             raise ValueError("上一轮世界认知不能重复引用事件")
+        if self.schema_version == "legacy-context-assessment-v1":
+            if self.market_mechanism is None:
+                raise ValueError("历史上一轮世界认知必须包含 market_mechanism")
+            if self.hypotheses or self.capital_implication or self.decision_blockers:
+                raise ValueError("历史上一轮世界认知不得混入新字段")
+            return self
+        if any(
+            (
+                self.market_mechanism is not None,
+                bool(self.drivers),
+                self.capital_relevance is not None,
+                bool(self.views),
+                bool(self.contradictions),
+                bool(self.data_gaps),
+            )
+        ):
+            raise ValueError("新上一轮世界模型不得混入已废弃字段")
+        if sum(item.role == "PRIMARY" for item in self.hypotheses) != 1:
+            raise ValueError("新上一轮世界模型必须且只能有一个 PRIMARY")
         return self
 
 
@@ -878,8 +959,10 @@ class DecisionPacket(FrozenModel):
             self.active_hypotheses or self.previous_assessment_refs
         ):
             raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
-        if self.schema_version == "decision-packet-v13" and self.capital_objective is None:
-            raise ValueError("DecisionPacket v13 必须绑定一个明确资本问题")
+        if self.schema_version in {"decision-packet-v13", "decision-packet-v14"} and (
+            self.capital_objective is None
+        ):
+            raise ValueError("DecisionPacket v13+ 必须绑定一个明确资本问题")
         coverage_domains = tuple(item.domain.value for item in self.information_coverage)
         if tuple(sorted(set(coverage_domains))) != coverage_domains:
             raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
@@ -908,6 +991,12 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         payload.pop("review_requests", None)
     if packet.schema_version != "decision-packet-v6" and packet.previous_context is None:
         payload.pop("previous_context", None)
+    if packet.schema_version != "decision-packet-v14" and packet.previous_context is not None:
+        previous_context = payload["previous_context"]
+        if packet.previous_context.schema_version == "legacy-context-assessment-v1":
+            previous_context.pop("schema_version", None)
+            previous_context.pop("hypotheses", None)
+            previous_context.pop("decision_blockers", None)
     if packet.schema_version == "decision-packet-v6" and packet.previous_context is not None:
         previous_context = payload["previous_context"]
         for field_name in (
@@ -938,11 +1027,7 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         and not packet.information_coverage
     ):
         payload.pop("information_coverage", None)
-    if (
-        packet.schema_version
-        not in _CURRENT_PACKET_SCHEMAS
-        and not packet.derivative_states
-    ):
+    if packet.schema_version not in _CURRENT_PACKET_SCHEMAS and not packet.derivative_states:
         payload.pop("derivative_states", None)
     return content_hash(payload)
 
@@ -1010,12 +1095,6 @@ class DecisionPacketBuilder:
             direct_event_refs=direct_event_refs,
             as_of=state.as_of,
         )
-        context_reference_eligible_refs = frozenset(
-            content_hash(event)
-            for event in intelligence_events
-            if self._is_context_reference_eligible(event)
-        )
-        known_event_refs = frozenset(content_hash(event) for event in intelligence_events)
         market_by_symbol = {item.symbol: item for item in markets}
         feature_by_symbol = {item.symbol: item for item in features}
         asset_states = tuple(
@@ -1060,8 +1139,6 @@ class DecisionPacketBuilder:
             "previous_context": self._compact_previous_context(
                 previous_context,
                 as_of=state.as_of,
-                known_event_refs=known_event_refs,
-                eligible_event_refs=context_reference_eligible_refs,
             ),
             "information_coverage": information_coverage,
             "data_quality_codes": state.data_quality_codes,
@@ -1303,8 +1380,7 @@ class DecisionPacketBuilder:
 
         return (
             event.impact >= self._policy.minimum_background_intelligence_impact
-            and event.source_reliability
-            >= self._policy.minimum_background_source_reliability
+            and event.source_reliability >= self._policy.minimum_background_source_reliability
         )
 
     def _compact_previous_context(
@@ -1312,38 +1388,19 @@ class DecisionPacketBuilder:
         context: PacketPreviousContext | None,
         *,
         as_of: datetime,
-        known_event_refs: frozenset[str],
-        eligible_event_refs: frozenset[str],
     ) -> PacketPreviousContext | None:
         if context is None:
             return None
-        event_references = tuple(
-            item.model_copy(
-                update={
-                    "impact_state": "STALE",
-                    "rationale": (
-                        "该线索未达到当前世界认知的来源质量与市场影响门槛，"
-                        "保留在永久事件账本中，但不再参与当前决策。"
-                    ),
-                    "stale_at": as_of,
-                }
-            )
-            if item.impact_state == "ACTIVE"
-            and item.evidence_id in known_event_refs
-            and item.evidence_id not in eligible_event_refs
-            else item
-            for item in context.event_references
-        )
-        return context.model_copy(
-            update={
-                "drivers": context.drivers[: self._policy.maximum_previous_context_drivers],
-                "event_references": tuple(
-                    item
-                    for item in event_references
-                    if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
-                ),
-            }
-        )
+        update: dict[str, object] = {
+            "event_references": tuple(
+                item
+                for item in context.event_references
+                if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
+            ),
+        }
+        if context.schema_version == "legacy-context-assessment-v1":
+            update["drivers"] = context.drivers[: self._policy.maximum_previous_context_drivers]
+        return context.model_copy(update=update)
 
     def _select_facts(
         self,
@@ -1373,8 +1430,7 @@ class DecisionPacketBuilder:
                 or item.fact.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
                 or (
                     item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
-                    and distance
-                    <= self._policy.maximum_calendar_context_distance_seconds
+                    and distance <= self._policy.maximum_calendar_context_distance_seconds
                 )
                 or distance <= self._policy.maximum_background_fact_distance_seconds
             ):
@@ -1544,12 +1600,8 @@ class DecisionPacketBuilder:
             last_funding_rate_bps=snapshot.last_funding_rate_bps,
             trailing_funding_rate_mean_bps=snapshot.trailing_funding_rate_mean_bps,
             trailing_funding_rate_sum_bps=snapshot.trailing_funding_rate_sum_bps,
-            trailing_funding_rate_stddev_bps=(
-                snapshot.trailing_funding_rate_stddev_bps
-            ),
-            trailing_funding_positive_fraction=(
-                snapshot.trailing_funding_positive_fraction
-            ),
+            trailing_funding_rate_stddev_bps=(snapshot.trailing_funding_rate_stddev_bps),
+            trailing_funding_positive_fraction=(snapshot.trailing_funding_positive_fraction),
             trailing_funding_rate_min_bps=snapshot.trailing_funding_rate_min_bps,
             funding_settlement_count=snapshot.funding_settlement_count,
             funding_window_hours=snapshot.funding_window_hours,

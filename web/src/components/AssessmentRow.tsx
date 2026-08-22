@@ -45,6 +45,17 @@ const CAPITAL_STATUS: Record<string, string> = {
   BASE_UNCHANGED: "程序基线不变",
   ENTRY_VETO_CANDIDATE: "入场否决研究候选",
   INSUFFICIENT_EVIDENCE: "证据不足，不改变基线",
+  SUPPORT: "支持程序动作",
+  NEUTRAL: "不改变程序动作",
+  CAUTION: "谨慎执行程序动作",
+  OPPOSE: "反对本次程序动作",
+  INSUFFICIENT: "增量证据不足",
+};
+
+const HYPOTHESIS_ROLE: Record<string, string> = {
+  PRIMARY: "主假设",
+  ALTERNATIVE: "替代假设",
+  TAIL_RISK: "尾部风险",
 };
 
 const COVERAGE_STATUS: Record<string, string> = {
@@ -116,6 +127,7 @@ export function AssessmentRow({ row }: { row: Row }) {
   }, [detail, open, row.assessment_id]);
 
   const category = row.capital_status === "ENTRY_VETO_CANDIDATE"
+    || row.capital_status === "OPPOSE"
     || row.directional_view_count > 0
     ? "pending"
     : "no-action";
@@ -181,6 +193,9 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
 }
 
 function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
+  if (detail.schema_version === "world-model-assessment-v1") {
+    return <CurrentWorldModel detail={detail} />;
+  }
   const legacyEventReferences = detail.cited_evidence.filter(
     (item) => item.kind === "INTELLIGENCE_EVENT",
   );
@@ -315,6 +330,126 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
   );
 }
 
+function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
+  return (
+    <div className={styles.snapshotPanel}>
+      <SnapshotHeader
+        title="当时世界认知"
+        stateId={detail.assessment_id}
+        asOf={detail.at}
+        identityLabel="assessment_id"
+      />
+      <div className={styles.snapshotQuestion}>
+        证据截止 {detail.as_of} · 认知可用 {detail.at}
+      </div>
+      {detail.hypotheses.map((hypothesis) => (
+        <SnapshotSection
+          key={hypothesis.hypothesis_id}
+          title={`${HYPOTHESIS_ROLE[hypothesis.role]} · ${hypothesis.horizon_hours} 小时`}
+        >
+          <p className={styles.thesis}>{hypothesis.claim}</p>
+          <ol className={styles.analysisList}>
+            {hypothesis.causal_chain.map((node, index) => (
+              <li key={`${hypothesis.hypothesis_id}-${index}`}>
+                <b>{node.statement}</b>
+                {node.evidence.map((item) => (
+                  <div key={item.evidence_id}>
+                    引用：{hhmm(item.at)} · {item.source} · {item.title}
+                  </div>
+                ))}
+              </li>
+            ))}
+          </ol>
+          {hypothesis.conflicting_evidence.length > 0 ? (
+            <div className={styles.invalidation}>
+              <span>反向证据</span>
+              <ul>
+                {hypothesis.conflicting_evidence.map((item) => (
+                  <li key={item.evidence_id}>{item.source} · {item.title}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className={styles.invalidation}>
+            <span>下一项关键观测</span>
+            <div>{hypothesis.next_observation} · 复核 {hypothesis.next_review_at}</div>
+            <span>失效条件</span>
+            <ul>
+              {hypothesis.invalidation_conditions.map((condition) => (
+                <li key={condition}>{condition}</li>
+              ))}
+            </ul>
+          </div>
+        </SnapshotSection>
+      ))}
+      {detail.capital_implication ? (
+        <SnapshotSection title="对当前程序策略的增量作用">
+          <div className={styles.marketSnapshot}>
+            <b>
+              {CAPITAL_STATUS[detail.capital_implication.effect]
+                ?? detail.capital_implication.effect}
+            </b>
+            <span>{detail.capital_implication.incremental_reason}</span>
+            <span>{detail.capital_implication.transmission}</span>
+            {detail.capital_implication.evidence.map((item) => (
+              <span key={item.evidence_id}>
+                引用：{hhmm(item.at)} · {item.source} · {item.title}
+              </span>
+            ))}
+            <span>
+              失效条件：{detail.capital_implication.invalidation_conditions.join("；")}
+            </span>
+            <small>研究结论 · 资本权限：无 · 未通过配对评估前仅记录影子结果</small>
+          </div>
+        </SnapshotSection>
+      ) : null}
+      {detail.decision_blockers.length > 0 ? (
+        <SnapshotSection title="会改变资本动作的关键未知">
+          <ul className={styles.analysisList}>
+            {detail.decision_blockers.map((item) => (
+              <li key={item.question}>
+                <b>{item.question}</b>
+                <div>若是：{item.action_if_yes}</div>
+                <div>若否：{item.action_if_no}</div>
+                <div>所需观测：{item.observation_needed}</div>
+              </li>
+            ))}
+          </ul>
+        </SnapshotSection>
+      ) : null}
+      <SnapshotSection title="关联事件及经济影响状态">
+        {detail.event_references.length > 0 ? (
+          <ul className={styles.snapshotList}>
+            {detail.event_references.map((item) => (
+              <li key={item.evidence_id}>
+                <b>
+                  {item.impact_state === "ACTIVE" ? "仍影响未来" : "影响已消退"}
+                  {` · ${hhmm(item.event_time)} · ${item.source}`}
+                </b>
+                {` · ${item.title}`}
+                <div>{item.rationale}</div>
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.snapshotEmpty}>当前假设未引用事件型证据</p>}
+      </SnapshotSection>
+      <SnapshotSection title="本次认知实际引用的冻结证据">
+        {detail.cited_evidence.length > 0 ? (
+          <ul className={styles.snapshotList}>
+            {detail.cited_evidence.map((item) => (
+              <li key={item.evidence_id}>
+                <b>{hhmm(item.at)} · {item.source}</b>
+                {` · ${item.title}`}
+                {item.detail ? <div>{item.detail}</div> : null}
+              </li>
+            ))}
+          </ul>
+        ) : <p className={styles.snapshotEmpty}>没有可解析的引用证据</p>}
+      </SnapshotSection>
+    </div>
+  );
+}
+
 function assessmentOutcome(outcome: AssessmentRecordDetail["views"][number]["outcome"]): string {
   if (!outcome) return "";
   const direction = outcome.direction_correct === null
@@ -331,7 +466,12 @@ function assessmentOutcome(outcome: AssessmentRecordDetail["views"][number]["out
 function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
   return (
     <div className={styles.snapshotPanel}>
-      <SnapshotHeader title="AI 输入快照" stateId={snapshot.state_id} asOf={snapshot.as_of} />
+      <SnapshotHeader
+        title="AI 输入快照"
+        stateId={snapshot.analysis_scope}
+        asOf={snapshot.as_of}
+        identityLabel="analysis_scope"
+      />
       <div className={styles.snapshotQuestion}>{snapshot.question}</div>
       {snapshot.capital_objective ? (
         <SnapshotSection title="本轮唯一资本问题">
@@ -371,7 +511,7 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           {snapshot.asset_states.map((asset) => (
             <div className={styles.marketSnapshot} key={asset.asset}>
               <b>{asset.asset} · {asset.market_symbol}</b>
-              <span>last {asset.last} · bid/ask {asset.bid}/{asset.ask}</span>
+              <span>last {asset.last}</span>
               <span>regime {asset.regime} · return {asset.return_fraction}</span>
               <span>vol {asset.realized_volatility} · spread {asset.spread_bps} bp · volume {asset.volume_ratio}</span>
             </div>
@@ -406,7 +546,9 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
       <SnapshotList
         title="确认事实"
         empty="没有确认事实"
-        items={snapshot.facts.map((fact) => `${fact.headline}：${fact.claim}`)}
+        items={snapshot.facts.map(
+          (fact) => `${fact.fact_type} · ${fact.decision_materiality}：${fact.claim}`,
+        )}
       />
       <SnapshotList
         title="新闻证据"
@@ -418,8 +560,15 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
       {snapshot.previous_context ? (
         <SnapshotSection title="继承的上一轮世界认知">
           <div className={styles.marketSnapshot}>
-            <b>{snapshot.previous_context.market_mechanism}</b>
-            {snapshot.previous_context.drivers.map((driver) => (
+            {(snapshot.previous_context.hypotheses ?? []).map((hypothesis) => (
+              <span key={hypothesis.hypothesis_id}>
+                {HYPOTHESIS_ROLE[hypothesis.role]} · {hypothesis.claim}
+              </span>
+            ))}
+            {snapshot.previous_context.market_mechanism ? (
+              <b>{snapshot.previous_context.market_mechanism}</b>
+            ) : null}
+            {(snapshot.previous_context.drivers ?? []).map((driver) => (
               <span key={`${driver.status}-${driver.statement}`}>
                 {DRIVER_STATUS[driver.status] ?? driver.status} · {driver.statement} → {driver.transmission}
               </span>
@@ -430,13 +579,21 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
                   ?? snapshot.previous_context.capital_relevance.status} · {snapshot.previous_context.capital_relevance.thesis}
               </span>
             ) : null}
+            {snapshot.previous_context.capital_implication ? (
+              <span>
+                上轮资本含义：
+                {CAPITAL_STATUS[snapshot.previous_context.capital_implication.effect]
+                  ?? snapshot.previous_context.capital_implication.effect}
+                {` · ${snapshot.previous_context.capital_implication.incremental_reason}`}
+              </span>
+            ) : null}
           </div>
         </SnapshotSection>
       ) : null}
       <SnapshotList
         title="因果信息覆盖"
         empty="没有覆盖合同"
-        items={snapshot.information_coverage.map((item) => {
+        items={snapshot.capability_summary.map((item) => {
           const covered = item.covered_capabilities.map(
             (capability) => CAPABILITY[capability] ?? capability,
           );
@@ -449,8 +606,6 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
           }`;
         })}
       />
-      <SnapshotList title="数据质量" empty="没有质量告警" items={snapshot.data_quality_codes} />
-      <SnapshotList title="覆盖缺口" empty="没有已知覆盖缺口" items={snapshot.coverage_gap_codes} />
       <SnapshotList
         title="输入容量"
         items={[

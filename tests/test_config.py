@@ -28,20 +28,20 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
     assert config.pipeline.version == "cash-observation-shadow-v1"
-    assert config.temporal.namespace == "shadow-capital-20260821-v9"
+    assert config.temporal.namespace == "shadow-capital-20260822-v10"
     assert config.capital.enabled
     assert config.information.version == "information-intake-v26"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v31"
+    assert config.decision_state.version == "portfolio-state-v32"
     assert config.decision_state.official_fact_policy.version == "official-fact-v12"
     assert config.decision_state.delta_policy.version == "state-delta-v14"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v32"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v13"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v33"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v14"
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.assessment.mandate.capital_objective is not None
-    assert config.assessment.version == "context-assessment-v28"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v7"
+    assert config.assessment.version == "context-assessment-v29"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v8"
     regulation = next(
         item
         for item in config.information.coverage_requirements

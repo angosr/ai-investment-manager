@@ -13,7 +13,7 @@ pipeline:
 
 temporal:
   # 本配置只服务独立 Capital Shadow；冻结发布时必须与事实库一一对应。
-  namespace: shadow-capital-20260821-v9
+  namespace: shadow-capital-20260822-v10
 
 deployment:
   stage: SHADOW

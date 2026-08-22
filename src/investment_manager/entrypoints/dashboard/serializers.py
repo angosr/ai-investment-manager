@@ -75,28 +75,29 @@ def cycle_detail(facts: CycleFacts) -> dict:
 def assessment_row(record: AssessmentRecord) -> dict:
     assessment = record.assessment
     directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
-    cited_evidence_ids = set(assessment.mechanism_evidence_ids) | {
-        evidence_id
-        for item in (*assessment.drivers, *assessment.views)
-        for evidence_id in item.evidence_ids
-    }
-    if assessment.capital_relevance is not None:
-        cited_evidence_ids.update(assessment.capital_relevance.evidence_ids)
+    cited_evidence_ids = set(_assessment_cited_ids(assessment))
+    primary = _primary_hypothesis(assessment)
+    capital_status = (
+        assessment.capital_implication.effect.value
+        if assessment.capital_implication is not None
+        else assessment.capital_relevance.status.value
+        if assessment.capital_relevance is not None
+        else None
+    )
     return {
+        "schema_version": assessment.schema_version.value,
         "assessment_id": assessment.assessment_id,
         "at": fmt.iso(assessment.available_at),
         "scope": assessment.analysis_scope,
         "summary": _assessment_summary(assessment),
-        "mechanism": assessment.market_mechanism,
-        "driver_count": len(assessment.drivers),
+        "mechanism": primary.claim if primary is not None else assessment.market_mechanism,
+        "driver_count": (
+            len(assessment.hypotheses) if primary is not None else len(assessment.drivers)
+        ),
         "evidence_count": len(cited_evidence_ids),
         "directional_view_count": len(directional),
         "view_count": len(assessment.views),
-        "capital_status": (
-            None
-            if assessment.capital_relevance is None
-            else assessment.capital_relevance.status.value
-        ),
+        "capital_status": capital_status,
     }
 
 
@@ -104,26 +105,64 @@ def assessment_detail(record: AssessmentRecord) -> dict:
     assessment = record.assessment
     outcomes = {(item.asset, item.horizon_minutes): item for item in record.outcomes}
     evidence_catalog = _assessment_evidence_catalog(record.packet)
-    cited_ids = tuple(
-        dict.fromkeys(
-            (
-                *assessment.mechanism_evidence_ids,
-                *(
-                    evidence_id
-                    for item in (*assessment.drivers, *assessment.views)
-                    for evidence_id in item.evidence_ids
-                ),
-                *(
-                    assessment.capital_relevance.evidence_ids
-                    if assessment.capital_relevance is not None
-                    else ()
-                ),
-            )
-        )
-    )
+    cited_ids = _assessment_cited_ids(assessment)
     return {
         **assessment_row(record),
         "as_of": fmt.iso(assessment.as_of),
+        "hypotheses": [
+            {
+                "hypothesis_id": hypothesis.hypothesis_id,
+                "continuity_ref": hypothesis.continuity_ref,
+                "role": hypothesis.role.value,
+                "claim": hypothesis.claim,
+                "horizon_hours": hypothesis.horizon_hours,
+                "causal_chain": [
+                    {
+                        "statement": node.statement,
+                        "evidence": _resolve_assessment_evidence(
+                            node.evidence_ids,
+                            evidence_catalog,
+                        ),
+                    }
+                    for node in hypothesis.causal_chain
+                ],
+                "conflicting_evidence": _resolve_assessment_evidence(
+                    hypothesis.conflicting_evidence_ids,
+                    evidence_catalog,
+                ),
+                "next_observation": hypothesis.next_observation,
+                "invalidation_conditions": list(hypothesis.invalidation_conditions),
+                "next_review_at": fmt.iso(hypothesis.next_review_at),
+            }
+            for hypothesis in assessment.hypotheses
+        ],
+        "capital_implication": (
+            None
+            if assessment.capital_implication is None
+            else {
+                "objective_id": assessment.capital_implication.objective_id,
+                "effect": assessment.capital_implication.effect.value,
+                "incremental_reason": (assessment.capital_implication.incremental_reason),
+                "transmission": assessment.capital_implication.transmission,
+                "evidence": _resolve_assessment_evidence(
+                    assessment.capital_implication.evidence_ids,
+                    evidence_catalog,
+                ),
+                "invalidation_conditions": list(
+                    assessment.capital_implication.invalidation_conditions
+                ),
+                "capital_authority": "NONE",
+            }
+        ),
+        "decision_blockers": [
+            {
+                "question": item.question,
+                "action_if_yes": item.action_if_yes,
+                "action_if_no": item.action_if_no,
+                "observation_needed": item.observation_needed,
+            }
+            for item in assessment.decision_blockers
+        ],
         "drivers": [
             {
                 "statement": driver.statement,
@@ -271,11 +310,19 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
             }
     if packet.previous_context is not None:
         previous = packet.previous_context
+        previous_primary = next(
+            (item for item in previous.hypotheses if item.role == "PRIMARY"),
+            None,
+        )
         catalog[previous.assessment_id] = {
             "evidence_id": previous.assessment_id,
             "kind": "PREVIOUS_CONTEXT",
             "title": "上一轮世界认知",
-            "detail": previous.market_mechanism,
+            "detail": (
+                previous_primary.claim
+                if previous_primary is not None
+                else previous.market_mechanism
+            ),
             "source": "CONTEXT_ASSESSMENT",
             "at": fmt.iso(previous.available_at),
         }
@@ -459,6 +506,12 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
+    primary = _primary_hypothesis(assessment)
+    if primary is not None:
+        role_count = len(assessment.hypotheses) - 1
+        return f"主假设 · {primary.horizon_hours} 小时" + (
+            f" · {role_count} 个竞争路径" if role_count else ""
+        )
     if assessment.capital_relevance is not None:
         if assessment.drivers:
             return f"当前世界模型识别出 {len(assessment.drivers)} 个重要驱动"
@@ -485,6 +538,31 @@ def _assessment_summary(assessment) -> str:
             )
         )
     return "；".join(summaries)
+
+
+def _primary_hypothesis(assessment):
+    return next(
+        (item for item in getattr(assessment, "hypotheses", ()) if item.role.value == "PRIMARY"),
+        None,
+    )
+
+
+def _assessment_cited_ids(assessment) -> tuple[str, ...]:
+    ids: list[str] = list(assessment.mechanism_evidence_ids)
+    ids.extend(
+        evidence_id
+        for item in (*assessment.drivers, *assessment.views)
+        for evidence_id in item.evidence_ids
+    )
+    if assessment.capital_relevance is not None:
+        ids.extend(assessment.capital_relevance.evidence_ids)
+    for hypothesis in assessment.hypotheses:
+        for node in hypothesis.causal_chain:
+            ids.extend(node.evidence_ids)
+        ids.extend(hypothesis.conflicting_evidence_ids)
+    if assessment.capital_implication is not None:
+        ids.extend(assessment.capital_implication.evidence_ids)
+    return tuple(dict.fromkeys(ids))
 
 
 def _assessment_outcome(outcome: AssessmentViewOutcome | None) -> dict | None:

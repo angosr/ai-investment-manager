@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, func, insert, select
 
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.app import create_app
-from investment_manager.entrypoints.dashboard.read_models import DashboardReader
+from investment_manager.entrypoints.dashboard.read_models import AssessmentRecord, DashboardReader
 from investment_manager.execution.models import ExitReason
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.executor import (
@@ -27,10 +27,17 @@ from investment_manager.forecast.context.repository import SqlContextAssessmentS
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
+    ContextAssessmentSchemaVersion,
+    ContextCapitalEffect,
+    ContextCapitalImplication,
+    ContextCausalNode,
+    ContextDecisionBlocker,
     ContextDriver,
     ContextDriverStatus,
     ContextEventImpactState,
     ContextEventReference,
+    ContextHypothesis,
+    ContextHypothesisRole,
     ContextView,
     PricedState,
 )
@@ -166,6 +173,79 @@ def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> Dec
         coverage_gap_codes=(),
         missing_fact_revision_ids=(),
         omitted_fact_revision_ids=(),
+    )
+
+
+def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
+    as_of = datetime(2026, 8, 22, 18, tzinfo=UTC)
+    packet = _dashboard_assessment_packet(as_of=as_of, analysis_scope="primary-portfolio")
+    evidence_id = "d" * 64
+    assessment = ContextAssessment(
+        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V1,
+        assessment_id="world-model-dashboard",
+        analysis_scope="primary-portfolio",
+        mandate_version="dashboard-test-mandate-v1",
+        as_of=as_of,
+        available_at=as_of + timedelta(seconds=10),
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash=packet.content_hash,
+        trigger_ids=packet.trigger_ids,
+        hypotheses=(
+            ContextHypothesis(
+                hypothesis_id="hypothesis-dashboard-primary",
+                role=ContextHypothesisRole.PRIMARY,
+                claim="政策预期仍是当前风险偏好变化的主要可检验解释。",
+                horizon_hours=72,
+                causal_chain=(
+                    ContextCausalNode(
+                        statement="官方政策日程已经发生变化。",
+                        evidence_ids=(evidence_id,),
+                    ),
+                    ContextCausalNode(
+                        statement="市场风险偏好可能在正式结果前重新定价。",
+                        evidence_ids=(evidence_id,),
+                    ),
+                ),
+                next_observation="观察正式政策结果及同步跨资产响应。",
+                invalidation_conditions=("官方取消日程且风险资产未发生同步响应",),
+                next_review_at=as_of + timedelta(hours=6),
+            ),
+        ),
+        capital_implication=ContextCapitalImplication(
+            objective_id="carry-program-base",
+            effect=ContextCapitalEffect.CAUTION,
+            incremental_reason="政策结果可能增加程序基线未覆盖的事件风险。",
+            transmission="政策结果经风险偏好与双腿流动性影响下一次 carry 入场。",
+            evidence_ids=(evidence_id,),
+            invalidation_conditions=("政策落地后双腿流动性与基差保持稳定",),
+        ),
+        decision_blockers=(
+            ContextDecisionBlocker(
+                question="政策结果是否造成双腿流动性同步恶化？",
+                action_if_yes="保留入场反对候选供配对评价。",
+                action_if_no="维持程序基线。",
+                observation_needed="正式结果后的现货深度、永续深度与基差响应。",
+            ),
+        ),
+    )
+
+    dto = ser.assessment_detail(AssessmentRecord(assessment=assessment, packet=packet))
+
+    assert dto["schema_version"] == "world-model-assessment-v1"
+    assert dto["mechanism"] == assessment.hypotheses[0].claim
+    assert dto["drivers"] == []
+    assert dto["views"] == []
+    assert dto["data_gaps"] == []
+    assert (
+        dto["hypotheses"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]
+        == evidence_id
+    )
+    assert dto["capital_implication"]["effect"] == "CAUTION"
+    assert dto["capital_implication"]["capital_authority"] == "NONE"
+    assert dto["decision_blockers"][0]["question"].startswith("政策结果")
+    assert (
+        dto["cited_evidence"]
+        == dto["hypotheses"][0]["causal_chain"][0]["evidence"]
     )
 
 
@@ -418,7 +498,10 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         }
     ]
     assert assessment_detail.json()["event_references"][0]["impact_state"] == "ACTIVE"
-    assert assessment_detail.json()["input_snapshot"]["packet_id"] == packet.packet_id
+    assert assessment_detail.json()["input_snapshot"]["analysis_scope"] == (
+        packet.analysis_scope
+    )
+    assert "packet_id" not in assessment_detail.json()["input_snapshot"]
     assert assessment_detail.json()["input_snapshot"]["capacity_summary"] == {
         "missing_fact_count": len(packet.missing_fact_revision_ids),
         "omitted_fact_count": len(packet.omitted_fact_revision_ids),

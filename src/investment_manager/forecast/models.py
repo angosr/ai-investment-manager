@@ -53,10 +53,10 @@ class ForecastTarget(FrozenModel):
         if sum((item.gross_weight for item in self.legs), Decimal("0")) != Decimal("1"):
             raise ValueError("ForecastTarget gross_weight 绝对权重之和必须为 1")
         if self.quantity_mode == ForecastQuantityMode.SAME_BASE_QUANTITY and (
-                len(self.legs) < 2
-                or len({item.instrument.base_asset for item in self.legs}) != 1
-                or len({item.instrument.contract_multiplier for item in self.legs}) != 1
-                or len({item.gross_weight for item in self.legs}) != 1
+            len(self.legs) < 2
+            or len({item.instrument.base_asset for item in self.legs}) != 1
+            or len({item.instrument.contract_multiplier for item in self.legs}) != 1
+            or len({item.gross_weight for item in self.legs}) != 1
         ):
             raise ValueError("SAME_BASE_QUANTITY 要求同基础资产、乘数和等权多腿")
         expected = self.identity_for(self.legs, self.quantity_mode)
@@ -210,6 +210,109 @@ class ContextEventImpactState(StrEnum):
     STALE = "STALE"
 
 
+class ContextAssessmentSchemaVersion(StrEnum):
+    """Explicitly separates immutable historical payloads from current writes."""
+
+    LEGACY = "legacy-context-assessment-v1"
+    WORLD_MODEL_V1 = "world-model-assessment-v1"
+
+
+class ContextHypothesisRole(StrEnum):
+    PRIMARY = "PRIMARY"
+    ALTERNATIVE = "ALTERNATIVE"
+    TAIL_RISK = "TAIL_RISK"
+
+
+class ContextCapitalEffect(StrEnum):
+    """Research-only effect relative to Program Base; never capital authority."""
+
+    SUPPORT = "SUPPORT"
+    NEUTRAL = "NEUTRAL"
+    CAUTION = "CAUTION"
+    OPPOSE = "OPPOSE"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class ContextCausalNode(FrozenModel):
+    statement: str = Field(min_length=1, max_length=600)
+    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def evidence_must_be_unique(self):
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("因果节点不能重复引用证据")
+        return self
+
+
+class ContextHypothesis(FrozenModel):
+    """A falsifiable explanation of the current world, not a price forecast."""
+
+    hypothesis_id: str = Field(min_length=1)
+    continuity_ref: str | None = Field(default=None, min_length=1)
+    role: ContextHypothesisRole
+    claim: str = Field(min_length=1, max_length=1_000)
+    horizon_hours: int = Field(gt=0, le=4_380)
+    causal_chain: tuple[ContextCausalNode, ...] = Field(min_length=2, max_length=5)
+    conflicting_evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
+    next_observation: str = Field(min_length=1, max_length=600)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
+    next_review_at: datetime
+
+    _utc_next_review_at = field_validator("next_review_at")(require_utc)
+
+    @model_validator(mode="after")
+    def references_and_invalidations_must_be_unique(self):
+        if len(set(self.conflicting_evidence_ids)) != len(self.conflicting_evidence_ids):
+            raise ValueError("世界假设不能重复引用反向证据")
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
+            raise ValueError("世界假设不能重复失效条件")
+        return self
+
+
+class ContextCapitalImplication(FrozenModel):
+    """A testable research recommendation relative to one program objective."""
+
+    objective_id: str = Field(min_length=1)
+    effect: ContextCapitalEffect
+    incremental_reason: str = Field(min_length=1, max_length=800)
+    transmission: str = Field(min_length=1, max_length=1_200)
+    evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def evidence_and_invalidations_must_be_canonical(self):
+        if (
+            self.effect
+            in {
+                ContextCapitalEffect.SUPPORT,
+                ContextCapitalEffect.CAUTION,
+                ContextCapitalEffect.OPPOSE,
+            }
+            and not self.evidence_ids
+        ):
+            raise ValueError("非中性资本含义必须引用当前证据")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("资本含义不能重复引用证据")
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
+            raise ValueError("资本含义不能重复失效条件")
+        return self
+
+
+class ContextDecisionBlocker(FrozenModel):
+    """Only a missing observation that can change the named capital action."""
+
+    question: str = Field(min_length=1, max_length=500)
+    action_if_yes: str = Field(min_length=1, max_length=500)
+    action_if_no: str = Field(min_length=1, max_length=500)
+    observation_needed: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def outcomes_must_change_the_action(self):
+        if self.action_if_yes == self.action_if_no:
+            raise ValueError("决策阻断项的两种观测结果必须改变资本动作")
+        return self
+
+
 class ContextCapitalRelevanceStatus(StrEnum):
     """Research stance relative to the program decision, never capital authority."""
 
@@ -235,9 +338,7 @@ class ContextCapitalRelevance(FrozenModel):
             raise ValueError("入场否决候选必须引用当前证据")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("资本相关性不能重复引用证据")
-        if len(set(self.invalidation_conditions)) != len(
-            self.invalidation_conditions
-        ):
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
             raise ValueError("资本相关性不能重复失效条件")
         return self
 
@@ -318,6 +419,7 @@ class ContextDriver(FrozenModel):
 
 
 class ContextAssessment(FrozenModel):
+    schema_version: ContextAssessmentSchemaVersion = ContextAssessmentSchemaVersion.LEGACY
     assessment_id: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     mandate_version: str = Field(min_length=1)
@@ -326,7 +428,9 @@ class ContextAssessment(FrozenModel):
     analysis_behavior_hash: str = Field(pattern=SHA256_PATTERN)
     decision_packet_hash: str = Field(pattern=SHA256_PATTERN)
     trigger_ids: tuple[str, ...] = Field(min_length=1)
-    market_mechanism: str = Field(min_length=1, max_length=2_000)
+    # The fields below are immutable legacy read compatibility. New assessments
+    # use hypotheses/capital_implication/decision_blockers exclusively.
+    market_mechanism: str | None = Field(default=None, min_length=1, max_length=2_000)
     # New assessments anchor the mechanism itself. Empty remains readable for
     # historical payloads created before the field existed.
     mechanism_evidence_ids: tuple[str, ...] = ()
@@ -340,6 +444,15 @@ class ContextAssessment(FrozenModel):
     views: tuple[ContextView, ...] = ()
     contradictions: tuple[str, ...] = ()
     data_gaps: tuple[str, ...] = ()
+    hypotheses: tuple[ContextHypothesis, ...] = Field(default=(), max_length=3)
+    capital_implication: ContextCapitalImplication | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    decision_blockers: tuple[ContextDecisionBlocker, ...] = Field(
+        default=(),
+        max_length=2,
+    )
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -358,11 +471,40 @@ class ContextAssessment(FrozenModel):
         event_ids = tuple(item.evidence_id for item in self.event_references)
         if len(set(event_ids)) != len(event_ids):
             raise ValueError("ContextAssessment 不能重复引用事件")
+        if self.schema_version == ContextAssessmentSchemaVersion.LEGACY:
+            if self.market_mechanism is None:
+                raise ValueError("历史 ContextAssessment 必须包含 market_mechanism")
+            if self.hypotheses or self.capital_implication or self.decision_blockers:
+                raise ValueError("历史 ContextAssessment 不得混入新世界模型字段")
+            return self
+        if any(
+            (
+                self.market_mechanism is not None,
+                bool(self.mechanism_evidence_ids),
+                bool(self.drivers),
+                self.capital_relevance is not None,
+                bool(self.views),
+                bool(self.contradictions),
+                bool(self.data_gaps),
+            )
+        ):
+            raise ValueError("新世界模型不得继续写入已废弃的段落式字段")
+        if not self.hypotheses:
+            raise ValueError("新世界模型至少需要一个可证伪假设")
+        primary_count = sum(item.role == ContextHypothesisRole.PRIMARY for item in self.hypotheses)
+        if primary_count != 1:
+            raise ValueError("新世界模型必须且只能包含一个 PRIMARY 假设")
+        hypothesis_ids = tuple(item.hypothesis_id for item in self.hypotheses)
+        if len(set(hypothesis_ids)) != len(hypothesis_ids):
+            raise ValueError("新世界模型不能重复 hypothesis_id")
+        if any(item.next_review_at <= self.as_of for item in self.hypotheses):
+            raise ValueError("世界假设 next_review_at 必须晚于分析时点")
         return self
 
 
 class BaseForecast(FrozenModel):
     """Point-in-time thesis; valid_until gates entry, horizon gates settlement."""
+
     forecast_id: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
@@ -398,6 +540,7 @@ class BaseForecast(FrozenModel):
 
 class CalibratedForecast(FrozenModel):
     """Investable thesis; valid_until gates entry, horizon gates settlement."""
+
     forecast_id: str = Field(min_length=1)
     role: ForecastRole
     producer_id: str = Field(min_length=1)

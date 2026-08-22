@@ -16,7 +16,10 @@ from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
     AssessmentWorkflowRequest,
 )
-from investment_manager.forecast.models import ContextAssessment
+from investment_manager.forecast.models import (
+    ContextAssessment,
+    ContextAssessmentSchemaVersion,
+)
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -40,10 +43,14 @@ from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
     PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
     PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+    PacketPreviousCapitalImplication,
     PacketPreviousCapitalRelevance,
+    PacketPreviousCausalNode,
     PacketPreviousContext,
+    PacketPreviousDecisionBlocker,
     PacketPreviousDriver,
     PacketPreviousEventReference,
+    PacketPreviousHypothesis,
     PacketPreviousView,
     PacketReviewRequest,
 )
@@ -205,14 +212,105 @@ def _previous_context(
 ) -> PacketPreviousContext | None:
     if assessment is None:
         return None
+    common = {
+        "assessment_id": assessment.assessment_id,
+        "analysis_scope": assessment.analysis_scope,
+        "mandate_version": assessment.mandate_version,
+        "analysis_behavior_hash": assessment.analysis_behavior_hash,
+        "decision_packet_hash": assessment.decision_packet_hash,
+        "as_of": assessment.as_of,
+        "available_at": assessment.available_at,
+        "event_references": tuple(
+            PacketPreviousEventReference(
+                evidence_id=item.evidence_id,
+                source=item.source,
+                title=item.title,
+                event_time=item.event_time,
+                impact_state=item.impact_state.value,
+                rationale=item.rationale,
+                stale_at=item.stale_at,
+            )
+            for item in assessment.event_references
+        ),
+    }
+    if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V1:
+        return PacketPreviousContext(
+            schema_version=assessment.schema_version.value,
+            **common,
+            hypotheses=tuple(
+                PacketPreviousHypothesis(
+                    hypothesis_id=item.hypothesis_id,
+                    continuity_ref=item.continuity_ref,
+                    role=item.role.value,
+                    claim=sanitize_external_text(
+                        item.claim,
+                        maximum_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
+                    )[0],
+                    horizon_hours=item.horizon_hours,
+                    causal_chain=tuple(
+                        PacketPreviousCausalNode(
+                            statement=sanitize_external_text(
+                                node.statement,
+                                maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+                            )[0],
+                            evidence_ids=node.evidence_ids,
+                        )
+                        for node in item.causal_chain
+                    ),
+                    conflicting_evidence_ids=item.conflicting_evidence_ids,
+                    next_observation=sanitize_external_text(
+                        item.next_observation,
+                        maximum_length=500,
+                    )[0],
+                    invalidation_conditions=tuple(
+                        sanitize_external_text(
+                            condition,
+                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                        )[0]
+                        for condition in item.invalidation_conditions
+                    ),
+                    next_review_at=item.next_review_at,
+                )
+                for item in assessment.hypotheses
+            ),
+            capital_implication=(
+                PacketPreviousCapitalImplication(
+                    objective_id=assessment.capital_implication.objective_id,
+                    effect=assessment.capital_implication.effect.value,
+                    incremental_reason=sanitize_external_text(
+                        assessment.capital_implication.incremental_reason,
+                        maximum_length=800,
+                    )[0],
+                    transmission=sanitize_external_text(
+                        assessment.capital_implication.transmission,
+                        maximum_length=1_200,
+                    )[0],
+                    evidence_ids=assessment.capital_implication.evidence_ids,
+                    invalidation_conditions=tuple(
+                        sanitize_external_text(
+                            condition,
+                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                        )[0]
+                        for condition in assessment.capital_implication.invalidation_conditions
+                    ),
+                )
+                if assessment.capital_implication is not None
+                else None
+            ),
+            decision_blockers=tuple(
+                PacketPreviousDecisionBlocker(
+                    question=item.question,
+                    action_if_yes=item.action_if_yes,
+                    action_if_no=item.action_if_no,
+                    observation_needed=item.observation_needed,
+                )
+                for item in assessment.decision_blockers
+            ),
+        )
+    assert assessment.market_mechanism is not None
     return PacketPreviousContext(
-        assessment_id=assessment.assessment_id,
-        analysis_scope=assessment.analysis_scope,
-        mandate_version=assessment.mandate_version,
-        analysis_behavior_hash=assessment.analysis_behavior_hash,
-        decision_packet_hash=assessment.decision_packet_hash,
-        as_of=assessment.as_of,
-        available_at=assessment.available_at,
+        schema_version=assessment.schema_version.value,
+        **common,
         market_mechanism=sanitize_external_text(
             assessment.market_mechanism,
             maximum_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
@@ -234,18 +332,6 @@ def _previous_context(
                 )[0],
             )
             for item in assessment.drivers
-        ),
-        event_references=tuple(
-            PacketPreviousEventReference(
-                evidence_id=item.evidence_id,
-                source=item.source,
-                title=item.title,
-                event_time=item.event_time,
-                impact_state=item.impact_state.value,
-                rationale=item.rationale,
-                stale_at=item.stale_at,
-            )
-            for item in assessment.event_references
         ),
         capital_relevance=(
             PacketPreviousCapitalRelevance(

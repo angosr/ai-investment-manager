@@ -95,6 +95,7 @@ export interface CapitalAction {
 }
 
 export interface AssessmentRecordRow {
+  schema_version: "legacy-context-assessment-v1" | "world-model-assessment-v1";
   assessment_id: string;
   at: string;
   scope: string;
@@ -104,7 +105,8 @@ export interface AssessmentRecordRow {
   evidence_count: number;
   directional_view_count: number;
   view_count: number;
-  capital_status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE" | null;
+  capital_status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE"
+    | "SUPPORT" | "NEUTRAL" | "CAUTION" | "OPPOSE" | "INSUFFICIENT" | null;
 }
 
 export interface AssessmentQuality {
@@ -132,6 +134,33 @@ export interface Page<T> {
 
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
   as_of: string;
+  hypotheses: {
+    hypothesis_id: string;
+    continuity_ref: string | null;
+    role: "PRIMARY" | "ALTERNATIVE" | "TAIL_RISK";
+    claim: string;
+    horizon_hours: number;
+    causal_chain: { statement: string; evidence: AssessmentEvidence[] }[];
+    conflicting_evidence: AssessmentEvidence[];
+    next_observation: string;
+    invalidation_conditions: string[];
+    next_review_at: string;
+  }[];
+  capital_implication: {
+    objective_id: string;
+    effect: "SUPPORT" | "NEUTRAL" | "CAUTION" | "OPPOSE" | "INSUFFICIENT";
+    incremental_reason: string;
+    transmission: string;
+    evidence: AssessmentEvidence[];
+    invalidation_conditions: string[];
+    capital_authority: "NONE";
+  } | null;
+  decision_blockers: {
+    question: string;
+    action_if_yes: string;
+    action_if_no: string;
+    observation_needed: string;
+  }[];
   capital_relevance: {
     objective_id: string;
     status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE";
@@ -192,10 +221,9 @@ export interface AssessmentEvidence {
 }
 
 export interface AssessmentInputSnapshot {
-  packet_id: string;
-  state_id: string;
+  analysis_scope: string;
+  mandate_version: string;
   as_of: string;
-  policy_version: string;
   question: string;
   capital_objective?: {
     objective_id: string;
@@ -219,8 +247,6 @@ export interface AssessmentInputSnapshot {
     asset: string;
     market_symbol: string;
     observed_at: string;
-    bid: string;
-    ask: string;
     last: string;
     return_fraction: string;
     realized_volatility: string;
@@ -260,11 +286,10 @@ export interface AssessmentInputSnapshot {
   }[];
   facts: {
     revision_id: string;
-    headline: string;
+    fact_type: string;
     claim: string;
-    status: string;
-    affected_assets: string[];
     risk_factors: string[];
+    decision_materiality: string;
     independent_source_count: number;
     directly_triggered: boolean;
   }[];
@@ -279,10 +304,27 @@ export interface AssessmentInputSnapshot {
     directly_triggered: boolean;
   }[];
   previous_context: {
-    assessment_id: string;
-    as_of: string;
-    available_at: string;
-    market_mechanism: string;
+    schema_version: "legacy-context-assessment-v1" | "world-model-assessment-v1";
+    assessment_id?: string;
+    as_of?: string;
+    available_at?: string;
+    market_mechanism?: string;
+    hypotheses?: {
+      hypothesis_id: string;
+      role: "PRIMARY" | "ALTERNATIVE" | "TAIL_RISK";
+      claim: string;
+      horizon_hours: number;
+      causal_chain: { statement: string; evidence_ids: string[] }[];
+      next_observation: string;
+      invalidation_conditions: string[];
+      next_review_at: string;
+    }[];
+    capital_implication?: {
+      objective_id: string;
+      effect: "SUPPORT" | "NEUTRAL" | "CAUTION" | "OPPOSE" | "INSUFFICIENT";
+      incremental_reason: string;
+      transmission: string;
+    };
     capital_relevance?: {
       objective_id: string;
       status: "BASE_UNCHANGED" | "ENTRY_VETO_CANDIDATE" | "INSUFFICIENT_EVIDENCE";
@@ -290,33 +332,30 @@ export interface AssessmentInputSnapshot {
       transmission: string;
       invalidation_condition: string;
     };
-    drivers: {
+    drivers?: {
       statement: string;
       status: "CONFIRMED" | "INFERRED" | "UNVERIFIED";
       transmission: string;
       invalidation_condition: string;
     }[];
-    views: {
+    views?: {
       asset: string;
       horizon_minutes: number;
       direction: "UP" | "DOWN" | "UNCERTAIN";
       already_priced: "NOT_PRICED" | "PARTIAL" | "MOSTLY_PRICED" | "UNKNOWN";
       uncertainty: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
     }[];
-    contradictions: string[];
-    data_gaps: string[];
+    contradictions?: string[];
+    data_gaps?: string[];
   } | null;
-  information_coverage: {
+  capability_summary: {
     domain: string;
     status: string;
-    source_stream_ids: string[];
     covered_capabilities: string[];
     missing_capabilities: string[];
-    latest_success_at: string | null;
-    latest_publication_at: string | null;
+    latest_success_at?: string | null;
+    latest_publication_at?: string | null;
   }[];
-  data_quality_codes: string[];
-  coverage_gap_codes: string[];
   capacity_summary: {
     missing_fact_count: number;
     omitted_fact_count: number;

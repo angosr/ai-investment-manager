@@ -1,6 +1,6 @@
 # 世界认知系统设计
 
-状态：目标设计与迁移规范。本文定义下一现役版本的唯一目标结构。迁移前实现由 `ARCHITECTURE.md` 记录；切换完成后，旧写路径、旧 Prompt 和旧展示必须删除，不能双轨运行。
+状态：现役设计与迁移验收规范。`world-model-assessment-v1` 已替换新写入、Prompt、Packet 投影和网页主展示；旧 Assessment 只保留不可变历史读取。资本价值仍必须由预登记的 Program Base 配对结果证明，不能把上线或一次成功输出写成盈利完成。
 
 ## 1. 设计结论
 
@@ -206,7 +206,7 @@ ContextAssessment
 
 ### 8.1 Hypothesis
 
-最多四项，表达当前主解释、竞争解释和重要尾部风险：
+最多三项，表达当前主解释、竞争解释和重要尾部风险：
 
 ```text
 continuity_ref       延续上一论题时只能选择已有引用；新 ID 由程序生成
@@ -248,10 +248,9 @@ capital_authority   NONE
 
 ```text
 question
-required_observation
-effect_if_yes
-effect_if_no
-expected_at
+observation_needed
+action_if_yes
+action_if_no
 ```
 
 若 Yes/No 不会改变 CapitalImplication，就不是 blocker，不进入 WorldModel。长期未配置能力进入 Coverage 建设计划；账户、磁盘、服务失败进入 Health/Risk。

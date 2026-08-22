@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine
 from investment_manager.forecast.models import (
     BaseForecast,
     ContextAssessment,
+    ContextCapitalEffect,
     ContextCapitalRelevanceStatus,
     ForecastOutcome,
     ForecastOutcomeStatus,
@@ -76,7 +77,7 @@ class ContextCapitalForwardSpec(FrozenModel):
 class ContextCapitalOpportunity(FrozenModel):
     forecast_id: str = Field(min_length=1)
     assessment_id: str | None = None
-    context_status: ContextCapitalRelevanceStatus | None = None
+    context_status: ContextCapitalRelevanceStatus | ContextCapitalEffect | None = None
     available_at: datetime
     base_net_return_bps: Decimal
     context_net_return_bps: Decimal
@@ -139,8 +140,7 @@ class ContextCapitalForwardResult(FrozenModel):
         ):
             raise ValueError("Context Capital natural_opportunity_count 不一致")
         if self.veto_count != sum(
-            item.context_status == ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE
-            for item in self.opportunities
+            _is_entry_veto(item.context_status) for item in self.opportunities
         ):
             raise ValueError("Context Capital veto_count 不一致")
         if self.fallback_count != sum(item.used_program_fallback for item in self.opportunities):
@@ -349,9 +349,7 @@ def load_context_capital_inputs(
             select(context_assessments.c.payload)
             .where(
                 context_assessments.c.analysis_behavior_hash == spec.analysis_behavior_hash,
-                analysis_behavior_not_quarantined(
-                    context_assessments.c.analysis_behavior_hash
-                ),
+                analysis_behavior_not_quarantined(context_assessments.c.analysis_behavior_hash),
                 context_assessments.c.available_at >= context_start,
                 context_assessments.c.available_at < spec.signal_window_end,
                 context_assessments.c.available_at <= published,
@@ -386,9 +384,7 @@ def evaluate_context_capital_forward_plan(
             forecast.producer_id != spec.producer_id
             or forecast.producer_version != spec.producer_version
             or forecast.forecast_family != spec.forecast_family
-            or not spec.signal_window_start
-            <= forecast.available_at
-            < spec.signal_window_end
+            or not spec.signal_window_start <= forecast.available_at < spec.signal_window_end
             or outcome.forecast_id != forecast.forecast_id
             or outcome.evaluation_version != spec.forecast_evaluation_version
         ):
@@ -420,27 +416,18 @@ def evaluate_context_capital_forward_plan(
             if item.available_at <= forecast.available_at
             and forecast.available_at - item.available_at
             <= timedelta(hours=spec.maximum_context_age_hours)
-            and item.capital_relevance is not None
-            and item.capital_relevance.objective_id == spec.objective_id
+            and _capital_objective_id(item) == spec.objective_id
         )
         assessment = eligible[-1] if eligible else None
         base_net = outcome.gross_target_return_bps - spec.round_trip_cost_bps
-        veto = bool(
-            assessment is not None
-            and assessment.capital_relevance is not None
-            and assessment.capital_relevance.status
-            == ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE
-        )
+        context_status = _capital_status(assessment)
+        veto = _is_entry_veto(context_status)
         context_net = Decimal("0") if veto else base_net
         opportunities.append(
             ContextCapitalOpportunity(
                 forecast_id=forecast.forecast_id,
                 assessment_id=(assessment.assessment_id if assessment is not None else None),
-                context_status=(
-                    assessment.capital_relevance.status
-                    if assessment is not None and assessment.capital_relevance is not None
-                    else None
-                ),
+                context_status=context_status,
                 available_at=forecast.available_at,
                 base_net_return_bps=base_net,
                 context_net_return_bps=context_net,
@@ -497,10 +484,7 @@ def evaluate_context_capital_forward_plan(
         incomplete_forecast_ids=incomplete_forecast_ids,
         natural_opportunity_count=len(paired) + len(incomplete_forecast_ids),
         paired_opportunity_count=len(paired),
-        veto_count=sum(
-            item.context_status == ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE
-            for item in paired
-        ),
+        veto_count=sum(_is_entry_veto(item.context_status) for item in paired),
         fallback_count=sum(item.used_program_fallback for item in paired),
         base_average_net_return_bps=base_mean,
         context_average_net_return_bps=context_mean,
@@ -509,6 +493,35 @@ def evaluate_context_capital_forward_plan(
         outcome=outcome,
         reason_codes=reason_codes,
     )
+
+
+def _capital_objective_id(assessment: ContextAssessment) -> str | None:
+    if assessment.capital_implication is not None:
+        return assessment.capital_implication.objective_id
+    if assessment.capital_relevance is not None:
+        return assessment.capital_relevance.objective_id
+    return None
+
+
+def _capital_status(
+    assessment: ContextAssessment | None,
+) -> ContextCapitalRelevanceStatus | ContextCapitalEffect | None:
+    if assessment is None:
+        return None
+    if assessment.capital_implication is not None:
+        return assessment.capital_implication.effect
+    if assessment.capital_relevance is not None:
+        return assessment.capital_relevance.status
+    return None
+
+
+def _is_entry_veto(
+    status: ContextCapitalRelevanceStatus | ContextCapitalEffect | None,
+) -> bool:
+    return status in {
+        ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE,
+        ContextCapitalEffect.OPPOSE,
+    }
 
 
 def failed_context_capital_experiment(

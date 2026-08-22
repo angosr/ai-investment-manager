@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from pathlib import Path
 
 from pydantic import TypeAdapter
@@ -24,7 +23,7 @@ from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
     ContextAssessmentContractError,
-    assessment_mechanism_evidence_ids,
+    assessment_previous_hypothesis_ids,
     assessment_visible_event_ids,
     assessment_visible_evidence_ids,
     build_assess_prompt,
@@ -35,8 +34,8 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v21"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v11"
+ASSESS_INPUT_VERSION = "world-model-input-v1"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v1"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -49,58 +48,34 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     schema = strict_output_schema(AssessStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
     draft = definitions["ContextAssessmentDraft"]
-    views = draft["properties"]["views"]
     evidence_ids = assessment_visible_evidence_ids(packet)
-    mechanism_evidence = draft["properties"]["mechanism_evidence_ids"]
-    mechanism_evidence["items"]["enum"] = list(
-        assessment_mechanism_evidence_ids(packet)
-    )
-    driver = definitions["ContextDriver"]
-    driver["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
-    drivers = draft["properties"]["drivers"]
-    drivers["minItems"] = 0
-    drivers["maxItems"] = 8
+    causal_node = definitions["ContextCausalNode"]
+    causal_node["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
+    hypothesis = definitions["ContextHypothesisDraft"]
+    hypothesis["properties"]["conflicting_evidence_ids"]["items"]["enum"] = list(evidence_ids)
+    previous_hypothesis_ids = assessment_previous_hypothesis_ids(packet)
+    continuity = hypothesis["properties"]["continuity_ref"]
+    continuity["anyOf"][0]["enum"] = list(previous_hypothesis_ids)
     event_reference = definitions["ContextEventReferenceUpdate"]
     visible_event_ids = assessment_visible_event_ids(packet)
     if visible_event_ids:
         event_reference["properties"]["evidence_id"]["enum"] = list(visible_event_ids)
-    event_reference_updates = draft["properties"]["event_reference_updates"]
+    event_reference_updates = draft["properties"]["event_relevance_updates"]
     event_reference_updates["maxItems"] = len(visible_event_ids)
     if packet.capital_objective is not None:
-        draft["properties"].pop("views")
-        draft["required"].remove("views")
-        capital = definitions["ContextCapitalRelevance"]
-        draft["properties"]["capital_relevance"] = {
-            "$ref": "#/$defs/ContextCapitalRelevance"
-        }
-        capital["properties"]["objective_id"]["enum"] = [
-            packet.capital_objective.objective_id
-        ]
+        capital = definitions["ContextCapitalImplication"]
+        draft["properties"]["capital_implication"] = {"$ref": "#/$defs/ContextCapitalImplication"}
+        capital["properties"]["objective_id"]["enum"] = [packet.capital_objective.objective_id]
         capital["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
         capital["properties"]["evidence_ids"]["minItems"] = 1
         capital["properties"]["evidence_ids"]["maxItems"] = 12
         capital["properties"]["invalidation_conditions"]["minItems"] = 1
-        capital["properties"]["invalidation_conditions"]["maxItems"] = 8
-        for unused in (
-            "AssessmentUncertainty",
-            "ContextView",
-            "DirectionalView",
-            "PricedState",
-        ):
-            definitions.pop(unused, None)
+        capital["properties"]["invalidation_conditions"]["maxItems"] = 5
     else:
-        context_view = definitions["ContextView"]
-        branches: list[dict[str, object]] = []
-        for required in packet.required_views:
-            branch = deepcopy(context_view)
-            properties = branch["properties"]
-            properties["asset"]["enum"] = [required.asset]
-            properties["horizon_minutes"]["enum"] = [required.horizon_minutes]
-            properties["evidence_ids"]["items"]["enum"] = list(evidence_ids)
-            branches.append(branch)
-        views["items"] = {"anyOf": branches}
-        views["minItems"] = len(packet.required_views)
-        views["maxItems"] = len(packet.required_views)
+        draft["properties"].pop("capital_implication")
+        draft["required"].remove("capital_implication")
+        definitions.pop("ContextCapitalEffect", None)
+        definitions.pop("ContextCapitalImplication", None)
     return schema
 
 

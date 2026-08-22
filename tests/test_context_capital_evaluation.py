@@ -4,8 +4,14 @@ from decimal import Decimal
 from investment_manager.forecast.models import (
     BaseForecast,
     ContextAssessment,
+    ContextAssessmentSchemaVersion,
+    ContextCapitalEffect,
+    ContextCapitalImplication,
     ContextCapitalRelevance,
     ContextCapitalRelevanceStatus,
+    ContextCausalNode,
+    ContextHypothesis,
+    ContextHypothesisRole,
     DirectionalView,
     ExposureDirection,
     ForecastKind,
@@ -143,15 +149,56 @@ def _assessment(index: int, status: ContextCapitalRelevanceStatus):
     )
 
 
+def _world_assessment(index: int, effect: ContextCapitalEffect):
+    available_at = START + timedelta(days=index * 28, hours=-1)
+    evidence_id = f"evidence-{index}"
+    return ContextAssessment(
+        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V1,
+        assessment_id=f"world-assessment-{index}",
+        analysis_scope="primary-portfolio",
+        mandate_version="primary-portfolio-mandate-v8",
+        as_of=available_at - timedelta(minutes=1),
+        available_at=available_at,
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash=f"{index + 10:064x}",
+        trigger_ids=(f"trigger-world-{index}",),
+        hypotheses=(
+            ContextHypothesis(
+                hypothesis_id=f"hypothesis-{index}",
+                role=ContextHypothesisRole.PRIMARY,
+                claim="外生冲击正在破坏双腿 carry 的成交完整性。",
+                horizon_hours=24,
+                causal_chain=(
+                    ContextCausalNode(
+                        statement="外生冲击已经发生。",
+                        evidence_ids=(evidence_id,),
+                    ),
+                    ContextCausalNode(
+                        statement="双腿流动性响应显示成交完整性下降。",
+                        evidence_ids=(evidence_id,),
+                    ),
+                ),
+                next_observation="观察双腿盘口与 funding 是否恢复。",
+                invalidation_conditions=("双腿流动性恢复且 funding 稳定",),
+                next_review_at=available_at + timedelta(hours=1),
+            ),
+        ),
+        capital_implication=ContextCapitalImplication(
+            objective_id="btc-calendar-carry-entry-veto-v1",
+            effect=effect,
+            incremental_reason="程序基线之外出现交易场所完整性风险。",
+            transmission="外生冲击通过双腿流动性与 funding 持续性破坏 carry。",
+            evidence_ids=(evidence_id,),
+            invalidation_conditions=("双腿成交与 funding 恢复稳定",),
+        ),
+    )
+
+
 def test_context_veto_is_evaluated_only_as_paired_incremental_return() -> None:
     spec = _spec()
-    inputs = tuple(
-        _forecast_and_outcome(index, gross_bps=Decimal("-10"))
-        for index in range(3)
-    )
+    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
     assessments = tuple(
-        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE)
-        for index in range(3)
+        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE) for index in range(3)
     )
 
     result = evaluate_context_capital_forward_plan(
@@ -172,12 +219,27 @@ def test_context_veto_is_evaluated_only_as_paired_incremental_return() -> None:
     assert result.return_delta_lower_bound_bps == Decimal("30.00")
 
 
+def test_new_world_model_oppose_effect_uses_the_same_paired_veto_evaluation() -> None:
+    spec = _spec()
+    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
+    assessments = tuple(_world_assessment(index, ContextCapitalEffect.OPPOSE) for index in range(3))
+
+    result = evaluate_context_capital_forward_plan(
+        spec=spec,
+        forecasts_and_outcomes=inputs,
+        assessments=assessments,
+        incomplete_forecast_ids=(),
+        published_at=spec.signal_window_end + timedelta(days=40),
+    )
+
+    assert result.outcome == ContextCapitalForwardOutcome.PASSED
+    assert result.veto_count == 3
+    assert result.context_average_net_return_bps == Decimal("0")
+
+
 def test_missing_context_falls_back_to_program_and_cannot_create_alpha() -> None:
     spec = _spec()
-    inputs = tuple(
-        _forecast_and_outcome(index, gross_bps=Decimal("50"))
-        for index in range(3)
-    )
+    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("50")) for index in range(3))
 
     result = evaluate_context_capital_forward_plan(
         spec=spec,
@@ -195,13 +257,9 @@ def test_missing_context_falls_back_to_program_and_cannot_create_alpha() -> None
 
 def test_incomplete_natural_opportunity_prevents_a_false_pass() -> None:
     spec = _spec()
-    inputs = tuple(
-        _forecast_and_outcome(index, gross_bps=Decimal("-10"))
-        for index in range(3)
-    )
+    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
     assessments = tuple(
-        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE)
-        for index in range(3)
+        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE) for index in range(3)
     )
 
     result = evaluate_context_capital_forward_plan(

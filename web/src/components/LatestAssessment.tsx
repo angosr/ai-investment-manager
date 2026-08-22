@@ -24,6 +24,17 @@ const CAPITAL_STATUS: Record<string, string> = {
   BASE_UNCHANGED: "程序基线不变",
   ENTRY_VETO_CANDIDATE: "入场否决研究候选",
   INSUFFICIENT_EVIDENCE: "证据不足，不改变基线",
+  SUPPORT: "支持程序动作",
+  NEUTRAL: "不改变程序动作",
+  CAUTION: "谨慎执行程序动作",
+  OPPOSE: "反对本次程序动作",
+  INSUFFICIENT: "增量证据不足",
+};
+
+const HYPOTHESIS_ROLE: Record<string, string> = {
+  PRIMARY: "主假设",
+  ALTERNATIVE: "替代假设",
+  TAIL_RISK: "尾部风险",
 };
 
 /** Latest immutable world-cognition snapshot plus the current update status. */
@@ -84,7 +95,19 @@ export function LatestAssessment() {
             <p className={styles.mechanism}>
               {detail?.mechanism ?? currentRow.mechanism}
             </p>
-            {detail && detail.drivers.length > 0 ? (
+            {detail && detail.hypotheses.length > 0 ? (
+              <div className={styles.drivers}>
+                {detail.hypotheses.map((hypothesis) => (
+                  <div key={hypothesis.hypothesis_id} className={styles.driver}>
+                    <b>
+                      {HYPOTHESIS_ROLE[hypothesis.role]} · {hypothesis.horizon_hours} 小时
+                    </b>
+                    <span>{hypothesis.claim}</span>
+                    <small>下一观测：{hypothesis.next_observation}</small>
+                  </div>
+                ))}
+              </div>
+            ) : detail && detail.drivers.length > 0 ? (
               <div className={styles.drivers}>
                 {detail.drivers.slice(0, 3).map((driver) => (
                   <div key={driver.statement} className={styles.driver}>
@@ -105,6 +128,17 @@ export function LatestAssessment() {
                 <small>研究旁路 · 资本权限：无</small>
               </div>
             ) : null}
+            {detail?.capital_implication ? (
+              <div className={styles.capital}>
+                <b>
+                  对当前程序策略 · {CAPITAL_STATUS[detail.capital_implication.effect]
+                    ?? detail.capital_implication.effect}
+                </b>
+                <span>{detail.capital_implication.incremental_reason}</span>
+                <span>{detail.capital_implication.transmission}</span>
+                <small>研究旁路 · 通过配对评估前资本权限为无</small>
+              </div>
+            ) : null}
           </div>
           <div>
             <div className={styles.views}>
@@ -114,9 +148,6 @@ export function LatestAssessment() {
                 </span>
               ))}
             </div>
-            {detail && detail.data_gaps.length > 0 ? (
-              <div className={styles.gaps}>仍缺：{detail.data_gaps.join("；")}</div>
-            ) : null}
             {activeEvents.length > 0 ? (
               <div className={styles.evidence}>
                 <b>当前仍影响未来的事件</b>

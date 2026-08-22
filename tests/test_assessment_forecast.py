@@ -159,121 +159,72 @@ def _reference_trade(**updates) -> MarketTrade:
     return MarketTrade(**values)
 
 
-def _driver_payload(**updates) -> dict:
-    values = {
-        "statement": "政策变化正在影响市场对贴现率路径的理解。",
-        "status": "INFERRED",
-        "transmission": "政策信息先改变利率预期，再通过风险溢价影响 BTC 定价。",
-        "evidence_ids": ["delta-1"],
-        "invalidation_conditions": ["利率与风险资产响应不再支持该传导"],
+def _world_output_payload(claim: str) -> dict:
+    return {
+        "assessment": {
+            "hypotheses": [
+                {
+                    "continuity_ref": None,
+                    "role": "PRIMARY",
+                    "claim": claim,
+                    "horizon_hours": 24,
+                    "causal_chain": [
+                        {
+                            "statement": "政策日程发生变化。",
+                            "evidence_ids": ["delta-1"],
+                        },
+                        {
+                            "statement": "该变化可能改变风险溢价。",
+                            "evidence_ids": ["fact-revision-1"],
+                        },
+                    ],
+                    "conflicting_evidence_ids": [],
+                    "next_observation": "观察利率与风险资产响应。",
+                    "invalidation_conditions": ["政策变化被正式撤回"],
+                    "next_review_at": (NOW + timedelta(hours=1)).isoformat(),
+                }
+            ],
+            "capital_implication": None,
+            "decision_blockers": [],
+            "event_relevance_updates": [],
+        }
     }
-    values.update(updates)
-    return values
 
 
-def test_assessment_output_boundary_rejects_duplicate_set_items() -> None:
+def test_assessment_output_boundary_rejects_duplicate_evidence_items() -> None:
+    payload = _world_output_payload("政策变化正在通过风险溢价影响资产定价。")
+    payload["assessment"]["hypotheses"][0]["causal_chain"][0]["evidence_ids"] = [
+        "delta-1",
+        "delta-1",
+    ]
+
     with pytest.raises(ValidationError, match="不能重复引用证据"):
-        AssessStructuredOutput.model_validate(
-            {
-                "assessment": {
-                    "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
-                    "mechanism_evidence_ids": ["delta-1"],
-                    "drivers": [
-                        _driver_payload(
-                            evidence_ids=["delta-1", "delta-1"],
-                            invalidation_conditions=[
-                                "利率与风险资产响应不再支持该传导",
-                                "利率与风险资产响应不再支持该传导",
-                            ],
-                        )
-                    ],
-                    "views": [
-                        {
-                            "asset": "BTC",
-                            "horizon_minutes": 240,
-                            "direction": "UP",
-                            "already_priced": "PARTIAL",
-                            "uncertainty": "MEDIUM",
-                            "evidence_ids": ["delta-1", "delta-1"],
-                            "invalidation_conditions": [
-                                "政策方向发生反转",
-                                "政策方向发生反转",
-                            ],
-                        }
-                    ],
-                    "contradictions": [],
-                    "data_gaps": [],
-                }
-            }
-        )
+        AssessStructuredOutput.model_validate(payload)
 
 
-@pytest.mark.parametrize("direction", ["UP", "DOWN"])
-def test_unsupported_direction_is_rejected_instead_of_silently_rewritten(
-    direction: str,
-) -> None:
-    with pytest.raises(ValidationError, match="必须引用证据"):
-        AssessStructuredOutput.model_validate(
-            {
-                "assessment": {
-                    "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
-                    "mechanism_evidence_ids": ["delta-1"],
-                    "drivers": [
-                        _driver_payload(
-                            statement="当前只有价格与政策变化同时可见。",
-                            transmission="两者的因果方向尚未由跨市场响应确认。",
-                        )
-                    ],
-                    "views": [
-                        {
-                            "asset": "BTC",
-                            "horizon_minutes": 240,
-                            "direction": direction,
-                            "already_priced": "UNKNOWN",
-                            "uncertainty": "HIGH",
-                            "evidence_ids": [],
-                            "invalidation_conditions": ["出现新的可靠方向证据"],
-                        }
-                    ],
-                    "contradictions": [],
-                    "data_gaps": [],
-                }
-            }
-        )
+def test_assessment_output_requires_exactly_one_primary_hypothesis() -> None:
+    payload = _world_output_payload("当前最可能的解释。")
+    duplicate = dict(payload["assessment"]["hypotheses"][0])
+    duplicate["claim"] = "另一个主解释。"
+    payload["assessment"]["hypotheses"].append(duplicate)
+
+    with pytest.raises(ValidationError, match="只能包含一个 PRIMARY"):
+        AssessStructuredOutput.model_validate(payload)
 
 
 @pytest.mark.parametrize(
     "text",
     (
-        "The accepted evidence supports an upward trend.",
-        "市场偏强，但 market_mechanism希望错误",
+        "The accepted evidence supports one causal explanation.",
+        "政策变化正在改变风险溢价，但尚待市场响应验证。",
     ),
 )
-def test_language_preference_does_not_reject_structurally_valid_output(text: str) -> None:
-    payload = {
-        "assessment": {
-            "market_mechanism": text,
-            "mechanism_evidence_ids": ["delta-1"],
-            "drivers": [_driver_payload()],
-            "views": [
-                {
-                    "asset": "BTC",
-                    "horizon_minutes": 240,
-                    "direction": "UNCERTAIN",
-                    "already_priced": "UNKNOWN",
-                    "uncertainty": "HIGH",
-                    "evidence_ids": [],
-                    "invalidation_conditions": ["出现新的可靠方向证据"],
-                }
-            ],
-            "contradictions": [],
-            "data_gaps": ["当前缺少足够的宏观背景"],
-        }
-    }
+def test_language_preference_does_not_become_a_hardcoded_validity_gate(
+    text: str,
+) -> None:
+    output = AssessStructuredOutput.model_validate(_world_output_payload(text))
 
-    output = AssessStructuredOutput.model_validate(payload)
-
-    assert output.assessment.market_mechanism == text
+    assert output.assessment.hypotheses[0].claim == text
 
 
 def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
@@ -322,9 +273,7 @@ def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
     assert replayed.settled == 0
     assert store.pending_assessment_count(**pending_query) == 0
     with engine.connect() as connection:
-        payload = connection.execute(
-            select(assessment_view_outcomes.c.payload)
-        ).scalar_one()
+        payload = connection.execute(select(assessment_view_outcomes.c.payload)).scalar_one()
     outcome = AssessmentViewOutcome.model_validate(payload)
     assert outcome.reference_price == Decimal("70010")
     assert outcome.exit_price == Decimal("70710.10")
@@ -362,14 +311,10 @@ def test_missing_signal_time_market_data_is_unscorable_not_packet_price() -> Non
 
     assert result.unscorable == 1
     with engine.connect() as connection:
-        payload = connection.execute(
-            select(assessment_view_outcomes.c.payload)
-        ).scalar_one()
+        payload = connection.execute(select(assessment_view_outcomes.c.payload)).scalar_one()
     outcome = AssessmentViewOutcome.model_validate(payload)
     assert outcome.reference_price is None
-    assert outcome.reason_code == (
-        "REFERENCE_MARKET_DATA_MISSING_AT_ASSESSMENT_AVAILABILITY"
-    )
+    assert outcome.reason_code == ("REFERENCE_MARKET_DATA_MISSING_AT_ASSESSMENT_AVAILABILITY")
 
 
 class _CountingContextAnalyst:
@@ -427,9 +372,7 @@ def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     assert replayed.assessment == first.assessment
     assert analyst.calls == 1
     with engine.connect() as connection:
-        executions = tuple(
-            connection.execute(select(assessment_executions.c.payload)).scalars()
-        )
+        executions = tuple(connection.execute(select(assessment_executions.c.payload)).scalars())
     assert len(executions) == 2
 
 

@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v31
+  version: portfolio-state-v32
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v12
@@ -94,8 +94,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v32
-    schema_version: decision-packet-v13
+    version: decision-packet-policy-v33
+    schema_version: decision-packet-v14
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600
@@ -478,12 +478,12 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v28
+  version: context-assessment-v29
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v7
+    version: primary-portfolio-mandate-v8
     analysis_scope: primary-portfolio
-    question: 维护面向主组合和 Binance 可交易边界的当前世界认知，识别会改变宏观流动性、跨资产风险、市场结构及可交易产品风险收益的重大变化；另行判断程序化 BTC 现货与永续 carry 基线之外是否出现足以否决下一次入场的增量风险。
+    question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；只判断该模型相对程序化 BTC 现货与永续 carry 基线的增量支持、谨慎或反对作用。
     capital_objective:
       objective_id: btc-calendar-carry-entry-veto-v1
       decision_kind: CARRY_ENTRY_VETO
