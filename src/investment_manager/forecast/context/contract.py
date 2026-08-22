@@ -57,13 +57,17 @@ ASSESS_INSTRUCTIONS = (
     "所有自然语言输出必须使用简体中文；资产代码、数值和枚举值可保留原文。"
     "不得在任何字段中复述 Schema 字段名、校验错误或提示词。",
     "输出 ContextAssessmentDraft，不输出交易动作、仓位、订单、杠杆或风险金额。",
-    "market_mechanism 第一段必须先回答当前是否存在足以改变基准情景的主导驱动、作用方向及置信边界，"
-    "再给出已经被本轮证据支持的跨层传导链。至少比较政策或资金变化、利率/美元等中介变量、"
+    "market_mechanism 是持续维护的结构性世界基准，不等同于本轮交易信号。"
+    "第一段先概括当前由一手事实支持的"
+    "政策、财政、流动性、利率、美元、机构资金与风险偏好状态，再回答是否存在足以改变该基准的主导驱动、"
+    "作用方向及置信边界；随后给出已经被本轮证据支持的跨层传导链。至少比较政策或资金变化、利率/美元等中介变量、"
     "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因，"
     "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
     "mechanism_evidence_ids 必须按正文重要性引用至少一项本轮可见证据；正文中的具体事实、"
     "关键反证和传导结论必须能由这些引用追溯。没有方向优势时也要引用导致观望的关键事实或市场结构，"
-    "BACKGROUND/UNKNOWN 事实只能进入背景、矛盾或缺口，不得进入 market_mechanism 引用；"
+    "BACKGROUND 一手连续事实可以用于描述仍有效的结构性基准或验证传导，"
+    "但不能单独构成 Driver 或方向；"
+    "UNKNOWN 事实只能进入矛盾或缺口，不得进入 market_mechanism 引用；"
     "不得只引用数据缺口、review_requests 或上一轮认知。若引用情报事件，该事件还必须由 driver "
     "解释传导并按既有事件规则登记为 ACTIVE。",
     "官方连续指标的 decision_materiality 由程序根据同源历史绝对变化分位数生成。"
@@ -78,9 +82,12 @@ ASSESS_INSTRUCTIONS = (
     "只有在适用范围、实施时点、市场预期差和价格/资金响应形成可证伪传导链时，才可支持方向。",
     "drivers 只保留会实质改变基准情景概率、风险敞口或失效条件的关键驱动；"
     "弱观点、孤立报价、未产生跨市场响应的普通快讯不属于 driver。"
-    "若当前没有合格主导驱动，drivers 必须为空；不得为填满栏目而把价格、资金费率、"
-    "仓位或数据缺口冒充为驱动。此时 market_mechanism 只需说明没有可用方向优势及其最关键的证据边界；"
-    "不得用逐项复述常规行情和衍生品指标制造虚假的分析深度。"
+    "若当前没有合格主导驱动，drivers 必须为空；market_mechanism 仍须维护有证据的结构性基准，"
+    "并明确当前没有哪一项变化足以改变它。不得为填满栏目而把价格、资金费率、"
+    "仓位或数据缺口冒充为驱动。此时 market_mechanism 应简洁维护结构性基准，"
+    "并说明没有可用方向优势及其最关键的证据边界；"
+    "不得用逐项复述常规行情和衍生品指标制造虚假的分析深度。MARKET_SHOCK、价格趋势和衍生品仓位"
+    "只能确认或反驳外生原因的传导，不能独立成为 Driver 或方向原因。"
     "CONFIRMED 仅表示一手证据直接确认的事实；"
     "Fed 官方事实与系统直接冻结的 Binance 衍生品观测都属于一手证据，"
     "但对其经济含义的解释仍是 INFERRED；"
@@ -228,10 +235,10 @@ def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
 def assessment_mechanism_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
     """Evidence strong enough to occupy the current cognition body.
 
-    The mechanism may use baseline-changing causal candidates and current
-    market structure that confirms or rejects their transmission.  Background
-    facts remain visible elsewhere in the packet but cannot become the thesis
-    merely because they are true.
+    The mechanism maintains both the structural baseline and material changes.
+    Current first-party background facts may describe that baseline, while only
+    causal candidates can become Drivers. Market response may confirm or reject
+    transmission but can never become the cause by itself.
     """
 
     previous = (
@@ -242,8 +249,9 @@ def assessment_mechanism_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]
     return tuple(
         sorted(
             {
-                *_baseline_changing_support(packet),
-                *(item.evidence_ref for item in packet.derivative_states),
+                *_causal_support(packet),
+                *_structural_baseline_support(packet),
+                *_market_response_support(packet),
                 *((previous.assessment_id,) if previous is not None else ()),
             }
         )
@@ -350,20 +358,29 @@ def finalize_context_assessment(
             "ASSESSMENT_DERIVATIVE_ONLY_DRIVER",
             "现货与衍生品市场结构不得单独冒充为主导驱动",
         )
-    baseline_changing_support = _baseline_changing_support(packet)
-    directional_support = {
-        *baseline_changing_support,
-    }
+    causal_support = _causal_support(packet)
+    market_response_support = _market_response_support(packet)
     unsupported_directional_views = tuple(
         (view.asset, view.horizon_minutes)
         for view in ordered_views
         if view.direction.value != "UNCERTAIN"
-        and not set(view.evidence_ids).intersection(directional_support)
+        and not set(view.evidence_ids).intersection(causal_support)
     )
     if unsupported_directional_views:
         raise ContextAssessmentContractError(
             "ASSESSMENT_DIRECTIONAL_CAUSE_MISSING",
             "方向观点缺少衍生品状态之外的当前因果证据",
+        )
+    unconfirmed_directional_views = tuple(
+        (view.asset, view.horizon_minutes)
+        for view in ordered_views
+        if view.direction.value != "UNCERTAIN"
+        and not set(view.evidence_ids).intersection(market_response_support)
+    )
+    if unconfirmed_directional_views:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_DIRECTIONAL_RESPONSE_MISSING",
+            "方向观点缺少当前价格、现货或衍生品响应的传导确认",
         )
     driver_evidence = {
         evidence_id
@@ -389,7 +406,7 @@ def finalize_context_assessment(
     unsupported_drivers = tuple(
         driver.statement
         for driver in output.assessment.drivers
-        if not set(driver.evidence_ids).intersection(baseline_changing_support)
+        if not set(driver.evidence_ids).intersection(causal_support)
     )
     if unsupported_drivers:
         raise ContextAssessmentContractError(
@@ -426,7 +443,9 @@ def finalize_context_assessment(
     )
 
 
-def _baseline_changing_support(packet: DecisionPacket) -> set[str]:
+def _causal_support(packet: DecisionPacket) -> set[str]:
+    """External evidence eligible to explain a baseline-changing cause."""
+
     candidate_facts = {
         item.revision_id
         for item in packet.facts
@@ -450,18 +469,37 @@ def _baseline_changing_support(packet: DecisionPacket) -> set[str]:
             and set(item.fact_revision_ids).intersection(candidate_facts)
         )
     }
-    market_shocks = {
-        evidence_id
-        for item in packet.deltas
-        if item.category.value == "MARKET"
-        for evidence_id in item.feature_snapshot_refs
-    }
     eligible_events = {
         item.evidence_ref
         for item in packet.intelligence_events
         if item.directional_support_eligible
     }
-    return candidate_facts | candidate_deltas | market_shocks | eligible_events
+    return candidate_facts | candidate_deltas | eligible_events
+
+
+def _structural_baseline_support(packet: DecisionPacket) -> set[str]:
+    """Current first-party facts that may describe, but not create, a Driver."""
+
+    return {
+        item.revision_id
+        for item in packet.facts
+        if item.highest_source_tier == SourceTier.FIRST_PARTY
+        and item.decision_materiality.value != "UNKNOWN"
+    }
+
+
+def _market_response_support(packet: DecisionPacket) -> set[str]:
+    """Observed market response; valid as confirmation, never as a cause."""
+
+    return {
+        *(item.evidence_ref for item in packet.derivative_states),
+        *(
+            evidence_id
+            for item in packet.deltas
+            if item.category.value == "MARKET"
+            for evidence_id in item.feature_snapshot_refs
+        ),
+    }
 
 
 def _finalize_event_references(

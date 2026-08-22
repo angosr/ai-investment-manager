@@ -100,20 +100,14 @@ def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, obj
 
 
 def previous_context_is_decision_relevant(previous: PacketPreviousContext | None) -> bool:
-    """Only carry forward cognition that can still change a decision.
+    """Carry the latest compact structural baseline, including uncertain views.
 
-    An all-uncertain assessment with no driver or active event is an audit result,
-    not durable evidence.  Re-sending it makes the model elaborate the previous
-    absence of an edge instead of reassessing the current evidence cut.
+    A world model is durable context, not an alias for a directional signal.
+    Current first-party evidence must still confirm, revise, or invalidate it;
+    the previous assessment can never prove a fresh cause on its own.
     """
 
-    if previous is None:
-        return False
-    return bool(
-        previous.drivers
-        or any(item.impact_state == "ACTIVE" for item in previous.event_references)
-        or any(item.direction != "UNCERTAIN" for item in previous.views)
-    )
+    return previous is not None
 
 
 def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:

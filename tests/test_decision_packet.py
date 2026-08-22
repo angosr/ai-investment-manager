@@ -432,7 +432,7 @@ def test_world_cognition_event_reference_becomes_stale_then_leaves_future_contex
         as_of=second_as_of + timedelta(hours=12),
     )
     assert within_grace.previous_context is not None
-    assert "previous_context" not in decision_packet_analysis_projection(within_grace)
+    assert "previous_context" in decision_packet_analysis_projection(within_grace)
     assert event_ref not in assessment_visible_evidence_ids(within_grace)
     _, after_grace = _packet(
         app_config,
@@ -1417,7 +1417,7 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
     assert "data_gaps" not in projected["previous_context"]
 
 
-def test_analysis_projection_does_not_recycle_empty_uncertain_context(
+def test_analysis_projection_keeps_structural_context_without_direction(
     app_config,
     replay_input,
 ) -> None:
@@ -1451,8 +1451,8 @@ def test_analysis_projection_does_not_recycle_empty_uncertain_context(
     prompt = build_assess_prompt(packet)
 
     assert packet.previous_context == previous
-    assert "previous_context" not in projected
-    assert previous.assessment_id not in prompt
+    assert projected["previous_context"]["assessment_id"] == previous.assessment_id
+    assert previous.assessment_id in prompt
 
 
 def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> None:
@@ -1666,7 +1666,7 @@ def test_finalize_assessment_rejects_unknown_mechanism_evidence(
         )
 
 
-def test_finalize_assessment_rejects_background_fact_in_mechanism(
+def test_finalize_assessment_accepts_background_fact_only_in_structural_baseline(
     app_config, replay_input
 ) -> None:
     _, packet = _packet(app_config, replay_input)
@@ -1675,16 +1675,20 @@ def test_finalize_assessment_rejects_background_fact_in_mechanism(
     )
     packet = packet.model_copy(update={"facts": (background,)})
 
-    with pytest.raises(
-        ContextAssessmentContractError,
-        match="候选驱动或用于验证传导",
-    ):
-        finalize_context_assessment(
-            output=_assessment_output(),
-            packet=packet,
-            analysis_behavior_hash=HASH,
-            available_at=packet.as_of + timedelta(seconds=20),
-        )
+    base = _assessment_output()
+    output = base.model_copy(
+        update={"assessment": base.assessment.model_copy(update={"drivers": ()})}
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.mechanism_evidence_ids == (background.revision_id,)
+    assert assessment.drivers == ()
 
 
 def test_finalize_assessment_rejects_derivative_state_as_only_driver(
@@ -1936,6 +1940,138 @@ def test_finalize_assessment_rejects_derivative_only_direction(app_config, repla
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),
         )
+
+
+def test_market_shock_can_confirm_transmission_but_cannot_become_the_cause(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    background = packet.facts[0].model_copy(
+        update={"decision_materiality": FactDecisionMateriality.BACKGROUND}
+    )
+    market_delta = packet.deltas[0].model_copy(
+        update={
+            "category": DeltaCategory.MARKET,
+            "fact_revision_ids": (),
+            "reason_codes": ("MARKET_SHOCK_TRIGGERED",),
+        }
+    )
+    packet = packet.model_copy(
+        update={"facts": (background,), "deltas": (market_delta,)}
+    )
+    base = _assessment_output()
+    driver = base.assessment.drivers[0].model_copy(
+        update={
+            "statement": "BTC 价格快速上涨构成主导原因。",
+            "status": ContextDriverStatus.INFERRED,
+            "evidence_ids": ("feature-btc",),
+        }
+    )
+    output = base.model_copy(
+        update={
+            "assessment": base.assessment.model_copy(
+                update={
+                    "mechanism_evidence_ids": ("feature-btc",),
+                    "drivers": (driver,),
+                }
+            )
+        }
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="足以改变基准情景的候选证据",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_direction_requires_current_market_response(app_config, replay_input) -> None:
+    _, packet = _packet(app_config, replay_input)
+    base = _assessment_output()
+    views = tuple(
+        view.model_copy(
+            update={
+                "direction": DirectionalView.UP,
+                "evidence_ids": ("revision-1",),
+            }
+        )
+        for view in base.assessment.views
+    )
+    output = base.model_copy(
+        update={"assessment": base.assessment.model_copy(update={"views": views})}
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="缺少当前价格、现货或衍生品响应",
+    ):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_direction_accepts_external_cause_with_current_market_response(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    derivatives = tuple(
+        PacketDerivativeState(
+            evidence_ref=evidence_ref,
+            asset=asset,
+            market_symbol=f"{asset}USDT",
+            observed_at=packet.as_of,
+            mark_index_premium_bps=Decimal("1.2"),
+            executable_short_basis_bps=Decimal("0.8"),
+            perpetual_spread_bps=Decimal("0.4"),
+            last_funding_rate_bps=Decimal("0.1"),
+            trailing_funding_rate_mean_bps=Decimal("0.08"),
+            trailing_funding_rate_sum_bps=Decimal("0.24"),
+            funding_settlement_count=3,
+            funding_window_hours=24,
+            next_funding_time=packet.as_of + timedelta(hours=4),
+        )
+        for asset, evidence_ref in (("BTC", "f" * 64), ("ETH", "e" * 64))
+    )
+    payload = {
+        name: getattr(packet, name)
+        for name in packet.__class__.model_fields
+        if name not in {"packet_id", "content_hash"}
+    }
+    payload["derivative_states"] = derivatives
+    packet = DecisionPacket.create(**payload)
+    base = _assessment_output()
+    response_by_asset = {item.asset: item.evidence_ref for item in derivatives}
+    views = tuple(
+        view.model_copy(
+            update={
+                "direction": DirectionalView.UP,
+                "evidence_ids": ("revision-1", response_by_asset[view.asset]),
+            }
+        )
+        for view in base.assessment.views
+    )
+    output = base.model_copy(
+        update={"assessment": base.assessment.model_copy(update={"views": views})}
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert all(view.direction == DirectionalView.UP for view in assessment.views)
 
 
 def test_finalize_assessment_rejects_missing_required_view(app_config, replay_input) -> None:

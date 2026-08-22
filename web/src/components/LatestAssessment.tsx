@@ -19,7 +19,6 @@ export function LatestAssessment() {
     row && quality?.latest_valid_at && row.at === quality.latest_valid_at,
   );
   const currentRow = currentSnapshot ? row : null;
-  const hasWorldCognition = Boolean(currentRow && currentRow.driver_count > 0);
   const detail = useLive(
     () => currentRow
       ? api.assessmentRecord(currentRow.assessment_id)
@@ -48,7 +47,7 @@ export function LatestAssessment() {
   return (
     <Card
       title="最新世界认知"
-      aside={hasWorldCognition && currentRow
+      aside={currentRow
         ? `${hhmm(currentRow.at)} UTC`
         : "尚未建立"}
       bodyPadded
@@ -60,7 +59,7 @@ export function LatestAssessment() {
             : "系统不会用无效输出填充。"}
         </p>
       ) : null}
-      {currentRow && hasWorldCognition ? (
+      {currentRow ? (
         <div className={styles.layout}>
           <div>
             <div className={styles.summary}>
@@ -103,15 +102,8 @@ export function LatestAssessment() {
             ) : null}
           </div>
         </div>
-      ) : currentRow ? (
-        <div>
-          <p className={styles.empty}>当前尚未形成能改变基准情景的有效世界认知。</p>
-          <p className={styles.warning}>
-            最近一次 AI 复核只完成了证据边界审计；完整依据保留在 AI 分析历史，不作为世界认知或开仓依据。
-          </p>
-        </div>
       ) : (
-        <p className={styles.empty}>等待具备主导因果证据的分析通过门禁。</p>
+        <p className={styles.empty}>等待第一份通过门禁的世界认知。</p>
       )}
     </Card>
   );

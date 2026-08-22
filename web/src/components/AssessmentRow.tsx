@@ -107,7 +107,6 @@ export function AssessmentRow({ row }: { row: Row }) {
   }, [detail, open, row.assessment_id]);
 
   const category = row.directional_view_count > 0 ? "pending" : "no-action";
-  const hasWorldCognition = row.driver_count > 0;
   return (
     <div className={`${styles.cyc} ${styles[category]} ${open ? styles.open : ""}`}>
       <button
@@ -117,14 +116,8 @@ export function AssessmentRow({ row }: { row: Row }) {
       >
         <span className={styles.time}>{hhmm(row.at)}</span>
         <span className={styles.mid}>
-          <span className={styles.summary}>
-            {hasWorldCognition ? row.summary : "未形成有效世界认知"}
-          </span>
-          <span className={styles.reason}>
-            {hasWorldCognition
-              ? row.mechanism
-              : "现有证据不足以建立能改变未来收益分布的主导因果链；本轮仅保留证据边界审计，不提供方向。"}
-          </span>
+          <span className={styles.summary}>{row.summary}</span>
+          <span className={styles.reason}>{row.mechanism}</span>
         </span>
         <span className={`${styles.pill} ${styles[category]}`}>
           {row.directional_view_count > 0
@@ -163,7 +156,7 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
           aria-pressed={worldContextOpen}
           onClick={() => setWorldContextOpen(!worldContextOpen)}
         >
-          {detail.driver_count > 0 ? "查看当时世界认知" : "查看未形成认知的原因"}
+          查看当时世界认知
         </button>
         {!snapshot ? <span className={styles.snapshotUnavailable}>历史记录未保留输入包</span> : null}
       </div>
@@ -174,24 +167,21 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
 }
 
 function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
-  const hasWorldCognition = detail.driver_count > 0;
   const legacyEventReferences = detail.cited_evidence.filter(
     (item) => item.kind === "INTELLIGENCE_EVENT",
   );
   return (
     <div className={styles.snapshotPanel}>
       <SnapshotHeader
-        title={hasWorldCognition ? "当时世界认知" : "证据边界审计（未形成世界认知）"}
+        title="当时世界认知"
         stateId={detail.assessment_id}
         asOf={detail.at}
         identityLabel="assessment_id"
       />
       <div className={styles.snapshotQuestion}>
-        分析时点 {detail.as_of} · {hasWorldCognition
-          ? `世界认知形成并可用时间 ${detail.at}`
-          : `审计完成时间 ${detail.at}`}
+        分析时点 {detail.as_of} · 世界认知形成并可用时间 {detail.at}
       </div>
-      <SnapshotSection title={hasWorldCognition ? "主导传导链" : "未通过的因果链及证据边界"}>
+      <SnapshotSection title="结构性基准与主导传导链">
         <p className={styles.thesis}>{detail.mechanism}</p>
       </SnapshotSection>
       <SnapshotSection title="关键驱动及引用">
@@ -211,7 +201,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
               </li>
             ))}
           </ul>
-        ) : <p className={styles.snapshotEmpty}>没有任何候选通过主导驱动门槛，因此本次结果不是世界认知</p>}
+        ) : <p className={styles.snapshotEmpty}>当前没有足以改变结构性基准的主导变化</p>}
       </SnapshotSection>
       <SnapshotSection title="资产与时域判断">
         <div className={styles.viewGrid}>
@@ -269,9 +259,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
               </li>
             ))}
           </ul>
-        ) : <p className={styles.snapshotEmpty}>
-          {hasWorldCognition ? "本次世界认知没有关联事件" : "没有事件取得进入世界认知的资格"}
-        </p>}
+        ) : <p className={styles.snapshotEmpty}>本次世界认知没有关联事件</p>}
       </SnapshotSection>
       <SnapshotSection title="本次认知实际引用的事实与事件">
         {detail.cited_evidence.length > 0 ? (
@@ -284,11 +272,7 @@ function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
               </li>
             ))}
           </ul>
-        ) : <p className={styles.snapshotEmpty}>
-          {hasWorldCognition
-            ? "本次认知没有引用可解析的冻结证据"
-            : "本次审计没有引用可解析的冻结证据"}
-        </p>}
+        ) : <p className={styles.snapshotEmpty}>本次认知没有引用可解析的冻结证据</p>}
       </SnapshotSection>
     </div>
   );
