@@ -64,7 +64,8 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
     )
 
     assert spec.source_policy_version == "spot-perp-calendar-month-risk-30pct-v3"
-    assert spec.version == "capital-shadow-evaluation-spec-v3"
+    assert spec.version == "capital-shadow-evaluation-spec-v4"
+    assert spec.equity_boundary_rule == ("EARLIEST_AUTHORITATIVE_REVISION_AT_OR_AFTER_BOUNDARY")
     assert "ONE_ACTIVE_DYNAMIC_PRODUCER" in spec.behavior_contract
     assert "MONTHLY_COUNTERFACTUAL_DOES_NOT_CONSUME_CAPITAL" in (spec.behavior_contract)
     assert spec.thresholds.calendar_months == 12
@@ -72,9 +73,14 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
     assert spec.thresholds.minimum_decision_complete_months == 12
     assert spec.thresholds.maximum_duplicate_execution_groups == 0
     assert spec.thresholds.maximum_source_policy_underperformance_fraction == Decimal("0.005")
+    assert spec.thresholds.maximum_account_boundary_delay_seconds == (
+        config.trigger.heartbeat_minutes * 60 + config.temporal.activity_schedule_to_close_seconds
+    )
     assert "COMPENSATION_LOSS" in spec.accounting_dimensions
     assert plan.base_manifest_id == manifest.manifest_id
     assert plan.required_stages[-1] == EvaluationStage.SHADOW
+    assert "AUTHORITATIVE_ACCOUNT_BOUNDARIES_WITHIN_DELAY" in plan.hard_guardrails
+    assert plan.fixed_regression_suite_version.endswith("v3")
     assert plan.candidate_spec_hash == content_hash(spec)
 
 
@@ -181,9 +187,10 @@ def _projection(
     plan_id: str,
     monthly_return: Decimal,
     counterfactual: Decimal | None,
+    starting_equity: Decimal = Decimal("10000"),
 ) -> CapitalLedgerProjection:
     monthly = (monthly_return,) * 12
-    starting = Decimal("10000")
+    starting = starting_equity
     ending = starting
     for value in monthly:
         ending *= Decimal("1") + value
@@ -275,6 +282,39 @@ def test_capital_evaluator_passes_complete_fee_reconciled_projection() -> None:
         projection.ending_equity / projection.starting_equity - Decimal("1")
     )
     assert result.metrics.net_pnl == projection.net_pnl
+
+
+def test_v4_evaluator_accepts_authoritative_observation_boundary_equity() -> None:
+    config, manifest = _release()
+    spec = CapitalShadowEvaluationSpec.freeze(
+        plan_id=PLAN_ID,
+        config=config,
+        manifest=manifest,
+        observation_start=datetime(2026, 9, 1, tzinfo=UTC),
+        observation_end=datetime(2027, 9, 1, tzinfo=UTC),
+    )
+    plan = build_capital_shadow_evaluation_plan(
+        spec=spec,
+        registered_at=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    projection = _projection(
+        plan_id=PLAN_ID,
+        monthly_return=Decimal("0.01"),
+        counterfactual=Decimal("0.10"),
+        starting_equity=Decimal("9876.54"),
+    )
+
+    result = evaluate_capital_shadow_plan(
+        spec=spec,
+        plan=plan,
+        projection=projection,
+        published_at=datetime(2027, 9, 8, tzinfo=UTC),
+    )
+
+    assert result.status == CapitalShadowEvaluationStatus.PASSED
+    assert result.metrics is not None
+    assert result.metrics.starting_equity == Decimal("9876.54")
+    assert spec.starting_equity == Decimal("10000")
 
 
 def test_capital_evaluator_fails_without_positive_fee_after_cost_edge() -> None:

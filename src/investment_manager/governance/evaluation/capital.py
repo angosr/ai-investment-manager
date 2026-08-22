@@ -28,6 +28,15 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.settings import AppConfig
 
+_MONTHLY_COMPOUNDING_RELATIVE_TOLERANCE = Decimal("1e-24")
+
+
+def equity_values_reconcile(calculated: Decimal, authoritative: Decimal) -> bool:
+    """Allow only deterministic Decimal division noise in monthly compounding."""
+
+    scale = max(abs(calculated), abs(authoritative), Decimal("1"))
+    return abs(calculated - authoritative) <= (scale * _MONTHLY_COMPOUNDING_RELATIVE_TOLERANCE)
+
 
 def capital_behavior_hash(config: AppConfig) -> str:
     """Identity of every setting that can change the Capital evaluation cohort."""
@@ -64,6 +73,11 @@ class CapitalShadowThresholds(FrozenModel):
     newey_west_lag_months: Literal[3] = 3
     maximum_drawdown_fraction: Decimal = Field(gt=0, le=1)
     minimum_margin_buffer_fraction: Decimal = Field(ge=0, le=1)
+    maximum_account_boundary_delay_seconds: int | None = Field(
+        default=None,
+        gt=0,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def month_thresholds_fit_window(self):
@@ -84,7 +98,8 @@ class CapitalShadowEvaluationSpec(FrozenModel):
         "capital-shadow-evaluation-spec-v1",
         "capital-shadow-evaluation-spec-v2",
         "capital-shadow-evaluation-spec-v3",
-    ] = "capital-shadow-evaluation-spec-v3"
+        "capital-shadow-evaluation-spec-v4",
+    ] = "capital-shadow-evaluation-spec-v4"
     plan_id: str
     release_manifest_id: str
     release_code_version: str = Field(pattern=r"^[0-9a-f]{40}$")
@@ -100,6 +115,12 @@ class CapitalShadowEvaluationSpec(FrozenModel):
     observation_end: datetime
     settlement_grace_days: int = Field(default=7, ge=1, le=31)
     starting_equity: Decimal = Field(gt=0)
+    equity_boundary_rule: Literal["EARLIEST_AUTHORITATIVE_REVISION_AT_OR_AFTER_BOUNDARY"] | None = (
+        Field(
+            default=None,
+            exclude_if=lambda value: value is None,
+        )
+    )
     baselines: tuple[str, ...] = (
         "CASH",
         "SOURCE_RESEARCH_POLICY_COUNTERFACTUAL",
@@ -144,6 +165,13 @@ class CapitalShadowEvaluationSpec(FrozenModel):
             raise ValueError("Capital Shadow 行为合同不得重复")
         if len(set(self.accounting_dimensions)) != len(self.accounting_dimensions):
             raise ValueError("Capital Shadow 归因维度不得重复")
+        bounded_boundaries = self.version == "capital-shadow-evaluation-spec-v4"
+        if bounded_boundaries != (self.equity_boundary_rule is not None):
+            raise ValueError("Capital Shadow 账户月界规则与评价版本不一致")
+        if bounded_boundaries != (
+            self.thresholds.maximum_account_boundary_delay_seconds is not None
+        ):
+            raise ValueError("Capital Shadow 账户月界最大延迟与评价版本不一致")
         return self
 
     @classmethod
@@ -185,6 +213,12 @@ class CapitalShadowEvaluationSpec(FrozenModel):
             observation_start=observation_start,
             observation_end=observation_end,
             starting_equity=config.shadow.initial_quote_balance,
+            equity_boundary_rule=("EARLIEST_AUTHORITATIVE_REVISION_AT_OR_AFTER_BOUNDARY"),
+            behavior_contract=(
+                *cls.model_fields["behavior_contract"].default,
+                "BOUNDED_AUTHORITATIVE_ACCOUNT_BOUNDARIES",
+                "OBSERVATION_RETURN_STARTS_FROM_BOUNDARY_ACCOUNT_EQUITY",
+            ),
             thresholds=CapitalShadowThresholds(
                 calendar_months=months,
                 minimum_forecast_available_months=months - 1,
@@ -197,6 +231,10 @@ class CapitalShadowEvaluationSpec(FrozenModel):
                 ),
                 maximum_drawdown_fraction=(config.capital.risk.maximum_drawdown_fraction),
                 minimum_margin_buffer_fraction=Decimal("0.05"),
+                maximum_account_boundary_delay_seconds=(
+                    config.trigger.heartbeat_minutes * 60
+                    + config.temporal.activity_schedule_to_close_seconds
+                ),
             ),
         )
 
@@ -266,7 +304,7 @@ class CapitalLedgerProjection(FrozenModel):
             if monthly_return <= Decimal("-1"):
                 raise ValueError("Capital ledger 月度收益不得使权益归零或为负")
             compounded *= Decimal("1") + monthly_return
-        if compounded != self.ending_equity:
+        if not equity_values_reconcile(compounded, self.ending_equity):
             raise ValueError("Capital ledger projection 月度收益与期末权益不一致")
         return self
 
@@ -406,6 +444,7 @@ def build_capital_shadow_evaluation_plan(
     if registered_at >= spec.observation_start:
         raise ValueError("Capital Shadow 计划必须在首个观察月开始前登记")
     legacy = spec.version == "capital-shadow-evaluation-spec-v1"
+    bounded_boundaries = spec.version == "capital-shadow-evaluation-spec-v4"
     hard_guardrails = (
         (
             "BOUND_RELEASE_AND_EVIDENCE_UNCHANGED",
@@ -435,6 +474,14 @@ def build_capital_shadow_evaluation_plan(
             "SOURCE_POLICY_ANNUAL_RETURN_GAP_WITHIN_LIMIT",
             "MAXIMUM_DRAWDOWN_WITHIN_LIMIT",
             "MARGIN_BUFFER_WITHIN_LIMIT",
+            *(
+                (
+                    "AUTHORITATIVE_ACCOUNT_BOUNDARIES_WITHIN_DELAY",
+                    "OBSERVATION_START_EQUITY_FROM_ACCOUNT_LEDGER",
+                )
+                if bounded_boundaries
+                else ()
+            ),
         )
     )
     return EvaluationPlan(
@@ -452,7 +499,11 @@ def build_capital_shadow_evaluation_plan(
         fixed_regression_suite_version=(
             "investment-manager-capital-shadow-regression-v1"
             if legacy
-            else "investment-manager-capital-shadow-regression-v2"
+            else (
+                "investment-manager-capital-shadow-regression-v3"
+                if bounded_boundaries
+                else "investment-manager-capital-shadow-regression-v2"
+            )
         ),
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
@@ -525,7 +576,10 @@ def evaluate_capital_shadow_plan(
             reason_codes=("MONTHLY_LEDGER_OR_COUNTERFACTUAL_INCOMPLETE",),
             source_ids=projection.source_ids,
         )
-    if projection.starting_equity != spec.starting_equity:
+    if (
+        spec.version != "capital-shadow-evaluation-spec-v4"
+        and projection.starting_equity != spec.starting_equity
+    ):
         raise ValueError("Capital ledger projection 起始权益与预登记合同不一致")
     monthly = projection.monthly_net_return_fractions
     monthly_log_returns = tuple((Decimal("1") + item).ln() for item in monthly)
@@ -664,6 +718,7 @@ def validate_capital_shadow_evaluation_plan(
             "capital-shadow-evaluation-spec-v1",
             "capital-shadow-evaluation-spec-v2",
             "capital-shadow-evaluation-spec-v3",
+            "capital-shadow-evaluation-spec-v4",
         }:
             continue
         try:

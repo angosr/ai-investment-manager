@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
 
@@ -24,6 +24,7 @@ from investment_manager.governance.evaluation.capital import (
     CapitalLedgerProjection,
     CapitalShadowEvaluationSpec,
     capital_behavior_hash,
+    equity_values_reconcile,
 )
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
@@ -116,6 +117,7 @@ class SqlCapitalLedgerProjector:
         counterfactual, market_source_ids = self._calendar_counterfactual(
             spec,
             records,
+            starting_equity=starting,
         )
         source_ids.update(market_source_ids)
         forecast_months = len(
@@ -191,8 +193,17 @@ class SqlCapitalLedgerProjector:
         if not values:
             raise ValueError("Capital ledger 观察窗口没有费用后绩效区间")
         points = _account_points(values)
-        start = _boundary_account_point(points, spec.observation_start)
-        end = _boundary_account_point(points, spec.observation_end)
+        maximum_delay = spec.thresholds.maximum_account_boundary_delay_seconds or 0
+        start = _boundary_account_point(
+            points,
+            spec.observation_start,
+            maximum_delay_seconds=maximum_delay,
+        )
+        end = _boundary_account_point(
+            points,
+            spec.observation_end,
+            maximum_delay_seconds=maximum_delay,
+        )
         selected = tuple(
             item
             for item in values
@@ -218,8 +229,14 @@ class SqlCapitalLedgerProjector:
         points = _account_points(intervals)
         windows = _calendar_month_windows(spec.observation_start, spec.observation_end)
         boundaries = {value for window in windows for value in window}
+        maximum_delay = spec.thresholds.maximum_account_boundary_delay_seconds or 0
         boundary_points = {
-            boundary: _boundary_account_point(points, boundary) for boundary in boundaries
+            boundary: _boundary_account_point(
+                points,
+                boundary,
+                maximum_delay_seconds=maximum_delay,
+            )
+            for boundary in boundaries
         }
         monthly = tuple(
             boundary_points[end].equity / boundary_points[start].equity - Decimal("1")
@@ -230,9 +247,12 @@ class SqlCapitalLedgerProjector:
         compounded = starting
         for value in monthly:
             compounded *= Decimal("1") + value
-        if compounded != ending:
+        if not equity_values_reconcile(compounded, ending):
             raise ValueError("Capital ledger 月度收益无法与连续权益核对")
-        if starting != spec.starting_equity:
+        if (
+            spec.version != "capital-shadow-evaluation-spec-v4"
+            and starting != spec.starting_equity
+        ):
             raise ValueError("Capital ledger 窗口起始权益与预登记合同不一致")
         return monthly, starting, ending
 
@@ -568,6 +588,8 @@ class SqlCapitalLedgerProjector:
         self,
         spec: CapitalShadowEvaluationSpec,
         records: tuple[CapitalCycleRecord, ...],
+        *,
+        starting_equity: Decimal,
     ) -> tuple[Decimal, set[str]]:
         evaluation_times = tuple(
             sorted(
@@ -582,7 +604,7 @@ class SqlCapitalLedgerProjector:
         if len(evaluation_times) < 2:
             raise ValueError("Capital counterfactual 缺少共享 Trigger 时点")
         points = tuple(self._market_point(value) for value in evaluation_times)
-        equity = spec.starting_equity
+        equity = starting_equity
         quantity = Decimal("0")
         previous: _MarketPoint | None = None
         source_ids: set[str] = {
@@ -668,7 +690,7 @@ class SqlCapitalLedgerProjector:
             spot_fee_bps=spot_spec.fee_bps,
             perpetual_fee_bps=perpetual_spec.fee_bps,
         )
-        total_return = (equity - spec.starting_equity) / spec.starting_equity
+        total_return = (equity - starting_equity) / starting_equity
         months = Decimal(
             len(
                 _calendar_month_windows(
@@ -768,11 +790,18 @@ def _account_points(
 def _boundary_account_point(
     points: tuple[_AccountPoint, ...],
     boundary: datetime,
+    *,
+    maximum_delay_seconds: int,
 ) -> _AccountPoint:
-    candidates = tuple(item for item in points if item.at == boundary)
+    if maximum_delay_seconds < 0:
+        raise ValueError("Capital ledger 账户月界最大延迟不得为负数")
+    latest = boundary + timedelta(seconds=maximum_delay_seconds)
+    candidates = tuple(item for item in points if boundary <= item.at <= latest)
     if not candidates:
+        if maximum_delay_seconds:
+            raise ValueError("Capital ledger 自然月界有界时间内缺少权威账户估值")
         raise ValueError("Capital ledger 自然月边界缺少精确账户估值")
-    return min(candidates, key=lambda item: item.revision)
+    return min(candidates, key=lambda item: (item.at, item.revision))
 
 
 def _maximum_group_unhedged_seconds(
