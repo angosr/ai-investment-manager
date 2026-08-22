@@ -33,6 +33,7 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
+from investment_manager.platform.fact_store import analysis_behavior_not_quarantined
 from investment_manager.settings import AppConfig
 
 
@@ -348,6 +349,9 @@ def load_context_capital_inputs(
             select(context_assessments.c.payload)
             .where(
                 context_assessments.c.analysis_behavior_hash == spec.analysis_behavior_hash,
+                analysis_behavior_not_quarantined(
+                    context_assessments.c.analysis_behavior_hash
+                ),
                 context_assessments.c.available_at >= context_start,
                 context_assessments.c.available_at < spec.signal_window_end,
                 context_assessments.c.available_at <= published,

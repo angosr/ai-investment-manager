@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import httpx
-from sqlalchemy import create_engine, insert
+from sqlalchemy import create_engine, func, insert, select
 
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.app import create_app
@@ -47,10 +47,19 @@ from investment_manager.legacy.repository import (
     decision_outcomes,
     market_snapshots,
 )
+from investment_manager.platform.fact_store import (
+    FactStoreRole,
+    SqlFactCohortQuarantineStore,
+    build_fact_cohort_quarantine,
+    require_fact_store_role,
+)
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.scheduling.tables import analysis_call_admissions
+from investment_manager.scheduling.tables import (
+    analysis_call_admissions,
+    analysis_trigger_events,
+)
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     DecisionPacket,
@@ -921,3 +930,46 @@ def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> N
     assert event.title == "BTCUSDT · 请求原因：Dashboard 立即复核"
     assert event.impact is None
     assert event.priority == 100
+
+
+def test_wrong_store_pipeline_is_quarantined_from_dashboard_without_deletion(
+    app_config,
+    replay_input,
+) -> None:
+    engine, _ = _seed_cycle(app_config, replay_input)
+    now = replay_input.market.as_of
+    wrong_pipeline = "context-assessment-wrong-store-v1"
+    SqlTriggerRepository(engine, app_config.trigger).record_trigger(
+        build_trigger_event(
+            trigger_type=AnalysisTriggerType.CANONICAL_FACT_REVISED,
+            symbol="BTCUSDT",
+            pipeline_id=wrong_pipeline,
+            occurred_at=now,
+            observed_at=now,
+            priority=100,
+            dedup_key="wrong-store-trigger",
+        )
+    )
+    require_fact_store_role(engine, FactStoreRole.CAPITAL, claim_if_missing=True)
+    quarantines = SqlFactCohortQuarantineStore(engine)
+    store_id, observed_role = quarantines.current_identity()
+    quarantines.record(
+        build_fact_cohort_quarantine(
+            store_id=store_id,
+            observed_role=observed_role,
+            expected_role=FactStoreRole.CONTEXT,
+            manifest_id="release-context-wrong-store-v1",
+            pipeline_id=wrong_pipeline,
+            analysis_behavior_hash=None,
+            quarantined_at=now,
+            evidence_ref="review-wrong-store-test",
+        )
+    )
+
+    events = DashboardReader(engine, app_config).list_events(cursor=None, limit=20)
+
+    assert all(event.kind != "CANONICAL_FACT_REVISED" for event in events)
+    with engine.connect() as connection:
+        assert connection.scalar(
+            select(func.count()).select_from(analysis_trigger_events)
+        ) == 1

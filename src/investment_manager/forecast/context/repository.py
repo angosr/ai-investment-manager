@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import assessment_executions, context_assessments
 from investment_manager.kernel.time import require_utc
+from investment_manager.platform.fact_store import analysis_behavior_not_quarantined
 from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.tables import decision_packets
 
@@ -134,7 +135,10 @@ class SqlContextAssessmentStore:
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(context_assessments.c.payload).where(
-                    context_assessments.c.assessment_id == assessment_id
+                    context_assessments.c.assessment_id == assessment_id,
+                    analysis_behavior_not_quarantined(
+                        context_assessments.c.analysis_behavior_hash
+                    ),
                 )
             ).scalar_one_or_none()
         return None if payload is None else ContextAssessment.model_validate(payload)
@@ -151,6 +155,9 @@ class SqlContextAssessmentStore:
                     context_assessments.c.packet_id == packet_id,
                     context_assessments.c.analysis_behavior_hash
                     == analysis_behavior_hash,
+                    analysis_behavior_not_quarantined(
+                        context_assessments.c.analysis_behavior_hash
+                    ),
                 )
             ).scalar_one_or_none()
         return None if payload is None else ContextAssessment.model_validate(payload)
@@ -169,6 +176,9 @@ class SqlContextAssessmentStore:
                 .where(
                     context_assessments.c.analysis_scope == analysis_scope,
                     context_assessments.c.available_at <= require_utc(as_of),
+                    analysis_behavior_not_quarantined(
+                        context_assessments.c.analysis_behavior_hash
+                    ),
                 )
                 .order_by(
                     context_assessments.c.available_at.desc(),

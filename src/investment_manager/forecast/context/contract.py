@@ -59,11 +59,12 @@ class AssessStructuredOutput(FrozenModel):
 
 
 ASSESS_INSTRUCTIONS = (
-    "你是无工具的资产上下文分析员。只读取 decision_packet_json，"
-    "维护当前最有利于资本决策的世界认知。",
+    "你是无工具的组合级资产上下文分析员。只读取 decision_packet_json，"
+    "维护面向整个 mandate 与组合决策的世界认知；它不是单一资产或当前候选产品专题。",
     "所有自然语言必须使用简体中文；资产代码、数值和枚举可保留原文。只输出 ContextAssessmentDraft，"
     "不得输出仓位、订单、杠杆或风险金额，也不得复述 Schema、校验错误或提示词。",
-    "market_mechanism 不是行情摘要或交易信号。用紧凑连贯的正文依次说明：当前结构性基准；"
+    "market_mechanism 是组合级世界模型，不是行情摘要或交易信号。用紧凑连贯的正文依次说明："
+    "当前结构性基准；"
     "相对 previous_context 真正发生的变化；至少两个有证据的竞争解释及取舍；"
     "从外生原因到利率/美元/流动性等中介、资金行为、市场响应的已验证传导；"
     "尚未验证的断点、时间尺度和对资本决策的含义。没有新变化时只维护仍有效的基准和关键反证，禁止换词复述上一轮。",
@@ -92,7 +93,9 @@ ASSESS_INSTRUCTIONS = (
     "只更新已有引用的理由或状态：未来边际影响完全消退、被证伪或被替代才标记 STALE，"
     "不得按年龄机械判旧，也不得恢复 STALE。新事件由 driver 首次引用时自动登记 ACTIVE，"
     "无需重复提交。",
-    "capital_objective 是本轮唯一需要评价的资本问题。capital_relevance 必须逐字匹配 objective_id；"
+    "capital_objective 只是 capital_relevance 的产品专项子问题，不定义世界认知边界；"
+    "market_mechanism 与 drivers 应覆盖全部可见因果域，并说明与当前产品的相关性。"
+    "capital_relevance 必须逐字匹配 objective_id；"
     "BASE_UNCHANGED 表示没有发现程序基线之外、足以否决下一次入场的增量风险；"
     "ENTRY_VETO_CANDIDATE 只表示需要进入配对评价的研究候选，不是订单权限；"
     "INSUFFICIENT_EVIDENCE 表示关键链条当前无法判断，也不能据此机械否决。"

@@ -43,6 +43,10 @@ from investment_manager.legacy.repository import (
     candidate_outcomes,
     signal_candidates,
 )
+from investment_manager.platform.fact_store import (
+    manifest_not_quarantined,
+    pipeline_not_quarantined,
+)
 from investment_manager.platform.time import database_utc
 from investment_manager.scheduling.models import (
     AnalysisTriggerPlan,
@@ -196,6 +200,8 @@ class GovernanceSnapshotAssembler:
                     .where(
                         analysis_trigger_plans.c.is_current.is_(True),
                         analysis_trigger_plans.c.manifest_id == champion.manifest_id,
+                        pipeline_not_quarantined(analysis_trigger_plans.c.pipeline_id),
+                        manifest_not_quarantined(analysis_trigger_plans.c.manifest_id),
                     )
                     .order_by(
                         analysis_trigger_plans.c.symbol,

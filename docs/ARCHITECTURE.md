@@ -104,8 +104,10 @@ Assessment 区分已确认事实、有证据推断与未验证假设。Dashboard
 并要求新一轮逐项延续、修正或判失效。上一份 Assessment 是派生证据，只能支持
 `INFERRED / UNVERIFIED`，不能把旧推断升级为 `CONFIRMED`；一手事实仍必须引用本轮可见的官方
 Fact。这样可以跨事件维持多层传导链，同时避免无限上下文、无来源记忆和历史错误自我强化。
-现役世界认知不再承担与资本目标错位的 BTC/ETH 60/240 分钟方向任务：`market_mechanism` 维护由当前一手事实支持的
-结构性基准，`drivers` 只记录足以改变该基准的重大变化，`capital_relevance` 则只回答冻结的 carry 入场风险问题。
+现役世界认知不再承担与资本目标错位的 BTC/ETH 60/240 分钟方向任务：`market_mechanism` 面向整个 mandate 与组合，
+维护由当前证据支持的宏观流动性、跨资产风险、市场结构和可交易产品风险收益基准；`drivers` 只记录足以改变该基准
+的重大变化。当前候选产品不是认知边界，冻结的 BTC carry 入场风险只由独立的 `capital_relevance` 子结构回答；
+不得因为当前产品绑定 BTC 就从世界模型中排除利率、美元、信用、股票、能源、监管、其他数字资产或交易场所风险。
 状态只有 `BASE_UNCHANGED / ENTRY_VETO_CANDIDATE / INSUFFICIENT_EVIDENCE`；否决候选必须说明程序基线未覆盖的增量
 风险、完整传导、当前证据和证伪条件，且仍无资本权限。历史 `views` 继续可读、可结算，但新资本目标行为必须输出
 空 `views`，不再浪费模型注意力制造短周期涨跌观点。没有 Driver 时仍维护结构性基准；不得把缺口说明、普通快讯、

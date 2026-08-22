@@ -67,6 +67,11 @@ from investment_manager.market.tables import (
     perpetual_market_states,
     perpetual_quotes,
 )
+from investment_manager.platform.fact_store import (
+    analysis_behavior_not_quarantined,
+    manifest_not_quarantined,
+    pipeline_not_quarantined,
+)
 from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
 from investment_manager.scheduling.tables import (
@@ -255,6 +260,11 @@ class DashboardReader:
     ) -> list[AssessmentRecord]:
         query = (
             select(context_assessments.c.payload)
+            .where(
+                analysis_behavior_not_quarantined(
+                    context_assessments.c.analysis_behavior_hash
+                )
+            )
             .order_by(
                 context_assessments.c.available_at.desc(),
                 context_assessments.c.assessment_id.desc(),
@@ -286,7 +296,12 @@ class DashboardReader:
                         decision_packets,
                         decision_packets.c.packet_id == context_assessments.c.packet_id,
                     )
-                    .where(context_assessments.c.assessment_id == assessment_id)
+                    .where(
+                        context_assessments.c.assessment_id == assessment_id,
+                        analysis_behavior_not_quarantined(
+                            context_assessments.c.analysis_behavior_hash
+                        ),
+                    )
                 )
                 .mappings()
                 .one_or_none()
@@ -329,6 +344,9 @@ class DashboardReader:
                 .where(
                     context_assessments.c.available_at >= cutoff,
                     context_assessments.c.available_at <= now,
+                    analysis_behavior_not_quarantined(
+                        context_assessments.c.analysis_behavior_hash
+                    ),
                 )
                 .order_by(
                     context_assessments.c.available_at.desc(),
@@ -550,7 +568,10 @@ class DashboardReader:
                 analysis_trigger_events.c.priority,
                 analysis_trigger_events.c.payload,
             )
-            .where(analysis_trigger_events.c.trigger_type != "INTELLIGENCE_INSERTED")
+            .where(
+                analysis_trigger_events.c.trigger_type != "INTELLIGENCE_INSERTED",
+                pipeline_not_quarantined(analysis_trigger_events.c.pipeline_id),
+            )
             .order_by(
                 analysis_trigger_events.c.occurred_at.desc(),
                 analysis_trigger_events.c.trigger_id.desc(),
@@ -841,6 +862,8 @@ class DashboardReader:
                 ).where(
                     analysis_trigger_plans.c.pipeline_id == pipeline,
                     analysis_trigger_plans.c.is_current.is_(True),
+                    pipeline_not_quarantined(analysis_trigger_plans.c.pipeline_id),
+                    manifest_not_quarantined(analysis_trigger_plans.c.manifest_id),
                 )
             ).all()
             manifest_ids = {manifest_id for _, manifest_id, _ in plan_rows}
@@ -872,6 +895,9 @@ class DashboardReader:
                     .where(
                         decision_packets.c.as_of <= forecast_cutoff,
                         context_assessments.c.analysis_behavior_hash == behavior_hash,
+                        analysis_behavior_not_quarantined(
+                            context_assessments.c.analysis_behavior_hash
+                        ),
                     )
                     .group_by(
                         context_assessments.c.assessment_id,
@@ -888,6 +914,9 @@ class DashboardReader:
                     select(func.max(context_assessments.c.available_at)).where(
                         context_assessments.c.analysis_behavior_hash == behavior_hash,
                         context_assessments.c.available_at <= now,
+                        analysis_behavior_not_quarantined(
+                            context_assessments.c.analysis_behavior_hash
+                        ),
                     )
                 ).scalar_one_or_none()
                 if latest_assessment_completed is not None:

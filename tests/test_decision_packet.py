@@ -1551,7 +1551,8 @@ def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> N
     assert "suggested_action" not in schema
     assert "order_type" not in schema
     assert "target_notional" not in schema
-    assert "capital_objective 是本轮唯一需要评价的资本问题" in prompt
+    assert "capital_objective 只是 capital_relevance 的产品专项子问题" in prompt
+    assert "不是单一资产或当前候选产品专题" in prompt
     assert "views 必须为空" in prompt
     assert "required_views_output_order_json" not in prompt
     assert "allowed_evidence_ids_json=" not in prompt

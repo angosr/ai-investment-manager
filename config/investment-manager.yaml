@@ -478,12 +478,12 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v27
+  version: context-assessment-v28
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v6
+    version: primary-portfolio-mandate-v7
     analysis_scope: primary-portfolio
-    question: 判断程序化 BTC 现货与永续 carry 基线之外，是否出现足以否决下一次入场的外生或跨市场风险，并维护支持该判断的当前世界认知。
+    question: 维护面向主组合和 Binance 可交易边界的当前世界认知，识别会改变宏观流动性、跨资产风险、市场结构及可交易产品风险收益的重大变化；另行判断程序化 BTC 现货与永续 carry 基线之外是否出现足以否决下一次入场的增量风险。
     capital_objective:
       objective_id: btc-calendar-carry-entry-veto-v1
       decision_kind: CARRY_ENTRY_VETO
