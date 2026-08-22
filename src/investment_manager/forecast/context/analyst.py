@@ -35,8 +35,12 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "assess-input-v19"
+ASSESS_INPUT_VERSION = "assess-input-v20"
 ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v10"
+
+
+class AssessPromptCapacityError(ValueError):
+    """The frozen assessment prompt cannot fit the configured runtime boundary."""
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -155,7 +159,7 @@ class AssessRunBundleBuilder:
         behavior_hash = self.behavior_hash(packet)
         output_schema = assess_output_schema(packet)
         if len(prompt) > self._runtime.maximum_prompt_characters:
-            raise ValueError("ASSESS DecisionPacket 超过 Codex 提示容量上限")
+            raise AssessPromptCapacityError("ASSESS DecisionPacket 超过 Codex 提示容量上限")
         return write_run_bundle(
             cycle_id=packet.packet_id,
             target=target,
@@ -227,6 +231,8 @@ class CodexContextAnalyst:
             )
             if bundle is None:
                 bundle = self._bundle_builder.build(packet, target)
+        except AssessPromptCapacityError:
+            return AnalystResult(False, None, "CODEX_PROMPT_CAPACITY_EXCEEDED")
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return AnalystResult(False, None, "CODEX_BUNDLE_INVALID")
         attempts = 0

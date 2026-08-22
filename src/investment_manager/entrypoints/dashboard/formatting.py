@@ -45,6 +45,7 @@ REASON_PLAIN = {
     "CODEX_ANALYST_UNAVAILABLE": "AI 分析器不可用",
     "CODEX_AUDIT_WRITE_FAILED": "AI 审计写入失败",
     "CODEX_BUNDLE_INVALID": "AI 运行包无效",
+    "CODEX_PROMPT_CAPACITY_EXCEEDED": "AI 输入超过容量上限",
     "CODEX_DETERMINISTIC_VALIDATION": "AI 建议未通过确定性校验",
     "CODEX_RUNTIME_DISABLED": "AI 运行时未启用",
     "DATA_STALE": "数据已过期",

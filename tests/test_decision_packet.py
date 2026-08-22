@@ -1216,7 +1216,12 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
     features = (FeatureEngine(app_config.feature).compute(market),)
 
     def background_fact(
-        *, revision_id: str, fact_type: str, risk_factor: str, minutes: int
+        *,
+        revision_id: str,
+        fact_type: str,
+        risk_factor: str,
+        minutes: int,
+        source_tier: SourceTier = SourceTier.FIRST_PARTY,
     ) -> VisibleFact:
         visible = _fact(
             market.as_of,
@@ -1227,13 +1232,14 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
         )
         return visible.model_copy(
             update={
+                "highest_source_tier": source_tier,
                 "fact": visible.fact.model_copy(
                     update={
                         "fact_type": fact_type,
                         "risk_factors": (risk_factor,),
                         "decision_materiality": FactDecisionMateriality.BACKGROUND,
                     }
-                )
+                ),
             }
         )
 
@@ -1252,9 +1258,10 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
         ),
         background_fact(
             revision_id="institutional-flow",
-            fact_type="IBIT_HOLDINGS_SNAPSHOT",
-            risk_factor="BTC_INSTITUTIONAL_HOLDINGS",
+            fact_type=BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
+            risk_factor="BTC_INSTITUTIONAL_FLOW",
             minutes=3,
+            source_tier=SourceTier.AGGREGATOR,
         ),
         background_fact(
             revision_id="rates",
@@ -1294,7 +1301,12 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
                     horizons_minutes=(60,),
                 ),
             ),
-            required_risk_factors=("REGULATION",),
+            required_risk_factors=(
+                "BTC_INSTITUTIONAL_FLOW",
+                "US_DOLLAR",
+                "US_FISCAL_LIQUIDITY",
+                "US_INTEREST_RATES",
+            ),
         ),
         state=state,
         deltas=(),
@@ -1313,8 +1325,8 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
     assert tuple(item.revision_id for item in packet.facts) == (
         "fiscal-result",
         "institutional-flow",
-        "rates",
         "dollar",
+        "rates",
     )
     assert packet.omitted_fact_revision_ids == ("fiscal-cash",)
 
@@ -1535,7 +1547,7 @@ def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> N
     assert "order_type" not in schema
     assert "target_notional" not in schema
     assert 'required_views_output_order_json=[{"asset":"BTC","horizon_minutes":60}' in prompt
-    assert 'allowed_evidence_ids_json=["delta-1","delta-2","feature-btc"' in prompt
+    assert "allowed_evidence_ids_json=" not in prompt
     assert "decision_packet_json=" in prompt
 
 
@@ -2242,6 +2254,28 @@ def test_assess_bundle_reuses_generic_locked_runner_contract(
     assert "suggested_action" not in schema
     assert "target_notional" not in schema
     assert json.loads(schema) == assess_output_schema(packet)
+
+
+def test_context_analyst_reports_prompt_capacity_before_calling_codex(
+    app_config, replay_input, tmp_path, monkeypatch
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    monkeypatch.setattr(
+        "investment_manager.forecast.context.analyst.build_assess_prompt",
+        lambda _packet: "x" * (app_config.codex_runtime.maximum_prompt_characters + 1),
+    )
+    router = _StaticRouter(AnalystResult(False, None, "UNUSED_ROUTER_RESULT"))
+    analyst = CodexContextAnalyst(
+        tmp_path,
+        _assess_bundle_builder(app_config),
+        router,
+    )
+
+    result = analyst.assess(packet)
+
+    assert not result.success
+    assert result.reason_code == "CODEX_PROMPT_CAPACITY_EXCEEDED"
+    assert router.bundles == []
 
 
 def test_configured_assessment_behavior_matches_packets_from_same_config(

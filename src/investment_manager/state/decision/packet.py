@@ -1311,6 +1311,22 @@ class DecisionPacketBuilder:
                 eligible.append(item)
             else:
                 omitted.append(item.fact.revision_id)
+        required_risk_position = {
+            risk_factor: position
+            for position, risk_factor in enumerate(mandate.required_risk_factors)
+        }
+
+        def causal_channel_rank(item: VisibleFact) -> tuple[int, tuple[str, ...]]:
+            positions = tuple(
+                required_risk_position[risk_factor]
+                for risk_factor in item.fact.risk_factors
+                if risk_factor in required_risk_position
+            )
+            return (
+                min(positions) if positions else len(required_risk_position),
+                item.fact.risk_factors,
+            )
+
         eligible.sort(
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
@@ -1318,6 +1334,7 @@ class DecisionPacketBuilder:
                 item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
+                causal_channel_rank(item),
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
                 abs(((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()),
@@ -1325,11 +1342,11 @@ class DecisionPacketBuilder:
                 item.fact.revision_id,
             )
         )
-        # Preserve causal coverage inside each epistemic class.  Pure recency
-        # ranking lets several fiscal rows consume the bounded Packet and evict
-        # the dollar, rates, liquidity or institutional-flow intermediaries
-        # needed to test transmission.  Take one risk-factor channel per round;
-        # repeated facts from a channel remain available in later rounds.
+        # Preserve causal coverage inside each epistemic class. Required channels
+        # receive a slot before source tier ranks comparable evidence within a
+        # channel; otherwise a lower-tier but unique transmission intermediary can
+        # be starved by unrelated first-party background. Repeated facts from one
+        # channel remain available in later rounds.
         diversified: list[VisibleFact] = []
 
         def epistemic_rank(item: VisibleFact) -> tuple[bool, bool]:

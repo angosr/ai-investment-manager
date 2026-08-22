@@ -111,7 +111,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
 - Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。
 - Treasury 暂定回购日历每 6 小时检查一次，原文、操作修订和取消记录永久保留；首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核。计划上限不是实际接受金额，也不能视为 Fed QE；财政域在债务发行数据接入前仍应显示 `PARTIAL`。
-- IBIT 官方持仓是部分机构覆盖：首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；只接入单一发行人时 `INSTITUTIONAL_FLOWS` 必须显示 `PARTIAL`，主要发行人合计流量能力完成后才可显示 `CURRENT`。
+- IBIT、ARKB、BITB 官方持仓首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI；BTC/ETH 合计流量以显式 `AGGREGATOR` 来源独立入库。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；覆盖状态可在全部声明能力健康时显示 `CURRENT`，但不得把聚合流量升级为一手事实，也不得用持仓冒充净申赎。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
 - `temporal-worker` 是旧 AnalysisCycle 的迁移期诊断入口，不属于现役 Shadow 服务；主线不得重新向它派发 Trigger。

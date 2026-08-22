@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v27
+  version: portfolio-state-v28
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v11
@@ -85,7 +85,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v28
+    version: decision-packet-policy-v29
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -99,7 +99,7 @@ decision_state:
     minimum_background_intelligence_impact: "0.80"
     minimum_background_source_reliability: "0.70"
     # AI 投影的上限；为固定分析指令预留约 5K，最终完整提示仍由 runtime 的 16K 门禁复核。
-    maximum_packet_characters: 11000
+    maximum_packet_characters: 12000
     maximum_previous_context_drivers: 3
 
 strategy:
@@ -353,7 +353,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v24
+  version: information-intake-v25
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -408,7 +408,7 @@ information:
         bitwise-bitb-holdings: [BTC_ETF_BITB_HOLDINGS]
         bykaranteli-etf-aggregate-flows: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
         ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
-      maximum_poll_age_seconds: 300
+      maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 345600
     - domain: SPOT_DERIVATIVES
       source_stream_ids: [binance-usdm-market]
@@ -465,7 +465,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v23
+  version: context-assessment-v24
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v3

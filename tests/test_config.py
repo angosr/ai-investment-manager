@@ -30,14 +30,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "cash-observation-shadow-v1"
     assert config.temporal.namespace == "shadow-capital-20260821-v9"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v24"
+    assert config.information.version == "information-intake-v25"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v27"
+    assert config.decision_state.version == "portfolio-state-v28"
     assert config.decision_state.official_fact_policy.version == "official-fact-v11"
     assert config.decision_state.delta_policy.version == "state-delta-v13"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v28"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v29"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.assessment.version == "context-assessment-v23"
+    assert config.decision_state.packet_policy.maximum_packet_characters == 12_000
+    assert config.assessment.version == "context-assessment-v24"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -61,6 +62,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
         "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
+    assert institutional.maximum_poll_age_seconds == 1200
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.packet_policy.maximum_calendar_context_distance_seconds == 604_800
     assert config.decision_state.official_fact_policy.affected_assets == (
