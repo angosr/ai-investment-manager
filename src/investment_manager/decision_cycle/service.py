@@ -15,6 +15,7 @@ from investment_manager.forecast.carry import CarryForecastProducer
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.application import ensure_trigger_plans
@@ -113,6 +114,7 @@ def run_trigger_service(
         config.trigger.dispatcher_advisory_lock_key,
     )
     with leadership:
+        SqlGovernanceRepository(engine).record_release(manifest)
         now = datetime.now(UTC)
         ensure_trigger_plans(
             repository=repository,
