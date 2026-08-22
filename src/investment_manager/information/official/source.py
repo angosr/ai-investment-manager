@@ -104,6 +104,21 @@ class HttpFederalRegisterSource:
                         "conditions[agencies][]",
                         "securities-and-exchange-commission",
                     ),
+                    *(
+                        ("fields[]", field)
+                        for field in (
+                            "document_number",
+                            "type",
+                            "title",
+                            "abstract",
+                            "action",
+                            "publication_date",
+                            "effective_on",
+                            "comments_close_on",
+                            "agencies",
+                            "html_url",
+                        )
+                    ),
                 ),
             )
         )

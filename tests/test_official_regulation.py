@@ -153,6 +153,18 @@ def test_http_source_uses_bounded_official_query() -> None:
         "commodity-futures-trading-commission",
         "securities-and-exchange-commission",
     ]
+    assert requests[0].url.params.get_list("fields[]") == [
+        "document_number",
+        "type",
+        "title",
+        "abstract",
+        "action",
+        "publication_date",
+        "effective_on",
+        "comments_close_on",
+        "agencies",
+        "html_url",
+    ]
 
 
 def test_ingestion_is_idempotent_and_revisions_are_append_only() -> None:
