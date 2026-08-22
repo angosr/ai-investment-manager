@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from temporalio.client import Client
 
 from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
@@ -18,12 +19,6 @@ from investment_manager.entrypoints.cli.support import (
     require_runtime_database,
     runtime_engine,
 )
-from investment_manager.execution.lifecycle.service import (
-    LifecycleTemporalWorker,
-    assemble_lifecycle_activities,
-    assemble_lifecycle_supervisor,
-)
-from investment_manager.execution.reconciliation.service import assemble_reconciliation
 from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
 from investment_manager.forecast.context.service import (
@@ -62,13 +57,6 @@ from investment_manager.information.official.source import (
     HttpTreasuryBuybackSource,
 )
 from investment_manager.information.repository import SqlEventStore
-from investment_manager.legacy.application import submit_frozen_analysis
-from investment_manager.legacy.cycle import CycleInput
-from investment_manager.legacy.runtime import (
-    TemporalAnalysisCoordinator,
-    assemble_analysis_cycle,
-    run_worker_process,
-)
 from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
@@ -93,30 +81,6 @@ from investment_manager.state.official_ingestion import (
     TreasuryBuybackCollectorService,
 )
 from investment_manager.state.repository import SqlFactStateStore
-
-
-@app.command("temporal-worker")
-def temporal_worker(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ] = Path("config/release-manifest.yaml"),
-) -> None:
-    """运行持久化分析 Worker；PROPOSE 模式调用隔离的真实 Codex。"""
-
-    loaded, manifest = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
-    cycle = assemble_analysis_cycle(
-        loaded,
-        database_url,
-        code_version=manifest.code_version,
-    )
-    run_worker_process(loaded.temporal, cycle)
 
 
 @app.command("assessment-worker")
@@ -161,28 +125,6 @@ def assessment_worker(
         code_version=manifest.code_version,
     )
     run_assessment_worker_process(config=loaded, application=application)
-
-
-@app.command("submit-analysis")
-def submit_analysis(
-    input_path: Annotated[Path, typer.Option("--input", exists=True, dir_okay=False)],
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    deadline_minutes: Annotated[int, typer.Option(min=1, max=30)] = 5,
-) -> None:
-    """诊断性提交一个冻结周期；生产触发器应直接调用同一 Coordinator。"""
-
-    loaded = load_config(config)
-    cycle_input = CycleInput.model_validate_json(input_path.read_text(encoding="utf-8"))
-    created_at = datetime.now(UTC)
-    result = asyncio.run(
-        submit_frozen_analysis(
-            cycle_input=cycle_input,
-            temporal_policy=loaded.temporal,
-            created_at=created_at,
-            deadline_minutes=deadline_minutes,
-        )
-    )
-    typer.echo(result.model_dump_json(indent=2))
 
 
 @app.command("submit-context-assessment")
@@ -353,71 +295,6 @@ def trigger_now(
     )
 
 
-@app.command("lifecycle-service")
-def lifecycle_service(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ] = Path("config/release-manifest.yaml"),
-) -> None:
-    """发现未关闭持仓并运行可恢复的 Temporal 生命周期监控。"""
-
-    loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
-
-    async def run() -> None:
-        temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
-        activities = assemble_lifecycle_activities(loaded, database_url)
-        supervisor = assemble_lifecycle_supervisor(
-            loaded,
-            database_url,
-            temporal.client,
-        )
-        async with LifecycleTemporalWorker(
-            temporal.client,
-            loaded.temporal,
-            activities,
-        ):
-            await supervisor.run(asyncio.Event())
-
-    asyncio.run(run())
-
-
-@app.command("reconciliation-service")
-def reconciliation_service(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ] = Path("config/release-manifest.yaml"),
-) -> None:
-    """持续主动对账独立 Mock 交易所与业务事实；差异时冻结新增风险。"""
-
-    loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
-
-    async def run() -> None:
-        temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
-        worker, supervisor = assemble_reconciliation(
-            loaded,
-            database_url,
-            temporal.client,
-        )
-        async with worker:
-            await supervisor.run(asyncio.Event())
-
-    asyncio.run(run())
-
-
 @app.command("outcome-evaluation-service")
 def outcome_evaluation_service(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
@@ -436,11 +313,14 @@ def outcome_evaluation_service(
     require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
-        temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
+        client = await Client.connect(
+            loaded.temporal.address,
+            namespace=loaded.temporal.namespace,
+        )
         worker, supervisor = assemble_outcome_evaluation(
             loaded,
             database_url,
-            temporal.client,
+            client,
         )
         async with worker:
             await supervisor.run(asyncio.Event())
@@ -468,11 +348,14 @@ def governance_service(
     require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
-        temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
+        client = await Client.connect(
+            loaded.temporal.address,
+            namespace=loaded.temporal.namespace,
+        )
         worker, supervisor = assemble_governance(
             loaded,
             database_url,
-            temporal.client,
+            client,
             project_root=root,
         )
         async with worker:

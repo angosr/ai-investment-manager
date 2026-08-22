@@ -66,7 +66,6 @@ CLI_CONTRACT = {
     "governance-service": "config,database_url,release_manifest,project_root",
     "information-collector": "config,database_url,release_manifest",
     "invalidate-evaluation-plan": "database_url,plan_id,reason_code,evidence_id",
-    "lifecycle-service": "config,database_url,release_manifest",
     "market-stream": "config,database_url,release_manifest",
     "outcome-evaluation-service": "config,database_url,release_manifest",
     "perpetual-trend-walk-forward": (
@@ -79,7 +78,9 @@ CLI_CONTRACT = {
         "blind_evaluation_catalog,starting_equity,spread_bps,include_trades,register_only"
     ),
     "phase-a-audit": "config,project_root",
-    "reconciliation-service": "config,database_url,release_manifest",
+    "quarantine-wrong-store-cohort": (
+        "database_url,manifest_id,pipeline_id,expected_role,evidence_ref,analysis_behavior_hash"
+    ),
     "register-capital-shadow-plan": (
         "config,database_url,release_manifest,plan_id,observation_start,observation_end"
     ),
@@ -103,9 +104,7 @@ CLI_CONTRACT = {
         "minimum_net_return_bps_lower_bound,minimum_incremental_return_bps_lower_bound"
     ),
     "shadow-audit": "config,release_manifest,project_root",
-    "submit-analysis": "input_path,config,deadline_minutes",
     "submit-context-assessment": "input_path,config,deadline_minutes",
-    "temporal-worker": "config,database_url,release_manifest",
     "trigger-now": "symbol,request_id,reason,config,database_url,release_manifest",
     "trigger-service": "config,database_url,release_manifest",
     "validate-config": "config",
@@ -213,9 +212,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 78
+    assert len(contract) == 79
     assert content_hash(contract) == (
-        "df4cae1b1469f1c06acda28e4328ed81109ec61ebc059554fcf7fa19d8436769"
+        "a3256bdb73919795e14d8c16a09aa762e8eeb466a7f8fafd17cbdbdb4128e610"
     )
 
 
@@ -253,16 +252,15 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "binance-testnet-audit",
             "binance-testnet-order-test",
         },
+        "entrypoints/cli/fact_store_commands.py": {
+            "quarantine-wrong-store-cohort",
+        },
         "entrypoints/cli/service_commands.py": {
             "assessment-worker",
-            "temporal-worker",
-            "submit-analysis",
             "submit-context-assessment",
             "market-stream",
             "trigger-service",
             "trigger-now",
-            "lifecycle-service",
-            "reconciliation-service",
             "outcome-evaluation-service",
             "governance-service",
             "information-collector",

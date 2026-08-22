@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
+from temporalio.client import Client
 
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
@@ -36,7 +37,6 @@ from investment_manager.entrypoints.dashboard.resources import (
     sample_host_resources,
 )
 from investment_manager.entrypoints.dashboard.stream import refresh_events
-from investment_manager.legacy.runtime import TemporalAnalysisCoordinator
 from investment_manager.platform.database import build_engine
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.settings import AppConfig
@@ -82,8 +82,10 @@ def create_app(
             if temporal_client is None:
                 async with temporal_lock:
                     if temporal_client is None:
-                        temporal = await TemporalAnalysisCoordinator.connect(config.temporal)
-                        temporal_client = temporal.client
+                        temporal_client = await Client.connect(
+                            config.temporal.address,
+                            namespace=config.temporal.namespace,
+                        )
 
             async def query(symbol: str) -> dict:
                 workflow_id = coordinator_workflow_id(symbol, config.pipeline.version)

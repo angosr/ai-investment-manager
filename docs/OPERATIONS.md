@@ -32,7 +32,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
 
 ## Temporal 编排
 
-当前主线由 `TriggerCoordinatorWorkflow` 持有触发计划、pending、合并和 single-flight 状态，由 `ContextAssessmentWorkflow` 对一个冻结 `DecisionPacket` 执行无交易权限的 AI 判断。PostgreSQL 只保存 Trigger、Packet、Assessment 和评价事实，不复制 Workflow 运行状态。`AnalysisCycleWorkflow → ExecutionWorkflow` 属于待删除旧链，已经退出 Trigger 调度；现役 Assessment Shadow 不启动它的 `temporal-worker`。
+当前主线由 `TriggerCoordinatorWorkflow` 持有触发计划、pending、合并和 single-flight 状态，由 `ContextAssessmentWorkflow` 对一个冻结 `DecisionPacket` 执行无交易权限的 AI 判断。PostgreSQL 只保存 Trigger、Packet、Assessment 和评价事实，不复制 Workflow 运行状态。`AnalysisCycleWorkflow → ExecutionWorkflow` 属于冻结历史链，已经退出 Trigger 调度，其 Worker、诊断提交、单腿生命周期与单腿对账入口均已从现役 CLI 删除。
 
 新交易链完成后，`execution_requests` 仍只能是业务交接事实，Temporal 历史继续作为重试、父子关系和流程终态的唯一来源。任何待执行请求必须保持 `PENDING` 和 `ACTIVE` 风险占用，禁止运维人员直接改表“修复”；应先查询确定性 `client_order_id` 的交易所结果，再恢复同一 Execution Workflow。
 
@@ -115,9 +115,6 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - IBIT、ARKB、BITB 官方持仓首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI；BTC/ETH 合计流量以显式 `AGGREGATOR` 来源独立入库。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；覆盖状态可在全部声明能力健康时显示 `CURRENT`，但不得把聚合流量升级为一手事实，也不得用持仓冒充净申赎。
 - release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
-- `temporal-worker` 是旧 AnalysisCycle 的迁移期诊断入口，不属于现役 Shadow 服务；主线不得重新向它派发 Trigger。
-- `lifecycle-service` 仅在新 TradePlan 执行链接通且可能产生持仓后启动；空仓 Assessment Shadow 不运行无消费者的生命周期进程。
-- `reconciliation-service`：按稳定时间桶运行主动对账；从独立 Mock 交易所账本和业务事实分别重建状态，报告非 `MATCHED` 或过期时冻结新增风险。
 - `outcome-evaluation-service`：唯一的 Forecast 与历史结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，结算程序 Forecast，并继续收尾旧 Proposal 与旧 `ContextAssessment` Directional View；现役资本目标 Assessment 不产生 View，不为它新增逐次方向结算服务。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 
 ### 前瞻证据稳定窗口
