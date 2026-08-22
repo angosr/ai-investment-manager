@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from itertools import groupby
 from typing import Literal
 
@@ -94,9 +94,59 @@ class DecisionPacketCapacityError(ValueError):
     pass
 
 
+_ANALYSIS_SIGNIFICANT_DIGITS = 6
+
+
+def _analysis_decimal(value: Decimal) -> str:
+    """Keep decision-scale precision without sending accounting-scale noise."""
+
+    if value == 0:
+        return "0"
+    quantum = Decimal(1).scaleb(
+        value.copy_abs().adjusted() - _ANALYSIS_SIGNIFICANT_DIGITS + 1
+    )
+    text = format(value.quantize(quantum, rounding=ROUND_HALF_EVEN), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
 def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, object]:
     payload = item.model_dump(mode="json")
-    return {name: payload[name] for name in names if name in payload}
+    projected: dict[str, object] = {}
+    for name in names:
+        if name not in payload:
+            continue
+        raw = getattr(item, name)
+        projected[name] = (
+            _analysis_decimal(raw) if isinstance(raw, Decimal) else payload[name]
+        )
+    return projected
+
+
+def _analysis_fact(item: PacketFact) -> dict[str, object]:
+    """Remove audit-only duplication while retaining epistemic qualifiers."""
+
+    projected: dict[str, object] = {
+        "revision_id": item.revision_id,
+        "fact_type": item.fact_type,
+        "event_time": (
+            item.event_time.isoformat() if item.event_time is not None else None
+        ),
+        "claim": item.claim,
+        "risk_factors": item.risk_factors,
+        "decision_materiality": item.decision_materiality.value,
+        "directly_triggered": item.directly_triggered,
+    }
+    if item.status != FactRevisionStatus.ACTIVE:
+        projected["status"] = item.status.value
+    if item.highest_source_tier != SourceTier.FIRST_PARTY:
+        projected["highest_source_tier"] = item.highest_source_tier.value
+    if item.independent_source_count != 1:
+        projected["independent_source_count"] = item.independent_source_count
+    if item.prompt_injection_suspected:
+        projected["prompt_injection_suspected"] = True
+    return projected
 
 
 def previous_context_is_decision_relevant(previous: PacketPreviousContext | None) -> bool:
@@ -180,24 +230,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         )
         for item in packet.derivative_states
     )
-    payload["facts"] = tuple(
-        (
-            {
-                "revision_id": item.revision_id,
-                "fact_type": item.fact_type,
-                "event_time": (
-                    item.event_time.isoformat() if item.event_time is not None else None
-                ),
-                "claim": item.claim,
-                "risk_factors": item.risk_factors,
-                "decision_materiality": item.decision_materiality.value,
-                "directly_triggered": item.directly_triggered,
-            }
-            if item.fact_type in OFFICIAL_METRIC_FACT_TYPES
-            else item.model_dump(mode="json")
-        )
-        for item in packet.facts
-    )
+    payload["facts"] = tuple(_analysis_fact(item) for item in packet.facts)
     previous = payload.get("previous_context")
     if previous is not None and not previous_context_is_decision_relevant(
         packet.previous_context

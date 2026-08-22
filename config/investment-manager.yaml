@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v25
+  version: portfolio-state-v26
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v10
@@ -79,7 +79,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v26
+    version: decision-packet-policy-v27
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000

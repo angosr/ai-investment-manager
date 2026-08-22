@@ -1417,6 +1417,73 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
     assert "data_gaps" not in projected["previous_context"]
 
 
+def test_analysis_projection_keeps_decision_precision_not_raw_decimal_noise(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    derivative = PacketDerivativeState(
+        evidence_ref="f" * 64,
+        asset="BTC",
+        market_symbol="BTCUSDT",
+        observed_at=packet.as_of,
+        mark_index_premium_bps=Decimal("0.30027777844133069626657"),
+        executable_short_basis_bps=Decimal("-0.512459279172454423072182"),
+        perpetual_spread_bps=Decimal("0.01290894738506680057548"),
+        last_funding_rate_bps=Decimal("1.00000000"),
+        trailing_funding_rate_mean_bps=Decimal("0.86046666666666666666666"),
+        trailing_funding_rate_sum_bps=Decimal("2.5814"),
+        funding_settlement_count=3,
+        funding_window_hours=24,
+        next_funding_time=packet.as_of + timedelta(hours=4),
+    )
+
+    projected = decision_packet_analysis_projection(
+        packet.model_copy(update={"derivative_states": (derivative,)})
+    )["derivative_states"][0]
+
+    assert projected["mark_index_premium_bps"] == "0.300278"
+    assert projected["executable_short_basis_bps"] == "-0.512459"
+    assert projected["perpetual_spread_bps"] == "0.0129089"
+    assert projected["last_funding_rate_bps"] == "1"
+    assert projected["trailing_funding_rate_mean_bps"] == "0.860467"
+
+
+def test_analysis_projection_compacts_fact_audit_fields_but_keeps_warnings(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    compact = decision_packet_analysis_projection(packet)["facts"][0]
+
+    assert tuple(compact) == (
+        "revision_id",
+        "fact_type",
+        "event_time",
+        "claim",
+        "risk_factors",
+        "decision_materiality",
+        "directly_triggered",
+    )
+
+    warned_fact = packet.facts[0].model_copy(
+        update={
+            "status": FactRevisionStatus.CONFLICTED,
+            "highest_source_tier": SourceTier.AGGREGATOR,
+            "independent_source_count": 2,
+            "prompt_injection_suspected": True,
+        }
+    )
+    warned = decision_packet_analysis_projection(
+        packet.model_copy(update={"facts": (warned_fact,)})
+    )["facts"][0]
+
+    assert warned["status"] == "CONFLICTED"
+    assert warned["highest_source_tier"] == "AGGREGATOR"
+    assert warned["independent_source_count"] == 2
+    assert warned["prompt_injection_suspected"] is True
+
+
 def test_analysis_projection_keeps_structural_context_without_direction(
     app_config,
     replay_input,
