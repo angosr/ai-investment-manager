@@ -666,6 +666,70 @@ async def fetch_binance_history(
 ) -> HistoricalDataset:
     """从 Binance 官方 REST 按页抓取完整已收盘 K 线并冻结交易规则。"""
 
+    return await _fetch_binance_kline_history(
+        base_url=base_url,
+        exchange_info_path="/api/v3/exchangeInfo",
+        klines_path="/api/v3/klines",
+        source="binance-rest-historical",
+        instrument_parser=_parse_instrument,
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        timeout_seconds=timeout_seconds,
+        clock=clock,
+        transport=transport,
+    )
+
+
+async def fetch_binance_usdm_history(
+    *,
+    base_url: str,
+    symbol: str,
+    interval: str,
+    start: datetime,
+    end: datetime,
+    timeout_seconds: int,
+    clock: Callable[[], datetime] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> HistoricalDataset:
+    """Freeze USD-M contract trade-price bars without pretending they are quotes."""
+
+    if base_url.rstrip("/") != "https://fapi.binance.com":
+        raise ValueError("USD-M 历史只接受 Binance 官方 REST")
+    return await _fetch_binance_kline_history(
+        base_url=base_url,
+        exchange_info_path="/fapi/v1/exchangeInfo",
+        klines_path="/fapi/v1/klines",
+        source="binance-usdm-rest-historical",
+        instrument_parser=_parse_usdm_instrument,
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        timeout_seconds=timeout_seconds,
+        clock=clock,
+        transport=transport,
+    )
+
+
+async def _fetch_binance_kline_history(
+    *,
+    base_url: str,
+    exchange_info_path: str,
+    klines_path: str,
+    source: str,
+    instrument_parser: Callable[[Any, str], InstrumentSpec],
+    symbol: str,
+    interval: str,
+    start: datetime,
+    end: datetime,
+    timeout_seconds: int,
+    clock: Callable[[], datetime] | None,
+    transport: httpx.AsyncBaseTransport | None,
+) -> HistoricalDataset:
+    """Shared strict pager for immutable Spot or USD-M trade-price bars."""
+
     start = require_utc(start)
     end = require_utc(end)
     collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
@@ -684,9 +748,12 @@ async def fetch_binance_history(
         follow_redirects=False,
         transport=transport,
     ) as client:
-        instrument_response = await client.get("/api/v3/exchangeInfo", params={"symbol": symbol})
+        instrument_response = await client.get(
+            exchange_info_path,
+            params={"symbol": symbol},
+        )
         instrument_response.raise_for_status()
-        instrument = _parse_instrument(instrument_response.json(), symbol)
+        instrument = instrument_parser(instrument_response.json(), symbol)
 
         cursor_ms = int(start.timestamp() * 1000)
         end_ms = int(end.timestamp() * 1000)
@@ -694,7 +761,7 @@ async def fetch_binance_history(
         rows: list[list[Any]] = []
         while cursor_ms < end_ms:
             response = await client.get(
-                "/api/v3/klines",
+                klines_path,
                 params={
                     "symbol": symbol,
                     "interval": interval,
@@ -735,13 +802,12 @@ async def fetch_binance_history(
     if not rows:
         raise ValueError("指定区间没有完整已收盘 K 线")
     bars = tuple(
-        _bar_from_row(row, symbol=symbol, interval=interval, source="binance-rest-historical")
-        for row in rows
+        _bar_from_row(row, symbol=symbol, interval=interval, source=source) for row in rows
     )
     bars_hash = _bars_hash(bars)
     manifest_payload = {
         "schema_version": "historical-bars-v1",
-        "source": "binance-rest-historical",
+        "source": source,
         "symbol": symbol,
         "interval": interval,
         "requested_start": start,
@@ -753,7 +819,7 @@ async def fetch_binance_history(
         dataset_id=stable_id("historical_dataset", *manifest_payload.values()),
         symbol=symbol,
         interval=interval,
-        source="binance-rest-historical",
+        source=source,
         collected_at=collected_at,
         requested_start=start,
         requested_end=end,
@@ -796,6 +862,38 @@ def _parse_instrument(raw: Any, symbol: str) -> InstrumentSpec:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Binance exchangeInfo 缺少必要现货交易规则") from exc
+
+
+def _parse_usdm_instrument(raw: Any, symbol: str) -> InstrumentSpec:
+    if not isinstance(raw, dict) or not isinstance(raw.get("symbols"), list):
+        raise ValueError("Binance USD-M exchangeInfo 响应非法")
+    records = [item for item in raw["symbols"] if item.get("symbol") == symbol]
+    if len(records) != 1:
+        raise ValueError(f"Binance USD-M exchangeInfo 未唯一返回 {symbol}")
+    record = records[0]
+    filters = {
+        item.get("filterType"): item
+        for item in record.get("filters", [])
+        if isinstance(item, dict) and isinstance(item.get("filterType"), str)
+    }
+    try:
+        price = filters["PRICE_FILTER"]
+        lot = filters["LOT_SIZE"]
+        notional = filters["MIN_NOTIONAL"]
+        return InstrumentSpec(
+            symbol=symbol,
+            base_asset=str(record["baseAsset"]),
+            quote_asset=str(record["quoteAsset"]),
+            price_increment=Decimal(str(price["tickSize"])),
+            quantity_increment=Decimal(str(lot["stepSize"])),
+            minimum_quantity=Decimal(str(lot["minQty"])),
+            maximum_quantity=Decimal(str(lot["maxQty"])),
+            minimum_notional=Decimal(str(notional.get("notional") or notional["minNotional"])),
+            minimum_price=Decimal(str(price["minPrice"])),
+            maximum_price=Decimal(str(price["maxPrice"])),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Binance USD-M exchangeInfo 缺少必要合约交易规则") from exc
 
 
 def _validate_bars(

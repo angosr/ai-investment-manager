@@ -48,6 +48,10 @@ CLI_CONTRACT = {
     "diagnose-dynamic-carry-history": (
         "config,carry_dataset_id,start,end,carry_catalog,spot_catalog,result_catalog"
     ),
+    "diagnose-dynamic-carry-intraday": (
+        "config,carry_dataset_id,spot_dataset_id,perpetual_dataset_id,start,end,"
+        "carry_catalog,dataset_catalog,result_catalog"
+    ),
     "evaluate-assessment-forward-plan": (
         "database_url,plan_id,published_at,evaluation_catalog"
     ),
@@ -63,6 +67,7 @@ CLI_CONTRACT = {
     ),
     "fetch-binance-funding-history": "config,symbol,start,end,catalog",
     "fetch-binance-history": "config,symbol,start,end,interval,catalog",
+    "fetch-binance-usdm-history": "config,symbol,start,end,interval,catalog",
     "freeze-event-history": "database_url,start,end,catalog",
     "governance-service": "config,database_url,release_manifest,project_root",
     "information-collector": "config,database_url,release_manifest",
@@ -268,9 +273,11 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         },
         "entrypoints/cli/research_commands.py": {
             "fetch-binance-history",
+            "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
             "diagnose-dynamic-carry-history",
+            "diagnose-dynamic-carry-intraday",
             "carry-walk-forward",
             "carry-blind-evaluate",
             "register-carry-forward-plan",

@@ -79,6 +79,54 @@ def fetch_binance_history_command(
     )
 
 
+@app.command("fetch-binance-usdm-history")
+def fetch_binance_usdm_history_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    symbol: Annotated[str, typer.Option()],
+    start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
+    end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    interval: Annotated[str, typer.Option(help="USD-M 合约交易价 K 线周期")],
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(".runtime/datasets"),
+) -> None:
+    """冻结 Binance USD-M 合约交易价 K 线；不把成交价冒充 bid/ask。"""
+
+    from investment_manager.research.dataset import (
+        HistoricalDatasetCatalog,
+        fetch_binance_usdm_history,
+    )
+
+    loaded = load_config(config)
+    canonical_symbol = _parse_research_symbol(symbol)
+    dataset = asyncio.run(
+        fetch_binance_usdm_history(
+            base_url="https://fapi.binance.com",
+            symbol=canonical_symbol,
+            interval=interval,
+            start=_parse_utc_option(start, name="start"),
+            end=_parse_utc_option(end, name="end"),
+            timeout_seconds=loaded.market_data.rest_timeout_seconds,
+        )
+    )
+    target = HistoricalDatasetCatalog(catalog).store(dataset)
+    typer.echo(
+        json.dumps(
+            {
+                "dataset_id": dataset.manifest.dataset_id,
+                "source": dataset.manifest.source,
+                "symbol": dataset.manifest.symbol,
+                "interval": dataset.manifest.interval,
+                "bar_count": dataset.manifest.bar_count,
+                "first_open_time": dataset.manifest.first_open_time.isoformat(),
+                "last_close_time": dataset.manifest.last_close_time.isoformat(),
+                "bars_hash": dataset.manifest.bars_hash,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("fetch-binance-funding-history")
 def fetch_binance_funding_history_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
@@ -257,6 +305,99 @@ def diagnose_dynamic_carry_history_command(
                 "start": result.start.isoformat(),
                 "end": result.end.isoformat(),
                 "metrics": result.metrics.model_dump(mode="json"),
+                "limitations": result.limitations,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("diagnose-dynamic-carry-intraday")
+def diagnose_dynamic_carry_intraday_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    spot_dataset_id: Annotated[str, typer.Option()],
+    perpetual_dataset_id: Annotated[str, typer.Option()],
+    start: Annotated[str | None, typer.Option(help="可选 UTC 起点（含）")] = None,
+    end: Annotated[str | None, typer.Option(help="可选 UTC 终点（不含）")] = None,
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    dataset_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/dynamic-carry-replays"
+    ),
+) -> None:
+    """以双市场盘中成交价做乐观诊断；不能代替可成交报价回测。"""
+
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.dataset import HistoricalDatasetCatalog
+    from investment_manager.research.dynamic_carry import (
+        DynamicCarryReplayCatalog,
+        intraday_replay_policy_from_config,
+        run_dynamic_carry_intraday_replay,
+    )
+
+    loaded = load_config(config)
+    carry = HistoricalCarryDatasetCatalog(carry_catalog).load(carry_dataset_id)
+    datasets = HistoricalDatasetCatalog(dataset_catalog)
+    spot = datasets.load(spot_dataset_id)
+    perpetual = datasets.load(perpetual_dataset_id)
+    interval = spot.manifest.interval
+    if not interval.endswith("m") or not interval[:-1].isdigit():
+        raise typer.BadParameter("盘中诊断仅接受分钟 K 线", param_hint="spot-dataset-id")
+    replay_start = (
+        _parse_utc_option(start, name="start")
+        if start is not None
+        else max(
+            carry.manifest.requested_start,
+            spot.manifest.first_open_time,
+            perpetual.manifest.first_open_time,
+        )
+    )
+    replay_end = (
+        _parse_utc_option(end, name="end")
+        if end is not None
+        else min(
+            carry.manifest.requested_end,
+            spot.manifest.requested_end,
+            perpetual.manifest.requested_end,
+        )
+    )
+    try:
+        result = run_dynamic_carry_intraday_replay(
+            carry_dataset=carry,
+            spot_dataset=spot,
+            perpetual_dataset=perpetual,
+            policy=intraday_replay_policy_from_config(
+                loaded,
+                bar_interval_minutes=int(interval[:-1]),
+            ),
+            starting_equity=loaded.shadow.initial_quote_balance,
+            start=replay_start,
+            end=replay_end,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="spot-dataset-id") from exc
+    target = DynamicCarryReplayCatalog(result_catalog).store(result)
+    typer.echo(
+        json.dumps(
+            {
+                "result_id": result.result_id,
+                "evidence_scope": result.evidence_scope,
+                "start": result.start.isoformat(),
+                "end": result.end.isoformat(),
+                "phases": [
+                    {
+                        "phase_offset_minutes": item.phase_offset_minutes,
+                        "metrics": item.metrics.model_dump(mode="json"),
+                    }
+                    for item in result.phases
+                ],
                 "limitations": result.limitations,
                 "path": str(target),
             },

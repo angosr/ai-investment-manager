@@ -170,6 +170,26 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 并写入 `.runtime/dynamic-carry-replays/`。它保留资金费的点时可见性和费用后权益，但日线无法证明
 15 分钟机会能成交，结果固定标记为 `REJECTION_ONLY_DIAGNOSTIC`；不得登记成通过证据或据此扩大权限。
 
+若已冻结同窗口、同周期的 Binance Spot 与 USD-M 合约成交价 K 线，可补做全部可表达 Heartbeat 相位的
+盘中淘汰诊断。USD-M 数据由官方 REST 独立冻结，不能用 Spot K 线或日线 carry 合约价格代替：
+
+```bash
+.venv/bin/investment-manager fetch-binance-usdm-history \
+  --config '<冻结 Capital 配置>' --symbol BTCUSDT --interval 5m \
+  --start '<UTC 起点>' --end '<UTC 终点>'
+
+.venv/bin/investment-manager diagnose-dynamic-carry-intraday \
+  --config '<冻结 Capital 配置>' \
+  --carry-dataset-id '<资金结算与日线 carry 数据集 ID>' \
+  --spot-dataset-id '<同窗口 Spot 5m 数据集 ID>' \
+  --perpetual-dataset-id '<同窗口 USD-M 5m 数据集 ID>'
+```
+
+该回放复用日线诊断的唯一资金、费用、仓位和滞回记账引擎，并分别运行每个可由 K 线表达的 Heartbeat
+相位。公开历史缺少两腿近期可成交 bid/ask，成交价开盘又按零历史点差计算，因此结果固定为
+`REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC`：任一相位费用后仍亏损可以淘汰弱经济假设；盈利不能证明可成交，
+不能替代前向 Shadow、事件触发回放或授予部署权限。结果的限制和数据身份随内容寻址制品永久冻结。
+
 每个 Capital Shadow Release 必须在首个月度窗口前，向它自己的事实库登记一次运行评价合同；命令从冻结配置与 Manifest 派生全部行为身份、证据、基线、成本维度和故障门槛，调用方只能选择计划 ID 与未来自然月窗口：
 
 ```bash

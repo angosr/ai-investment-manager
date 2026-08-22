@@ -83,11 +83,14 @@ from investment_manager.research.dataset import (
     _months_covering,
     fetch_binance_funding_history,
     fetch_binance_history,
+    fetch_binance_usdm_history,
     freeze_historical_events,
 )
 from investment_manager.research.dynamic_carry import (
     DynamicCarryReplayCatalog,
+    intraday_replay_policy_from_config,
     replay_policy_from_config,
+    run_dynamic_carry_intraday_replay,
     run_dynamic_carry_replay,
 )
 from investment_manager.research.screening import run_raw_signal_screen
@@ -602,6 +605,86 @@ def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
     assert dataset.manifest.instrument.quantity_increment == Decimal("0.000001")
     assert dataset.bars[0].observed_at == dataset.bars[0].close_time
     assert calls == 1
+
+
+def test_fetch_binance_usdm_history_has_distinct_source_and_rules() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=10)
+    first_ms = int(start.timestamp() * 1000)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v1/exchangeInfo":
+            return httpx.Response(
+                200,
+                json={
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "baseAsset": "BTC",
+                            "quoteAsset": "USDT",
+                            "filters": [
+                                {
+                                    "filterType": "PRICE_FILTER",
+                                    "tickSize": "0.1",
+                                    "minPrice": "0.1",
+                                    "maxPrice": "1000000",
+                                },
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "100"},
+                            ],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json=[
+                [first_ms, "100", "102", "99", "101", "5", first_ms + 299_999],
+                [
+                    first_ms + 300_000,
+                    "101",
+                    "103",
+                    "100",
+                    "102",
+                    "6",
+                    first_ms + 599_999,
+                ],
+            ],
+        )
+
+    dataset = asyncio.run(
+        fetch_binance_usdm_history(
+            base_url="https://fapi.binance.com",
+            symbol="BTCUSDT",
+            interval="5m",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: end + timedelta(days=1),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert dataset.manifest.source == "binance-usdm-rest-historical"
+    assert dataset.manifest.instrument.quantity_increment == Decimal("0.001")
+    assert dataset.manifest.instrument.minimum_notional == Decimal("100")
+    assert dataset.bars[0].source == dataset.manifest.source
+    with pytest.raises(ValueError, match="官方 REST"):
+        asyncio.run(
+            fetch_binance_usdm_history(
+                base_url="https://example.com",
+                symbol="BTCUSDT",
+                interval="5m",
+                start=start,
+                end=end,
+                timeout_seconds=1,
+            )
+        )
 
 
 def _funding_archive(filename: str, rows: tuple[tuple[str, str, str], ...]) -> bytes:
@@ -1227,6 +1310,69 @@ def test_dynamic_carry_replay_does_not_force_a_subthreshold_trade() -> None:
     assert result.metrics.entry_eligible_day_count == 0
     assert result.actions == ()
     assert result.metrics.ending_equity == Decimal("10000")
+
+
+def test_dynamic_carry_intraday_replay_covers_every_heartbeat_phase(
+    tmp_path,
+) -> None:
+    _, _, carry = _carry_dataset(
+        count=3,
+        funding_rate=Decimal("0.002"),
+        settlements_per_day=3,
+    )
+    spot = _dataset(
+        count=2 * 24 * 12,
+        interval="5m",
+        bar_delta=timedelta(minutes=5),
+        initial_price=Decimal("100"),
+        price_step=Decimal("1"),
+        source="binance-rest-historical",
+    )
+    perpetual_instrument = _instrument().model_copy(
+        update={
+            "price_increment": Decimal("0.1"),
+            "quantity_increment": Decimal("0.001"),
+            "minimum_quantity": Decimal("0.001"),
+            "minimum_notional": Decimal("100"),
+        }
+    )
+    perpetual = _dataset(
+        count=len(spot.bars),
+        interval="5m",
+        bar_delta=timedelta(minutes=5),
+        initial_price=Decimal("100"),
+        price_step=Decimal("1"),
+        instrument=perpetual_instrument,
+        source="binance-usdm-rest-historical",
+    )
+    config = load_config(Path("config/investment-manager.shadow.yaml"))
+    result = run_dynamic_carry_intraday_replay(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        perpetual_dataset=perpetual,
+        policy=intraday_replay_policy_from_config(
+            config,
+            bar_interval_minutes=5,
+        ),
+        starting_equity=Decimal("10000"),
+        start=spot.bars[0].open_time,
+        end=spot.bars[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert result.evidence_scope == "REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC"
+    assert [item.phase_offset_minutes for item in result.phases] == [0, 5, 10]
+    assert all(item.metrics.entry_count == 1 for item in result.phases)
+    assert all(item.metrics.boundary_exit_count == 1 for item in result.phases)
+    assert all(item.metrics.net_pnl > 0 for item in result.phases)
+    assert all(
+        item.metrics.funding_pnl + item.metrics.basis_pnl
+        - item.metrics.modeled_cost
+        == item.metrics.net_pnl
+        for item in result.phases
+    )
+    catalog = DynamicCarryReplayCatalog(tmp_path / "dynamic-carry")
+    catalog.store(result)
+    assert catalog.load(result.result_id) == result
 
 
 def test_carry_policy_profiles_freeze_risk_sizing() -> None:

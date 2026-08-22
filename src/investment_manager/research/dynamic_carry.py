@@ -1,16 +1,17 @@
-"""Point-in-time diagnostic replay for the active rolling carry hypothesis.
+"""Point-in-time diagnostic replays for the active rolling carry hypothesis.
 
-The frozen carry bundle currently has daily prices but exact funding settlement
-times.  This module therefore answers a narrow question: would the production
-signal and its hysteresis have survived fees at UTC daily opens?  It is useful
-for rejecting weak economics, but cannot authorize a strategy whose live clock
-runs every 15 minutes.
+Daily bars provide a long-horizon diagnostic.  Aligned intraday Spot/USD-M trade
+bars provide a more faithful but deliberately optimistic screen because public
+history does not contain recent executable quotes for both legs.  Both paths can
+reject weak economics; neither can authorize deployment.
 """
 
 from __future__ import annotations
 
 import json
 from bisect import bisect_left, bisect_right
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -142,16 +143,109 @@ class DynamicCarryReplayResult(FrozenModel):
         return self
 
 
+class DynamicCarryIntradayReplayPolicy(FrozenModel):
+    version: Literal["dynamic-carry-intraday-trade-open-v1"] = (
+        "dynamic-carry-intraday-trade-open-v1"
+    )
+    capital: DynamicCarryReplayPolicy
+    trigger_policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    heartbeat_minutes: int = Field(gt=0)
+    bar_interval_minutes: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def clock_is_exactly_representable(self):
+        if self.heartbeat_minutes % self.bar_interval_minutes:
+            raise ValueError("盘中 Carry K 线必须精确整除 Heartbeat 周期")
+        return self
+
+
+class DynamicCarryIntradayReplayMetrics(FrozenModel):
+    starting_equity: Decimal = Field(gt=0)
+    ending_equity: Decimal
+    net_pnl: Decimal
+    funding_pnl: Decimal
+    basis_pnl: Decimal
+    modeled_cost: Decimal = Field(ge=0)
+    return_fraction: Decimal
+    simple_annualized_return_fraction: Decimal
+    maximum_drawdown_fraction: Decimal = Field(ge=0)
+    bar_count: int = Field(gt=0)
+    decision_count: int = Field(gt=0)
+    signal_count: int = Field(ge=0)
+    missing_signal_count: int = Field(ge=0)
+    entry_eligible_observation_count: int = Field(ge=0)
+    exposure_bar_count: int = Field(ge=0)
+    entry_count: int = Field(ge=0)
+    rebalance_count: int = Field(ge=0)
+    signal_exit_count: int = Field(ge=0)
+    boundary_exit_count: int = Field(ge=0, le=1)
+    maximum_gross_signal_bps: Decimal | None = None
+    latest_gross_signal_bps: Decimal | None = None
+
+    @model_validator(mode="after")
+    def metrics_reconcile(self):
+        if self.ending_equity - self.starting_equity != self.net_pnl:
+            raise ValueError("盘中 Dynamic Carry 权益与净损益不一致")
+        if self.funding_pnl + self.basis_pnl - self.modeled_cost != self.net_pnl:
+            raise ValueError("盘中 Dynamic Carry 收益归因无法核对")
+        if self.signal_count + self.missing_signal_count != self.decision_count:
+            raise ValueError("盘中 Dynamic Carry 决策数量无法核对")
+        return self
+
+
+class DynamicCarryIntradayPhaseResult(FrozenModel):
+    phase_offset_minutes: int = Field(ge=0)
+    actions: tuple[DynamicCarryReplayAction, ...]
+    metrics: DynamicCarryIntradayReplayMetrics
+
+
+class DynamicCarryIntradayReplayResult(FrozenModel):
+    version: Literal["dynamic-carry-intraday-replay-v1"] = "dynamic-carry-intraday-replay-v1"
+    result_id: str
+    evidence_scope: Literal["REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC"] = (
+        "REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC"
+    )
+    carry_dataset_id: str
+    spot_dataset_id: str
+    perpetual_dataset_id: str
+    funding_dataset_id: str
+    policy: DynamicCarryIntradayReplayPolicy
+    start: datetime
+    end: datetime
+    assumptions: tuple[str, ...]
+    limitations: tuple[str, ...]
+    phases: tuple[DynamicCarryIntradayPhaseResult, ...] = Field(min_length=1)
+
+    _utc_start = field_validator("start")(require_utc)
+    _utc_end = field_validator("end")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_phases_match(self):
+        expected_offsets = tuple(
+            range(0, self.policy.heartbeat_minutes, self.policy.bar_interval_minutes)
+        )
+        if tuple(item.phase_offset_minutes for item in self.phases) != expected_offsets:
+            raise ValueError("盘中 Dynamic Carry 必须完整覆盖全部 K 线时钟相位")
+        payload = self.model_dump(exclude={"result_id"})
+        expected = stable_id("dynamic_carry_intraday_replay", content_hash(payload))
+        if self.result_id != expected:
+            raise ValueError("盘中 Dynamic Carry 结果 ID 与内容不一致")
+        return self
+
+
 class DynamicCarryReplayEnvelope(FrozenModel):
     result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    result: DynamicCarryReplayResult
+    result: DynamicCarryReplayResult | DynamicCarryIntradayReplayResult
 
 
 class DynamicCarryReplayCatalog:
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
 
-    def store(self, result: DynamicCarryReplayResult) -> Path:
+    def store(
+        self,
+        result: DynamicCarryReplayResult | DynamicCarryIntradayReplayResult,
+    ) -> Path:
         target = self._root / f"{result.result_id}.json"
         if target.exists():
             if self.load(result.result_id) != result:
@@ -168,7 +262,10 @@ class DynamicCarryReplayCatalog:
             payload=envelope,
         )
 
-    def load(self, result_id: str) -> DynamicCarryReplayResult:
+    def load(
+        self,
+        result_id: str,
+    ) -> DynamicCarryReplayResult | DynamicCarryIntradayReplayResult:
         raw = json.loads((self._root / f"{result_id}.json").read_text(encoding="utf-8"))
         if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(raw.get("result")):
             raise ValueError("Dynamic Carry 诊断制品内容哈希不匹配")
@@ -243,6 +340,263 @@ def replay_policy_from_config(config: AppConfig) -> DynamicCarryReplayPolicy:
     )
 
 
+def intraday_replay_policy_from_config(
+    config: AppConfig,
+    *,
+    bar_interval_minutes: int,
+) -> DynamicCarryIntradayReplayPolicy:
+    """Bind the replay clock to the exact active heartbeat policy."""
+
+    return DynamicCarryIntradayReplayPolicy(
+        capital=replay_policy_from_config(config),
+        trigger_policy_hash=content_hash(config.trigger),
+        heartbeat_minutes=config.trigger.heartbeat_minutes,
+        bar_interval_minutes=bar_interval_minutes,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AlignedReplayBar:
+    open_time: datetime
+    close_time: datetime
+    spot_open: Decimal
+    spot_high: Decimal
+    spot_low: Decimal
+    spot_close: Decimal
+    perpetual_open: Decimal
+    perpetual_high: Decimal
+    perpetual_close: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplayOutcome:
+    ending_equity: Decimal
+    funding_pnl: Decimal
+    basis_pnl: Decimal
+    modeled_cost: Decimal
+    maximum_drawdown_fraction: Decimal
+    observation_count: int
+    decision_count: int
+    signal_count: int
+    missing_signal_count: int
+    entry_eligible_count: int
+    exposure_count: int
+    entry_count: int
+    rebalance_count: int
+    signal_exit_count: int
+    boundary_exit_count: int
+    maximum_gross_signal_bps: Decimal | None
+    latest_gross_signal_bps: Decimal | None
+    actions: tuple[DynamicCarryReplayAction, ...]
+
+
+def _run_aligned_replay(
+    *,
+    bars: tuple[_AlignedReplayBar, ...],
+    settlements: tuple[CarryFundingSettlement, ...],
+    policy: DynamicCarryReplayPolicy,
+    starting_equity: Decimal,
+    is_decision_time: Callable[[datetime], bool],
+) -> _ReplayOutcome:
+    """Single accounting implementation shared by daily and intraday clocks."""
+
+    if starting_equity <= 0 or not bars:
+        raise ValueError("Dynamic Carry 回放要求正初始权益和非空行情")
+    settlement_times = tuple(item.funding_time for item in settlements)
+    equity = starting_equity
+    peak = equity
+    maximum_drawdown = Decimal("0")
+    quantity = Decimal("0")
+    prior: _AlignedReplayBar | None = None
+    funding_pnl = Decimal("0")
+    basis_pnl = Decimal("0")
+    modeled_cost = Decimal("0")
+    actions: list[DynamicCarryReplayAction] = []
+    signals: list[Decimal] = []
+    decision_count = 0
+    missing_signals = 0
+    entry_eligible = 0
+    exposure_count = 0
+    entry_count = 0
+    rebalance_count = 0
+    signal_exit_count = 0
+
+    for bar in bars:
+        if prior is not None:
+            basis_change = quantity * (
+                (bar.spot_open - prior.spot_open) - (bar.perpetual_open - prior.perpetual_open)
+            )
+            funding_change = quantity * _settlement_value_between(
+                settlements=settlements,
+                settlement_times=settlement_times,
+                start=prior.open_time,
+                end=bar.open_time,
+            )
+            equity += basis_change + funding_change
+            basis_pnl += basis_change
+            funding_pnl += funding_change
+            peak = max(peak, equity)
+            maximum_drawdown = max(
+                maximum_drawdown,
+                Decimal("1") - equity / peak,
+            )
+
+        if is_decision_time(bar.open_time):
+            decision_count += 1
+            signal = _projected_gross_signal(
+                settlements=settlements,
+                settlement_times=settlement_times,
+                policy=policy,
+                at=bar.open_time,
+                spot_open=bar.spot_open,
+                contract_open=bar.perpetual_open,
+            )
+            if signal is None:
+                missing_signals += 1
+            else:
+                signals.append(signal)
+                net_signal = signal - policy.estimated_round_trip_cost_bps
+                if net_signal >= policy.minimum_entry_net_bps:
+                    entry_eligible += 1
+                selected = net_signal >= (
+                    policy.minimum_hold_net_bps if quantity > 0 else policy.minimum_entry_net_bps
+                )
+                desired_gross = (
+                    equity * policy.gross_allocation_fraction if selected else Decimal("0")
+                )
+                current_gross = quantity * (bar.spot_open + bar.perpetual_open)
+                turnover = abs(desired_gross - current_gross)
+                if Decimal("0") < turnover < policy.minimum_rebalance_notional:
+                    desired_gross = current_gross
+                target_quantity = floor_to_step(
+                    desired_gross / (bar.spot_open + bar.perpetual_open),
+                    policy.common_quantity_step,
+                )
+                if target_quantity != quantity and not _group_is_executable(
+                    prior_quantity=quantity,
+                    target_quantity=target_quantity,
+                    spot_price=bar.spot_open,
+                    perpetual_price=bar.perpetual_open,
+                    policy=policy,
+                ):
+                    target_quantity = quantity
+                if target_quantity != quantity:
+                    prior_quantity = quantity
+                    cost = _execution_cost(
+                        quantity_delta=abs(target_quantity - quantity),
+                        spot_price=bar.spot_open,
+                        perpetual_price=bar.perpetual_open,
+                        policy=policy,
+                    )
+                    equity -= cost
+                    modeled_cost += cost
+                    kind: Literal[
+                        "ENTRY",
+                        "REBALANCE",
+                        "SIGNAL_EXIT",
+                        "BOUNDARY_EXIT",
+                    ]
+                    if prior_quantity == 0:
+                        kind = "ENTRY"
+                        entry_count += 1
+                    elif target_quantity == 0:
+                        kind = "SIGNAL_EXIT"
+                        signal_exit_count += 1
+                    else:
+                        kind = "REBALANCE"
+                        rebalance_count += 1
+                    actions.append(
+                        DynamicCarryReplayAction(
+                            at=bar.open_time,
+                            kind=kind,
+                            gross_signal_bps=signal,
+                            net_signal_bps=net_signal,
+                            prior_quantity=prior_quantity,
+                            target_quantity=target_quantity,
+                            modeled_cost=cost,
+                        )
+                    )
+                    quantity = target_quantity
+                    peak = max(peak, equity)
+                    maximum_drawdown = max(
+                        maximum_drawdown,
+                        Decimal("1") - equity / peak,
+                    )
+
+        if quantity > 0:
+            exposure_count += 1
+            conservative_intrabar_equity = equity + quantity * (
+                (bar.spot_low - bar.spot_open) - (bar.perpetual_high - bar.perpetual_open)
+            )
+            maximum_drawdown = max(
+                maximum_drawdown,
+                Decimal("1") - conservative_intrabar_equity / peak,
+            )
+        prior = bar
+
+    last = bars[-1]
+    basis_change = quantity * (
+        (last.spot_close - last.spot_open) - (last.perpetual_close - last.perpetual_open)
+    )
+    funding_change = quantity * _settlement_value_between(
+        settlements=settlements,
+        settlement_times=settlement_times,
+        start=last.open_time,
+        end=last.close_time,
+    )
+    equity += basis_change + funding_change
+    basis_pnl += basis_change
+    funding_pnl += funding_change
+    peak = max(peak, equity)
+    maximum_drawdown = max(maximum_drawdown, Decimal("1") - equity / peak)
+    boundary_exit_count = 0
+    if quantity > 0:
+        closing_cost = _execution_cost(
+            quantity_delta=quantity,
+            spot_price=last.spot_close,
+            perpetual_price=last.perpetual_close,
+            policy=policy,
+        )
+        equity -= closing_cost
+        modeled_cost += closing_cost
+        actions.append(
+            DynamicCarryReplayAction(
+                at=last.close_time,
+                kind="BOUNDARY_EXIT",
+                gross_signal_bps=signals[-1] if signals else None,
+                net_signal_bps=(
+                    signals[-1] - policy.estimated_round_trip_cost_bps if signals else None
+                ),
+                prior_quantity=quantity,
+                target_quantity=Decimal("0"),
+                modeled_cost=closing_cost,
+            )
+        )
+        boundary_exit_count = 1
+        maximum_drawdown = max(maximum_drawdown, Decimal("1") - equity / peak)
+
+    return _ReplayOutcome(
+        ending_equity=equity,
+        funding_pnl=funding_pnl,
+        basis_pnl=basis_pnl,
+        modeled_cost=modeled_cost,
+        maximum_drawdown_fraction=maximum_drawdown,
+        observation_count=len(bars),
+        decision_count=decision_count,
+        signal_count=len(signals),
+        missing_signal_count=missing_signals,
+        entry_eligible_count=entry_eligible,
+        exposure_count=exposure_count,
+        entry_count=entry_count,
+        rebalance_count=rebalance_count,
+        signal_exit_count=signal_exit_count,
+        boundary_exit_count=boundary_exit_count,
+        maximum_gross_signal_bps=max(signals) if signals else None,
+        latest_gross_signal_bps=signals[-1] if signals else None,
+        actions=tuple(actions),
+    )
+
+
 def run_dynamic_carry_replay(
     *,
     carry_dataset: HistoricalCarryDataset,
@@ -267,205 +621,55 @@ def run_dynamic_carry_replay(
         start=start,
         end=end,
     )
-    settlements = carry_dataset.settlements
-    settlement_times = tuple(item.funding_time for item in settlements)
-    equity = starting_equity
-    peak = equity
-    maximum_drawdown = Decimal("0")
-    quantity = Decimal("0")
-    prior_open_at: datetime | None = None
-    prior_spot_open: Decimal | None = None
-    prior_contract_open: Decimal | None = None
-    funding_pnl = Decimal("0")
-    basis_pnl = Decimal("0")
-    modeled_cost = Decimal("0")
-    actions: list[DynamicCarryReplayAction] = []
-    signals: list[Decimal] = []
-    missing_signals = 0
-    entry_eligible_days = 0
-    exposure_days = 0
-    entry_count = 0
-    rebalance_count = 0
-    signal_exit_count = 0
-
-    for day in days:
-        spot = spot_by_open[day.open_time]
-        if prior_open_at is not None:
-            assert prior_spot_open is not None and prior_contract_open is not None
-            basis_change = quantity * (
-                (spot.open - prior_spot_open) - (day.contract_open - prior_contract_open)
-            )
-            funding_change = quantity * _settlement_value_between(
-                settlements=settlements,
-                settlement_times=settlement_times,
-                start=prior_open_at,
-                end=day.open_time,
-            )
-            equity += basis_change + funding_change
-            basis_pnl += basis_change
-            funding_pnl += funding_change
-            peak = max(peak, equity)
-            maximum_drawdown = max(
-                maximum_drawdown,
-                Decimal("1") - equity / peak,
-            )
-
-        signal = _daily_open_signal(
-            carry_dataset=carry_dataset,
-            settlement_times=settlement_times,
-            policy=policy,
-            at=day.open_time,
-            spot_open=spot.open,
-            contract_open=day.contract_open,
+    bars = tuple(
+        _AlignedReplayBar(
+            open_time=day.open_time,
+            close_time=day.close_time,
+            spot_open=spot_by_open[day.open_time].open,
+            spot_high=spot_by_open[day.open_time].high,
+            spot_low=spot_by_open[day.open_time].low,
+            spot_close=spot_by_open[day.open_time].close,
+            perpetual_open=day.contract_open,
+            perpetual_high=day.contract_high,
+            perpetual_close=day.contract_close,
         )
-        current_gross = quantity * (spot.open + day.contract_open)
-        target_quantity = quantity
-        if signal is None:
-            missing_signals += 1
-        else:
-            signals.append(signal)
-            net_signal = signal - policy.estimated_round_trip_cost_bps
-            if net_signal >= policy.minimum_entry_net_bps:
-                entry_eligible_days += 1
-            selected = net_signal >= (
-                policy.minimum_hold_net_bps if quantity > 0 else policy.minimum_entry_net_bps
-            )
-            desired_gross = equity * policy.gross_allocation_fraction if selected else Decimal("0")
-            turnover = abs(desired_gross - current_gross)
-            if Decimal("0") < turnover < policy.minimum_rebalance_notional:
-                desired_gross = current_gross
-            target_quantity = floor_to_step(
-                desired_gross / (spot.open + day.contract_open),
-                policy.common_quantity_step,
-            )
-            if target_quantity != quantity and not _group_is_executable(
-                prior_quantity=quantity,
-                target_quantity=target_quantity,
-                spot_price=spot.open,
-                perpetual_price=day.contract_open,
-                policy=policy,
-            ):
-                target_quantity = quantity
-            if target_quantity != quantity:
-                prior_quantity = quantity
-                cost = _execution_cost(
-                    quantity_delta=abs(target_quantity - quantity),
-                    spot_price=spot.open,
-                    perpetual_price=day.contract_open,
-                    policy=policy,
-                )
-                equity -= cost
-                modeled_cost += cost
-                kind: Literal["ENTRY", "REBALANCE", "SIGNAL_EXIT", "BOUNDARY_EXIT"]
-                if prior_quantity == 0:
-                    kind = "ENTRY"
-                    entry_count += 1
-                elif target_quantity == 0:
-                    kind = "SIGNAL_EXIT"
-                    signal_exit_count += 1
-                else:
-                    kind = "REBALANCE"
-                    rebalance_count += 1
-                actions.append(
-                    DynamicCarryReplayAction(
-                        at=day.open_time,
-                        kind=kind,
-                        gross_signal_bps=signal,
-                        net_signal_bps=net_signal,
-                        prior_quantity=prior_quantity,
-                        target_quantity=target_quantity,
-                        modeled_cost=cost,
-                    )
-                )
-                quantity = target_quantity
-                peak = max(peak, equity)
-                maximum_drawdown = max(
-                    maximum_drawdown,
-                    Decimal("1") - equity / peak,
-                )
-
-        if quantity > 0:
-            exposure_days += 1
-            conservative_intraday_equity = equity + quantity * (
-                (spot.low - spot.open) - (day.contract_high - day.contract_open)
-            )
-            maximum_drawdown = max(
-                maximum_drawdown,
-                Decimal("1") - conservative_intraday_equity / peak,
-            )
-        prior_open_at = day.open_time
-        prior_spot_open = spot.open
-        prior_contract_open = day.contract_open
-
-    last_day = days[-1]
-    last_spot = spot_by_open[last_day.open_time]
-    basis_change = quantity * (
-        (last_spot.close - last_spot.open) - (last_day.contract_close - last_day.contract_open)
+        for day in days
     )
-    funding_change = quantity * _settlement_value_between(
-        settlements=settlements,
-        settlement_times=settlement_times,
-        start=last_day.open_time,
-        end=last_day.close_time,
+    outcome = _run_aligned_replay(
+        bars=bars,
+        settlements=carry_dataset.settlements,
+        policy=policy,
+        starting_equity=starting_equity,
+        is_decision_time=lambda _: True,
     )
-    equity += basis_change + funding_change
-    basis_pnl += basis_change
-    funding_pnl += funding_change
-    peak = max(peak, equity)
-    maximum_drawdown = max(maximum_drawdown, Decimal("1") - equity / peak)
-    boundary_exit_count = 0
-    if quantity > 0:
-        closing_cost = _execution_cost(
-            quantity_delta=quantity,
-            spot_price=last_spot.close,
-            perpetual_price=last_day.contract_close,
-            policy=policy,
-        )
-        equity -= closing_cost
-        modeled_cost += closing_cost
-        actions.append(
-            DynamicCarryReplayAction(
-                at=last_day.close_time,
-                kind="BOUNDARY_EXIT",
-                gross_signal_bps=signals[-1] if signals else None,
-                net_signal_bps=(
-                    signals[-1] - policy.estimated_round_trip_cost_bps if signals else None
-                ),
-                prior_quantity=quantity,
-                target_quantity=Decimal("0"),
-                modeled_cost=closing_cost,
-            )
-        )
-        boundary_exit_count = 1
-        maximum_drawdown = max(maximum_drawdown, Decimal("1") - equity / peak)
 
     elapsed_days = Decimal(
-        str((days[-1].close_time - days[0].open_time).total_seconds())
+        str((bars[-1].close_time - bars[0].open_time).total_seconds())
     ) / Decimal("86400")
-    net_pnl = equity - starting_equity
+    net_pnl = outcome.ending_equity - starting_equity
     metrics = DynamicCarryReplayMetrics(
         starting_equity=starting_equity,
-        ending_equity=equity,
+        ending_equity=outcome.ending_equity,
         net_pnl=net_pnl,
-        funding_pnl=funding_pnl,
-        basis_pnl=basis_pnl,
-        modeled_cost=modeled_cost,
+        funding_pnl=outcome.funding_pnl,
+        basis_pnl=outcome.basis_pnl,
+        modeled_cost=outcome.modeled_cost,
         return_fraction=net_pnl / starting_equity,
         simple_annualized_return_fraction=(
             net_pnl / starting_equity * Decimal("365.25") / elapsed_days
         ),
-        maximum_drawdown_fraction=maximum_drawdown,
-        day_count=len(days),
-        signal_day_count=len(signals),
-        missing_signal_day_count=missing_signals,
-        entry_eligible_day_count=entry_eligible_days,
-        exposure_day_count=exposure_days,
-        entry_count=entry_count,
-        rebalance_count=rebalance_count,
-        signal_exit_count=signal_exit_count,
-        boundary_exit_count=boundary_exit_count,
-        maximum_gross_signal_bps=max(signals) if signals else None,
-        latest_gross_signal_bps=signals[-1] if signals else None,
+        maximum_drawdown_fraction=outcome.maximum_drawdown_fraction,
+        day_count=outcome.observation_count,
+        signal_day_count=outcome.signal_count,
+        missing_signal_day_count=outcome.missing_signal_count,
+        entry_eligible_day_count=outcome.entry_eligible_count,
+        exposure_day_count=outcome.exposure_count,
+        entry_count=outcome.entry_count,
+        rebalance_count=outcome.rebalance_count,
+        signal_exit_count=outcome.signal_exit_count,
+        boundary_exit_count=outcome.boundary_exit_count,
+        maximum_gross_signal_bps=outcome.maximum_gross_signal_bps,
+        latest_gross_signal_bps=outcome.latest_gross_signal_bps,
     )
     payload = {
         "version": "dynamic-carry-daily-open-replay-v1",
@@ -492,11 +696,123 @@ def run_dynamic_carry_replay(
             "INTRADAY_SIGNAL_DURATION_AND_CROSS_MARKET_QUOTE_SKEW_ARE_UNOBSERVED",
             "DIAGNOSTIC_RESULT_CANNOT_GRANT_DEPLOYMENT_PERMISSION",
         ),
-        "actions": tuple(actions),
+        "actions": outcome.actions,
         "metrics": metrics,
     }
     return DynamicCarryReplayResult(
         result_id=stable_id("dynamic_carry_replay", content_hash(payload)),
+        **payload,
+    )
+
+
+def run_dynamic_carry_intraday_replay(
+    *,
+    carry_dataset: HistoricalCarryDataset,
+    spot_dataset: HistoricalDataset,
+    perpetual_dataset: HistoricalDataset,
+    policy: DynamicCarryIntradayReplayPolicy,
+    starting_equity: Decimal,
+    start: datetime,
+    end: datetime,
+) -> DynamicCarryIntradayReplayResult:
+    """Replay every observable heartbeat phase without historical bid/ask."""
+
+    start = require_utc(start)
+    end = require_utc(end)
+    if starting_equity <= 0 or start >= end:
+        raise ValueError("盘中 Dynamic Carry 回放资金或时间边界非法")
+    bars = _validated_intraday_window(
+        carry_dataset=carry_dataset,
+        spot_dataset=spot_dataset,
+        perpetual_dataset=perpetual_dataset,
+        policy=policy,
+        start=start,
+        end=end,
+    )
+    elapsed_days = Decimal(
+        str((bars[-1].close_time - bars[0].open_time).total_seconds())
+    ) / Decimal("86400")
+    phases = []
+    for offset in range(
+        0,
+        policy.heartbeat_minutes,
+        policy.bar_interval_minutes,
+    ):
+        outcome = _run_aligned_replay(
+            bars=bars,
+            settlements=carry_dataset.settlements,
+            policy=policy.capital,
+            starting_equity=starting_equity,
+            is_decision_time=lambda at, phase=offset: (
+                (at.hour * 60 + at.minute - phase) % policy.heartbeat_minutes == 0
+            ),
+        )
+        net_pnl = outcome.ending_equity - starting_equity
+        phases.append(
+            DynamicCarryIntradayPhaseResult(
+                phase_offset_minutes=offset,
+                actions=outcome.actions,
+                metrics=DynamicCarryIntradayReplayMetrics(
+                    starting_equity=starting_equity,
+                    ending_equity=outcome.ending_equity,
+                    net_pnl=net_pnl,
+                    funding_pnl=outcome.funding_pnl,
+                    basis_pnl=outcome.basis_pnl,
+                    modeled_cost=outcome.modeled_cost,
+                    return_fraction=net_pnl / starting_equity,
+                    simple_annualized_return_fraction=(
+                        net_pnl / starting_equity * Decimal("365.25") / elapsed_days
+                    ),
+                    maximum_drawdown_fraction=(outcome.maximum_drawdown_fraction),
+                    bar_count=outcome.observation_count,
+                    decision_count=outcome.decision_count,
+                    signal_count=outcome.signal_count,
+                    missing_signal_count=outcome.missing_signal_count,
+                    entry_eligible_observation_count=(outcome.entry_eligible_count),
+                    exposure_bar_count=outcome.exposure_count,
+                    entry_count=outcome.entry_count,
+                    rebalance_count=outcome.rebalance_count,
+                    signal_exit_count=outcome.signal_exit_count,
+                    boundary_exit_count=outcome.boundary_exit_count,
+                    maximum_gross_signal_bps=(outcome.maximum_gross_signal_bps),
+                    latest_gross_signal_bps=outcome.latest_gross_signal_bps,
+                ),
+            )
+        )
+    payload = {
+        "version": "dynamic-carry-intraday-replay-v1",
+        "evidence_scope": "REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC",
+        "carry_dataset_id": carry_dataset.manifest.dataset_id,
+        "spot_dataset_id": spot_dataset.manifest.dataset_id,
+        "perpetual_dataset_id": perpetual_dataset.manifest.dataset_id,
+        "funding_dataset_id": carry_dataset.manifest.funding_dataset_id,
+        "policy": policy,
+        "start": start,
+        "end": end,
+        "assumptions": (
+            "ALL_BAR_REPRESENTABLE_HEARTBEAT_PHASES_REPLAYED",
+            "FUNDING_VISIBLE_ONLY_AFTER_FROZEN_AVAILABLE_AT",
+            "MISSING_SIGNAL_RETAINS_EXISTING_POSITION",
+            "SAME_BASE_QUANTITY_SPOT_LONG_PERPETUAL_SHORT",
+            "CURRENT_PRODUCTION_HYSTERESIS_SIZING_AND_FEES",
+            "CONSERVATIVE_UNSYNCHRONIZED_INTRABAR_HIGH_LOW_DRAWDOWN_BOUND",
+            "NO_CODEX_REPLAY",
+        ),
+        "limitations": (
+            "TRADE_BAR_OPENS_ARE_NOT_EXECUTABLE_BID_ASK_QUOTES",
+            "ZERO_HISTORICAL_SPREAD_MAKES_REPLAY_OPTIMISTIC",
+            "LAST_VISIBLE_SETTLEMENT_PROXIES_HISTORICAL_PERPETUAL_STATE_FUNDING_RATE",
+            "BAR_BUCKETS_CANNOT_REPRODUCE_EXACT_CROSS_MARKET_QUOTE_SKEW",
+            "EVENT_DRIVEN_TRIGGER_TIMES_OUTSIDE_HEARTBEAT_PHASES_ARE_NOT_REPLAYED",
+            "DIAGNOSTIC_RESULT_CANNOT_GRANT_DEPLOYMENT_PERMISSION",
+        ),
+        "phases": tuple(phases),
+    }
+    return DynamicCarryIntradayReplayResult(
+        result_id=stable_id(
+            "dynamic_carry_intraday_replay",
+            content_hash(payload),
+        ),
         **payload,
     )
 
@@ -528,9 +844,64 @@ def _validated_window(
     return days, spot_by_open
 
 
-def _daily_open_signal(
+def _validated_intraday_window(
     *,
     carry_dataset: HistoricalCarryDataset,
+    spot_dataset: HistoricalDataset,
+    perpetual_dataset: HistoricalDataset,
+    policy: DynamicCarryIntradayReplayPolicy,
+    start: datetime,
+    end: datetime,
+) -> tuple[_AlignedReplayBar, ...]:
+    capital = policy.capital
+    if (
+        carry_dataset.manifest.symbol != capital.symbol
+        or spot_dataset.manifest.symbol != capital.symbol
+        or perpetual_dataset.manifest.symbol != capital.symbol
+        or spot_dataset.manifest.source != "binance-rest-historical"
+        or perpetual_dataset.manifest.source != "binance-usdm-rest-historical"
+        or spot_dataset.manifest.interval != perpetual_dataset.manifest.interval
+        or spot_dataset.manifest.interval != f"{policy.bar_interval_minutes}m"
+    ):
+        raise ValueError("盘中 Dynamic Carry 数据源、品种或周期不一致")
+    if not (
+        carry_dataset.manifest.requested_start <= start
+        and end <= carry_dataset.manifest.requested_end
+    ):
+        raise ValueError("盘中 Dynamic Carry 超出资金结算数据窗口")
+    spots = tuple(item for item in spot_dataset.bars if start <= item.open_time < end)
+    perpetuals = tuple(item for item in perpetual_dataset.bars if start <= item.open_time < end)
+    if (
+        not spots
+        or len(spots) != len(perpetuals)
+        or spots[0].open_time != start
+        or spots[-1].close_time >= end
+    ):
+        raise ValueError("盘中 Dynamic Carry 窗口缺少完整对齐 K 线")
+    if any(
+        spot.open_time != perpetual.open_time or spot.close_time != perpetual.close_time
+        for spot, perpetual in zip(spots, perpetuals, strict=True)
+    ):
+        raise ValueError("盘中 Dynamic Carry Spot/Perpetual K 线未点时对齐")
+    return tuple(
+        _AlignedReplayBar(
+            open_time=spot.open_time,
+            close_time=spot.close_time,
+            spot_open=spot.open,
+            spot_high=spot.high,
+            spot_low=spot.low,
+            spot_close=spot.close,
+            perpetual_open=perpetual.open,
+            perpetual_high=perpetual.high,
+            perpetual_close=perpetual.close,
+        )
+        for spot, perpetual in zip(spots, perpetuals, strict=True)
+    )
+
+
+def _projected_gross_signal(
+    *,
+    settlements: tuple[CarryFundingSettlement, ...],
     settlement_times: tuple[datetime, ...],
     policy: DynamicCarryReplayPolicy,
     at: datetime,
@@ -540,9 +911,7 @@ def _daily_open_signal(
     start = at - timedelta(hours=policy.funding_lookback_hours)
     left = bisect_left(settlement_times, start)
     right = bisect_left(settlement_times, at)
-    visible = tuple(
-        item for item in carry_dataset.settlements[left:right] if item.available_at <= at
-    )
+    visible = tuple(item for item in settlements[left:right] if item.available_at <= at)
     if len(visible) < policy.minimum_funding_settlements:
         return None
     trailing_rate = median(item.funding_rate for item in visible)
