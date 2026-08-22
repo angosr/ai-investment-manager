@@ -32,7 +32,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.capital.enabled
     assert config.information.version == "information-intake-v23"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v23"
+    assert config.decision_state.version == "portfolio-state-v24"
     assert config.decision_state.official_fact_policy.version == "official-fact-v10"
     assert config.decision_state.delta_policy.version == "state-delta-v12"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v26"

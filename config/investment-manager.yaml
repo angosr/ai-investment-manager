@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v23
+  version: portfolio-state-v24
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v10
