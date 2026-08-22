@@ -1340,6 +1340,7 @@ def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
         {
             "domain": "FISCAL_DEBT",
             "status": "PARTIAL",
+            "covered_capabilities": ("DEBT_REPURCHASE",),
             "missing_capabilities": ("DEBT_ISSUANCE",),
         },
     )

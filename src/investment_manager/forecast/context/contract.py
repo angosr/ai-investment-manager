@@ -123,7 +123,9 @@ ASSESS_INSTRUCTIONS = (
     "review_requests 只说明主 Agent 为什么要求此刻复核，不是市场事实或方向证据。",
     "information_coverage 是各因果领域的点时采集覆盖：CURRENT 表示所需决策能力齐全且来源正常，"
     "PARTIAL 表示已有部分可用来源、但 missing_capabilities 所列关键能力仍缺失；"
-    "二者都不等于支持某个方向。"
+    "covered_capabilities 表示已接入的能力，但是否新鲜仍以 status 为准；二者都不等于支持某个方向。"
+    "facts 是容量内的代表性证据，不是全部已接入来源；不得因为某项 covered capability 的具体事实"
+    "本轮未入选，就声称系统只有当前展示的单一来源。此时只能说明本轮没有提供该能力的具体数值。"
     "NO_RECENT_PUBLICATION 表示来源正常但连续数据已过新鲜阈值；SOURCE_STALE/SOURCE_FAILED/"
     "NOT_CONFIGURED 表示信息基础设施缺口。必须据此区分‘没有新发布’与‘系统不知道’，"
     "并优先指出会截断关键传导链的缺口。",

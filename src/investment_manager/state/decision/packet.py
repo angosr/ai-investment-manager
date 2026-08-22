@@ -259,6 +259,10 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         {
             "domain": item.domain.value,
             "status": item.status.value,
+            # Selected facts are a bounded representative subset.  Keep the
+            # compact capability inventory so the analyst cannot mistake an
+            # omitted source fact for an unconfigured data route.
+            "covered_capabilities": item.covered_capabilities,
             "missing_capabilities": item.missing_capabilities,
             **(
                 {}

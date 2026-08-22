@@ -65,6 +65,9 @@ const CAPABILITY: Record<string, string> = {
   BINANCE_PERPETUAL: "Binance 永续市场",
   BINANCE_SPOT: "Binance 现货市场",
   BTC_ETF_AGGREGATE_FLOW: "BTC ETF 合计资金流",
+  BTC_ETF_ARKB_HOLDINGS: "ARKB 发行人持仓",
+  BTC_ETF_BITB_HOLDINGS: "BITB 发行人持仓",
+  BTC_ETF_IBIT_HOLDINGS: "IBIT 发行人持仓",
   CREDIT: "信用市场",
   DEBT_ISSUANCE: "国债发行",
   DEBT_REPURCHASE: "国债回购",
@@ -362,10 +365,14 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
         title="因果信息覆盖"
         empty="没有覆盖合同"
         items={snapshot.information_coverage.map((item) => {
+          const covered = item.covered_capabilities.map(
+            (capability) => CAPABILITY[capability] ?? capability,
+          );
           const missing = item.missing_capabilities.map(
             (capability) => CAPABILITY[capability] ?? capability,
           );
           return `${CAUSAL_DOMAIN[item.domain] ?? item.domain}：${COVERAGE_STATUS[item.status] ?? item.status}${
+            covered.length > 0 ? `；已接入 ${covered.join("、")}` : ""}${
             missing.length > 0 ? `；仍缺 ${missing.join("、")}` : ""
           }`;
         })}
