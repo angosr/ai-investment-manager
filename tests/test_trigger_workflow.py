@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -16,7 +16,6 @@ from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
 )
 from investment_manager.kernel.identity import stable_id
-from investment_manager.legacy.workflows import PREPARE_ACTIVITY_NAME, AnalysisCycleWorkflow
 from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
@@ -64,14 +63,20 @@ async def build_request(raw_batch):
     }
 
 
-@activity.defn(name=PREPARE_ACTIVITY_NAME)
-async def prepare_no_action(_request):
-    return {
-        "attempt": 1,
-        "cycle_result": {"outcome": "NO_ACTION", "reason_code": "TEST_NO_ACTION"},
-    }
+@workflow.defn(name="AnalysisCycleWorkflow")
+class AnalysisCycleWorkflow:
+    """Test-only child: TriggerCoordinator owns dispatch, not child business semantics."""
 
-
+    @workflow.run
+    async def run(self, request):
+        workflow_id = str(request.get("workflow_id") or workflow.info().workflow_id)
+        return {
+            "workflow_id": workflow_id,
+            "status": "COMPLETED",
+            "reason_code": "TEST_NO_ACTION",
+            "attempt": 1,
+            "cycle_result": {"outcome": "NO_ACTION", "reason_code": "TEST_NO_ACTION"},
+        }
 def test_trigger_coordinator_deduplicates_and_runs_one_event_batch(app_config) -> None:
     async def scenario() -> None:
         async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -117,7 +122,6 @@ def test_trigger_coordinator_deduplicates_and_runs_one_event_batch(app_config) -
                     env.client,
                     task_queue=analysis_queue,
                     workflows=[AnalysisCycleWorkflow],
-                    activities=[prepare_no_action],
                 ),
             ):
                 handle = await env.client.start_workflow(
@@ -451,7 +455,6 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
                     env.client,
                     task_queue=analysis_queue,
                     workflows=[AnalysisCycleWorkflow],
-                    activities=[prepare_no_action],
                 ),
             ):
                 handle = await env.client.start_workflow(
@@ -549,7 +552,6 @@ def test_trigger_coordinator_retries_post_projection_failure_with_frozen_batch(
                     env.client,
                     task_queue=analysis_queue,
                     workflows=[AnalysisCycleWorkflow],
-                    activities=[prepare_no_action],
                 ),
             ):
                 handle = await env.client.start_workflow(
@@ -732,7 +734,6 @@ def test_trigger_coordinator_keeps_event_until_global_admission_retry(
                     env.client,
                     task_queue=analysis_queue,
                     workflows=[AnalysisCycleWorkflow],
-                    activities=[prepare_no_action],
                 ),
             ):
                 handle = await env.client.start_workflow(
@@ -906,7 +907,6 @@ def test_heartbeat_remains_pending_past_generic_trigger_expiry(app_config) -> No
                     env.client,
                     task_queue=analysis_queue,
                     workflows=[AnalysisCycleWorkflow],
-                    activities=[prepare_no_action],
                 ),
             ):
                 handle = await env.client.start_workflow(

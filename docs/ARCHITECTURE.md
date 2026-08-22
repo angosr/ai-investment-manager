@@ -758,7 +758,7 @@ kernel/platform
    统一计算现金、费用、funding、产品/Sleeve 持仓、权益和待完成组；资本入口先恢复旧非终态 group，
    再允许新决策。下一步接 Binance 产品 Venue、保证金/资金流水和主动对账；新链不再接收
    `TradeIntent`，也不假定交易所提供跨产品原子成交。
-5. **切流删除**：点时回放、故障注入和独立模拟盘均通过后，发布新链并一次性删除 SignalCandidate、TradeIntent、旧 AnalysisCycle、旧表写入、旧 Worker、专属 CLI/配置和 `legacy/`。
+5. **切流删除**：旧 AnalysisCycle/Execution Temporal Worker、协调器和专属 CLI 已在主线删除；点时回放、结果结算和正式 Venue parity 完成后，再删除仍被历史评价读取的 SignalCandidate、TradeIntent、旧表写入及其余 `legacy/`。
 
 迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。
 
