@@ -107,7 +107,7 @@ export function LatestAssessment() {
         <div>
           <p className={styles.empty}>当前尚未形成能改变基准情景的有效世界认知。</p>
           <p className={styles.warning}>
-            最近一次 AI 复核只否定了现有证据的方向解释；完整依据保留在 AI 分析历史，不作为世界认知或开仓依据。
+            最近一次 AI 复核只完成了证据边界审计；完整依据保留在 AI 分析历史，不作为世界认知或开仓依据。
           </p>
         </div>
       ) : (
