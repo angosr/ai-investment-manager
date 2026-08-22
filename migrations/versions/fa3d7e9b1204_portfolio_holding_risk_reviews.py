@@ -16,6 +16,40 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # d1a4c7e9b205 added revision with a zero server default so existing facts
+    # remained readable. Before making the field unique, preserve every old
+    # snapshot and assign a deterministic causal order per portfolio. Keep the
+    # JSON fact projection aligned with the indexed column because repositories
+    # reconstruct the model from payload.
+    op.execute(
+        sa.text(
+            """
+            WITH ranked AS (
+                SELECT
+                    snapshot_id,
+                    CAST(
+                        ROW_NUMBER() OVER (
+                            PARTITION BY portfolio_id
+                            ORDER BY as_of, observed_at, snapshot_id
+                        ) - 1
+                        AS INTEGER
+                    ) AS backfilled_revision
+                FROM portfolio_account_snapshots
+            )
+            UPDATE portfolio_account_snapshots AS snapshot
+            SET
+                revision = ranked.backfilled_revision,
+                payload = jsonb_set(
+                    snapshot.payload::jsonb,
+                    '{revision}',
+                    to_jsonb(ranked.backfilled_revision),
+                    true
+                )::json
+            FROM ranked
+            WHERE snapshot.snapshot_id = ranked.snapshot_id
+            """
+        )
+    )
     with op.batch_alter_table("portfolio_account_snapshots") as batch_op:
         batch_op.create_unique_constraint(
             "uq_portfolio_account_revision",
