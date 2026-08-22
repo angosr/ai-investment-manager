@@ -32,6 +32,7 @@ class MarketDataPolicy(StrictConfig):
     reconnect_maximum_seconds: int = Field(default=30, ge=1, le=300)
     quote_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
     trade_persist_interval_ms: int = Field(default=1000, ge=100, le=60_000)
+    maximum_cross_market_quote_skew_seconds: int = Field(default=15, ge=1, le=300)
     perpetual_instruments: tuple[InstrumentId, ...] = ()
     perpetual_rest_base_url: str = "https://fapi.binance.com"
     perpetual_poll_seconds: int = Field(default=300, ge=30, le=3600)

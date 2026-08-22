@@ -74,6 +74,9 @@ def run_trigger_service(
                 maximum_perpetual_age_seconds=(
                     config.market_data.perpetual_poll_seconds * 3
                 ),
+                maximum_quote_skew_seconds=(
+                    config.market_data.maximum_cross_market_quote_skew_seconds
+                ),
             )
             if config.carry_forecast.enabled and capital_consumer is None
             else None

@@ -34,6 +34,7 @@ class PortfolioRiskPolicy(FrozenModel):
     version: str = Field(min_length=1)
     instrument_allowlist: tuple[str, ...] = Field(min_length=1)
     maximum_quote_age_seconds: int = Field(gt=0)
+    maximum_quote_skew_seconds: int = Field(gt=0)
     maximum_account_age_seconds: int = Field(gt=0)
     maximum_daily_loss: Money
     maximum_drawdown_fraction: UnitInterval
@@ -61,6 +62,8 @@ class PortfolioRiskPolicy(FrozenModel):
         )
         if any(item <= 0 for item in positive_limits):
             raise ValueError("Risk 暴露、保证金、压力和失配上限必须为正数")
+        if self.maximum_quote_skew_seconds > self.maximum_quote_age_seconds:
+            raise ValueError("跨产品报价时间偏差上限不得宽于报价新鲜度上限")
         return self
 
 
@@ -114,6 +117,7 @@ class PortfolioHoldingRiskReview(FrozenModel):
             "account-reconciled",
             "execution-clear",
             "input-freshness",
+            "quote-alignment",
             "kill-switch",
             "daily-loss",
             "drawdown",
@@ -129,12 +133,23 @@ class PortfolioHoldingRiskReview(FrozenModel):
         by_id = {item.rule_id: item for item in self.rule_results}
         defer = any(
             by_id[item].state != GuardState.PASS
-            for item in ("account-reconciled", "execution-clear", "input-freshness")
+            for item in (
+                "account-reconciled",
+                "execution-clear",
+                "input-freshness",
+                "quote-alignment",
+            )
         )
         risk_failed = any(
             item.state == GuardState.FAIL
             for item in self.rule_results
-            if item.rule_id not in {"account-reconciled", "execution-clear", "input-freshness"}
+            if item.rule_id
+            not in {
+                "account-reconciled",
+                "execution-clear",
+                "input-freshness",
+                "quote-alignment",
+            }
         )
         expected = (
             HoldingRiskOutcome.DEFER
@@ -462,6 +477,12 @@ class PortfolioRiskEngine:
             )
             for quote in quotes
         )
+        aligned = all(
+            self._quotes_aligned(
+                tuple(quote_by_instrument[item.instrument.key] for item in sleeve.legs)
+            )
+            for sleeve in account.sleeves
+        )
         checks = (
             (
                 "account-reconciled",
@@ -480,6 +501,14 @@ class PortfolioRiskEngine:
                 None,
             ),
             ("input-freshness", fresh, "HOLDING_INPUTS_FRESH", "HOLDING_INPUTS_STALE", None, None),
+            (
+                "quote-alignment",
+                aligned,
+                "HOLDING_QUOTES_ALIGNED",
+                "HOLDING_QUOTES_MISALIGNED",
+                None,
+                str(self._policy.maximum_quote_skew_seconds),
+            ),
             (
                 "kill-switch",
                 not (self._policy.kill_switch or account.kill_switch_active),
@@ -548,7 +577,7 @@ class PortfolioRiskEngine:
         rules = tuple(
             RuleResult(
                 rule_id=rule_id,
-                rule_version="portfolio-holding-risk-v1",
+                rule_version="portfolio-holding-risk-v2",
                 state=GuardState.PASS if passed else GuardState.FAIL,
                 reason_code=pass_code if passed else fail_code,
                 observed=None if observed is None else str(observed),
@@ -559,12 +588,24 @@ class PortfolioRiskEngine:
         gating_failed = any(
             item.state != GuardState.PASS
             for item in rules
-            if item.rule_id in {"account-reconciled", "execution-clear", "input-freshness"}
+            if item.rule_id
+            in {
+                "account-reconciled",
+                "execution-clear",
+                "input-freshness",
+                "quote-alignment",
+            }
         )
         risk_failed = any(
             item.state == GuardState.FAIL
             for item in rules
-            if item.rule_id not in {"account-reconciled", "execution-clear", "input-freshness"}
+            if item.rule_id
+            not in {
+                "account-reconciled",
+                "execution-clear",
+                "input-freshness",
+                "quote-alignment",
+            }
         )
         outcome = (
             HoldingRiskOutcome.DEFER
@@ -618,6 +659,18 @@ class PortfolioRiskEngine:
                 "ACCOUNT_FRESH",
                 "ACCOUNT_STALE_OR_FUTURE",
             ),
+            (
+                f"quote-alignment:{sleeve.sleeve_id}",
+                self._quotes_aligned(
+                    tuple(
+                        quote_by_instrument[leg.instrument.key]
+                        for leg in sleeve.forecast_target.legs
+                        if leg.instrument.key in quote_by_instrument
+                    )
+                ),
+                "QUOTES_ALIGNED",
+                "QUOTES_MISALIGNED",
+            ),
         ]
         for leg in sleeve.forecast_target.legs:
             quote = quote_by_instrument.get(leg.instrument.key)
@@ -665,6 +718,16 @@ class PortfolioRiskEngine:
             for rule_id, passed, pass_code, fail_code in checks
         ]
         return all(item[1] for item in checks), rules
+
+    def _quotes_aligned(self, quotes: tuple[ExecutableQuote, ...]) -> bool:
+        """Reject synthetic cross-product prices assembled from different moments."""
+
+        if not quotes:
+            return False
+        observed = tuple(item.observed_at for item in quotes)
+        return (max(observed) - min(observed)).total_seconds() <= (
+            self._policy.maximum_quote_skew_seconds
+        )
 
     def _global_scale(
         self,
@@ -858,7 +921,7 @@ class PortfolioRiskEngine:
     ) -> RuleResult:
         return RuleResult(
             rule_id=rule_id,
-            rule_version="portfolio-risk-v2",
+            rule_version="portfolio-risk-v3",
             state=GuardState.PASS if passed else GuardState.FAIL,
             reason_code=pass_code if passed else fail_code,
         )

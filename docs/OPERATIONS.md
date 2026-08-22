@@ -203,7 +203,7 @@ deployment:
   credential_profile: null
 ```
 
-行情适配器只允许成对使用 Binance 官方主网端点或 Spot Testnet 端点；Shadow 固定主网公开行情，Testnet 固定 Testnet 行情，禁止跨环境混用。未收盘 K 线不进入策略；报价、成交和 K 线均按本地 `observed_at` 做时间可见性过滤。流上的每条消息仍进入确定性市场冲击检测：检测窗口直接使用配置 K 线周期，同品种同窗口最多触发一次，收盘 K 线仅作流上漏检的恢复兜底。PostgreSQL 默认只按品种每秒持久化一条报价和一条成交，避免当前低频分析无收益地写入数百万行/天。真实端点曾暴露 aggregate trade ID 超过 32 位的问题，数据库现使用 `BIGINT` 且固定测试覆盖该边界。
+行情适配器只允许成对使用 Binance 官方主网端点或 Spot Testnet 端点；Shadow 固定主网公开行情，Testnet 固定 Testnet 行情，禁止跨环境混用。未收盘 K 线不进入策略；报价、成交和 K 线均按本地 `observed_at` 做时间可见性过滤。任何 Spot/Perpetual 基差必须先选定 Perpetual 报价，再读取不晚于它的 Spot 报价；观测偏差超过 `maximum_cross_market_quote_skew_seconds` 时失败关闭。该上限不得短于 Spot 冻结间隔，并须与 Capital Risk 完全一致。流上的每条消息仍进入确定性市场冲击检测：检测窗口直接使用配置 K 线周期，同品种同窗口最多触发一次，收盘 K 线仅作流上漏检的恢复兜底。PostgreSQL 默认只按品种每秒持久化一条报价和一条成交，避免当前低频分析无收益地写入数百万行/天。真实端点曾暴露 aggregate trade ID 超过 32 位的问题，数据库现使用 `BIGINT` 且固定测试覆盖该边界。
 
 持续服务发生异常时只在错误类别变化时记录堆栈，恢复后允许同类错误再次报告；正常高频消息不逐条打印。进程存活不是健康证明，至少同时核对最新行情时间、Outbox backlog、TriggerCoordinator 查询、最近对账状态和分析周期结果。
 

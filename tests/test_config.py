@@ -32,7 +32,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.capital.enabled
     assert config.information.version == "information-intake-v23"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v24"
+    assert config.decision_state.version == "portfolio-state-v25"
     assert config.decision_state.official_fact_policy.version == "official-fact-v10"
     assert config.decision_state.delta_policy.version == "state-delta-v12"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v26"
@@ -112,6 +112,16 @@ def test_capital_active_chain_requires_dynamic_candidate() -> None:
     payload["capital"]["mock_candidate_authorizations"] = ()
 
     with pytest.raises(ValidationError, match="只能启用 Dynamic Carry"):
+        type(config).model_validate(payload)
+
+
+def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["market_data"]["quote_persist_interval_ms"] = 16_000
+
+    with pytest.raises(ValidationError, match="不得短于 Spot 冻结间隔"):
         type(config).model_validate(payload)
 
 

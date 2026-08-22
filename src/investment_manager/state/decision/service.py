@@ -56,4 +56,7 @@ def assemble_decision_packet_preparation(
             config.market_data.funding_history_lookback_hours
         ),
         maximum_perpetual_age_seconds=config.market_data.perpetual_poll_seconds * 3,
+        maximum_cross_market_quote_skew_seconds=(
+            config.market_data.maximum_cross_market_quote_skew_seconds
+        ),
     )

@@ -206,6 +206,7 @@ def _policy() -> PortfolioRiskPolicy:
         version="portfolio-risk-v2",
         instrument_allowlist=tuple(item.key for item in _instruments()),
         maximum_quote_age_seconds=180,
+        maximum_quote_skew_seconds=15,
         maximum_account_age_seconds=60,
         maximum_daily_loss=Decimal("200"),
         maximum_drawdown_fraction=Decimal("0.05"),
@@ -254,6 +255,47 @@ def test_stale_one_leg_quote_clamps_whole_new_sleeve_to_zero() -> None:
     approved = decision.approved_target.sleeves[0]
     assert approved.approved_gross_notional == 0
     assert "NEW_RISK_CLAMPED_TO_CURRENT" in approved.reason_codes
+
+
+def test_cross_market_quote_skew_clamps_whole_new_sleeve_to_zero() -> None:
+    spot, perpetual = _quotes()
+    misaligned = perpetual.model_copy(
+        update={"observed_at": NOW - timedelta(seconds=16)}
+    )
+    quotes = (spot, misaligned)
+    decision = _evaluate(
+        target=_target(quotes=quotes),
+        quotes=quotes,
+    )
+
+    assert decision.approved_target is not None
+    approved = decision.approved_target.sleeves[0]
+    assert approved.approved_gross_notional == 0
+    assert "NEW_RISK_CLAMPED_TO_CURRENT" in approved.reason_codes
+    assert any(
+        item.reason_code == "QUOTES_MISALIGNED"
+        for item in decision.rule_results
+    )
+
+
+def test_cross_market_quote_skew_defers_holding_review() -> None:
+    spot, perpetual = _quotes()
+    misaligned = perpetual.model_copy(
+        update={"observed_at": NOW - timedelta(seconds=16)}
+    )
+
+    review = PortfolioRiskEngine(_policy()).review_holding(
+        account=_account(gross="1000"),
+        quotes=(spot, misaligned),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+
+    assert review.outcome == HoldingRiskOutcome.DEFER
+    assert any(
+        item.reason_code == "HOLDING_QUOTES_MISALIGNED"
+        for item in review.rule_results
+    )
 
 
 def test_pending_execution_group_blocks_new_risk_for_whole_sleeve() -> None:

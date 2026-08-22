@@ -7,7 +7,7 @@ from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import FeatureEngine
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
@@ -109,6 +109,20 @@ class _PointInTimeMarketStore:
     def latest_perpetual_quote(self, *, instrument, evaluation_at, visible_at):
         assert self.perpetual_quote.instrument == instrument
         return self.perpetual_quote
+
+    def latest_spot_quote(self, *, instrument, evaluation_at, visible_at):
+        assert instrument.symbol == self.market.symbol
+        observed_at = evaluation_at
+        return MarketQuote(
+            quote_id=stable_id("aligned_spot_quote", instrument.key, observed_at),
+            symbol=instrument.symbol,
+            observed_at=observed_at,
+            bid=self.market.bid,
+            bid_quantity="1",
+            ask=self.market.ask,
+            ask_quantity="1",
+            source="test",
+        )
 
     def funding_settlements(self, *, instrument, start, end, visible_at):
         return tuple(

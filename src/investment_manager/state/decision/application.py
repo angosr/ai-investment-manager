@@ -111,6 +111,7 @@ class DecisionPacketPreparation:
         perpetual_instruments: tuple[InstrumentId, ...] = (),
         funding_history_lookback_hours: int = 24,
         maximum_perpetual_age_seconds: int = 900,
+        maximum_cross_market_quote_skew_seconds: int = 15,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not market_interval or not market_source:
@@ -121,6 +122,8 @@ class DecisionPacketPreparation:
             raise ValueError("DecisionPacket Funding 窗口配置非法")
         if maximum_perpetual_age_seconds < 1:
             raise ValueError("DecisionPacket Perpetual age 配置非法")
+        if maximum_cross_market_quote_skew_seconds < 1:
+            raise ValueError("DecisionPacket 跨市场报价偏差配置非法")
         perpetual_symbols = tuple(item.symbol for item in perpetual_instruments)
         if tuple(sorted(set(perpetual_symbols))) != perpetual_symbols:
             raise ValueError("DecisionPacket perpetual_instruments 必须按 symbol 唯一且排序")
@@ -143,6 +146,9 @@ class DecisionPacketPreparation:
         }
         self._funding_history_lookback_hours = funding_history_lookback_hours
         self._maximum_perpetual_age_seconds = maximum_perpetual_age_seconds
+        self._maximum_cross_market_quote_skew_seconds = (
+            maximum_cross_market_quote_skew_seconds
+        )
         self._clock = clock
 
     def prepare(
@@ -375,6 +381,19 @@ class DecisionPacketPreparation:
                 raise ValueError(
                     f"DecisionPacket {asset.market_symbol} Perpetual 行情已过期"
                 )
+            aligned_spot_quote = self._market_store.latest_spot_quote(
+                instrument=InstrumentId.binance_spot(
+                    symbol=asset.market_symbol,
+                    base_asset=asset.asset,
+                    quote_asset=instrument.quote_asset,
+                ),
+                evaluation_at=quote.observed_at,
+                visible_at=as_of,
+            )
+            if aligned_spot_quote is None:
+                raise ValueError(
+                    f"DecisionPacket 缺少 {asset.market_symbol} 点时对齐 Spot 报价"
+                )
             settlements = self._market_store.funding_settlements(
                 instrument=instrument,
                 start=as_of - timedelta(hours=self._funding_history_lookback_hours),
@@ -386,10 +405,14 @@ class DecisionPacketPreparation:
                     cycle_id=analysis_id,
                     asset=asset.asset,
                     spot=market_by_symbol[asset.market_symbol],
+                    aligned_spot_quote=aligned_spot_quote,
                     state=state,
                     quote=quote,
                     settlements=settlements,
                     funding_window_hours=self._funding_history_lookback_hours,
+                    maximum_quote_skew_seconds=(
+                        self._maximum_cross_market_quote_skew_seconds
+                    ),
                 )
             )
         return tuple(sorted(snapshots, key=lambda item: item.asset))

@@ -145,6 +145,16 @@ class AppConfig(StrictConfig):
                 raise ValueError("Capital 主动链必须且只能启用 Dynamic Carry 候选")
             if self.capital.settlement_asset != self.carry_forecast.quote_asset:
                 raise ValueError("Capital 与 Shadow 结算资产必须一致")
+            if (
+                self.market_data.maximum_cross_market_quote_skew_seconds * 1_000
+                < self.market_data.quote_persist_interval_ms
+            ):
+                raise ValueError("Capital 跨产品报价偏差上限不得短于 Spot 冻结间隔")
+            if (
+                self.capital.risk.maximum_quote_skew_seconds
+                != self.market_data.maximum_cross_market_quote_skew_seconds
+            ):
+                raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
             evidence_gross = (
                 self.carry_forecast.evidence.evaluated_gross_exposure_fraction
             )

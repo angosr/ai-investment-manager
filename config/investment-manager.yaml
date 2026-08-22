@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v24
+  version: portfolio-state-v25
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v10
@@ -145,7 +145,7 @@ carry_forecast:
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
 dynamic_carry_forecast:
-  version: dynamic-carry-point-in-time-v1
+  version: dynamic-carry-point-in-time-v2
   enabled: false
   producer_id: btc-dynamic-carry
   forecast_family: delta-neutral-dynamic-carry
@@ -159,7 +159,7 @@ dynamic_carry_forecast:
   signal_validity_minutes: 30
 
 capital:
-  version: product-capital-v5
+  version: product-capital-v6
   enabled: false
   settlement_asset: USDT
   decision:
@@ -173,9 +173,10 @@ capital:
     minimum_rebalance_notional: "25"
     target_validity_minutes: 30
   risk:
-    version: carry-portfolio-risk-v2
+    version: carry-portfolio-risk-v3
     instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
     maximum_quote_age_seconds: 300
+    maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
     maximum_daily_loss: "200"
     maximum_drawdown_fraction: "0.05"
@@ -320,7 +321,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v7
+  version: binance-public-shadow-v8
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64
@@ -333,6 +334,7 @@ market_data:
   reconnect_maximum_seconds: 30
   quote_persist_interval_ms: 1000
   trade_persist_interval_ms: 1000
+  maximum_cross_market_quote_skew_seconds: 15
   perpetual_instruments:
     - venue: BINANCE
       product: USD_M_PERPETUAL

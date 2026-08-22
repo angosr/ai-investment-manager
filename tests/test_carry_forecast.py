@@ -39,13 +39,18 @@ def _perpetual() -> InstrumentId:
     )
 
 
-def _market(as_of: datetime) -> InMemoryMarketDataStore:
+def _market(
+    as_of: datetime,
+    *,
+    spot_observed_at: datetime | None = None,
+) -> InMemoryMarketDataStore:
     market = InMemoryMarketDataStore()
+    spot_observed_at = spot_observed_at or as_of
     market.put_quote(
         MarketQuote(
-            quote_id=stable_id("spot_quote", as_of),
+            quote_id=stable_id("spot_quote", spot_observed_at),
             symbol="BTCUSDT",
-            observed_at=as_of,
+            observed_at=spot_observed_at,
             bid=Decimal("99990"),
             bid_quantity=Decimal("1"),
             ask=Decimal("100000"),
@@ -135,6 +140,7 @@ def test_carry_producer_creates_one_point_in_time_monthly_shadow_forecast(
         store=store,
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: NOW,
     )
 
@@ -189,6 +195,7 @@ def test_carry_producer_does_not_enter_late_in_month(app_config) -> None:
         store=SqlForecastStore(engine),
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: datetime(2026, 8, 21, tzinfo=UTC),
     )
 
@@ -231,6 +238,7 @@ def test_dynamic_carry_uses_visible_median_funding_and_executable_basis(
         store=store,
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: NOW,
     ).produce(as_of=NOW)
 
@@ -243,6 +251,49 @@ def test_dynamic_carry_uses_visible_median_funding_and_executable_basis(
     assert forecast.valid_until == NOW + timedelta(minutes=30)
     assert len(forecast.input_refs) == 6
     assert store.forecast(forecast.forecast_id) == forecast
+
+
+def test_dynamic_carry_rejects_cross_market_quotes_from_different_moments(
+    app_config,
+) -> None:
+    market = _market(
+        NOW,
+        spot_observed_at=NOW - timedelta(seconds=16),
+    )
+    instrument = _perpetual()
+    for hours, rate in ((16, "0.0001"), (8, "0.0001")):
+        funding_at = NOW - timedelta(hours=hours)
+        market.put_funding_settlement(
+            FundingSettlement(
+                settlement_id=stable_id(
+                    "funding_settlement",
+                    instrument.key,
+                    funding_at.isoformat(),
+                    FundingRateType.REGULAR.value,
+                ),
+                instrument=instrument,
+                funding_time=funding_at,
+                observed_at=funding_at + timedelta(seconds=1),
+                funding_rate=rate,
+                mark_price="100000",
+                rate_type=FundingRateType.REGULAR,
+                source="test",
+            )
+        )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+
+    forecast = DynamicCarryForecastProducer(
+        policy=app_config.dynamic_carry_forecast.model_copy(update={"enabled": True}),
+        market=market,
+        store=SqlForecastStore(engine),
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
+        clock=lambda: NOW,
+    ).produce(as_of=NOW)
+
+    assert forecast is None
 
 
 @pytest.mark.parametrize(
@@ -265,6 +316,7 @@ def test_carry_forecast_horizon_matches_the_exact_calendar_month(
         store=SqlForecastStore(engine),
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: as_of,
     ).produce(as_of=as_of)
 
@@ -287,6 +339,7 @@ def test_carry_producer_does_not_use_an_on_time_request_processed_late(
         store=SqlForecastStore(engine),
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: NOW + timedelta(minutes=31),
     )
 
@@ -351,6 +404,7 @@ def test_persisted_monthly_forecast_cannot_authorize_late_catch_up(
         store=SqlForecastStore(engine),
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: clock[0],
     )
 
@@ -369,6 +423,7 @@ def test_disabled_carry_producer_does_not_write(app_config) -> None:
         store=store,
         maximum_spot_age_seconds=60,
         maximum_perpetual_age_seconds=900,
+        maximum_quote_skew_seconds=15,
         clock=lambda: NOW,
     )
 

@@ -43,6 +43,7 @@ class CarryForecastProducer:
     store: SqlForecastStore
     maximum_spot_age_seconds: int
     maximum_perpetual_age_seconds: int
+    maximum_quote_skew_seconds: int
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _cached_slot_start: datetime | None = field(default=None, init=False)
     _cached_forecast: BaseForecast | None = field(default=None, init=False)
@@ -79,15 +80,19 @@ class CarryForecastProducer:
             self._cached_forecast = existing
             return existing
         spot, perpetual = (item.instrument for item in target.legs)
-        spot_quote = self.market.latest_spot_quote(
-            instrument=spot,
-            evaluation_at=available_at,
-            visible_at=available_at,
-        )
         perpetual_quote = self.market.latest_perpetual_quote(
             instrument=perpetual,
             evaluation_at=available_at,
             visible_at=available_at,
+        )
+        spot_quote = (
+            self.market.latest_spot_quote(
+                instrument=spot,
+                evaluation_at=perpetual_quote.observed_at,
+                visible_at=available_at,
+            )
+            if perpetual_quote is not None
+            else None
         )
         state = self.market.latest_perpetual_state(
             instrument=perpetual,
@@ -110,6 +115,15 @@ class CarryForecastProducer:
             for item in (perpetual_quote.exchange_time, state.exchange_time)
         ):
             raise ValueError("Carry Forecast Perpetual 行情过期")
+        observed_times = (
+            spot_quote.observed_at,
+            perpetual_quote.observed_at,
+            state.observed_at,
+        )
+        if (max(observed_times) - min(observed_times)).total_seconds() > (
+            self.maximum_quote_skew_seconds
+        ):
+            return None
 
         spot_entry = spot_quote.ask
         perpetual_entry = perpetual_quote.bid
@@ -233,6 +247,7 @@ class DynamicCarryForecastProducer:
     store: SqlForecastStore
     maximum_spot_age_seconds: int
     maximum_perpetual_age_seconds: int
+    maximum_quote_skew_seconds: int
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def produce(self, *, as_of: datetime) -> BaseForecast | None:
@@ -246,15 +261,19 @@ class DynamicCarryForecastProducer:
             quote_asset=self.policy.quote_asset,
         )
         spot, perpetual = (item.instrument for item in target.legs)
-        spot_quote = self.market.latest_spot_quote(
-            instrument=spot,
-            evaluation_at=available_at,
-            visible_at=available_at,
-        )
         perpetual_quote = self.market.latest_perpetual_quote(
             instrument=perpetual,
             evaluation_at=available_at,
             visible_at=available_at,
+        )
+        spot_quote = (
+            self.market.latest_spot_quote(
+                instrument=spot,
+                evaluation_at=perpetual_quote.observed_at,
+                visible_at=available_at,
+            )
+            if perpetual_quote is not None
+            else None
         )
         state = self.market.latest_perpetual_state(
             instrument=perpetual,
@@ -277,6 +296,15 @@ class DynamicCarryForecastProducer:
             for value in (perpetual_quote.exchange_time, state.exchange_time)
         ):
             raise ValueError("Dynamic Carry Perpetual 行情过期")
+        observed_times = (
+            spot_quote.observed_at,
+            perpetual_quote.observed_at,
+            state.observed_at,
+        )
+        if (max(observed_times) - min(observed_times)).total_seconds() > (
+            self.maximum_quote_skew_seconds
+        ):
+            return None
         settlements = self.market.funding_settlements(
             instrument=perpetual,
             start=available_at - timedelta(hours=self.policy.funding_lookback_hours),

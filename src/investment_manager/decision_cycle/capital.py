@@ -663,51 +663,57 @@ class CapitalCycleService:
         return account
 
     def _quotes(self, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
-        values: list[ExecutableQuote] = []
-        for spec in self._config.capital.execution_specs:
-            instrument = spec.instrument
-            if instrument.product == InstrumentProduct.SPOT:
-                quote = self._market.latest_spot_quote(
-                    instrument=instrument,
-                    evaluation_at=as_of,
-                    visible_at=as_of,
-                )
-                if quote is None:
-                    raise ValueError("Capital 缺少 Spot 可成交报价")
-                values.append(
-                    ExecutableQuote(
-                        source_quote_id=quote.quote_id,
-                        instrument=instrument,
-                        as_of=as_of,
-                        observed_at=quote.observed_at,
-                        bid=quote.bid,
-                        bid_quantity=quote.bid_quantity,
-                        ask=quote.ask,
-                        ask_quantity=quote.ask_quantity,
-                        source=quote.source,
-                    )
-                )
-                continue
-            quote = self._market.latest_perpetual_quote(
-                instrument=instrument,
-                evaluation_at=as_of,
-                visible_at=as_of,
-            )
-            if quote is None:
-                raise ValueError("Capital 缺少 Perpetual 可成交报价")
-            values.append(
-                ExecutableQuote(
-                    source_quote_id=quote.quote_id,
-                    instrument=instrument,
-                    as_of=as_of,
-                    observed_at=quote.exchange_time,
-                    bid=quote.bid,
-                    bid_quantity=quote.bid_quantity,
-                    ask=quote.ask,
-                    ask_quantity=quote.ask_quantity,
-                    source=quote.source,
-                )
-            )
+        instruments = tuple(
+            item.instrument for item in self._config.capital.execution_specs
+        )
+        spot = next(
+            item for item in instruments if item.product == InstrumentProduct.SPOT
+        )
+        perpetual = next(
+            item for item in instruments if item.product != InstrumentProduct.SPOT
+        )
+        perpetual_quote = self._market.latest_perpetual_quote(
+            instrument=perpetual,
+            evaluation_at=as_of,
+            visible_at=as_of,
+        )
+        if perpetual_quote is None:
+            raise ValueError("Capital 缺少 Perpetual 可成交报价")
+        spot_quote = self._market.latest_spot_quote(
+            instrument=spot,
+            evaluation_at=perpetual_quote.observed_at,
+            visible_at=as_of,
+        )
+        if spot_quote is None:
+            raise ValueError("Capital 缺少与 Perpetual 点时对齐的 Spot 可成交报价")
+        if (
+            perpetual_quote.observed_at - spot_quote.observed_at
+        ).total_seconds() > self._config.capital.risk.maximum_quote_skew_seconds:
+            raise ValueError("Capital Spot/Perpetual 可成交报价时间偏差过大")
+        values = [
+            ExecutableQuote(
+                source_quote_id=spot_quote.quote_id,
+                instrument=spot,
+                as_of=as_of,
+                observed_at=spot_quote.observed_at,
+                bid=spot_quote.bid,
+                bid_quantity=spot_quote.bid_quantity,
+                ask=spot_quote.ask,
+                ask_quantity=spot_quote.ask_quantity,
+                source=spot_quote.source,
+            ),
+            ExecutableQuote(
+                source_quote_id=perpetual_quote.quote_id,
+                instrument=perpetual,
+                as_of=as_of,
+                observed_at=perpetual_quote.observed_at,
+                bid=perpetual_quote.bid,
+                bid_quantity=perpetual_quote.bid_quantity,
+                ask=perpetual_quote.ask,
+                ask_quantity=perpetual_quote.ask_quantity,
+                source=perpetual_quote.source,
+            ),
+        ]
         return tuple(sorted(values, key=lambda item: item.instrument.key))
 
 
@@ -767,6 +773,9 @@ def assemble_capital_cycle(
                 ),
                 maximum_perpetual_age_seconds=(
                     config.capital.risk.maximum_quote_age_seconds
+                ),
+                maximum_quote_skew_seconds=(
+                    config.market_data.maximum_cross_market_quote_skew_seconds
                 ),
                 clock=forecast_clock,
             ),

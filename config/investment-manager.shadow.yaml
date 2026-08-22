@@ -9,9 +9,9 @@ capital:
   mock_candidate_authorizations:
     - version: mock-candidate-authorization-v1
       producer_id: btc-dynamic-carry
-      producer_version: dynamic-carry-point-in-time-v1
+      producer_version: dynamic-carry-point-in-time-v2
       forecast_family: delta-neutral-dynamic-carry
-      hypothesis_fingerprint: 4d8e5da261910f17438bdc61e047a6c5a62bcb5ddb2b766be61eae98d04f2802
+      hypothesis_fingerprint: ea53b956b9ece330d85b63df58b2ee7eb8de9f2c3a3ce8cd0cac66f90e8c6aa0
       evaluation_plan_id: capital-shadow-dynamic-v1
       valid_from: 2026-08-21T18:00:00Z
       valid_until: 2027-09-01T00:00:00Z

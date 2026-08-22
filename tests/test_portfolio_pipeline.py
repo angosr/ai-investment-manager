@@ -222,6 +222,7 @@ def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
                 version="risk-v2",
                 instrument_allowlist=instruments,
                 maximum_quote_age_seconds=180,
+                maximum_quote_skew_seconds=15,
                 maximum_account_age_seconds=60,
                 maximum_daily_loss=Decimal("200"),
                 maximum_drawdown_fraction=Decimal("0.05"),

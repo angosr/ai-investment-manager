@@ -6,7 +6,7 @@ from decimal import Decimal
 from itertools import pairwise
 
 from investment_manager.kernel.identity import content_hash
-from investment_manager.market.models import FeatureSnapshot, MarketSnapshot
+from investment_manager.market.models import FeatureSnapshot, MarketQuote, MarketSnapshot
 from investment_manager.market.perpetual.models import (
     DerivativeContextSnapshot,
     FundingSettlement,
@@ -80,21 +80,33 @@ def build_derivative_context_snapshot(
     cycle_id: str,
     asset: str,
     spot: MarketSnapshot,
+    aligned_spot_quote: MarketQuote,
     state: PerpetualMarketState,
     quote: PerpetualQuote,
     settlements: tuple[FundingSettlement, ...],
     funding_window_hours: int,
+    maximum_quote_skew_seconds: int,
 ) -> DerivativeContextSnapshot:
     """Project executable basis and funding history into one dense, replayable fact."""
 
     if not 1 <= funding_window_hours <= 168:
         raise ValueError("Funding 汇总窗口必须在 1..168 小时")
+    if maximum_quote_skew_seconds < 1:
+        raise ValueError("跨市场报价时间偏差上限必须为正数")
     if state.instrument != quote.instrument or state.instrument.symbol != spot.symbol:
         raise ValueError("衍生品状态、报价和 Spot 快照必须属于同一产品标的")
+    if aligned_spot_quote.symbol != spot.symbol:
+        raise ValueError("对齐 Spot 报价必须属于同一标的")
     if spot.cycle_id != cycle_id:
         raise ValueError("衍生品决策状态必须绑定同一 cycle")
     if state.observed_at > spot.as_of or quote.observed_at > spot.as_of:
         raise ValueError("衍生品决策状态不能使用 as_of 后才可见的数据")
+    if aligned_spot_quote.observed_at > spot.as_of:
+        raise ValueError("对齐 Spot 报价不能在 as_of 后才可见")
+    if abs(
+        (quote.observed_at - aligned_spot_quote.observed_at).total_seconds()
+    ) > maximum_quote_skew_seconds:
+        raise ValueError("Spot/Perpetual 报价时间偏差过大")
     window_start = spot.as_of - timedelta(hours=funding_window_hours)
     visible = tuple(
         item
@@ -117,7 +129,10 @@ def build_derivative_context_snapshot(
         observed_at=max(state.observed_at, quote.observed_at),
         mark_index_premium_bps=(state.mark_price / state.index_price - Decimal("1"))
         * Decimal("10000"),
-        executable_short_basis_bps=(quote.bid / spot.ask - Decimal("1")) * Decimal("10000"),
+        executable_short_basis_bps=(
+            quote.bid / aligned_spot_quote.ask - Decimal("1")
+        )
+        * Decimal("10000"),
         perpetual_spread_bps=(quote.ask - quote.bid)
         / ((quote.ask + quote.bid) / Decimal("2"))
         * Decimal("10000"),
@@ -143,6 +158,7 @@ def build_derivative_context_snapshot(
             sorted(
                 {
                     content_hash(spot),
+                    aligned_spot_quote.quote_id,
                     state.state_id,
                     quote.quote_id,
                     *(item.settlement_id for item in visible),

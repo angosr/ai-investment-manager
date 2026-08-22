@@ -64,6 +64,19 @@ def _quote(at: datetime = NOW, *, update_id: int = 1) -> MarketQuote:
     )
 
 
+def _aligned_spot_quote(spot, *, observed_at: datetime = NOW) -> MarketQuote:
+    return MarketQuote(
+        quote_id=stable_id("aligned_spot_quote", spot.symbol, observed_at),
+        symbol=spot.symbol,
+        observed_at=observed_at,
+        bid=spot.bid,
+        bid_quantity="2",
+        ask=spot.ask,
+        ask_quantity="3",
+        source="test",
+    )
+
+
 def _trade(at: datetime = NOW, *, trade_id: int = 4_034_643_345) -> MarketTrade:
     return MarketTrade(
         trade_id=f"trade-{trade_id}",
@@ -214,10 +227,12 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
         cycle_id="analysis-1",
         asset="BTC",
         spot=spot,
+        aligned_spot_quote=_aligned_spot_quote(spot),
         state=_perpetual_state(observed_at=NOW),
         quote=_perpetual_quote(observed_at=NOW),
         settlements=(settlement,),
         funding_window_hours=24,
+        maximum_quote_skew_seconds=15,
     )
 
     assert snapshot.mark_index_premium_bps == Decimal("20")
@@ -240,6 +255,7 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
         sorted(
             (
                 content_hash(spot),
+                _aligned_spot_quote(spot).quote_id,
                 _perpetual_state(observed_at=NOW).state_id,
                 _perpetual_quote(observed_at=NOW).quote_id,
                 settlement.settlement_id,
@@ -248,6 +264,60 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     )
 
 
+def test_derivative_basis_uses_time_aligned_spot_quote_not_latest_snapshot(
+    replay_input,
+) -> None:
+    spot = replay_input.market.model_copy(
+        update={"cycle_id": "analysis-aligned", "as_of": NOW, "observed_at": NOW}
+    )
+    aligned = _aligned_spot_quote(
+        spot,
+        observed_at=NOW - timedelta(seconds=5),
+    ).model_copy(
+        update={"bid": spot.bid + Decimal("10"), "ask": spot.ask + Decimal("10")}
+    )
+    perpetual = _perpetual_quote(observed_at=NOW)
+
+    snapshot = build_derivative_context_snapshot(
+        cycle_id="analysis-aligned",
+        asset="BTC",
+        spot=spot,
+        aligned_spot_quote=aligned,
+        state=_perpetual_state(observed_at=NOW),
+        quote=perpetual,
+        settlements=(),
+        funding_window_hours=24,
+        maximum_quote_skew_seconds=15,
+    )
+
+    assert snapshot.executable_short_basis_bps == (
+        perpetual.bid / aligned.ask - Decimal("1")
+    ) * Decimal("10000")
+    assert snapshot.executable_short_basis_bps != (
+        perpetual.bid / spot.ask - Decimal("1")
+    ) * Decimal("10000")
+
+
+def test_derivative_basis_rejects_misaligned_cross_market_quote(replay_input) -> None:
+    spot = replay_input.market.model_copy(
+        update={"cycle_id": "analysis-misaligned", "as_of": NOW, "observed_at": NOW}
+    )
+
+    with pytest.raises(ValueError, match="报价时间偏差过大"):
+        build_derivative_context_snapshot(
+            cycle_id="analysis-misaligned",
+            asset="BTC",
+            spot=spot,
+            aligned_spot_quote=_aligned_spot_quote(
+                spot,
+                observed_at=NOW - timedelta(seconds=16),
+            ),
+            state=_perpetual_state(observed_at=NOW),
+            quote=_perpetual_quote(observed_at=NOW),
+            settlements=(),
+            funding_window_hours=24,
+            maximum_quote_skew_seconds=15,
+        )
 def test_derivative_context_without_visible_funding_keeps_empty_summary(
     replay_input,
 ) -> None:
@@ -270,16 +340,18 @@ def test_derivative_context_without_visible_funding_keeps_empty_summary(
         cycle_id="analysis-1",
         asset="BTC",
         spot=spot,
+        aligned_spot_quote=_aligned_spot_quote(spot),
         state=_perpetual_state(observed_at=NOW),
         quote=_perpetual_quote(observed_at=NOW),
         settlements=(too_old,),
         funding_window_hours=24,
+        maximum_quote_skew_seconds=15,
     )
 
     assert snapshot.funding_settlement_count == 0
     assert snapshot.trailing_funding_rate_sum_bps is None
     assert snapshot.trailing_funding_rate_mean_bps is None
-    assert len(snapshot.input_refs) == 3
+    assert len(snapshot.input_refs) == 4
 
 
 def test_spot_flow_reports_actual_contiguous_cold_start_window(replay_input) -> None:
@@ -306,10 +378,12 @@ def test_spot_flow_reports_actual_contiguous_cold_start_window(replay_input) -> 
         cycle_id="analysis-cold-start",
         asset="BTC",
         spot=spot,
+        aligned_spot_quote=_aligned_spot_quote(spot),
         state=_perpetual_state(observed_at=NOW),
         quote=_perpetual_quote(observed_at=NOW),
         settlements=(),
         funding_window_hours=24,
+        maximum_quote_skew_seconds=15,
     )
 
     assert snapshot.spot_flow_window_minutes == 10

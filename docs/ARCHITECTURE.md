@@ -350,6 +350,10 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
 已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
 现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
+跨产品价格也不得把各自“最新”报价直接拼接：基差生产者先冻结 Perpetual 报价，再只读取其本地
+`observed_at` 之前最后可见的 Spot 报价，并对两者观测偏差设置同一配置化上限。超过上限时 Forecast
+不产生机会、世界认知不形成该衍生品证据、Risk 对新增风险整组拒绝且持仓复核延后；不得用插值、
+后到报价或降低门槛制造套利。两条 quote identity 必须共同进入不可变输入引用，保证回放使用同一价格对。
 统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
 只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略；已持久化的
 Forecast 把月末经济 horizon 与月首开仓有效期分开；窗口结束后 Producer 不再返回该机会。月度规则只
