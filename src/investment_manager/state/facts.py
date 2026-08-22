@@ -5,9 +5,12 @@ from decimal import ROUND_HALF_EVEN, Decimal
 
 from pydantic import Field, model_validator
 
+from investment_manager.information.aggregated_flows import (
+    CONTINUOUS_CONTEXT_FACT_TYPES,
+    AggregatedEtfFlowSnapshot,
+)
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
 from investment_manager.information.official.metrics import (
-    OFFICIAL_METRIC_FACT_TYPES,
     OfficialMetricSnapshot,
 )
 from investment_manager.information.official.public_calendar import (
@@ -443,6 +446,51 @@ def project_official_metric_fact(
     )
 
 
+def project_aggregated_etf_flow_fact(
+    record: AggregatedEtfFlowSnapshot,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    decision_materiality = (
+        FactDecisionMateriality.CANDIDATE
+        if record.sample_size >= policy.metric_minimum_history_observations
+        and record.absolute_flow_percentile
+        >= policy.metric_candidate_absolute_percentile
+        else FactDecisionMateriality.BACKGROUND
+    )
+    direction = "net inflow" if record.net_inflow_usd_m >= 0 else "net outflow"
+    return _build_fact_revision(
+        fact_id=stable_id("canonical_fact", record.fact_type),
+        projection_version=policy.version,
+        fact_type=record.fact_type,
+        status=FactRevisionStatus.ACTIVE,
+        event_time=datetime.combine(record.effective_date, time.min, tzinfo=UTC),
+        observed_at=record.observation.observed_at,
+        headline=(
+            f"U.S. spot {record.asset} ETF aggregate daily {direction}: "
+            f"${abs(record.net_inflow_usd_m)}m"
+        ),
+        claim=(
+            f"aggregator=ByKaranteli; effective_date={record.effective_date.isoformat()}; "
+            f"finalized_daily_net_inflow_usd_m={record.net_inflow_usd_m}; "
+            f"net_assets_usd_m={record.net_assets_usd_m}; "
+            f"cumulative_inflow_usd_m={record.cumulative_inflow_usd_m}; "
+            f"value_traded_usd_m={record.value_traded_usd_m}; "
+            f"absolute_flow_percentile={record.absolute_flow_percentile}; "
+            f"sample_size={record.sample_size}; "
+            f"lookback={record.lookback_start.isoformat()}..{record.lookback_end.isoformat()}. "
+            "This is a finalized aggregate series from a named public aggregator, "
+            "not issuer first-party evidence and not an intraday estimate."
+        ),
+        affected_assets=(record.asset,),
+        risk_factors=(f"{record.asset}_INSTITUTIONAL_FLOW",),
+        decision_materiality=decision_materiality,
+        source_observation_ids=(record.observation.observation_id,),
+        previous=previous,
+    )
+
+
 def build_state_snapshot(
     *,
     projection_version: str,
@@ -547,7 +595,7 @@ def build_state_material_delta(
         revision_id
         for revision_id in observed_changed_ids
         if (
-            facts_by_revision[revision_id].fact_type not in OFFICIAL_METRIC_FACT_TYPES
+            facts_by_revision[revision_id].fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES
             or facts_by_revision[revision_id].decision_materiality
             == FactDecisionMateriality.CANDIDATE
         )
@@ -636,7 +684,7 @@ def build_state_material_delta(
         "observed_at": observed_at.isoformat(),
         "expires_at": (observed_at + timedelta(seconds=policy.validity_seconds)).isoformat(),
         "category": (
-            DeltaCategory.FIRST_PARTY_FACT.value
+            DeltaCategory.CANONICAL_FACT.value
             if changed_ids
             else (
                 DeltaCategory.INTELLIGENCE_EVENT.value

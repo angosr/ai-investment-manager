@@ -25,10 +25,10 @@ from investment_manager.information.official.regulation import (
     FederalRegisterRulemakingRecord,
 )
 from investment_manager.information.official.repository import (
-    OfficialRecordWrite,
     SqlFederalRegisterInformationIngestor,
     SqlFedOfficialInformationIngestor,
     SqlTreasuryBuybackInformationIngestor,
+    StructuredRecordWrite,
 )
 from investment_manager.information.official.source import OfficialRegulatoryDocument
 from investment_manager.information.official.treasury_buybacks import (
@@ -90,7 +90,7 @@ _FED_STREAMS = {
 
 @dataclass(frozen=True, slots=True)
 class OfficialFactIngestionResult:
-    records: tuple[OfficialRecordWrite, ...]
+    records: tuple[StructuredRecordWrite, ...]
     new_fact_revisions: tuple[CanonicalFactRevision, ...]
 
 
@@ -154,7 +154,7 @@ class SqlFedFactIngestor:
 
     def _project(
         self,
-        writes: tuple[OfficialRecordWrite, ...],
+        writes: tuple[StructuredRecordWrite, ...],
     ) -> tuple[CanonicalFactRevision, ...]:
         projected: list[CanonicalFactRevision] = []
         for write in writes:
@@ -180,7 +180,7 @@ class SqlFedFactIngestor:
 
     def _candidate(
         self,
-        write: OfficialRecordWrite,
+        write: StructuredRecordWrite,
         *,
         previous: CanonicalFactRevision | None,
     ) -> CanonicalFactRevision:

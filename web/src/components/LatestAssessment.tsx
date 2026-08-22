@@ -12,6 +12,7 @@ const DIRECTION: Record<string, string> = {
 
 const EVIDENCE_KIND: Record<string, string> = {
   FIRST_PARTY_FACT: "一手事实",
+  STRUCTURED_FACT: "结构化聚合事实",
   INTELLIGENCE_EVENT: "事件",
   MARKET_STRUCTURE: "市场结构",
   MATERIAL_DELTA: "重大变化",

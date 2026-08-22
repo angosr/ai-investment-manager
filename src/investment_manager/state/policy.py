@@ -2,6 +2,9 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 
+from investment_manager.information.aggregated_flows import (
+    AGGREGATED_FLOW_FACT_TYPES,
+)
 from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.types import FrozenModel
@@ -85,4 +88,7 @@ class DecisionStatePolicy(StrictConfig):
         configured_metrics = configured & OFFICIAL_METRIC_FACT_TYPES
         if configured_metrics and configured_metrics != OFFICIAL_METRIC_FACT_TYPES:
             raise ValueError("官方宏观指标 MaterialDelta 规则必须完整启用或完整关闭")
+        configured_flows = configured & AGGREGATED_FLOW_FACT_TYPES
+        if configured_flows and configured_flows != AGGREGATED_FLOW_FACT_TYPES:
+            raise ValueError("BTC/ETH ETF 合计流 MaterialDelta 规则必须完整启用或完整关闭")
         return self

@@ -19,6 +19,9 @@ class FactRevisionStatus(StrEnum):
 
 
 class DeltaCategory(StrEnum):
+    CANONICAL_FACT = "CANONICAL_FACT"
+    # Immutable packets created before structured non-first-party facts were
+    # introduced retain this historical value when replayed.
     FIRST_PARTY_FACT = "FIRST_PARTY_FACT"
     INTELLIGENCE_EVENT = "INTELLIGENCE_EVENT"
     MARKET = "MARKET"

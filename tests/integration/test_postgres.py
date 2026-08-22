@@ -25,7 +25,7 @@ from investment_manager.information.official.records import (
     MarketCalendarEventRevision,
     parse_fomc_calendar,
 )
-from investment_manager.information.official.repository import SqlOfficialInformationStore
+from investment_manager.information.official.repository import SqlStructuredInformationStore
 from investment_manager.information.raw_payload import build_raw_source_payload
 from investment_manager.information.raw_repository import SqlRawSourcePayloadStore
 from investment_manager.information.repository import SqlEventStore
@@ -140,7 +140,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
         accounts = tuple(pool.map(project_account, (1, 2)))
     assert sorted(item.revision for item in accounts) == [0, 1]
 
-    official_store = SqlOfficialInformationStore(engine)
+    official_store = SqlStructuredInformationStore(engine)
     raw_store = SqlRawSourcePayloadStore(engine)
     observed_at = datetime(2026, 8, 20, 12, tzinfo=UTC)
 

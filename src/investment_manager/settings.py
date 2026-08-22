@@ -30,6 +30,10 @@ from investment_manager.governance.policy import (
     GovernancePolicy,
     OutcomeEvaluationPolicy,
 )
+from investment_manager.information.aggregated_flows import (
+    AGGREGATED_FLOW_FACT_TYPES,
+    AGGREGATED_FLOW_RISK_FACTORS,
+)
 from investment_manager.information.official.metrics import (
     OFFICIAL_METRIC_FACT_TYPES,
     OFFICIAL_METRIC_RISK_FACTORS,
@@ -129,6 +133,8 @@ class AppConfig(StrictConfig):
         }
         if configured_fact_types & OFFICIAL_METRIC_FACT_TYPES:
             configured_risk_factors.update(OFFICIAL_METRIC_RISK_FACTORS)
+        if configured_fact_types & AGGREGATED_FLOW_FACT_TYPES:
+            configured_risk_factors.update(AGGREGATED_FLOW_RISK_FACTORS)
         if not configured_risk_factors.issubset(required_risk_factors):
             raise ValueError("DecisionState 风险因子必须属于 Assessment mandate")
         if self.assessment.enabled and not self.codex_runtime.enabled:

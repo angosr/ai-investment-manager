@@ -13,17 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v26
+  version: portfolio-state-v27
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v10
+    version: official-fact-v11
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v12
+    version: state-delta-v13
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -39,6 +39,12 @@ decision_state:
       - fact_type: BITB_HOLDINGS_SNAPSHOT
         materiality: HIGH
         reason_code: BITB_HOLDINGS_REVISION
+      - fact_type: BTC_ETF_AGGREGATE_FLOW_SNAPSHOT
+        materiality: HIGH
+        reason_code: BTC_ETF_AGGREGATE_FLOW_REVISION
+      - fact_type: ETH_ETF_AGGREGATE_FLOW_SNAPSHOT
+        materiality: HIGH
+        reason_code: ETH_ETF_AGGREGATE_FLOW_REVISION
       - fact_type: FED_BROAD_DOLLAR_SNAPSHOT
         materiality: HIGH
         reason_code: FED_BROAD_DOLLAR_REVISION
@@ -79,7 +85,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_TREASURY_YIELD_REVISION
   packet_policy:
-    version: decision-packet-policy-v27
+    version: decision-packet-policy-v28
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -347,7 +353,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v23
+  version: information-intake-v24
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -365,6 +371,7 @@ information:
   regulatory_poll_seconds: 300
   official_metric_poll_seconds: 300
   official_metric_slow_poll_seconds: 900
+  etf_aggregate_flow_poll_seconds: 300
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
     - domain: FISCAL_DEBT
@@ -393,15 +400,16 @@ information:
       maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 604800
     - domain: INSTITUTIONAL_FLOWS
-      # 逐基金持仓不是现金申赎；即使三只发行人正常，合计流量能力仍必须明确保持缺失。
-      source_stream_ids: [ark-arkb-holdings, bitwise-bitb-holdings, ishares-ibit-holdings]
+      # 发行人持仓与聚合净流量保持不同证据等级，不能互相冒充。
+      source_stream_ids: [ark-arkb-holdings, bitwise-bitb-holdings, bykaranteli-etf-aggregate-flows, ishares-ibit-holdings]
       required_capabilities: [BTC_ETF_AGGREGATE_FLOW, BTC_ETF_ARKB_HOLDINGS, BTC_ETF_BITB_HOLDINGS, BTC_ETF_IBIT_HOLDINGS, ETH_ETF_AGGREGATE_FLOW]
       source_capabilities:
         ark-arkb-holdings: [BTC_ETF_ARKB_HOLDINGS]
         bitwise-bitb-holdings: [BTC_ETF_BITB_HOLDINGS]
+        bykaranteli-etf-aggregate-flows: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
         ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
       maximum_poll_age_seconds: 300
-      maximum_publication_age_seconds: 172800
+      maximum_publication_age_seconds: 345600
     - domain: SPOT_DERIVATIVES
       source_stream_ids: [binance-usdm-market]
       required_capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT, MULTI_VENUE_SPOT, OPTIONS_POSITIONING]
@@ -457,7 +465,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v22
+  version: context-assessment-v23
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v3
@@ -470,7 +478,7 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
+    required_risk_factors: [BTC_INSTITUTIONAL_FLOW, BTC_INSTITUTIONAL_HOLDINGS, ETH_INSTITUTIONAL_FLOW, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_FISCAL_LIQUIDITY, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

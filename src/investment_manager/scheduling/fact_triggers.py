@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
+from investment_manager.information.aggregated_flows import CONTINUOUS_CONTEXT_FACT_TYPES
 from investment_manager.kernel.identity import stable_id
 from investment_manager.scheduling.models import (
     AddWakeup,
@@ -95,7 +95,7 @@ class CanonicalFactTriggerPublisher:
                     f"CanonicalFact 缺少 MaterialDelta 规则: {fact.fact_type}"
                 ) from exc
             if (
-                fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                fact.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
                 and fact.decision_materiality != FactDecisionMateriality.CANDIDATE
             ):
                 # Routine continuous observations remain in State but do not

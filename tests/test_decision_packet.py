@@ -33,6 +33,9 @@ from investment_manager.forecast.models import (
     DirectionalView,
     PricedState,
 )
+from investment_manager.information.aggregated_flows import (
+    BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
+)
 from investment_manager.information.models import (
     CausalDomain,
     CoverageStatus,
@@ -1757,6 +1760,49 @@ def test_finalize_assessment_accepts_background_fact_only_in_structural_baseline
 
     assert assessment.mechanism_evidence_ids == (background.revision_id,)
     assert assessment.drivers == ()
+
+
+def test_aggregate_flow_candidate_supports_inference_but_not_confirmed_driver(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    aggregate = packet.facts[0].model_copy(
+        update={
+            "fact_type": BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
+            "highest_source_tier": SourceTier.AGGREGATOR,
+            "decision_materiality": FactDecisionMateriality.CANDIDATE,
+        }
+    )
+    packet = packet.model_copy(update={"facts": (aggregate,)})
+    base = _assessment_output()
+    inferred = base.assessment.drivers[0].model_copy(
+        update={"status": ContextDriverStatus.INFERRED}
+    )
+    output = base.model_copy(
+        update={
+            "assessment": base.assessment.model_copy(update={"drivers": (inferred,)})
+        }
+    )
+
+    assessment = finalize_context_assessment(
+        output=output,
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.drivers[0].status == ContextDriverStatus.INFERRED
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="CONFIRMED driver",
+    ):
+        finalize_context_assessment(
+            output=base,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
 
 
 def test_finalize_assessment_rejects_derivative_state_as_only_driver(

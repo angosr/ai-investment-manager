@@ -68,7 +68,7 @@ INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-m
 
 ## 实时 Shadow
 
-当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。固定一手端点还包括 Fed FOMC/Chair 日历和政策 RSS、Treasury TGA/收益率曲线、Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR，以及 Federal Register 的 SEC/CFTC 数字资产 Notice/Proposed Rule/Rule。监管流和宏观快速流每 5 分钟、低频流每 15 分钟轮询；原始响应、语义修订和轮询结果均持久化，任一配置源不健康都会降低整个因果域覆盖。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
+当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。固定一手端点还包括 Fed FOMC/Chair 日历和政策 RSS、Treasury TGA/收益率曲线、Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR，以及 Federal Register 的 SEC/CFTC 数字资产 Notice/Proposed Rule/Rule；固定的 ByKaranteli 公开 JSON 端点以 `AGGREGATOR` 等级提供 BTC/ETH 已结算交易日合计 ETF 净流量。监管流、宏观快速流和合计流量每 5 分钟、低频流每 15 分钟轮询；原始响应、语义修订和轮询结果均持久化，任一配置源不健康都会降低整个因果域覆盖。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
 
 资讯标准化器保留直接资产事件，并用版本化有限词表路由跨资产宏观事件。关键跨资产事件可越过高优先级阈值，但同一波事件先按品种合并；一般跨资产事件只进入下一次面板。资讯触发具有固定有效期，过期触发丢弃但原始标准事件事实不删除。
 
@@ -104,7 +104,7 @@ PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager challenger-audit
 
 Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角色协作，不使用仓库脚本承载状态：
 
-- `information-collector`：采集本机 TrendRadar/NewsNow 事件流和配置中固定的一手官方端点；聚合事件与官方记录分别进入各自事实边界，再统一投影到 State。
+- `information-collector`：采集本机 TrendRadar/NewsNow 事件流、配置中固定的一手官方端点及显式分级的结构化聚合指标；新闻事件与类型化记录保持不同身份，再统一投影到 State。
 - `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
 - `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让显式装配的合格 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。没有候选时只形成现金观察事实；月度 calendar carry 只供 evaluator 构建点时 counterfactual，不进入主动链。Dispatcher 不实现业务防抖或批处理。
 - Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。

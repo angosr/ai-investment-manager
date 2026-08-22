@@ -12,6 +12,9 @@ from investment_manager.forecast.models import (
     ContextEventReference,
     ContextView,
 )
+from investment_manager.information.aggregated_flows import (
+    AGGREGATED_FLOW_FACT_TYPES,
+)
 from investment_manager.information.models import SourceTier
 from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
@@ -74,6 +77,9 @@ ASSESS_INSTRUCTIONS = (
     "BACKGROUND 或 UNKNOWN 指标只能合并为简短背景/反证，不得逐项展开，不得单独构成 driver，"
     "也不得支持 UP/DOWN；只有 CANDIDATE 才表示量级足以进入主导因素竞争，"
     "但仍需与中介变量和市场响应共同验证因果。",
+    "BTC/ETH ETF aggregate-flow 事实来自明确标记的公共聚合源，只包含已结束交易日的合计净流量。"
+    "它不是发行人一手证据、不是盘中估计，也不能支持 CONFIRMED；只有程序标记为 CANDIDATE 时"
+    "才可作为 INFERRED driver 的资金端证据，并且方向仍须由同期现货或市场结构响应确认。",
     "财政部回购日程中的 maximum 只是计划上限；TREASURY_BUYBACK_OPERATION_RESULT "
     "中的 accepted 才是实际接受额，两者都不是 Fed QE。实际结果可验证财政操作本身，"
     "但在缺少收益率、美元、跨资产和现货资金响应时仍不得单独支持加密资产方向。",
@@ -328,13 +334,19 @@ def finalize_context_assessment(
                 "ASSESSMENT_CIRCULAR_INFERENCE",
                 "上一轮认知不能单独证明本轮推断或方向",
             )
+    first_party_fact_ids = {
+        item.revision_id
+        for item in packet.facts
+        if item.highest_source_tier == SourceTier.FIRST_PARTY
+    }
     first_party_evidence = {
+        *first_party_fact_ids,
         *(
-            item.revision_id
-            for item in packet.facts
-            if item.highest_source_tier == SourceTier.FIRST_PARTY
+            item.delta_id
+            for item in packet.deltas
+            if item.fact_revision_ids
+            and set(item.fact_revision_ids).issubset(first_party_fact_ids)
         ),
-        *(item.delta_id for item in packet.deltas if item.category.value == "FIRST_PARTY_FACT"),
         *(item.evidence_ref for item in packet.derivative_states),
     }
     unsupported_confirmed = tuple(
@@ -451,15 +463,21 @@ def _causal_support(packet: DecisionPacket) -> set[str]:
     candidate_facts = {
         item.revision_id
         for item in packet.facts
-        if item.highest_source_tier == SourceTier.FIRST_PARTY
-        and (
+        if (
             (
-                item.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                item.highest_source_tier == SourceTier.FIRST_PARTY
+                and item.fact_type in OFFICIAL_METRIC_FACT_TYPES
                 and item.decision_materiality.value == "CANDIDATE"
             )
             or (
-                item.fact_type not in OFFICIAL_METRIC_FACT_TYPES
+                item.highest_source_tier == SourceTier.FIRST_PARTY
+                and item.fact_type not in OFFICIAL_METRIC_FACT_TYPES
                 and item.decision_materiality.value != "BACKGROUND"
+            )
+            or (
+                item.highest_source_tier == SourceTier.AGGREGATOR
+                and item.fact_type in AGGREGATED_FLOW_FACT_TYPES
+                and item.decision_materiality.value == "CANDIDATE"
             )
         )
     }
@@ -467,7 +485,7 @@ def _causal_support(packet: DecisionPacket) -> set[str]:
         item.delta_id
         for item in packet.deltas
         if (
-            item.category.value == "FIRST_PARTY_FACT"
+            item.category.value in {"CANONICAL_FACT", "FIRST_PARTY_FACT"}
             and set(item.fact_revision_ids).intersection(candidate_facts)
         )
     }
@@ -485,7 +503,13 @@ def _structural_baseline_support(packet: DecisionPacket) -> set[str]:
     return {
         item.revision_id
         for item in packet.facts
-        if item.highest_source_tier == SourceTier.FIRST_PARTY
+        if (
+            item.highest_source_tier == SourceTier.FIRST_PARTY
+            or (
+                item.highest_source_tier == SourceTier.AGGREGATOR
+                and item.fact_type in AGGREGATED_FLOW_FACT_TYPES
+            )
+        )
         and item.decision_materiality.value != "UNKNOWN"
     }
 

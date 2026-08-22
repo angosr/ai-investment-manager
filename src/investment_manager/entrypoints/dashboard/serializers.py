@@ -174,7 +174,11 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
     for fact in packet.facts:
         catalog[fact.revision_id] = {
             "evidence_id": fact.revision_id,
-            "kind": "FIRST_PARTY_FACT",
+            "kind": (
+                "FIRST_PARTY_FACT"
+                if fact.highest_source_tier.value == "FIRST_PARTY"
+                else "STRUCTURED_FACT"
+            ),
             "title": fact.headline,
             "detail": fact.claim,
             "source": fact.highest_source_tier.value,

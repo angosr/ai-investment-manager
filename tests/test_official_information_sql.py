@@ -14,7 +14,7 @@ from investment_manager.information.official.records import (
 )
 from investment_manager.information.official.repository import (
     SqlFedOfficialInformationIngestor,
-    SqlOfficialInformationStore,
+    SqlStructuredInformationStore,
 )
 from investment_manager.information.tables import (
     market_calendar_event_revisions,
@@ -64,14 +64,14 @@ def _public_calendar(*, day: str = "28", include_chair: bool = True) -> str:
 
 def _store() -> tuple[
     SqlFedOfficialInformationIngestor,
-    SqlOfficialInformationStore,
+    SqlStructuredInformationStore,
     Engine,
 ]:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     return (
         SqlFedOfficialInformationIngestor(engine),
-        SqlOfficialInformationStore(engine),
+        SqlStructuredInformationStore(engine),
         engine,
     )
 

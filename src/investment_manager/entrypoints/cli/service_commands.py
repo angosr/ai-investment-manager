@@ -39,6 +39,7 @@ from investment_manager.governance.evaluation.outcome_service import assemble_ou
 from investment_manager.governance.models import evaluation_plan_invalidation_id
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.information.aggregated_flows import HttpAggregatedEtfFlowSource
 from investment_manager.information.collector import (
     EventNormalizer,
     HttpxNewsNowTransport,
@@ -77,7 +78,9 @@ from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.metric_ingestion import (
+    AggregatedEtfFlowCollectorService,
     OfficialMetricCollectorService,
+    SqlAggregatedEtfFlowFactIngestor,
     SqlOfficialMetricFactIngestor,
 )
 from investment_manager.state.official_ingestion import (
@@ -554,6 +557,18 @@ def information_collector(
         slow_poll_seconds=policy.official_metric_slow_poll_seconds,
         poll_recorder=SqlInformationCoverageStore(engine),
     )
+    aggregate_flow_service = AggregatedEtfFlowCollectorService(
+        source=HttpAggregatedEtfFlowSource(
+            timeout_seconds=policy.request_timeout_seconds,
+        ),
+        ingestor=SqlAggregatedEtfFlowFactIngestor(
+            engine,
+            policy=loaded.decision_state.official_fact_policy,
+        ),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        poll_seconds=policy.etf_aggregate_flow_poll_seconds,
+        poll_recorder=SqlInformationCoverageStore(engine),
+    )
     regulatory_service = RegulatoryOfficialCollectorService(
         source=HttpFederalRegisterSource(
             timeout_seconds=policy.request_timeout_seconds,
@@ -586,6 +601,7 @@ def information_collector(
             service.run(stop),
             official_service.run(stop),
             metric_service.run(stop),
+            aggregate_flow_service.run(stop),
             regulatory_service.run(stop),
             treasury_buyback_service.run(stop),
         )

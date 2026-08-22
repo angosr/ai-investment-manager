@@ -160,7 +160,7 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
 
 export interface AssessmentEvidence {
   evidence_id: string;
-  kind: "FIRST_PARTY_FACT" | "INTELLIGENCE_EVENT" | "MATERIAL_DELTA" | "MARKET_FEATURE" | "MARKET_STRUCTURE" | "PREVIOUS_CONTEXT";
+  kind: "FIRST_PARTY_FACT" | "STRUCTURED_FACT" | "INTELLIGENCE_EVENT" | "MATERIAL_DELTA" | "MARKET_FEATURE" | "MARKET_STRUCTURE" | "PREVIOUS_CONTEXT";
   title: string;
   detail: string;
   source: string;

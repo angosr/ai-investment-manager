@@ -30,14 +30,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "cash-observation-shadow-v1"
     assert config.temporal.namespace == "shadow-capital-20260821-v9"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v23"
+    assert config.information.version == "information-intake-v24"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v26"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v10"
-    assert config.decision_state.delta_policy.version == "state-delta-v12"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v27"
+    assert config.decision_state.version == "portfolio-state-v27"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v11"
+    assert config.decision_state.delta_policy.version == "state-delta-v13"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v28"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.assessment.version == "context-assessment-v22"
+    assert config.assessment.version == "context-assessment-v23"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -55,6 +55,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert institutional.source_capabilities == {
         "ark-arkb-holdings": ("BTC_ETF_ARKB_HOLDINGS",),
         "bitwise-bitb-holdings": ("BTC_ETF_BITB_HOLDINGS",),
+        "bykaranteli-etf-aggregate-flows": (
+            "BTC_ETF_AGGREGATE_FLOW",
+            "ETH_ETF_AGGREGATE_FLOW",
+        ),
         "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
@@ -64,7 +68,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETH",
     )
     assert config.assessment.mandate.required_risk_factors == (
+        "BTC_INSTITUTIONAL_FLOW",
         "BTC_INSTITUTIONAL_HOLDINGS",
+        "ETH_INSTITUTIONAL_FLOW",
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",
         "US_DOLLAR",

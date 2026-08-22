@@ -8,13 +8,13 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.execution.models import AccountSnapshot
+from investment_manager.information.aggregated_flows import CONTINUOUS_CONTEXT_FACT_TYPES
 from investment_manager.information.models import (
     CoverageStatus,
     DomainCoverageSnapshot,
     IntelligenceEvent,
     SourceTier,
 )
-from investment_manager.information.official.metrics import OFFICIAL_METRIC_FACT_TYPES
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -1300,7 +1300,7 @@ class DecisionPacketBuilder:
             )
             if (
                 item.fact.revision_id in direct_fact_ids
-                or item.fact.fact_type in OFFICIAL_METRIC_FACT_TYPES
+                or item.fact.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
                 or (
                     item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
                     and distance
@@ -1316,7 +1316,7 @@ class DecisionPacketBuilder:
                 item.fact.revision_id not in direct_fact_ids,
                 item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
                 item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
-                item.fact.fact_type not in OFFICIAL_METRIC_FACT_TYPES,
+                item.fact.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",

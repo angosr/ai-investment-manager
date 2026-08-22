@@ -95,6 +95,7 @@ class InformationPolicy(StrictConfig):
     )
     regulatory_poll_seconds: int = Field(default=300, ge=60, le=3_600)
     official_metric_poll_seconds: int = Field(default=300, ge=60, le=3_600)
+    etf_aggregate_flow_poll_seconds: int = Field(default=300, ge=60, le=3_600)
     official_metric_slow_poll_seconds: int = Field(
         default=900,
         ge=300,

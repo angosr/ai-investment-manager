@@ -6,6 +6,10 @@ from datetime import datetime
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 
+from investment_manager.information.aggregated_flows import (
+    AggregatedEtfFlowSnapshot,
+    AggregatedRecordKind,
+)
 from investment_manager.information.official.metrics import OfficialMetricSnapshot
 from investment_manager.information.official.public_calendar import (
     FED_PUBLIC_CALENDAR_URL,
@@ -58,8 +62,9 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
 
-OfficialRecord = (
+StructuredRecord = (
     BaseOfficialRecord
+    | AggregatedEtfFlowSnapshot
     | FedChairPublicEventRecord
     | OfficialMetricSnapshot
     | FederalRegisterRulemakingRecord
@@ -72,19 +77,19 @@ CalendarOfficialRecord = (
 
 
 @dataclass(frozen=True, slots=True)
-class OfficialRecordWrite:
-    record: OfficialRecord
+class StructuredRecordWrite:
+    record: StructuredRecord
     inserted: bool
     calendar_revision: MarketCalendarEventRevision | None = None
 
 
-class SqlOfficialInformationStore:
-    """Single append-only boundary for first-seen official records and revisions."""
+class SqlStructuredInformationStore:
+    """Append-only boundary for typed, source-tiered observations and revisions."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def put(self, record: OfficialRecord) -> OfficialRecordWrite:
+    def put(self, record: StructuredRecord) -> StructuredRecordWrite:
         observation = record.observation
         with self._engine.begin() as connection:
             raw_payload_exists = connection.execute(
@@ -95,7 +100,7 @@ class SqlOfficialInformationStore:
                 )
             ).scalar_one_or_none()
             if raw_payload_exists is None:
-                raise ValueError("官方记录缺少截至 observed_at 可见的原始来源 payload")
+                raise ValueError("结构化记录缺少截至 observed_at 可见的原始来源 payload")
             advisory_xact_lock(
                 connection,
                 "source_observation",
@@ -120,13 +125,13 @@ class SqlOfficialInformationStore:
                         if isinstance(latest, CalendarOfficialRecord)
                         else None
                     )
-                    return OfficialRecordWrite(
+                    return StructuredRecordWrite(
                         record=latest,
                         inserted=False,
                         calendar_revision=revision,
                     )
                 if latest.observation.observed_at >= observation.observed_at:
-                    raise ValueError("官方记录修订 observed_at 必须严格递增")
+                    raise ValueError("结构化记录修订 observed_at 必须严格递增")
 
             connection.execute(
                 insert(source_observations).values(
@@ -146,13 +151,13 @@ class SqlOfficialInformationStore:
                 if isinstance(record, CalendarOfficialRecord)
                 else None
             )
-        return OfficialRecordWrite(
+        return StructuredRecordWrite(
             record=record,
             inserted=True,
             calendar_revision=revision,
         )
 
-    def observation(self, observation_id: str) -> OfficialRecord:
+    def observation(self, observation_id: str) -> StructuredRecord:
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(source_observations.c.payload).where(
@@ -199,7 +204,7 @@ class SqlOfficialInformationStore:
         *,
         as_of: datetime,
         source_id: str | None = None,
-    ) -> tuple[OfficialRecord, ...]:
+    ) -> tuple[StructuredRecord, ...]:
         as_of = require_utc(as_of)
         conditions = [source_observations.c.observed_at <= as_of]
         if source_id is not None:
@@ -345,7 +350,7 @@ class SqlFedOfficialInformationIngestor:
 
     def __init__(self, engine: Engine) -> None:
         self._raw = SqlRawSourcePayloadStore(engine)
-        self._records = SqlOfficialInformationStore(engine)
+        self._records = SqlStructuredInformationStore(engine)
 
     def ingest_calendar(
         self,
@@ -353,7 +358,7 @@ class SqlFedOfficialInformationIngestor:
         *,
         observed_at: datetime,
         years: tuple[int, ...] | None = None,
-    ) -> tuple[OfficialRecordWrite, ...]:
+    ) -> tuple[StructuredRecordWrite, ...]:
         content = html.encode("utf-8")
         raw = build_raw_source_payload(
             source_id=FED_SOURCE_ID,
@@ -377,7 +382,7 @@ class SqlFedOfficialInformationIngestor:
         xml: str,
         *,
         observed_at: datetime,
-    ) -> tuple[OfficialRecordWrite, ...]:
+    ) -> tuple[StructuredRecordWrite, ...]:
         content = xml.encode("utf-8")
         raw = build_raw_source_payload(
             source_id=FED_SOURCE_ID,
@@ -398,7 +403,7 @@ class SqlFedOfficialInformationIngestor:
         *,
         observed_at: datetime,
         years: tuple[int, ...] | None = None,
-    ) -> tuple[OfficialRecordWrite, ...]:
+    ) -> tuple[StructuredRecordWrite, ...]:
         observed_at = require_utc(observed_at)
         content = payload.encode("utf-8")
         raw = build_raw_source_payload(
@@ -451,14 +456,14 @@ class SqlTreasuryBuybackInformationIngestor:
 
     def __init__(self, engine: Engine) -> None:
         self._raw = SqlRawSourcePayloadStore(engine)
-        self._records = SqlOfficialInformationStore(engine)
+        self._records = SqlStructuredInformationStore(engine)
 
     def ingest_calendar(
         self,
         content: bytes,
         *,
         observed_at: datetime,
-    ) -> tuple[OfficialRecordWrite, ...]:
+    ) -> tuple[StructuredRecordWrite, ...]:
         observed_at = require_utc(observed_at)
         raw = build_raw_source_payload(
             source_id=TREASURY_BUYBACK_SOURCE_ID,
@@ -507,7 +512,7 @@ class SqlTreasuryBuybackInformationIngestor:
         *,
         scheduled: TreasuryBuybackOperationRecord,
         observed_at: datetime,
-    ) -> OfficialRecordWrite:
+    ) -> StructuredRecordWrite:
         observed_at = require_utc(observed_at)
         source_url = treasury_buyback_result_url(scheduled.operation_start_at)
         raw = build_raw_source_payload(
@@ -532,7 +537,7 @@ class SqlFederalRegisterInformationIngestor:
 
     def __init__(self, engine: Engine) -> None:
         self._raw = SqlRawSourcePayloadStore(engine)
-        self._records = SqlOfficialInformationStore(engine)
+        self._records = SqlStructuredInformationStore(engine)
 
     def ingest(
         self,
@@ -540,7 +545,7 @@ class SqlFederalRegisterInformationIngestor:
         *,
         source_url: str,
         observed_at: datetime,
-    ) -> tuple[OfficialRecordWrite, ...]:
+    ) -> tuple[StructuredRecordWrite, ...]:
         observed_at = require_utc(observed_at)
         raw = build_raw_source_payload(
             source_id=FEDERAL_REGISTER_SOURCE_ID,
@@ -560,10 +565,12 @@ class SqlFederalRegisterInformationIngestor:
         )
 
 
-def _record_from_payload(payload: dict) -> OfficialRecord:
+def _record_from_payload(payload: dict) -> StructuredRecord:
     kind = payload.get("kind")
     if kind == OfficialRecordKind.FOMC_MEETING.value:
         return FomcMeetingRecord.model_validate(payload)
+    if kind == AggregatedRecordKind.ETF_FLOW_SNAPSHOT.value:
+        return AggregatedEtfFlowSnapshot.model_validate(payload)
     if kind == OfficialRecordKind.FED_MONETARY_RELEASE.value:
         return FedMonetaryReleaseRecord.model_validate(payload)
     if kind == OfficialRecordKind.FEDERAL_REGISTER_RULEMAKING.value:
@@ -576,7 +583,7 @@ def _record_from_payload(payload: dict) -> OfficialRecord:
         return TreasuryBuybackOperationRecord.model_validate(payload)
     if kind == OfficialRecordKind.TREASURY_BUYBACK_RESULT.value:
         return TreasuryBuybackResultRecord.model_validate(payload)
-    raise ValueError("未知官方记录类型")
+    raise ValueError("未知结构化记录类型")
 
 
 def _calendar_event_id(record: CalendarOfficialRecord) -> str:
