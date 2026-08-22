@@ -37,7 +37,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.delta_policy.version == "state-delta-v11"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v26"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.assessment.version == "context-assessment-v18"
+    assert config.assessment.version == "context-assessment-v19"
     regulation = next(
         item
         for item in config.information.coverage_requirements

@@ -461,7 +461,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v18
+  version: context-assessment-v19
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v3
