@@ -10,6 +10,8 @@ from sqlalchemy.pool import StaticPool
 
 from investment_manager.information.models import SourcePollStatus
 from investment_manager.information.official.metrics import (
+    ARKB_HOLDINGS_STREAM_ID,
+    BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
     IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
@@ -174,6 +176,52 @@ def _documents() -> dict[str, OfficialMetricDocument]:
             ),
             "text/csv",
         ),
+        ARKB_HOLDINGS_STREAM_ID: (
+            "https://assets.ark-funds.com/fund-documents/funds-etf-csv/"
+            "ARK_21SHARES_BITCOIN_ETF_ARKB_HOLDINGS.csv",
+            (
+                b"date,fund,company,ticker,cusip,shares,market value ($),weight (%)\n"
+                b'08/21/2026,ARKB,BITCOIN,BTC,-,"35,026.00000000",'
+                b'"$2,542,000,000.00",100.00\n'
+            ),
+            "text/csv",
+        ),
+        BITB_HOLDINGS_STREAM_ID: (
+            "https://bitbetf.com/",
+            (
+                "<html><body><script id=\"__NEXT_DATA__\" type=\"application/json\">"
+                + json.dumps(
+                    {
+                        "props": {
+                            "pageProps": {
+                                "fundData": {
+                                    "data": {
+                                        "updatedAt": "2026-08-21T18:00:00Z",
+                                        "fundDetails": {
+                                            "asOfDate": "2026-08-21",
+                                            "netAssets": "2920000000.25",
+                                            "sharesOutstanding": "69780000",
+                                        },
+                                        "holdings": {
+                                            "asOfDate": "2026-08-21",
+                                            "basket": [
+                                                {
+                                                    "companyName": "BITCOIN",
+                                                    "shares": "37871.96676424",
+                                                    "marketValue": "2919999000.12",
+                                                }
+                                            ],
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+                + "</script></body></html>"
+            ).encode(),
+            "text/html",
+        ),
     }
     return {
         stream_id: OfficialMetricDocument(
@@ -216,13 +264,21 @@ def test_all_fixed_first_party_metric_documents_parse_to_compact_snapshots() -> 
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 7
+    assert len({item.fact_type for item in snapshots}) == 9
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
     ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)
     assert {item.name.value: item.value for item in ibit.metrics}["ibit_btc_holdings"] == Decimal(
         "762287.0365"
     )
+    arkb = next(item for item in snapshots if item.stream_id == ARKB_HOLDINGS_STREAM_ID)
+    assert {item.name.value: item.value for item in arkb.metrics}["btc_etp_holdings"] == Decimal(
+        "35026"
+    )
+    bitb = next(item for item in snapshots if item.stream_id == BITB_HOLDINGS_STREAM_ID)
+    bitb_values = {item.name.value: item.value for item in bitb.metrics}
+    assert bitb_values["btc_etp_holdings"] == Decimal("37871.96676424")
+    assert bitb_values["btc_etp_shares_outstanding"] == Decimal("69780000")
 
 
 def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> None:
@@ -319,6 +375,54 @@ def test_latest_only_issuer_feed_builds_honest_change_after_second_day() -> None
         second.new_fact_revision.decision_materiality
         == FactDecisionMateriality.BACKGROUND
     )
+
+
+@pytest.mark.parametrize(
+    ("stream_id", "replacements", "expected_change"),
+    (
+        (
+            ARKB_HOLDINGS_STREAM_ID,
+            (
+                (b"08/21/2026", b"08/22/2026"),
+                (b"35,026.00000000", b"35,126.00000000"),
+                (b"2,542,000,000.00", b"2,552,000,000.00"),
+            ),
+            Decimal("100"),
+        ),
+        (
+            BITB_HOLDINGS_STREAM_ID,
+            (
+                (b"2026-08-21", b"2026-08-22"),
+                (b"37871.96676424", b"37971.96676424"),
+                (b"69780000", b"69880000"),
+            ),
+            Decimal("100"),
+        ),
+    ),
+)
+def test_each_additional_issuer_builds_only_its_own_point_in_time_change(
+    stream_id: str,
+    replacements: tuple[tuple[bytes, bytes], ...],
+    expected_change: Decimal,
+) -> None:
+    engine = _engine()
+    ingestor = SqlOfficialMetricFactIngestor(engine, policy=METRIC_POLICY)
+    first_document = _documents()[stream_id]
+    ingestor.ingest(first_document, observed_at=OBSERVED_AT)
+    content = first_document.content
+    for old, new in replacements:
+        content = content.replace(old, new)
+
+    second = ingestor.ingest(
+        replace(first_document, content=content),
+        observed_at=OBSERVED_AT + timedelta(days=1),
+    )
+
+    assert second.record is not None
+    values = {item.name.value: item.value for item in second.record.record.metrics}
+    assert values["btc_etp_holdings_change_1d"] == expected_change
+    assert second.record.record.change_context is not None
+    assert second.record.record.change_context.sample_size == 1
 
 
 def test_metric_collector_isolates_one_stream_failure_and_audits_both_polls() -> None:

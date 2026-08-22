@@ -30,14 +30,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.version == "carry-capital-shadow-v8"
     assert config.temporal.namespace == "shadow-capital-20260821-v8"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v22"
+    assert config.information.version == "information-intake-v23"
     assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v22"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v9"
-    assert config.decision_state.delta_policy.version == "state-delta-v11"
+    assert config.decision_state.version == "portfolio-state-v23"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v10"
+    assert config.decision_state.delta_policy.version == "state-delta-v12"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v26"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.assessment.version == "context-assessment-v20"
+    assert config.assessment.version == "context-assessment-v21"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -46,6 +46,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert regulation.source_stream_ids == ("federal-register-digital-assets",)
     assert regulation.source_capabilities == {
         "federal-register-digital-assets": ("AGENCY_RULEMAKING",)
+    }
+    institutional = next(
+        item
+        for item in config.information.coverage_requirements
+        if item.domain.value == "INSTITUTIONAL_FLOWS"
+    )
+    assert institutional.source_capabilities == {
+        "ark-arkb-holdings": ("BTC_ETF_ARKB_HOLDINGS",),
+        "bitwise-bitb-holdings": ("BTC_ETF_BITB_HOLDINGS",),
+        "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.packet_policy.maximum_calendar_context_distance_seconds == 604_800

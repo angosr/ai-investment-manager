@@ -5,6 +5,7 @@ import json
 from datetime import UTC, date, datetime, time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from enum import StrEnum
+from html.parser import HTMLParser
 from typing import Literal
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -27,6 +28,8 @@ TREASURY_RATES_SOURCE_ID = "us-treasury-rates"
 FED_H10_SOURCE_ID = "federal-reserve-h10"
 NYFED_MARKETS_SOURCE_ID = "new-york-fed-markets"
 ISHARES_SOURCE_ID = "ishares"
+ARK_SOURCE_ID = "ark-invest"
+BITWISE_SOURCE_ID = "bitwise"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
@@ -35,6 +38,8 @@ NYFED_RRP_STREAM_ID = "nyfed-reverse-repo"
 NYFED_SOMA_STREAM_ID = "nyfed-soma-holdings"
 NYFED_RATES_STREAM_ID = "nyfed-reference-rates"
 IBIT_HOLDINGS_STREAM_ID = "ishares-ibit-holdings"
+ARKB_HOLDINGS_STREAM_ID = "ark-arkb-holdings"
+BITB_HOLDINGS_STREAM_ID = "bitwise-bitb-holdings"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
@@ -43,6 +48,8 @@ NYFED_RRP_FACT_TYPE = "NYFED_REVERSE_REPO_SNAPSHOT"
 NYFED_SOMA_FACT_TYPE = "NYFED_SOMA_SNAPSHOT"
 NYFED_RATES_FACT_TYPE = "NYFED_REFERENCE_RATES_SNAPSHOT"
 IBIT_HOLDINGS_FACT_TYPE = "IBIT_HOLDINGS_SNAPSHOT"
+ARKB_HOLDINGS_FACT_TYPE = "ARKB_HOLDINGS_SNAPSHOT"
+BITB_HOLDINGS_FACT_TYPE = "BITB_HOLDINGS_SNAPSHOT"
 
 OFFICIAL_METRIC_FACT_TYPES = frozenset(
     {
@@ -53,6 +60,8 @@ OFFICIAL_METRIC_FACT_TYPES = frozenset(
         NYFED_SOMA_FACT_TYPE,
         NYFED_RATES_FACT_TYPE,
         IBIT_HOLDINGS_FACT_TYPE,
+        ARKB_HOLDINGS_FACT_TYPE,
+        BITB_HOLDINGS_FACT_TYPE,
     }
 )
 OFFICIAL_METRIC_RISK_FACTORS = frozenset(
@@ -73,6 +82,13 @@ class OfficialMetricName(StrEnum):
     IBIT_NET_ASSETS_USD_M = "ibit_net_assets_usd_m"
     IBIT_SHARES_OUTSTANDING = "ibit_shares_outstanding"
     IBIT_SHARES_OUTSTANDING_CHANGE_1D = "ibit_shares_outstanding_change_1d"
+    BTC_ETP_HOLDINGS = "btc_etp_holdings"
+    BTC_ETP_HOLDINGS_CHANGE_1D = "btc_etp_holdings_change_1d"
+    BTC_ETP_NET_ASSETS_USD_M = "btc_etp_net_assets_usd_m"
+    BTC_ETP_SHARES_OUTSTANDING = "btc_etp_shares_outstanding"
+    BTC_ETP_SHARES_OUTSTANDING_CHANGE_1D = (
+        "btc_etp_shares_outstanding_change_1d"
+    )
     TGA_BALANCE_USD_M = "tga_balance_usd_m"
     TGA_CHANGE_1D_USD_M = "tga_change_1d_usd_m"
     TGA_CHANGE_5D_USD_M = "tga_change_5d_usd_m"
@@ -162,6 +178,8 @@ class OfficialMetricSnapshot(FrozenModel):
             "www.federalreserve.gov",
             "markets.newyorkfed.org",
             "www.ishares.com",
+            "assets.ark-funds.com",
+            "bitbetf.com",
         }:
             raise ValueError("官方指标 URL 不在固定官方域名")
         names = tuple(item.name.value for item in self.metrics)
@@ -236,6 +254,8 @@ def parse_official_metric_document(
         NYFED_SOMA_STREAM_ID: _parse_soma,
         NYFED_RATES_STREAM_ID: _parse_reference_rates,
         IBIT_HOLDINGS_STREAM_ID: _parse_ibit_holdings,
+        ARKB_HOLDINGS_STREAM_ID: _parse_arkb_holdings,
+        BITB_HOLDINGS_STREAM_ID: _parse_bitb_holdings,
     }
     parser = parsers.get(stream_id)
     if parser is None:
@@ -689,14 +709,193 @@ def _parse_ibit_holdings(
     )
 
 
+def _parse_arkb_holdings(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    try:
+        rows = tuple(csv.DictReader(content.decode("utf-8-sig").splitlines()))
+    except UnicodeDecodeError as exc:
+        raise ValueError("ARKB holdings CSV 编码非法") from exc
+    bitcoin_rows = tuple(
+        row
+        for row in rows
+        if row.get("fund") == "ARKB"
+        and row.get("ticker") == "BTC"
+        and row.get("company") == "BITCOIN"
+    )
+    if len(bitcoin_rows) != 1:
+        raise ValueError("ARKB holdings CSV 缺少唯一 BTC 持仓")
+    bitcoin = bitcoin_rows[0]
+    try:
+        effective_date = datetime.strptime(str(bitcoin["date"]), "%m/%d/%Y").date()
+        btc_quantity = _decimal(
+            str(bitcoin["shares"]).replace(",", ""),
+            name="ARKB BTC quantity",
+        )
+        market_value = _decimal(
+            str(bitcoin["market value ($)"]).replace("$", "").replace(",", ""),
+            name="ARKB BTC market value",
+        )
+    except KeyError as exc:
+        raise ValueError("ARKB holdings CSV 缺少固定字段") from exc
+    return _snapshot(
+        source_id=ARK_SOURCE_ID,
+        stream_id=ARKB_HOLDINGS_STREAM_ID,
+        domain=CausalDomain.INSTITUTIONAL_FLOWS,
+        fact_type=ARKB_HOLDINGS_FACT_TYPE,
+        effective_date=effective_date,
+        headline="ARK 21Shares Bitcoin ETF daily holdings",
+        risk_factors=("BTC_INSTITUTIONAL_HOLDINGS",),
+        metrics=(
+            _metric(
+                OfficialMetricName.BTC_ETP_HOLDINGS,
+                btc_quantity,
+                OfficialMetricUnit.BITCOIN,
+            ),
+            _metric(
+                OfficialMetricName.BTC_ETP_NET_ASSETS_USD_M,
+                market_value / Decimal("1000000"),
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(effective_date, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+class _NextDataParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._inside = False
+        self.content: list[str] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        attributes = dict(attrs)
+        self._inside = tag == "script" and attributes.get("id") == "__NEXT_DATA__"
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script":
+            self._inside = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside:
+            self.content.append(data)
+
+
+def _parse_bitb_holdings(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    try:
+        html = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("BITB 页面编码非法") from exc
+    parser = _NextDataParser()
+    parser.feed(html)
+    if not parser.content:
+        raise ValueError("BITB 页面缺少 __NEXT_DATA__")
+    document = _json_object("".join(parser.content).encode())
+    try:
+        page_props = document["props"]["pageProps"]
+        data = page_props["fundData"]["data"]
+        details = data["fundDetails"]
+        holdings = data["holdings"]
+        effective_date = _date(holdings["asOfDate"], name="BITB holdings asOfDate")
+        if _date(details["asOfDate"], name="BITB details asOfDate") != effective_date:
+            raise ValueError("BITB 持仓与基金详情日期不一致")
+        bitcoin_rows = tuple(
+            row
+            for row in holdings["basket"]
+            if isinstance(row, dict) and row.get("companyName") == "BITCOIN"
+        )
+        if len(bitcoin_rows) != 1:
+            raise ValueError("BITB 页面缺少唯一 BTC 持仓")
+        bitcoin = bitcoin_rows[0]
+        btc_quantity = _decimal(bitcoin.get("shares"), name="BITB BTC quantity")
+        market_value = _decimal(
+            bitcoin.get("marketValue"),
+            name="BITB BTC market value",
+        )
+        net_assets = _decimal(details.get("netAssets"), name="BITB net assets")
+        shares_outstanding = _decimal(
+            details.get("sharesOutstanding"),
+            name="BITB shares outstanding",
+        )
+        source_published_at = min(
+            _datetime(data.get("updatedAt"), name="BITB updatedAt"),
+            observed_at,
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValueError("BITB 页面结构缺少固定字段") from exc
+    if market_value <= 0 or net_assets <= 0 or shares_outstanding <= 0:
+        raise ValueError("BITB 持仓、资产和份额必须为正数")
+    return _snapshot(
+        source_id=BITWISE_SOURCE_ID,
+        stream_id=BITB_HOLDINGS_STREAM_ID,
+        domain=CausalDomain.INSTITUTIONAL_FLOWS,
+        fact_type=BITB_HOLDINGS_FACT_TYPE,
+        effective_date=effective_date,
+        headline="Bitwise Bitcoin ETF daily holdings",
+        risk_factors=("BTC_INSTITUTIONAL_HOLDINGS",),
+        metrics=(
+            _metric(
+                OfficialMetricName.BTC_ETP_HOLDINGS,
+                btc_quantity,
+                OfficialMetricUnit.BITCOIN,
+            ),
+            _metric(
+                OfficialMetricName.BTC_ETP_NET_ASSETS_USD_M,
+                net_assets / Decimal("1000000"),
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.BTC_ETP_SHARES_OUTSTANDING,
+                shares_outstanding,
+                OfficialMetricUnit.SHARES,
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=source_published_at,
+        payload_ref=payload_ref,
+    )
+
+
 def with_official_metric_history(
     snapshot: OfficialMetricSnapshot,
     history: tuple[OfficialMetricSnapshot, ...],
 ) -> OfficialMetricSnapshot:
     """Add revision-safe change context when a latest-only source has accumulated history."""
 
-    if snapshot.stream_id != IBIT_HOLDINGS_STREAM_ID:
+    policies = {
+        IBIT_HOLDINGS_STREAM_ID: (
+            OfficialMetricName.IBIT_BTC_HOLDINGS,
+            OfficialMetricName.IBIT_BTC_HOLDINGS_CHANGE_1D,
+            OfficialMetricName.IBIT_SHARES_OUTSTANDING,
+            OfficialMetricName.IBIT_SHARES_OUTSTANDING_CHANGE_1D,
+        ),
+        ARKB_HOLDINGS_STREAM_ID: (
+            OfficialMetricName.BTC_ETP_HOLDINGS,
+            OfficialMetricName.BTC_ETP_HOLDINGS_CHANGE_1D,
+            None,
+            None,
+        ),
+        BITB_HOLDINGS_STREAM_ID: (
+            OfficialMetricName.BTC_ETP_HOLDINGS,
+            OfficialMetricName.BTC_ETP_HOLDINGS_CHANGE_1D,
+            OfficialMetricName.BTC_ETP_SHARES_OUTSTANDING,
+            OfficialMetricName.BTC_ETP_SHARES_OUTSTANDING_CHANGE_1D,
+        ),
+    }
+    policy = policies.get(snapshot.stream_id)
+    if policy is None:
         return snapshot
+    holdings_name, holdings_change_name, shares_name, shares_change_name = policy
     by_date = {
         item.effective_date: item
         for item in history
@@ -706,37 +905,39 @@ def with_official_metric_history(
     ordered = tuple(by_date[key] for key in sorted(by_date))
     if not ordered:
         return snapshot
-    btc_history = tuple(
-        (item.effective_date, _metric_value(item, OfficialMetricName.IBIT_BTC_HOLDINGS))
+    holdings_history = tuple(
+        (item.effective_date, _metric_value(item, holdings_name))
         for item in (*ordered, snapshot)
     )
-    shares_history = tuple(
-        (
-            item.effective_date,
-            _metric_value(item, OfficialMetricName.IBIT_SHARES_OUTSTANDING),
+    holdings_change = holdings_history[-1][1] - holdings_history[-2][1]
+    additions = [
+        _metric(
+            holdings_change_name,
+            holdings_change,
+            OfficialMetricUnit.BITCOIN,
         )
-        for item in (*ordered, snapshot)
-    )
-    btc_change = btc_history[-1][1] - btc_history[-2][1]
-    shares_change = shares_history[-1][1] - shares_history[-2][1]
+    ]
+    if shares_name is not None and shares_change_name is not None:
+        shares_history = tuple(
+            (item.effective_date, _metric_value(item, shares_name))
+            for item in (*ordered, snapshot)
+        )
+        additions.append(
+            _metric(
+                shares_change_name,
+                shares_history[-1][1] - shares_history[-2][1],
+                OfficialMetricUnit.SHARES,
+            )
+        )
     metrics = (
         *snapshot.metrics,
-        _metric(
-            OfficialMetricName.IBIT_BTC_HOLDINGS_CHANGE_1D,
-            btc_change,
-            OfficialMetricUnit.BITCOIN,
-        ),
-        _metric(
-            OfficialMetricName.IBIT_SHARES_OUTSTANDING_CHANGE_1D,
-            shares_change,
-            OfficialMetricUnit.SHARES,
-        ),
+        *additions,
     )
     context = _most_unusual_change_context(
-        btc_history,
+        holdings_history,
         candidates=(
             (
-                OfficialMetricName.IBIT_BTC_HOLDINGS_CHANGE_1D,
+                holdings_change_name,
                 1,
                 OfficialMetricUnit.BITCOIN,
             ),
@@ -928,6 +1129,10 @@ def _stream_source_id(stream_id: str) -> str:
         return FED_H10_SOURCE_ID
     if stream_id == IBIT_HOLDINGS_STREAM_ID:
         return ISHARES_SOURCE_ID
+    if stream_id == ARKB_HOLDINGS_STREAM_ID:
+        return ARK_SOURCE_ID
+    if stream_id == BITB_HOLDINGS_STREAM_ID:
+        return BITWISE_SOURCE_ID
     if stream_id in {NYFED_RRP_STREAM_ID, NYFED_SOMA_STREAM_ID, NYFED_RATES_STREAM_ID}:
         return NYFED_MARKETS_SOURCE_ID
     raise ValueError(f"未知官方指标流: {stream_id}")

@@ -17,6 +17,8 @@ from investment_manager.information.models import (
     SourcePollStatus,
 )
 from investment_manager.information.official.metrics import (
+    ARKB_HOLDINGS_STREAM_ID,
+    BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
     IBIT_HOLDINGS_STREAM_ID,
     NYFED_RATES_STREAM_ID,
@@ -46,6 +48,8 @@ from investment_manager.state.repository import SqlFactStateStore
 logger = logging.getLogger(__name__)
 
 OFFICIAL_METRIC_STREAM_DOMAINS = {
+    ARKB_HOLDINGS_STREAM_ID: CausalDomain.INSTITUTIONAL_FLOWS,
+    BITB_HOLDINGS_STREAM_ID: CausalDomain.INSTITUTIONAL_FLOWS,
     TGA_STREAM_ID: CausalDomain.FISCAL_DEBT,
     TREASURY_YIELD_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
     FED_BROAD_DOLLAR_STREAM_ID: CausalDomain.CROSS_ASSET_EXTERNAL,
@@ -55,6 +59,8 @@ OFFICIAL_METRIC_STREAM_DOMAINS = {
     NYFED_RATES_STREAM_ID: CausalDomain.MONETARY_INFLATION,
 }
 SLOW_OFFICIAL_METRIC_STREAMS = {
+    ARKB_HOLDINGS_STREAM_ID,
+    BITB_HOLDINGS_STREAM_ID,
     FED_BROAD_DOLLAR_STREAM_ID,
     IBIT_HOLDINGS_STREAM_ID,
     NYFED_SOMA_STREAM_ID,

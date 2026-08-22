@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from investment_manager.information.official.metrics import FED_BROAD_DOLLAR_STREAM_ID
+from investment_manager.information.official.metrics import (
+    ARKB_HOLDINGS_STREAM_ID,
+    BITB_HOLDINGS_STREAM_ID,
+    FED_BROAD_DOLLAR_STREAM_ID,
+)
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
     build_fed_chair_cancellation,
@@ -128,6 +132,41 @@ def test_official_metric_source_retries_xml_406_then_uses_validator() -> None:
     assert first is not None and first.content == b"<rdf:RDF/>"
     assert second is None
     assert len(requests) == 3
+
+
+@pytest.mark.parametrize(
+    ("stream_id", "expected_url", "expected_accept"),
+    (
+        (
+            ARKB_HOLDINGS_STREAM_ID,
+            "https://assets.ark-funds.com/fund-documents/funds-etf-csv/"
+            "ARK_21SHARES_BITCOIN_ETF_ARKB_HOLDINGS.csv",
+            "text/csv",
+        ),
+        (BITB_HOLDINGS_STREAM_ID, "https://bitbetf.com/", "text/html"),
+    ),
+)
+def test_issuer_holdings_sources_use_fixed_first_party_endpoints(
+    stream_id: str,
+    expected_url: str,
+    expected_accept: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b"issuer holdings")
+
+    source = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    document = source.fetch(stream_id, observed_at=OBSERVED_AT)
+
+    assert document is not None
+    assert str(requests[0].url) == expected_url
+    assert requests[0].headers["accept"] == expected_accept
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:

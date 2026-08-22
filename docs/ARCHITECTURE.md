@@ -172,11 +172,11 @@ Treasury 回购日历以操作窗口建立稳定事件身份，日历修订与�
 `DEBT_REPURCHASE / FISCAL_CALENDAR` 能力，不能单独支撑 BTC 方向。方向判断必须继续核对实际操作结果、
 国债收益率、美元、跨资产响应与加密资产资金流；债务发行能力未接入前财政域仍为 `PARTIAL`。
 
-iShares IBIT 已通过发行人官方日持仓 CSV 接入同一 Raw/Observation/Fact/State 链，冻结 BTC 数量、流通份额和
-资产价值；从第二个真实观测日起才计算日变化，并在累计足够历史前保持 `BACKGROUND`。单只基金不能代表美国
-现货 ETF 合计，持仓变化也不能直接等同净现金流，因此该来源暂不使 `INSTITUTIONAL_FLOWS` 晋级为 `CURRENT`；
-只有主要发行人合计流量能力完成后才能使机构资金域从 `PARTIAL` 晋级。历史不能按今天看到的页面倒填
-observed_at，冷启动缺口必须保留。
+iShares IBIT、ARK 21Shares ARKB 与 Bitwise BITB 已通过发行人官方日持仓入口接入同一
+Raw/Observation/Fact/State 链，分别冻结可得的 BTC 数量、基金流通份额和资产价值；从第二个真实观测日起才
+计算同一发行人的日变化，并在累计足够历史前保持 `BACKGROUND`。多只基金的持仓覆盖仍不等于美国现货 ETF
+合计净现金流，持仓或份额变化也不能直接等同现金申赎，因此 `INSTITUTIONAL_FLOWS` 继续保持 `PARTIAL`；
+只有 BTC 与 ETH 合计流量能力完成后才能晋级。历史不能按今天看到的页面倒填 observed_at，冷启动缺口必须保留。
 
 连续宏观数值的“发生变化”不等于“足以改变大盘基准情景”。采集器从同一份一手响应保留点时可见历史，
 程序按绝对变化的经验分位数和最小样本合同生成 `BACKGROUND / CANDIDATE`：样本不足或未达到冻结异常阈值的更新

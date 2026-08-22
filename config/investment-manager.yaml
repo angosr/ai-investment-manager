@@ -13,17 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v22
+  version: portfolio-state-v23
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v9
+    version: official-fact-v10
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v11
+    version: state-delta-v12
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -33,6 +33,12 @@ decision_state:
     market_risk_factors: [MARKET_VOLATILITY]
     market_reason_code: MARKET_SHOCK_TRIGGERED
     rules:
+      - fact_type: ARKB_HOLDINGS_SNAPSHOT
+        materiality: HIGH
+        reason_code: ARKB_HOLDINGS_REVISION
+      - fact_type: BITB_HOLDINGS_SNAPSHOT
+        materiality: HIGH
+        reason_code: BITB_HOLDINGS_REVISION
       - fact_type: FED_BROAD_DOLLAR_SNAPSHOT
         materiality: HIGH
         reason_code: FED_BROAD_DOLLAR_REVISION
@@ -353,7 +359,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v22
+  version: information-intake-v23
   normalizer_version: trendradar-collector-v8
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -399,11 +405,13 @@ information:
       maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 604800
     - domain: INSTITUTIONAL_FLOWS
-      # IBIT 仅证明一只基金的日持仓，不能满足 ETF 合计流量能力。
-      source_stream_ids: [ishares-ibit-holdings]
-      required_capabilities: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
+      # 逐基金持仓不是现金申赎；即使三只发行人正常，合计流量能力仍必须明确保持缺失。
+      source_stream_ids: [ark-arkb-holdings, bitwise-bitb-holdings, ishares-ibit-holdings]
+      required_capabilities: [BTC_ETF_AGGREGATE_FLOW, BTC_ETF_ARKB_HOLDINGS, BTC_ETF_BITB_HOLDINGS, BTC_ETF_IBIT_HOLDINGS, ETH_ETF_AGGREGATE_FLOW]
       source_capabilities:
-        ishares-ibit-holdings: []
+        ark-arkb-holdings: [BTC_ETF_ARKB_HOLDINGS]
+        bitwise-bitb-holdings: [BTC_ETF_BITB_HOLDINGS]
+        ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
       maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 172800
     - domain: SPOT_DERIVATIVES
@@ -461,7 +469,7 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v20
+  version: context-assessment-v21
   enabled: false
   mandate:
     version: primary-portfolio-mandate-v3

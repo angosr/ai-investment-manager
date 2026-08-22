@@ -126,11 +126,11 @@ ASSESS_INSTRUCTIONS = (
     "单一交易场所的边际订单流，不等于 ETF 或机构净流入。"
     "多空账户比不等于多空名义仓位比，任一单项指标都不得被机械解释为方向信号；"
     "必须结合价格响应与其他资金层证据判断新增风险偏好还是拥挤/平仓。",
-    "IBIT_HOLDINGS_SNAPSHOT 是 BlackRock/iShares 单只基金的一手日持仓，不代表美国现货 ETF 合计。"
-    "BTC 持仓或流通份额变化也不等于净现金流，费用、运营调整与申赎都可能改变数量；"
-    "只有累计到足够点时历史并成为 CANDIDATE 后，才可与其他发行人、现货响应"
-    "和价格传导共同竞争 Driver。"
-    "在主要发行人尚未覆盖前，INSTITUTIONAL_FLOWS 必须继续视为部分未知。",
+    "IBIT_HOLDINGS_SNAPSHOT、ARKB_HOLDINGS_SNAPSHOT 与 BITB_HOLDINGS_SNAPSHOT 是三个"
+    "发行人各自公布的一手日持仓，不代表美国现货 ETF 合计。BTC 持仓、基金流通份额变化都不等于"
+    "净现金流，费用、运营调整与申赎都可能改变数量；只有同一发行人累计到足够点时历史并成为"
+    "CANDIDATE 后，才可结合其他发行人、现货响应和价格传导共同竞争 Driver。"
+    "在 BTC 与 ETH 合计申赎能力尚未接入前，INSTITUTIONAL_FLOWS 必须继续视为部分未知。",
     "TREASURY_BUYBACK_OPERATION_SCHEDULE 是美国财政部公布的暂定回购操作窗口。"
     "maximum_purchase_usd_m 只是该期限桶计划购买上限，不是实际接受金额；财政部回购也不是"
     "美联储扩表或 QE。它可以作为财政流动性日程进入因果链，但必须结合实际操作结果、国债收益率、"
