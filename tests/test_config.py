@@ -169,6 +169,14 @@ def test_official_macro_fact_rules_cannot_be_partially_enabled() -> None:
     with pytest.raises(ValidationError, match="必须完整启用或完整关闭"):
         type(config).model_validate(payload)
 
+    historical = type(config).model_validate(
+        payload,
+        context={"historical_read_only": True},
+    )
+    assert len(historical.decision_state.delta_policy.rules) == len(
+        config.decision_state.delta_policy.rules
+    ) - 1
+
 
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
     root = Path(__file__).resolve().parents[1]

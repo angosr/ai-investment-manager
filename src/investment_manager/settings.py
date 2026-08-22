@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, model_validator
 
 from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 from investment_manager.execution.policy import (
@@ -87,10 +87,15 @@ class AppConfig(StrictConfig):
     deployment: DeploymentPolicy
 
     @model_validator(mode="after")
-    def cross_domain_invariants_hold(self):
+    def cross_domain_invariants_hold(self, info: ValidationInfo):
         retired_dynamic = self.dynamic_carry_forecast
         if retired_dynamic is not None and retired_dynamic.get("enabled") is not False:
             raise ValueError("退役 Dynamic Carry 配置只允许只读解析已禁用历史身份")
+        if (
+            isinstance(info.context, dict)
+            and info.context.get("historical_read_only") is True
+        ):
+            return self
         if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:
             raise ValueError("DecisionState 与 Assessment mandate scope 必须一致")
         mandate_symbols = tuple(
@@ -215,11 +220,18 @@ class AppConfig(StrictConfig):
         return self
 
 
-def load_config(path: str | Path) -> AppConfig:
+def load_config(
+    path: str | Path,
+    *,
+    historical_read_only: bool = False,
+) -> AppConfig:
     """加载严格配置；小型环境文件可用 ``extends`` 继承同目录基线。"""
 
     config_path = Path(path).resolve()
-    return AppConfig.model_validate(_load_config_mapping(config_path, stack=()))
+    return AppConfig.model_validate(
+        _load_config_mapping(config_path, stack=()),
+        context={"historical_read_only": historical_read_only},
+    )
 
 
 def _load_config_mapping(config_path: Path, *, stack: tuple[Path, ...]) -> dict[str, Any]:

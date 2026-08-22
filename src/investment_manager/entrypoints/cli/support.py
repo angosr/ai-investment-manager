@@ -82,7 +82,7 @@ def load_read_only_release_identity(config: Path, release_manifest: Path):
     manifest integrity still remain mandatory.
     """
 
-    loaded = load_config(config)
+    loaded = load_config(config, historical_read_only=True)
     manifest = load_release_manifest(release_manifest)
     validate_manifest_against_config(
         manifest,

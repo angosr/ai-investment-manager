@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, model_validator
 
 from investment_manager.information.aggregated_flows import (
     AGGREGATED_FLOW_FACT_TYPES,
@@ -74,7 +74,7 @@ class DecisionStatePolicy(StrictConfig):
     packet_policy: DecisionPacketPolicy
 
     @model_validator(mode="after")
-    def official_projection_must_have_delta_rules(self):
+    def official_projection_must_have_delta_rules(self, info: ValidationInfo):
         if not self.official_fact_policy.affected_assets:
             raise ValueError("OfficialFact projection 必须声明受影响资产")
         required = {
@@ -85,6 +85,12 @@ class DecisionStatePolicy(StrictConfig):
         configured = {item.fact_type for item in self.delta_policy.rules}
         if not required.issubset(configured):
             raise ValueError("OfficialFact projection 缺少对应 MaterialDelta 规则")
+        historical_read_only = bool(
+            isinstance(info.context, dict)
+            and info.context.get("historical_read_only") is True
+        )
+        if historical_read_only:
+            return self
         configured_metrics = configured & OFFICIAL_METRIC_FACT_TYPES
         if configured_metrics and configured_metrics != OFFICIAL_METRIC_FACT_TYPES:
             raise ValueError("官方宏观指标 MaterialDelta 规则必须完整启用或完整关闭")
