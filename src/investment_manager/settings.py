@@ -180,6 +180,12 @@ class AppConfig(StrictConfig):
         permissions = self.capital.mock_candidate_authorizations
         if permissions and not self.capital.enabled:
             raise ValueError("禁用 Capital 时不得保留 Mock candidate authorization")
+        if (
+            permissions
+            and self.trigger.heartbeat_minutes
+            > self.carry_forecast.maximum_monthly_entry_delay_minutes
+        ):
+            raise ValueError("Capital 心跳必须覆盖 Carry 入场窗口")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

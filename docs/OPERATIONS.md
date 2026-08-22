@@ -168,40 +168,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 Heartbeat 相位均为费用后亏损，因此 `capital-shadow-dynamic-v7` 已记录不可变失效事实。主线不再保留该
 候选的配置、生产者或诊断命令；失败制品和 Git 历史足以审计，不得以同一标签继续微调或重新授权。
 
-每个 Capital Shadow Release 必须在首个月度窗口前，向它自己的事实库登记一次运行评价合同；命令从冻结配置与 Manifest 派生全部行为身份、证据、基线、成本维度和故障门槛，调用方只能选择计划 ID 与未来自然月窗口：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
-  .venv/bin/investment-manager register-capital-shadow-plan \
-  --config '<冻结 Capital 配置>' \
-  --release-manifest '<冻结 Capital Manifest>' \
-  --plan-id '<唯一计划 ID>' \
-  --observation-start '2026-09-01T00:00:00Z' \
-  --observation-end '2027-09-01T00:00:00Z'
-```
-
-计划以现金和同策略研究账本为双基线，要求十二个月决策完整、至少十一个月 Forecast 可用、禁止晚开与重复 group，并冻结未对冲/恢复时限、费用后权益、资本占用、fee、spread、funding、basis 和 compensation loss。任一绑定的代码、配置、组件、Evidence 或行为身份变化都截断 cohort；不得把不同 Release 的月份拼接后晋级。
-计划同时冻结账户月界最大允许延迟；每个月界使用其后有界时间内最早的权威账户 revision，观察窗收益及研究
-counterfactual 均以观察起点选中的真实权益为基数。部署应预置月界唤醒以降低延迟，但评价不得要求服务和数据库
-时间戳恰好等于 `00:00:00`，也不得接受超过冻结上限的估值。
-Trigger Service 启动时会在创建任何触发计划前重新派生完整合同，并要求该 Manifest 恰好匹配一个已登记计划；缺失、篡改、重复或晚于服务启动时间登记都会拒绝启动。
-
-评价必须从该 Release 的精确代码 checkout 运行；命令会同时核验 Git、配置、Manifest、预登记 spec 和行为哈希。
-在窗口或七天结算宽限期成熟前执行只会生成明确的 `INCOMPLETE` 内容寻址制品；成熟后才投影完整账本，且冻结
-延迟内的自然月账户 revision、Trigger 决策、点时可成交报价或 Funding 任一缺失都会失败关闭：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<Capital Release 独立事实库>' \
-  .venv/bin/investment-manager evaluate-capital-shadow-plan \
-  --config '<冻结 Capital 配置>' \
-  --release-manifest '<冻结 Capital Manifest>' \
-  --plan-id '<已登记计划 ID>' \
-  --published-at '<固定 UTC 评价时点>' \
-  --evaluation-catalog '.runtime/capital-shadow-evaluations'
-```
-
-同一 `published-at` 与同一事实账本重试会得到同一结果 ID 和同一制品；调用方不能重传月份、收益、基线或门槛。
-
 部署私有配置必须满足：
 
 ```yaml

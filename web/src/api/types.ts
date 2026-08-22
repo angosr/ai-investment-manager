@@ -65,9 +65,7 @@ export interface CapitalOverview {
     producer_id: string;
     producer_version: string;
     forecast_family: string;
-    authorization_status: "NOT_AUTHORIZED" | "NOT_YET_VALID" | "ACTIVE" | "EXPIRED";
-    authorization_valid_from: string | null;
-    authorization_valid_until: string | null;
+    authorization_status: "NOT_AUTHORIZED" | "ACTIVE";
     maximum_allocation_fraction: string | null;
     next_entry_at: string | null;
     next_entry_expires_at: string | null;

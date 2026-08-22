@@ -14,9 +14,7 @@ const REASON_LABELS: Record<string, string> = {
 
 const AUTHORIZATION_LABELS: Record<string, string> = {
   NOT_AUTHORIZED: "未获 Mock 授权",
-  NOT_YET_VALID: "Mock 授权尚未生效",
   ACTIVE: "Mock 授权有效",
-  EXPIRED: "Mock 授权已到期",
 };
 
 export function Capital({ data }: { data: CapitalOverview | null }) {

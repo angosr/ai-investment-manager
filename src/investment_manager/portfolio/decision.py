@@ -425,8 +425,6 @@ class PortfolioDecisionEngine:
             )
         permission = item.mock_authorization
         assert permission is not None
-        if not permission.valid_from <= as_of < permission.valid_until:
-            return False
         threshold = (
             permission.minimum_hold_net_bps
             if current_notional > 0

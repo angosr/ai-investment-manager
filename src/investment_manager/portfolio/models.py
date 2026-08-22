@@ -311,27 +311,19 @@ class PortfolioEdgeBasis(StrEnum):
 
 
 class MockCandidateAuthorization(FrozenModel):
-    """Frozen permission to collect Mock evidence, never real-order permission."""
+    """Evidence-bound permission to trade one candidate in Mock, never real orders."""
 
     version: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
     hypothesis_fingerprint: str = Field(pattern=SHA256_PATTERN)
-    evaluation_plan_id: str = Field(min_length=1)
-    valid_from: datetime
-    valid_until: datetime
     maximum_allocation_fraction: UnitInterval
     minimum_entry_net_bps: Decimal
     minimum_hold_net_bps: Decimal
 
-    _utc_valid_from = field_validator("valid_from")(require_utc)
-    _utc_valid_until = field_validator("valid_until")(require_utc)
-
     @model_validator(mode="after")
-    def bounds_and_hysteresis_must_be_consistent(self):
-        if self.valid_from >= self.valid_until:
-            raise ValueError("Mock candidate authorization 时间范围非法")
+    def allocation_and_hysteresis_must_be_consistent(self):
         if self.maximum_allocation_fraction <= 0:
             raise ValueError("Mock candidate allocation 必须为正数")
         if self.minimum_hold_net_bps > self.minimum_entry_net_bps:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -67,8 +67,6 @@ class CapitalCandidateStatus:
     producer_version: str
     forecast_family: str
     authorization_status: str
-    authorization_valid_from: datetime | None
-    authorization_valid_until: datetime | None
     maximum_allocation_fraction: Decimal | None
     next_entry_at: datetime | None
     next_entry_expires_at: datetime | None
@@ -664,12 +662,6 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 "producer_version": candidate.producer_version,
                 "forecast_family": candidate.forecast_family,
                 "authorization_status": candidate.authorization_status,
-                "authorization_valid_from": _iso(
-                    candidate.authorization_valid_from
-                ),
-                "authorization_valid_until": _iso(
-                    candidate.authorization_valid_until
-                ),
                 "maximum_allocation_fraction": (
                     None
                     if candidate.maximum_allocation_fraction is None
@@ -751,17 +743,9 @@ def _capital_candidate_status(
         status = "NOT_AUTHORIZED"
         next_entry = next_expiry = None
     else:
-        status = (
-            "NOT_YET_VALID"
-            if now < permission.valid_from
-            else "ACTIVE"
-            if now < permission.valid_until
-            else "EXPIRED"
-        )
+        status = "ACTIVE"
         next_entry, next_expiry = _next_entry_window(
             now=now,
-            valid_from=permission.valid_from,
-            valid_until=permission.valid_until,
             window_minutes=policy.maximum_monthly_entry_delay_minutes,
         )
     evidence = policy.evidence
@@ -773,8 +757,6 @@ def _capital_candidate_status(
         producer_version=policy.version,
         forecast_family=policy.forecast_family,
         authorization_status=status,
-        authorization_valid_from=(permission.valid_from if permission else None),
-        authorization_valid_until=(permission.valid_until if permission else None),
         maximum_allocation_fraction=(
             permission.maximum_allocation_fraction if permission else None
         ),
@@ -789,22 +771,14 @@ def _capital_candidate_status(
 def _next_entry_window(
     *,
     now: datetime,
-    valid_from: datetime,
-    valid_until: datetime,
     window_minutes: int,
-) -> tuple[datetime | None, datetime | None]:
-    cursor = datetime(valid_from.year, valid_from.month, 1, tzinfo=UTC)
-    if cursor < valid_from:
+) -> tuple[datetime, datetime]:
+    cursor = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    expires_at = cursor + timedelta(minutes=window_minutes)
+    if now >= expires_at:
         cursor = _next_month(cursor)
-    while cursor < valid_until:
-        expires_at = min(
-            cursor + timedelta(minutes=window_minutes),
-            valid_until,
-        )
-        if now < expires_at:
-            return cursor, expires_at
-        cursor = _next_month(cursor)
-    return None, None
+        expires_at = cursor + timedelta(minutes=window_minutes)
+    return cursor, expires_at
 
 
 def _next_month(value: datetime) -> datetime:

@@ -3,7 +3,6 @@
 from investment_manager.entrypoints.cli import (
     assessment_commands as _assessment_commands,  # noqa: F401
 )
-from investment_manager.entrypoints.cli import capital_commands as _capital_commands  # noqa: F401
 from investment_manager.entrypoints.cli import commands as _commands  # noqa: F401
 from investment_manager.entrypoints.cli import (  # noqa: F401
     fact_store_commands as _fact_store_commands,

@@ -435,15 +435,6 @@ Forward 结果成熟且通过同口径门禁，候选才可实现为一个 `Capi
 “读取前序→投影→持久化”，并由 `(portfolio_id, revision)` 唯一约束兜底；跨 UTC 日的首个快照把与
 上一权威快照之间的权益差计入新日，而不是重置为零后永久漏记。
 
-Capital 的前瞻评价不建立第二套收益账本。`CapitalShadowEvaluationSpec` 在首笔订单前绑定精确
-Release、配置哈希、组件版本、Evidence 制品、资本行为哈希和未来十二个自然月，并把现金与源研究策略
-冻结为双基线；运行完整率、晚开、重复 group、未对冲/恢复时限以及全部成本维度进入同一个通用
-`EvaluationPlan` 快照。Capital Trigger Service 在创建 TriggerPlan 或装配资本消费者前，必须从治理库
-取得恰好一个与当前 Release 逐字段一致且已提前登记的合同，否则失败关闭。任何绑定身份变化都截断
-cohort，未来 evaluator 只能从 Forecast、PortfolioTarget、Account、Performance 与 ExecutionGroup
-权威事实派生结果。旧月度 Release
-的自然月行为继续由其冻结 Forecast policy 与评价 spec 表达，不得重新泄漏为账户级 cadence。
-
 下一步是在独立事实库持续验证恢复、绩效区间和 30 日结算，并补 Sleeve 级可核对归因；随后才实现
 Binance Spot + USD-M Product Venue 和权威账户对账。迁移完成后删除旧合同，不保留适配器或双路径。
 
@@ -460,8 +451,8 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 权限分两次授予，但不是两种 Forecast 或两套组合算法：
 
-1. **Mock 候选授权**只要求事前冻结经济假设、点时数据合同、自然信号、行为身份、现实成本、风险上限、评价
-   窗口和失败/删除条件；它的目的就是产生尚不存在的前向证据，因此不得反过来要求已有盈利结论。
+1. **Mock 候选授权**只要求事前冻结经济假设、点时数据合同、自然信号、行为身份、现实成本、风险上限和
+   失败/删除条件；授权随 Release 立即生效，直到候选被新 Release 替换或移除，不设置日历等待期。
 2. **真实订单授权**必须读取同一候选在独立样本上的费用后增量、保守下界、回撤、容量、恢复和数据完整性，
    未通过时不能因为模拟盈利、AI 自信或主 Agent 判断而放宽。
 
@@ -473,21 +464,11 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
 并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。calendar carry 的不可变历史 Evidence 不会单独获得资本权限；它只作为点时 counterfactual，或由精确的
-事前 Mock authorization 支撑同一候选收集前向证据。主动链同时最多装配一个机制明确、事前登记的
+结论。calendar carry 的不可变历史 Evidence 不会单独获得真实订单权限；精确的 Mock authorization 只允许
+同一候选在模拟盘收集前向证据。主动链同时最多装配一个机制明确、事前登记的
 challenger；没有授权或没有自然信号时保持现金。已经失败的
 `dynamic-carry-point-in-time-v2` 生产代码和装配已删除，只保留内容寻址失败制品与不可变计划失效事实。新候选
 必须在结构和信息来源上与它不同，先完成低成本拒绝型回放，再进入同一模拟资本链，避免在同一标签上调参。
-
-Capital evaluator 与候选 Release 同时冻结，不在结果出现后补写裁判。它从不可变 `CapitalCycleRecord`、Forecast、
-Target、Risk、TradePlan、ExecutionGroup、订单观察和相邻账户绩效区间投影一份内容寻址账本：自然月收益使用每个
-UTC 月界之后、冻结最大延迟内最早的权威账户 revision；延迟上限由心跳间隔与 Activity 调度期限在计划登记时
-确定，月界唤醒只负责及时生成 revision，不能改写估值或插值。观察窗收益和 counterfactual 都从观察起点选中的
-真实账户权益开始，账户初始化金额只作来源核对，观察窗前的交易损益不得混入或使评价失效。费用后净权益必须与 price、funding 和 fee 加法归因一致，slippage 与
-compensation 只作诊断而不重复计入 PnL。calendar counterfactual 复用候选的 Trigger 时点、当时可见可成交报价、
-Funding、费用、数量精度和 30% 容量，但不写 Forecast、Target、订单或账户。观察窗和结算宽限期未成熟时只能输出
-`INCOMPLETE`；成熟后任一月界在冻结延迟内缺少权威 revision、决策链或点时事实都会失败关闭，不能用更晚估值、
-插值或事后行情补齐。
 
 ## 4. 目标目录
 

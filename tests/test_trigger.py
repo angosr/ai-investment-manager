@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from datetime import timedelta
 from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from investment_manager.portfolio.models import MockCandidateAuthorization
 from investment_manager.scheduling.application import ensure_trigger_plans, trigger_now
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.models import (
@@ -184,11 +182,6 @@ def test_trigger_service_acquires_leadership_before_durable_release_setup(
     )
     monkeypatch.setattr(
         trigger_runtime,
-        "SqlGovernanceRepository",
-        lambda _engine: events.append("release-write"),
-    )
-    monkeypatch.setattr(
-        trigger_runtime,
         "ensure_trigger_plans",
         lambda *_args, **_kwargs: events.append("plan-write"),
     )
@@ -201,101 +194,6 @@ def test_trigger_service_acquires_leadership_before_durable_release_setup(
         )
 
     assert events == ["leadership"]
-
-
-def test_trigger_service_validates_capital_contract_before_plan_bootstrap(
-    monkeypatch, app_config
-) -> None:
-    events: list[str] = []
-    capital_config = app_config.model_copy(
-        update={
-            "capital": app_config.capital.model_copy(
-                update={
-                    "enabled": True,
-                    "mock_candidate_authorizations": (
-                        MockCandidateAuthorization(
-                            version="trigger-test-authorization-v1",
-                            producer_id=app_config.carry_forecast.producer_id,
-                            producer_version=app_config.carry_forecast.version,
-                            forecast_family=app_config.carry_forecast.forecast_family,
-                            hypothesis_fingerprint="d" * 64,
-                            evaluation_plan_id="trigger-test-plan",
-                            valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-                            valid_until=datetime(2027, 1, 1, tzinfo=UTC),
-                            maximum_allocation_fraction=Decimal("0.1"),
-                            minimum_entry_net_bps=Decimal("5"),
-                            minimum_hold_net_bps=Decimal("-5"),
-                        ),
-                    ),
-                }
-            )
-        }
-    )
-    manifest = SimpleNamespace(manifest_id="release-capital-contract")
-
-    class Leadership:
-        def __init__(self, _engine, _lock_key):
-            pass
-
-        def __enter__(self):
-            events.append("leadership")
-
-        def __exit__(self, exc_type, exc, traceback):
-            return None
-
-    class Governance:
-        def record_release(self, release):
-            assert release is manifest
-            events.append("release")
-
-        def plans_for_manifest(self, manifest_id):
-            assert manifest_id == manifest.manifest_id
-            events.append("load-evaluation-plans")
-            return ("capital-plan",)
-
-    class SetupComplete(RuntimeError):
-        pass
-
-    def validate(**kwargs):
-        assert kwargs["config"] is capital_config
-        assert kwargs["manifest"] is manifest
-        assert kwargs["plans"] == ("capital-plan",)
-        events.append("validate-capital-contract")
-
-    def stop_after_setup(**_kwargs):
-        events.append("bootstrap-trigger-plans")
-        raise SetupComplete
-
-    monkeypatch.setattr(trigger_runtime, "build_engine", lambda _url: object())
-    monkeypatch.setattr(trigger_runtime, "require_current_schema", lambda _engine: None)
-    monkeypatch.setattr(
-        trigger_runtime,
-        "SqlTriggerRepository",
-        lambda _engine, _policy: object(),
-    )
-    monkeypatch.setattr(trigger_runtime, "PostgresTriggerLeadership", Leadership)
-    monkeypatch.setattr(trigger_runtime, "SqlGovernanceRepository", lambda _engine: Governance())
-    monkeypatch.setattr(
-        trigger_runtime,
-        "validate_capital_shadow_evaluation_plan",
-        validate,
-    )
-    monkeypatch.setattr(trigger_runtime, "ensure_trigger_plans", stop_after_setup)
-
-    with pytest.raises(SetupComplete):
-        trigger_runtime.run_trigger_service(
-            config=capital_config,
-            manifest=manifest,
-            database_url="postgresql://unused",
-        )
-
-    assert events == [
-        "leadership",
-        "release",
-        "load-evaluation-plans",
-        "validate-capital-contract",
-        "bootstrap-trigger-plans",
-    ]
 
 
 def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
@@ -404,44 +302,6 @@ def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_pl
 
     assert repository.patch_count == 1
     assert repository.plan.scheduled_wakeups == (official, candidate)
-
-
-def test_authorized_capital_candidate_materializes_every_future_natural_window(
-    app_config,
-) -> None:
-    permission = MockCandidateAuthorization(
-        version="calendar-carry-test-authorization-v1",
-        producer_id=app_config.carry_forecast.producer_id,
-        producer_version=app_config.carry_forecast.version,
-        forecast_family=app_config.carry_forecast.forecast_family,
-        hypothesis_fingerprint="d" * 64,
-        evaluation_plan_id="calendar-carry-forward-test",
-        valid_from=datetime(2026, 9, 1, tzinfo=UTC),
-        valid_until=datetime(2027, 9, 1, tzinfo=UTC),
-        maximum_allocation_fraction=Decimal("0.3"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
-    )
-    configured = app_config.model_copy(
-        update={
-            "capital": app_config.capital.model_copy(
-                update={"enabled": True, "mock_candidate_authorizations": (permission,)}
-            )
-        }
-    )
-
-    scheduled = trigger_runtime.capital_candidate_wakeups(
-        configured,
-        now=datetime(2026, 8, 22, tzinfo=UTC),
-    )
-
-    wakeups = scheduled[app_config.carry_forecast.symbol]
-    assert len(wakeups) == 12
-    assert wakeups[0].wake_at == datetime(2026, 9, 1, tzinfo=UTC)
-    assert wakeups[0].expires_at == datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
-    assert wakeups[-1].wake_at == datetime(2027, 8, 1, tzinfo=UTC)
-    assert len({item.wakeup_id for item in wakeups}) == 12
-    assert all("自然月首信号窗口" in item.reason for item in wakeups)
 
 
 def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(

@@ -52,9 +52,7 @@
 
 主线已经完成首条 `BaseForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 资本切片：主动链唯一候选是获得显式 Mock 授权的 BTC Spot Long / USD-M Perpetual Short 月度 calendar carry；它只在月首自然窗口按点时 basis、funding 和现实成本选择持仓或现金。已失败的 dynamic carry 生产路径已经删除，只保留不可变失败证据；历史 blind 窗口因重叠不可再用，所以真实订单权限仍严格禁用。每个触发批次都追加一条不可变 `CapitalCycleRecord`，包括无机会、保持、风控退出和执行结果；Trigger 先恢复非终态 group、按真实 funding/费用/可成交价更新账户并复核持仓风险，再评价新的点时机会。低于最小调仓金额时 Target 冻结当前暴露，Planner 不会生成无效订单。
 
-Capital 的十二个月裁判已在观察窗前冻结并具有独立可执行入口：它只读权威资本账本，按精确 UTC 月界核对几何收益与费用归因，并用相同 Trigger、点时可成交报价、Funding、成本和容量计算不占实际资本的 calendar counterfactual。窗口成熟前结果只能是 `INCOMPLETE`，成熟后结果与完整账本投影一起写入内容寻址制品；实现完成不代表尚未产生的长期盈利证据已经存在。
-
-尚未完成且不能由仓库自行假定完成：独立 Capital Shadow 的长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，真正 PUSH/STREAM 的低延迟新闻源，以及“程序基线 vs 确定性 Context 否决规则”的前向配对增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。私有 Challenger 的真实 Codex ContextAssessment 只维护世界认知并判断程序基线之外的 carry 入场风险，明确标记研究旁路且无资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，真正 PUSH/STREAM 的低延迟新闻源，以及“程序基线 vs 确定性 Context 否决规则”的前向配对增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。私有 Challenger 的真实 Codex ContextAssessment 只维护世界认知并判断程序基线之外的 carry 入场风险，明确标记研究旁路且无资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 

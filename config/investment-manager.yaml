@@ -160,7 +160,7 @@ carry_forecast:
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
 capital:
-  version: product-capital-v7
+  version: product-capital-v8
   enabled: false
   settlement_asset: USDT
   decision:
@@ -285,7 +285,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v15
+  version: analysis-trigger-v16
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"
