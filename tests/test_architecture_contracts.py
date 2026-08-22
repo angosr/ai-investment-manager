@@ -45,13 +45,6 @@ CLI_CONTRACT = {
         "config,database_url,window_start,window_end,published_at,pipeline_version,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
-    "diagnose-dynamic-carry-history": (
-        "config,carry_dataset_id,start,end,carry_catalog,spot_catalog,result_catalog"
-    ),
-    "diagnose-dynamic-carry-intraday": (
-        "config,carry_dataset_id,spot_dataset_id,perpetual_dataset_id,start,end,"
-        "carry_catalog,dataset_catalog,result_catalog"
-    ),
     "evaluate-assessment-forward-plan": (
         "database_url,plan_id,published_at,evaluation_catalog"
     ),
@@ -276,8 +269,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
-            "diagnose-dynamic-carry-history",
-            "diagnose-dynamic-carry-intraday",
             "carry-walk-forward",
             "carry-blind-evaluate",
             "register-carry-forward-plan",

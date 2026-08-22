@@ -9,9 +9,6 @@ capital:
   enabled: false
   mock_candidate_authorizations: []
 
-dynamic_carry_forecast:
-  enabled: false
-
 market_data:
   version: binance-public-testnet-v3
   rest_base_url: https://testnet.binance.vision

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
@@ -5,7 +6,17 @@ from itertools import pairwise
 import pytest
 from sqlalchemy import create_engine, insert
 
-from investment_manager.decision_cycle.capital import assemble_capital_cycle
+from investment_manager.decision_cycle.capital import (
+    CapitalForecastSource,
+    assemble_capital_cycle,
+)
+from investment_manager.forecast.carry import _carry_target
+from investment_manager.forecast.models import (
+    BaseForecast,
+    DirectionalView,
+    ForecastReferencePrice,
+)
+from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.governance.evaluation.capital import (
     CapitalShadowEvaluationSpec,
     equity_values_reconcile,
@@ -25,12 +36,87 @@ from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
+    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
     PortfolioPerformanceInterval,
 )
 from investment_manager.scheduling.tables import analysis_trigger_batches
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
+
+_TEST_PRODUCER_ID = "ledger-test-candidate"
+_TEST_PRODUCER_VERSION = "ledger-test-candidate-v1"
+_TEST_FORECAST_FAMILY = "ledger-test-delta-neutral"
+
+
+def _candidate_config():
+    config = load_config("config/investment-manager.shadow.yaml")
+    permission = MockCandidateAuthorization(
+        version="ledger-test-authorization-v1",
+        producer_id=_TEST_PRODUCER_ID,
+        producer_version=_TEST_PRODUCER_VERSION,
+        forecast_family=_TEST_FORECAST_FAMILY,
+        hypothesis_fingerprint="b" * 64,
+        evaluation_plan_id="capital-ledger-test-plan",
+        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+        valid_until=datetime(2027, 10, 1, tzinfo=UTC),
+        maximum_allocation_fraction=Decimal("0.30"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    return config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={"mock_candidate_authorizations": (permission,)}
+            )
+        }
+    )
+
+
+@dataclass(frozen=True)
+class _LedgerForecastProducer:
+    store: SqlForecastStore
+
+    def produce(self, *, as_of: datetime) -> BaseForecast:
+        target = _carry_target(symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT")
+        forecast_id = stable_id(
+            "base_forecast",
+            _TEST_PRODUCER_ID,
+            _TEST_PRODUCER_VERSION,
+            target.target_id,
+            as_of,
+        )
+        existing = self.store.forecast(forecast_id)
+        if existing is not None:
+            assert isinstance(existing, BaseForecast)
+            return existing
+        forecast = BaseForecast(
+            forecast_id=forecast_id,
+            producer_id=_TEST_PRODUCER_ID,
+            producer_version=_TEST_PRODUCER_VERSION,
+            forecast_family=_TEST_FORECAST_FAMILY,
+            target=target,
+            horizon_minutes=7 * 24 * 60,
+            direction=DirectionalView.UP,
+            reference_prices=tuple(
+                ForecastReferencePrice(
+                    instrument_id=item.instrument.key,
+                    price=(
+                        Decimal("100000")
+                        if item.instrument.product == InstrumentProduct.SPOT
+                        else Decimal("100500")
+                    ),
+                )
+                for item in target.legs
+            ),
+            observed_at=as_of,
+            available_at=as_of,
+            valid_until=as_of + timedelta(minutes=30),
+            raw_score=Decimal("40"),
+            input_refs=(stable_id("ledger_test_input", as_of),),
+        )
+        self.store.record(forecast)
+        return forecast
 
 
 def _month(value: datetime, offset: int = 1) -> datetime:
@@ -262,7 +348,7 @@ def _put_flat_quotes(
 
 
 def test_v4_monthly_returns_use_bounded_authoritative_account_revisions() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
+    config = _candidate_config()
     spec = _evaluation_spec(config)
     start = spec.observation_start
     intervals = _account_intervals(
@@ -283,7 +369,7 @@ def test_v4_monthly_returns_use_bounded_authoritative_account_revisions() -> Non
 
 
 def test_v4_monthly_returns_reject_account_revision_beyond_frozen_delay() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
+    config = _candidate_config()
     spec = _evaluation_spec(config)
     maximum_delay = spec.thresholds.maximum_account_boundary_delay_seconds
     assert maximum_delay is not None
@@ -298,7 +384,7 @@ def test_v4_monthly_returns_reject_account_revision_beyond_frozen_delay() -> Non
 
 
 def test_v3_monthly_returns_preserve_exact_configured_start_semantics() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
+    config = _candidate_config()
     spec = _legacy_v3_spec(_evaluation_spec(config))
     exact = _account_intervals(
         spec.observation_start,
@@ -329,7 +415,7 @@ def test_v3_monthly_returns_preserve_exact_configured_start_semantics() -> None:
 def test_counterfactual_normalizes_from_observation_boundary_equity() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
+    config = _candidate_config()
     spec = _evaluation_spec(config)
     market = SqlMarketDataStore(engine)
     first = spec.observation_start + timedelta(seconds=5)
@@ -400,7 +486,7 @@ def test_counterfactual_normalizes_from_observation_boundary_equity() -> None:
 def test_capital_ledger_projects_exact_months_and_point_in_time_counterfactual() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
+    config = _candidate_config()
     start = datetime(2026, 9, 1, tzinfo=UTC)
     end = datetime(2027, 9, 1, tzinfo=UTC)
     permission = config.capital.mock_candidate_authorizations[0].model_copy(
@@ -421,7 +507,21 @@ def test_capital_ledger_projects_exact_months_and_point_in_time_counterfactual()
         observation_end=end,
     )
     market = SqlMarketDataStore(engine)
-    service = assemble_capital_cycle(config, engine)
+    evidence = config.carry_forecast.evidence
+    assert evidence is not None
+    service = assemble_capital_cycle(
+        config,
+        engine,
+        forecast_sources=(
+            CapitalForecastSource(
+                forecast_family=_TEST_FORECAST_FAMILY,
+                producer=_LedgerForecastProducer(SqlForecastStore(engine)),
+                estimated_variable_cost_bps=evidence.round_trip_cost_bps,
+                risk_template=config.capital.sleeve_risk,
+                mock_authorization=permission,
+            ),
+        ),
+    )
     for sequence in range(13):
         at = _month(start, sequence)
         _put_market(market, config, at=at, sequence=sequence)

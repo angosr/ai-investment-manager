@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
+from investment_manager.portfolio.models import MockCandidateAuthorization
 from investment_manager.scheduling.application import ensure_trigger_plans, trigger_now
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.models import (
@@ -207,7 +209,26 @@ def test_trigger_service_validates_capital_contract_before_plan_bootstrap(
     events: list[str] = []
     capital_config = app_config.model_copy(
         update={
-            "capital": app_config.capital.model_copy(update={"enabled": True})
+            "capital": app_config.capital.model_copy(
+                update={
+                    "enabled": True,
+                    "mock_candidate_authorizations": (
+                        MockCandidateAuthorization(
+                            version="trigger-test-authorization-v1",
+                            producer_id="trigger-test-candidate",
+                            producer_version="trigger-test-candidate-v1",
+                            forecast_family="trigger-test-family",
+                            hypothesis_fingerprint="d" * 64,
+                            evaluation_plan_id="trigger-test-plan",
+                            valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+                            valid_until=datetime(2027, 1, 1, tzinfo=UTC),
+                            maximum_allocation_fraction=Decimal("0.1"),
+                            minimum_entry_net_bps=Decimal("5"),
+                            minimum_hold_net_bps=Decimal("-5"),
+                        ),
+                    ),
+                }
+            )
         }
     )
     manifest = SimpleNamespace(manifest_id="release-capital-contract")

@@ -365,13 +365,10 @@ Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账�
 每个冻结 TriggerBatch 还以自身 batch ID 作为 cause 追加一条 `CapitalCycleRecord`，直接保存品种、触发类型、
 账户快照、Forecast/Target 引用与终态；因此无 Target 的无机会/保持也是权威事实，多品种同一时刻触发不会
 依赖时间近似关联或互相覆盖。Dashboard 只投影该记录，不从“缺少 Target”反推行动。
-Shadow-only
-发布器只把与运行同为 15%/leg、30% gross 的 BTC 五折 walk-forward 制品投影成 `PROGRAM_BASE`
-CalibratedForecast；源文件 SHA-256、内部结果哈希、评价规格、数据集、策略、成本、样本与收益统计在
-装配时逐项校验，Capital ReleaseManifest 再绑定该制品哈希。研究、Portfolio 单 Sleeve 上限与 Risk
-gross/单产品上限必须满足同一尺寸恒等式。由于历史 blind 窗口已被其他候选消耗，配置必须显式记录
-`UNAVAILABLE_OVERLAPPING_WINDOW`，且非 SHADOW 阶段拒绝装配。`CapitalCycleService` 已把该 Forecast 接到 Portfolio、Risk、TradePlan、持久化 Mock Product
-Venue 与账户投影；该 Producer 错过自身入口时不产生新的经济目标，不为制造交易改变行为。持仓主动风险退出在每次
+月度 carry 的历史制品仅保留为研究和 counterfactual，不进入主动资本链。`CapitalCycleService` 允许零个
+合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
+未来候选必须以显式 `CapitalForecastSource` 接入同一 Portfolio、Risk、TradePlan、持久化 Mock Product Venue
+与账户投影，并绑定事前登记的 Mock authorization。持仓主动风险退出在每次
 账户观察后形成显式 `PortfolioHoldingRiskReview`：正常持有为 `HOLD`，未对账、旧输入或未完成 group
 为 `DEFER`，账户/敞口/保证金/压力越界为 `EXIT`。EXIT 只能由 Portfolio 生成零暴露 Target，再走原有
 Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新开放 allocation，也不存在紧急下单旁路。
@@ -424,18 +421,10 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
 并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。calendar carry 的不可变历史 Evidence 只作为新 cohort 的点时 counterfactual，不进入主动资本链、也不占用
-组合容量；主动链只装配一个 dynamic challenger。新增收益来源仍一次只接入一个机制不同的 challenger，避免并行
-试错把选择偏差伪装成盈利能力。
-
-Dynamic challenger 另有一个内容寻址的**淘汰型历史诊断**，直接冻结现役信号公式、费用、5/-5bp
-入场/持有滞回、组合与风控共同约束后的仓位、数量步长和最小订单额；资金结算严格按 `available_at`
-进入信号，缺少新信号时沿用生产语义持仓而非擅自退出。现有 carry 历史价格只有 UTC 日线，因此它只能在
-日开盘检验长期费用后经济性，不能重放 15 分钟触发、可成交 bid/ask、跨市场报价偏差或盘中风险退出，也绝不
-产生部署权限。研究层可另行冻结同窗口的 Spot 与 USD-M 成交价盘中 K 线，并用同一记账引擎覆盖全部可表达的
-Heartbeat 相位；由于公开历史没有两腿近期可成交 bid/ask，该路径按零历史点差运行，只是更强的乐观淘汰诊断，
-不能因时间粒度更细而升级成正式回测。只有先补齐内容寻址的盘中双产品可成交行情，才允许把它升级为候选的
-正式评价器；事件触发时点和前向成交恢复证据仍须独立验证。
+结论。calendar carry 的不可变历史 Evidence 只作为点时 counterfactual，不进入主动资本链、也不占用组合容量。
+主动链同时最多装配一个机制明确、事前登记的 challenger；当前没有合格候选，因此保持现金。已经失败的
+`dynamic-carry-point-in-time-v2` 生产代码和装配已删除，只保留内容寻址失败制品与不可变计划失效事实。新候选
+必须在结构和信息来源上与它不同，先完成低成本拒绝型回放，再进入同一模拟资本链，避免在同一标签上调参。
 
 Capital evaluator 与候选 Release 同时冻结，不在结果出现后补写裁判。它从不可变 `CapitalCycleRecord`、Forecast、
 Target、Risk、TradePlan、ExecutionGroup、订单观察和相邻账户绩效区间投影一份内容寻址账本：自然月收益使用每个

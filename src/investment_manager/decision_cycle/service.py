@@ -119,7 +119,7 @@ def run_trigger_service(
     with leadership:
         governance = SqlGovernanceRepository(engine)
         governance.record_release(manifest)
-        if config.capital.enabled:
+        if config.capital.mock_candidate_authorizations:
             validate_capital_shadow_evaluation_plan(
                 config=config,
                 manifest=manifest,

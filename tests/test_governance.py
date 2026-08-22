@@ -160,7 +160,6 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
             for name, _version in historical.component_versions
         ),
         ("carry_forecast", config.carry_forecast.version),
-        ("dynamic_carry_forecast", config.dynamic_carry_forecast.version),
         ("capital", config.capital.version),
     )
     manifest = historical.model_copy(

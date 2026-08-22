@@ -144,22 +144,8 @@ carry_forecast:
     valid_until: 2027-08-01T00:00:00Z
     blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
 
-dynamic_carry_forecast:
-  version: dynamic-carry-point-in-time-v2
-  enabled: false
-  producer_id: btc-dynamic-carry
-  forecast_family: delta-neutral-dynamic-carry
-  symbol: BTCUSDT
-  base_asset: BTC
-  quote_asset: USDT
-  funding_lookback_hours: 24
-  minimum_funding_settlements: 2
-  forecast_horizon_hours: 168
-  funding_interval_hours: 8
-  signal_validity_minutes: 30
-
 capital:
-  version: product-capital-v6
+  version: product-capital-v7
   enabled: false
   settlement_asset: USDT
   decision:

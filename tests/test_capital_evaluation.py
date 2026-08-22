@@ -18,13 +18,34 @@ from investment_manager.governance.models import (
     load_release_manifest,
 )
 from investment_manager.kernel.identity import content_hash
+from investment_manager.portfolio.models import MockCandidateAuthorization
 from investment_manager.settings import load_config
 
-PLAN_ID = "capital-shadow-dynamic-v1"
+PLAN_ID = "capital-shadow-candidate-v1"
 
 
 def _release():
     config = load_config("config/investment-manager.shadow.yaml")
+    permission = MockCandidateAuthorization(
+        version="capital-evaluation-test-authorization-v1",
+        producer_id="capital-evaluation-test-candidate",
+        producer_version="capital-evaluation-test-candidate-v1",
+        forecast_family="capital-evaluation-test-family",
+        hypothesis_fingerprint="c" * 64,
+        evaluation_plan_id=PLAN_ID,
+        valid_from=datetime(2026, 8, 21, tzinfo=UTC),
+        valid_until=datetime(2027, 10, 1, tzinfo=UTC),
+        maximum_allocation_fraction=Decimal("0.30"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    config = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={"mock_candidate_authorizations": (permission,)}
+            )
+        }
+    )
     historical = load_release_manifest("config/release-manifest.yaml")
     evidence = config.carry_forecast.evidence
     assert evidence is not None
@@ -66,7 +87,7 @@ def test_capital_shadow_plan_freezes_release_baselines_and_failure_rules() -> No
     assert spec.source_policy_version == "spot-perp-calendar-month-risk-30pct-v3"
     assert spec.version == "capital-shadow-evaluation-spec-v4"
     assert spec.equity_boundary_rule == ("EARLIEST_AUTHORITATIVE_REVISION_AT_OR_AFTER_BOUNDARY")
-    assert "ONE_ACTIVE_DYNAMIC_PRODUCER" in spec.behavior_contract
+    assert "ONE_ACTIVE_CANDIDATE_PRODUCER" in spec.behavior_contract
     assert "MONTHLY_COUNTERFACTUAL_DOES_NOT_CONSUME_CAPITAL" in (spec.behavior_contract)
     assert spec.thresholds.calendar_months == 12
     assert spec.thresholds.minimum_forecast_available_months == 11

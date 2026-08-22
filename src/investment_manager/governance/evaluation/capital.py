@@ -44,7 +44,6 @@ def capital_behavior_hash(config: AppConfig) -> str:
     return content_hash(
         {
             "carry_forecast": config.carry_forecast.model_dump(mode="json"),
-            "dynamic_carry_forecast": config.dynamic_carry_forecast.model_dump(mode="json"),
             "capital": config.capital.model_dump(mode="json"),
             "market_data": config.market_data.model_dump(mode="json"),
             "trigger": config.trigger.model_dump(mode="json"),
@@ -129,7 +128,7 @@ class CapitalShadowEvaluationSpec(FrozenModel):
         "SAME_DECISION_CHAIN_ABOVE_VENUE",
         "NATURAL_SIGNAL_NO_FORCED_TRADES",
         "MOCK_HYPOTHESIS_EDGE_EXPLICITLY_LABELED",
-        "ONE_ACTIVE_DYNAMIC_PRODUCER",
+        "ONE_ACTIVE_CANDIDATE_PRODUCER",
         "MONTHLY_COUNTERFACTUAL_DOES_NOT_CONSUME_CAPITAL",
         "RECOVER_OR_COMPENSATE_NONTERMINAL_GROUP",
         "PROGRAMMATIC_RISK_EXIT_ONLY",
@@ -196,7 +195,9 @@ class CapitalShadowEvaluationSpec(FrozenModel):
             raise ValueError("Capital 评价必须绑定完整 Release 与 Carry evidence")
         months = _calendar_month_count(observation_start, observation_end)
         permissions = config.capital.mock_candidate_authorizations
-        if permissions and any(item.evaluation_plan_id != plan_id for item in permissions):
+        if len(permissions) != 1:
+            raise ValueError("Capital 评价必须绑定唯一主动候选权限")
+        if any(item.evaluation_plan_id != plan_id for item in permissions):
             raise ValueError("Mock candidate authorization 必须绑定本 Capital EvaluationPlan")
         return cls(
             plan_id=plan_id,

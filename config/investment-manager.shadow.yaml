@@ -6,24 +6,10 @@ strategy:
 
 capital:
   enabled: true
-  mock_candidate_authorizations:
-    - version: mock-candidate-authorization-v1
-      producer_id: btc-dynamic-carry
-      producer_version: dynamic-carry-point-in-time-v2
-      forecast_family: delta-neutral-dynamic-carry
-      hypothesis_fingerprint: ea53b956b9ece330d85b63df58b2ee7eb8de9f2c3a3ce8cd0cac66f90e8c6aa0
-      evaluation_plan_id: capital-shadow-dynamic-v1
-      valid_from: 2026-08-21T18:00:00Z
-      valid_until: 2027-09-01T00:00:00Z
-      maximum_allocation_fraction: "0.30"
-      minimum_entry_net_bps: "5"
-      minimum_hold_net_bps: "-5"
-
-dynamic_carry_forecast:
-  enabled: true
+  mock_candidate_authorizations: []
 
 pipeline:
-  version: carry-capital-shadow-v9
+  version: cash-observation-shadow-v1
 
 temporal:
   # 本配置只服务独立 Capital Shadow；冻结发布时必须与事实库一一对应。

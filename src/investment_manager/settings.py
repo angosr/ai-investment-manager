@@ -20,7 +20,6 @@ from investment_manager.forecast.policy import (
     CodexAccountRegistry,
     CodexRuntimePolicy,
     ContextAssessmentPolicy,
-    DynamicCarryForecastPolicy,
     PipelinePolicy,
     ProposalPolicy,
     StrategyPolicy,
@@ -37,8 +36,6 @@ from investment_manager.information.official.metrics import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
-from investment_manager.kernel.identity import content_hash
-from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import (
     CapitalPolicy,
@@ -57,7 +54,6 @@ class AppConfig(StrictConfig):
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
     carry_forecast: CarryForecastPolicy
-    dynamic_carry_forecast: DynamicCarryForecastPolicy
     capital: CapitalPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
@@ -139,10 +135,6 @@ class AppConfig(StrictConfig):
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前 Capital 候选权限只允许 SHADOW Mock")
-            if not self.carry_forecast.enabled or self.carry_forecast.evidence is None:
-                raise ValueError("Capital 必须绑定已发布的 Carry Shadow evidence")
-            if not self.dynamic_carry_forecast.enabled:
-                raise ValueError("Capital 主动链必须且只能启用 Dynamic Carry 候选")
             if self.capital.settlement_asset != self.carry_forecast.quote_asset:
                 raise ValueError("Capital 与 Shadow 结算资产必须一致")
             if (
@@ -155,59 +147,9 @@ class AppConfig(StrictConfig):
                 != self.market_data.maximum_cross_market_quote_skew_seconds
             ):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
-            evidence_gross = (
-                self.carry_forecast.evidence.evaluated_gross_exposure_fraction
-            )
-            if (
-                self.capital.decision.maximum_total_exposure_fraction
-                != evidence_gross
-                or self.capital.decision.maximum_single_sleeve_fraction
-                != evidence_gross
-                or self.capital.risk.maximum_gross_exposure_fraction
-                != evidence_gross
-                or self.capital.risk.maximum_instrument_fraction * 2
-                != evidence_gross
-            ):
-                raise ValueError("Carry 研究、组合与风控仓位尺寸必须完全一致")
-            instruments = tuple(
-                item.instrument for item in self.capital.execution_specs
-            )
-            if (
-                {item.product for item in instruments}
-                != {
-                    InstrumentProduct.SPOT,
-                    InstrumentProduct.USD_M_PERPETUAL,
-                }
-                or any(
-                    item.symbol != self.carry_forecast.symbol
-                    or item.base_asset != self.carry_forecast.base_asset
-                    or item.quote_asset != self.carry_forecast.quote_asset
-                    for item in instruments
-                )
-            ):
-                raise ValueError("Capital Instruments 必须精确匹配 Carry 双产品目标")
         permissions = self.capital.mock_candidate_authorizations
-        if self.dynamic_carry_forecast.enabled:
-            if not self.capital.enabled or self.deployment.stage != DeploymentStage.SHADOW:
-                raise ValueError("Dynamic Carry 只能由启用的 SHADOW Capital 运行")
-            if len(permissions) != 1:
-                raise ValueError("Dynamic Carry 必须绑定唯一 Mock candidate authorization")
-            permission = permissions[0]
-            dynamic = self.dynamic_carry_forecast
-            if (
-                permission.producer_id != dynamic.producer_id
-                or permission.producer_version != dynamic.version
-                or permission.forecast_family != dynamic.forecast_family
-                or permission.hypothesis_fingerprint != content_hash(dynamic)
-            ):
-                raise ValueError("Dynamic Carry 与 Mock candidate authorization 身份不一致")
-            if (
-                dynamic.funding_lookback_hours
-                > self.market_data.funding_history_lookback_hours
-            ):
-                raise ValueError("Dynamic Carry 回看窗口超过 Market Funding 历史")
-        elif permissions:
-            raise ValueError("禁用 Dynamic Carry 时不得保留 Mock candidate authorization")
+        if permissions and not self.capital.enabled:
+            raise ValueError("禁用 Capital 时不得保留 Mock candidate authorization")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

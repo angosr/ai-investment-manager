@@ -106,7 +106,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 - `information-collector`：采集本机 TrendRadar/NewsNow 事件流和配置中固定的一手官方端点；聚合事件与官方记录分别进入各自事实边界，再统一投影到 State。
 - `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
-- `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让唯一 dynamic carry 主动 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。月度 calendar carry 只供 evaluator 构建点时 counterfactual，不进入主动链。Dispatcher 不实现业务防抖或批处理。
+- `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让显式装配的合格 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。没有候选时只形成现金观察事实；月度 calendar carry 只供 evaluator 构建点时 counterfactual，不进入主动链。Dispatcher 不实现业务防抖或批处理。
 - Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。
 - 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
 - Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。
@@ -158,37 +158,11 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 窗口结束并经过七天结算宽限后，先用现有冻结命令生成精确同窗口的现货、资金费率和 carry 内容寻址数据，再从预登记的精确 Git 提交及 Python/Pydantic 环境运行 `evaluate-carry-forward-plan --plan-id ... --carry-dataset-id ...`。评价命令在读取调用方指定的数据制品前先校验成熟时间、代码版本和最小依赖环境，随后按 carry 引用加载现货与官方资金费率制品并逐条复核结算；数据窗口、来源、采集时间、资金费率身份或预登记规格任一不符都会失败关闭。连续账本费用后净收益不为正，或采用固定三个月滞后的保守 Newey-West 月度收益下界不为正，均不能通过。它只产生研究结果和失败实验事实，不创建永续适配器、订单或权限。
 
-现役 dynamic carry 可先用同一冻结配置做低成本淘汰诊断：
-
-```bash
-.venv/bin/investment-manager diagnose-dynamic-carry-history \
-  --config '<冻结 Capital 配置>' \
-  --carry-dataset-id '<内容寻址 carry 数据集 ID>'
-```
-
-命令从配置自行派生信号、成本、滞回、风险尺寸和执行规则，以配置中的初始权益在 UTC 日开盘回放，
-并写入 `.runtime/dynamic-carry-replays/`。它保留资金费的点时可见性和费用后权益，但日线无法证明
-15 分钟机会能成交，结果固定标记为 `REJECTION_ONLY_DIAGNOSTIC`；不得登记成通过证据或据此扩大权限。
-
-若已冻结同窗口、同周期的 Binance Spot 与 USD-M 合约成交价 K 线，可补做全部可表达 Heartbeat 相位的
-盘中淘汰诊断。USD-M 数据由官方 REST 独立冻结，不能用 Spot K 线或日线 carry 合约价格代替：
-
-```bash
-.venv/bin/investment-manager fetch-binance-usdm-history \
-  --config '<冻结 Capital 配置>' --symbol BTCUSDT --interval 5m \
-  --start '<UTC 起点>' --end '<UTC 终点>'
-
-.venv/bin/investment-manager diagnose-dynamic-carry-intraday \
-  --config '<冻结 Capital 配置>' \
-  --carry-dataset-id '<资金结算与日线 carry 数据集 ID>' \
-  --spot-dataset-id '<同窗口 Spot 5m 数据集 ID>' \
-  --perpetual-dataset-id '<同窗口 USD-M 5m 数据集 ID>'
-```
-
-该回放复用日线诊断的唯一资金、费用、仓位和滞回记账引擎，并分别运行每个可由 K 线表达的 Heartbeat
-相位。公开历史缺少两腿近期可成交 bid/ask，成交价开盘又按零历史点差计算，因此结果固定为
-`REJECTION_ONLY_OPTIMISTIC_DIAGNOSTIC`：任一相位费用后仍亏损可以淘汰弱经济假设；盈利不能证明可成交，
-不能替代前向 Shadow、事件触发回放或授予部署权限。结果的限制和数据身份随内容寻址制品永久冻结。
+`dynamic-carry-point-in-time-v2` 已退役。其最终淘汰证据是
+`.runtime/dynamic-carry-replays/dynamic_carry_intraday_replay_3d256fcb7296c85d7848.json`，内容哈希为
+`b10811677926447410f6b4904311e9e49be5e9402b5e3da1641cd5ad57a05ddb`。该偏乐观盘中诊断在全部可表达的
+Heartbeat 相位均为费用后亏损，因此 `capital-shadow-dynamic-v7` 已记录不可变失效事实。主线不再保留该
+候选的配置、生产者或诊断命令；失败制品和 Git 历史足以审计，不得以同一标签继续微调或重新授权。
 
 每个 Capital Shadow Release 必须在首个月度窗口前，向它自己的事实库登记一次运行评价合同；命令从冻结配置与 Manifest 派生全部行为身份、证据、基线、成本维度和故障门槛，调用方只能选择计划 ID 与未来自然月窗口：
 

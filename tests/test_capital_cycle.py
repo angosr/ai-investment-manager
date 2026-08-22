@@ -1,9 +1,13 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine, func, insert, select
 
-from investment_manager.decision_cycle.capital import assemble_capital_cycle
+from investment_manager.decision_cycle.capital import (
+    CapitalForecastSource,
+    assemble_capital_cycle,
+)
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
@@ -12,6 +16,13 @@ from investment_manager.entrypoints.dashboard.capital import (
 )
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
+from investment_manager.forecast.carry import _carry_target
+from investment_manager.forecast.models import (
+    BaseForecast,
+    DirectionalView,
+    ForecastReferencePrice,
+)
+from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import (
@@ -21,7 +32,11 @@ from investment_manager.market.perpetual.models import (
     PerpetualQuote,
 )
 from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.portfolio.models import CapitalCycleRecord, PortfolioEdgeBasis
+from investment_manager.portfolio.models import (
+    CapitalCycleRecord,
+    MockCandidateAuthorization,
+    PortfolioEdgeBasis,
+)
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
@@ -38,6 +53,121 @@ from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
 NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
+
+_TEST_PRODUCER_ID = "test-capital-candidate"
+_TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
+_TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
+
+
+@dataclass(frozen=True)
+class _FixedMockForecastProducer:
+    store: SqlForecastStore
+    raw_score: Decimal
+    available_delay_seconds: int = 0
+
+    def produce(self, *, as_of: datetime) -> BaseForecast:
+        available_at = as_of + timedelta(seconds=self.available_delay_seconds)
+        target = _carry_target(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        )
+        reference_prices = tuple(
+            ForecastReferencePrice(
+                instrument_id=item.instrument.key,
+                price=(
+                    Decimal("100000")
+                    if item.instrument.product == InstrumentProduct.SPOT
+                    else Decimal("100300")
+                ),
+            )
+            for item in target.legs
+        )
+        forecast_id = stable_id(
+            "base_forecast",
+            _TEST_PRODUCER_ID,
+            _TEST_PRODUCER_VERSION,
+            target.target_id,
+            available_at,
+            self.raw_score,
+        )
+        existing = self.store.forecast(forecast_id)
+        if existing is not None:
+            assert isinstance(existing, BaseForecast)
+            return existing
+        forecast = BaseForecast(
+            forecast_id=forecast_id,
+            producer_id=_TEST_PRODUCER_ID,
+            producer_version=_TEST_PRODUCER_VERSION,
+            forecast_family=_TEST_FORECAST_FAMILY,
+            target=target,
+            horizon_minutes=7 * 24 * 60,
+            direction=DirectionalView.UP,
+            reference_prices=reference_prices,
+            observed_at=as_of,
+            available_at=available_at,
+            valid_until=available_at + timedelta(minutes=30),
+            raw_score=self.raw_score,
+            input_refs=(stable_id("test_candidate_input", as_of),),
+            unknowns=("TEST_FORECAST",),
+        )
+        self.store.record(forecast)
+        return forecast
+
+
+class _NoForecastProducer:
+    def produce(self, *, as_of: datetime) -> None:
+        return None
+
+
+def _candidate_service(
+    config,
+    engine,
+    *,
+    raw_score: Decimal = Decimal("40"),
+    available_delay_seconds: int = 0,
+    emit: bool = True,
+):
+    authorization = MockCandidateAuthorization(
+        version="test-mock-candidate-authorization-v1",
+        producer_id=_TEST_PRODUCER_ID,
+        producer_version=_TEST_PRODUCER_VERSION,
+        forecast_family=_TEST_FORECAST_FAMILY,
+        hypothesis_fingerprint="a" * 64,
+        evaluation_plan_id="test-capital-candidate-plan",
+        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+        valid_until=datetime(2027, 1, 1, tzinfo=UTC),
+        maximum_allocation_fraction=Decimal("0.30"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    configured = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={"mock_candidate_authorizations": (authorization,)}
+            )
+        }
+    )
+    source = CapitalForecastSource(
+        forecast_family=_TEST_FORECAST_FAMILY,
+        producer=(
+            _FixedMockForecastProducer(
+                store=SqlForecastStore(engine),
+                raw_score=raw_score,
+                available_delay_seconds=available_delay_seconds,
+            )
+            if emit
+            else _NoForecastProducer()
+        ),
+        estimated_variable_cost_bps=Decimal("20"),
+        risk_template=configured.capital.sleeve_risk,
+        mock_authorization=authorization,
+    )
+    return configured, assemble_capital_cycle(
+        configured,
+        engine,
+        forecast_sources=(source,),
+    )
 
 
 def _put_market(
@@ -157,14 +287,44 @@ def _put_funding_history(
         )
 
 
-def test_capital_cycle_turns_dynamic_carry_into_idempotent_mock_trade() -> None:
+def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=6)
+
+    result = assemble_capital_cycle(config, engine).produce(
+        as_of=NOW,
+        cause_id="cash-observation-batch",
+        trigger_batch_id="cash-observation-batch",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert result.outcome.value == "NO_CHANGE"
+    account = SqlPortfolioStore(engine).latest_account(
+        portfolio_id=config.capital.decision.portfolio_id,
+        as_of=NOW,
+    )
+    assert account is not None
+    assert account.cash_balance == account.equity == Decimal("10000")
+    assert not account.positions
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
+    activity = CapitalDashboardReader(engine, config).activity()[0]
+    assert activity.outcome == "NO_OPPORTUNITY"
+    assert activity.reason_codes == ("NO_ACTIVE_CAPITAL_OPPORTUNITY",)
+
+
+def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=7)
     _put_funding_history(market, config, at=NOW)
-    service = assemble_capital_cycle(config, engine)
+    config, service = _candidate_service(config, engine)
 
     first = service.produce(
         as_of=NOW,
@@ -247,7 +407,7 @@ def test_capital_cycle_turns_dynamic_carry_into_idempotent_mock_trade() -> None:
     assert first_page[0].activity_id != second_page[0].activity_id
 
 
-def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain() -> None:
+def test_explicit_mock_candidate_can_trade_outside_monthly_window_via_same_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -256,10 +416,11 @@ def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain(
     _put_market(market, config, at=at, sequence=70)
     _put_funding_history(market, config, at=at)
 
-    result = assemble_capital_cycle(config, engine, forecast_clock=lambda: at).produce(
+    config, service = _candidate_service(config, engine)
+    result = service.produce(
         as_of=at,
-        cause_id="dynamic-carry-batch",
-        trigger_batch_id="dynamic-carry-batch",
+        cause_id="explicit-candidate-batch",
+        trigger_batch_id="explicit-candidate-batch",
         symbol="BTCUSDT",
         trigger_types=("HEARTBEAT",),
     )
@@ -275,7 +436,7 @@ def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain(
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
 
 
-def test_unprofitable_dynamic_candidate_explains_cash_without_fake_rebalance() -> None:
+def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -289,10 +450,11 @@ def test_unprofitable_dynamic_candidate_explains_cash_without_fake_rebalance() -
         rates=("0.00001", "0.00001", "0.00001"),
     )
 
-    result = assemble_capital_cycle(config, engine, forecast_clock=lambda: at).produce(
+    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    result = service.produce(
         as_of=at,
-        cause_id="unprofitable-dynamic-carry-batch",
-        trigger_batch_id="unprofitable-dynamic-carry-batch",
+        cause_id="unprofitable-candidate-batch",
+        trigger_batch_id="unprofitable-candidate-batch",
         symbol="BTCUSDT",
         trigger_types=("HEARTBEAT",),
     )
@@ -318,10 +480,10 @@ def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -
     _put_market(market, config, at=NOW, sequence=8)
     _put_funding_history(market, config, at=NOW)
     available_at = NOW + timedelta(seconds=5)
-    service = assemble_capital_cycle(
+    config, service = _candidate_service(
         config,
         engine,
-        forecast_clock=lambda: available_at,
+        available_delay_seconds=5,
     )
 
     result = service.produce(
@@ -348,7 +510,7 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=1)
     _put_funding_history(market, config, at=NOW)
-    service = assemble_capital_cycle(config, engine)
+    config, service = _candidate_service(config, engine)
 
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
@@ -364,7 +526,8 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
         perpetual_bid="103280",
         perpetual_ask="103290",
     )
-    after_restart = assemble_capital_cycle(config, engine).produce(
+    config, restarted = _candidate_service(config, engine, emit=False)
+    after_restart = restarted.produce(
         as_of=missed,
         cause_id="capital-test-batch-2",
         trigger_batch_id="capital-test-batch-2",
@@ -390,7 +553,7 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     assert activity[0].reason_codes == ("NO_NEW_OPPORTUNITY_HOLDING_REVIEWED",)
 
 
-def test_dynamic_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
+def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     loaded = load_config("config/investment-manager.shadow.yaml")
@@ -404,7 +567,7 @@ def test_dynamic_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=10)
     _put_funding_history(market, config, at=NOW)
-    service = assemble_capital_cycle(config, engine)
+    config, service = _candidate_service(config, engine)
 
     forced_cash = service.produce(as_of=NOW)
     replay = service.produce(as_of=NOW)
@@ -427,7 +590,8 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
     market = SqlMarketDataStore(engine)
     _put_market(market, loaded, at=NOW, sequence=20)
     _put_funding_history(market, loaded, at=NOW)
-    opened = assemble_capital_cycle(loaded, engine).produce(as_of=NOW)
+    loaded, service = _candidate_service(loaded, engine)
+    opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
     assert opened.account.positions
 
@@ -440,7 +604,8 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
     )
     heartbeat = NOW + timedelta(hours=25)
     _put_market(market, protected, at=heartbeat, sequence=21)
-    exited = assemble_capital_cycle(protected, engine).produce(as_of=heartbeat)
+    protected, service = _candidate_service(protected, engine, emit=False)
+    exited = service.produce(as_of=heartbeat)
 
     assert isinstance(exited, TradePlanExecutionResult)
     assert not exited.account.positions

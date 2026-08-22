@@ -99,7 +99,7 @@ class SqlCapitalLedgerProjector:
         source_ids.update(item.interval_id for item in intervals)
         monthly_returns, starting, ending = self._monthly_returns(spec, intervals)
         attribution = self._attribution(intervals)
-        decision_source_ids, dynamic_forecasts = self._validate_decision_chain(
+        decision_source_ids, candidate_forecasts = self._validate_decision_chain(
             records,
         )
         source_ids.update(decision_source_ids)
@@ -121,7 +121,7 @@ class SqlCapitalLedgerProjector:
         )
         source_ids.update(market_source_ids)
         forecast_months = len(
-            {(item.available_at.year, item.available_at.month) for item in dynamic_forecasts}
+            {(item.available_at.year, item.available_at.month) for item in candidate_forecasts}
         )
         maximum_drawdown = self._maximum_drawdown(intervals, starting)
         unresolved = sum(not item.terminal for item in groups)
@@ -347,17 +347,21 @@ class SqlCapitalLedgerProjector:
             if {row.forecast_id for row in forecast_rows} != forecast_ids:
                 raise ValueError("Capital ledger CycleRecord 缺少 Forecast")
             loaded_forecasts = []
-            dynamic = self._config.dynamic_carry_forecast
+            permissions = {
+                item.forecast_family: item
+                for item in self._config.capital.mock_candidate_authorizations
+            }
             for row in forecast_rows:
                 if row.kind != ForecastKind.BASE.value:
-                    raise ValueError("Dynamic cohort 不得混入 CalibratedForecast")
+                    raise ValueError("Mock candidate cohort 不得混入 CalibratedForecast")
                 forecast = BaseForecast.model_validate(row.payload)
+                permission = permissions.get(forecast.forecast_family)
                 if (
-                    forecast.producer_id != dynamic.producer_id
-                    or forecast.producer_version != dynamic.version
-                    or forecast.forecast_family != dynamic.forecast_family
+                    permission is None
+                    or forecast.producer_id != permission.producer_id
+                    or forecast.producer_version != permission.producer_version
                 ):
-                    raise ValueError("Dynamic cohort Forecast producer 身份不一致")
+                    raise ValueError("Mock candidate cohort Forecast producer 身份不一致")
                 loaded_forecasts.append(forecast)
                 source_ids.add(row.forecast_id)
         return source_ids, tuple(loaded_forecasts)

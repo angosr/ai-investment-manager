@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from statistics import median
 
 from investment_manager.forecast.models import (
     BaseForecast,
@@ -23,7 +22,6 @@ from investment_manager.forecast.models import (
 from investment_manager.forecast.policy import (
     CarryEvidencePolicy,
     CarryForecastPolicy,
-    DynamicCarryForecastPolicy,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -236,164 +234,6 @@ class CarryForecastProducer:
     ) -> bool:
         age = expected_at - observed_at
         return timedelta(0) <= age <= timedelta(seconds=maximum_age_seconds)
-
-
-@dataclass(slots=True)
-class DynamicCarryForecastProducer:
-    """Emit a rolling BaseForecast from executable basis and visible funding."""
-
-    policy: DynamicCarryForecastPolicy
-    market: MarketDataStore
-    store: SqlForecastStore
-    maximum_spot_age_seconds: int
-    maximum_perpetual_age_seconds: int
-    maximum_quote_skew_seconds: int
-    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
-
-    def produce(self, *, as_of: datetime) -> BaseForecast | None:
-        if not self.policy.enabled:
-            return None
-        requested_at = require_utc(as_of)
-        available_at = max(require_utc(self.clock()), requested_at)
-        target = _carry_target(
-            symbol=self.policy.symbol,
-            base_asset=self.policy.base_asset,
-            quote_asset=self.policy.quote_asset,
-        )
-        spot, perpetual = (item.instrument for item in target.legs)
-        perpetual_quote = self.market.latest_perpetual_quote(
-            instrument=perpetual,
-            evaluation_at=available_at,
-            visible_at=available_at,
-        )
-        spot_quote = (
-            self.market.latest_spot_quote(
-                instrument=spot,
-                evaluation_at=perpetual_quote.observed_at,
-                visible_at=available_at,
-            )
-            if perpetual_quote is not None
-            else None
-        )
-        state = self.market.latest_perpetual_state(
-            instrument=perpetual,
-            as_of=available_at,
-        )
-        if spot_quote is None or perpetual_quote is None or state is None:
-            raise ValueError("Dynamic Carry 缺少 Spot/Perpetual 点时行情")
-        if not CarryForecastProducer._fresh(
-            observed_at=spot_quote.observed_at,
-            expected_at=available_at,
-            maximum_age_seconds=self.maximum_spot_age_seconds,
-        ):
-            raise ValueError("Dynamic Carry Spot 报价过期")
-        if not all(
-            CarryForecastProducer._fresh(
-                observed_at=value,
-                expected_at=available_at,
-                maximum_age_seconds=self.maximum_perpetual_age_seconds,
-            )
-            for value in (perpetual_quote.exchange_time, state.exchange_time)
-        ):
-            raise ValueError("Dynamic Carry Perpetual 行情过期")
-        observed_times = (
-            spot_quote.observed_at,
-            perpetual_quote.observed_at,
-            state.observed_at,
-        )
-        if (max(observed_times) - min(observed_times)).total_seconds() > (
-            self.maximum_quote_skew_seconds
-        ):
-            return None
-        settlements = self.market.funding_settlements(
-            instrument=perpetual,
-            start=available_at - timedelta(hours=self.policy.funding_lookback_hours),
-            end=available_at,
-            visible_at=available_at,
-        )
-        if len(settlements) < self.policy.minimum_funding_settlements:
-            return None
-        trailing_rate = median(item.funding_rate for item in settlements)
-        projected_rate = min(trailing_rate, state.last_funding_rate)
-        funding_periods = Decimal(self.policy.forecast_horizon_hours) / Decimal(
-            self.policy.funding_interval_hours
-        )
-        basis_convergence_bps = (
-            Decimal("0.5")
-            * (perpetual_quote.bid / spot_quote.ask - Decimal("1"))
-            * _BPS
-        )
-        projected_funding_bps = (
-            Decimal("0.5") * projected_rate * funding_periods * _BPS
-        )
-        projected_gross_bps = basis_convergence_bps + projected_funding_bps
-        direction = (
-            DirectionalView.UP
-            if projected_gross_bps > 0
-            else DirectionalView.DOWN
-            if projected_gross_bps < 0
-            else DirectionalView.UNCERTAIN
-        )
-        input_refs = tuple(
-            sorted(
-                {
-                    spot_quote.quote_id,
-                    perpetual_quote.quote_id,
-                    state.state_id,
-                    *(item.settlement_id for item in settlements),
-                }
-            )
-        )
-        forecast_id = stable_id(
-            "base_forecast",
-            self.policy.producer_id,
-            self.policy.version,
-            target.target_id,
-            available_at,
-            input_refs,
-        )
-        existing = self.store.forecast(forecast_id)
-        if existing is not None:
-            if not isinstance(existing, BaseForecast):
-                raise ValueError("Dynamic Carry Forecast identity 类型冲突")
-            return existing
-        forecast = BaseForecast(
-            forecast_id=forecast_id,
-            producer_id=self.policy.producer_id,
-            producer_version=self.policy.version,
-            forecast_family=self.policy.forecast_family,
-            target=target,
-            horizon_minutes=self.policy.forecast_horizon_hours * 60,
-            direction=direction,
-            reference_prices=(
-                ForecastReferencePrice(
-                    instrument_id=spot.key,
-                    price=spot_quote.ask,
-                ),
-                ForecastReferencePrice(
-                    instrument_id=perpetual.key,
-                    price=perpetual_quote.bid,
-                ),
-            ),
-            observed_at=max(
-                spot_quote.observed_at,
-                perpetual_quote.observed_at,
-                state.observed_at,
-                *(item.observed_at for item in settlements),
-            ),
-            available_at=available_at,
-            valid_until=available_at
-            + timedelta(minutes=self.policy.signal_validity_minutes),
-            raw_score=projected_gross_bps,
-            input_refs=input_refs,
-            unknowns=(
-                "FUTURE_FUNDING_RATE_PATH",
-                "EXIT_BASIS_AND_SPREAD",
-                "VENUE_AND_MARGIN_STRESS",
-            ),
-        )
-        self.store.record(forecast)
-        return forecast
 
 
 def _carry_target(

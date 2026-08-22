@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -27,9 +26,6 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
-from investment_manager.forecast.carry import (
-    DynamicCarryForecastProducer,
-)
 from investment_manager.forecast.repository import Forecast, SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -63,10 +59,6 @@ from investment_manager.scheduling.models import TriggerBatch
 from investment_manager.settings import AppConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 class CapitalForecastProducer(Protocol):
@@ -110,8 +102,8 @@ class CapitalCycleService:
         cycle_records: SqlCapitalCycleStore,
     ) -> None:
         families = tuple(item.forecast_family for item in forecast_sources)
-        if not families or tuple(sorted(set(families))) != tuple(sorted(families)):
-            raise ValueError("Capital Forecast sources 必须非空且 family 唯一")
+        if tuple(sorted(set(families))) != tuple(sorted(families)):
+            raise ValueError("Capital Forecast source family 必须唯一")
         self._config = config
         self._market = market
         self._forecasts = forecasts
@@ -721,13 +713,10 @@ def assemble_capital_cycle(
     config: AppConfig,
     engine,
     *,
-    forecast_clock: Callable[[], datetime] = _utc_now,
+    forecast_sources: tuple[CapitalForecastSource, ...] = (),
 ) -> CapitalCycleService:
     if not config.capital.enabled or config.deployment.stage != DeploymentStage.SHADOW:
         raise ValueError("Capital cycle 只装配显式启用的 SHADOW")
-    evidence = config.carry_forecast.evidence
-    if evidence is None:  # guarded by AppConfig; keep assembly fail-closed.
-        raise ValueError("Capital cycle 缺少 Carry evidence")
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     portfolio = SqlPortfolioStore(engine)
@@ -758,31 +747,6 @@ def assemble_capital_cycle(
         store=groups,
         venue=venue,
         observations=observations,
-    )
-    if not config.dynamic_carry_forecast.enabled:
-        raise ValueError("Capital cycle 必须绑定唯一 Dynamic Carry 主动候选")
-    forecast_sources = (
-        CapitalForecastSource(
-            forecast_family=config.dynamic_carry_forecast.forecast_family,
-            producer=DynamicCarryForecastProducer(
-                policy=config.dynamic_carry_forecast,
-                market=market,
-                store=forecasts,
-                maximum_spot_age_seconds=(
-                    config.capital.risk.maximum_quote_age_seconds
-                ),
-                maximum_perpetual_age_seconds=(
-                    config.capital.risk.maximum_quote_age_seconds
-                ),
-                maximum_quote_skew_seconds=(
-                    config.market_data.maximum_cross_market_quote_skew_seconds
-                ),
-                clock=forecast_clock,
-            ),
-            estimated_variable_cost_bps=evidence.round_trip_cost_bps,
-            risk_template=config.capital.sleeve_risk,
-            mock_authorization=config.capital.mock_candidate_authorizations[0],
-        ),
     )
     return CapitalCycleService(
         config=config,

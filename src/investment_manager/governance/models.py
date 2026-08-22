@@ -633,7 +633,6 @@ _CONFIG_COMPONENT_NAMES = (
     "strategy",
     "calibration",
     "carry_forecast",
-    "dynamic_carry_forecast",
     "capital",
     "composition",
     "frequency",
