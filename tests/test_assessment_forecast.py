@@ -244,6 +244,7 @@ def test_assessment_output_boundary_rejects_duplicate_set_items() -> None:
             {
                 "assessment": {
                     "market_mechanism": "政策修订改变了市场对贴现率路径的预期。",
+                    "mechanism_evidence_ids": ["delta-1"],
                     "drivers": [
                         _driver_payload(
                             evidence_ids=["delta-1", "delta-1"],
@@ -283,6 +284,7 @@ def test_unsupported_direction_is_rejected_instead_of_silently_rewritten(
             {
                 "assessment": {
                     "market_mechanism": "当前可见证据不足以支持可靠的方向判断。",
+                    "mechanism_evidence_ids": ["delta-1"],
                     "drivers": [
                         _driver_payload(
                             statement="当前只有价格与政策变化同时可见。",
@@ -318,6 +320,7 @@ def test_language_preference_does_not_reject_structurally_valid_output(text: str
     payload = {
         "assessment": {
             "market_mechanism": text,
+            "mechanism_evidence_ids": ["delta-1"],
             "drivers": [_driver_payload()],
             "views": [
                 {

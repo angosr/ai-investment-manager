@@ -75,7 +75,7 @@ def cycle_detail(facts: CycleFacts) -> dict:
 def assessment_row(record: AssessmentRecord) -> dict:
     assessment = record.assessment
     directional = [view for view in assessment.views if view.direction != "UNCERTAIN"]
-    cited_evidence_ids = {
+    cited_evidence_ids = set(assessment.mechanism_evidence_ids) | {
         evidence_id
         for item in (*assessment.drivers, *assessment.views)
         for evidence_id in item.evidence_ids
@@ -99,9 +99,14 @@ def assessment_detail(record: AssessmentRecord) -> dict:
     evidence_catalog = _assessment_evidence_catalog(record.packet)
     cited_ids = tuple(
         dict.fromkeys(
-            evidence_id
-            for item in (*assessment.drivers, *assessment.views)
-            for evidence_id in item.evidence_ids
+            (
+                *assessment.mechanism_evidence_ids,
+                *(
+                    evidence_id
+                    for item in (*assessment.drivers, *assessment.views)
+                    for evidence_id in item.evidence_ids
+                ),
+            )
         )
     )
     return {

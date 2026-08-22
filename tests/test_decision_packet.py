@@ -607,6 +607,7 @@ def _assessment_output() -> AssessStructuredOutput:
     return AssessStructuredOutput(
         assessment=ContextAssessmentDraft(
             market_mechanism="监管确定性变化可能改变市场要求的风险溢价。",
+            mechanism_evidence_ids=("revision-1",),
             drivers=(
                 ContextDriver(
                     statement="监管日程发生了可验证变化。",
@@ -1597,6 +1598,7 @@ def test_finalize_assessment_canonicalizes_complete_reordered_views(
     assert tuple((item.asset, item.horizon_minutes) for item in assessment.views) == tuple(
         (item.asset, item.horizon_minutes) for item in packet.required_views
     )
+    assert assessment.mechanism_evidence_ids == ("revision-1",)
 
 
 def test_finalize_assessment_rejects_duplicate_view(app_config, replay_input) -> None:
@@ -1624,6 +1626,28 @@ def test_finalize_assessment_rejects_unknown_evidence(app_config, replay_input) 
     payload = _assessment_output().model_dump()
     payload["assessment"]["views"][0]["evidence_ids"] = ("not-visible",)
     output = AssessStructuredOutput.model_validate(payload)
+
+    with pytest.raises(ValueError, match="不可见证据"):
+        finalize_context_assessment(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_finalize_assessment_rejects_unknown_mechanism_evidence(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    output = _assessment_output()
+    output = output.model_copy(
+        update={
+            "assessment": output.assessment.model_copy(
+                update={"mechanism_evidence_ids": ("not-visible",)}
+            )
+        }
+    )
 
     with pytest.raises(ValueError, match="不可见证据"):
         finalize_context_assessment(

@@ -295,6 +295,9 @@ class ContextAssessment(FrozenModel):
     decision_packet_hash: str = Field(pattern=SHA256_PATTERN)
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     market_mechanism: str = Field(min_length=1, max_length=2_000)
+    # New assessments anchor the mechanism itself. Empty remains readable for
+    # historical payloads created before the field existed.
+    mechanism_evidence_ids: tuple[str, ...] = ()
     # Empty is a first-class result when no baseline-changing driver is known.
     # Market state must not be promoted merely to fill a narrative slot.
     drivers: tuple[ContextDriver, ...] = ()
@@ -315,6 +318,8 @@ class ContextAssessment(FrozenModel):
             raise ValueError("ContextView 必须按资产/时域唯一且排序")
         if len(set(self.trigger_ids)) != len(self.trigger_ids):
             raise ValueError("ContextAssessment 不能重复引用触发")
+        if len(set(self.mechanism_evidence_ids)) != len(self.mechanism_evidence_ids):
+            raise ValueError("ContextAssessment 机制证据不能重复")
         event_ids = tuple(item.evidence_id for item in self.event_references)
         if len(set(event_ids)) != len(event_ids):
             raise ValueError("ContextAssessment 不能重复引用事件")

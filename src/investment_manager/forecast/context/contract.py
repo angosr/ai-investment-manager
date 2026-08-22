@@ -40,6 +40,7 @@ class ContextEventReferenceUpdate(FrozenModel):
 
 class ContextAssessmentDraft(FrozenModel):
     market_mechanism: str = Field(min_length=1, max_length=2_000)
+    mechanism_evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
     drivers: tuple[ContextDriver, ...] = Field(default=(), max_length=8)
     event_reference_updates: tuple[ContextEventReferenceUpdate, ...] = ()
     views: tuple[ContextView, ...] = Field(min_length=1)
@@ -60,6 +61,10 @@ ASSESS_INSTRUCTIONS = (
     "再给出已经被本轮证据支持的跨层传导链。至少比较政策或资金变化、利率/美元等中介变量、"
     "现货需求、衍生品仓位与价格响应；不得把涨跌、趋势或区间本身写成原因，"
     "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
+    "mechanism_evidence_ids 必须按正文重要性引用至少一项本轮可见证据；正文中的具体事实、"
+    "关键反证和传导结论必须能由这些引用追溯。没有方向优势时也要引用导致观望的关键事实或市场结构，"
+    "不得只引用数据缺口、review_requests 或上一轮认知。若引用情报事件，该事件还必须由 driver "
+    "解释传导并按既有事件规则登记为 ACTIVE。",
     "官方连续指标的 decision_materiality 由程序根据同源历史绝对变化分位数生成。"
     "BACKGROUND 或 UNKNOWN 指标只能合并为简短背景/反证，不得逐项展开，不得单独构成 driver，"
     "也不得支持 UP/DOWN；只有 CANDIDATE 才表示量级足以进入主导因素竞争，"
@@ -239,6 +244,7 @@ def finalize_context_assessment(
     ordered_views = tuple(views_by_key[key] for key in expected_views)
     visible_evidence = set(assessment_visible_evidence_ids(packet))
     referenced_evidence = {
+        *output.assessment.mechanism_evidence_ids,
         *(evidence_id for view in ordered_views for evidence_id in view.evidence_ids),
         *(
             evidence_id
@@ -256,6 +262,9 @@ def finalize_context_assessment(
         packet.previous_context.assessment_id if packet.previous_context is not None else None
     )
     if previous_id is not None:
+        circular_mechanism = set(output.assessment.mechanism_evidence_ids) == {
+            previous_id
+        }
         circular_inferences = tuple(
             driver.statement
             for driver in output.assessment.drivers
@@ -267,7 +276,7 @@ def finalize_context_assessment(
             for view in ordered_views
             if view.direction.value != "UNCERTAIN" and set(view.evidence_ids) == {previous_id}
         )
-        if circular_inferences or circular_views:
+        if circular_mechanism or circular_inferences or circular_views:
             raise ContextAssessmentContractError(
                 "ASSESSMENT_CIRCULAR_INFERENCE",
                 "上一轮认知不能单独证明本轮推断或方向",
@@ -371,6 +380,7 @@ def finalize_context_assessment(
         decision_packet_hash=packet.content_hash,
         trigger_ids=packet.trigger_ids,
         market_mechanism=output.assessment.market_mechanism,
+        mechanism_evidence_ids=output.assessment.mechanism_evidence_ids,
         drivers=output.assessment.drivers,
         event_references=event_references,
         views=ordered_views,
