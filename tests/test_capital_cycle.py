@@ -10,6 +10,7 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_activity,
     serialize_capital_overview,
 )
+from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentProduct, MarketQuote
@@ -237,6 +238,13 @@ def test_capital_cycle_turns_dynamic_carry_into_idempotent_mock_trade() -> None:
     assert activity_by_symbol["ETHUSDT"].trigger_types == ("MARKET_SHOCK",)
     assert activity_by_symbol["BTCUSDT"].outcome == "EXECUTED"
     assert activity_by_symbol["BTCUSDT"].trigger_types == ("HEARTBEAT",)
+    first_page = CapitalDashboardReader(engine, config).activity(limit=1)
+    second_page = CapitalDashboardReader(engine, config).activity(
+        cursor=PageCursor(first_page[0].at, first_page[0].activity_id),
+        limit=1,
+    )
+    assert len(first_page) == len(second_page) == 1
+    assert first_page[0].activity_id != second_page[0].activity_id
 
 
 def test_dynamic_mock_candidate_can_trade_outside_monthly_window_via_same_chain() -> None:

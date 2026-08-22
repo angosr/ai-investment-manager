@@ -10,6 +10,7 @@ import type {
   CycleRow,
   Equity,
   Health,
+  Page,
   Position,
   Resources,
   WorldEvent,
@@ -23,34 +24,50 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-function pagePath(path: string, before?: string, limit = 30): string {
+function pagePath(path: string, cursor?: string, limit = 30): string {
   const query = new URLSearchParams({ limit: String(limit) });
-  if (before) query.set("before", before);
+  if (cursor) query.set("cursor", cursor);
   return `${path}?${query.toString()}`;
 }
 
 export const api = {
   health: () => getJson<Health>("/api/health"),
   capital: () => getJson<CapitalOverview>("/api/capital"),
-  capitalActivity: (before?: string, limit = 30) =>
-    getJson<{ actions: CapitalAction[] }>(pagePath("/api/capital/activity", before, limit)),
-  assessmentCycles: (before?: string, limit = 30) =>
-    getJson<{ cycles: CycleRow[] }>(pagePath("/api/assessment/cycles", before, limit)),
+  capitalActivity: async (cursor?: string, limit = 30): Promise<Page<CapitalAction>> => {
+    const result = await getJson<{ actions: CapitalAction[]; next_cursor: string | null }>(
+      pagePath("/api/capital/activity", cursor, limit),
+    );
+    return { items: result.actions, nextCursor: result.next_cursor };
+  },
+  assessmentCycles: async (cursor?: string, limit = 30): Promise<Page<CycleRow>> => {
+    const result = await getJson<{ cycles: CycleRow[]; next_cursor: string | null }>(
+      pagePath("/api/assessment/cycles", cursor, limit),
+    );
+    return { items: result.cycles, nextCursor: result.next_cursor };
+  },
   assessmentCycle: (id: string) =>
     getJson<CycleDetail>(`/api/assessment/cycles/${encodeURIComponent(id)}`),
-  assessmentRecords: (before?: string, limit = 30) =>
-    getJson<AssessmentFeed>(pagePath("/api/assessment/records", before, limit)),
+  assessmentRecords: (cursor?: string, limit = 30) =>
+    getJson<AssessmentFeed>(pagePath("/api/assessment/records", cursor, limit)),
   latestAssessment: () =>
     getJson<AssessmentFeed>("/api/assessment/records?limit=1"),
   assessmentRecord: (id: string) =>
     getJson<AssessmentRecordDetail>(
       `/api/assessment/records/${encodeURIComponent(id)}`,
     ),
-  cycles: (before?: string, limit = 30) =>
-    getJson<{ cycles: CycleRow[] }>(pagePath("/api/cycles", before, limit)),
+  cycles: async (cursor?: string, limit = 30): Promise<Page<CycleRow>> => {
+    const result = await getJson<{ cycles: CycleRow[]; next_cursor: string | null }>(
+      pagePath("/api/cycles", cursor, limit),
+    );
+    return { items: result.cycles, nextCursor: result.next_cursor };
+  },
   cycle: (id: string) => getJson<CycleDetail>(`/api/cycles/${encodeURIComponent(id)}`),
-  events: (before?: string, limit = 30) =>
-    getJson<{ events: WorldEvent[] }>(pagePath("/api/events", before, limit)),
+  events: async (cursor?: string, limit = 30): Promise<Page<WorldEvent>> => {
+    const result = await getJson<{ events: WorldEvent[]; next_cursor: string | null }>(
+      pagePath("/api/events", cursor, limit),
+    );
+    return { items: result.events, nextCursor: result.next_cursor };
+  },
   positions: () => getJson<{ positions: Position[] }>("/api/positions"),
   equity: (window: string) => getJson<Equity>(`/api/equity?window=${encodeURIComponent(window)}`),
   accounts: () => getJson<Accounts>("/api/accounts"),

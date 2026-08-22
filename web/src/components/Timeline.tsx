@@ -35,14 +35,12 @@ export function Timeline({
 function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
   const [tab, setTab] = useState<Tab>("actions");
   const cycles = usePagedLive(
-    async (before) => (await api.cycles(before)).cycles,
+    (cursor) => api.cycles(cursor),
     "cycles",
-    (item) => item.at,
   );
   const events = usePagedLive(
-    async (before) => (await api.events(before)).events,
+    (cursor) => api.events(cursor),
     "events",
-    (item) => item.at,
   );
 
   return (
@@ -77,20 +75,20 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
 function CapitalTimeline() {
   const [tab, setTab] = useState<Tab>("actions");
   const actions = usePagedLive(
-    async (before) => (await api.capitalActivity(before)).actions,
+    (cursor) => api.capitalActivity(cursor),
     "cycles",
-    (item) => item.at,
   );
   const assessmentRecords = usePagedLive(
-    async (before) => (await api.assessmentRecords(before)).assessments,
+    async (cursor) => {
+      const result = await api.assessmentRecords(cursor);
+      return { items: result.assessments, nextCursor: result.next_cursor };
+    },
     "cycles",
-    (item) => item.at,
   );
   const assessmentStatus = useLive(() => api.latestAssessment(), "cycles");
   const events = usePagedLive(
-    async (before) => (await api.events(before)).events,
+    (cursor) => api.events(cursor),
     "events",
-    (item) => item.at,
   );
   const capitalActions = actions.items;
   return (

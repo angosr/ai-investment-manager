@@ -43,6 +43,11 @@ Index(
     analysis_trigger_events.c.pipeline_id,
     analysis_trigger_events.c.observed_at,
 )
+Index(
+    "ix_analysis_trigger_events_cursor",
+    analysis_trigger_events.c.occurred_at,
+    analysis_trigger_events.c.trigger_id,
+)
 
 analysis_trigger_batches = Table(
     "analysis_trigger_batches",

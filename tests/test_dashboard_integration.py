@@ -43,7 +43,9 @@ from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.models import DecisionOutcome, DirectionalView
 from investment_manager.legacy.repository import (
     SqlFactLedger,
+    analysis_cycles,
     decision_outcomes,
+    market_snapshots,
 )
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
@@ -419,11 +421,33 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     assert bad_assessment_detail.status_code == 200
     assert bad_assessment_detail.json()["mechanism"] == bad_assessment.market_mechanism
     assert capital_rows.status_code == 200
-    assert capital_rows.json() == {"actions": []}
+    assert capital_rows.json() == {"actions": [], "next_cursor": None}
     assert events.status_code == 200
     assert any(
         item["title"] == "Assessment 库中的一手事件"
         for item in events.json()["events"]
+    )
+
+    async def read_assessment_pages():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            first = await client.get("/api/assessment/records?limit=1")
+            second = await client.get(
+                "/api/assessment/records",
+                params={"limit": 1, "cursor": first.json()["next_cursor"]},
+            )
+            return first, second
+
+    first_assessment_page, second_assessment_page = asyncio.run(
+        read_assessment_pages()
+    )
+    assert first_assessment_page.json()["assessments"][0]["assessment_id"] == (
+        bad_assessment.assessment_id
+    )
+    assert second_assessment_page.json()["assessments"][0]["assessment_id"] == (
+        assessment.assessment_id
     )
 
 
@@ -431,13 +455,140 @@ def test_reader_and_serializer_render_a_real_persisted_cycle(app_config, replay_
     engine, result = _seed_cycle(app_config, replay_input)
     reader = DashboardReader(engine, app_config)
 
-    rows = reader.list_cycles(before=None, limit=10)
+    rows = reader.list_cycles(cursor=None, limit=10)
     assert len(rows) == 1
     row_dto = ser.cycle_row(rows[0])
     assert row_dto["cycle_id"] == result.cycle_id
     assert row_dto["symbol"]  # market_snapshots join filled the symbol
     assert row_dto["summary"]  # 一句人话摘要非空
     assert row_dto["category"] in {"exec", "pending", "rejected", "no-trade", "no-action"}
+
+
+def test_cycle_api_composite_cursor_has_no_gap_during_concurrent_insert(
+    app_config,
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-cycles.db'}"
+    engine = create_engine(database_url)
+    create_schema(engine)
+    at = datetime(2026, 8, 22, 3, tzinfo=UTC)
+
+    def insert_cycle(cycle_id: str) -> None:
+        with engine.begin() as connection:
+            connection.execute(
+                insert(analysis_cycles).values(
+                    cycle_id=cycle_id,
+                    as_of=at,
+                    pipeline_version=app_config.pipeline.version,
+                    outcome="NO_ACTION",
+                    reason_code="NO_ACTION",
+                    created_at=at,
+                )
+            )
+            connection.execute(
+                insert(market_snapshots).values(
+                    cycle_id=cycle_id,
+                    symbol="BTCUSDT",
+                    as_of=at,
+                    content_hash=cycle_id.removeprefix("cycle-").ljust(64, "0")[:64],
+                    payload={},
+                )
+            )
+
+    for suffix in ("a", "b", "c"):
+        insert_cycle(f"cycle-{suffix}")
+    application = create_app(app_config, database_url)
+
+    async def read_pages():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            first = await client.get("/api/cycles?limit=2")
+            assert first.status_code == 200, first.text
+            assert "next_cursor" in first.json(), first.text
+            insert_cycle("cycle-d")
+            cursor = first.json()["next_cursor"]
+            second = await client.get("/api/cycles", params={"limit": 2, "cursor": cursor})
+            fresh = await client.get("/api/cycles?limit=2")
+            invalid = await client.get("/api/cycles?cursor=not-a-valid-cursor")
+            return first, second, fresh, invalid
+
+    first, second, fresh, invalid = asyncio.run(read_pages())
+    assert [item["cycle_id"] for item in first.json()["cycles"]] == [
+        "cycle-c",
+        "cycle-b",
+    ]
+    assert [item["cycle_id"] for item in second.json()["cycles"]] == ["cycle-a"]
+    assert second.json()["next_cursor"] is None
+    assert [item["cycle_id"] for item in fresh.json()["cycles"]] == [
+        "cycle-d",
+        "cycle-c",
+    ]
+    assert invalid.status_code == 400
+
+
+def test_event_api_composite_cursor_merges_databases_without_gap(
+    app_config,
+    tmp_path,
+) -> None:
+    primary_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-events-primary.db'}"
+    archive_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-events-archive.db'}"
+    primary = create_engine(primary_url)
+    archive = create_engine(archive_url)
+    create_schema(primary)
+    create_schema(archive)
+    at = datetime(2026, 8, 22, 3, tzinfo=UTC)
+
+    def put(engine, suffix: str) -> None:
+        SqlEventStore(engine, pipeline_id=app_config.pipeline.version).put(
+            IntelligenceEvent(
+                evidence_id=f"event-{suffix}",
+                event_time=at,
+                observed_at=at,
+                source="official-test",
+                title=f"事件 {suffix}",
+                body="用于验证跨库稳定游标。",
+                symbols=("BTCUSDT",),
+                relevance=Decimal("0.8"),
+                impact=Decimal("0.7"),
+                source_reliability=Decimal("0.9"),
+                novelty=Decimal("0.8"),
+            )
+        )
+
+    put(primary, "a")
+    put(archive, "b")
+    put(primary, "c")
+    application = create_app(
+        app_config,
+        primary_url,
+        assessment_database_url=archive_url,
+        assessment_config=app_config,
+    )
+
+    async def read_pages():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://dashboard.test",
+        ) as client:
+            first = await client.get("/api/events?limit=2")
+            put(archive, "d")
+            second = await client.get(
+                "/api/events",
+                params={"limit": 2, "cursor": first.json()["next_cursor"]},
+            )
+            return first, second
+
+    first, second = asyncio.run(read_pages())
+    assert [item["event_id"] for item in first.json()["events"]] == [
+        "NEWS:event-c",
+        "NEWS:event-b",
+    ]
+    assert [item["event_id"] for item in second.json()["events"]] == [
+        "NEWS:event-a"
+    ]
+    assert second.json()["next_cursor"] is None
 
 
 def test_dashboard_accounts_use_the_assessment_archive_identity(app_config, tmp_path) -> None:
@@ -738,7 +889,7 @@ def test_news_fed_into_a_cycle_links_back_to_it(app_config, replay_input) -> Non
     )
 
     reader = DashboardReader(engine, app_config)
-    events = [ser.world_event(event) for event in reader.list_events(before=None, limit=20)]
+    events = [ser.world_event(event) for event in reader.list_events(cursor=None, limit=20)]
     fed = next(event for event in events if event["kind"] == "NEWS")
     assert fed["fed_cycle_id"] == result.cycle_id
     assert fed["fed_cycle_at"] is not None
@@ -762,7 +913,7 @@ def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> N
 
     event = next(
         item
-        for item in DashboardReader(engine, app_config).list_events(before=None, limit=20)
+        for item in DashboardReader(engine, app_config).list_events(cursor=None, limit=20)
         if item.kind == "AGENT_WAKEUP"
     )
 

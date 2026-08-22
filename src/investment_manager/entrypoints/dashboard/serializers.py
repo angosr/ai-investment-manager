@@ -356,6 +356,7 @@ def position(record: OpenLifecycleRecord, *, mark: Decimal | None, side: str | N
 
 def world_event(event: WorldEvent) -> dict:
     return {
+        "event_id": event.event_id,
         "kind": event.kind,
         "at": fmt.iso(event.at),
         "source": event.source,

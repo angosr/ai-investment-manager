@@ -293,6 +293,7 @@ def test_equity_curve_is_running_sum_of_net_pnl():
 
 def test_world_event_serializes_injection_flag():
     event = WorldEvent(
+        event_id="NEWS:test-event",
         kind="NEWS",
         at=datetime(2026, 8, 18, 11, 40, tzinfo=UTC),
         source="TrendRadar",
@@ -302,6 +303,7 @@ def test_world_event_serializes_injection_flag():
         injection_suspected=True,
     )
     dto = ser.world_event(event)
+    assert dto["event_id"] == "NEWS:test-event"
     assert dto["injection_suspected"] is True
     assert dto["symbols"] == ["BTCUSDT"]
 

@@ -24,6 +24,12 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_overview,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
+from investment_manager.entrypoints.dashboard.pagination import (
+    InvalidPageCursor,
+    PageCursor,
+    decode_page_cursor,
+    page_slice,
+)
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.entrypoints.dashboard.resources import (
     prime_cpu_sampler,
@@ -139,22 +145,44 @@ def create_app(
         return _json(serialize_capital_overview(overview))
 
     async def capital_activity(request: Request) -> JSONResponse:
+        limit = _parse_limit(request)
         items = await run_in_threadpool(
             capital_reader.activity,
-            before=_parse_before(request),
-            limit=_parse_limit(request),
+            cursor=_parse_cursor(request),
+            limit=limit + 1,
         )
-        return _json(serialize_capital_activity(items))
+        page = page_slice(
+            items,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(item.at, item.activity_id),
+        )
+        return _json(
+            {
+                **serialize_capital_activity(page.items),
+                "next_cursor": page.next_cursor,
+            }
+        )
 
     async def assessment_cycles(request: Request) -> JSONResponse:
         if assessment_reader is None:
-            return _json({"cycles": []})
+            return _json({"cycles": [], "next_cursor": None})
+        limit = _parse_limit(request)
         rows = await run_in_threadpool(
             assessment_reader.list_cycles,
-            before=_parse_before(request),
-            limit=_parse_limit(request),
+            cursor=_parse_cursor(request),
+            limit=limit + 1,
         )
-        return _json({"cycles": [ser.cycle_row(row) for row in rows]})
+        page = page_slice(
+            rows,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(item.as_of, item.cycle_id),
+        )
+        return _json(
+            {
+                "cycles": [ser.cycle_row(row) for row in page.items],
+                "next_cursor": page.next_cursor,
+            }
+        )
 
     async def assessment_cycle_detail(request: Request) -> JSONResponse:
         if assessment_reader is None:
@@ -169,22 +197,32 @@ def create_app(
 
     async def assessment_records(request: Request) -> JSONResponse:
         if assessment_reader is None:
-            return _json({"assessments": [], "quality": None})
+            return _json({"assessments": [], "quality": None, "next_cursor": None})
+        limit = _parse_limit(request)
         rows, quality = await asyncio.gather(
             run_in_threadpool(
                 assessment_reader.list_assessments,
-                before=_parse_before(request),
-                limit=_parse_limit(request),
+                cursor=_parse_cursor(request),
+                limit=limit + 1,
             ),
             run_in_threadpool(
                 assessment_reader.assessment_quality_status,
                 now=datetime.now(UTC),
             ),
         )
+        page = page_slice(
+            rows,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(
+                item.assessment.available_at,
+                item.assessment.assessment_id,
+            ),
+        )
         return _json(
             {
-                "assessments": [ser.assessment_row(record) for record in rows],
+                "assessments": [ser.assessment_row(record) for record in page.items],
                 "quality": ser.assessment_quality(quality),
+                "next_cursor": page.next_cursor,
             }
         )
 
@@ -203,10 +241,24 @@ def create_app(
         return _json(ser.assessment_detail(record))
 
     async def cycles(request: Request) -> JSONResponse:
-        before = _parse_before(request)
+        cursor = _parse_cursor(request)
         limit = _parse_limit(request)
-        rows = await run_in_threadpool(reader.list_cycles, before=before, limit=limit)
-        return _json({"cycles": [ser.cycle_row(row) for row in rows]})
+        rows = await run_in_threadpool(
+            reader.list_cycles,
+            cursor=cursor,
+            limit=limit + 1,
+        )
+        page = page_slice(
+            rows,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(item.as_of, item.cycle_id),
+        )
+        return _json(
+            {
+                "cycles": [ser.cycle_row(row) for row in page.items],
+                "next_cursor": page.next_cursor,
+            }
+        )
 
     async def cycle_detail(request: Request) -> JSONResponse:
         cycle_id = request.path_params["cycle_id"]
@@ -216,22 +268,32 @@ def create_app(
         return _json(ser.cycle_detail(facts))
 
     async def events(request: Request) -> JSONResponse:
-        before = _parse_before(request)
+        cursor = _parse_cursor(request)
         limit = _parse_limit(request)
         primary, assessment = await asyncio.gather(
-            run_in_threadpool(reader.list_events, before=before, limit=limit),
+            run_in_threadpool(reader.list_events, cursor=cursor, limit=limit + 1),
             (
                 run_in_threadpool(
                     assessment_reader.list_events,
-                    before=before,
-                    limit=limit,
+                    cursor=cursor,
+                    limit=limit + 1,
                 )
                 if assessment_reader is not None
                 else asyncio.sleep(0, result=[])
             ),
         )
-        found = _merge_events(primary, assessment, limit=limit)
-        return _json({"events": [ser.world_event(event) for event in found]})
+        found = _merge_events(primary, assessment, limit=limit + 1)
+        page = page_slice(
+            found,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(item.at, item.event_id),
+        )
+        return _json(
+            {
+                "events": [ser.world_event(event) for event in page.items],
+                "next_cursor": page.next_cursor,
+            }
+        )
 
     async def positions(_request: Request) -> JSONResponse:
         records = await run_in_threadpool(reader.open_positions)
@@ -325,7 +387,10 @@ def create_app(
         ),
         Route("/api/stream", stream),
     ]
-    app = Starlette(routes=routes)
+    app = Starlette(
+        routes=routes,
+        exception_handlers={InvalidPageCursor: _invalid_page_cursor},
+    )
     if web_dist is not None and web_dist.is_dir():
         app.mount("/", StaticFiles(directory=str(web_dist), html=True), name="web")
     return app
@@ -342,25 +407,26 @@ def _parse_limit(request: Request) -> int:
     return max(1, min(_MAX_LIMIT, value))
 
 
-def _parse_before(request: Request) -> datetime | None:
-    raw = request.query_params.get("before")
+def _parse_cursor(request: Request) -> PageCursor | None:
+    raw = request.query_params.get("cursor")
     if raw is None:
         return None
-    try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return decode_page_cursor(raw)
 
 
 def _merge_events(primary, assessment, *, limit: int):
     """Merge the capital and assessment ledgers without duplicating shared facts."""
 
-    unique = {
-        (event.kind, event.at, event.source, event.title, event.symbols): event
-        for event in (*primary, *assessment)
-    }
-    return sorted(unique.values(), key=lambda event: event.at, reverse=True)[:limit]
+    unique = {event.event_id: event for event in (*primary, *assessment)}
+    return sorted(
+        unique.values(),
+        key=lambda event: (event.at, event.event_id),
+        reverse=True,
+    )[:limit]
+
+
+async def _invalid_page_cursor(_request: Request, exc: Exception) -> JSONResponse:
+    return _json({"detail": str(exc)}, status_code=400)
 
 
 def _json(payload, *, status_code: int = 200) -> JSONResponse:

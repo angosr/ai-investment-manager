@@ -1,6 +1,7 @@
 // 通用 React 钩子：实时数据、时钟、主题、连接状态。
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Page } from "./api/types";
 import { subscribeRefresh, subscribeStatus } from "./lib/sse";
 import type { RefreshTopic } from "./lib/sse";
 
@@ -70,22 +71,20 @@ export interface PagedLive<T> {
  * SSE 只刷新第一页，不会把用户正在查看的旧页清空。
  */
 export function usePagedLive<T>(
-  fetchPage: (before?: string) => Promise<T[]>,
+  fetchPage: (cursor?: string) => Promise<Page<T>>,
   topic: RefreshTopic,
-  at: (item: T) => string,
-  pageSize = 30,
 ): PagedLive<T> {
   const [pages, setPages] = useState<T[][]>([]);
-  const [more, setMore] = useState<boolean[]>([]);
+  const [nextCursors, setNextCursors] = useState<(string | null)[]>([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const fetchRef = useRef(fetchPage);
-  const atRef = useRef(at);
   const pagesRef = useRef(pages);
+  const cursorsRef = useRef(nextCursors);
   const pageRef = useRef(page);
   fetchRef.current = fetchPage;
-  atRef.current = at;
   pagesRef.current = pages;
+  cursorsRef.current = nextCursors;
   pageRef.current = page;
 
   useEffect(() => {
@@ -93,6 +92,9 @@ export function usePagedLive<T>(
     let running = false;
     let rerun = false;
     const refreshFirst = async () => {
+      // Older pages belong to one immutable cursor chain. Do not splice a newly
+      // refreshed first page into that chain while the user is reading history.
+      if (pageRef.current !== 0) return;
       if (running) {
         rerun = true;
         return;
@@ -103,8 +105,8 @@ export function usePagedLive<T>(
         try {
           const first = await fetchRef.current();
           if (!disposed) {
-            setPages((current) => [first, ...current.slice(1)]);
-            setMore((current) => [first.length === pageSize, ...current.slice(1)]);
+            setPages([first.items]);
+            setNextCursors([first.nextCursor]);
           }
         } catch (err) {
           console.error("时间线首页获取失败", err);
@@ -119,7 +121,7 @@ export function usePagedLive<T>(
       disposed = true;
       unsubscribe();
     };
-  }, [pageSize, topic]);
+  }, [topic]);
 
   const previous = useCallback(() => setPage((current) => Math.max(0, current - 1)), []);
   const next = useCallback(() => {
@@ -130,26 +132,31 @@ export function usePagedLive<T>(
       setPage(currentPage + 1);
       return;
     }
-    const current = loaded[currentPage] ?? [];
-    const last = current[current.length - 1];
-    if (!last || more[currentPage] === false) return;
+    const cursor = cursorsRef.current[currentPage];
+    if (!cursor) return;
     setLoading(true);
-    void fetchRef.current(atRef.current(last))
-      .then((items) => {
-        setPages((existing) => [...existing, items]);
-        setMore((existing) => [...existing, items.length === pageSize]);
-        if (items.length > 0) setPage(currentPage + 1);
+    void fetchRef.current(cursor)
+      .then((result) => {
+        setPages((existing) => [
+          ...existing.slice(0, currentPage + 1),
+          result.items,
+        ]);
+        setNextCursors((existing) => [
+          ...existing.slice(0, currentPage + 1),
+          result.nextCursor,
+        ]);
+        if (result.items.length > 0) setPage(currentPage + 1);
       })
       .catch((err) => console.error("更早的时间线记录获取失败", err))
       .finally(() => setLoading(false));
-  }, [loading, more, pageSize]);
+  }, [loading]);
 
   const items = pages[page] ?? [];
   return {
     items,
     page,
     hasPrevious: page > 0,
-    hasNext: Boolean(pages[page + 1]) || Boolean(more[page]),
+    hasNext: Boolean(pages[page + 1]) || Boolean(nextCursors[page]),
     loading,
     previous,
     next,

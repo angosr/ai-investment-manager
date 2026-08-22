@@ -69,7 +69,11 @@ analysis_cycles = Table(
     Column("reason_code", String(128), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
-Index("ix_analysis_cycles_as_of", analysis_cycles.c.as_of)
+Index(
+    "ix_analysis_cycles_cursor",
+    analysis_cycles.c.as_of,
+    analysis_cycles.c.cycle_id,
+)
 Index(
     "ix_analysis_cycles_pipeline_as_of",
     analysis_cycles.c.pipeline_version,

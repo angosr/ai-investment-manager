@@ -106,7 +106,8 @@ TriggerBatch 展示“为什么复核、判断结果、是否进入风控、是�
 
 每次 AI 详情提供“查看这次 AI 看到的信息快照”，内容必须是当时真实进入 Packet 的唯一输入，并明确展示
 继承的上一轮认知；禁止按时间接近关系补配、重复新闻，或用当前状态回填历史分析。资金行动、AI 判断和
-世界事件的数据库事实永久保留，页面固定使用服务端游标分页；30 条是单页容量，不是保留上限。标签不得用
+世界事件的数据库事实永久保留，页面固定使用服务端不透明复合游标分页；游标绑定排序时间与不可变记录 ID，
+同一时间戳跨页及首页并发插入均不得造成重复或漏项。30 条是单页容量，不是保留上限。标签不得用
 当前已加载条数冒充总历史数。
 
 ---
@@ -166,7 +167,7 @@ Champion/manifest 的具体身份仍放在次要位置；但运行配置与发�
 
 ### 5.3 周期时间线
 
-- 索引（自写只读 `SELECT`）：`analysis_cycles` 按 `as_of desc` 分页（`cycle_id, as_of, pipeline_version, outcome, reason_code, symbol`）。无现成 list 助手，故自查。
+- 索引（自写只读 `SELECT`）：`analysis_cycles` 按 `(as_of, cycle_id) desc` 做 keyset 分页（`cycle_id, as_of, pipeline_version, outcome, reason_code, symbol`）。无现成 list 助手，故自查。
 - **收起行必须是一句人话，不点开也能懂**：
   - 第 1 行摘要（由 `outcome` + 动作事实拼装的自然语言）：如「开多仓 0.012 @ 63,140，止损 61,980」/「未开仓 · 风控拒绝：组合风险超限」/「未开仓 · 扣掉成本后优势不足」/「未行动 · 没有值得建仓的机会」。
   - 第 2 行（次要）：AI 一句话理由（`thesis` 摘要）。
@@ -272,18 +273,18 @@ investment-manager dashboard-service \
 | 端点 | 内容 |
 |---|---|
 | `/api/health` | 顶栏全局灯（§5.1） |
-| `/api/cycles?before=&limit=` | 决策时间线索引（§5.3） |
+| `/api/cycles?cursor=&limit=` | 决策时间线索引（§5.3）；响应返回下一页不透明复合游标 |
 | `/api/cycles/{cycle_id}` | 单周期全图（`SqlFactLedger.get`），**已含该周期的信息快照 `panel`（§5.9）** |
-| `/api/events?before=&limit=` | 世界事件时间线（§5.8，新闻 + 触发事件合并） |
+| `/api/events?cursor=&limit=` | 世界事件时间线（§5.8，新闻 + 触发事件合并） |
 | `/api/equity?window=` | 权益曲线序列 + 窗口指标（§5.2） |
 | `/api/positions` | 未平仓 + 盯市估算（§5.4） |
 | `/api/accounts` | 白名单账号余量/状态/调用活动（§5.5） |
 | `/api/resources` | 主机 CPU/内存/磁盘（§5.6） |
 | `/api/reconciliation` | 最新对账（§5.7） |
 | `/api/capital` | 当前产品账户、最新资本决策、风险、执行与费用后绩效 |
-| `/api/capital/activity` | 按 TriggerBatch cause 读取不可变 Capital 行动记录 |
-| `/api/assessment/cycles[/{cycle_id}]` | 可选的独立只读历史 AI 判断档案 |
-| `/api/assessment/records[/{assessment_id}]` | 现役 `ContextAssessment` 及各时域结算结果 |
+| `/api/capital/activity?cursor=&limit=` | 按 TriggerBatch cause 读取不可变 Capital 行动记录 |
+| `/api/assessment/cycles?cursor=&limit=` | 可选的独立只读历史 AI 判断档案；`/{cycle_id}` 读取详情 |
+| `/api/assessment/records?cursor=&limit=` | 现役 `ContextAssessment` 及各时域结算结果；`/{assessment_id}` 读取详情 |
 | `/api/stream` | SSE 变更信号（§6） |
 
 ---

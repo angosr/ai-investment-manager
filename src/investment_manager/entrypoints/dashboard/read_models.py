@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.engine import Engine
 
+from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
 from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
@@ -128,6 +129,7 @@ class AssessmentQualityStatus:
 class WorldEvent:
     """世界事件时间线一行：一条采集到的新闻或一个触发事件。"""
 
+    event_id: str
     kind: str  # "NEWS" | "MARKET_SHOCK" | "POSITION_RECHECK" | "INTELLIGENCE_INSERTED"
     at: datetime
     source: str
@@ -187,7 +189,7 @@ class DashboardReader:
         self._reconciliation = SqlReconciliationReportStore(engine)
 
     # --- 决策时间线 -------------------------------------------------------
-    def list_cycles(self, *, before: datetime | None, limit: int) -> list[CycleRow]:
+    def list_cycles(self, *, cursor: PageCursor | None, limit: int) -> list[CycleRow]:
         query = (
             select(
                 analysis_cycles.c.cycle_id,
@@ -213,14 +215,16 @@ class DashboardReader:
             .order_by(analysis_cycles.c.as_of.desc(), analysis_cycles.c.cycle_id.desc())
             .limit(limit)
         )
-        if before is not None:
-            query = query.where(analysis_cycles.c.as_of < before)
+        if cursor is not None:
+            query = query.where(
+                older_than(analysis_cycles.c.as_of, analysis_cycles.c.cycle_id, cursor)
+            )
         with self._engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
         return [
             CycleRow(
                 cycle_id=row["cycle_id"],
-                as_of=row["as_of"],
+                as_of=database_utc(row["as_of"]),
                 symbol=row["symbol"],
                 outcome=row["outcome"],
                 reason_code=row["reason_code"],
@@ -244,7 +248,7 @@ class DashboardReader:
     def list_assessments(
         self,
         *,
-        before: datetime | None,
+        cursor: PageCursor | None,
         limit: int,
     ) -> list[AssessmentRecord]:
         query = (
@@ -253,14 +257,20 @@ class DashboardReader:
                 context_assessments.c.available_at.desc(),
                 context_assessments.c.assessment_id.desc(),
             )
-            .limit(max(limit, 100))
+            .limit(limit)
         )
-        if before is not None:
-            query = query.where(context_assessments.c.available_at < before)
+        if cursor is not None:
+            query = query.where(
+                older_than(
+                    context_assessments.c.available_at,
+                    context_assessments.c.assessment_id,
+                    cursor,
+                )
+            )
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
         assessments = (ContextAssessment.model_validate(payload) for payload in payloads)
-        return [AssessmentRecord(assessment=assessment) for assessment in assessments][:limit]
+        return [AssessmentRecord(assessment=assessment) for assessment in assessments]
 
     def get_assessment(self, assessment_id: str) -> AssessmentRecord | None:
         with self._engine.connect() as connection:
@@ -441,20 +451,30 @@ class DashboardReader:
         )
 
     # --- 世界事件时间线 ---------------------------------------------------
-    def list_events(self, *, before: datetime | None, limit: int) -> list[WorldEvent]:
-        news = self._recent_news(before=before, limit=limit)
-        triggers = self._recent_triggers(before=before, limit=limit)
-        merged = sorted(news + triggers, key=lambda event: event.at, reverse=True)
+    def list_events(self, *, cursor: PageCursor | None, limit: int) -> list[WorldEvent]:
+        news = self._recent_news(cursor=cursor, limit=limit)
+        triggers = self._recent_triggers(cursor=cursor, limit=limit)
+        merged = sorted(
+            news + triggers,
+            key=lambda event: (event.at, event.event_id),
+            reverse=True,
+        )
         return merged[:limit]
 
-    def _recent_news(self, *, before: datetime | None, limit: int) -> list[WorldEvent]:
+    def _recent_news(self, *, cursor: PageCursor | None, limit: int) -> list[WorldEvent]:
+        cursor_identity = literal("NEWS:") + normalized_events.c.evidence_id
         query = (
             select(normalized_events.c.payload)
-            .order_by(normalized_events.c.event_time.desc())
+            .order_by(
+                normalized_events.c.event_time.desc(),
+                normalized_events.c.evidence_id.desc(),
+            )
             .limit(limit)
         )
-        if before is not None:
-            query = query.where(normalized_events.c.event_time < before)
+        if cursor is not None:
+            query = query.where(
+                older_than(normalized_events.c.event_time, cursor_identity, cursor)
+            )
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
         parsed = tuple(IntelligenceEvent.model_validate(payload) for payload in payloads)
@@ -466,6 +486,7 @@ class DashboardReader:
             _, body_suspicious = sanitize_external_text(event.body)
             events.append(
                 WorldEvent(
+                    event_id=f"NEWS:{event.evidence_id}",
                     kind="NEWS",
                     at=event.event_time,
                     source=event.source,
@@ -511,20 +532,32 @@ class DashboardReader:
                 break
         return mapping
 
-    def _recent_triggers(self, *, before: datetime | None, limit: int) -> list[WorldEvent]:
+    def _recent_triggers(
+        self,
+        *,
+        cursor: PageCursor | None,
+        limit: int,
+    ) -> list[WorldEvent]:
+        cursor_identity = literal("TRIGGER:") + analysis_trigger_events.c.trigger_id
         query = (
             select(
+                analysis_trigger_events.c.trigger_id,
                 analysis_trigger_events.c.trigger_type,
                 analysis_trigger_events.c.symbol,
                 analysis_trigger_events.c.occurred_at,
                 analysis_trigger_events.c.priority,
             )
             .where(analysis_trigger_events.c.trigger_type != "INTELLIGENCE_INSERTED")
-            .order_by(analysis_trigger_events.c.occurred_at.desc())
+            .order_by(
+                analysis_trigger_events.c.occurred_at.desc(),
+                analysis_trigger_events.c.trigger_id.desc(),
+            )
             .limit(limit)
         )
-        if before is not None:
-            query = query.where(analysis_trigger_events.c.occurred_at < before)
+        if cursor is not None:
+            query = query.where(
+                older_than(analysis_trigger_events.c.occurred_at, cursor_identity, cursor)
+            )
         with self._engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
         labels = {
@@ -539,8 +572,9 @@ class DashboardReader:
         }
         return [
             WorldEvent(
+                event_id=f"TRIGGER:{row['trigger_id']}",
                 kind=row["trigger_type"],
-                at=row["occurred_at"],
+                at=database_utc(row["occurred_at"]),
                 source=sources.get(row["trigger_type"], "系统调度"),
                 title=f"{labels.get(row['trigger_type'], row['trigger_type'])}（{row['symbol']}）",
                 symbols=(row["symbol"],),

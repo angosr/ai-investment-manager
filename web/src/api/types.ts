@@ -107,6 +107,12 @@ export interface AssessmentQuality {
 export interface AssessmentFeed {
   assessments: AssessmentRecordRow[];
   quality: AssessmentQuality | null;
+  next_cursor: string | null;
+}
+
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
 }
 
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
@@ -360,6 +366,7 @@ export interface CycleDetail {
 }
 
 export interface WorldEvent {
+  event_id: string;
   kind: string;
   at: string;
   source: string;

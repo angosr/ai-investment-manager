@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
+from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
 from investment_manager.execution.group.models import ExecutionGroup
 from investment_manager.execution.planning.planner import TradePlan
 from investment_manager.execution.tables import (
@@ -210,20 +211,24 @@ class CapitalDashboardReader:
     def activity(
         self,
         *,
-        before: datetime | None = None,
+        cursor: PageCursor | None = None,
         limit: int = 30,
     ) -> tuple[CapitalActivity, ...]:
         """Project one concise action row per admitted capital trigger batch."""
 
-        if limit < 1 or limit > 100:
-            raise ValueError("Capital activity limit 必须在 1..100")
+        if limit < 1 or limit > 101:
+            raise ValueError("Capital activity internal limit 必须在 1..101")
         query = select(
             capital_cycle_records.c.evaluated_at,
             capital_cycle_records.c.payload,
         ).where(capital_cycle_records.c.pipeline_id == self._config.pipeline.version)
-        if before is not None:
+        if cursor is not None:
             query = query.where(
-                capital_cycle_records.c.evaluated_at < require_utc(before)
+                older_than(
+                    capital_cycle_records.c.evaluated_at,
+                    capital_cycle_records.c.record_id,
+                    cursor,
+                )
             )
         with self._engine.connect() as connection:
             rows = connection.execute(
