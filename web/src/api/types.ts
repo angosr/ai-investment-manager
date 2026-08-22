@@ -433,6 +433,7 @@ export interface WorldEvent {
   title: string;
   symbols: string[];
   impact: number | null;
+  priority: number | null;
   injection_suspected: boolean;
   fed_cycle_id: string | null;
   fed_cycle_at: string | null;

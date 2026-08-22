@@ -918,4 +918,6 @@ def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> N
     )
 
     assert event.source == "主 Agent"
-    assert event.title == "Agent 立即复核（BTCUSDT）"
+    assert event.title == "BTCUSDT · 请求原因：Dashboard 立即复核"
+    assert event.impact is None
+    assert event.priority == 100

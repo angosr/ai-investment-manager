@@ -137,6 +137,8 @@ class WorldEvent:
     symbols: tuple[str, ...]
     impact: float | None
     injection_suspected: bool
+    # 新闻使用 impact；系统触发使用原始调度优先级。两者语义不同，不能互相换算。
+    priority: int | None = None
     # 若这条新闻被选入某周期的信息面板（喂给了那次分析），记录该周期
     fed_cycle_id: str | None = None
     fed_cycle_at: datetime | None = None
@@ -546,6 +548,7 @@ class DashboardReader:
                 analysis_trigger_events.c.symbol,
                 analysis_trigger_events.c.occurred_at,
                 analysis_trigger_events.c.priority,
+                analysis_trigger_events.c.payload,
             )
             .where(analysis_trigger_events.c.trigger_type != "INTELLIGENCE_INSERTED")
             .order_by(
@@ -561,28 +564,47 @@ class DashboardReader:
         with self._engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
         labels = {
-            "MARKET_SHOCK": "市场冲击",
-            "POSITION_RECHECK": "持仓复检",
-            "AGENT_WAKEUP": "Agent 立即复核",
+            "MARKET_SHOCK": "价格波动触发市场复核",
+            "POSITION_RECHECK": "持仓状态触发风险复检",
+            "CANONICAL_FACT_REVISED": "关键事实修订触发重新分析",
+            "HEARTBEAT": "例行状态检查",
         }
         sources = {
             "MARKET_SHOCK": "Binance 行情",
             "POSITION_RECHECK": "生命周期",
             "AGENT_WAKEUP": "主 Agent",
+            "CANONICAL_FACT_REVISED": "事实协调器",
+            "HEARTBEAT": "系统调度",
         }
-        return [
-            WorldEvent(
-                event_id=f"TRIGGER:{row['trigger_id']}",
-                kind=row["trigger_type"],
-                at=database_utc(row["occurred_at"]),
-                source=sources.get(row["trigger_type"], "系统调度"),
-                title=f"{labels.get(row['trigger_type'], row['trigger_type'])}（{row['symbol']}）",
-                symbols=(row["symbol"],),
-                impact=min(1.0, row["priority"] / 100.0),
-                injection_suspected=False,
+        events: list[WorldEvent] = []
+        for row in rows:
+            trigger_type = row["trigger_type"]
+            symbol = row["symbol"]
+            payload = row["payload"]
+            review_reason = payload.get("review_reason") if isinstance(payload, dict) else None
+            if trigger_type == "AGENT_WAKEUP":
+                reason = (
+                    review_reason.strip()
+                    if isinstance(review_reason, str) and review_reason.strip()
+                    else "基于最新信息重新评估"
+                )
+                title = f"{symbol} · 请求原因：{reason}"
+            else:
+                title = f"{symbol} · {labels.get(trigger_type, '系统事件触发重新分析')}"
+            events.append(
+                WorldEvent(
+                    event_id=f"TRIGGER:{row['trigger_id']}",
+                    kind=trigger_type,
+                    at=database_utc(row["occurred_at"]),
+                    source=sources.get(trigger_type, "系统调度"),
+                    title=title,
+                    symbols=(symbol,),
+                    impact=None,
+                    injection_suspected=False,
+                    priority=row["priority"],
+                )
             )
-            for row in rows
-        ]
+        return events
 
     # --- 持仓 / 对账 ------------------------------------------------------
     def open_positions(self) -> tuple[OpenLifecycleRecord, ...]:

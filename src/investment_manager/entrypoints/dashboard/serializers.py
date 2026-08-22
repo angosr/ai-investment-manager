@@ -402,6 +402,7 @@ def world_event(event: WorldEvent) -> dict:
         "title": event.title,
         "symbols": list(event.symbols),
         "impact": event.impact,
+        "priority": event.priority,
         "injection_suspected": event.injection_suspected,
         "fed_cycle_id": event.fed_cycle_id,
         "fed_cycle_at": fmt.iso(event.fed_cycle_at),

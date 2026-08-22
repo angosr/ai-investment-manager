@@ -78,6 +78,30 @@
   color: var(--accent-line);
   font-family: var(--font-mono);
 }
+.folded {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.folded summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-line);
+}
+.folded ol {
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+.folded li {
+  margin-top: 5px;
+}
+.folded time {
+  display: inline-block;
+  min-width: 42px;
+  margin-right: 8px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
 .right {
   text-align: right;
   white-space: nowrap;
