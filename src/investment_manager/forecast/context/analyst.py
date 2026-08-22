@@ -24,6 +24,7 @@ from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
     ContextAssessmentContractError,
+    assessment_mechanism_evidence_ids,
     assessment_visible_event_ids,
     assessment_visible_evidence_ids,
     build_assess_prompt,
@@ -35,7 +36,7 @@ from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
 ASSESS_INPUT_VERSION = "assess-input-v16"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v8"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "assess-dynamic-output-v9"
 
 
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
@@ -47,6 +48,10 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     context_view = definitions["ContextView"]
     views = draft["properties"]["views"]
     evidence_ids = assessment_visible_evidence_ids(packet)
+    mechanism_evidence = draft["properties"]["mechanism_evidence_ids"]
+    mechanism_evidence["items"]["enum"] = list(
+        assessment_mechanism_evidence_ids(packet)
+    )
     driver = definitions["ContextDriver"]
     driver["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
     drivers = draft["properties"]["drivers"]

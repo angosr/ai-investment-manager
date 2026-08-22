@@ -1491,6 +1491,14 @@ def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_i
     drivers = schema["$defs"]["ContextAssessmentDraft"]["properties"]["drivers"]
     assert drivers["minItems"] == 0
     assert drivers["maxItems"] == 8
+    mechanism_evidence = schema["$defs"]["ContextAssessmentDraft"]["properties"][
+        "mechanism_evidence_ids"
+    ]
+    assert mechanism_evidence["items"]["enum"] == [
+        "delta-1",
+        "delta-2",
+        "revision-1",
+    ]
 
 
 def test_assessment_accepts_no_driver_when_all_views_are_uncertain(
@@ -1658,6 +1666,27 @@ def test_finalize_assessment_rejects_unknown_mechanism_evidence(
         )
 
 
+def test_finalize_assessment_rejects_background_fact_in_mechanism(
+    app_config, replay_input
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    background = packet.facts[0].model_copy(
+        update={"decision_materiality": FactDecisionMateriality.BACKGROUND}
+    )
+    packet = packet.model_copy(update={"facts": (background,)})
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="候选驱动或用于验证传导",
+    ):
+        finalize_context_assessment(
+            output=_assessment_output(),
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
 def test_finalize_assessment_rejects_derivative_state_as_only_driver(
     app_config, replay_input
 ) -> None:
@@ -1744,14 +1773,18 @@ def test_routine_metric_cannot_be_promoted_to_world_driver(
     output = base.model_copy(
         update={
             "assessment": base.assessment.model_copy(
-                update={"drivers": (driver,), "views": views}
+                update={
+                    "mechanism_evidence_ids": ("delta-1",),
+                    "drivers": (driver,),
+                    "views": views,
+                }
             )
         }
     )
 
     with pytest.raises(
         ContextAssessmentContractError,
-        match="缺少足以改变基准情景",
+        match="候选驱动或用于验证传导",
     ):
         finalize_context_assessment(
             output=output,

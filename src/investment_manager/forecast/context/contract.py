@@ -63,6 +63,7 @@ ASSESS_INSTRUCTIONS = (
     "也不得用‘通常会先影响’之类没有当前证据的通用机制填充世界认知。",
     "mechanism_evidence_ids 必须按正文重要性引用至少一项本轮可见证据；正文中的具体事实、"
     "关键反证和传导结论必须能由这些引用追溯。没有方向优势时也要引用导致观望的关键事实或市场结构，"
+    "BACKGROUND/UNKNOWN 事实只能进入背景、矛盾或缺口，不得进入 market_mechanism 引用；"
     "不得只引用数据缺口、review_requests 或上一轮认知。若引用情报事件，该事件还必须由 driver "
     "解释传导并按既有事件规则登记为 ACTIVE。",
     "官方连续指标的 decision_materiality 由程序根据同源历史绝对变化分位数生成。"
@@ -224,6 +225,31 @@ def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
     )
 
 
+def assessment_mechanism_evidence_ids(packet: DecisionPacket) -> tuple[str, ...]:
+    """Evidence strong enough to occupy the current cognition body.
+
+    The mechanism may use baseline-changing causal candidates and current
+    market structure that confirms or rejects their transmission.  Background
+    facts remain visible elsewhere in the packet but cannot become the thesis
+    merely because they are true.
+    """
+
+    previous = (
+        packet.previous_context
+        if previous_context_is_decision_relevant(packet.previous_context)
+        else None
+    )
+    return tuple(
+        sorted(
+            {
+                *_baseline_changing_support(packet),
+                *(item.evidence_ref for item in packet.derivative_states),
+                *((previous.assessment_id,) if previous is not None else ()),
+            }
+        )
+    )
+
+
 def finalize_context_assessment(
     *,
     output: AssessStructuredOutput,
@@ -257,6 +283,17 @@ def finalize_context_assessment(
         raise ContextAssessmentContractError(
             "ASSESSMENT_EVIDENCE_NOT_VISIBLE",
             f"Assessment 引用了不可见证据: {unknown_evidence}",
+        )
+    ineligible_mechanism_evidence = tuple(
+        sorted(
+            set(output.assessment.mechanism_evidence_ids)
+            - set(assessment_mechanism_evidence_ids(packet))
+        )
+    )
+    if ineligible_mechanism_evidence:
+        raise ContextAssessmentContractError(
+            "ASSESSMENT_MECHANISM_EVIDENCE_INELIGIBLE",
+            "世界认知正文只能引用候选驱动或用于验证传导的当前市场结构",
         )
     previous_id = (
         packet.previous_context.assessment_id if packet.previous_context is not None else None
