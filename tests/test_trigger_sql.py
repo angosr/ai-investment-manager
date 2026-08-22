@@ -101,6 +101,7 @@ def test_plan_patch_plan_wakeups_and_trigger_now_commit_atomically(
     assert not repository.record_batch(batch, analysis_submitted_at=now)
     pending = repository.pending_outbox(as_of=now)
     kinds = [item.message_kind.value for item in pending]
+    assert kinds == ["PLAN_REVISED", "PLAN_REVISED", "TRIGGER_CREATED"]
     assert kinds.count("PLAN_REVISED") == 2
     assert kinds.count("TRIGGER_CREATED") == 1
     repository.mark_delivered(pending[0].outbox_id, delivered_at=now)

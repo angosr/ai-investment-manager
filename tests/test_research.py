@@ -86,6 +86,17 @@ from investment_manager.research.dataset import (
     fetch_binance_usdm_history,
     freeze_historical_events,
 )
+from investment_manager.research.perpetual_trend import (
+    PerpetualTrendEvaluationCatalog,
+    PerpetualTrendEvaluationSpec,
+    PerpetualTrendPolicy,
+    PerpetualTrendWalkForwardPlan,
+    _target_signal_and_gross,
+    build_perpetual_trend_evaluation_plan,
+    current_perpetual_trend_evaluator_environment,
+    run_perpetual_trend_walk_forward,
+    validate_perpetual_trend_evaluation_plan,
+)
 from investment_manager.research.screening import run_raw_signal_screen
 
 
@@ -1120,6 +1131,238 @@ def _carry_dataset(
             settlements=settlements,
         ),
     )
+
+
+def _perpetual_trend_dataset() -> HistoricalCarryDataset:
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, tzinfo=UTC)
+    instrument = CarryInstrumentSpec(
+        symbol="ETHUSDT",
+        pair="ETHUSDT",
+        base_asset="ETH",
+        quote_asset="USDT",
+        margin_asset="USDT",
+        onboarded_at=start - timedelta(days=1),
+        price_increment=Decimal("0.01"),
+        quantity_increment=Decimal("0.001"),
+        minimum_quantity=Decimal("0.001"),
+        maximum_quantity=Decimal("10000"),
+        minimum_notional=Decimal("5"),
+    )
+    price = Decimal("100")
+    days: list[CarryMarketDay] = []
+    settlements: list[CarryFundingSettlement] = []
+    at = start
+    while at < end:
+        factor = {
+            2020: Decimal("1.001"),
+            2021: Decimal("1.002"),
+            2022: Decimal("0.998"),
+            2023: Decimal("1.0015"),
+            2024: Decimal("0.9985"),
+            2025: Decimal("1.001"),
+        }[at.year]
+        open_price = price
+        close_price = (open_price * factor).quantize(Decimal("0.00000001"))
+        high = (max(open_price, close_price) * Decimal("1.01")).quantize(
+            Decimal("0.00000001")
+        )
+        low = (min(open_price, close_price) * Decimal("0.99")).quantize(
+            Decimal("0.00000001")
+        )
+        close_time = at + timedelta(days=1) - timedelta(milliseconds=1)
+        days.append(
+            CarryMarketDay(
+                symbol="ETHUSDT",
+                open_time=at,
+                close_time=close_time,
+                contract_open=open_price,
+                contract_high=high,
+                contract_low=low,
+                contract_close=close_price,
+                mark_open=open_price,
+                mark_high=high,
+                mark_low=low,
+                mark_close=close_price,
+                index_open=open_price,
+                index_high=high,
+                index_low=low,
+                index_close=close_price,
+                premium_open=Decimal("0"),
+                premium_high=Decimal("0"),
+                premium_low=Decimal("0"),
+                premium_close=Decimal("0"),
+            )
+        )
+        settlements.append(
+            CarryFundingSettlement(
+                symbol="ETHUSDT",
+                funding_time=at + timedelta(hours=8),
+                available_at=at + timedelta(hours=8, minutes=1),
+                funding_interval_hours=8,
+                funding_rate=Decimal("0.0001"),
+                mark_price=(open_price + close_price) / Decimal("2"),
+            )
+        )
+        price = close_price
+        at += timedelta(days=1)
+    frozen_days = tuple(days)
+    frozen_settlements = tuple(settlements)
+    days_hash = _days_hash(frozen_days)
+    settlements_hash = _settlements_hash(frozen_settlements)
+    spot_dataset_id = stable_id("test_spot_dataset", "ETHUSDT", start, end)
+    funding_dataset_id = stable_id("test_funding_dataset", "ETHUSDT", start, end)
+    identity = (
+        "historical-binance-carry-v1",
+        "binance-usdm-rest-carry",
+        "ETHUSDT",
+        "1d",
+        start,
+        end,
+        spot_dataset_id,
+        funding_dataset_id,
+        days_hash,
+        settlements_hash,
+        "MARK_8H_PRE_SETTLEMENT_CLOSE",
+        instrument,
+    )
+    return HistoricalCarryDataset(
+        manifest=HistoricalCarryDatasetManifest(
+            dataset_id=stable_id("historical_carry_dataset", *identity),
+            symbol="ETHUSDT",
+            collected_at=end,
+            requested_start=start,
+            requested_end=end,
+            spot_dataset_id=spot_dataset_id,
+            funding_dataset_id=funding_dataset_id,
+            first_open_time=frozen_days[0].open_time,
+            last_close_time=frozen_days[-1].close_time,
+            first_funding_time=frozen_settlements[0].funding_time,
+            last_funding_time=frozen_settlements[-1].funding_time,
+            day_count=len(frozen_days),
+            settlement_count=len(frozen_settlements),
+            days_hash=days_hash,
+            settlements_hash=settlements_hash,
+            instrument=instrument,
+        ),
+        days=frozen_days,
+        settlements=frozen_settlements,
+    )
+
+
+def test_perpetual_trend_uses_prior_data_real_funding_and_exact_plan(tmp_path) -> None:
+    carry = _perpetual_trend_dataset()
+    spec = PerpetualTrendEvaluationSpec.freeze(
+        manifest=carry.manifest,
+        evaluator_code_version="a" * 40,
+        evaluator_environment=current_perpetual_trend_evaluator_environment(),
+        policy=PerpetualTrendPolicy(),
+        plan=PerpetualTrendWalkForwardPlan(plan_id="eth-perpetual-trend-test"),
+    )
+    registered = build_perpetual_trend_evaluation_plan(
+        spec=spec,
+        base_manifest_id="test-champion",
+        registered_at=datetime(2025, 7, 1, tzinfo=UTC),
+    )
+    validate_perpetual_trend_evaluation_plan(
+        spec=spec,
+        plan=registered,
+        champion_manifest_id="test-champion",
+        evaluated_at=datetime(2025, 7, 2, tzinfo=UTC),
+        evaluator_code_version="a" * 40,
+        evaluator_environment=spec.evaluator_environment,
+    )
+    assert registered.blind_query_budget == 0
+    assert EvaluationStage.BLIND not in registered.required_stages
+    with pytest.raises(ValueError, match="精确评价代码版本"):
+        validate_perpetual_trend_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id="test-champion",
+            evaluated_at=datetime(2025, 7, 2, tzinfo=UTC),
+            evaluator_code_version="b" * 40,
+            evaluator_environment=spec.evaluator_environment,
+        )
+
+    result = run_perpetual_trend_walk_forward(carry_dataset=carry, spec=spec)
+    assert tuple(fold.year for fold in result.folds) == (2021, 2022, 2023, 2024)
+    assert result.metrics.weekly_sample_count == 208
+    assert result.folds[0].metrics.funding_pnl < 0  # long pays positive funding
+    assert result.folds[1].metrics.funding_pnl > 0  # short receives positive funding
+    assert result.metrics.aggregate_net_pnl == (
+        result.metrics.aggregate_price_pnl
+        + result.metrics.aggregate_funding_pnl
+        - result.metrics.aggregate_modeled_cost
+    )
+    assert result.metrics.minimum_margin_buffer_fraction > 0
+    assert result.metrics.maximum_drawdown_fraction <= Decimal("0.05")
+    catalog = PerpetualTrendEvaluationCatalog(tmp_path)
+    catalog.store(result)
+    assert catalog.load(result.evaluation_id) == result
+
+
+def test_perpetual_trend_ignores_consumed_tail_labels() -> None:
+    carry = _perpetual_trend_dataset()
+    spec = PerpetualTrendEvaluationSpec.freeze(
+        manifest=carry.manifest,
+        evaluator_code_version="a" * 40,
+        evaluator_environment=current_perpetual_trend_evaluator_environment(),
+        policy=PerpetualTrendPolicy(),
+        plan=PerpetualTrendWalkForwardPlan(plan_id="tail-isolation-test"),
+    )
+    baseline = run_perpetual_trend_walk_forward(carry_dataset=carry, spec=spec)
+    changed_days = tuple(
+        day
+        if day.open_time < spec.plan.development_end
+        else day.model_copy(
+            update={
+                "contract_close": day.contract_close * Decimal("1.5"),
+                "contract_high": max(day.contract_high, day.contract_close * Decimal("1.5")),
+            }
+        )
+        for day in carry.days
+    )
+    changed = HistoricalCarryDataset(
+        manifest=carry.manifest.model_copy(
+            update={
+                "days_hash": _days_hash(changed_days),
+                "dataset_id": stable_id(
+                    "historical_carry_dataset",
+                    carry.manifest.schema_version,
+                    carry.manifest.source,
+                    carry.manifest.symbol,
+                    carry.manifest.interval,
+                    carry.manifest.requested_start,
+                    carry.manifest.requested_end,
+                    carry.manifest.spot_dataset_id,
+                    carry.manifest.funding_dataset_id,
+                    _days_hash(changed_days),
+                    carry.manifest.settlements_hash,
+                    carry.manifest.settlement_mark_method,
+                    carry.manifest.instrument,
+                ),
+            }
+        ),
+        days=changed_days,
+        settlements=carry.settlements,
+    )
+    changed_spec = spec.model_copy(update={"carry_dataset_id": changed.manifest.dataset_id})
+    replay = run_perpetual_trend_walk_forward(
+        carry_dataset=changed, spec=changed_spec
+    )
+    assert tuple(fold.metrics for fold in replay.folds) == tuple(
+        fold.metrics for fold in baseline.folds
+    )
+
+
+def test_perpetual_trend_signal_cannot_read_execution_day_close() -> None:
+    policy = PerpetualTrendPolicy()
+    closes = tuple(Decimal(index + 100) for index in range(240))
+    index = 220
+    baseline = _target_signal_and_gross(closes, index, policy)
+    shocked = list(closes)
+    shocked[index] = Decimal("0.01")
+    assert _target_signal_and_gross(tuple(shocked), index, policy) == baseline
 
 
 def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(

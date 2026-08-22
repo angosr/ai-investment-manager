@@ -13,17 +13,52 @@ from investment_manager.governance.models import (
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
-from investment_manager.settings import load_config
+from investment_manager.platform.fact_store import FactStoreRole, require_fact_store_role
+from investment_manager.settings import AppConfig, load_config
 
 
-def runtime_engine(database_url: str):
+def configured_fact_store_role(config: AppConfig) -> FactStoreRole | None:
+    enabled = tuple(
+        role
+        for active, role in (
+            (config.capital.enabled, FactStoreRole.CAPITAL),
+            (config.assessment.enabled, FactStoreRole.CONTEXT),
+        )
+        if active
+    )
+    if len(enabled) > 1:
+        raise RuntimeError("Capital 与 Context 不得共享一个运行事实库")
+    return enabled[0] if enabled else None
+
+
+def runtime_engine(
+    database_url: str,
+    *,
+    fact_store_role: FactStoreRole | None = None,
+    claim_fact_store: bool = False,
+):
     engine = build_engine(database_url)
     require_current_schema(engine)
+    if fact_store_role is not None:
+        require_fact_store_role(
+            engine,
+            fact_store_role,
+            claim_if_missing=claim_fact_store,
+        )
     return engine
 
 
-def require_runtime_database(database_url: str) -> None:
-    engine = runtime_engine(database_url)
+def require_runtime_database(
+    database_url: str,
+    *,
+    config: AppConfig | None = None,
+    claim_fact_store: bool = False,
+) -> None:
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=(configured_fact_store_role(config) if config is not None else None),
+        claim_fact_store=claim_fact_store,
+    )
     engine.dispose()
 
 

@@ -11,6 +11,7 @@ import typer
 from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
+    configured_fact_store_role,
     default_web_dist,
     load_read_only_release_identity,
     load_runtime_release,
@@ -109,7 +110,7 @@ def temporal_worker(
     """运行持久化分析 Worker；PROPOSE 模式调用隔离的真实 Codex。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
     cycle = assemble_analysis_cycle(
         loaded,
         database_url,
@@ -133,7 +134,11 @@ def assessment_worker(
     """运行无交易权限的 ContextAssessment Worker。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
-    engine = runtime_engine(database_url)
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=configured_fact_store_role(loaded),
+        claim_fact_store=True,
+    )
     governance = SqlGovernanceRepository(engine)
     plans = tuple(
         plan
@@ -224,7 +229,11 @@ def market_stream(
     """运行 Binance 公开只读行情服务；仅显式 SHADOW 配置可以启动。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    engine = runtime_engine(database_url)
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=configured_fact_store_role(loaded),
+        claim_fact_store=True,
+    )
     store = SqlMarketDataStore(engine)
     triggers = SqlTriggerRepository(engine, loaded.trigger)
     detector = MarketShockDetector(
@@ -282,6 +291,7 @@ def trigger_service(
     """运行唯一 TriggerCoordinator Worker 与可靠 Outbox Dispatcher。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
     run_trigger_service(
         config=loaded,
         manifest=manifest,
@@ -315,7 +325,14 @@ def trigger_now(
     if symbol not in loaded.market_data.symbols:
         raise ValueError("symbol 不在当前行情白名单")
     result = apply_trigger_now(
-        repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
+        repository=SqlTriggerRepository(
+            runtime_engine(
+                database_url,
+                fact_store_role=configured_fact_store_role(loaded),
+                claim_fact_store=True,
+            ),
+            loaded.trigger,
+        ),
         symbol=symbol,
         pipeline_id=loaded.pipeline.version,
         manifest_id=manifest.manifest_id,
@@ -351,7 +368,7 @@ def lifecycle_service(
     """发现未关闭持仓并运行可恢复的 Temporal 生命周期监控。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -386,7 +403,7 @@ def reconciliation_service(
     """持续主动对账独立 Mock 交易所与业务事实；差异时冻结新增风险。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -416,7 +433,7 @@ def outcome_evaluation_service(
     """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -448,7 +465,7 @@ def governance_service(
 
     loaded, _ = load_runtime_release(config, release_manifest)
     root = project_root.resolve()
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
 
     async def run() -> None:
         temporal = await TemporalAnalysisCoordinator.connect(loaded.temporal)
@@ -502,7 +519,11 @@ def information_collector(
                 maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
             )
         )
-    engine = runtime_engine(database_url)
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=configured_fact_store_role(loaded),
+        claim_fact_store=True,
+    )
     collector = InformationCollector(
         tuple(sources),
         EventNormalizer(
@@ -663,7 +684,7 @@ def dashboard_service(
         typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
         typer.echo("先运行：cd web && npm install && npm run build")
     loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url)
+    require_runtime_database(database_url, config=loaded)
     assessment_loaded = None
     assessment_identity_args = (
         assessment_database_url,
@@ -682,7 +703,7 @@ def dashboard_service(
             assessment_config,
             assessment_release_manifest,
         )
-        require_runtime_database(assessment_database_url)
+        require_runtime_database(assessment_database_url, config=assessment_loaded)
     application = create_app(
         loaded,
         database_url,

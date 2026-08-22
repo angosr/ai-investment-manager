@@ -94,7 +94,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v30
+    version: decision-packet-policy-v31
     schema_version: decision-packet-v12
     maximum_facts: 12
     maximum_fact_characters: 4000
@@ -107,8 +107,8 @@ decision_state:
     # 低可靠聚合新闻永久入库，但不作为人工复核时的普通背景占用 AI 注意力。
     minimum_background_intelligence_impact: "0.80"
     minimum_background_source_reliability: "0.70"
-    # AI 投影的上限；为固定分析指令预留约 5K，最终完整提示仍由 runtime 的 16K 门禁复核。
-    maximum_packet_characters: 11300
+    # AI 投影的上限；精简后的通用分析契约约 2K，完整提示仍须低于 runtime 的 16K 硬上限。
+    maximum_packet_characters: 12500
     maximum_previous_context_drivers: 3
 
 strategy:
@@ -478,12 +478,12 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v25
+  version: context-assessment-v26
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v4
+    version: primary-portfolio-mandate-v5
     analysis_scope: primary-portfolio
-    question: Assess accepted material evidence and its portfolio implications.
+    question: 维护当前世界认知，识别相对上一轮的实质变化、竞争解释、已验证传导及其资本含义。
     assets:
       - asset: BTC
         market_symbol: BTCUSDT
@@ -491,7 +491,8 @@ assessment:
       - asset: ETH
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
-    required_risk_factors: [BTC_INSTITUTIONAL_FLOW, BTC_INSTITUTIONAL_HOLDINGS, ETH_INSTITUTIONAL_FLOW, EXTERNAL_INFORMATION, MARKET_VOLATILITY, US_DOLLAR, US_ENERGY_INFLATION, US_EQUITY_RISK_APPETITE, US_FISCAL_LIQUIDITY, US_HIGH_YIELD_CREDIT_RISK, US_INTEREST_RATES, US_MONETARY_LIQUIDITY, US_MONETARY_POLICY]
+    # 顺序是 Packet 容量不足时的因果优先级：外生政策/流动性、定价中介、资金行为、交叉验证。
+    required_risk_factors: [US_MONETARY_POLICY, US_FISCAL_LIQUIDITY, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_DOLLAR, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

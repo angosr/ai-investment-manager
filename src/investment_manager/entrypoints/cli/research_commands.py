@@ -502,6 +502,108 @@ def carry_blind_evaluate_command(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+@app.command("perpetual-trend-walk-forward")
+def perpetual_trend_walk_forward_command(
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="EvaluationPlan 事实库"),
+    ],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    plan_id: Annotated[str, typer.Option()],
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    evaluation_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/perpetual-trend-evaluations"
+    ),
+    register_only: Annotated[
+        bool, typer.Option(help="只读取 manifest 并预登记固定 ETH 双向永续假设")
+    ] = False,
+) -> None:
+    """预登记或评价固定 ETH 双向永续趋势；从不读取已消费尾窗。"""
+
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.perpetual_trend import (
+        PerpetualTrendEvaluationCatalog,
+        PerpetualTrendEvaluationSpec,
+        PerpetualTrendPolicy,
+        PerpetualTrendWalkForwardPlan,
+        build_perpetual_trend_evaluation_plan,
+        current_perpetual_trend_evaluator_environment,
+        failed_perpetual_trend_experiment,
+        run_perpetual_trend_walk_forward,
+        validate_perpetual_trend_evaluation_plan,
+    )
+
+    governance = SqlGovernanceRepository(_runtime_engine(database_url))
+    champion = governance.get_champion()
+    registered = governance.get_plan(plan_id)
+    catalog = HistoricalCarryDatasetCatalog(carry_catalog)
+    if register_only:
+        spec = PerpetualTrendEvaluationSpec.freeze(
+            manifest=catalog.load_manifest(carry_dataset_id),
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_perpetual_trend_evaluator_environment(),
+            policy=PerpetualTrendPolicy(),
+            plan=PerpetualTrendWalkForwardPlan(plan_id=plan_id),
+        )
+        registered = build_perpetual_trend_evaluation_plan(
+            spec=spec,
+            base_manifest_id=champion.manifest_id,
+            registered_at=datetime.now(UTC),
+        )
+        governance.register_plan(registered)
+        typer.echo(
+            json.dumps(
+                {
+                    "evaluation_plan": registered.model_dump(mode="json"),
+                    "perpetual_trend_spec": spec.model_dump(mode="json"),
+                    "perpetual_trend_spec_hash": content_hash(spec),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if registered is None or registered.candidate_spec_snapshot is None:
+        raise typer.BadParameter(
+            "永续趋势 EvaluationPlan 尚未预登记；先执行 --register-only",
+            param_hint="plan-id",
+        )
+    _reject_invalidated_evaluation_plan(governance, plan_id)
+    evaluated_at = datetime.now(UTC)
+    try:
+        spec = PerpetualTrendEvaluationSpec.model_validate(
+            registered.candidate_spec_snapshot
+        )
+        if spec.carry_dataset_id != carry_dataset_id:
+            raise ValueError("调用方 carry 数据集与预登记规格不一致")
+        validate_perpetual_trend_evaluation_plan(
+            spec=spec,
+            plan=registered,
+            champion_manifest_id=champion.manifest_id,
+            evaluated_at=evaluated_at,
+            evaluator_code_version=current_clean_code_version(),
+            evaluator_environment=current_perpetual_trend_evaluator_environment(),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="plan-id") from exc
+    # Exact plan validation precedes label loading; registration only touched manifest.json.
+    carry_dataset = catalog.load(spec.carry_dataset_id)
+    result = run_perpetual_trend_walk_forward(
+        carry_dataset=carry_dataset,
+        spec=spec,
+    )
+    result_path = PerpetualTrendEvaluationCatalog(evaluation_catalog).store(result)
+    if not result.passed:
+        governance.record_failed_experiment(
+            failed_perpetual_trend_experiment(result, rejected_at=evaluated_at)
+        )
+    payload = result.model_dump(mode="json", exclude={"folds": {"__all__": {"weekly_returns"}}})
+    payload["result_path"] = str(result_path)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @app.command("register-carry-forward-plan")
 def register_carry_forward_plan_command(
     database_url: Annotated[

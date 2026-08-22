@@ -15,6 +15,7 @@ from investment_manager.forecast.context.analyst import (
     configured_assess_behavior_hash,
 )
 from investment_manager.forecast.context.contract import (
+    ASSESS_INSTRUCTIONS,
     AssessStructuredOutput,
     ContextAssessmentContractError,
     ContextAssessmentDraft,
@@ -1549,6 +1550,17 @@ def test_assess_schema_has_no_trade_action_fields(app_config, replay_input) -> N
     assert 'required_views_output_order_json=[{"asset":"BTC","horizon_minutes":60}' in prompt
     assert "allowed_evidence_ids_json=" not in prompt
     assert "decision_packet_json=" in prompt
+
+
+def test_assess_contract_is_dense_and_not_patched_for_named_market_events() -> None:
+    instructions = "\n".join(ASSESS_INSTRUCTIONS)
+
+    assert len(instructions) <= 2_500
+    assert "TREASURY_BUYBACK_OPERATION" not in instructions
+    assert "IBIT_HOLDINGS_SNAPSHOT" not in instructions
+    assert "US_DIGITAL_ASSET_RULEMAKING" not in instructions
+    assert "竞争解释" in instructions
+    assert "事件时间与观察时间" in instructions
 
 
 def test_assess_schema_constrains_packet_views_and_evidence(app_config, replay_input) -> None:

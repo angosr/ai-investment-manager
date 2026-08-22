@@ -68,6 +68,9 @@ CLI_CONTRACT = {
     "lifecycle-service": "config,database_url,release_manifest",
     "market-stream": "config,database_url,release_manifest",
     "outcome-evaluation-service": "config,database_url,release_manifest",
+    "perpetual-trend-walk-forward": (
+        "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
+    ),
     "paired-decision-tape": (
         "config,database_url,pipeline_version,symbol,plan_id,signal_end,"
         "source_blind_evaluation_id,dataset_id,horizon_minutes,maximum_age_minutes,"
@@ -209,9 +212,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 77
+    assert len(contract) == 78
     assert content_hash(contract) == (
-        "956104f2580c36bd49a32f4435f775e2659237da880913cca13f0fe6bde8fdfb"
+        "df4cae1b1469f1c06acda28e4328ed81109ec61ebc059554fcf7fa19d8436769"
     )
 
 
@@ -280,6 +283,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "replay-event-triggers",
             "research-catalog",
             "paired-decision-tape",
+            "perpetual-trend-walk-forward",
         },
     }
 

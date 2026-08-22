@@ -9,6 +9,7 @@ import typer
 
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
+    configured_fact_store_role,
     load_runtime_release,
     parse_utc_option,
     reject_invalidated_evaluation_plan,
@@ -56,7 +57,13 @@ def register_capital_shadow_plan(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    governance = SqlGovernanceRepository(runtime_engine(database_url))
+    governance = SqlGovernanceRepository(
+        runtime_engine(
+            database_url,
+            fact_store_role=configured_fact_store_role(loaded),
+            claim_fact_store=True,
+        )
+    )
     governance.record_release(manifest)
     existing = governance.get_plan(plan_id)
     if existing is None:
@@ -109,7 +116,11 @@ def evaluate_capital_shadow_plan_command(
     if publication > datetime.now(UTC):
         raise typer.BadParameter("published-at 不能晚于当前时间")
     loaded, manifest = load_runtime_release(config, release_manifest)
-    engine = runtime_engine(database_url)
+    engine = runtime_engine(
+        database_url,
+        fact_store_role=configured_fact_store_role(loaded),
+        claim_fact_store=True,
+    )
     governance = SqlGovernanceRepository(engine)
     plan = governance.get_plan(plan_id)
     if plan is None:

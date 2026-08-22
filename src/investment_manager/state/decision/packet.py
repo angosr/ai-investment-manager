@@ -315,8 +315,11 @@ class AnalysisMandate(FrozenModel):
             raise ValueError("Mandate assets 必须唯一且排序")
         if len(set(symbol_keys)) != len(symbol_keys):
             raise ValueError("Mandate market_symbol 必须唯一")
-        if tuple(sorted(set(self.required_risk_factors))) != (self.required_risk_factors):
-            raise ValueError("required_risk_factors 必须唯一且排序")
+        # Order is the mandate owner's explicit causal priority when the packet
+        # cannot carry one representative for every channel.  Sorting it would
+        # silently turn lexical order into investment priority.
+        if len(set(self.required_risk_factors)) != len(self.required_risk_factors):
+            raise ValueError("required_risk_factors 必须唯一")
         return self
 
 

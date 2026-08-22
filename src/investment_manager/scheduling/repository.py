@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import field_validator
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import case, func, insert, select, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -334,7 +334,17 @@ class SqlTriggerRepository:
                     trigger_outbox.c.status == "PENDING",
                     trigger_outbox.c.available_at <= as_of,
                 )
-                .order_by(trigger_outbox.c.available_at, trigger_outbox.c.outbox_id)
+                # TriggerNow writes the revised plan and its trigger at one logical
+                # time.  The plan must be delivered first; a content-hash id does
+                # not encode causal order.
+                .order_by(
+                    trigger_outbox.c.available_at,
+                    case(
+                        (trigger_outbox.c.message_kind == "PLAN_REVISED", 0),
+                        else_=1,
+                    ),
+                    trigger_outbox.c.outbox_id,
+                )
                 .limit(limit)
             ).mappings()
             return tuple(

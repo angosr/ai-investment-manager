@@ -35,10 +35,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v30"
     assert config.decision_state.official_fact_policy.version == "official-fact-v12"
     assert config.decision_state.delta_policy.version == "state-delta-v14"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v30"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v31"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v12"
-    assert config.decision_state.packet_policy.maximum_packet_characters == 11_300
-    assert config.assessment.version == "context-assessment-v25"
+    assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
+    assert config.assessment.version == "context-assessment-v26"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -70,19 +70,19 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETH",
     )
     assert config.assessment.mandate.required_risk_factors == (
+        "US_MONETARY_POLICY",
+        "US_FISCAL_LIQUIDITY",
+        "US_MONETARY_LIQUIDITY",
+        "US_INTEREST_RATES",
+        "US_DOLLAR",
         "BTC_INSTITUTIONAL_FLOW",
-        "BTC_INSTITUTIONAL_HOLDINGS",
         "ETH_INSTITUTIONAL_FLOW",
+        "US_EQUITY_RISK_APPETITE",
+        "US_HIGH_YIELD_CREDIT_RISK",
+        "US_ENERGY_INFLATION",
+        "BTC_INSTITUTIONAL_HOLDINGS",
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",
-        "US_DOLLAR",
-        "US_ENERGY_INFLATION",
-        "US_EQUITY_RISK_APPETITE",
-        "US_FISCAL_LIQUIDITY",
-        "US_HIGH_YIELD_CREDIT_RISK",
-        "US_INTEREST_RATES",
-        "US_MONETARY_LIQUIDITY",
-        "US_MONETARY_POLICY",
     )
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
 

@@ -47,6 +47,13 @@ export function LatestAssessment() {
       }))
     : [];
   const citedEvidence = detail?.cited_evidence ?? [];
+  const attemptMessage = quality?.latest_attempt_status === "NO_ATTEMPT"
+    ? "当前分析版本尚未执行世界认知分析；这不是质量筛选结果。"
+    : quality?.latest_attempt_status === "REJECTED"
+      ? `最近一次分析输出无法形成可解析快照，失败已保留用于继续改进${quality.latest_attempt_reason ? `：${quality.latest_attempt_reason}。` : "。"}`
+      : quality?.latest_attempt_status === "FAILED"
+        ? `最近一次分析执行失败，失败已保留用于继续改进${quality.latest_attempt_reason ? `：${quality.latest_attempt_reason}。` : "。"}`
+        : "当前分析版本尚未产生世界认知快照。";
   return (
     <Card
       title="最新世界认知"
@@ -57,9 +64,9 @@ export function LatestAssessment() {
     >
       {quality && !currentSnapshot ? (
         <p className={styles.warning}>
-          当前分析版本尚未形成合格世界认知。{row
-            ? `${hhmm(row.at)} UTC 的旧快照仅保留在 AI 分析历史，不作为当前判断。`
-            : "系统不会用无效输出填充。"}
+          {attemptMessage}{row
+            ? ` ${hhmm(row.at)} UTC 的旧版本快照仅保留在 AI 分析历史，不作为当前判断。`
+            : ""}
         </p>
       ) : null}
       {currentRow ? (
@@ -116,7 +123,7 @@ export function LatestAssessment() {
           </div>
         </div>
       ) : (
-        <p className={styles.empty}>等待第一份通过门禁的世界认知。</p>
+        <p className={styles.empty}>{attemptMessage}</p>
       )}
     </Card>
   );

@@ -12,6 +12,7 @@ def compose_metadata() -> MetaData:
     """Load every table owner into the one physical-database registry."""
 
     for owner in (
+        "investment_manager.platform.fact_store",
         "investment_manager.information.tables",
         "investment_manager.market.tables",
         "investment_manager.scheduling.tables",
