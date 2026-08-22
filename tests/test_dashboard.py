@@ -91,6 +91,21 @@ def test_assessment_evidence_catalog_resolves_derivative_state() -> None:
     assert "OI 变化 0.02" in catalog[evidence_ref]["detail"]
 
 
+def test_world_cognition_summary_is_not_reduced_to_current_product() -> None:
+    assessment = SimpleNamespace(capital_relevance=object(), drivers=())
+
+    summary = ser._assessment_summary(assessment)
+
+    assert summary == "当前未确认足以改变世界模型基准的主导因素"
+    assert "BTC" not in summary
+
+    with_drivers = SimpleNamespace(
+        capital_relevance=object(),
+        drivers=(object(), object()),
+    )
+    assert ser._assessment_summary(with_drivers) == "当前世界模型识别出 2 个重要驱动"
+
+
 def test_health_uses_authoritative_per_scope_heartbeat() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
     report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)

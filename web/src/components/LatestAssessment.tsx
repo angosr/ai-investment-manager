@@ -81,17 +81,6 @@ export function LatestAssessment() {
             <div className={styles.summary}>
               {currentRow.summary}
             </div>
-            {detail?.capital_relevance ? (
-              <div className={styles.capital}>
-                <b>
-                  {CAPITAL_STATUS[detail.capital_relevance.status]
-                    ?? detail.capital_relevance.status}
-                </b>
-                <span>{detail.capital_relevance.thesis}</span>
-                <span>{detail.capital_relevance.transmission}</span>
-                <small>研究旁路 · 资本权限：无</small>
-              </div>
-            ) : null}
             <p className={styles.mechanism}>
               {detail?.mechanism ?? currentRow.mechanism}
             </p>
@@ -103,6 +92,17 @@ export function LatestAssessment() {
                     <span>{driver.transmission}</span>
                   </div>
                 ))}
+              </div>
+            ) : null}
+            {detail?.capital_relevance ? (
+              <div className={styles.capital}>
+                <b>
+                  当前产品相关性 · {CAPITAL_STATUS[detail.capital_relevance.status]
+                    ?? detail.capital_relevance.status}
+                </b>
+                <span>{detail.capital_relevance.thesis}</span>
+                <span>{detail.capital_relevance.transmission}</span>
+                <small>研究旁路 · 资本权限：无</small>
               </div>
             ) : null}
           </div>

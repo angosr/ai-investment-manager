@@ -460,13 +460,9 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
     if assessment.capital_relevance is not None:
-        labels = {
-            "BASE_UNCHANGED": "未发现需要否决下一次 BTC carry 入场的额外风险",
-            "ENTRY_VETO_CANDIDATE": "发现需要配对验证的 BTC carry 入场风险",
-            "INSUFFICIENT_EVIDENCE": "关键证据不足，暂不改变程序基线",
-        }
-        status = assessment.capital_relevance.status.value
-        return labels.get(status, status)
+        if assessment.drivers:
+            return f"当前世界模型识别出 {len(assessment.drivers)} 个重要驱动"
+        return "当前未确认足以改变世界模型基准的主导因素"
     direction_labels = {"UP": "看涨", "DOWN": "看跌", "UNCERTAIN": "方向不明"}
     by_asset: dict[str, list] = {}
     for view in assessment.views:
