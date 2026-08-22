@@ -13,7 +13,7 @@ component_versions:
   - [calibration, edge-calibration-v1]
   - [carry_forecast, btc-carry-monthly-first-open-v4]
   - [dynamic_carry_forecast, dynamic-carry-point-in-time-v1]
-  - [capital, product-capital-v4]
+  - [capital, product-capital-v5]
   - [composition, calibrated-net-edge-v1]
   - [frequency, frequency-v4]
   - [risk, risk-v1]
