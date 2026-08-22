@@ -13,7 +13,7 @@
 }
 .tabs {
   display: flex;
-  gap: 2px;
+  gap: 20px;
 }
 .tab {
   background: transparent;
@@ -97,6 +97,9 @@
   background: color-mix(in srgb, var(--warn) 7%, var(--panel));
 }
 @media (max-width: 640px) {
+  .tabs {
+    gap: 14px;
+  }
   .quality {
     align-items: flex-start;
     flex-direction: column;
