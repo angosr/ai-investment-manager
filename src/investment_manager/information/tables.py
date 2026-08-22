@@ -99,11 +99,7 @@ normalized_events = Table(
     Column("payload", JSON, nullable=False),
     UniqueConstraint("source", "content_hash", name="uq_normalized_event_source_hash"),
 )
-Index(
-    "ix_normalized_events_cursor",
-    normalized_events.c.event_time,
-    normalized_events.c.evidence_id,
-)
+Index("ix_normalized_events_event_time", normalized_events.c.event_time)
 
 source_poll_records = Table(
     "source_poll_records",

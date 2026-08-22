@@ -78,11 +78,6 @@ Index(
     context_assessments.c.analysis_behavior_hash,
     context_assessments.c.available_at,
 )
-Index(
-    "ix_context_assessments_cursor",
-    context_assessments.c.available_at,
-    context_assessments.c.assessment_id,
-)
 
 assessment_executions = Table(
     "assessment_executions",
