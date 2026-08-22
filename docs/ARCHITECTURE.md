@@ -93,6 +93,8 @@ State 内容身份和 Assessment 权威复用共同抑制重复 Codex 调用。
 
 #### 3.1.1 世界认知不是新增账本，而是现有证据链的可评价投影
 
+本节记录当前已部署实现及其边界；下一现役版本的根因审查、完整目标结构、数据能力、程序化事件窗、AI 契约、决策接口、评价和一次性迁移/删除标准统一见 [`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md)。迁移完成后本节只保留系统边界摘要，不复制该详细规范。
+
 “世界认知”不建立第二套 Observation/Fact/State，也不等同于最新价格趋势或一段 AI 摘要。它是
 `DecisionPacket → ContextAssessment` 对当前决策有效证据的有状态投影：State 冻结事实，Packet 做点时压缩，
 Assessment 区分已确认事实、有证据推断与未验证假设。Dashboard 展示最新可解析投影及其冻结快照；执行失败或
