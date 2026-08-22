@@ -212,7 +212,7 @@ def build_context_capital_forward_plan(
         minimum_sample_size=spec.minimum_opportunity_count,
         hard_guardrails=(
             "NATURAL_OPPORTUNITY_COUNT_SUFFICIENT",
-            "NO_PENDING_PROGRAM_FORECAST_OUTCOMES",
+            "NO_INCOMPLETE_PROGRAM_FORECAST_OUTCOMES",
             "PAIRED_NET_RETURN_DELTA_LOWER_BOUND_POSITIVE",
         ),
         required_stages=(EvaluationStage.SHADOW,),

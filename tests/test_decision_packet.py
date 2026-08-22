@@ -1618,6 +1618,22 @@ def test_capital_objective_replaces_redundant_direction_views(
     assert "required_views" not in projected
 
 
+def test_new_optional_capital_fields_do_not_change_legacy_packet_identity(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        packet_schema_version="decision-packet-v12",
+    )
+
+    persisted = packet.model_dump(mode="json")
+
+    assert "capital_objective" not in persisted
+    assert DecisionPacket.model_validate(persisted) == packet
+
+
 def test_capital_objective_rejects_directional_output(app_config, replay_input) -> None:
     mandate = _mandate().model_copy(
         update={

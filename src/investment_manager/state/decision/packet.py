@@ -332,7 +332,10 @@ class AnalysisMandate(FrozenModel):
     question: str = Field(min_length=1, max_length=500)
     assets: tuple[MandateAsset, ...] = Field(min_length=1)
     required_risk_factors: tuple[str, ...] = Field(min_length=1)
-    capital_objective: CapitalContextObjective | None = None
+    capital_objective: CapitalContextObjective | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def mandate_identity_must_be_unique_and_sorted(self):
@@ -403,13 +406,20 @@ class PacketDerivativeState(FrozenModel):
     last_funding_rate_bps: Decimal
     trailing_funding_rate_mean_bps: Decimal | None
     trailing_funding_rate_sum_bps: Decimal | None
-    trailing_funding_rate_stddev_bps: Decimal | None = None
+    trailing_funding_rate_stddev_bps: Decimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     trailing_funding_positive_fraction: Decimal | None = Field(
         default=None,
         ge=0,
         le=1,
+        exclude_if=lambda value: value is None,
     )
-    trailing_funding_rate_min_bps: Decimal | None = None
+    trailing_funding_rate_min_bps: Decimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     funding_settlement_count: int = Field(ge=0)
     funding_window_hours: int = Field(gt=0, le=720)
     next_funding_time: datetime
@@ -730,7 +740,10 @@ class PacketPreviousContext(FrozenModel):
     )
     drivers: tuple[PacketPreviousDriver, ...] = Field(max_length=8)
     event_references: tuple[PacketPreviousEventReference, ...] = ()
-    capital_relevance: PacketPreviousCapitalRelevance | None = None
+    capital_relevance: PacketPreviousCapitalRelevance | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     views: tuple[PacketPreviousView, ...]
     contradictions: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
     data_gaps: tuple[str, ...] = Field(max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
@@ -760,7 +773,10 @@ class DecisionPacket(FrozenModel):
     as_of: datetime
     state_id: str
     question: str
-    capital_objective: CapitalContextObjective | None = None
+    capital_objective: CapitalContextObjective | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     portfolio: PacketPortfolioState
