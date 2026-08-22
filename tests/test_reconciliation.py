@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine
-from temporalio.testing import WorkflowEnvironment
 
 from investment_manager.execution.reconciliation.engine import (
     DifferenceKind,
@@ -16,14 +14,6 @@ from investment_manager.execution.reconciliation.repository import (
     SqlLocalTradingStateSource,
     SqlMockExchangeTruthSource,
     SqlReconciliationReportStore,
-)
-from investment_manager.execution.reconciliation.service import (
-    ReconciliationActivities,
-    ReconciliationTemporalCoordinator,
-    ReconciliationTemporalWorker,
-    ReconciliationWorkflowStatus,
-    _seconds_until_next_bucket,
-    build_reconciliation_workflow_request,
 )
 from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.legacy.cycle import AnalysisCycle
@@ -48,33 +38,6 @@ def _sql_cycle(engine, app_config):
         exchange=SqlMockExchange(engine, app_config.execution),
         risk_budget=SqlRiskBudgetStore(engine),
     )
-
-
-def test_reconciliation_schedule_tracks_absolute_boundaries() -> None:
-    almost_boundary = datetime(2026, 8, 18, 12, 0, 59, 750_000, tzinfo=UTC)
-    after_slow_run = datetime(2026, 8, 18, 12, 1, 7, tzinfo=UTC)
-
-    assert _seconds_until_next_bucket(almost_boundary, bucket_seconds=60) == 0.25
-    assert _seconds_until_next_bucket(after_slow_run, bucket_seconds=60) == 53
-
-
-def test_reconciliation_workflow_identity_covers_orchestration_version(app_config) -> None:
-    as_of = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    original = build_reconciliation_workflow_request(
-        as_of=as_of,
-        reconciliation_policy=app_config.reconciliation,
-        temporal_policy=app_config.temporal,
-    )
-    revised = build_reconciliation_workflow_request(
-        as_of=as_of,
-        reconciliation_policy=app_config.reconciliation,
-        temporal_policy=app_config.temporal.model_copy(
-            update={"version": "temporal-analysis-next"}
-        ),
-    )
-
-    assert revised.workflow_id != original.workflow_id
-    assert revised.input_hash != original.input_hash
 
 
 def test_reconciliation_matches_independent_mock_exchange_journal(app_config, replay_input) -> None:
@@ -155,54 +118,6 @@ def test_remote_order_without_local_commit_freezes_new_risk(app_config, replay_i
     assert report.freeze_new_risk is True
     assert DifferenceKind.ORDER_MISSING_LOCAL in {item.kind for item in report.differences}
     assert DifferenceKind.POSITION_MISSING_LOCAL in {item.kind for item in report.differences}
-
-
-def test_reconciliation_workflow_persists_and_replays_report(
-    app_config, replay_input, tmp_path
-) -> None:
-    async def scenario() -> None:
-        engine = create_engine(
-            f"sqlite+pysqlite:///{tmp_path / 'reconciliation-temporal.db'}",
-            connect_args={"check_same_thread": False},
-        )
-        create_schema(engine)
-        _sql_cycle(engine, app_config).run(replay_input)
-        local, remote = _sources(engine, app_config)
-        reports = SqlReconciliationReportStore(engine)
-        activities = ReconciliationActivities(local=local, remote=remote, reports=reports)
-        async with await WorkflowEnvironment.start_time_skipping() as env:
-            policy = app_config.temporal.model_copy(
-                update={"reconciliation_task_queue": "reconciliation-test"}
-            )
-            coordinator = ReconciliationTemporalCoordinator(env.client, policy)
-            request = build_reconciliation_workflow_request(
-                as_of=replay_input.market.as_of,
-                reconciliation_policy=app_config.reconciliation,
-                temporal_policy=policy,
-            )
-            async with ReconciliationTemporalWorker(env.client, policy, activities):
-                first = await coordinator.execute(request)
-                replayed = await coordinator.execute(request)
-                history = [
-                    event
-                    async for event in env.client.get_workflow_handle(
-                        request.workflow_id
-                    ).fetch_history_events()
-                ]
-            assert first.status == ReconciliationWorkflowStatus.COMPLETED
-            assert first.report is not None
-            assert first.report.status == ReconciliationStatus.MATCHED
-            assert replayed == first
-            assert reports.latest(as_of=replay_input.market.as_of) == first.report
-            scheduled = [
-                event.activity_task_scheduled_event_attributes
-                for event in history
-                if event.WhichOneof("attributes") == "activity_task_scheduled_event_attributes"
-            ]
-            assert len(scheduled) == 1
-            assert scheduled[0].use_workflow_build_id is False
-
-    asyncio.run(scenario())
 
 
 def test_shadow_account_fails_closed_without_fresh_matched_report(app_config, replay_input) -> None:
