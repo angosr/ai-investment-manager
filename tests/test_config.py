@@ -40,8 +40,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.assessment.mandate.capital_objective is not None
-    assert config.assessment.version == "context-assessment-v27"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v6"
+    assert config.assessment.version == "context-assessment-v28"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v7"
     regulation = next(
         item
         for item in config.information.coverage_requirements
