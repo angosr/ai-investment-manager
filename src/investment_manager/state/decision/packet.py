@@ -251,6 +251,39 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 ),
             }
             previous = payload["previous_context"]
+        else:
+            # Previous hypotheses are derived state, not evidence.  The next
+            # analysis only needs their stable identity and falsifiable edge
+            # to decide continuity.  Re-sending old causal nodes, conflicts,
+            # and capital evidence duplicates the immutable audit trail and
+            # makes a maintained model larger than a cold start.
+            previous["hypotheses"] = tuple(
+                {
+                    key: hypothesis[key]
+                    for key in (
+                        "hypothesis_id",
+                        "continuity_ref",
+                        "role",
+                        "claim",
+                        "horizon_hours",
+                        "next_observation",
+                        "invalidation_conditions",
+                        "next_review_at",
+                    )
+                }
+                for hypothesis in previous["hypotheses"]
+            )
+            capital = previous.get("capital_implication")
+            if capital is not None:
+                previous["capital_implication"] = {
+                    key: capital[key]
+                    for key in (
+                        "objective_id",
+                        "effect",
+                        "incremental_reason",
+                        "invalidation_conditions",
+                    )
+                }
         for field_name in (
             "analysis_behavior_hash",
             "analysis_scope",

@@ -260,6 +260,8 @@ def test_packet_carries_latest_world_model_as_derived_evidence(
     assert packet.previous_context == previous
     projected = decision_packet_analysis_projection(packet)
     assert projected["previous_context"]["hypotheses"][0]["claim"] == (previous.hypotheses[0].claim)
+    assert "causal_chain" not in projected["previous_context"]["hypotheses"][0]
+    assert "conflicting_evidence_ids" not in projected["previous_context"]["hypotheses"][0]
     assert previous.assessment_id in build_assess_prompt(packet)
 
 
