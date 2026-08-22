@@ -158,6 +158,18 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 窗口结束并经过七天结算宽限后，先用现有冻结命令生成精确同窗口的现货、资金费率和 carry 内容寻址数据，再从预登记的精确 Git 提交及 Python/Pydantic 环境运行 `evaluate-carry-forward-plan --plan-id ... --carry-dataset-id ...`。评价命令在读取调用方指定的数据制品前先校验成熟时间、代码版本和最小依赖环境，随后按 carry 引用加载现货与官方资金费率制品并逐条复核结算；数据窗口、来源、采集时间、资金费率身份或预登记规格任一不符都会失败关闭。连续账本费用后净收益不为正，或采用固定三个月滞后的保守 Newey-West 月度收益下界不为正，均不能通过。它只产生研究结果和失败实验事实，不创建永续适配器、订单或权限。
 
+现役 dynamic carry 可先用同一冻结配置做低成本淘汰诊断：
+
+```bash
+.venv/bin/investment-manager diagnose-dynamic-carry-history \
+  --config '<冻结 Capital 配置>' \
+  --carry-dataset-id '<内容寻址 carry 数据集 ID>'
+```
+
+命令从配置自行派生信号、成本、滞回、风险尺寸和执行规则，以配置中的初始权益在 UTC 日开盘回放，
+并写入 `.runtime/dynamic-carry-replays/`。它保留资金费的点时可见性和费用后权益，但日线无法证明
+15 分钟机会能成交，结果固定标记为 `REJECTION_ONLY_DIAGNOSTIC`；不得登记成通过证据或据此扩大权限。
+
 每个 Capital Shadow Release 必须在首个月度窗口前，向它自己的事实库登记一次运行评价合同；命令从冻结配置与 Manifest 派生全部行为身份、证据、基线、成本维度和故障门槛，调用方只能选择计划 ID 与未来自然月窗口：
 
 ```bash

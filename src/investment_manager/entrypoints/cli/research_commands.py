@@ -187,6 +187,85 @@ def fetch_binance_carry_history_command(
     )
 
 
+@app.command("diagnose-dynamic-carry-history")
+def diagnose_dynamic_carry_history_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    carry_dataset_id: Annotated[str, typer.Option()],
+    start: Annotated[
+        str | None,
+        typer.Option(help="可选的带时区 UTC 日线开盘起点（含）"),
+    ] = None,
+    end: Annotated[
+        str | None,
+        typer.Option(help="可选的带时区 UTC 评价终点（不含）"),
+    ] = None,
+    carry_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/carry-datasets"
+    ),
+    spot_catalog: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/dynamic-carry-replays"
+    ),
+) -> None:
+    """以生产规则做日开盘点时诊断；结果只能用于淘汰弱候选。"""
+
+    from datetime import timedelta
+
+    from investment_manager.research.carry import HistoricalCarryDatasetCatalog
+    from investment_manager.research.dataset import HistoricalDatasetCatalog
+    from investment_manager.research.dynamic_carry import (
+        DynamicCarryReplayCatalog,
+        replay_policy_from_config,
+        run_dynamic_carry_replay,
+    )
+
+    loaded = load_config(config)
+    carry = HistoricalCarryDatasetCatalog(carry_catalog).load(carry_dataset_id)
+    spot = HistoricalDatasetCatalog(spot_catalog).load(
+        carry.manifest.spot_dataset_id
+    )
+    replay_start = (
+        _parse_utc_option(start, name="start")
+        if start is not None
+        else carry.days[0].open_time
+    )
+    replay_end = (
+        _parse_utc_option(end, name="end")
+        if end is not None
+        else carry.days[-1].close_time + timedelta(microseconds=1)
+    )
+    try:
+        result = run_dynamic_carry_replay(
+            carry_dataset=carry,
+            spot_dataset=spot,
+            policy=replay_policy_from_config(loaded),
+            starting_equity=loaded.shadow.initial_quote_balance,
+            start=replay_start,
+            end=replay_end,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="carry-dataset-id") from exc
+    target = DynamicCarryReplayCatalog(result_catalog).store(result)
+    typer.echo(
+        json.dumps(
+            {
+                "result_id": result.result_id,
+                "evidence_scope": result.evidence_scope,
+                "carry_dataset_id": result.carry_dataset_id,
+                "start": result.start.isoformat(),
+                "end": result.end.isoformat(),
+                "metrics": result.metrics.model_dump(mode="json"),
+                "limitations": result.limitations,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("carry-walk-forward")
 def carry_walk_forward_command(
     database_url: Annotated[

@@ -85,7 +85,13 @@ from investment_manager.research.dataset import (
     fetch_binance_history,
     freeze_historical_events,
 )
+from investment_manager.research.dynamic_carry import (
+    DynamicCarryReplayCatalog,
+    replay_policy_from_config,
+    run_dynamic_carry_replay,
+)
 from investment_manager.research.screening import run_raw_signal_screen
+from investment_manager.settings import load_config
 
 
 def test_public_data_research_symbol_is_independent_of_production_allowlist(
@@ -870,7 +876,13 @@ def _carry_dataset(
     mark_high: Decimal = Decimal("101"),
     spot_source: str = "test-history",
     funding_rate: Decimal = Decimal("0.0002"),
+    settlements_per_day: int = 1,
+    daily_funding_rates: tuple[Decimal, ...] | None = None,
 ) -> tuple[HistoricalDataset, HistoricalFundingDataset, HistoricalCarryDataset]:
+    if settlements_per_day <= 0 or 24 % settlements_per_day:
+        raise ValueError("settlements_per_day 必须是 24 的正整数因子")
+    if daily_funding_rates is not None and len(daily_funding_rates) != count:
+        raise ValueError("daily_funding_rates 必须与 carry 日数一致")
     spot = _dataset(
         count=count,
         interval="1d",
@@ -903,16 +915,27 @@ def _carry_dataset(
         )
         for bar in spot.bars
     )
+    funding_interval_hours = 24 // settlements_per_day
     settlements = tuple(
         CarryFundingSettlement(
             symbol="BTCUSDT",
-            funding_time=bar.open_time,
-            available_at=bar.open_time + timedelta(minutes=1),
-            funding_interval_hours=24,
-            funding_rate=funding_rate,
+            funding_time=(
+                bar.open_time + timedelta(hours=funding_interval_hours * index)
+            ),
+            available_at=(
+                bar.open_time
+                + timedelta(hours=funding_interval_hours * index, minutes=1)
+            ),
+            funding_interval_hours=funding_interval_hours,
+            funding_rate=(
+                daily_funding_rates[day_index]
+                if daily_funding_rates is not None
+                else funding_rate
+            ),
             mark_price=Decimal("100"),
         )
-        for bar in spot.bars
+        for day_index, bar in enumerate(spot.bars)
+        for index in range(settlements_per_day)
     )
     funding_observations = tuple(
         FundingRateObservation(
@@ -1112,6 +1135,98 @@ def test_carry_backtest_reconciles_cost_funding_and_walk_forward_gates(
     blind_catalog = CarryBlindCatalog(tmp_path / "blind")
     blind_catalog.store(blind)
     assert blind_catalog.load(blind.result_id) == blind
+
+
+def test_dynamic_carry_daily_open_diagnostic_replays_production_rules(
+    tmp_path,
+) -> None:
+    spot, _, carry = _carry_dataset(
+        count=10,
+        funding_rate=Decimal("0.0003"),
+        settlements_per_day=3,
+    )
+    config = load_config(Path("config/investment-manager.shadow.yaml"))
+    policy = replay_policy_from_config(config)
+
+    result = run_dynamic_carry_replay(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=policy,
+        starting_equity=Decimal("10000"),
+        start=carry.days[0].open_time,
+        end=carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert result.evidence_scope == "REJECTION_ONLY_DIAGNOSTIC"
+    assert result.metrics.missing_signal_day_count == 1
+    assert result.metrics.signal_day_count == 9
+    assert result.metrics.entry_count == 1
+    assert result.metrics.signal_exit_count == 0
+    assert result.metrics.boundary_exit_count == 1
+    assert result.metrics.funding_pnl > result.metrics.modeled_cost
+    assert result.metrics.basis_pnl == 0
+    assert result.metrics.net_pnl > 0
+    assert result.actions[0].kind == "ENTRY"
+    assert result.actions[-1].kind == "BOUNDARY_EXIT"
+    assert "DAILY_OPEN_CANNOT_REPLAY_THE_PRODUCTION_15_MINUTE_TRIGGER_CLOCK" in (
+        result.limitations
+    )
+    catalog = DynamicCarryReplayCatalog(tmp_path / "dynamic-carry")
+    catalog.store(result)
+    assert catalog.load(result.result_id) == result
+
+
+def test_dynamic_carry_replay_uses_entry_hold_hysteresis() -> None:
+    spot, _, carry = _carry_dataset(
+        count=6,
+        settlements_per_day=3,
+        daily_funding_rates=(
+            Decimal("0.0003"),
+            Decimal("0.0002"),
+            Decimal("0.0001"),
+            Decimal("0.0001"),
+            Decimal("0.0001"),
+            Decimal("0.0001"),
+        ),
+    )
+    config = load_config(Path("config/investment-manager.shadow.yaml"))
+    result = run_dynamic_carry_replay(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=replay_policy_from_config(config),
+        starting_equity=Decimal("10000"),
+        start=carry.days[0].open_time,
+        end=carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert [item.kind for item in result.actions] == ["ENTRY", "SIGNAL_EXIT"]
+    assert result.actions[0].at == carry.days[1].open_time
+    # 21 gross bps - 20 cost = +1 net bps: too weak for a new entry, but above
+    # the -5 bps holding threshold, so the position survives day two.
+    assert result.actions[1].at == carry.days[3].open_time
+    assert result.metrics.exposure_day_count == 2
+
+
+def test_dynamic_carry_replay_does_not_force_a_subthreshold_trade() -> None:
+    spot, _, carry = _carry_dataset(
+        count=5,
+        funding_rate=Decimal("0.0002"),
+        settlements_per_day=3,
+    )
+    config = load_config(Path("config/investment-manager.shadow.yaml"))
+    result = run_dynamic_carry_replay(
+        carry_dataset=carry,
+        spot_dataset=spot,
+        policy=replay_policy_from_config(config),
+        starting_equity=Decimal("10000"),
+        start=carry.days[0].open_time,
+        end=carry.days[-1].close_time + timedelta(microseconds=1),
+    )
+
+    assert result.metrics.maximum_gross_signal_bps == Decimal("21")
+    assert result.metrics.entry_eligible_day_count == 0
+    assert result.actions == ()
+    assert result.metrics.ending_equity == Decimal("10000")
 
 
 def test_carry_policy_profiles_freeze_risk_sizing() -> None:
