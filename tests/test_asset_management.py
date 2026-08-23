@@ -5,18 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.forecast.models import (
-    AssessmentUncertainty,
-    BaseForecast,
-    CalibratedForecast,
-    ContextAssessment,
-    ContextView,
-    DirectionalView,
     ExposureDirection,
     ForecastLeg,
-    ForecastReferencePrice,
-    ForecastRole,
     ForecastTarget,
-    PricedState,
 )
 from investment_manager.information.models import (
     SourceObservation,
@@ -28,6 +19,7 @@ from investment_manager.market.models import (
     InstrumentProduct,
 )
 from investment_manager.portfolio.models import (
+    PortfolioCostEstimate,
     PortfolioTarget,
     SleeveTarget,
 )
@@ -54,14 +46,6 @@ def _spot_target() -> ForecastTarget:
     )
 
 
-def _spot_reference_prices() -> tuple[ForecastReferencePrice, ...]:
-    target = _spot_target()
-    return (
-        ForecastReferencePrice(
-            instrument_id=target.legs[0].instrument.key,
-            price=Decimal("100000"),
-        ),
-    )
 
 
 def _spot_quote() -> ExecutableQuote:
@@ -152,18 +136,6 @@ def _source_observation() -> SourceObservation:
     )
 
 
-def _context_view(*, asset: str = "BTC") -> ContextView:
-    return ContextView(
-        asset=asset,
-        horizon_minutes=240,
-        direction=DirectionalView.UP,
-        already_priced=PricedState.PARTIAL,
-        uncertainty=AssessmentUncertainty.HIGH,
-        evidence_ids=("fact-1",),
-        invalidation_conditions=("official-retraction",),
-    )
-
-
 def _sleeve_target() -> SleeveTarget:
     target = _spot_target()
     return SleeveTarget(
@@ -176,9 +148,17 @@ def _sleeve_target() -> SleeveTarget:
         forecast_target=target,
         desired_gross_notional=Decimal("1000"),
         forecast_ids=("forecast-1",),
-        conservative_gross_bps=Decimal("20"),
-        estimated_variable_cost_bps=Decimal("8"),
-        conservative_net_bps=Decimal("12"),
+        decision_gross_bps=Decimal("20"),
+        cost=PortfolioCostEstimate(
+            model_version="test-cost-v1",
+            gross_notional=Decimal("1000"),
+            fee_bps=Decimal("8"),
+            exit_spread_bps=Decimal("0"),
+            depth_slippage_bps=Decimal("0"),
+            total_bps=Decimal("8"),
+            quote_refs=("spot-quote",),
+        ),
+        decision_net_bps=Decimal("12"),
         reason_codes=("NET_EDGE_POSITIVE",),
     )
 
@@ -240,138 +220,6 @@ def test_material_delta_requires_real_referenced_change() -> None:
             horizons_minutes=(60, 240),
             reason_codes=("OFFICIAL_REVISION",),
             content_hash=HASH,
-        )
-
-
-def test_context_assessment_is_multi_asset_but_unique_per_horizon() -> None:
-    assessment = ContextAssessment(
-        assessment_id="assessment-1",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        as_of=NOW,
-        available_at=NOW + timedelta(seconds=20),
-        analysis_behavior_hash=HASH,
-        decision_packet_hash=HASH,
-        trigger_ids=("delta-1",),
-        market_mechanism="Regulatory clarity can alter the risk premium.",
-        views=(_context_view(asset="BTC"), _context_view(asset="ETH")),
-    )
-
-    assert tuple(item.asset for item in assessment.views) == ("BTC", "ETH")
-
-    payload = assessment.model_dump()
-    payload["views"] = (payload["views"][1], payload["views"][0])
-    with pytest.raises(ValidationError, match="资产/时域唯一且排序"):
-        ContextAssessment.model_validate(payload)
-
-
-def test_context_assessment_cannot_smuggle_an_order_field() -> None:
-    payload = ContextAssessment(
-        assessment_id="assessment-1",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        as_of=NOW,
-        available_at=NOW + timedelta(seconds=20),
-        analysis_behavior_hash=HASH,
-        decision_packet_hash=HASH,
-        trigger_ids=("delta-1",),
-        market_mechanism="Regulatory clarity can alter the risk premium.",
-        views=(_context_view(),),
-    ).model_dump()
-    payload["order_type"] = "MARKET"
-
-    with pytest.raises(ValidationError, match="extra_forbidden"):
-        ContextAssessment.model_validate(payload)
-
-
-def test_base_forecast_rejects_free_analysis_latency() -> None:
-    with pytest.raises(ValidationError, match="时间顺序非法"):
-        BaseForecast(
-            forecast_id="forecast-1",
-            producer_id="trend",
-            producer_version="v1",
-            forecast_family="TREND",
-            target=_spot_target(),
-            horizon_minutes=240,
-            direction=DirectionalView.UP,
-            reference_prices=(
-                ForecastReferencePrice(
-                    instrument_id=_spot_target().legs[0].instrument.key,
-                    price=Decimal("100"),
-                ),
-            ),
-            observed_at=NOW,
-            available_at=NOW - timedelta(seconds=1),
-            valid_until=NOW + timedelta(hours=4),
-            raw_score=Decimal("1.2"),
-            input_refs=("feature-1",),
-        )
-
-
-@pytest.mark.parametrize(
-    ("role", "base_id", "assessment_id"),
-    [
-        (ForecastRole.PROGRAM_BASE, "base-1", None),
-        (ForecastRole.AI_EVENT, None, "assessment-1"),
-        (ForecastRole.AI_ADJUSTED, "base-1", "assessment-1"),
-    ],
-)
-def test_calibrated_forecast_roles_have_one_unambiguous_provenance(
-    role: ForecastRole,
-    base_id: str | None,
-    assessment_id: str | None,
-) -> None:
-    forecast = CalibratedForecast(
-        forecast_id="calibrated-1",
-        role=role,
-        producer_id="calibration",
-        producer_version="v1",
-        forecast_family="EVENT",
-        target=_spot_target(),
-        horizon_minutes=240,
-        direction=DirectionalView.UP,
-        reference_prices=_spot_reference_prices(),
-        expected_edge_half_life_seconds=3600,
-        available_at=NOW,
-        valid_until=NOW + timedelta(hours=1),
-        base_forecast_id=base_id,
-        assessment_id=assessment_id,
-        expected_gross_bps=Decimal("25"),
-        conservative_gross_bps=Decimal("15"),
-        dispersion_bps=Decimal("30"),
-        calibration_ref="calibration-v1",
-        calibration_sample_size=40,
-        non_overlapping_sample_size=30,
-        input_refs=("input-1",),
-    )
-
-    assert forecast.role == role
-
-
-def test_calibrated_forecast_rejects_role_reference_mismatch() -> None:
-    with pytest.raises(ValidationError, match="base_forecast_id 不匹配"):
-        CalibratedForecast(
-            forecast_id="calibrated-1",
-            role=ForecastRole.AI_EVENT,
-            producer_id="calibration",
-            producer_version="v1",
-            forecast_family="EVENT",
-            target=_spot_target(),
-            horizon_minutes=240,
-            direction=DirectionalView.UP,
-            reference_prices=_spot_reference_prices(),
-            expected_edge_half_life_seconds=3600,
-            available_at=NOW,
-            valid_until=NOW + timedelta(hours=1),
-            base_forecast_id="base-1",
-            assessment_id="assessment-1",
-            expected_gross_bps=Decimal("25"),
-            conservative_gross_bps=Decimal("15"),
-            dispersion_bps=Decimal("30"),
-            calibration_ref="calibration-v1",
-            calibration_sample_size=40,
-            non_overlapping_sample_size=30,
-            input_refs=("input-1",),
         )
 
 

@@ -5,20 +5,16 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
 
-from investment_manager.forecast.models import (
-    BaseForecast,
-    CalibratedForecast,
-    DirectionalView,
-    ExposureDirection,
-    ForecastLeg,
+from investment_manager.forecast.contracts import (
+    ForecastContract,
+    ForecastDecisionSlot,
+)
+from investment_manager.forecast.models import ExposureDirection, ForecastLeg
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import (
     ForecastLegOutcome,
     ForecastOutcome,
     ForecastOutcomeStatus,
-)
-from investment_manager.forecast.repository import (
-    Forecast,
-    SqlForecastStore,
-    forecast_kind,
 )
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -31,8 +27,7 @@ _BPS = Decimal("10000")
 @dataclass(frozen=True, slots=True)
 class ForecastSettlementResult:
     settled: int = 0
-    abstained: int = 0
-    unscorable: int = 0
+    outcome_unavailable: int = 0
     pending: int = 0
 
 
@@ -53,71 +48,68 @@ class ForecastOutcomeSettler:
 
     def settle(self, *, as_of: datetime) -> ForecastSettlementResult:
         now = require_utc(as_of)
-        settled = abstained = unscorable = pending = 0
-        for forecast in self.store.pending(
+        settled = unavailable = pending = 0
+        for contract, slot in self.store.pending_slots(
             evaluation_version=self.evaluation_version,
             limit=self.batch_size,
             due_at=now,
         ):
-            evaluation_at = forecast.available_at + timedelta(minutes=forecast.horizon_minutes)
             try:
-                outcome = self._outcome(forecast=forecast, settled_at=now)
+                outcome = self._outcome(
+                    contract=contract,
+                    slot=slot,
+                    settled_at=now,
+                )
             except _MarketFactsIncomplete:
-                if now - evaluation_at < timedelta(minutes=self.settlement_grace_minutes):
+                if now - slot.evaluation_at < timedelta(minutes=self.settlement_grace_minutes):
                     pending += 1
                     continue
-                outcome = self._unscorable(forecast=forecast, settled_at=now)
+                outcome = self._unavailable(slot=slot, settled_at=now)
             inserted = int(self.store.record_outcome(outcome))
             settled += inserted * int(outcome.status == ForecastOutcomeStatus.SETTLED)
-            abstained += inserted * int(outcome.status == ForecastOutcomeStatus.ABSTAINED)
-            unscorable += inserted * int(outcome.status == ForecastOutcomeStatus.UNSCORABLE)
+            unavailable += inserted * int(
+                outcome.status == ForecastOutcomeStatus.OUTCOME_UNAVAILABLE
+            )
         return ForecastSettlementResult(
             settled=settled,
-            abstained=abstained,
-            unscorable=unscorable,
+            outcome_unavailable=unavailable,
             pending=pending,
         )
 
     def _outcome(
         self,
         *,
-        forecast: Forecast,
+        contract: ForecastContract,
+        slot: ForecastDecisionSlot,
         settled_at: datetime,
     ) -> ForecastOutcome:
-        references = {item.instrument_id: item.price for item in forecast.reference_prices}
-        evaluation_at = forecast.available_at + timedelta(minutes=forecast.horizon_minutes)
+        references = {item.instrument_id: item.price for item in slot.cutoff_prices}
         legs = tuple(
             self._leg_outcome(
                 leg=leg,
                 reference_price=references[leg.instrument.key],
-                available_at=forecast.available_at,
-                evaluation_at=evaluation_at,
+                information_cutoff_at=slot.information_cutoff_at,
+                evaluation_at=slot.evaluation_at,
                 settled_at=settled_at,
             )
-            for leg in forecast.target.legs
+            for leg in contract.target.legs
         )
         gross_return = sum(
             (item.price_return_bps + item.funding_return_bps for item in legs),
             Decimal("0"),
         )
-        common = self._common(forecast=forecast, settled_at=settled_at)
-        if forecast.direction == DirectionalView.UNCERTAIN:
-            return ForecastOutcome(
-                **common,
-                status=ForecastOutcomeStatus.ABSTAINED,
-                legs=legs,
-                gross_target_return_bps=gross_return,
-                reason_code="FORECAST_ABSTAINED",
-            )
-        directional_return = (
-            gross_return if forecast.direction == DirectionalView.UP else -gross_return
+        bucket = next(
+            item
+            for item in contract.outcome_buckets
+            if (item.lower_bps is None or gross_return >= item.lower_bps)
+            and (item.upper_bps is None or gross_return < item.upper_bps)
         )
         return ForecastOutcome(
-            **common,
+            **self._common(slot=slot, settled_at=settled_at),
             status=ForecastOutcomeStatus.SETTLED,
             legs=legs,
             gross_target_return_bps=gross_return,
-            directional_return_bps=directional_return,
+            realized_bucket_id=bucket.bucket_id,
             reason_code="GROSS_TARGET_RETURN_AVAILABLE",
         )
 
@@ -126,23 +118,14 @@ class ForecastOutcomeSettler:
         *,
         leg: ForecastLeg,
         reference_price: Decimal,
-        available_at: datetime,
+        information_cutoff_at: datetime,
         evaluation_at: datetime,
         settled_at: datetime,
     ) -> ForecastLegOutcome:
-        entry_price, _ = self._executable_price(
-            leg=leg,
-            evaluation_at=available_at,
-            visible_at=available_at,
-            entering=True,
-        )
-        if entry_price != reference_price:
-            raise _MarketFactsIncomplete
-        exit_price, _ = self._executable_price(
+        exit_price = self._executable_exit_price(
             leg=leg,
             evaluation_at=evaluation_at,
             visible_at=settled_at,
-            entering=False,
         )
         sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
         price_return = (
@@ -153,12 +136,12 @@ class ForecastOutcomeSettler:
         if leg.instrument.product != InstrumentProduct.SPOT:
             settlements = self.market.funding_settlements(
                 instrument=leg.instrument,
-                start=available_at,
+                start=information_cutoff_at,
                 end=evaluation_at,
                 visible_at=settled_at,
             )
             self._require_complete_funding(
-                start=available_at,
+                start=information_cutoff_at,
                 end=evaluation_at,
                 settlement_times=tuple(item.funding_time for item in settlements),
             )
@@ -178,21 +161,20 @@ class ForecastOutcomeSettler:
             instrument_id=leg.instrument.key,
             direction=leg.direction,
             gross_weight=leg.gross_weight,
-            reference_price=reference_price,
+            cutoff_reference_price=reference_price,
             exit_price=exit_price,
             price_return_bps=price_return,
             funding_return_bps=funding_return,
             funding_settlement_ids=funding_ids,
         )
 
-    def _executable_price(
+    def _executable_exit_price(
         self,
         *,
         leg: ForecastLeg,
         evaluation_at: datetime,
         visible_at: datetime,
-        entering: bool,
-    ) -> tuple[Decimal, datetime]:
+    ) -> Decimal:
         if leg.instrument.product == InstrumentProduct.SPOT:
             quote = self.market.latest_spot_quote(
                 instrument=leg.instrument,
@@ -205,13 +187,7 @@ class ForecastOutcomeSettler:
                 maximum_age_seconds=self.maximum_spot_age_seconds,
             ):
                 raise _MarketFactsIncomplete
-            price = self._side_price(
-                bid=quote.bid,
-                ask=quote.ask,
-                direction=leg.direction,
-                entering=entering,
-            )
-            return price, quote.observed_at
+            return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
         quote = self.market.latest_perpetual_quote(
             instrument=leg.instrument,
             evaluation_at=evaluation_at,
@@ -223,25 +199,7 @@ class ForecastOutcomeSettler:
             maximum_age_seconds=self.maximum_perpetual_age_seconds,
         ):
             raise _MarketFactsIncomplete
-        price = self._side_price(
-            bid=quote.bid,
-            ask=quote.ask,
-            direction=leg.direction,
-            entering=entering,
-        )
-        return price, quote.exchange_time
-
-    @staticmethod
-    def _side_price(
-        *,
-        bid: Decimal,
-        ask: Decimal,
-        direction: ExposureDirection,
-        entering: bool,
-    ) -> Decimal:
-        if direction == ExposureDirection.LONG:
-            return ask if entering else bid
-        return bid if entering else ask
+        return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
 
     @staticmethod
     def _fresh(
@@ -267,39 +225,34 @@ class ForecastOutcomeSettler:
         if any(right - left > maximum_gap for left, right in pairwise(points)):
             raise _MarketFactsIncomplete
 
-    def _unscorable(
+    def _unavailable(
         self,
         *,
-        forecast: Forecast,
+        slot: ForecastDecisionSlot,
         settled_at: datetime,
     ) -> ForecastOutcome:
         return ForecastOutcome(
-            **self._common(forecast=forecast, settled_at=settled_at),
-            status=ForecastOutcomeStatus.UNSCORABLE,
+            **self._common(slot=slot, settled_at=settled_at),
+            status=ForecastOutcomeStatus.OUTCOME_UNAVAILABLE,
             reason_code="POINT_IN_TIME_MARKET_OR_FUNDING_FACTS_INCOMPLETE",
         )
 
     def _common(
         self,
         *,
-        forecast: BaseForecast | CalibratedForecast,
+        slot: ForecastDecisionSlot,
         settled_at: datetime,
     ) -> dict[str, object]:
         return {
             "outcome_id": stable_id(
                 "forecast_outcome",
-                forecast.forecast_id,
+                slot.slot_id,
                 self.evaluation_version,
             ),
-            "forecast_id": forecast.forecast_id,
-            "forecast_kind": forecast_kind(forecast),
-            "producer_id": forecast.producer_id,
-            "producer_version": forecast.producer_version,
-            "target_id": forecast.target.target_id,
-            "direction": forecast.direction,
-            "horizon_minutes": forecast.horizon_minutes,
+            "contract_id": slot.contract_id,
+            "decision_slot_id": slot.slot_id,
             "evaluation_version": self.evaluation_version,
-            "available_at": forecast.available_at,
-            "evaluation_at": forecast.available_at + timedelta(minutes=forecast.horizon_minutes),
+            "information_cutoff_at": slot.information_cutoff_at,
+            "evaluation_at": slot.evaluation_at,
             "settled_at": settled_at,
         }

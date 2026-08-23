@@ -12,18 +12,13 @@ from temporalio.client import Client
 from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
-    configured_fact_store_role,
     default_web_dist,
-    load_read_only_release_identity,
     load_runtime_release,
     require_runtime_database,
     runtime_engine,
 )
 from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
-from investment_manager.forecast.context.opportunity_service import (
-    assemble_opportunity_review_service,
-)
 from investment_manager.forecast.context.service import (
     AssessmentTemporalCoordinator,
     assemble_assessment_application,
@@ -31,13 +26,8 @@ from investment_manager.forecast.context.service import (
 )
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.governance.change.service import assemble_governance
-from investment_manager.governance.evaluation.assessment import (
-    validate_assessment_runtime_plan,
-)
 from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
-from investment_manager.governance.models import evaluation_plan_invalidation_id
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.aggregated_flows import HttpAggregatedEtfFlowSource
 from investment_manager.information.collector import (
     EventNormalizer,
@@ -63,7 +53,6 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
-from investment_manager.platform.fact_store import FactStoreRole
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.application import (
     set_trigger_heartbeat as apply_trigger_heartbeat,
@@ -105,26 +94,7 @@ def assessment_worker(
     """运行无交易权限的 ContextAssessment Worker。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
-    engine = runtime_engine(
-        database_url,
-        fact_store_role=configured_fact_store_role(loaded),
-        claim_fact_store=True,
-    )
-    governance = SqlGovernanceRepository(engine)
-    plans = tuple(
-        plan
-        for plan in governance.plans_for_manifest(manifest.manifest_id)
-        if governance.get_failed_experiment(
-            evaluation_plan_invalidation_id(plan.plan_id)
-        )
-        is None
-    )
-    validate_assessment_runtime_plan(
-        config=loaded,
-        manifest=manifest,
-        plans=plans,
-        started_at=datetime.now(UTC),
-    )
+    engine = runtime_engine(database_url)
     engine.dispose()
     application = assemble_assessment_application(
         loaded,
@@ -133,67 +103,6 @@ def assessment_worker(
         manifest_id=manifest.manifest_id,
     )
     run_assessment_worker_process(config=loaded, application=application)
-
-
-@app.command("opportunity-review-service")
-def opportunity_review_service(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(
-            envvar="INVESTMENT_MANAGER_DATABASE_URL",
-            help="可写 Context 事实库",
-        ),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ],
-    capital_database_url: Annotated[
-        str,
-        typer.Option(
-            envvar="INVESTMENT_MANAGER_CAPITAL_DATABASE_URL",
-            help="只读 Capital 事实库",
-        ),
-    ],
-    capital_config: Annotated[
-        Path,
-        typer.Option("--capital-config", exists=True, dir_okay=False),
-    ],
-    capital_release_manifest: Annotated[
-        Path,
-        typer.Option(
-            "--capital-release-manifest",
-            exists=True,
-            dir_okay=False,
-        ),
-    ],
-) -> None:
-    """持续复核仍可入场的自然 Program 机会；只写研究事实，不阻塞资本。"""
-
-    context_loaded, context_manifest = load_runtime_release(config, release_manifest)
-    capital_loaded, _ = load_read_only_release_identity(
-        capital_config,
-        capital_release_manifest,
-    )
-    context_engine = runtime_engine(
-        database_url,
-        fact_store_role=FactStoreRole.CONTEXT,
-        claim_fact_store=True,
-    )
-    capital_engine = runtime_engine(
-        capital_database_url,
-        fact_store_role=FactStoreRole.CAPITAL,
-        claim_fact_store=False,
-    )
-    service = assemble_opportunity_review_service(
-        context_config=context_loaded,
-        capital_config=capital_loaded,
-        context_manifest=context_manifest,
-        context_engine=context_engine,
-        capital_engine=capital_engine,
-    )
-    asyncio.run(service.run(asyncio.Event()))
 
 
 @app.command("submit-context-assessment")
@@ -240,11 +149,7 @@ def market_stream(
     """运行 Binance 公开只读行情服务；仅显式 SHADOW 配置可以启动。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    engine = runtime_engine(
-        database_url,
-        fact_store_role=configured_fact_store_role(loaded),
-        claim_fact_store=True,
-    )
+    engine = runtime_engine(database_url)
     store = SqlMarketDataStore(engine)
     triggers = SqlTriggerRepository(engine, loaded.trigger)
     detector = MarketShockDetector(
@@ -302,7 +207,7 @@ def trigger_service(
     """运行唯一 TriggerCoordinator Worker 与可靠 Outbox Dispatcher。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
+    require_runtime_database(database_url)
     run_trigger_service(
         config=loaded,
         manifest=manifest,
@@ -336,14 +241,7 @@ def trigger_now(
     if symbol not in loaded.market_data.symbols:
         raise ValueError("symbol 不在当前行情白名单")
     result = apply_trigger_now(
-        repository=SqlTriggerRepository(
-            runtime_engine(
-                database_url,
-                fact_store_role=configured_fact_store_role(loaded),
-                claim_fact_store=True,
-            ),
-            loaded.trigger,
-        ),
+        repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,
         pipeline_id=loaded.pipeline.version,
         manifest_id=manifest.manifest_id,
@@ -386,14 +284,7 @@ def set_trigger_heartbeat(
     if symbol not in loaded.market_data.symbols:
         raise ValueError("symbol 不在当前行情白名单")
     result = apply_trigger_heartbeat(
-        repository=SqlTriggerRepository(
-            runtime_engine(
-                database_url,
-                fact_store_role=configured_fact_store_role(loaded),
-                claim_fact_store=True,
-            ),
-            loaded.trigger,
-        ),
+        repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,
         pipeline_id=loaded.pipeline.version,
         manifest_id=manifest.manifest_id,
@@ -428,7 +319,7 @@ def outcome_evaluation_service(
     """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
 
     loaded, _ = load_runtime_release(config, release_manifest)
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
+    require_runtime_database(database_url)
 
     async def run() -> None:
         client = await Client.connect(
@@ -463,7 +354,7 @@ def governance_service(
 
     loaded, _ = load_runtime_release(config, release_manifest)
     root = project_root.resolve()
-    require_runtime_database(database_url, config=loaded, claim_fact_store=True)
+    require_runtime_database(database_url)
 
     async def run() -> None:
         client = await Client.connect(
@@ -520,11 +411,7 @@ def information_collector(
                 maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
             )
         )
-    engine = runtime_engine(
-        database_url,
-        fact_store_role=configured_fact_store_role(loaded),
-        claim_fact_store=True,
-    )
+    engine = runtime_engine(database_url)
     collector = InformationCollector(
         tuple(sources),
         EventNormalizer(
@@ -638,49 +525,6 @@ def dashboard_service(
         str,
         typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
-    assessment_database_url: Annotated[
-        str | None,
-        typer.Option(
-            envvar="INVESTMENT_MANAGER_ASSESSMENT_DATABASE_URL",
-            help="可选的只读 Assessment 历史库；仅用于分层展示，不参与资本核算",
-        ),
-    ] = None,
-    assessment_config: Annotated[
-        Path | None,
-        typer.Option(
-            "--assessment-config",
-            exists=True,
-            dir_okay=False,
-            help="Assessment 历史库对应的冻结配置；只用于正确解释只读事实",
-        ),
-    ] = None,
-    assessment_release_manifest: Annotated[
-        Path | None,
-        typer.Option(
-            "--assessment-release-manifest",
-            exists=True,
-            dir_okay=False,
-            help="Assessment 历史库对应的 ReleaseManifest",
-        ),
-    ] = None,
-    capital_config: Annotated[
-        Path,
-        typer.Option(
-            "--capital-config",
-            exists=True,
-            dir_okay=False,
-            help="主资本事实库对应的冻结生产者配置",
-        ),
-    ] = ...,
-    capital_release_manifest: Annotated[
-        Path,
-        typer.Option(
-            "--capital-release-manifest",
-            exists=True,
-            dir_okay=False,
-            help="主资本事实库对应的冻结生产者 ReleaseManifest",
-        ),
-    ] = ...,
     release_manifest: Annotated[
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
@@ -702,36 +546,11 @@ def dashboard_service(
     if resolved_dist is None:
         typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
         typer.echo("先运行：cd web && npm install && npm run build")
-    load_runtime_release(config, release_manifest)
-    capital_loaded, _ = load_read_only_release_identity(
-        capital_config,
-        capital_release_manifest,
-    )
-    require_runtime_database(database_url, config=capital_loaded)
-    assessment_loaded = None
-    assessment_identity_args = (
-        assessment_database_url,
-        assessment_config,
-        assessment_release_manifest,
-    )
-    if any(item is not None for item in assessment_identity_args):
-        if not all(item is not None for item in assessment_identity_args):
-            raise typer.BadParameter(
-                "Assessment 历史库、配置和 ReleaseManifest 必须同时提供"
-            )
-        assert assessment_config is not None
-        assert assessment_release_manifest is not None
-        assert assessment_database_url is not None
-        assessment_loaded, _ = load_read_only_release_identity(
-            assessment_config,
-            assessment_release_manifest,
-        )
-        require_runtime_database(assessment_database_url, config=assessment_loaded)
+    loaded, _ = load_runtime_release(config, release_manifest)
+    require_runtime_database(database_url)
     application = create_app(
-        capital_loaded,
+        loaded,
         database_url,
-        assessment_database_url=assessment_database_url,
-        assessment_config=assessment_loaded,
         web_dist=resolved_dist,
     )
     typer.echo(f"运行观测台就绪：http://{host}:{port}")

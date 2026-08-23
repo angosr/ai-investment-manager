@@ -12,15 +12,17 @@ from investment_manager.execution.planning.planner import (
     TradePlanner,
     TradePlannerPolicy,
 )
+from investment_manager.forecast.contracts import ForecastPriceAnchor
 from investment_manager.forecast.models import (
-    CalibratedForecast,
-    DirectionalView,
     ExposureDirection,
     ForecastLeg,
-    ForecastReferencePrice,
-    ForecastRole,
     ForecastTarget,
 )
+from investment_manager.forecast.results import (
+    CalibratedForecast,
+    ForecastBucketProbability,
+)
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
@@ -106,30 +108,48 @@ def _target() -> ForecastTarget:
 
 def _forecast() -> CalibratedForecast:
     target = _target()
+    cutoff_at = NOW - timedelta(minutes=1)
+    anchors = tuple(
+        ForecastPriceAnchor(
+            instrument_id=leg.instrument.key,
+            price=Decimal("100"),
+            observed_at=cutoff_at,
+            available_at=cutoff_at,
+            quote_ref=f"cutoff-{leg.instrument.key}",
+        )
+        for leg in target.legs
+    )
+    slot_id = "slot-1"
+    base_id = "base-1"
+    policy_id = "calibration-v1"
     return CalibratedForecast(
-        forecast_id="forecast-1",
-        role=ForecastRole.PROGRAM_BASE,
+        forecast_id=stable_id(
+            "calibrated_forecast", slot_id, policy_id, base_id
+        ),
+        contract_id="carry-contract-v1",
+        decision_slot_id=slot_id,
+        base_forecast_id=base_id,
+        forecast_policy_id=policy_id,
         producer_id="carry-calibration",
-        producer_version="v1",
-        forecast_family="delta-neutral-funding-carry",
+        producer_behavior_id="carry-v1",
+        outcome_family_id="delta-neutral-funding-carry",
         target=target,
         horizon_minutes=240,
-        direction=DirectionalView.UP,
-        reference_prices=tuple(
-            ForecastReferencePrice(
-                instrument_id=leg.instrument.key,
-                price=Decimal("100"),
-            )
-            for leg in target.legs
+        cutoff_prices=anchors,
+        entry_prices=tuple(
+            item.model_copy(update={"available_at": NOW}) for item in anchors
         ),
-        expected_edge_half_life_seconds=3_600,
+        information_cutoff_at=cutoff_at,
         available_at=NOW,
         valid_until=NOW + timedelta(hours=1),
-        base_forecast_id="base-1",
+        outcome_probabilities=(
+            ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.2")),
+            ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.3")),
+            ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.5")),
+        ),
         expected_gross_bps=Decimal("25"),
         conservative_gross_bps=Decimal("20"),
         dispersion_bps=Decimal("30"),
-        calibration_ref="calibration-v1",
         calibration_sample_size=40,
         non_overlapping_sample_size=30,
         input_refs=("feature-1",),
@@ -140,7 +160,7 @@ def _sleeve_id() -> str:
     forecast = _forecast()
     return SleeveTarget.identity_for(
         portfolio_id="primary",
-        forecast_family=forecast.forecast_family,
+        forecast_family=forecast.outcome_family_id,
         forecast_target_id=forecast.target.target_id,
     )
 
@@ -256,7 +276,6 @@ def _inputs(*, gross: str = "0") -> dict[str, object]:
         "sleeves": (
             PortfolioSleeveInput(
                 sleeve_id=_sleeve_id(),
-                estimated_variable_cost_bps=Decimal("5"),
                 forecast=_forecast(),
             ),
         ),
@@ -312,7 +331,6 @@ def test_pipeline_accepts_cash_target_after_an_uneconomic_forecast() -> None:
     inputs["sleeves"] = (
         PortfolioSleeveInput(
             sleeve_id=_sleeve_id(),
-            estimated_variable_cost_bps=Decimal("5"),
             forecast=forecast,
         ),
     )

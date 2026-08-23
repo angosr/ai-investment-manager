@@ -2,18 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from investment_manager.forecast.models import (
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
-    ContextCapitalImplication,
     ContextCausalNode,
-    ContextDecisionBlocker,
     ContextEventImpactState,
     ContextEventReference,
-    ContextHypothesis,
-    ContextHypothesisRole,
     ContextMechanism,
     ContextMechanismRelationship,
     ContextTransmissionStage,
@@ -43,35 +38,6 @@ class ContextEventReferenceUpdate(FrozenModel):
     evidence_id: str
     impact_state: ContextEventImpactState
     rationale: str = Field(min_length=1, max_length=600)
-
-
-class ContextHypothesisDraft(FrozenModel):
-    continuity_ref: str | None = Field(default=None, min_length=1)
-    role: ContextHypothesisRole
-    claim: str = Field(min_length=1, max_length=1_000)
-    horizon_hours: int = Field(gt=0, le=4_380)
-    causal_chain: tuple[ContextCausalNode, ...] = Field(min_length=2, max_length=5)
-    conflicting_evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
-    next_observation: str = Field(min_length=1, max_length=600)
-    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
-    next_review_at: datetime
-
-
-class ContextAssessmentDraft(FrozenModel):
-    hypotheses: tuple[ContextHypothesisDraft, ...] = Field(min_length=1, max_length=3)
-    capital_implication: ContextCapitalImplication | None = None
-    decision_blockers: tuple[ContextDecisionBlocker, ...] = Field(default=(), max_length=2)
-    event_relevance_updates: tuple[ContextEventReferenceUpdate, ...] = ()
-
-    @model_validator(mode="after")
-    def exactly_one_primary_hypothesis(self):
-        if sum(item.role == ContextHypothesisRole.PRIMARY for item in self.hypotheses) != 1:
-            raise ValueError("世界模型必须且只能包含一个 PRIMARY 假设")
-        return self
-
-
-class AssessStructuredOutput(FrozenModel):
-    assessment: ContextAssessmentDraft
 
 
 class ContextVerificationTestDraft(FrozenModel):
@@ -139,14 +105,6 @@ ASSESS_INSTRUCTIONS = (
     "支持与反驳谓词必须不同且可程序结算。transmission_stage 只有获得实际响应证据时"
     "才能从 PENDING 前进。invalidation_conditions 与 next_review_at 必须可操作；"
     "next_review_at 晚于 as_of，并选择下一项可能改变机制的自然时间点，而不是机械固定周期。",
-)
-
-ASSESS_CAPITAL_INSTRUCTION = (
-    "输入包含 capital_objective 时，capital_implication 只比较世界模型相对 "
-    "capital_objective.base_decision_inputs 的增量作用：SUPPORT、NEUTRAL、CAUTION、OPPOSE 或 "
-    "INSUFFICIENT。它没有交易权限。只有可引用的增量证据及完整传导足以改变该程序动作时，"
-    "才使用 SUPPORT/CAUTION/OPPOSE；单一行情、普通波动、账户状态或采集缺口不能自动成为资本结论。"
-    "objective_id 必须逐字匹配。"
 )
 
 
@@ -230,16 +188,9 @@ def assessment_visible_event_ids(packet: DecisionPacket) -> tuple[str, ...]:
     )
 
 
-def assessment_previous_hypothesis_ids(packet: DecisionPacket) -> tuple[str, ...]:
-    previous = _previous_context(packet)
-    if previous is None or previous.schema_version != "world-model-assessment-v1":
-        return ()
-    return tuple(item.hypothesis_id for item in previous.hypotheses)
-
-
 def assessment_previous_mechanism_ids(packet: DecisionPacket) -> tuple[str, ...]:
     previous = _previous_context(packet)
-    if previous is None or previous.schema_version != "world-model-assessment-v2":
+    if previous is None:
         return ()
     return tuple(item.mechanism_id for item in previous.mechanisms)
 
@@ -297,13 +248,6 @@ def finalize_world_model(
     analysis_behavior_hash: str,
     available_at: datetime,
 ) -> ContextAssessment:
-    from investment_manager.state.decision.packet import DecisionPacketPurpose
-
-    if packet.purpose != DecisionPacketPurpose.WORLD_UPDATE or packet.capital_objective is not None:
-        raise ContextAssessmentContractError(
-            "WORLD_UPDATE_PACKET_INVALID",
-            "WorldModel 只能由不含资本目标的 WORLD_UPDATE 生成",
-        )
     available = require_utc(available_at)
     draft = output.world_model
     previous_ids = set(assessment_previous_mechanism_ids(packet))
@@ -374,9 +318,7 @@ def finalize_world_model(
     disconnected_mechanisms: list[int] = []
     for index, mechanism in enumerate(draft.mechanisms):
         causal_evidence_ids = {
-            evidence_id
-            for node in mechanism.causal_chain
-            for evidence_id in node.evidence_ids
+            evidence_id for node in mechanism.causal_chain for evidence_id in node.evidence_ids
         }
         causal_fact_types = {
             continuous_fact_types_by_evidence[evidence_id]
@@ -433,7 +375,6 @@ def finalize_world_model(
         content_hash(draft),
     )
     return ContextAssessment(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V2,
         assessment_id=assessment_id,
         analysis_scope=packet.analysis_scope,
         mandate_version=packet.mandate_version,
@@ -449,121 +390,9 @@ def finalize_world_model(
     )
 
 
-def finalize_context_assessment(
-    *,
-    output: AssessStructuredOutput,
-    packet: DecisionPacket,
-    analysis_behavior_hash: str,
-    available_at: datetime,
-) -> ContextAssessment:
-    available = require_utc(available_at)
-    draft = output.assessment
-    objective = packet.capital_objective
-    implication = draft.capital_implication
-    if objective is None:
-        if implication is not None:
-            raise ContextAssessmentContractError(
-                "ASSESSMENT_CAPITAL_OBJECTIVE_UNAVAILABLE",
-                "没有资本目标时不得生成资本含义",
-            )
-    elif implication is None or implication.objective_id != objective.objective_id:
-        raise ContextAssessmentContractError(
-            "ASSESSMENT_CAPITAL_OBJECTIVE_INVALID",
-            "世界模型必须完整回答 DecisionPacket 的唯一资本问题",
-        )
-
-    previous_hypothesis_ids = set(assessment_previous_hypothesis_ids(packet))
-    continuity_refs = {
-        item.continuity_ref for item in draft.hypotheses if item.continuity_ref is not None
-    }
-    unknown_continuity = tuple(sorted(continuity_refs - previous_hypothesis_ids))
-    if unknown_continuity:
-        raise ContextAssessmentContractError(
-            "ASSESSMENT_CONTINUITY_NOT_VISIBLE",
-            f"世界模型引用了不可见的上一轮假设: {unknown_continuity}",
-        )
-    if len(continuity_refs) != sum(item.continuity_ref is not None for item in draft.hypotheses):
-        raise ContextAssessmentContractError(
-            "ASSESSMENT_CONTINUITY_DUPLICATED",
-            "多个当前假设不能继承同一个上一轮假设",
-        )
-
-    visible_evidence = set(assessment_visible_evidence_ids(packet))
-    hypothesis_evidence = {
-        evidence_id
-        for hypothesis in draft.hypotheses
-        for node in hypothesis.causal_chain
-        for evidence_id in node.evidence_ids
-    }
-    conflicting_evidence = {
-        evidence_id
-        for hypothesis in draft.hypotheses
-        for evidence_id in hypothesis.conflicting_evidence_ids
-    }
-    capital_evidence = set(implication.evidence_ids if implication is not None else ())
-    referenced_evidence = hypothesis_evidence | conflicting_evidence | capital_evidence
-    unknown_evidence = tuple(sorted(referenced_evidence - visible_evidence))
-    if unknown_evidence:
-        raise ContextAssessmentContractError(
-            "ASSESSMENT_EVIDENCE_NOT_VISIBLE",
-            f"世界模型引用了不可见证据: {unknown_evidence}",
-        )
-    current_evidence = assessment_current_evidence_ids(packet)
-    primary = next(item for item in draft.hypotheses if item.role == ContextHypothesisRole.PRIMARY)
-    primary_evidence = {
-        evidence_id for node in primary.causal_chain for evidence_id in node.evidence_ids
-    }
-    if not primary_evidence.intersection(current_evidence):
-        raise ContextAssessmentContractError(
-            "ASSESSMENT_PRIMARY_NOT_REFRESHED",
-            "PRIMARY 假设必须由本轮点时证据重新确认、修正或反驳",
-        )
-
-    event_references = _finalize_event_references(
-        draft=draft,
-        packet=packet,
-        referenced_evidence=referenced_evidence,
-    )
-    hypotheses = tuple(
-        ContextHypothesis(
-            hypothesis_id=stable_id(
-                "world_hypothesis",
-                packet.content_hash,
-                analysis_behavior_hash,
-                available.isoformat(),
-                item.model_dump(mode="json"),
-            ),
-            **item.model_dump(),
-        )
-        for item in draft.hypotheses
-    )
-    assessment_id = stable_id(
-        "context_assessment",
-        packet.content_hash,
-        analysis_behavior_hash,
-        available.isoformat(),
-        content_hash(draft),
-    )
-    return ContextAssessment(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V1,
-        assessment_id=assessment_id,
-        analysis_scope=packet.analysis_scope,
-        mandate_version=packet.mandate_version,
-        as_of=packet.as_of,
-        available_at=available,
-        analysis_behavior_hash=analysis_behavior_hash,
-        decision_packet_hash=packet.content_hash,
-        trigger_ids=packet.trigger_ids,
-        hypotheses=hypotheses,
-        event_references=event_references,
-        capital_implication=implication,
-        decision_blockers=draft.decision_blockers,
-    )
-
-
 def _finalize_event_references(
     *,
-    draft: ContextAssessmentDraft | WorldModelDraft,
+    draft: WorldModelDraft,
     packet: DecisionPacket,
     referenced_evidence: set[str],
 ) -> tuple[ContextEventReference, ...]:
@@ -605,10 +434,7 @@ def _finalize_event_references(
         )
 
     event_rationale: dict[str, str] = {}
-    explanatory_items = (
-        draft.mechanisms if isinstance(draft, WorldModelDraft) else draft.hypotheses
-    )
-    for explanatory_item in explanatory_items:
+    for explanatory_item in draft.mechanisms:
         for node in explanatory_item.causal_chain:
             for evidence_id in node.evidence_ids:
                 if evidence_id in visible_event_ids:
@@ -616,16 +442,6 @@ def _finalize_event_references(
         for evidence_id in explanatory_item.conflicting_evidence_ids:
             if evidence_id in visible_event_ids:
                 event_rationale.setdefault(evidence_id, explanatory_item.claim)
-    capital_implication = (
-        draft.capital_implication if isinstance(draft, ContextAssessmentDraft) else None
-    )
-    if capital_implication is not None:
-        for evidence_id in capital_implication.evidence_ids:
-            if evidence_id in visible_event_ids:
-                event_rationale.setdefault(
-                    evidence_id,
-                    capital_implication.incremental_reason,
-                )
     referenced_event_ids = referenced_evidence.intersection(visible_event_ids)
     stale_ids = {
         item.evidence_id for item in updates if item.impact_state == ContextEventImpactState.STALE

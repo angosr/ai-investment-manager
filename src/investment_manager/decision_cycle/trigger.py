@@ -19,7 +19,6 @@ from investment_manager.forecast.context.workflow import (
 )
 from investment_manager.forecast.models import (
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
     ContextMechanismObservation,
 )
 from investment_manager.governance.policy import DeploymentStage
@@ -41,24 +40,15 @@ from investment_manager.state.decision.application import (
 )
 from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-    PREVIOUS_CONTEXT_LIST_ITEMS,
-    PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
-    PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
     PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
     DecisionPacket,
-    PacketPreviousCapitalImplication,
-    PacketPreviousCapitalRelevance,
     PacketPreviousCausalNode,
     PacketPreviousContext,
-    PacketPreviousDecisionBlocker,
-    PacketPreviousDriver,
     PacketPreviousEventReference,
-    PacketPreviousHypothesis,
     PacketPreviousMechanism,
     PacketPreviousVerificationObservation,
     PacketPreviousVerificationPredicate,
     PacketPreviousVerificationTest,
-    PacketPreviousView,
     PacketReviewRequest,
     replace_packet_previous_context,
 )
@@ -174,7 +164,10 @@ class TriggerDispatchBuilder:
             reviews_by_id[review.review_id] = review
         review_requests = tuple(reviews_by_id[item] for item in sorted(reviews_by_id))
         dispatches: list[AnalysisDispatchRequest] = []
-        if self._config.assessment.enabled:
+        assessment_triggered = any(
+            item != AnalysisTriggerType.WORLD_MODEL_UPDATED for item in trigger_types
+        )
+        if self._config.assessment.enabled and assessment_triggered:
             assert self._packet_preparation is not None
             assert self._assessment_history is not None
             previous = self._assessment_history.latest_before(
@@ -182,12 +175,8 @@ class TriggerDispatchBuilder:
                 as_of=as_of,
             )
             previous_observations = (
-                self._assessment_history.mechanism_observations(
-                    previous.assessment_id
-                )
+                self._assessment_history.mechanism_observations(previous.assessment_id)
                 if previous is not None
-                and previous.schema_version
-                == ContextAssessmentSchemaVersion.WORLD_MODEL_V2
                 else ()
             )
             prepared = self._packet_preparation.prepare(
@@ -205,11 +194,7 @@ class TriggerDispatchBuilder:
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None
                 packet = prepared.packet
-                if (
-                    previous is not None
-                    and previous.schema_version
-                    == ContextAssessmentSchemaVersion.WORLD_MODEL_V2
-                ):
+                if previous is not None:
                     recorded_observations = self._assessment_history.observe_mechanisms(
                         assessment=previous,
                         packet=packet,
@@ -250,14 +235,15 @@ class TriggerDispatchBuilder:
                 )
         if self._batch_recorder is not None:
             submitted_at = max(require_utc(self._clock()), as_of)
-            admission = self._batch_recorder.admit_analysis_call(
-                batch,
-                requested_at=submitted_at,
-            )
-            if not admission.admitted:
-                if admission.retry_at is None:
-                    raise RuntimeError("调用准入缺少 retry_at")
-                raise AnalysisCallDeferred(admission.retry_at)
+            if dispatches:
+                admission = self._batch_recorder.admit_analysis_call(
+                    batch,
+                    requested_at=submitted_at,
+                )
+                if not admission.admitted:
+                    if admission.retry_at is None:
+                        raise RuntimeError("调用准入缺少 retry_at")
+                    raise AnalysisCallDeferred(admission.retry_at)
             self._batch_recorder.record_batch(batch, analysis_submitted_at=submitted_at)
         return tuple(dispatches)
 
@@ -269,15 +255,27 @@ def _previous_context(
 ) -> PacketPreviousContext | None:
     if assessment is None:
         return None
-    common = {
-        "assessment_id": assessment.assessment_id,
-        "analysis_scope": assessment.analysis_scope,
-        "mandate_version": assessment.mandate_version,
-        "analysis_behavior_hash": assessment.analysis_behavior_hash,
-        "decision_packet_hash": assessment.decision_packet_hash,
-        "as_of": assessment.as_of,
-        "available_at": assessment.available_at,
-        "event_references": tuple(
+    latest_observation_by_test = {
+        item.test_id: item
+        for item in sorted(
+            observations,
+            key=lambda value: (value.observed_at, value.observation_id),
+        )
+    }
+    return PacketPreviousContext(
+        assessment_id=assessment.assessment_id,
+        analysis_scope=assessment.analysis_scope,
+        mandate_version=assessment.mandate_version,
+        analysis_behavior_hash=assessment.analysis_behavior_hash,
+        decision_packet_hash=assessment.decision_packet_hash,
+        as_of=assessment.as_of,
+        available_at=assessment.available_at,
+        synthesis=sanitize_external_text(
+            assessment.synthesis,
+            maximum_length=2_000,
+        )[0],
+        synthesis_horizon_hours=assessment.synthesis_horizon_hours,
+        event_references=tuple(
             PacketPreviousEventReference(
                 evidence_id=item.evidence_id,
                 source=item.source,
@@ -289,239 +287,70 @@ def _previous_context(
             )
             for item in assessment.event_references
         ),
-    }
-    if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V2:
-        assert assessment.synthesis is not None
-        assert assessment.synthesis_horizon_hours is not None
-        latest_observation_by_test = {
-            item.test_id: item
-            for item in sorted(
-                observations,
-                key=lambda value: (value.observed_at, value.observation_id),
-            )
-        }
-        return PacketPreviousContext(
-            schema_version=assessment.schema_version.value,
-            **common,
-            synthesis=sanitize_external_text(
-                assessment.synthesis,
-                maximum_length=2_000,
-            )[0],
-            synthesis_horizon_hours=assessment.synthesis_horizon_hours,
-            mechanisms=tuple(
-                PacketPreviousMechanism(
-                    mechanism_id=item.mechanism_id,
-                    continuity_ref=item.continuity_ref,
-                    relationship=item.relationship.value,
-                    claim=sanitize_external_text(
-                        item.claim,
-                        maximum_length=1_200,
-                    )[0],
-                    horizon_hours=item.horizon_hours,
-                    causal_chain=tuple(
-                        PacketPreviousCausalNode(
-                            statement=sanitize_external_text(
-                                node.statement,
-                                maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
-                            )[0],
-                            evidence_ids=node.evidence_ids,
-                        )
-                        for node in item.causal_chain
-                    ),
-                    transmission_stage=item.transmission_stage.value,
-                    conflicting_evidence_ids=item.conflicting_evidence_ids,
-                    verification_tests=tuple(
-                        PacketPreviousVerificationTest(
-                            feature_selector=test.feature_selector,
-                            evaluation_window_minutes=test.evaluation_window_minutes,
-                            supports_predicate=PacketPreviousVerificationPredicate(
-                                **test.supports_predicate.model_dump()
-                            ),
-                            contradicts_predicate=PacketPreviousVerificationPredicate(
-                                **test.contradicts_predicate.model_dump()
-                            ),
-                            latest_observation=(
-                                PacketPreviousVerificationObservation(
-                                    observed_at=observation.observed_at,
-                                    value=observation.value,
-                                    match=observation.match.value,
-                                    support_streak=observation.support_streak,
-                                    contradiction_streak=(
-                                        observation.contradiction_streak
-                                    ),
-                                    resolution=observation.resolution.value,
-                                )
-                                if (
-                                    observation := latest_observation_by_test.get(
-                                        verification_test_id(
-                                            assessment_id=assessment.assessment_id,
-                                            mechanism_id=item.mechanism_id,
-                                            test_index=index,
-                                            test=test,
-                                        )
+        mechanisms=tuple(
+            PacketPreviousMechanism(
+                mechanism_id=item.mechanism_id,
+                continuity_ref=item.continuity_ref,
+                relationship=item.relationship.value,
+                claim=sanitize_external_text(item.claim, maximum_length=1_200)[0],
+                horizon_hours=item.horizon_hours,
+                causal_chain=tuple(
+                    PacketPreviousCausalNode(
+                        statement=sanitize_external_text(
+                            node.statement,
+                            maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+                        )[0],
+                        evidence_ids=node.evidence_ids,
+                    )
+                    for node in item.causal_chain
+                ),
+                transmission_stage=item.transmission_stage.value,
+                conflicting_evidence_ids=item.conflicting_evidence_ids,
+                verification_tests=tuple(
+                    PacketPreviousVerificationTest(
+                        feature_selector=test.feature_selector,
+                        evaluation_window_minutes=test.evaluation_window_minutes,
+                        supports_predicate=PacketPreviousVerificationPredicate(
+                            **test.supports_predicate.model_dump()
+                        ),
+                        contradicts_predicate=PacketPreviousVerificationPredicate(
+                            **test.contradicts_predicate.model_dump()
+                        ),
+                        latest_observation=(
+                            PacketPreviousVerificationObservation(
+                                observed_at=observation.observed_at,
+                                value=observation.value,
+                                match=observation.match.value,
+                                support_streak=observation.support_streak,
+                                contradiction_streak=observation.contradiction_streak,
+                                resolution=observation.resolution.value,
+                            )
+                            if (
+                                observation := latest_observation_by_test.get(
+                                    verification_test_id(
+                                        assessment_id=assessment.assessment_id,
+                                        mechanism_id=item.mechanism_id,
+                                        test_index=index,
+                                        test=test,
                                     )
                                 )
-                                is not None
-                                else None
-                            ),
-                        )
-                        for index, test in enumerate(item.verification_tests)
-                    ),
-                    invalidation_conditions=tuple(
-                        sanitize_external_text(
-                            condition,
-                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-                        )[0]
-                        for condition in item.invalidation_conditions
-                    ),
-                    next_review_at=item.next_review_at,
-                )
-                for item in assessment.mechanisms
-            ),
-        )
-    if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V1:
-        return PacketPreviousContext(
-            schema_version=assessment.schema_version.value,
-            **common,
-            hypotheses=tuple(
-                PacketPreviousHypothesis(
-                    hypothesis_id=item.hypothesis_id,
-                    continuity_ref=item.continuity_ref,
-                    role=item.role.value,
-                    claim=sanitize_external_text(
-                        item.claim,
-                        maximum_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
-                    )[0],
-                    horizon_hours=item.horizon_hours,
-                    causal_chain=tuple(
-                        PacketPreviousCausalNode(
-                            statement=sanitize_external_text(
-                                node.statement,
-                                maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
-                            )[0],
-                            evidence_ids=node.evidence_ids,
-                        )
-                        for node in item.causal_chain
-                    ),
-                    conflicting_evidence_ids=item.conflicting_evidence_ids,
-                    next_observation=sanitize_external_text(
-                        item.next_observation,
-                        maximum_length=500,
-                    )[0],
-                    invalidation_conditions=tuple(
-                        sanitize_external_text(
-                            condition,
-                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-                        )[0]
-                        for condition in item.invalidation_conditions
-                    ),
-                    next_review_at=item.next_review_at,
-                )
-                for item in assessment.hypotheses
-            ),
-            capital_implication=(
-                PacketPreviousCapitalImplication(
-                    objective_id=assessment.capital_implication.objective_id,
-                    effect=assessment.capital_implication.effect.value,
-                    incremental_reason=sanitize_external_text(
-                        assessment.capital_implication.incremental_reason,
-                        maximum_length=800,
-                    )[0],
-                    transmission=sanitize_external_text(
-                        assessment.capital_implication.transmission,
-                        maximum_length=1_200,
-                    )[0],
-                    evidence_ids=assessment.capital_implication.evidence_ids,
-                    invalidation_conditions=tuple(
-                        sanitize_external_text(
-                            condition,
-                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-                        )[0]
-                        for condition in assessment.capital_implication.invalidation_conditions
-                    ),
-                )
-                if assessment.capital_implication is not None
-                else None
-            ),
-            decision_blockers=tuple(
-                PacketPreviousDecisionBlocker(
-                    question=item.question,
-                    action_if_yes=item.action_if_yes,
-                    action_if_no=item.action_if_no,
-                    observation_needed=item.observation_needed,
-                )
-                for item in assessment.decision_blockers
-            ),
-        )
-    assert assessment.market_mechanism is not None
-    return PacketPreviousContext(
-        schema_version=assessment.schema_version.value,
-        **common,
-        market_mechanism=sanitize_external_text(
-            assessment.market_mechanism,
-            maximum_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
-        )[0],
-        drivers=tuple(
-            PacketPreviousDriver(
-                statement=sanitize_external_text(
-                    item.statement,
-                    maximum_length=PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
-                )[0],
-                status=item.status.value,
-                transmission=sanitize_external_text(
-                    item.transmission,
-                    maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
-                )[0],
-                invalidation_condition=sanitize_external_text(
-                    item.invalidation_conditions[0],
-                    maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-                )[0],
+                            )
+                            is not None
+                            else None
+                        ),
+                    )
+                    for index, test in enumerate(item.verification_tests)
+                ),
+                invalidation_conditions=tuple(
+                    sanitize_external_text(
+                        condition,
+                        maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                    )[0]
+                    for condition in item.invalidation_conditions
+                ),
+                next_review_at=item.next_review_at,
             )
-            for item in assessment.drivers
-        ),
-        capital_relevance=(
-            PacketPreviousCapitalRelevance(
-                objective_id=assessment.capital_relevance.objective_id,
-                status=assessment.capital_relevance.status.value,
-                thesis=sanitize_external_text(
-                    assessment.capital_relevance.thesis,
-                    maximum_length=800,
-                )[0],
-                transmission=sanitize_external_text(
-                    assessment.capital_relevance.transmission,
-                    maximum_length=1_200,
-                )[0],
-                invalidation_condition=sanitize_external_text(
-                    assessment.capital_relevance.invalidation_conditions[0],
-                    maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-                )[0],
-            )
-            if assessment.capital_relevance is not None
-            else None
-        ),
-        views=tuple(
-            PacketPreviousView(
-                asset=item.asset,
-                horizon_minutes=item.horizon_minutes,
-                direction=item.direction.value,
-                already_priced=item.already_priced.value,
-                uncertainty=item.uncertainty.value,
-            )
-            for item in assessment.views
-        ),
-        contradictions=tuple(
-            sanitize_external_text(
-                item,
-                maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-            )[0]
-            for item in assessment.contradictions[:PREVIOUS_CONTEXT_LIST_ITEMS]
-        ),
-        data_gaps=tuple(
-            sanitize_external_text(
-                item,
-                maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-            )[0]
-            for item in assessment.data_gaps[:PREVIOUS_CONTEXT_LIST_ITEMS]
+            for item in assessment.mechanisms
         ),
     )
 

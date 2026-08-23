@@ -57,3 +57,109 @@ def test_all_physical_database_tables_share_one_metadata_registry() -> None:
     assert portfolio_protection_states.metadata is registry
     assert portfolio_risk_budgets.metadata is registry
     assert risk_reservations.metadata is registry
+
+
+def test_unified_store_migration_archives_retired_role_facts(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'unified-store.db'}"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "d7a9c2e4f601")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO fact_store_identity "
+                "(singleton_key, store_id, role, claimed_at) "
+                "VALUES ('PRIMARY', 'old-store', 'CONTEXT', '2026-08-23 12:00:00')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO fact_cohort_quarantines "
+                "(quarantine_id, store_id, manifest_id, pipeline_id, "
+                "analysis_behavior_hash, reason_code, quarantined_at, payload) "
+                "VALUES ('old-quarantine', 'old-store', 'old-manifest', 'old-pipeline', "
+                "NULL, 'WRONG_FACT_STORE', '2026-08-23 12:01:00', '{}')"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    tables = set(inspect(engine).get_table_names())
+    assert "fact_store_identity" not in tables
+    assert "fact_cohort_quarantines" not in tables
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT role FROM historical_fact_store_identities")
+        ).scalar_one() == "CONTEXT"
+        assert connection.execute(
+            text("SELECT quarantine_id FROM historical_fact_cohort_quarantines")
+        ).scalar_one() == "old-quarantine"
+
+
+def test_world_model_migration_keeps_only_canonical_v2_in_active_ledger(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'world-model-v2.db'}"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "e2f6a8c4d901")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        for suffix in ("old", "current", "transitional"):
+            connection.execute(
+                text(
+                    "INSERT INTO decision_packets "
+                    "(packet_id, analysis_scope, as_of, policy_version, content_hash, payload) "
+                    "VALUES (:packet_id, 'scope', '2026-08-23 12:00:00', 'policy', "
+                    ":content_hash, '{}')"
+                ),
+                {"packet_id": f"packet-{suffix}", "content_hash": suffix[0] * 64},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO context_assessments "
+                "(assessment_id, packet_id, analysis_scope, available_at, "
+                "analysis_behavior_hash, payload) VALUES "
+                "('assessment-old', 'packet-old', 'scope', '2026-08-23 12:01:00', "
+                ":old_hash, :old_payload), "
+                "('assessment-current', 'packet-current', 'scope', "
+                "'2026-08-23 12:02:00', :current_hash, :current_payload), "
+                "('assessment-transitional', 'packet-transitional', 'scope', "
+                "'2026-08-23 12:03:00', :transitional_hash, :transitional_payload)"
+            ),
+            {
+                "old_hash": "a" * 64,
+                "current_hash": "b" * 64,
+                "transitional_hash": "c" * 64,
+                "old_payload": '{"schema_version":"world-model-assessment-v1"}',
+                "current_payload": '{"schema_version":"world-model-assessment-v2"}',
+                "transitional_payload": (
+                    '{"schema_version":"world-model-assessment-v2",'
+                    '"views":[],"market_mechanism":"retired"}'
+                ),
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        active = connection.execute(
+            text("SELECT assessment_id, payload FROM context_assessments")
+        ).mappings().all()
+        archived = set(
+            connection.execute(
+                text("SELECT assessment_id FROM historical_context_assessments")
+            ).scalars()
+        )
+
+    assert {row["assessment_id"] for row in active} == {
+        "assessment-current",
+        "assessment-transitional",
+    }
+    transitional = next(
+        row["payload"]
+        for row in active
+        if row["assessment_id"] == "assessment-transitional"
+    )
+    assert "views" not in transitional
+    assert "market_mechanism" not in transitional
+    assert archived == {"assessment-old", "assessment-transitional"}

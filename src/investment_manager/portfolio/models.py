@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -125,9 +125,7 @@ class PortfolioPerformanceAttribution(FrozenModel):
             price_pnl=end.price_pnl - start.price_pnl,
             funding_pnl=end.funding_pnl - start.funding_pnl,
             fee_cost=end.fee_cost - start.fee_cost,
-            execution_slippage_cost=(
-                end.execution_slippage_cost - start.execution_slippage_cost
-            ),
+            execution_slippage_cost=(end.execution_slippage_cost - start.execution_slippage_cost),
             compensation_loss=end.compensation_loss - start.compensation_loss,
             net_pnl=end.net_pnl - start.net_pnl,
         )
@@ -190,11 +188,7 @@ class PortfolioAccountSnapshot(FrozenModel):
         for sleeve in self.sleeves:
             for leg in sleeve.legs:
                 quantities[leg.instrument.key] += leg.quantity
-        return {
-            key: value
-            for key, value in sorted(quantities.items())
-            if value != 0
-        }
+        return {key: value for key, value in sorted(quantities.items()) if value != 0}
 
 
 class PortfolioPerformanceKind(StrEnum):
@@ -315,8 +309,8 @@ class MockCandidateAuthorization(FrozenModel):
 
     version: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
-    producer_version: str = Field(min_length=1)
-    forecast_family: str = Field(min_length=1)
+    producer_behavior_id: str = Field(min_length=1)
+    outcome_family_id: str = Field(min_length=1)
     hypothesis_fingerprint: str = Field(pattern=SHA256_PATTERN)
     maximum_allocation_fraction: UnitInterval
     minimum_entry_net_bps: Decimal
@@ -331,6 +325,26 @@ class MockCandidateAuthorization(FrozenModel):
         return self
 
 
+class PortfolioCostEstimate(FrozenModel):
+    """Point-in-time, size-aware round-trip cost used by Portfolio."""
+
+    model_version: str = Field(min_length=1)
+    gross_notional: Money
+    fee_bps: Money
+    exit_spread_bps: Money
+    depth_slippage_bps: Money
+    total_bps: Money
+    quote_refs: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def components_and_refs_must_be_canonical(self):
+        if self.total_bps != self.fee_bps + self.exit_spread_bps + self.depth_slippage_bps:
+            raise ValueError("Portfolio 成本合计与费用、退出点差和深度滑点不一致")
+        if tuple(sorted(set(self.quote_refs))) != self.quote_refs:
+            raise ValueError("Portfolio 成本报价引用必须唯一且排序")
+        return self
+
+
 class SleeveTarget(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
@@ -338,19 +352,9 @@ class SleeveTarget(FrozenModel):
     desired_gross_notional: Money
     forecast_ids: tuple[str, ...] = Field(min_length=1)
     edge_basis: PortfolioEdgeBasis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
-    decision_gross_bps: Decimal = Field(
-        validation_alias=AliasChoices(
-            "decision_gross_bps",
-            "conservative_gross_bps",
-        )
-    )
-    estimated_variable_cost_bps: Money
-    decision_net_bps: Decimal = Field(
-        validation_alias=AliasChoices(
-            "decision_net_bps",
-            "conservative_net_bps",
-        )
-    )
+    decision_gross_bps: Decimal
+    cost: PortfolioCostEstimate
+    decision_net_bps: Decimal
     reason_codes: tuple[str, ...] = Field(min_length=1)
 
     @staticmethod
@@ -369,7 +373,7 @@ class SleeveTarget(FrozenModel):
 
     @model_validator(mode="after")
     def economics_and_refs_must_be_consistent(self):
-        expected_net = self.decision_gross_bps - self.estimated_variable_cost_bps
+        expected_net = self.decision_gross_bps - self.cost.total_bps
         if self.decision_net_bps != expected_net:
             raise ValueError("SleeveTarget 决策净收益必须等于毛收益依据减可变成本")
         if tuple(sorted(set(self.forecast_ids))) != self.forecast_ids:
@@ -377,18 +381,6 @@ class SleeveTarget(FrozenModel):
         if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
             raise ValueError("SleeveTarget reason_codes 必须唯一且排序")
         return self
-
-    @property
-    def conservative_gross_bps(self) -> Decimal:
-        """Compatibility accessor for pre-edge-basis consumers."""
-
-        return self.decision_gross_bps
-
-    @property
-    def conservative_net_bps(self) -> Decimal:
-        """Compatibility accessor for pre-edge-basis consumers."""
-
-        return self.decision_net_bps
 
 
 class PortfolioTarget(FrozenModel):
@@ -416,14 +408,10 @@ class PortfolioTarget(FrozenModel):
         sleeve_ids = tuple(item.sleeve_id for item in self.sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioTarget Sleeves 必须唯一且排序")
-        if tuple(sorted(set(self.considered_forecast_ids))) != (
-            self.considered_forecast_ids
-        ):
+        if tuple(sorted(set(self.considered_forecast_ids))) != (self.considered_forecast_ids):
             raise ValueError("considered_forecast_ids 必须唯一且排序")
         referenced_forecasts = {
-            forecast_id
-            for sleeve in self.sleeves
-            for forecast_id in sleeve.forecast_ids
+            forecast_id for sleeve in self.sleeves for forecast_id in sleeve.forecast_ids
         }
         if not referenced_forecasts.issubset(self.considered_forecast_ids):
             raise ValueError("SleeveTarget Forecast 必须来自 Portfolio 考虑集")
@@ -431,9 +419,7 @@ class PortfolioTarget(FrozenModel):
         if tuple(sorted(set(quote_keys))) != quote_keys:
             raise ValueError("PortfolioTarget quotes 必须按 Instrument 唯一且排序")
         required_quote_keys = {
-            leg.instrument.key
-            for sleeve in self.sleeves
-            for leg in sleeve.forecast_target.legs
+            leg.instrument.key for sleeve in self.sleeves for leg in sleeve.forecast_target.legs
         }
         if not required_quote_keys.issubset(quote_keys):
             raise ValueError("PortfolioTarget quotes 必须覆盖全部 Sleeve Legs")
@@ -449,19 +435,20 @@ class PortfolioTarget(FrozenModel):
             )
             if sleeve.sleeve_id != expected_id:
                 raise ValueError("SleeveTarget sleeve_id 与 Portfolio/ForecastTarget 不一致")
-        if sum(item.desired_gross_notional for item in self.sleeves) > (
-            self.reference_equity
-        ):
+        if sum(item.desired_gross_notional for item in self.sleeves) > (self.reference_equity):
             raise ValueError("无杠杆 PortfolioTarget gross notional 不能超过参考权益")
         return self
 
 
 class CapitalCycleOutcome(StrEnum):
-    NO_OPPORTUNITY = "NO_OPPORTUNITY"
+    CASH = "CASH"
     HOLD = "HOLD"
     TARGET_DECIDED = "TARGET_DECIDED"
-    OPPORTUNITY_ALREADY_DECIDED = "OPPORTUNITY_ALREADY_DECIDED"
+    FORECAST_ALREADY_DECIDED = "FORECAST_ALREADY_DECIDED"
     RISK_EXIT = "RISK_EXIT"
+    # Read-only values retained solely to deserialize immutable pre-migration records.
+    NO_OPPORTUNITY = "NO_OPPORTUNITY"
+    OPPORTUNITY_ALREADY_DECIDED = "OPPORTUNITY_ALREADY_DECIDED"
 
 
 class CapitalCycleRecord(FrozenModel):
@@ -550,6 +537,7 @@ class CapitalCycleRecord(FrozenModel):
             raise ValueError("CapitalCycleRecord reason_codes 必须唯一且排序")
         requires_target = self.outcome in {
             CapitalCycleOutcome.TARGET_DECIDED,
+            CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
             CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED,
             CapitalCycleOutcome.RISK_EXIT,
         }

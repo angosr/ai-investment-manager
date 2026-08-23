@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-import typer
 from sqlalchemy import create_engine, insert, select, update
 
-import investment_manager.entrypoints.cli.assessment_commands as assessment_commands
-from investment_manager.entrypoints.cli.assessment_commands import (
-    register_assessment_forward_plan,
-)
 from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.forecast.codex.router import AnalystResult
-from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.models import AssessmentOutcomeStatus, DirectionalView
 from investment_manager.forecast.policy import AiMode
 from investment_manager.forecast.tables import codex_runs
 from investment_manager.legacy.analyst import analysis_behavior_hash
@@ -47,7 +40,6 @@ from investment_manager.market.repository import SqlMarketDataStore, create_mark
 from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.schema import create_schema
-from investment_manager.settings import load_config
 
 
 class StaticAnalyst:
@@ -154,30 +146,6 @@ def _stored(engine, *, horizon_minutes: int = 60) -> AnalysisForecastOutcome:
     return AnalysisForecastOutcome.model_validate(payload)
 
 
-def test_forward_plan_registration_rejects_caller_supplied_behavior_hash(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        assessment_commands,
-        "load_runtime_release",
-        lambda config, _manifest: (
-            load_config(config),
-            SimpleNamespace(manifest_id="release-test"),
-        ),
-    )
-    with pytest.raises(typer.BadParameter, match="实际行为哈希不一致"):
-        register_assessment_forward_plan(
-            config=Path("config/investment-manager.yaml"),
-            release_manifest=Path("config/release-manifest.yaml"),
-            database_url="postgresql://unused",
-            plan_id="wrong-behavior-plan",
-            analysis_behavior_hash="0" * 64,
-            signal_window_start=datetime(2026, 9, 1, tzinfo=UTC).isoformat(),
-            signal_window_end=datetime(2026, 10, 1, tzinfo=UTC).isoformat(),
-            minimum_non_overlapping_samples=30,
-        )
-
-
 def test_legacy_single_forecast_payload_is_read_without_retaining_aliases(
     replay_input,
 ) -> None:
@@ -253,7 +221,7 @@ def test_directional_view_settles_without_creating_a_trade(
 
     assert first.settled == 1
     assert replay.settled == 0
-    assert outcome.status == ForecastOutcomeStatus.SETTLED
+    assert outcome.status == AssessmentOutcomeStatus.SETTLED
     assert outcome.analysis_behavior_hash == analysis_behavior_hash(
         app_config.model_copy(
             update={
@@ -345,7 +313,7 @@ def test_uncertain_view_records_abstention_and_realized_move(
     outcome = _stored(engine)
 
     assert result.abstained == 1
-    assert outcome.status == ForecastOutcomeStatus.ABSTAINED
+    assert outcome.status == AssessmentOutcomeStatus.ABSTAINED
     assert outcome.market_return_bps == Decimal("-100")
     assert outcome.directional_return_bps is None
     assert outcome.direction_correct is None
@@ -377,7 +345,7 @@ def test_ambiguous_successful_codex_runs_fail_closed(
     outcome = _stored(engine)
 
     assert result.unscorable == 1
-    assert outcome.status == ForecastOutcomeStatus.UNSCORABLE
+    assert outcome.status == AssessmentOutcomeStatus.UNSCORABLE
     assert outcome.reason_code == "CODEX_COMPLETION_TIME_MISSING_OR_AMBIGUOUS"
     tape = SqlForecastDecisionTapeReader(engine).read(
         pipeline_version="forecast-shadow-test-v1",
@@ -451,7 +419,7 @@ def _scored_outcome(
         directional_view=directional_view,
         confidence=Decimal("0.60"),
         view_horizon_minutes=60,
-        status=ForecastOutcomeStatus.SETTLED,
+        status=AssessmentOutcomeStatus.SETTLED,
         signal_observed_at=signal_at,
         evaluation_at=evaluation_at,
         settled_at=evaluation_at + timedelta(seconds=1),

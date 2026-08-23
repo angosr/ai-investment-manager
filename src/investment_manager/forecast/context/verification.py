@@ -8,7 +8,6 @@ from decimal import Decimal
 
 from investment_manager.forecast.models import (
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
     ContextMechanismObservation,
     ContextPredicateOperator,
     ContextVerificationMatch,
@@ -45,8 +44,6 @@ def observe_world_model(
     persistence requirement is satisfied only by consecutive matching packets.
     """
 
-    if assessment.schema_version != ContextAssessmentSchemaVersion.WORLD_MODEL_V2:
-        return ()
     if packet.as_of <= assessment.available_at:
         return ()
     previous_by_test: dict[str, ContextMechanismObservation] = {}
@@ -66,9 +63,7 @@ def observe_world_model(
     observations: list[ContextMechanismObservation] = []
     for mechanism in assessment.mechanisms:
         baseline_evidence_ids = {
-            evidence_id
-            for node in mechanism.causal_chain
-            for evidence_id in node.evidence_ids
+            evidence_id for node in mechanism.causal_chain for evidence_id in node.evidence_ids
         } | set(mechanism.conflicting_evidence_ids)
         for index, test in enumerate(mechanism.verification_tests):
             if packet.as_of > assessment.available_at + timedelta(
@@ -270,17 +265,15 @@ def packet_feature_observations(
             raw = getattr(item, field)
             if raw is not None:
                 source_observed_at, source_family = _derivative_feature_source(item, field)
-                values[f"derivative_state:{item.asset}.{field}"] = (
-                    PacketFeatureObservation(
-                        value=Decimal(str(raw)),
-                        source_ref=stable_id(
-                            "derivative_feature_observation",
-                            item.asset,
-                            source_family,
-                            source_observed_at,
-                        ),
-                        source_observed_at=source_observed_at,
-                    )
+                values[f"derivative_state:{item.asset}.{field}"] = PacketFeatureObservation(
+                    value=Decimal(str(raw)),
+                    source_ref=stable_id(
+                        "derivative_feature_observation",
+                        item.asset,
+                        source_family,
+                        source_observed_at,
+                    ),
+                    source_observed_at=source_observed_at,
                 )
     for item in getattr(packet, "facts", ()):
         for field, value in continuous_fact_numeric_values(item).items():

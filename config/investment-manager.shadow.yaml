@@ -6,13 +6,45 @@ strategy:
 
 capital:
   enabled: true
-  mock_candidate_authorizations: []
+  context_forecast:
+    enabled: true
+  mock_candidate_authorizations:
+    - version: btc-context-mock-v1
+      producer_id: codex-world-model-forecast
+      producer_behavior_id: "f2645412c69006cd99364a26f8236c449cd2450d78e96cfe1abeecf5a7140c41"
+      outcome_family_id: btc-spot-directional-4h
+      hypothesis_fingerprint: "60fb3594569baa887bb8c3d2cadaa787ec27865745b79a5ef736156e4e784e4e"
+      maximum_allocation_fraction: "0.10"
+      minimum_entry_net_bps: "10"
+      minimum_hold_net_bps: "0"
+
+codex_runtime:
+  enabled: true
+  isolation_verified: true
+
+assessment:
+  enabled: true
+
+codex_accounts:
+  accounts:
+    - account_id: .codex
+      codex_home: /home/aiuser/.codex
+      enabled: true
+      capacity_weight: "1"
+    - account_id: .codex2
+      codex_home: /home/aiuser/.codex2
+      enabled: true
+      capacity_weight: "1"
+    - account_id: .codex_affine_pb
+      codex_home: /home/aiuser/.codex_affine_pb
+      enabled: true
+      capacity_weight: "1"
 
 pipeline:
   version: cash-observation-shadow-v1
 
 temporal:
-  # 本配置只服务独立 Capital Shadow；冻结发布时必须与事实库一一对应。
+  # WorldModel、Forecast 与 Capital 在同一运行事实库协作。
   namespace: shadow-capital-20260822-v10
 
 deployment:

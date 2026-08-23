@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
+from investment_manager.execution.planning.planner import InstrumentExecutionSpec
+from investment_manager.forecast.contracts import ForecastPriceAnchor
 from investment_manager.forecast.models import (
-    BaseForecast,
-    CalibratedForecast,
-    DirectionalView,
     ExposureDirection,
     ForecastLeg,
-    ForecastReferencePrice,
-    ForecastRole,
+    ForecastQuantityMode,
     ForecastTarget,
 )
+from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
+from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
@@ -22,175 +24,203 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
     PortfolioSleeveInput,
+    remaining_forecast_gross_bps,
 )
 from investment_manager.portfolio.models import (
     InstrumentPosition,
     MockCandidateAuthorization,
     PortfolioAccountSnapshot,
-    PortfolioEdgeBasis,
     SleevePosition,
     SleeveTarget,
-    sleeve_gross_notional,
 )
 
-NOW = datetime(2026, 8, 20, 11, tzinfo=UTC)
-
-
-def _instruments(symbol: str = "BTCUSDT") -> tuple[InstrumentId, InstrumentId]:
-    base = symbol.removesuffix("USDT")
-    return (
-        InstrumentId.binance_spot(
-            symbol=symbol,
-            base_asset=base,
-            quote_asset="USDT",
+NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
+SPOT = InstrumentId.binance_spot(
+    symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT"
+)
+PERPETUAL = InstrumentId(
+    product=InstrumentProduct.USD_M_PERPETUAL,
+    symbol="BTCUSDT",
+    base_asset="BTC",
+    quote_asset="USDT",
+    settlement_asset="USDT",
+)
+TARGET = ForecastTarget.create(
+    (
+        ForecastLeg(
+            instrument=SPOT,
+            direction=ExposureDirection.LONG,
+            gross_weight=Decimal("0.5"),
         ),
-        InstrumentId(
-            product=InstrumentProduct.USD_M_PERPETUAL,
-            symbol=symbol,
-            base_asset=base,
-            quote_asset="USDT",
-            settlement_asset="USDT",
+        ForecastLeg(
+            instrument=PERPETUAL,
+            direction=ExposureDirection.SHORT,
+            gross_weight=Decimal("0.5"),
         ),
-    )
-
-
-def _target(symbol: str = "BTCUSDT") -> ForecastTarget:
-    spot, perpetual = _instruments(symbol)
-    return ForecastTarget.create(
-        (
-            ForecastLeg(
-                instrument=spot,
-                direction=ExposureDirection.LONG,
-                gross_weight=Decimal("0.5"),
-            ),
-            ForecastLeg(
-                instrument=perpetual,
-                direction=ExposureDirection.SHORT,
-                gross_weight=Decimal("0.5"),
-            ),
-        )
-    )
+    ),
+    quantity_mode=ForecastQuantityMode.SAME_BASE_QUANTITY,
+)
 
 
 def _forecast(
-    symbol: str = "BTCUSDT",
     *,
-    forecast_id: str = "forecast-1",
-    gross_bps: str = "20",
-    direction: DirectionalView = DirectionalView.UP,
-    half_life_seconds: int = 3_600,
-    available_at: datetime = NOW,
-    valid_until: datetime = NOW + timedelta(hours=1),
-) -> CalibratedForecast:
-    target = _target(symbol)
-    return CalibratedForecast(
-        forecast_id=forecast_id,
-        role=ForecastRole.PROGRAM_BASE,
-        producer_id="carry-calibration",
-        producer_version="v1",
-        forecast_family="delta-neutral-funding-carry",
-        target=target,
-        horizon_minutes=240,
-        direction=direction,
-        reference_prices=tuple(
-            ForecastReferencePrice(
-                instrument_id=leg.instrument.key,
-                price=Decimal("100"),
-            )
-            for leg in target.legs
+    expected_bps: str = "40",
+    available_at: datetime = NOW - timedelta(minutes=1),
+    valid_until: datetime = NOW + timedelta(minutes=30),
+    behavior: str = "carry-v1",
+) -> BaseForecast:
+    cutoff_at = available_at - timedelta(minutes=1)
+    anchors = tuple(
+        ForecastPriceAnchor(
+            instrument_id=leg.instrument.key,
+            price=Decimal("100"),
+            observed_at=cutoff_at,
+            available_at=cutoff_at,
+            quote_ref=f"cutoff-{leg.instrument.key}",
+        )
+        for leg in TARGET.legs
+    )
+    slot_id = stable_id("slot", cutoff_at.isoformat())
+    return BaseForecast(
+        forecast_id=stable_id("base_forecast", slot_id, behavior),
+        contract_id="carry-contract-v1",
+        decision_slot_id=slot_id,
+        producer_id="cash-carry",
+        producer_behavior_id=behavior,
+        outcome_family_id="btc-carry",
+        target=TARGET,
+        horizon_minutes=1_440,
+        cutoff_prices=anchors,
+        entry_prices=tuple(
+            item.model_copy(update={"available_at": available_at}) for item in anchors
         ),
-        expected_edge_half_life_seconds=half_life_seconds,
+        information_cutoff_at=cutoff_at,
+        input_observed_at=cutoff_at,
         available_at=available_at,
         valid_until=valid_until,
-        base_forecast_id=f"base-{forecast_id}",
-        expected_gross_bps=Decimal(gross_bps) + Decimal("5"),
-        conservative_gross_bps=Decimal(gross_bps),
-        dispersion_bps=Decimal("30"),
-        calibration_ref="calibration-v1",
-        calibration_sample_size=40,
-        non_overlapping_sample_size=30,
-        input_refs=(f"input-{forecast_id}",),
+        outcome_probabilities=(
+            ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.2")),
+            ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.3")),
+            ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.5")),
+        ),
+        expected_gross_bps=Decimal(expected_bps),
+        input_refs=("market-input",),
     )
 
 
-def _quotes(symbol: str = "BTCUSDT", *, spot_bid: str = "100"):
-    quotes = []
-    for instrument in _instruments(symbol):
-        bid = Decimal(spot_bid) if instrument.product == InstrumentProduct.SPOT else Decimal("100")
-        quotes.append(
-            ExecutableQuote(
-                source_quote_id=f"quote-{instrument.product.value}",
-                instrument=instrument,
-                as_of=NOW,
-                observed_at=NOW,
-                bid=bid,
-                bid_quantity=Decimal("100"),
-                ask=bid + Decimal("0.01"),
-                ask_quantity=Decimal("100"),
-                source="test",
-            )
-        )
-    return tuple(quotes)
+def _authorization(forecast: BaseForecast) -> MockCandidateAuthorization:
+    return MockCandidateAuthorization(
+        version="mock-v1",
+        producer_id=forecast.producer_id,
+        producer_behavior_id=forecast.producer_behavior_id,
+        outcome_family_id=forecast.outcome_family_id,
+        hypothesis_fingerprint="a" * 64,
+        maximum_allocation_fraction=Decimal("0.10"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
 
 
-def _input(
-    *,
-    forecast: BaseForecast | CalibratedForecast | None = None,
-    cost_bps: str = "5",
-    refresh_target: bool = True,
-    mock_authorization: MockCandidateAuthorization | None = None,
-) -> PortfolioSleeveInput:
+def _input(forecast: BaseForecast | None = None) -> PortfolioSleeveInput:
     forecast = forecast or _forecast()
-    sleeve_id = SleeveTarget.identity_for(
-        portfolio_id="primary",
-        forecast_family=forecast.forecast_family,
-        forecast_target_id=forecast.target.target_id,
-    )
     return PortfolioSleeveInput(
-        sleeve_id=sleeve_id,
-        estimated_variable_cost_bps=Decimal(cost_bps),
+        sleeve_id=SleeveTarget.identity_for(
+            portfolio_id="primary",
+            forecast_family=forecast.outcome_family_id,
+            forecast_target_id=forecast.target.target_id,
+        ),
         forecast=forecast,
-        mock_authorization=mock_authorization,
-        refresh_target=refresh_target,
+        mock_authorization=_authorization(forecast),
     )
 
 
-def _account(
+def _quotes(
     *,
-    forecast: BaseForecast | CalibratedForecast | None = None,
-    gross: str = "0",
-) -> PortfolioAccountSnapshot:
-    forecast = forecast or _forecast()
-    gross_value = Decimal(gross)
-    positions: tuple[InstrumentPosition, ...] = ()
-    sleeves: tuple[SleevePosition, ...] = ()
-    if gross_value > 0:
-        legs = tuple(
+    spot_bid: str = "100",
+    spot_ask: str = "100",
+    perpetual_bid: str = "100",
+    perpetual_ask: str = "100",
+    quantity: str = "100",
+) -> tuple[ExecutableQuote, ...]:
+    values = (
+        ExecutableQuote(
+            source_quote_id="spot-quote",
+            instrument=SPOT,
+            as_of=NOW,
+            observed_at=NOW,
+            bid=Decimal(spot_bid),
+            bid_quantity=Decimal(quantity),
+            ask=Decimal(spot_ask),
+            ask_quantity=Decimal(quantity),
+            source="test",
+        ),
+        ExecutableQuote(
+            source_quote_id="perpetual-quote",
+            instrument=PERPETUAL,
+            as_of=NOW,
+            observed_at=NOW,
+            bid=Decimal(perpetual_bid),
+            bid_quantity=Decimal(quantity),
+            ask=Decimal(perpetual_ask),
+            ask_quantity=Decimal(quantity),
+            source="test",
+        ),
+    )
+    return tuple(sorted(values, key=lambda item: item.instrument.key))
+
+
+def _specs() -> tuple[InstrumentExecutionSpec, ...]:
+    values = (
+        InstrumentExecutionSpec(
+            instrument=SPOT,
+            quantity_step=Decimal("0.00001"),
+            minimum_order_notional=Decimal("5"),
+            fee_bps=Decimal("12.5"),
+        ),
+        InstrumentExecutionSpec(
+            instrument=PERPETUAL,
+            quantity_step=Decimal("0.001"),
+            minimum_order_notional=Decimal("100"),
+            fee_bps=Decimal("7.5"),
+        ),
+    )
+    return tuple(sorted(values, key=lambda item: item.instrument.key))
+
+
+def _account(*, holding: bool = False) -> PortfolioAccountSnapshot:
+    sleeve = _input()
+    positions = ()
+    product_positions = ()
+    if holding:
+        product_positions = (
             InstrumentPosition(
-                instrument=leg.instrument,
-                quantity=(
-                    Decimal("1")
-                    if leg.direction == ExposureDirection.LONG
-                    else Decimal("-1")
-                )
-                * gross_value
-                * leg.gross_weight
-                / Decimal("100"),
+                instrument=SPOT,
+                quantity=Decimal("5"),
                 average_price=Decimal("100"),
-            )
-            for leg in forecast.target.legs
+            ),
+            InstrumentPosition(
+                instrument=PERPETUAL,
+                quantity=Decimal("-5"),
+                average_price=Decimal("100"),
+            ),
         )
-        positions = legs
-        sleeves = (
+        positions = (
             SleevePosition(
-                sleeve_id=SleeveTarget.identity_for(
-                    portfolio_id="primary",
-                    forecast_family=forecast.forecast_family,
-                    forecast_target_id=forecast.target.target_id,
+                sleeve_id=sleeve.sleeve_id,
+                forecast_family=sleeve.forecast.outcome_family_id,
+                target=TARGET,
+                legs=(
+                    InstrumentPosition(
+                        instrument=SPOT,
+                        quantity=Decimal("5"),
+                        average_price=Decimal("100"),
+                    ),
+                    InstrumentPosition(
+                        instrument=PERPETUAL,
+                        quantity=Decimal("-5"),
+                        average_price=Decimal("100"),
+                    ),
                 ),
-                forecast_family=forecast.forecast_family,
-                target=forecast.target,
-                legs=legs,
             ),
         )
     return PortfolioAccountSnapshot(
@@ -200,294 +230,146 @@ def _account(
         as_of=NOW,
         observed_at=NOW,
         settlement_asset="USDT",
-        cash_balance=Decimal("10000") - gross_value,
-        equity=Decimal("10000"),
-        equity_high_water=Decimal("10000"),
-        positions=positions,
-        sleeves=sleeves,
+        cash_balance=Decimal("10000"),
+            equity=Decimal("10000"),
+            equity_high_water=Decimal("10000"),
+            positions=product_positions,
+            sleeves=positions,
     )
 
 
-def _policy(**updates) -> PortfolioDecisionPolicy:
-    return PortfolioDecisionPolicy(
-        version="portfolio-shadow-v2",
-        portfolio_id="primary",
-    ).model_copy(update=updates)
-
-
-def _base_forecast(*, gross_bps: str) -> BaseForecast:
-    target = _target()
-    return BaseForecast(
-        forecast_id=f"mock-forecast-{gross_bps}",
-        producer_id="btc-dynamic-carry",
-        producer_version="dynamic-carry-v1",
-        forecast_family="delta-neutral-dynamic-carry",
-        target=target,
-        horizon_minutes=7 * 24 * 60,
-        direction=DirectionalView.UP,
-        reference_prices=tuple(
-            ForecastReferencePrice(
-                instrument_id=leg.instrument.key,
-                price=Decimal("100"),
-            )
-            for leg in target.legs
-        ),
-        observed_at=NOW,
-        available_at=NOW,
-        valid_until=NOW + timedelta(minutes=30),
-        raw_score=Decimal(gross_bps),
-        input_refs=("derivative-state-1",),
+def _engine(*, enabled: bool = True) -> PortfolioDecisionEngine:
+    return PortfolioDecisionEngine(
+        PortfolioDecisionPolicy(
+            version="portfolio-v1",
+            portfolio_id="primary",
+            enabled=enabled,
+        )
     )
 
 
-def _mock_authorization() -> MockCandidateAuthorization:
-    return MockCandidateAuthorization(
-        version="mock-candidate-v1",
-        producer_id="btc-dynamic-carry",
-        producer_version="dynamic-carry-v1",
-        forecast_family="delta-neutral-dynamic-carry",
-        hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
+def test_engine_is_off_without_creating_a_target() -> None:
+    assert (
+        _engine(enabled=False).decide(
+            cycle_id="cycle-1",
+            as_of=NOW,
+            account=_account(),
+            sleeves=(_input(),),
+            quotes=_quotes(),
+            execution_specs=_specs(),
+        )
+        is None
     )
 
 
-def test_engine_is_off_by_default() -> None:
-    result = PortfolioDecisionEngine(_policy()).decide(
+def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> None:
+    target = _engine().decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(),
         sleeves=(_input(),),
         quotes=_quotes(),
+        execution_specs=_specs(),
     )
+    assert target is not None and len(target.sleeves) == 1
+    sleeve = target.sleeves[0]
+    assert sleeve.desired_gross_notional == Decimal("1000")
+    assert sleeve.cost.fee_bps == Decimal("20.00")
+    assert sleeve.cost.total_bps == Decimal("20.00")
+    assert sleeve.decision_net_bps == Decimal("20.00")
 
-    assert result is None
 
-
-def test_engine_allocates_one_multi_leg_sleeve_in_gross_notional() -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
+    target = _engine().decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(),
-        sleeves=(_input(),),
+        sleeves=(_input(_forecast(expected_bps="20")),),
         quotes=_quotes(),
+        execution_specs=_specs(),
     )
+    assert target is not None
+    assert target.sleeves == ()
+    assert target.reason_codes == ("CASH_SELECTED_NO_POSITIVE_NET_EDGE",)
 
-    assert result is not None
-    assert len(result.sleeves) == 1
-    assert result.sleeves[0].desired_gross_notional == Decimal("3000")
-    assert tuple(
-        (leg.instrument.product, leg.direction, leg.gross_weight)
-        for leg in result.sleeves[0].forecast_target.legs
-    ) == (
-        (InstrumentProduct.SPOT, ExposureDirection.LONG, Decimal("0.5")),
-        (
-            InstrumentProduct.USD_M_PERPETUAL,
-            ExposureDirection.SHORT,
-            Decimal("0.5"),
-        ),
+
+def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None:
+    forecast = _forecast()
+    favorable = remaining_forecast_gross_bps(
+        forecast,
+        quote_by_instrument={item.instrument.key: item for item in _quotes(
+            spot_bid="99", spot_ask="99", perpetual_bid="101", perpetual_ask="101"
+        )},
+        as_of=NOW,
     )
+    adverse = remaining_forecast_gross_bps(
+        forecast,
+        quote_by_instrument={item.instrument.key: item for item in _quotes(
+            spot_bid="101", spot_ask="101", perpetual_bid="99", perpetual_ask="99"
+        )},
+        as_of=NOW,
+    )
+    assert favorable > forecast.expected_gross_bps
+    assert adverse < forecast.expected_gross_bps
 
 
-def test_mock_authorized_base_forecast_uses_hypothesis_edge_without_fake_calibration(
-) -> None:
-    forecast = _base_forecast(gross_bps="25")
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+def test_base_forecast_requires_exact_behavior_authorization() -> None:
+    forecast = _forecast()
+    permission = _authorization(forecast).model_copy(
+        update={"producer_behavior_id": "different"}
+    )
+    with pytest.raises(ValueError, match="精确绑定"):
+        PortfolioSleeveInput(
+            sleeve_id=_input(forecast).sleeve_id,
+            forecast=forecast,
+            mock_authorization=permission,
+        )
+
+
+def test_expired_forecast_forces_an_existing_sleeve_to_cash() -> None:
+    expired = _forecast(
+        available_at=NOW - timedelta(hours=2),
+        valid_until=NOW - timedelta(hours=1),
+    )
+    target = _engine().decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        account=_account(forecast=forecast),
-        sleeves=(
-            _input(
-                forecast=forecast,
-                cost_bps="20",
-                mock_authorization=_mock_authorization(),
-            ),
-        ),
+        account=_account(holding=True),
+        sleeves=(_input(expired),),
         quotes=_quotes(),
+        execution_specs=_specs(),
     )
-
-    assert result is not None
-    assert result.sleeves[0].desired_gross_notional == Decimal("1000")
-    assert result.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
-    assert result.sleeves[0].decision_gross_bps == Decimal("25")
-    assert result.sleeves[0].decision_net_bps == Decimal("5")
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == 0
+    assert "EXPIRED_FORECAST_EXIT" in target.reason_codes
 
 
-def test_base_forecast_without_mock_authorization_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Mock candidate authorization"):
-        _input(forecast=_base_forecast(gross_bps="25"), cost_bps="20")
-
-
-def test_mock_candidate_uses_lower_hold_threshold_without_forcing_entry() -> None:
-    forecast = _base_forecast(gross_bps="16")
-    authorization = _mock_authorization()
-    input_value = _input(
-        forecast=forecast,
-        cost_bps="20",
-        mock_authorization=authorization,
-    )
-    engine = PortfolioDecisionEngine(_policy(enabled=True))
-
-    cash = engine.decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(forecast=forecast),
-        sleeves=(input_value,),
-        quotes=_quotes(),
-    )
-    held = engine.decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(forecast=forecast, gross="1000"),
-        sleeves=(input_value,),
-        quotes=_quotes(),
-    )
-
-    assert cash is not None and cash.sleeves == ()
-    assert cash.quotes == _quotes()
-    assert held is not None
-    held_account = _account(forecast=forecast, gross="1000")
-    assert held.sleeves[0].desired_gross_notional == sleeve_gross_notional(
-        held_account.sleeves[0],
-        quote_by_instrument={item.instrument.key: item for item in _quotes()},
-    )
-
-def test_engine_ranks_sleeves_and_allocates_only_remaining_capacity() -> None:
-    btc = _input(forecast=_forecast(forecast_id="btc", gross_bps="20"))
-    eth_forecast = _forecast("ETHUSDT", forecast_id="eth", gross_bps="30")
-    eth = _input(forecast=eth_forecast)
-    quotes = tuple(sorted((*_quotes(), *_quotes("ETHUSDT")), key=lambda item: item.instrument.key))
-    sleeves = tuple(sorted((btc, eth), key=lambda item: item.sleeve_id))
-
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
+def test_cost_increases_when_desired_size_exceeds_visible_depth() -> None:
+    target = _engine().decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(),
-        sleeves=sleeves,
-        quotes=quotes,
-    )
-
-    assert result is not None
-    desired = {
-        item.forecast_ids: item.desired_gross_notional for item in result.sleeves
-    }
-    assert desired == {("eth",): Decimal("3000"), ("btc",): Decimal("2000")}
-
-
-def test_engine_retains_unrefreshed_sleeve_while_allocating_new_opportunity() -> None:
-    btc_forecast = _forecast(forecast_id="btc")
-    eth_forecast = _forecast("ETHUSDT", forecast_id="eth", gross_bps="30")
-    btc = _input(forecast=btc_forecast, refresh_target=False)
-    eth = _input(forecast=eth_forecast)
-    quotes = tuple(
-        sorted((*_quotes(), *_quotes("ETHUSDT")), key=lambda item: item.instrument.key)
-    )
-    sleeves = tuple(sorted((btc, eth), key=lambda item: item.sleeve_id))
-
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(forecast=btc_forecast, gross="2500"),
-        sleeves=sleeves,
-        quotes=quotes,
-    )
-
-    assert result is not None
-    desired = {
-        item.forecast_ids: item.desired_gross_notional for item in result.sleeves
-    }
-    assert desired == {("btc",): Decimal("2500.125"), ("eth",): Decimal("2499.875")}
-    assert "UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST" in result.reason_codes
-
-
-def test_engine_emits_explicit_zero_target_to_exit_open_sleeve() -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(forecast=_forecast(direction=DirectionalView.DOWN), gross="2500"),
-        sleeves=(
-            _input(
-                forecast=_forecast(direction=DirectionalView.DOWN),
-            ),
+        sleeves=(_input(_forecast(expected_bps="500")),),
+        quotes=_quotes(
+            spot_bid="99.9",
+            spot_ask="100.1",
+            perpetual_bid="99.9",
+            perpetual_ask="100.1",
+            quantity="1",
         ),
-        quotes=_quotes(),
+        execution_specs=_specs(),
     )
-
-    assert result is not None
-    assert result.sleeves[0].desired_gross_notional == 0
-    assert "CASH_SELECTED" in result.sleeves[0].reason_codes
+    assert target is not None
+    assert target.sleeves[0].cost.depth_slippage_bps > 0
 
 
-def test_engine_hysteresis_suppresses_uneconomic_rebalance() -> None:
-    result = PortfolioDecisionEngine(
-        _policy(enabled=True, minimum_rebalance_notional=Decimal("100"))
-    ).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(gross="2950"),
-        sleeves=(_input(),),
-        quotes=_quotes(),
-    )
-
-    assert result is not None
-    assert "REBALANCE_BELOW_MINIMUM" in result.reason_codes
-    assert len(result.sleeves) == 1
-    account = _account(gross="2950")
-    assert result.sleeves[0].desired_gross_notional == sleeve_gross_notional(
-        account.sleeves[0],
-        quote_by_instrument={item.instrument.key: item for item in _quotes()},
-    )
-
-
-def test_engine_does_not_chase_sleeve_edge_already_consumed() -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(),
-        sleeves=(_input(),),
-        quotes=_quotes(spot_bid="100.50"),
-    )
-
-    assert result is not None
-    assert result.sleeves == ()
-    assert "CASH_SELECTED_NO_ELIGIBLE_FORECAST" in result.reason_codes
-    assert "REBALANCE_BELOW_MINIMUM" not in result.reason_codes
-
-
-def test_engine_requires_complete_product_quotes() -> None:
+def test_decision_rejects_incomplete_product_quotes() -> None:
     with pytest.raises(ValueError, match="精确覆盖"):
-        PortfolioDecisionEngine(_policy(enabled=True)).decide(
+        _engine().decide(
             cycle_id="cycle-1",
             as_of=NOW,
             account=_account(),
             sleeves=(_input(),),
             quotes=(_quotes()[0],),
+            execution_specs=_specs(),
         )
-
-
-@pytest.mark.parametrize(
-    "forecast",
-    [
-        _forecast(forecast_id="future", available_at=NOW + timedelta(seconds=1)),
-        _forecast(
-            forecast_id="expired",
-            available_at=NOW - timedelta(seconds=1),
-            valid_until=NOW,
-        ),
-    ],
-)
-def test_engine_never_opens_from_unavailable_forecast(
-    forecast: CalibratedForecast,
-) -> None:
-    result = PortfolioDecisionEngine(_policy(enabled=True)).decide(
-        cycle_id="cycle-1",
-        as_of=NOW,
-        account=_account(forecast=forecast),
-        sleeves=(_input(forecast=forecast),),
-        quotes=_quotes(),
-    )
-
-    assert result is not None
-    assert result.sleeves == ()
-    assert "CASH_SELECTED_NO_ELIGIBLE_FORECAST" in result.reason_codes

@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import httpx
-from sqlalchemy import create_engine, func, insert, select
+from sqlalchemy import create_engine, insert
 
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.app import create_app
@@ -25,21 +25,15 @@ from investment_manager.forecast.context.executor import (
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
-    AssessmentUncertainty,
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
-    ContextCapitalEffect,
-    ContextCapitalImplication,
     ContextCausalNode,
-    ContextDecisionBlocker,
-    ContextDriver,
-    ContextDriverStatus,
     ContextEventImpactState,
     ContextEventReference,
-    ContextHypothesis,
-    ContextHypothesisRole,
-    ContextView,
-    PricedState,
+    ContextMechanism,
+    ContextMechanismRelationship,
+    ContextTransmissionStage,
+    ContextVerificationPredicate,
+    ContextVerificationTest,
 )
 from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
 from investment_manager.forecast.tables import codex_runs, context_assessments
@@ -47,26 +41,17 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.models import DecisionOutcome, DirectionalView
+from investment_manager.legacy.models import DecisionOutcome
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     analysis_cycles,
     decision_outcomes,
     market_snapshots,
 )
-from investment_manager.platform.fact_store import (
-    FactStoreRole,
-    SqlFactCohortQuarantineStore,
-    build_fact_cohort_quarantine,
-    require_fact_store_role,
-)
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.scheduling.tables import (
-    analysis_call_admissions,
-    analysis_trigger_events,
-)
+from investment_manager.scheduling.tables import analysis_call_admissions
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     DecisionPacket,
@@ -167,8 +152,6 @@ def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> Dec
                 directly_triggered=False,
             ),
         ),
-        active_hypotheses=(),
-        previous_assessment_refs=(),
         data_quality_codes=(),
         coverage_gap_codes=(),
         missing_fact_revision_ids=(),
@@ -176,24 +159,30 @@ def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> Dec
     )
 
 
-def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
-    as_of = datetime(2026, 8, 22, 18, tzinfo=UTC)
-    packet = _dashboard_assessment_packet(as_of=as_of, analysis_scope="primary-portfolio")
+def _dashboard_world_model(
+    packet: DecisionPacket,
+    *,
+    assessment_id: str,
+    analysis_behavior_hash: str,
+    synthesis: str,
+    event_reference: ContextEventReference | None = None,
+) -> ContextAssessment:
     evidence_id = "d" * 64
-    assessment = ContextAssessment(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V1,
-        assessment_id="world-model-dashboard",
-        analysis_scope="primary-portfolio",
-        mandate_version="dashboard-test-mandate-v1",
-        as_of=as_of,
-        available_at=as_of + timedelta(seconds=10),
-        analysis_behavior_hash="a" * 64,
+    return ContextAssessment(
+        assessment_id=assessment_id,
+        analysis_scope=packet.analysis_scope,
+        mandate_version=packet.mandate_version,
+        as_of=packet.as_of,
+        available_at=packet.as_of + timedelta(seconds=10),
+        analysis_behavior_hash=analysis_behavior_hash,
         decision_packet_hash=packet.content_hash,
         trigger_ids=packet.trigger_ids,
-        hypotheses=(
-            ContextHypothesis(
-                hypothesis_id="hypothesis-dashboard-primary",
-                role=ContextHypothesisRole.PRIMARY,
+        synthesis=synthesis,
+        synthesis_horizon_hours=72,
+        mechanisms=(
+            ContextMechanism(
+                mechanism_id=f"{assessment_id}-mechanism",
+                relationship=ContextMechanismRelationship.SUPPORTS,
                 claim="政策预期仍是当前风险偏好变化的主要可检验解释。",
                 horizon_hours=72,
                 causal_chain=(
@@ -206,138 +195,93 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
                         evidence_ids=(evidence_id,),
                     ),
                 ),
-                next_observation="观察正式政策结果及同步跨资产响应。",
+                transmission_stage=ContextTransmissionStage.PROPAGATING,
+                verification_tests=(
+                    ContextVerificationTest(
+                        feature_selector="asset_state:BTC.return_fraction",
+                        evaluation_window_minutes=60,
+                        supports_predicate=ContextVerificationPredicate(
+                            operator="GT", value=Decimal("0")
+                        ),
+                        contradicts_predicate=ContextVerificationPredicate(
+                            operator="LT", value=Decimal("0")
+                        ),
+                    ),
+                ),
                 invalidation_conditions=("官方取消日程且风险资产未发生同步响应",),
-                next_review_at=as_of + timedelta(hours=6),
+                next_review_at=packet.as_of + timedelta(hours=6),
             ),
         ),
-        capital_implication=ContextCapitalImplication(
-            objective_id="carry-program-base",
-            effect=ContextCapitalEffect.CAUTION,
-            incremental_reason="政策结果可能增加程序基线未覆盖的事件风险。",
-            transmission="政策结果经风险偏好与双腿流动性影响下一次 carry 入场。",
-            evidence_ids=(evidence_id,),
-            invalidation_conditions=("政策落地后双腿流动性与基差保持稳定",),
-        ),
-        decision_blockers=(
-            ContextDecisionBlocker(
-                question="政策结果是否造成双腿流动性同步恶化？",
-                action_if_yes="保留入场反对候选供配对评价。",
-                action_if_no="维持程序基线。",
-                observation_needed="正式结果后的现货深度、永续深度与基差响应。",
-            ),
-        ),
+        event_references=((event_reference,) if event_reference is not None else ()),
+    )
+
+
+def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
+    as_of = datetime(2026, 8, 22, 18, tzinfo=UTC)
+    packet = _dashboard_assessment_packet(as_of=as_of, analysis_scope="primary-portfolio")
+    evidence_id = "d" * 64
+    assessment = _dashboard_world_model(
+        packet,
+        assessment_id="world-model-dashboard",
+        analysis_behavior_hash="a" * 64,
+        synthesis="政策预期正在改变风险偏好，正式结果是主要反转风险。",
     )
 
     dto = ser.assessment_detail(AssessmentRecord(assessment=assessment, packet=packet))
 
-    assert dto["schema_version"] == "world-model-assessment-v1"
-    assert dto["mechanism"] == assessment.hypotheses[0].claim
-    assert dto["drivers"] == []
-    assert dto["views"] == []
-    assert dto["data_gaps"] == []
+    assert dto["schema_version"] == "world-model-assessment-v2"
+    assert dto["mechanism"] == assessment.synthesis
     assert (
-        dto["hypotheses"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]
+        dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]
         == evidence_id
     )
-    assert dto["capital_implication"]["effect"] == "CAUTION"
-    assert dto["capital_implication"]["capital_authority"] == "NONE"
-    assert dto["decision_blockers"][0]["question"].startswith("政策结果")
     assert (
         dto["cited_evidence"]
-        == dto["hypotheses"][0]["causal_chain"][0]["evidence"]
+        == dto["mechanisms"][0]["causal_chain"][0]["evidence"]
     )
 
 
-def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_store(
+def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     app_config,
     replay_input,
     tmp_path,
 ) -> None:
-    primary_url = f"sqlite+pysqlite:///{tmp_path / 'capital.db'}"
-    assessment_url = f"sqlite+pysqlite:///{tmp_path / 'assessment.db'}"
-    primary_engine = create_engine(primary_url)
-    create_schema(primary_engine)
-    archive_engine, result = _seed_cycle(
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'unified.db'}"
+    engine, result = _seed_cycle(
         app_config,
         replay_input,
-        database_url=assessment_url,
+        database_url=database_url,
     )
     as_of = datetime.now(UTC) - timedelta(minutes=1)
     packet = _dashboard_assessment_packet(
         as_of=as_of,
         analysis_scope="primary-portfolio",
     )
-    assessment = ContextAssessment(
+    assessment = _dashboard_world_model(
+        packet,
         assessment_id="context-assessment-dashboard",
-        analysis_scope="primary-portfolio",
-        mandate_version="dashboard-test-mandate-v1",
-        as_of=as_of,
-        available_at=as_of + timedelta(seconds=10),
         analysis_behavior_hash=configured_assess_behavior_hash(app_config),
-        decision_packet_hash=packet.content_hash,
-        trigger_ids=packet.trigger_ids,
-        market_mechanism="宏观事实尚不足以形成可靠的短期方向判断。",
-        drivers=(
-            ContextDriver(
-                statement="政策日程仍可能改变未来风险溢价。",
-                status=ContextDriverStatus.INFERRED,
-                transmission="政策预期先影响风险偏好，再影响现货需求与价格。",
-                evidence_ids=("d" * 64,),
-                invalidation_conditions=("官方取消日程或市场完成定价",),
-            ),
+        synthesis="政策日程仍可能经风险偏好改变未来风险溢价。",
+        event_reference=ContextEventReference(
+            evidence_id="d" * 64,
+            source="official-calendar",
+            title="重要政策日程发生变化",
+            event_time=as_of - timedelta(minutes=5),
+            impact_state=ContextEventImpactState.ACTIVE,
+            rationale="正式日程尚未结束，未来政策预期仍可能变化。",
         ),
-        event_references=(
-            ContextEventReference(
-                evidence_id="d" * 64,
-                source="official-calendar",
-                title="重要政策日程发生变化",
-                event_time=as_of - timedelta(minutes=5),
-                impact_state=ContextEventImpactState.ACTIVE,
-                rationale="正式日程尚未结束，未来政策预期仍可能变化。",
-            ),
-        ),
-        views=(
-            ContextView(
-                asset="BTC",
-                horizon_minutes=60,
-                direction=DirectionalView.UNCERTAIN,
-                already_priced=PricedState.UNKNOWN,
-                uncertainty=AssessmentUncertainty.HIGH,
-                invalidation_conditions=("出现新的可靠方向证据",),
-            ),
-        ),
-        data_gaps=("缺少可靠方向证据",),
     )
     bad_packet = _dashboard_assessment_packet(
         as_of=as_of + timedelta(seconds=1),
         analysis_scope="primary-portfolio",
     )
-    bad_assessment = ContextAssessment(
+    bad_assessment = _dashboard_world_model(
+        bad_packet,
         assessment_id="context-assessment-dashboard-invalid-language",
-        analysis_scope="primary-portfolio",
-        mandate_version="dashboard-test-mandate-v1",
-        as_of=bad_packet.as_of,
-        available_at=as_of + timedelta(seconds=20),
         analysis_behavior_hash="c" * 64,
-        decision_packet_hash=bad_packet.content_hash,
-        trigger_ids=bad_packet.trigger_ids,
-        market_mechanism=(
-            "Accepted evidence suggests rising ETH while market_mechanism希望错误"
-        ),
-        views=(
-            ContextView(
-                asset="BTC",
-                horizon_minutes=60,
-                direction=DirectionalView.UNCERTAIN,
-                already_priced=PricedState.UNKNOWN,
-                uncertainty=AssessmentUncertainty.HIGH,
-                invalidation_conditions=("出现新的可靠方向证据",),
-            ),
-        ),
-        data_gaps=("Portfolio equity is unavailable.], views错误",),
+        synthesis="Accepted evidence suggests rising ETH while 叙事存在残渣。",
     )
-    with archive_engine.begin() as connection:
+    with engine.begin() as connection:
         connection.execute(
             insert(decision_packets),
             (
@@ -368,7 +312,6 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                     "analysis_scope": assessment.analysis_scope,
                     "available_at": assessment.available_at,
                     "analysis_behavior_hash": assessment.analysis_behavior_hash,
-                    "view_count": len(assessment.views),
                     "payload": assessment.model_dump(mode="json"),
                 },
                 {
@@ -377,7 +320,6 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                     "analysis_scope": bad_assessment.analysis_scope,
                     "available_at": bad_assessment.available_at,
                     "analysis_behavior_hash": bad_assessment.analysis_behavior_hash,
-                    "view_count": len(bad_assessment.views),
                     "payload": bad_assessment.model_dump(mode="json"),
                 },
             ),
@@ -398,7 +340,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
                 },
             )
         )
-    SqlContextAssessmentStore(archive_engine).record_execution(
+    SqlContextAssessmentStore(engine).record_execution(
         AssessmentExecution.create(
             status=AssessmentExecutionStatus.FAILED,
             packet_id=bad_packet.packet_id,
@@ -411,7 +353,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         )
     )
     SqlEventStore(
-        archive_engine,
+        engine,
         pipeline_id=app_config.pipeline.version,
     ).put(
         IntelligenceEvent(
@@ -419,8 +361,8 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
             event_time=assessment.as_of,
             observed_at=assessment.available_at,
             source="official-calendar",
-            title="Assessment 库中的一手事件",
-            body="用于确认 Capital 观测台读取正确的情报事实库。",
+            title="统一事实库中的一手事件",
+            body="用于确认观测台读取唯一权威事实链。",
             symbols=("BTCUSDT",),
             relevance=Decimal("0.8"),
             impact=Decimal("0.7"),
@@ -429,12 +371,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         )
     )
 
-    application = create_app(
-        app_config,
-        primary_url,
-        assessment_database_url=assessment_url,
-        assessment_config=app_config,
-    )
+    application = create_app(app_config, database_url)
 
     async def read_endpoints():
         async with httpx.AsyncClient(
@@ -485,9 +422,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
     }
     assert assessment_detail.status_code == 200
     assert assessment_detail.json()["evidence_count"] == 1
-    assert assessment_detail.json()["views"][0]["direction"] == "UNCERTAIN"
-    assert assessment_detail.json()["views"][0]["outcome"] is None
-    assert assessment_detail.json()["drivers"][0]["evidence"] == [
+    assert assessment_detail.json()["mechanisms"][0]["causal_chain"][0]["evidence"] == [
         {
             "evidence_id": "d" * 64,
             "kind": "INTELLIGENCE_EVENT",
@@ -507,12 +442,12 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         "input_snapshot"
     ]
     assert bad_assessment_detail.status_code == 200
-    assert bad_assessment_detail.json()["mechanism"] == bad_assessment.market_mechanism
+    assert bad_assessment_detail.json()["mechanism"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": [], "next_cursor": None}
     assert events.status_code == 200
     assert any(
-        item["title"] == "Assessment 库中的一手事件"
+        item["title"] == "统一事实库中的一手事件"
         for item in events.json()["events"]
     )
 
@@ -616,16 +551,13 @@ def test_cycle_api_composite_cursor_has_no_gap_during_concurrent_insert(
     assert invalid.status_code == 400
 
 
-def test_event_api_composite_cursor_merges_databases_without_gap(
+def test_event_api_cursor_pages_one_fact_store_without_gap(
     app_config,
     tmp_path,
 ) -> None:
-    primary_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-events-primary.db'}"
-    archive_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-events-archive.db'}"
-    primary = create_engine(primary_url)
-    archive = create_engine(archive_url)
-    create_schema(primary)
-    create_schema(archive)
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-events.db'}"
+    engine = create_engine(database_url)
+    create_schema(engine)
     at = datetime(2026, 8, 22, 3, tzinfo=UTC)
 
     def put(engine, suffix: str) -> None:
@@ -645,15 +577,10 @@ def test_event_api_composite_cursor_merges_databases_without_gap(
             )
         )
 
-    put(primary, "a")
-    put(archive, "b")
-    put(primary, "c")
-    application = create_app(
-        app_config,
-        primary_url,
-        assessment_database_url=archive_url,
-        assessment_config=app_config,
-    )
+    put(engine, "a")
+    put(engine, "b")
+    put(engine, "c")
+    application = create_app(app_config, database_url)
 
     async def read_pages():
         async with httpx.AsyncClient(
@@ -661,7 +588,7 @@ def test_event_api_composite_cursor_merges_databases_without_gap(
             base_url="http://dashboard.test",
         ) as client:
             first = await client.get("/api/events?limit=2")
-            put(archive, "d")
+            put(engine, "d")
             second = await client.get(
                 "/api/events",
                 params={"limit": 2, "cursor": first.json()["next_cursor"]},
@@ -679,11 +606,9 @@ def test_event_api_composite_cursor_merges_databases_without_gap(
     assert second.json()["next_cursor"] is None
 
 
-def test_dashboard_accounts_use_the_assessment_archive_identity(app_config, tmp_path) -> None:
-    primary_url = f"sqlite+pysqlite:///{tmp_path / 'accounts-primary.db'}"
-    assessment_url = f"sqlite+pysqlite:///{tmp_path / 'accounts-assessment.db'}"
-    create_schema(create_engine(primary_url))
-    create_schema(create_engine(assessment_url))
+def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'accounts.db'}"
+    create_schema(create_engine(database_url))
 
     def config_with_account(account_id: str):
         return app_config.model_copy(
@@ -701,12 +626,7 @@ def test_dashboard_accounts_use_the_assessment_archive_identity(app_config, tmp_
             }
         )
 
-    application = create_app(
-        config_with_account(".codex-primary"),
-        primary_url,
-        assessment_database_url=assessment_url,
-        assessment_config=config_with_account(".codex-assessment"),
-    )
+    application = create_app(config_with_account(".codex-runtime"), database_url)
 
     async def read_accounts():
         async with httpx.AsyncClient(
@@ -719,7 +639,7 @@ def test_dashboard_accounts_use_the_assessment_archive_identity(app_config, tmp_
 
     assert response.status_code == 200
     assert [item["account_id"] for item in response.json()["accounts"]] == [
-        ".codex-assessment"
+        ".codex-runtime"
     ]
 
 
@@ -841,10 +761,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                 analysis_scope=config.assessment.mandate.analysis_scope,
                 available_at=completed_at,
                 analysis_behavior_hash=behavior_hash,
-                view_count=sum(
-                    len(asset.horizons_minutes) for asset in config.assessment.mandate.assets
-                ),
-                payload={},
+                    payload={},
             )
         )
 
@@ -1009,46 +926,3 @@ def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> N
     assert event.title == "BTCUSDT · 请求原因：Dashboard 立即复核"
     assert event.impact is None
     assert event.priority == 100
-
-
-def test_wrong_store_pipeline_is_quarantined_from_dashboard_without_deletion(
-    app_config,
-    replay_input,
-) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
-    now = replay_input.market.as_of
-    wrong_pipeline = "context-assessment-wrong-store-v1"
-    SqlTriggerRepository(engine, app_config.trigger).record_trigger(
-        build_trigger_event(
-            trigger_type=AnalysisTriggerType.CANONICAL_FACT_REVISED,
-            symbol="BTCUSDT",
-            pipeline_id=wrong_pipeline,
-            occurred_at=now,
-            observed_at=now,
-            priority=100,
-            dedup_key="wrong-store-trigger",
-        )
-    )
-    require_fact_store_role(engine, FactStoreRole.CAPITAL, claim_if_missing=True)
-    quarantines = SqlFactCohortQuarantineStore(engine)
-    store_id, observed_role = quarantines.current_identity()
-    quarantines.record(
-        build_fact_cohort_quarantine(
-            store_id=store_id,
-            observed_role=observed_role,
-            expected_role=FactStoreRole.CONTEXT,
-            manifest_id="release-context-wrong-store-v1",
-            pipeline_id=wrong_pipeline,
-            analysis_behavior_hash=None,
-            quarantined_at=now,
-            evidence_ref="review-wrong-store-test",
-        )
-    )
-
-    events = DashboardReader(engine, app_config).list_events(cursor=None, limit=20)
-
-    assert all(event.kind != "CANONICAL_FACT_REVISED" for event in events)
-    with engine.connect() as connection:
-        assert connection.scalar(
-            select(func.count()).select_from(analysis_trigger_events)
-        ) == 1

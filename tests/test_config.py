@@ -23,7 +23,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert not config.deployment.live_order_submission_enabled
     assert config.deployment.credential_profile is None
     assert not config.strategy.enabled
-    assert not config.codex_runtime.enabled
+    assert config.codex_runtime.enabled
+    assert config.codex_runtime.isolation_verified
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
@@ -41,7 +42,6 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_fact_characters == 6_000
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.mandate.capital_objective is None
     assert config.assessment.version == "context-assessment-v31"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
@@ -106,17 +106,23 @@ def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     restored = DecisionStatePolicy.model_validate(payload)
 
     assert all(
-        item.fact_type != "US_DIGITAL_ASSET_RULEMAKING"
-        for item in restored.delta_policy.rules
+        item.fact_type != "US_DIGITAL_ASSET_RULEMAKING" for item in restored.delta_policy.rules
     )
 
 
-def test_capital_can_observe_cash_without_an_active_candidate() -> None:
+def test_shadow_has_one_explicit_context_candidate() -> None:
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "investment-manager.shadow.yaml")
 
     assert config.capital.enabled
-    assert config.capital.mock_candidate_authorizations == ()
+    assert config.assessment.enabled
+    assert config.capital.context_forecast is not None
+    assert config.capital.context_forecast.enabled
+    assert len(config.capital.mock_candidate_authorizations) == 1
+    authorization = config.capital.mock_candidate_authorizations[0]
+    assert authorization.producer_behavior_id == (
+        config.capital.context_forecast.producer_behavior_id
+    )
 
 
 def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:
@@ -151,15 +157,6 @@ def test_official_macro_fact_rules_cannot_be_partially_enabled() -> None:
 
     with pytest.raises(ValidationError, match="必须完整启用或完整关闭"):
         type(config).model_validate(payload)
-
-    historical = type(config).model_validate(
-        payload,
-        context={"historical_read_only": True},
-    )
-    assert len(historical.decision_state.delta_policy.rules) == len(
-        config.decision_state.delta_policy.rules
-    ) - 1
-
 
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
     root = Path(__file__).resolve().parents[1]
@@ -246,9 +243,7 @@ def _enabled_assessment_payload() -> tuple[type, dict]:
 
 def test_enabled_assessment_requires_lease_to_cover_one_codex_call() -> None:
     config_type, payload = _enabled_assessment_payload()
-    payload["codex_runtime"]["lease_ttl_seconds"] = payload["codex_runtime"][
-        "timeout_seconds"
-    ]
+    payload["codex_runtime"]["lease_ttl_seconds"] = payload["codex_runtime"]["timeout_seconds"]
 
     with pytest.raises(ValidationError, match="账号租约必须长于"):
         config_type.model_validate(payload)

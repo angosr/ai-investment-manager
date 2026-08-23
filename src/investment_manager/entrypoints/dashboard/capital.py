@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -17,14 +18,17 @@ from investment_manager.execution.tables import (
     mock_product_orders,
     trade_plans,
 )
-from investment_manager.forecast.models import (
+from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
-    ForecastKind,
+    ForecastResultKind,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.kernel.time import require_utc
-from investment_manager.portfolio.decision import remaining_forecast_gross_bps
+from investment_manager.portfolio.decision import (
+    estimate_round_trip_cost,
+    remaining_forecast_gross_bps,
+)
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
@@ -59,8 +63,17 @@ class CapitalOverview:
 
 @dataclass(frozen=True, slots=True)
 class CapitalCandidateEconomics:
+    forecast_id: str
     producer_id: str
-    forecast_family: str
+    outcome_family_id: str
+    information_cutoff_at: datetime
+    available_at: datetime
+    valid_until: datetime
+    world_model_id: str | None
+    outcome_probabilities: tuple[tuple[str, Decimal], ...]
+    mechanism_contributions: tuple[tuple[str, str, str], ...]
+    evidence_refs: tuple[str, ...]
+    analysis_input: dict | None
     gross_bps: Decimal
     estimated_round_trip_cost_bps: Decimal
     net_bps: Decimal
@@ -107,10 +120,7 @@ class CapitalDashboardReader:
                 capital_cycle_records.c.evaluated_at,
                 capital_cycle_records.c.record_id,
                 CapitalCycleRecord,
-                where_clause=(
-                    capital_cycle_records.c.pipeline_id
-                    == self._config.pipeline.version
-                ),
+                where_clause=(capital_cycle_records.c.pipeline_id == self._config.pipeline.version),
             )
             target = self._latest_payload(
                 connection,
@@ -119,11 +129,7 @@ class CapitalDashboardReader:
                 portfolio_targets.c.target_id,
                 PortfolioTarget,
             )
-            if (
-                account is not None
-                and target is not None
-                and account.as_of > target.as_of
-            ):
+            if account is not None and target is not None and account.as_of > target.as_of:
                 target = None
             risk = None
             if target is not None:
@@ -146,8 +152,7 @@ class CapitalDashboardReader:
                 ).scalars()
             )
             order_count = int(
-                connection.scalar(select(func.count()).select_from(mock_product_orders))
-                or 0
+                connection.scalar(select(func.count()).select_from(mock_product_orders)) or 0
             )
             performance_count = int(
                 connection.scalar(
@@ -221,7 +226,7 @@ class CapitalDashboardReader:
         query = select(
             capital_cycle_records.c.evaluated_at,
             capital_cycle_records.c.payload,
-        ).where(capital_cycle_records.c.pipeline_id == self._config.pipeline.version)
+        )
         if cursor is not None:
             query = query.where(
                 older_than(
@@ -239,23 +244,15 @@ class CapitalDashboardReader:
             ).all()
             if not rows:
                 return ()
-            records = tuple(
-                CapitalCycleRecord.model_validate(item.payload) for item in rows
-            )
+            records = tuple(CapitalCycleRecord.model_validate(item.payload) for item in rows)
             forecast_ids = tuple(
-                sorted(
-                    {
-                        forecast_id
-                        for item in records
-                        for forecast_id in item.forecast_ids
-                    }
-                )
+                sorted({forecast_id for item in records for forecast_id in item.forecast_ids})
             )
             loaded_forecasts = (
                 {
                     item.forecast_id: (
                         BaseForecast.model_validate(item.payload)
-                        if ForecastKind(item.kind) == ForecastKind.BASE
+                        if ForecastResultKind(item.kind) == ForecastResultKind.BASE
                         else CalibratedForecast.model_validate(item.payload)
                     )
                     for item in connection.execute(
@@ -269,9 +266,7 @@ class CapitalDashboardReader:
                 if forecast_ids
                 else {}
             )
-            target_ids = tuple(
-                item.target_id for item in records if item.target_id is not None
-            )
+            target_ids = tuple(item.target_id for item in records if item.target_id is not None)
             targets = (
                 {
                     item.target_id: PortfolioTarget.model_validate(item.payload)
@@ -333,15 +328,12 @@ class CapitalDashboardReader:
                     for item in connection.execute(
                         select(
                             execution_groups.c.plan_id,
-                            func.count(mock_product_orders.c.client_order_id).label(
-                                "order_count"
-                            ),
+                            func.count(mock_product_orders.c.client_order_id).label("order_count"),
                         )
                         .select_from(
                             execution_groups.outerjoin(
                                 mock_product_orders,
-                                mock_product_orders.c.group_id
-                                == execution_groups.c.group_id,
+                                mock_product_orders.c.group_id == execution_groups.c.group_id,
                             )
                         )
                         .where(execution_groups.c.plan_id.in_(plan_ids))
@@ -354,11 +346,7 @@ class CapitalDashboardReader:
         return tuple(
             self._activity_row(
                 record=record,
-                target=(
-                    targets.get(record.target_id)
-                    if record.target_id is not None
-                    else None
-                ),
+                target=(targets.get(record.target_id) if record.target_id is not None else None),
                 risks=risks,
                 plans=plans,
                 groups_by_plan=groups_by_plan,
@@ -385,21 +373,17 @@ class CapitalDashboardReader:
             forecasts=forecasts,
         )
         if record.outcome in {
+            CapitalCycleOutcome.CASH,
             CapitalCycleOutcome.NO_OPPORTUNITY,
             CapitalCycleOutcome.HOLD,
         }:
-            summary = (
-                "已评估：维持现有持仓"
-                if record.outcome == CapitalCycleOutcome.HOLD
-                else "已评估：没有新的合格资本机会"
-            )
             return CapitalActivity(
                 activity_id=record.record_id,
                 at=record.evaluated_at,
                 symbol=record.symbol,
                 trigger_types=record.trigger_types,
                 outcome=record.outcome.value,
-                summary=summary,
+                summary=self._routine_summary(record),
                 reason_codes=record.reason_codes,
             )
         if target is None:
@@ -428,14 +412,17 @@ class CapitalDashboardReader:
                 risk_outcome=risk.outcome.value,
                 candidate_economics=candidate_economics,
             )
-        if record.outcome == CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED:
+        if record.outcome in {
+            CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
+            CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED,
+        }:
             return CapitalActivity(
                 activity_id=record.record_id,
                 at=record.evaluated_at,
                 symbol=record.symbol,
                 trigger_types=record.trigger_types,
                 outcome=record.outcome.value,
-                summary="同一经济机会已决策，本轮未重复下单",
+                summary="同一 Forecast 已经完成资本决策，本轮未重复下单",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
                 candidate_economics=candidate_economics,
@@ -487,17 +474,9 @@ class CapitalDashboardReader:
         if target is None:
             return ()
         quote_by_instrument = {item.instrument.key: item for item in target.quotes}
-        cost_bps = sum(
-            (item.fee_bps for item in self._config.capital.execution_specs),
-            Decimal("0"),
-        ) + sum(
-            (
-                self._config.frequency.latency_bps,
-                self._config.frequency.adverse_selection_bps,
-                self._config.frequency.uncertainty_buffer_bps,
-            ),
-            Decimal("0"),
-        )
+        spec_by_instrument = {
+            item.instrument.key: item for item in self._config.capital.execution_specs
+        }
         candidates = []
         for forecast_id in record.forecast_ids:
             forecast = forecasts.get(forecast_id)
@@ -511,8 +490,8 @@ class CapitalDashboardReader:
                         item
                         for item in self._config.capital.mock_candidate_authorizations
                         if item.producer_id == forecast.producer_id
-                        and item.producer_version == forecast.producer_version
-                        and item.forecast_family == forecast.forecast_family
+                        and item.producer_behavior_id == forecast.producer_behavior_id
+                        and item.outcome_family_id == forecast.outcome_family_id
                     ),
                     None,
                 )
@@ -526,10 +505,55 @@ class CapitalDashboardReader:
                 quote_by_instrument=quote_by_instrument,
                 as_of=target.as_of,
             )
+            gross_notional = min(
+                target.reference_equity
+                * self._config.capital.decision.maximum_single_sleeve_fraction,
+                target.reference_equity
+                * (
+                    permission.maximum_allocation_fraction
+                    if isinstance(forecast, BaseForecast)
+                    else Decimal("1")
+                ),
+            )
+            cost_bps = estimate_round_trip_cost(
+                policy=self._config.capital.decision,
+                forecast=forecast,
+                gross_notional=gross_notional,
+                quote_by_instrument=quote_by_instrument,
+                spec_by_instrument=spec_by_instrument,
+            ).total_bps
             candidates.append(
                 CapitalCandidateEconomics(
+                    forecast_id=forecast.forecast_id,
                     producer_id=forecast.producer_id,
-                    forecast_family=forecast.forecast_family,
+                    outcome_family_id=forecast.outcome_family_id,
+                    information_cutoff_at=forecast.information_cutoff_at,
+                    available_at=forecast.available_at,
+                    valid_until=forecast.valid_until,
+                    world_model_id=(
+                        forecast.world_model_id if isinstance(forecast, BaseForecast) else None
+                    ),
+                    outcome_probabilities=tuple(
+                        (item.bucket_id, item.probability)
+                        for item in forecast.outcome_probabilities
+                    ),
+                    mechanism_contributions=(
+                        tuple(
+                            (item.mechanism_id, item.effect.value, item.rationale)
+                            for item in forecast.mechanism_contributions
+                        )
+                        if isinstance(forecast, BaseForecast)
+                        else ()
+                    ),
+                    evidence_refs=(
+                        forecast.evidence_refs if isinstance(forecast, BaseForecast) else ()
+                    ),
+                    analysis_input=(
+                        json.loads(forecast.analysis_input_json)
+                        if isinstance(forecast, BaseForecast)
+                        and forecast.analysis_input_json is not None
+                        else None
+                    ),
                     gross_bps=gross_bps,
                     estimated_round_trip_cost_bps=cost_bps,
                     net_bps=gross_bps - cost_bps,
@@ -537,6 +561,27 @@ class CapitalDashboardReader:
                 )
             )
         return tuple(candidates)
+
+    @staticmethod
+    def _routine_summary(record: CapitalCycleRecord) -> str:
+        reasons = set(record.reason_codes)
+        if "PROGRAMMATIC_RISK_REVIEW" in reasons:
+            return (
+                "程序化账户与风险复核完成，现有仓位保持不变"
+                if record.outcome == CapitalCycleOutcome.HOLD
+                else "程序化账户与风险复核完成，当前保持现金"
+            )
+        no_estimate = next(
+            (item for item in record.reason_codes if item.startswith("FORECAST_NO_ESTIMATE:")),
+            None,
+        )
+        if no_estimate is not None:
+            return f"预测源未形成可用概率估计，当前保持现金（{no_estimate.split(':', 1)[1]}）"
+        if "NO_REGISTERED_FORECAST_SOURCE" in reasons:
+            return "当前没有装配可运行的预测源，资金保持现金"
+        if record.outcome == CapitalCycleOutcome.HOLD:
+            return "本轮预测与程序化约束未要求改变现有仓位"
+        return "本轮没有形成可进入组合比较的预测，资金保持现金"
 
     @staticmethod
     def _latest_payload(
@@ -556,15 +601,14 @@ class CapitalDashboardReader:
         statement = select(payload_column)
         if where_clause is not None:
             statement = statement.where(where_clause)
-        payload = connection.execute(
-            statement.order_by(*ordering).limit(1)
-        ).scalar_one_or_none()
+        payload = connection.execute(statement.order_by(*ordering).limit(1)).scalar_one_or_none()
         return None if payload is None else model.model_validate(payload)
 
     @staticmethod
     def _payload_for(connection, statement, model):
         payload = connection.execute(statement).scalar_one_or_none()
         return None if payload is None else model.model_validate(payload)
+
 
 def serialize_capital_overview(overview: CapitalOverview) -> dict:
     account = overview.account
@@ -661,8 +705,27 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "order_count": item.order_count,
                 "candidate_economics": [
                     {
+                        "forecast_id": candidate.forecast_id,
                         "producer_id": candidate.producer_id,
-                        "forecast_family": candidate.forecast_family,
+                        "outcome_family_id": candidate.outcome_family_id,
+                        "information_cutoff_at": _iso(candidate.information_cutoff_at),
+                        "available_at": _iso(candidate.available_at),
+                        "valid_until": _iso(candidate.valid_until),
+                        "world_model_id": candidate.world_model_id,
+                        "outcome_probabilities": [
+                            {"bucket_id": bucket_id, "probability": str(probability)}
+                            for bucket_id, probability in candidate.outcome_probabilities
+                        ],
+                        "mechanism_contributions": [
+                            {
+                                "mechanism_id": mechanism_id,
+                                "effect": effect,
+                                "rationale": rationale,
+                            }
+                            for mechanism_id, effect, rationale in candidate.mechanism_contributions
+                        ],
+                        "evidence_refs": list(candidate.evidence_refs),
+                        "analysis_input": candidate.analysis_input,
                         "gross_bps": str(candidate.gross_bps),
                         "estimated_round_trip_cost_bps": str(
                             candidate.estimated_round_trip_cost_bps

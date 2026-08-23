@@ -542,7 +542,12 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
         "initialized",
         "account/rateLimits/read",
     ]
-    assert captured["command"] == ["/usr/bin/codex", "app-server", "--stdio", "--strict-config"]
+    assert captured["command"] == [
+        str(_runtime(app_config).binary),
+        "app-server",
+        "--stdio",
+        "--strict-config",
+    ]
     assert Path(captured["env"]["CODEX_HOME"]) != registry.accounts[0].codex_home
     assert captured["auth_target"] == registry.accounts[0].codex_home / "auth.json"
     assert snapshot.account_id == "codex_a"
@@ -1053,7 +1058,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     assert captured["auth_target"] == registry.accounts[1].codex_home / "auth.json"
     assert not {"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} & captured["env"].keys()
     command = captured["command"]
-    assert command[:2] == ["/usr/bin/codex", "app-server"]
+    assert command[:2] == [str(_runtime(app_config).binary), "app-server"]
     assert "--stdio" in command
     assert "--strict-config" in command
     disabled_features = {

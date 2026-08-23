@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 
 from temporalio.client import Client
 
-from investment_manager.decision_cycle.capital import assemble_capital_cycle
+from investment_manager.decision_cycle.capital import (
+    CapitalTriggerConsumer,
+    assemble_capital_cycle,
+)
 from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
@@ -57,7 +60,13 @@ def run_trigger_service(
         if terminated and on_superseded is not None:
             on_superseded(terminated)
         capital_consumer = (
-            assemble_capital_cycle(config, engine) if config.capital.enabled else None
+            assemble_capital_cycle(
+                config,
+                engine,
+                code_version=manifest.code_version,
+            )
+            if config.capital.enabled
+            else None
         )
         activities = TriggerCoordinatorActivities(
             TriggerDispatchBuilder(
@@ -68,13 +77,24 @@ def run_trigger_service(
                     else None
                 ),
                 assessment_history=(
-                    SqlContextAssessmentStore(engine)
-                    if config.assessment.enabled
-                    else None
+                    SqlContextAssessmentStore(engine) if config.assessment.enabled else None
                 ),
                 batch_recorder=repository,
                 program_forecast_producers=(),
-                program_batch_consumers=(capital_consumer,)
+                program_batch_consumers=(
+                    CapitalTriggerConsumer(
+                        capital_consumer,
+                        context_cadence_minutes=(
+                            config.capital.context_forecast.cadence_minutes
+                            if config.assessment.enabled
+                            and config.capital.context_forecast is not None
+                            and config.capital.context_forecast.enabled
+                            else None
+                        ),
+                    )
+                    if config.assessment.enabled
+                    else capital_consumer,
+                )
                 if capital_consumer is not None
                 else (),
             )

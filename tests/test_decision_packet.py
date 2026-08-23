@@ -15,27 +15,19 @@ from investment_manager.forecast.context.analyst import (
     configured_assess_behavior_hash,
 )
 from investment_manager.forecast.context.contract import (
-    AssessStructuredOutput,
     ContextAssessmentContractError,
-    ContextAssessmentDraft,
-    ContextHypothesisDraft,
     ContextMechanismDraft,
     ContextVerificationTestDraft,
     WorldModelDraft,
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
     build_assess_prompt,
-    finalize_context_assessment,
     finalize_world_model,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.verification import packet_feature_values
 from investment_manager.forecast.models import (
-    ContextCapitalEffect,
-    ContextCapitalImplication,
     ContextCausalNode,
-    ContextEventImpactState,
-    ContextHypothesisRole,
     ContextMechanismRelationship,
     ContextPredicateOperator,
     ContextTransmissionStage,
@@ -56,7 +48,6 @@ from investment_manager.market.features import FeatureEngine
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
-    CapitalContextObjective,
     DecisionPacket,
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
@@ -64,14 +55,10 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
     PacketPreviousCausalNode,
     PacketPreviousContext,
-    PacketPreviousDriver,
-    PacketPreviousEventReference,
-    PacketPreviousHypothesis,
     PacketPreviousMechanism,
     PacketPreviousVerificationObservation,
     PacketPreviousVerificationPredicate,
     PacketPreviousVerificationTest,
-    PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
     continuous_fact_numeric_values,
@@ -235,241 +222,6 @@ def _packet(
     return builder, packet
 
 
-def test_packet_carries_latest_world_model_as_derived_evidence(
-    app_config,
-    replay_input,
-) -> None:
-    previous = PacketPreviousContext(
-        schema_version="world-model-assessment-v1",
-        assessment_id="assessment-prior-1",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        hypotheses=(
-            PacketPreviousHypothesis(
-                hypothesis_id="world-hypothesis-prior",
-                role="PRIMARY",
-                claim="财政流动性变化正在通过期限溢价影响风险资产估值。",
-                horizon_hours=168,
-                causal_chain=(
-                    PacketPreviousCausalNode(
-                        statement="财政流动性条件发生变化。",
-                        evidence_ids=("revision-prior",),
-                    ),
-                    PacketPreviousCausalNode(
-                        statement="期限溢价成为风险资产的关键中介。",
-                        evidence_ids=("market-prior",),
-                    ),
-                ),
-                next_observation="观察长端收益率与美元的同步响应。",
-                invalidation_conditions=("长端收益率持续反向变化",),
-                next_review_at=replay_input.market.as_of + timedelta(hours=6),
-            ),
-        ),
-    )
-
-    _, packet = _packet(app_config, replay_input, previous_context=previous)
-
-    assert packet.previous_context == previous
-    projected = decision_packet_analysis_projection(packet)
-    assert projected["previous_context"]["hypotheses"][0]["claim"] == (previous.hypotheses[0].claim)
-    assert "causal_chain" not in projected["previous_context"]["hypotheses"][0]
-    assert "conflicting_evidence_ids" not in projected["previous_context"]["hypotheses"][0]
-    assert previous.assessment_id in build_assess_prompt(packet)
-
-
-@pytest.mark.parametrize(
-    ("scope", "available_offset", "message"),
-    (
-        ("other-scope", -1, "scope 不一致"),
-        ("crypto-risk", 1, "尚不可见"),
-    ),
-)
-def test_packet_rejects_future_or_cross_scope_previous_context(
-    app_config,
-    replay_input,
-    scope,
-    available_offset,
-    message,
-) -> None:
-    as_of = replay_input.market.as_of
-    previous = PacketPreviousContext(
-        assessment_id="assessment-invalid-context",
-        analysis_scope=scope,
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=as_of - timedelta(minutes=2),
-        available_at=as_of + timedelta(minutes=available_offset),
-        market_mechanism="用于验证点时与作用域门禁的历史认知。",
-    )
-
-    with pytest.raises(ValueError, match=message):
-        _packet(app_config, replay_input, previous_context=previous)
-
-
-def test_event_reference_is_active_only_when_used_and_expires_one_day_after_stale(
-    app_config,
-    replay_input,
-) -> None:
-    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
-    event_ref = content_hash(event)
-    _, packet = _packet(app_config, replay_input, intelligence_events=(event,))
-    base = _assessment_output()
-    primary = base.assessment.hypotheses[0]
-    event_node = primary.causal_chain[1].model_copy(update={"evidence_ids": (event_ref,)})
-    output = base.model_copy(
-        update={
-            "assessment": base.assessment.model_copy(
-                update={
-                    "hypotheses": (
-                        primary.model_copy(
-                            update={"causal_chain": (primary.causal_chain[0], event_node)}
-                        ),
-                    )
-                }
-            )
-        }
-    )
-
-    assessment = finalize_context_assessment(
-        output=output,
-        packet=packet,
-        analysis_behavior_hash=HASH,
-        available_at=packet.as_of + timedelta(seconds=10),
-    )
-
-    assert assessment.event_references[0].evidence_id == event_ref
-    assert assessment.event_references[0].impact_state == ContextEventImpactState.ACTIVE
-
-    stale_previous = PacketPreviousContext(
-        schema_version="world-model-assessment-v1",
-        assessment_id=assessment.assessment_id,
-        analysis_scope=assessment.analysis_scope,
-        mandate_version=assessment.mandate_version,
-        analysis_behavior_hash=assessment.analysis_behavior_hash,
-        decision_packet_hash=assessment.decision_packet_hash,
-        as_of=assessment.as_of,
-        available_at=assessment.available_at,
-        hypotheses=(
-            PacketPreviousHypothesis(
-                hypothesis_id=assessment.hypotheses[0].hypothesis_id,
-                role="PRIMARY",
-                claim=assessment.hypotheses[0].claim,
-                horizon_hours=assessment.hypotheses[0].horizon_hours,
-                causal_chain=tuple(
-                    PacketPreviousCausalNode(
-                        statement=node.statement,
-                        evidence_ids=node.evidence_ids,
-                    )
-                    for node in assessment.hypotheses[0].causal_chain
-                ),
-                next_observation=assessment.hypotheses[0].next_observation,
-                invalidation_conditions=assessment.hypotheses[0].invalidation_conditions,
-                next_review_at=assessment.hypotheses[0].next_review_at,
-            ),
-        ),
-        event_references=(
-            PacketPreviousEventReference(
-                evidence_id=event_ref,
-                source=event.source,
-                title=event.title,
-                event_time=event.event_time,
-                impact_state="STALE",
-                rationale="该事件的未来边际影响已经完全反映。",
-                stale_at=packet.as_of,
-            ),
-        ),
-    )
-    _, after_expiry = _packet(
-        app_config,
-        replay_input,
-        previous_context=stale_previous,
-        as_of=packet.as_of + timedelta(days=1, seconds=1),
-    )
-
-    assert after_expiry.previous_context is not None
-    assert after_expiry.previous_context.event_references == ()
-
-
-def test_ineligible_event_cannot_be_promoted_into_world_model(
-    app_config,
-    replay_input,
-) -> None:
-    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
-    event_ref = content_hash(event)
-    _, packet = _packet(app_config, replay_input, intelligence_events=(event,))
-    packet = packet.model_copy(
-        update={
-            "intelligence_events": (
-                packet.intelligence_events[0].model_copy(
-                    update={"directional_support_eligible": False}
-                ),
-            )
-        }
-    )
-    base = _assessment_output()
-    primary = base.assessment.hypotheses[0]
-    output = base.model_copy(
-        update={
-            "assessment": base.assessment.model_copy(
-                update={
-                    "hypotheses": (
-                        primary.model_copy(
-                            update={
-                                "causal_chain": (
-                                    primary.causal_chain[0],
-                                    primary.causal_chain[1].model_copy(
-                                        update={"evidence_ids": (event_ref,)}
-                                    ),
-                                )
-                            }
-                        ),
-                    )
-                }
-            )
-        }
-    )
-
-    with pytest.raises(ContextAssessmentContractError, match="低质量或低影响线索"):
-        finalize_context_assessment(
-            output=output,
-            packet=packet,
-            analysis_behavior_hash=HASH,
-            available_at=packet.as_of + timedelta(seconds=10),
-        )
-
-
-def _assessment_output() -> AssessStructuredOutput:
-    return AssessStructuredOutput(
-        assessment=ContextAssessmentDraft(
-            hypotheses=(
-                ContextHypothesisDraft(
-                    role=ContextHypothesisRole.PRIMARY,
-                    claim="监管日程变化正在通过风险溢价影响加密资产定价。",
-                    horizon_hours=168,
-                    causal_chain=(
-                        ContextCausalNode(
-                            statement="官方监管日程发生了可验证变化。",
-                            evidence_ids=("revision-1",),
-                        ),
-                        ContextCausalNode(
-                            statement="该变化构成未来风险溢价重新定价的外生输入。",
-                            evidence_ids=("delta-1",),
-                        ),
-                    ),
-                    next_observation="观察正式会议结果与跨资产风险溢价响应。",
-                    invalidation_conditions=("官方撤回日程或市场响应否定该传导",),
-                    next_review_at=datetime(2026, 9, 1, tzinfo=UTC),
-                ),
-            ),
-        )
-    )
-
-
 def _world_model_output() -> WorldModelStructuredOutput:
     return WorldModelStructuredOutput(
         world_model=WorldModelDraft(
@@ -513,6 +265,44 @@ def _world_model_output() -> WorldModelStructuredOutput:
                 ),
             ),
         )
+    )
+
+
+def _previous_world_model(as_of: datetime, *, assessment_id: str) -> PacketPreviousContext:
+    predicate = PacketPreviousVerificationPredicate(operator="GT", value=Decimal("0"))
+    return PacketPreviousContext(
+        assessment_id=assessment_id,
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=as_of - timedelta(hours=1),
+        available_at=as_of - timedelta(minutes=59),
+        synthesis="上一轮仍有效的联合因果基准。",
+        synthesis_horizon_hours=24,
+        mechanisms=(
+            PacketPreviousMechanism(
+                mechanism_id=f"{assessment_id}-mechanism",
+                relationship="SUPPORTS",
+                claim="上一轮主导机制仍需由当前证据复核。",
+                horizon_hours=24,
+                causal_chain=(
+                    PacketPreviousCausalNode(statement="原因端。", evidence_ids=("old-1",)),
+                    PacketPreviousCausalNode(statement="响应端。", evidence_ids=("old-2",)),
+                ),
+                transmission_stage="PROPAGATING",
+                verification_tests=(
+                    PacketPreviousVerificationTest(
+                        feature_selector="asset_state:BTC.return_fraction",
+                        evaluation_window_minutes=60,
+                        supports_predicate=predicate,
+                        contradicts_predicate=predicate.model_copy(update={"operator": "LTE"}),
+                    ),
+                ),
+                invalidation_conditions=("当前证据否定传导",),
+                next_review_at=as_of + timedelta(hours=1),
+            ),
+        ),
     )
 
 
@@ -1261,26 +1051,9 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
     app_config,
     replay_input,
 ) -> None:
-    previous = PacketPreviousContext(
+    previous = _previous_world_model(
+        replay_input.market.as_of,
         assessment_id="assessment-prior-dense",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        market_mechanism="上一轮仍有效的因果基准。",
-        drivers=(
-            PacketPreviousDriver(
-                statement="仍在影响定价的主导因素。",
-                status="INFERRED",
-                transmission="该因素仍可能改变风险溢价。",
-                invalidation_condition="当前传导被新事实证伪",
-            ),
-        ),
-        views=(),
-        contradictions=("上一时点矛盾",),
-        data_gaps=("上一时点缺口",),
     )
     _, packet = _packet(app_config, replay_input, previous_context=previous)
     derivative = PacketDerivativeState(
@@ -1396,48 +1169,6 @@ def test_analysis_projection_compacts_fact_audit_fields_but_keeps_warnings(
     assert warned["prompt_injection_suspected"] is True
 
 
-def test_analysis_projection_does_not_anchor_new_model_on_legacy_prose(
-    app_config,
-    replay_input,
-) -> None:
-    previous = PacketPreviousContext(
-        assessment_id="assessment-prior-no-edge",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        market_mechanism="上一轮也没有识别到主导驱动。",
-        drivers=(),
-        views=tuple(
-            PacketPreviousView(
-                asset=asset,
-                horizon_minutes=horizon,
-                direction="UNCERTAIN",
-                already_priced="UNKNOWN",
-                uncertainty="HIGH",
-            )
-            for asset in ("BTC", "ETH")
-            for horizon in (60, 240)
-        ),
-        contradictions=(),
-        data_gaps=(),
-    )
-    _, packet = _packet(app_config, replay_input, previous_context=previous)
-
-    projected = decision_packet_analysis_projection(packet)
-    prompt = build_assess_prompt(packet)
-
-    assert packet.previous_context == previous
-    assert projected["previous_context"] == {
-        "schema_version": "legacy-context-assessment-v1",
-        "event_references": (),
-    }
-    assert previous.assessment_id not in prompt
-    assert previous.market_mechanism not in prompt
-
-
 def test_analysis_projection_compacts_prior_world_verification_without_losing_state(
     app_config,
     replay_input,
@@ -1448,7 +1179,6 @@ def test_analysis_projection_compacts_prior_world_verification_without_losing_st
         persistence_observations=2,
     )
     previous = PacketPreviousContext(
-        schema_version="world-model-assessment-v2",
         assessment_id="assessment-prior-world-model",
         analysis_scope="crypto-risk",
         mandate_version="mandate-v1",
@@ -1515,16 +1245,9 @@ def test_replacing_previous_context_refreezes_packet_identity(
     app_config,
     replay_input,
 ) -> None:
-    previous = PacketPreviousContext(
+    previous = _previous_world_model(
+        replay_input.market.as_of,
         assessment_id="assessment-refrozen",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        market_mechanism="仅用于验证不可变 Packet 重新冻结。",
-        views=(),
     )
     _, packet = _packet(app_config, replay_input)
 
@@ -1535,47 +1258,6 @@ def test_replacing_previous_context_refreezes_packet_identity(
     assert refrozen.content_hash != packet.content_hash
     assert refrozen.state_id == packet.state_id
     assert refrozen.trigger_ids == packet.trigger_ids
-
-
-def _capital_mandate() -> AnalysisMandate:
-    return _mandate().model_copy(
-        update={
-            "capital_objective": CapitalContextObjective(
-                objective_id="program-entry-veto-v1",
-                producer_id="program-candidate",
-                producer_version="program-candidate-v1",
-                forecast_family="program-opportunity",
-                base_decision_inputs=(
-                    "BASIS",
-                    "COSTS",
-                    "FUNDING",
-                    "LIQUIDITY",
-                ),
-            )
-        }
-    )
-
-
-def _capital_assessment_output() -> AssessStructuredOutput:
-    base = _assessment_output()
-    return base.model_copy(
-        update={
-            "assessment": base.assessment.model_copy(
-                update={
-                    "capital_implication": ContextCapitalImplication(
-                        objective_id="program-entry-veto-v1",
-                        effect=ContextCapitalEffect.NEUTRAL,
-                        incremental_reason="当前世界证据没有增加程序基线尚未覆盖的入场风险。",
-                        transmission=(
-                            "已见外生事件尚未形成破坏 funding、basis 或双腿流动性的完整传导。"
-                        ),
-                        evidence_ids=("revision-1",),
-                        invalidation_conditions=("交易场所完整性或双腿流动性出现外生恶化",),
-                    )
-                }
-            )
-        }
-    )
 
 
 def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
@@ -1606,20 +1288,6 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert "decision_packet_json=" in prompt
 
 
-def test_world_model_analyzer_rejects_capital_review_packet(
-    app_config,
-    replay_input,
-) -> None:
-    _, packet = _packet(
-        app_config,
-        replay_input,
-        packet_schema_version="decision-packet-v13",
-        mandate=_capital_mandate(),
-    )
-    with pytest.raises(ValueError, match="不接受 CAPITAL_REVIEW"):
-        assess_output_schema(packet)
-
-
 def test_finalize_assessment_writes_only_current_world_model_schema(
     app_config,
     replay_input,
@@ -1632,18 +1300,13 @@ def test_finalize_assessment_writes_only_current_world_model_schema(
         available_at=packet.as_of + timedelta(seconds=20),
     )
 
-    assert assessment.schema_version.value == "world-model-assessment-v2"
+    assert assessment.schema_version == "world-model-assessment-v2"
     assert assessment.analysis_behavior_hash == HASH
     assert assessment.decision_packet_hash == packet.content_hash
     assert assessment.trigger_ids == packet.trigger_ids
     assert assessment.synthesis is not None
     assert len(assessment.mechanisms) == 1
     assert assessment.mechanisms[0].relationship == ContextMechanismRelationship.SUPPORTS
-    assert assessment.hypotheses == ()
-    assert assessment.market_mechanism is None
-    assert assessment.drivers == ()
-    assert assessment.data_gaps == ()
-    assert assessment.views == ()
 
 
 def test_world_model_continuous_cause_requires_connected_fact_test(
@@ -1687,31 +1350,20 @@ def test_world_model_continuous_cause_requires_connected_fact_test(
         )
 
 
-def test_world_model_requires_exactly_one_primary() -> None:
-    base = _assessment_output().assessment.hypotheses[0]
-    with pytest.raises(ValidationError, match="只能包含一个 PRIMARY"):
-        ContextAssessmentDraft(
-            hypotheses=(
-                base,
-                base.model_copy(update={"claim": "另一个重复的主假设。"}),
-            )
-        )
-
-
 def test_world_model_rejects_unknown_evidence(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
-    base = _assessment_output()
-    primary = base.assessment.hypotheses[0]
+    base = _world_model_output()
+    mechanism = base.world_model.mechanisms[0]
     output = base.model_copy(
         update={
-            "assessment": base.assessment.model_copy(
+            "world_model": base.world_model.model_copy(
                 update={
-                    "hypotheses": (
-                        primary.model_copy(
+                    "mechanisms": (
+                        mechanism.model_copy(
                             update={
                                 "causal_chain": (
-                                    primary.causal_chain[0],
-                                    primary.causal_chain[1].model_copy(
+                                    mechanism.causal_chain[0],
+                                    mechanism.causal_chain[1].model_copy(
                                         update={"evidence_ids": ("not-visible",)}
                                     ),
                                 )
@@ -1727,7 +1379,7 @@ def test_world_model_rejects_unknown_evidence(app_config, replay_input) -> None:
         ContextAssessmentContractError,
         match="不可见证据",
     ):
-        finalize_context_assessment(
+        finalize_world_model(
             output=output,
             packet=packet,
             analysis_behavior_hash=HASH,
@@ -1735,50 +1387,23 @@ def test_world_model_rejects_unknown_evidence(app_config, replay_input) -> None:
         )
 
 
-def test_world_model_continuity_can_only_reference_previous_hypothesis(
+def test_world_model_continuity_can_only_reference_previous_mechanism(
     app_config,
     replay_input,
 ) -> None:
-    previous = PacketPreviousContext(
-        schema_version="world-model-assessment-v1",
+    previous = _previous_world_model(
+        replay_input.market.as_of,
         assessment_id="assessment-prior-continuity",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash="b" * 64,
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        hypotheses=(
-            PacketPreviousHypothesis(
-                hypothesis_id="known-hypothesis",
-                role="PRIMARY",
-                claim="上一轮主解释。",
-                horizon_hours=24,
-                causal_chain=(
-                    PacketPreviousCausalNode(
-                        statement="上一轮原因。",
-                        evidence_ids=("old-1",),
-                    ),
-                    PacketPreviousCausalNode(
-                        statement="上一轮响应。",
-                        evidence_ids=("old-2",),
-                    ),
-                ),
-                next_observation="等待下一项事实。",
-                invalidation_conditions=("出现反向事实",),
-                next_review_at=replay_input.market.as_of + timedelta(hours=1),
-            ),
-        ),
     )
     _, packet = _packet(app_config, replay_input, previous_context=previous)
-    base = _assessment_output()
+    base = _world_model_output()
     output = base.model_copy(
         update={
-            "assessment": base.assessment.model_copy(
+            "world_model": base.world_model.model_copy(
                 update={
-                    "hypotheses": (
-                        base.assessment.hypotheses[0].model_copy(
-                            update={"continuity_ref": "unknown-hypothesis"}
+                    "mechanisms": (
+                        base.world_model.mechanisms[0].model_copy(
+                            update={"continuity_ref": "unknown-mechanism"}
                         ),
                     )
                 }
@@ -1786,72 +1411,12 @@ def test_world_model_continuity_can_only_reference_previous_hypothesis(
         }
     )
 
-    with pytest.raises(ContextAssessmentContractError, match="不可见的上一轮假设"):
-        finalize_context_assessment(
+    with pytest.raises(ContextAssessmentContractError, match="不可见的上一轮机制"):
+        finalize_world_model(
             output=output,
             packet=packet,
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),
-        )
-
-
-def test_primary_hypothesis_must_be_refreshed_by_current_point_in_time_evidence(
-    app_config,
-    replay_input,
-) -> None:
-    event = replay_input.events[0].model_copy(update={"impact": Decimal("0.90")})
-    event_ref = content_hash(event)
-    previous = PacketPreviousContext(
-        assessment_id="legacy-with-active-event",
-        analysis_scope="crypto-risk",
-        mandate_version="mandate-v1",
-        as_of=replay_input.market.as_of - timedelta(hours=1),
-        available_at=replay_input.market.as_of - timedelta(minutes=59),
-        market_mechanism="历史模型。",
-        event_references=(
-            PacketPreviousEventReference(
-                evidence_id=event_ref,
-                source=event.source,
-                title=event.title,
-                event_time=event.event_time,
-                impact_state="ACTIVE",
-                rationale="仍需验证。",
-            ),
-        ),
-    )
-    _, packet = _packet(app_config, replay_input, previous_context=previous)
-    base = _assessment_output()
-    primary = base.assessment.hypotheses[0]
-    event_only = primary.model_copy(
-        update={
-            "causal_chain": tuple(
-                node.model_copy(update={"evidence_ids": (event_ref,)})
-                for node in primary.causal_chain
-            )
-        }
-    )
-    output = base.model_copy(
-        update={"assessment": base.assessment.model_copy(update={"hypotheses": (event_only,)})}
-    )
-
-    with pytest.raises(ContextAssessmentContractError, match="本轮点时证据"):
-        finalize_context_assessment(
-            output=output,
-            packet=packet,
-            analysis_behavior_hash=HASH,
-            available_at=packet.as_of + timedelta(seconds=20),
-        )
-
-
-def test_decision_blocker_requires_different_actions() -> None:
-    from investment_manager.forecast.models import ContextDecisionBlocker
-
-    with pytest.raises(ValidationError, match="两种观测结果必须改变资本动作"):
-        ContextDecisionBlocker(
-            question="正式规则是否生效？",
-            action_if_yes="保持程序基线",
-            action_if_no="保持程序基线",
-            observation_needed="官方最终规则及生效日期",
         )
 
 
@@ -1915,11 +1480,11 @@ def test_packet_rejects_future_derivative_observation(app_config, replay_input) 
 
 
 def test_assessment_output_rejects_smuggled_order() -> None:
-    payload = _assessment_output().model_dump()
-    payload["assessment"]["order_type"] = "MARKET"
+    payload = _world_model_output().model_dump()
+    payload["world_model"]["order_type"] = "MARKET"
 
     with pytest.raises(ValidationError, match="extra_forbidden"):
-        AssessStructuredOutput.model_validate(payload)
+        WorldModelStructuredOutput.model_validate(payload)
 
 
 class _StaticRouter:
@@ -2185,8 +1750,8 @@ def test_context_analyst_stops_immediately_after_deterministic_semantic_failure(
 
 def test_context_assessment_store_is_immutable_and_idempotent(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
-    assessment = finalize_context_assessment(
-        output=_assessment_output(),
+    assessment = finalize_world_model(
+        output=_world_model_output(),
         packet=packet,
         analysis_behavior_hash=HASH,
         available_at=packet.as_of + timedelta(seconds=20),
@@ -2228,14 +1793,14 @@ def test_context_assessment_store_rejects_second_output_for_same_behavior(
     app_config, replay_input
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    first = finalize_context_assessment(
-        output=_assessment_output(),
+    first = finalize_world_model(
+        output=_world_model_output(),
         packet=packet,
         analysis_behavior_hash=HASH,
         available_at=packet.as_of + timedelta(seconds=20),
     )
-    retry = finalize_context_assessment(
-        output=_assessment_output(),
+    retry = finalize_world_model(
+        output=_world_model_output(),
         packet=packet,
         analysis_behavior_hash=HASH,
         available_at=packet.as_of + timedelta(seconds=30),
@@ -2260,8 +1825,8 @@ def test_context_assessment_store_rejects_second_output_for_same_behavior(
 
 def test_context_assessment_store_rejects_packet_mismatch(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
-    assessment = finalize_context_assessment(
-        output=_assessment_output(),
+    assessment = finalize_world_model(
+        output=_world_model_output(),
         packet=packet,
         analysis_behavior_hash=HASH,
         available_at=packet.as_of + timedelta(seconds=20),

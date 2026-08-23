@@ -18,6 +18,7 @@ from investment_manager.market.models import (
 from investment_manager.portfolio.models import (
     InstrumentPosition,
     PortfolioAccountSnapshot,
+    PortfolioCostEstimate,
     PortfolioTarget,
     SleevePosition,
     SleeveTarget,
@@ -93,9 +94,17 @@ def _target(
         forecast_target=_forecast_target(),
         desired_gross_notional=Decimal(desired),
         forecast_ids=("forecast-1",),
-        conservative_gross_bps=Decimal("20"),
-        estimated_variable_cost_bps=Decimal("5"),
-        conservative_net_bps=Decimal("15"),
+        decision_gross_bps=Decimal("20"),
+        cost=PortfolioCostEstimate(
+            model_version="test-cost-v1",
+            gross_notional=Decimal(desired),
+            fee_bps=Decimal("5"),
+            exit_spread_bps=Decimal("0"),
+            depth_slippage_bps=Decimal("0"),
+            total_bps=Decimal("5"),
+            quote_refs=tuple(item.source_quote_id for item in quotes),
+        ),
+        decision_net_bps=Decimal("15"),
         reason_codes=("POSITIVE_CONSERVATIVE_NET_EDGE",),
     )
     return PortfolioTarget(

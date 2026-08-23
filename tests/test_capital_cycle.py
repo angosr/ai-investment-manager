@@ -16,16 +16,27 @@ from investment_manager.entrypoints.dashboard.capital import (
 )
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import (
+    ForecastBenchmarkProbability,
+    ForecastContract,
+    ForecastDecisionSlot,
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
+    ForecastOutcomeBucket,
+    ForecastPermission,
+    ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
+)
 from investment_manager.forecast.models import (
-    BaseForecast,
-    DirectionalView,
     ExposureDirection,
     ForecastLeg,
     ForecastQuantityMode,
-    ForecastReferencePrice,
     ForecastTarget,
 )
 from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import (
@@ -40,7 +51,6 @@ from investment_manager.portfolio.models import (
     MockCandidateAuthorization,
     PortfolioEdgeBasis,
 )
-from investment_manager.portfolio.policy import CashCarryProgramPolicy
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
@@ -98,58 +108,173 @@ def _test_delta_neutral_target() -> ForecastTarget:
 @dataclass(frozen=True)
 class _FixedMockForecastProducer:
     store: SqlForecastStore
+    contracts: SqlForecastContractStore
+    contract: ForecastContract
+    binding: ForecastProducerBinding
     raw_score: Decimal
     available_delay_seconds: int = 0
 
     def produce(self, *, as_of: datetime) -> BaseForecast:
         available_at = as_of + timedelta(seconds=self.available_delay_seconds)
-        target = _test_delta_neutral_target()
-        reference_prices = tuple(
-            ForecastReferencePrice(
+        target = self.contract.target
+        anchors = tuple(
+            ForecastPriceAnchor(
                 instrument_id=item.instrument.key,
                 price=(
                     Decimal("100000")
                     if item.instrument.product == InstrumentProduct.SPOT
                     else Decimal("100300")
                 ),
+                observed_at=as_of,
+                available_at=as_of,
+                quote_ref=f"test-cutoff-{item.instrument.key}-{as_of.isoformat()}",
             )
             for item in target.legs
         )
-        forecast_id = stable_id(
-            "base_forecast",
-            _TEST_PRODUCER_ID,
-            _TEST_PRODUCER_VERSION,
-            target.target_id,
-            available_at,
-            self.raw_score,
+        self.contracts.record_contract(self.contract)
+        self.contracts.record_binding(self.binding)
+        slot = ForecastDecisionSlot.create(
+            self.contract,
+            slot_as_of=as_of,
+            cutoff_prices=anchors,
         )
+        self.contracts.record_slot(slot)
+        forecast_id = stable_id("base_forecast", slot.slot_id, self.binding.producer_behavior_id)
         existing = self.store.forecast(forecast_id)
         if existing is not None:
             assert isinstance(existing, BaseForecast)
             return existing
         forecast = BaseForecast(
             forecast_id=forecast_id,
-            producer_id=_TEST_PRODUCER_ID,
-            producer_version=_TEST_PRODUCER_VERSION,
-            forecast_family=_TEST_FORECAST_FAMILY,
+            contract_id=self.contract.contract_id,
+            decision_slot_id=slot.slot_id,
+            producer_id=self.binding.producer_id,
+            producer_behavior_id=self.binding.producer_behavior_id,
+            outcome_family_id=self.contract.outcome_family_id,
             target=target,
-            horizon_minutes=7 * 24 * 60,
-            direction=DirectionalView.UP,
-            reference_prices=reference_prices,
-            observed_at=as_of,
+            horizon_minutes=self.contract.horizon_minutes,
+            cutoff_prices=anchors,
+            entry_prices=tuple(
+                item.model_copy(update={"available_at": available_at}) for item in anchors
+            ),
+            information_cutoff_at=as_of,
+            input_observed_at=as_of,
             available_at=available_at,
             valid_until=available_at + timedelta(minutes=30),
-            raw_score=self.raw_score,
+            outcome_probabilities=(
+                ForecastBucketProbability(
+                    bucket_id="LOSS",
+                    probability=(Decimal("1") - self.raw_score / Decimal("100")) / Decimal("2"),
+                ),
+                ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0")),
+                ForecastBucketProbability(
+                    bucket_id="GAIN",
+                    probability=(Decimal("1") + self.raw_score / Decimal("100")) / Decimal("2"),
+                ),
+            ),
+            expected_gross_bps=self.raw_score,
             input_refs=(stable_id("test_candidate_input", as_of),),
-            unknowns=("TEST_FORECAST",),
         )
         self.store.record(forecast)
         return forecast
 
 
 class _NoForecastProducer:
-    def produce(self, *, as_of: datetime) -> None:
-        return None
+    def __init__(self, *, contracts, contract, binding):
+        self.contracts = contracts
+        self.contract = contract
+        self.binding = binding
+
+    def produce(self, *, as_of: datetime) -> ForecastNoEstimate:
+        self.contracts.record_contract(self.contract)
+        self.contracts.record_binding(self.binding)
+        slot = ForecastDecisionSlot.create(
+            self.contract,
+            slot_as_of=as_of,
+            cutoff_prices=(),
+        )
+        self.contracts.record_slot(slot)
+        result = ForecastNoEstimate(
+            result_id=stable_id(
+                "forecast_no_estimate", slot.slot_id, self.binding.producer_behavior_id
+            ),
+            slot_id=slot.slot_id,
+            contract_id=self.contract.contract_id,
+            producer_kind=ForecastProducerKind.PROGRAM,
+            producer_id=self.binding.producer_id,
+            producer_behavior_id=self.binding.producer_behavior_id,
+            reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
+            information_cutoff_at=as_of,
+            attempted_at=as_of,
+            completed_at=as_of,
+        )
+        self.contracts.record_no_estimate(result)
+        return result
+
+
+def _test_contract_and_binding() -> tuple[ForecastContract, ForecastProducerBinding]:
+    buckets = (
+        ForecastOutcomeBucket(
+            bucket_id="LOSS",
+            upper_bps=Decimal("-20"),
+            representative_bps=Decimal("-100"),
+        ),
+        ForecastOutcomeBucket(
+            bucket_id="FLAT",
+            lower_bps=Decimal("-20"),
+            upper_bps=Decimal("20"),
+            representative_bps=Decimal("0"),
+        ),
+        ForecastOutcomeBucket(
+            bucket_id="GAIN",
+            lower_bps=Decimal("20"),
+            representative_bps=Decimal("100"),
+        ),
+    )
+    contract = ForecastContract.create(
+        contract_version="test-carry-contract-v1",
+        outcome_family_id=_TEST_FORECAST_FAMILY,
+        target=_test_delta_neutral_target(),
+        outcome_buckets=buckets,
+        horizon_minutes=7 * 24 * 60,
+        decision_slot_rule="test-slot-v1",
+        evaluation_trigger="test-trigger-v1",
+        information_cutoff_rule="slot-as-of-v1",
+        completion_deadline_seconds=30,
+        minimum_remaining_horizon_minutes=7 * 24 * 60 - 60,
+        entry_anchor_rule="first-quote-after-completion-v1",
+        cost_semantics_version="executable-round-trip-v1",
+        validity_minutes=30,
+        validity_conditions=("TEST_QUOTES_VALID",),
+        settlement_rule="test-executable-settlement-v1",
+        forecast_benchmark=tuple(
+            ForecastBenchmarkProbability(bucket_id=bucket.bucket_id, probability=probability)
+            for bucket, probability in zip(
+                buckets,
+                (Decimal("0.25"), Decimal("0.5"), Decimal("0.25")),
+                strict=True,
+            )
+        ),
+        decision_benchmark="cash-v1",
+    )
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.PROGRAM.value,
+            _TEST_PRODUCER_ID,
+            _TEST_PRODUCER_VERSION,
+            ForecastPermission.MOCK.value,
+            (),
+            None,
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=_TEST_PRODUCER_ID,
+        producer_behavior_id=_TEST_PRODUCER_VERSION,
+        permission=ForecastPermission.MOCK,
+    )
+    return contract, binding
 
 
 def _candidate_service(
@@ -160,11 +285,13 @@ def _candidate_service(
     available_delay_seconds: int = 0,
     emit: bool = True,
 ):
+    contract, binding = _test_contract_and_binding()
+    contract_store = SqlForecastContractStore(engine)
     authorization = MockCandidateAuthorization(
         version="test-mock-candidate-authorization-v1",
         producer_id=_TEST_PRODUCER_ID,
-        producer_version=_TEST_PRODUCER_VERSION,
-        forecast_family=_TEST_FORECAST_FAMILY,
+        producer_behavior_id=_TEST_PRODUCER_VERSION,
+        outcome_family_id=_TEST_FORECAST_FAMILY,
         hypothesis_fingerprint="a" * 64,
         maximum_allocation_fraction=Decimal("0.30"),
         minimum_entry_net_bps=Decimal("5"),
@@ -178,17 +305,24 @@ def _candidate_service(
         }
     )
     source = CapitalForecastSource(
-        forecast_family=_TEST_FORECAST_FAMILY,
+        contract=contract,
+        binding=binding,
         producer=(
             _FixedMockForecastProducer(
                 store=SqlForecastStore(engine),
+                contracts=contract_store,
+                contract=contract,
+                binding=binding,
                 raw_score=raw_score,
                 available_delay_seconds=available_delay_seconds,
             )
             if emit
-            else _NoForecastProducer()
+            else _NoForecastProducer(
+                contracts=contract_store,
+                contract=contract,
+                binding=binding,
+            )
         ),
-        estimated_variable_cost_bps=Decimal("20"),
         risk_template=configured.capital.sleeve_risk,
         mock_authorization=authorization,
     )
@@ -320,6 +454,19 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
+    assert config.capital.context_forecast is not None
+    config = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={
+                    "context_forecast": config.capital.context_forecast.model_copy(
+                        update={"enabled": False}
+                    ),
+                    "mock_candidate_authorizations": (),
+                }
+            )
+        }
+    )
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=6)
 
@@ -342,8 +489,8 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
     activity = CapitalDashboardReader(engine, config).activity()[0]
-    assert activity.outcome == "NO_OPPORTUNITY"
-    assert activity.reason_codes == ("NO_ACTIVE_CAPITAL_OPPORTUNITY",)
+    assert activity.outcome == "CASH"
+    assert activity.reason_codes == ("NO_REGISTERED_FORECAST_SOURCE",)
 
 
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:
@@ -422,7 +569,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     activity = CapitalDashboardReader(engine, config).activity()
     assert len(activity) == 2
     activity_by_symbol = {item.symbol: item for item in activity}
-    assert activity_by_symbol["ETHUSDT"].outcome == "OPPORTUNITY_ALREADY_DECIDED"
+    assert activity_by_symbol["ETHUSDT"].outcome == "FORECAST_ALREADY_DECIDED"
     assert activity_by_symbol["ETHUSDT"].order_count == 0
     assert activity_by_symbol["ETHUSDT"].trigger_types == ("MARKET_SHOCK",)
     assert activity_by_symbol["BTCUSDT"].outcome == "EXECUTED"
@@ -443,32 +590,30 @@ def test_configured_cash_carry_program_uses_the_authoritative_capital_path() -> 
     authorization = MockCandidateAuthorization(
         version="cash-carry-forward-authorization-v1",
         producer_id="btc-cash-carry",
-        producer_version="btc-cash-carry-v1",
-        forecast_family="btc-delta-neutral-carry",
+        producer_behavior_id="btc-cash-carry-behavior-v1",
+        outcome_family_id="btc-delta-neutral-carry",
         hypothesis_fingerprint="b" * 64,
         maximum_allocation_fraction=Decimal("0.10"),
         minimum_entry_net_bps=Decimal("5"),
         minimum_hold_net_bps=Decimal("-5"),
     )
-    program = CashCarryProgramPolicy(
-        version="cash-carry-program-v1",
-        enabled=True,
-        producer_id=authorization.producer_id,
-        producer_version=authorization.producer_version,
-        forecast_family=authorization.forecast_family,
-        horizon_hours=168,
-        entry_validity_minutes=30,
-        funding_lookback_hours=72,
-        minimum_funding_samples=3,
-        minimum_positive_funding_fraction=Decimal("0.66"),
-        funding_projection_haircut=Decimal("0.5"),
-        estimated_variable_cost_bps=Decimal("20"),
+    assert base.capital.cash_carry_program is not None
+    program = base.capital.cash_carry_program.model_copy(
+        update={
+            "enabled": True,
+            "funding_lookback_hours": 72,
+            "minimum_funding_samples": 3,
+            "minimum_positive_funding_fraction": Decimal("0.66"),
+        }
     )
     config = base.model_copy(
         update={
             "capital": base.capital.model_copy(
                 update={
                     "cash_carry_program": program,
+                    "context_forecast": base.capital.context_forecast.model_copy(
+                        update={"enabled": False}
+                    ),
                     "mock_candidate_authorizations": (authorization,),
                 }
             )
@@ -490,7 +635,7 @@ def test_configured_cash_carry_program_uses_the_authoritative_capital_path() -> 
     assert result.groups and result.groups[0].terminal
     target = SqlPortfolioStore(engine).target_for_cycle(result.groups[0].cycle_id)
     assert target is not None
-    assert target.sleeves[0].forecast_family == program.forecast_family
+    assert target.sleeves[0].forecast_family == program.outcome_family_id
     assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
 
 
@@ -549,14 +694,12 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert result.trade_plan is not None
     assert result.trade_plan.groups == ()
     activity = CapitalDashboardReader(engine, config).activity()[0]
-    assert activity.reason_codes == ("CASH_SELECTED_NO_ELIGIBLE_FORECAST",)
+    assert activity.reason_codes == ("CASH_SELECTED_NO_POSITIVE_NET_EDGE",)
     assert len(activity.candidate_economics) == 1
     economics = activity.candidate_economics[0]
     assert economics.net_bps < economics.entry_threshold_bps
     serialized = serialize_capital_activity((activity,))["actions"][0]
-    assert serialized["candidate_economics"][0]["net_bps"] == str(
-        economics.net_bps
-    )
+    assert serialized["candidate_economics"][0]["net_bps"] == str(economics.net_bps)
 
 
 def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -> None:
@@ -590,7 +733,7 @@ def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -
     assert record.evaluated_at == available_at
 
 
-def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one() -> None:
+def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -623,21 +766,18 @@ def test_capital_cycle_uses_forecast_opportunity_identity_and_holds_without_one(
     )
     _put_trigger_batch(engine, config, at=missed, sequence=2)
 
-    assert after_restart.outcome.value == "NO_CHANGE"
+    assert isinstance(after_restart, TradePlanExecutionResult)
+    assert not after_restart.account.sleeves
     overview = CapitalDashboardReader(engine, config).overview(now=missed)
     dto = serialize_capital_overview(overview)
-    assert dto["decision"] == {
-        "as_of": missed.isoformat(),
-        "mode": "NO_CHANGE",
-        "reason_codes": ["NO_NEW_OPPORTUNITY_HOLDING_REVIEWED"],
-        "risk_outcome": None,
-    }
+    assert dto["decision"]["as_of"] == missed.isoformat()
+    assert "EXPIRED_FORECAST_EXIT" in dto["decision"]["reason_codes"]
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
-        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 2
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 4
     activity = CapitalDashboardReader(engine, config).activity()
-    assert activity[0].outcome == "HOLD"
-    assert activity[0].reason_codes == ("NO_NEW_OPPORTUNITY_HOLDING_REVIEWED",)
+    assert activity[0].outcome == "EXECUTED"
+    assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
 
 
 def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:

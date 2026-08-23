@@ -46,9 +46,6 @@ class AssessPromptCapacityError(ValueError):
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     """Constrain packet-dependent semantics before Codex sampling."""
 
-    if packet.capital_objective is not None:
-        raise ValueError("世界模型分析器不接受 CAPITAL_REVIEW Packet")
-
     schema = strict_output_schema(WorldModelStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
     draft = definitions["WorldModelDraft"]
@@ -83,11 +80,6 @@ def assess_behavior_hash(
         packet_policy_version=packet.policy_version,
         mandate_version=packet.mandate_version,
         required_views=tuple((item.asset, item.horizon_minutes) for item in packet.required_views),
-        capital_objective=(
-            packet.capital_objective.model_dump(mode="json")
-            if packet.capital_objective is not None
-            else None
-        ),
     )
 
 
@@ -103,11 +95,6 @@ def configured_assess_behavior_hash(config: AppConfig) -> str:
         required_views=tuple(
             (asset.asset, horizon) for asset in mandate.assets for horizon in asset.horizons_minutes
         ),
-        capital_objective=(
-            mandate.capital_objective.model_dump(mode="json")
-            if mandate.capital_objective is not None
-            else None
-        ),
     )
 
 
@@ -118,7 +105,6 @@ def _assess_behavior_hash(
     packet_policy_version: str,
     mandate_version: str,
     required_views: tuple[tuple[str, int], ...],
-    capital_objective: dict[str, object] | None,
 ) -> str:
     return content_hash(
         {
@@ -131,7 +117,6 @@ def _assess_behavior_hash(
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
             "required_views": required_views,
-            "capital_objective": capital_objective,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,

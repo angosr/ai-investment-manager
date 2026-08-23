@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
-from enum import StrEnum
 from itertools import groupby
 from typing import Literal
 
@@ -54,31 +53,6 @@ from investment_manager.state.models import (
 from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.policy import DecisionPacketPolicy
 
-_LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS = {
-    "decision-packet-v1",
-    "decision-packet-v2",
-    "decision-packet-v3",
-}
-_LEGACY_PACKET_SCHEMAS_WITHOUT_EVENT_URL = {
-    "decision-packet-v1",
-    "decision-packet-v2",
-    "decision-packet-v3",
-    "decision-packet-v4",
-}
-_PACKET_SCHEMAS_WITHOUT_FACT_MATERIALITY = {
-    f"decision-packet-v{version}" for version in range(1, 11)
-}
-_CURRENT_PACKET_SCHEMAS = {
-    "decision-packet-v8",
-    "decision-packet-v9",
-    "decision-packet-v10",
-    "decision-packet-v11",
-    "decision-packet-v12",
-    "decision-packet-v13",
-    "decision-packet-v14",
-    "decision-packet-v15",
-    "decision-packet-v16",
-}
 _CALENDAR_CONTEXT_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
@@ -87,15 +61,8 @@ _CALENDAR_CONTEXT_FACT_TYPES = {
 _RESULT_CONTEXT_FACT_TYPES = {TREASURY_BUYBACK_RESULT_FACT_TYPE}
 _EXTENDED_CONTEXT_FACT_TYPES = _CALENDAR_CONTEXT_FACT_TYPES | _RESULT_CONTEXT_FACT_TYPES
 PREVIOUS_CONTEXT_MECHANISM_CHARACTERS = 800
-PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
 PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS = 500
 PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS = 200
-PREVIOUS_CONTEXT_LIST_ITEMS = 3
-
-
-class DecisionPacketPurpose(StrEnum):
-    WORLD_UPDATE = "WORLD_UPDATE"
-    CAPITAL_REVIEW = "CAPITAL_REVIEW"
 
 
 class DecisionPacketCapacityError(ValueError):
@@ -178,9 +145,7 @@ def _compact_continuous_fact_state(item: PacketFact) -> str:
     deferred: list[str] = []
     for part in parts:
         key = part.split("=", 1)[0].strip()
-        if key in {"aggregator", "effective_date", "lookback"} or key.startswith(
-            "sample_size"
-        ):
+        if key in {"aggregator", "effective_date", "lookback"} or key.startswith("sample_size"):
             continue
         if key == "change_context":
             context = part.split("=", 1)[1]
@@ -196,10 +161,10 @@ def _compact_continuous_fact_state(item: PacketFact) -> str:
                 f"n={fields.get('sample_size', 'UNKNOWN')}"
             )
             continue
-        if (
-            "_change_" in key
-            or key in {"finalized_daily_net_inflow_usd_m", "absolute_flow_percentile"}
-        ):
+        if "_change_" in key or key in {
+            "finalized_daily_net_inflow_usd_m",
+            "absolute_flow_percentile",
+        }:
             selected.append(part)
         elif key not in {"cumulative_inflow_usd_m", "value_traded_usd_m"}:
             deferred.append(part)
@@ -321,11 +286,6 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
-    if packet.capital_objective is not None:
-        # Monitoring horizons remain in the immutable packet for Delta and
-        # settlement compatibility.  They are not a request for redundant
-        # short-horizon direction calls when the mandate names a capital task.
-        payload.pop("required_views", None)
     payload["asset_states"] = tuple(
         _analysis_fields(
             item,
@@ -401,51 +361,17 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     if previous is not None and not previous_context_is_decision_relevant(packet.previous_context):
         payload.pop("previous_context")
     elif previous is not None:
-        if packet.previous_context.schema_version == "legacy-context-assessment-v1":
-            payload["previous_context"] = {
-                "schema_version": "legacy-context-assessment-v1",
-                "event_references": tuple(
-                    item
-                    for item in previous["event_references"]
-                    if item["impact_state"] == "ACTIVE"
-                ),
-            }
-            previous = payload["previous_context"]
-        elif packet.previous_context.schema_version == "world-model-assessment-v1":
-            # Previous hypotheses are derived state, not evidence.  The next
-            # analysis only needs their stable identity and falsifiable edge
-            # to decide continuity.  Re-sending old causal nodes, conflicts,
-            # and capital evidence duplicates the immutable audit trail and
-            # makes a maintained model larger than a cold start.
-            previous["hypotheses"] = tuple(
-                {
-                    key: hypothesis[key]
-                    for key in (
-                        "hypothesis_id",
-                        "continuity_ref",
-                        "role",
-                        "claim",
-                        "horizon_hours",
-                        "next_observation",
-                        "invalidation_conditions",
-                        "next_review_at",
-                    )
-                }
-                for hypothesis in previous["hypotheses"]
-            )
-            capital = previous.get("capital_implication")
-            if capital is not None:
-                previous["capital_implication"] = {
-                    key: capital[key]
-                    for key in (
-                        "objective_id",
-                        "effect",
-                        "incremental_reason",
-                        "invalidation_conditions",
-                    )
-                }
-        else:
-            compact_mechanisms = tuple(
+        payload["previous_context"] = {
+            "assessment_id": previous["assessment_id"],
+            "as_of": previous["as_of"],
+            "synthesis": previous["synthesis"],
+            "synthesis_horizon_hours": previous["synthesis_horizon_hours"],
+            "test_tuple_schema": (
+                "feature,window_min,support(op,value[,upper],persistence),"
+                "contradict(op,value[,upper],persistence),"
+                "observed(value,match,support_streak,contradiction_streak,resolution)"
+            ),
+            "mechanisms": tuple(
                 {
                     "id": mechanism["mechanism_id"],
                     "continuity": mechanism["continuity_ref"],
@@ -460,39 +386,11 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                     "review_at": mechanism["next_review_at"],
                 }
                 for mechanism in previous["mechanisms"]
-            )
-            payload["previous_context"] = {
-                "assessment_id": previous["assessment_id"],
-                "as_of": previous["as_of"],
-                "synthesis": previous["synthesis"],
-                "synthesis_horizon_hours": previous["synthesis_horizon_hours"],
-                "test_tuple_schema": (
-                    "feature,window_min,support(op,value[,upper],persistence),"
-                    "contradict(op,value[,upper],persistence),"
-                    "observed(value,match,support_streak,contradiction_streak,resolution)"
-                ),
-                "mechanisms": compact_mechanisms,
-            }
-            previous = payload["previous_context"]
-        for field_name in (
-            "analysis_behavior_hash",
-            "analysis_scope",
-            "decision_packet_hash",
-            "mandate_version",
-        ):
-            previous.pop(field_name, None)
-        if "event_references" in previous:
-            previous["event_references"] = tuple(
-                item
-                for item in previous["event_references"]
-                if item["impact_state"] == "ACTIVE"
-            )
-        # Historical contradictions and gaps describe the old evidence cut.
-        # Sending them again competes with the current facts and can anchor the
-        # analyst on a gap that the new packet has already closed.  They remain
-        # in the immutable packet and assessment audit trail.
-        previous.pop("contradictions", None)
-        previous.pop("data_gaps", None)
+            ),
+            "event_references": tuple(
+                item for item in previous["event_references"] if item["impact_state"] == "ACTIVE"
+            ),
+        }
     if not packet.review_requests:
         payload.pop("review_requests", None)
     payload["capability_summary"] = tuple(
@@ -522,33 +420,12 @@ class MandateAsset(FrozenModel):
         return self
 
 
-class CapitalContextObjective(FrozenModel):
-    """One research-only capital question; never an order or allocation permission."""
-
-    objective_id: str = Field(min_length=1)
-    decision_kind: Literal["PROGRAM_ENTRY_VETO"] = "PROGRAM_ENTRY_VETO"
-    producer_id: str = Field(min_length=1)
-    producer_version: str = Field(min_length=1)
-    forecast_family: str = Field(min_length=1)
-    base_decision_inputs: tuple[str, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def base_inputs_are_canonical(self):
-        if tuple(sorted(set(self.base_decision_inputs))) != self.base_decision_inputs:
-            raise ValueError("资本上下文目标的程序输入必须唯一且排序")
-        return self
-
-
 class AnalysisMandate(FrozenModel):
     version: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     question: str = Field(min_length=1, max_length=500)
     assets: tuple[MandateAsset, ...] = Field(min_length=1)
     required_risk_factors: tuple[str, ...] = Field(min_length=1)
-    capital_objective: CapitalContextObjective | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
 
     @model_validator(mode="after")
     def mandate_identity_must_be_unique_and_sorted(self):
@@ -873,42 +750,6 @@ class PacketReviewRequest(FrozenModel):
         return self
 
 
-class PacketPreviousDriver(FrozenModel):
-    statement: str = Field(
-        min_length=1,
-        max_length=PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
-    )
-    status: Literal["CONFIRMED", "INFERRED", "UNVERIFIED"]
-    transmission: str = Field(
-        min_length=1,
-        max_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
-    )
-    invalidation_condition: str = Field(
-        min_length=1,
-        max_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
-    )
-
-
-class PacketPreviousView(FrozenModel):
-    asset: str = Field(min_length=1)
-    horizon_minutes: int = Field(gt=0)
-    direction: Literal["UP", "DOWN", "UNCERTAIN"]
-    already_priced: Literal["NOT_PRICED", "PARTIAL", "MOSTLY_PRICED", "UNKNOWN"]
-    uncertainty: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
-
-
-class PacketPreviousCapitalRelevance(FrozenModel):
-    objective_id: str = Field(min_length=1)
-    status: Literal[
-        "BASE_UNCHANGED",
-        "ENTRY_VETO_CANDIDATE",
-        "INSUFFICIENT_EVIDENCE",
-    ]
-    thesis: str = Field(min_length=1, max_length=800)
-    transmission: str = Field(min_length=1, max_length=1_200)
-    invalidation_condition: str = Field(min_length=1, max_length=200)
-
-
 class PacketPreviousEventReference(FrozenModel):
     evidence_id: str = Field(pattern=SHA256_PATTERN)
     source: str = Field(min_length=1, max_length=128)
@@ -940,37 +781,6 @@ class PacketPreviousCausalNode(FrozenModel):
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("上一轮因果节点不能重复引用证据")
         return self
-
-
-class PacketPreviousHypothesis(FrozenModel):
-    hypothesis_id: str = Field(min_length=1)
-    continuity_ref: str | None = Field(default=None, min_length=1)
-    role: Literal["PRIMARY", "ALTERNATIVE", "TAIL_RISK"]
-    claim: str = Field(min_length=1, max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS)
-    horizon_hours: int = Field(gt=0, le=4_380)
-    causal_chain: tuple[PacketPreviousCausalNode, ...] = Field(min_length=2, max_length=5)
-    conflicting_evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
-    next_observation: str = Field(min_length=1, max_length=500)
-    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
-    next_review_at: datetime
-
-    _utc_next_review_at = field_validator("next_review_at")(require_utc)
-
-
-class PacketPreviousCapitalImplication(FrozenModel):
-    objective_id: str = Field(min_length=1)
-    effect: Literal["SUPPORT", "NEUTRAL", "CAUTION", "OPPOSE", "INSUFFICIENT"]
-    incremental_reason: str = Field(min_length=1, max_length=800)
-    transmission: str = Field(min_length=1, max_length=1_200)
-    evidence_ids: tuple[str, ...] = Field(default=(), max_length=12)
-    invalidation_conditions: tuple[str, ...] = Field(min_length=1, max_length=5)
-
-
-class PacketPreviousDecisionBlocker(FrozenModel):
-    question: str = Field(min_length=1, max_length=500)
-    action_if_yes: str = Field(min_length=1, max_length=500)
-    action_if_no: str = Field(min_length=1, max_length=500)
-    observation_needed: str = Field(min_length=1, max_length=500)
 
 
 class PacketPreviousVerificationPredicate(FrozenModel):
@@ -1022,108 +832,30 @@ class PacketPreviousContext(FrozenModel):
     """Latest inherited world model; derived evidence, never a first-party fact."""
 
     assessment_id: str = Field(min_length=1)
-    schema_version: Literal[
-        "legacy-context-assessment-v1",
-        "world-model-assessment-v1",
-        "world-model-assessment-v2",
-    ] = "legacy-context-assessment-v1"
-    analysis_scope: str | None = Field(default=None, min_length=1)
-    mandate_version: str | None = Field(default=None, min_length=1)
-    analysis_behavior_hash: str | None = Field(
-        default=None,
-        pattern=SHA256_PATTERN,
-    )
-    decision_packet_hash: str | None = Field(
-        default=None,
-        pattern=SHA256_PATTERN,
-    )
+    analysis_scope: str = Field(min_length=1)
+    mandate_version: str = Field(min_length=1)
+    analysis_behavior_hash: str = Field(pattern=SHA256_PATTERN)
+    decision_packet_hash: str = Field(pattern=SHA256_PATTERN)
     as_of: datetime
     available_at: datetime
-    market_mechanism: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
-    )
-    drivers: tuple[PacketPreviousDriver, ...] = Field(default=(), max_length=8)
     event_references: tuple[PacketPreviousEventReference, ...] = ()
-    capital_relevance: PacketPreviousCapitalRelevance | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    views: tuple[PacketPreviousView, ...] = ()
-    contradictions: tuple[str, ...] = Field(default=(), max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
-    data_gaps: tuple[str, ...] = Field(default=(), max_length=PREVIOUS_CONTEXT_LIST_ITEMS)
-    hypotheses: tuple[PacketPreviousHypothesis, ...] = Field(default=(), max_length=3)
-    capital_implication: PacketPreviousCapitalImplication | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    decision_blockers: tuple[PacketPreviousDecisionBlocker, ...] = Field(
-        default=(),
-        max_length=2,
-    )
-    synthesis: str | None = Field(default=None, min_length=1, max_length=2_000)
-    synthesis_horizon_hours: int | None = Field(default=None, gt=0, le=17_520)
-    mechanisms: tuple[PacketPreviousMechanism, ...] = ()
+    synthesis: str = Field(min_length=1, max_length=2_000)
+    synthesis_horizon_hours: int = Field(gt=0, le=17_520)
+    mechanisms: tuple[PacketPreviousMechanism, ...] = Field(min_length=1)
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
 
     @model_validator(mode="after")
-    def timeline_and_views_are_consistent(self):
+    def timeline_and_identity_are_consistent(self):
         if self.available_at < self.as_of:
             raise ValueError("上一轮世界认知的可用时间不能早于分析时点")
-        keys = tuple((item.asset, item.horizon_minutes) for item in self.views)
-        if tuple(sorted(set(keys))) != keys:
-            raise ValueError("上一轮世界认知 views 必须唯一且排序")
         event_ids = tuple(item.evidence_id for item in self.event_references)
         if len(set(event_ids)) != len(event_ids):
             raise ValueError("上一轮世界认知不能重复引用事件")
-        if self.schema_version == "legacy-context-assessment-v1":
-            if self.market_mechanism is None:
-                raise ValueError("历史上一轮世界认知必须包含 market_mechanism")
-            if self.hypotheses or self.capital_implication or self.decision_blockers:
-                raise ValueError("历史上一轮世界认知不得混入新字段")
-            return self
-        if self.schema_version == "world-model-assessment-v2":
-            if any(
-                (
-                    self.market_mechanism is not None,
-                    bool(self.drivers),
-                    self.capital_relevance is not None,
-                    bool(self.views),
-                    bool(self.contradictions),
-                    bool(self.data_gaps),
-                    bool(self.hypotheses),
-                    self.capital_implication is not None,
-                    bool(self.decision_blockers),
-                )
-            ):
-                raise ValueError("WorldModel v2 上下文不得混入历史或资本字段")
-            if self.synthesis is None or self.synthesis_horizon_hours is None:
-                raise ValueError("WorldModel v2 上下文必须包含综合判断及其时域")
-            if not self.mechanisms:
-                raise ValueError("WorldModel v2 上下文至少需要一个机制")
-            return self
-        if (
-            self.synthesis is not None
-            or self.synthesis_horizon_hours is not None
-            or self.mechanisms
-        ):
-            raise ValueError("WorldModel v1 上下文不得混入 v2 字段")
-        if any(
-            (
-                self.market_mechanism is not None,
-                bool(self.drivers),
-                self.capital_relevance is not None,
-                bool(self.views),
-                bool(self.contradictions),
-                bool(self.data_gaps),
-            )
-        ):
-            raise ValueError("新上一轮世界模型不得混入已废弃字段")
-        if sum(item.role == "PRIMARY" for item in self.hypotheses) != 1:
-            raise ValueError("新上一轮世界模型必须且只能有一个 PRIMARY")
+        mechanism_ids = tuple(item.mechanism_id for item in self.mechanisms)
+        if len(set(mechanism_ids)) != len(mechanism_ids):
+            raise ValueError("上一轮世界认知不能重复 mechanism_id")
         return self
 
 
@@ -1136,11 +868,6 @@ class DecisionPacket(FrozenModel):
     as_of: datetime
     state_id: str
     question: str
-    purpose: DecisionPacketPurpose = DecisionPacketPurpose.WORLD_UPDATE
-    capital_objective: CapitalContextObjective | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     portfolio: PacketPortfolioState
@@ -1150,10 +877,6 @@ class DecisionPacket(FrozenModel):
     review_requests: tuple[PacketReviewRequest, ...] = ()
     facts: tuple[PacketFact, ...]
     intelligence_events: tuple[PacketIntelligenceEvent, ...] = ()
-    # Read-only compatibility for immutable pre-v8 packets. New packets do not
-    # serialize or populate these superseded placeholders.
-    active_hypotheses: tuple[str, ...] = Field(default=(), exclude=True)
-    previous_assessment_refs: tuple[str, ...] = Field(default=(), exclude=True)
     previous_context: PacketPreviousContext | None = None
     information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
     data_quality_codes: tuple[str, ...]
@@ -1238,25 +961,6 @@ class DecisionPacket(FrozenModel):
             values = getattr(self, name)
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"DecisionPacket {name} 必须唯一且排序")
-        if self.schema_version in _CURRENT_PACKET_SCHEMAS and (
-            self.active_hypotheses or self.previous_assessment_refs
-        ):
-            raise ValueError("DecisionPacket v8+ 不再写入旧假设或 Assessment 引用占位")
-        if self.schema_version in {"decision-packet-v13", "decision-packet-v14"} and (
-            self.capital_objective is None
-        ):
-            raise ValueError("DecisionPacket v13+ 必须绑定一个明确资本问题")
-        if self.schema_version in {"decision-packet-v15", "decision-packet-v16"}:
-            if (
-                self.purpose == DecisionPacketPurpose.WORLD_UPDATE
-                and self.capital_objective is not None
-            ):
-                raise ValueError("WORLD_UPDATE 不得绑定资本目标")
-            if (
-                self.purpose == DecisionPacketPurpose.CAPITAL_REVIEW
-                and self.capital_objective is None
-            ):
-                raise ValueError("CAPITAL_REVIEW 必须绑定资本目标")
         coverage_domains = tuple(item.domain.value for item in self.information_coverage)
         if tuple(sorted(set(coverage_domains))) != coverage_domains:
             raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
@@ -1293,61 +997,12 @@ def replace_packet_previous_context(
 
 
 def _decision_packet_content_hash(packet: DecisionPacket) -> str:
-    payload = packet.model_dump(
-        mode="json",
-        exclude={"packet_id", "content_hash"},
+    return content_hash(
+        packet.model_dump(
+            mode="json",
+            exclude={"packet_id", "content_hash"},
+        )
     )
-    if packet.schema_version not in {"decision-packet-v15", "decision-packet-v16"}:
-        payload.pop("purpose", None)
-    if packet.schema_version not in _CURRENT_PACKET_SCHEMAS:
-        payload["active_hypotheses"] = packet.active_hypotheses
-        payload["previous_assessment_refs"] = packet.previous_assessment_refs
-    if (
-        packet.schema_version in _LEGACY_PACKET_SCHEMAS_WITHOUT_REVIEW_REQUESTS
-        and not packet.review_requests
-    ):
-        payload.pop("review_requests", None)
-    if packet.schema_version != "decision-packet-v6" and packet.previous_context is None:
-        payload.pop("previous_context", None)
-    if packet.schema_version != "decision-packet-v14" and packet.previous_context is not None:
-        previous_context = payload["previous_context"]
-        if packet.previous_context.schema_version == "legacy-context-assessment-v1":
-            previous_context.pop("schema_version", None)
-            previous_context.pop("hypotheses", None)
-            previous_context.pop("decision_blockers", None)
-    if packet.schema_version == "decision-packet-v6" and packet.previous_context is not None:
-        previous_context = payload["previous_context"]
-        for field_name in (
-            "analysis_scope",
-            "mandate_version",
-            "analysis_behavior_hash",
-            "decision_packet_hash",
-        ):
-            previous_context.pop(field_name, None)
-        if not packet.previous_context.event_references:
-            previous_context.pop("event_references", None)
-    if packet.schema_version in _LEGACY_PACKET_SCHEMAS_WITHOUT_EVENT_URL:
-        for event in payload["intelligence_events"]:
-            if event["url"] is None:
-                event.pop("url")
-    if packet.schema_version in _PACKET_SCHEMAS_WITHOUT_FACT_MATERIALITY:
-        for fact in payload["facts"]:
-            fact.pop("decision_materiality", None)
-    if (
-        packet.schema_version
-        not in {
-            "decision-packet-v7",
-            "decision-packet-v8",
-            "decision-packet-v9",
-            "decision-packet-v10",
-            "decision-packet-v11",
-        }
-        and not packet.information_coverage
-    ):
-        payload.pop("information_coverage", None)
-    if packet.schema_version not in _CURRENT_PACKET_SCHEMAS and not packet.derivative_states:
-        payload.pop("derivative_states", None)
-    return content_hash(payload)
 
 
 _SOURCE_RANK = {
@@ -1444,12 +1099,6 @@ class DecisionPacketBuilder:
             "as_of": state.as_of,
             "state_id": state.state_id,
             "question": mandate.question,
-            "purpose": (
-                DecisionPacketPurpose.CAPITAL_REVIEW
-                if mandate.capital_objective is not None
-                else DecisionPacketPurpose.WORLD_UPDATE
-            ),
-            "capital_objective": mandate.capital_objective,
             "trigger_ids": trigger_ids,
             "required_views": required_views,
             "portfolio": self._portfolio_state(account),
@@ -1721,8 +1370,6 @@ class DecisionPacketBuilder:
                 if item.stale_at is None or item.stale_at + timedelta(days=1) > as_of
             ),
         }
-        if context.schema_version == "legacy-context-assessment-v1":
-            update["drivers"] = context.drivers[: self._policy.maximum_previous_context_drivers]
         return context.model_copy(update=update)
 
     def _select_facts(
@@ -1753,8 +1400,7 @@ class DecisionPacketBuilder:
                 or item.fact.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
                 or (
                     item.fact.decision_materiality == FactDecisionMateriality.CANDIDATE
-                    and distance
-                    <= self._policy.maximum_calendar_context_distance_seconds
+                    and distance <= self._policy.maximum_calendar_context_distance_seconds
                 )
                 or (
                     item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
@@ -1805,13 +1451,9 @@ class DecisionPacketBuilder:
         represented_context_types: set[str] = set()
         for item in eligible:
             is_collapsible_context = (
-                (
-                    item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
-                    or item.fact.decision_materiality
-                    == FactDecisionMateriality.CANDIDATE
-                )
-                and item.fact.revision_id not in direct_fact_ids
-            )
+                item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
+                or item.fact.decision_materiality == FactDecisionMateriality.CANDIDATE
+            ) and item.fact.revision_id not in direct_fact_ids
             if is_collapsible_context and item.fact.fact_type in represented_context_types:
                 omitted.append(item.fact.revision_id)
                 continue

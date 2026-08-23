@@ -10,7 +10,11 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.models import BaseForecast, CalibratedForecast, ForecastKind
+from investment_manager.forecast.results import (
+    BaseForecast,
+    CalibratedForecast,
+    ForecastResultKind,
+)
 from investment_manager.forecast.tables import forecasts
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
@@ -55,6 +59,7 @@ class PortfolioStore(Protocol):
         portfolio_id: str,
         as_of: datetime,
     ) -> PortfolioAccountSnapshot | None: ...
+
 
 class SqlPortfolioStore:
     """Immutable account/target ledger; retries must reproduce exact facts."""
@@ -200,9 +205,7 @@ class SqlPortfolioStore:
     def target_for_cycle(self, cycle_id: str) -> PortfolioTarget | None:
         with self._engine.connect() as connection:
             payload = connection.execute(
-                select(portfolio_targets.c.payload).where(
-                    portfolio_targets.c.cycle_id == cycle_id
-                )
+                select(portfolio_targets.c.payload).where(portfolio_targets.c.cycle_id == cycle_id)
             ).scalar_one_or_none()
         return None if payload is None else PortfolioTarget.model_validate(payload)
 
@@ -217,17 +220,13 @@ class SqlPortfolioStore:
                 portfolio_account_snapshots.c.cycle_id,
                 portfolio_account_snapshots.c.portfolio_id,
                 portfolio_account_snapshots.c.payload,
-            ).where(
-                portfolio_account_snapshots.c.snapshot_id
-                == target.account_snapshot_id
-            )
+            ).where(portfolio_account_snapshots.c.snapshot_id == target.account_snapshot_id)
         ).one_or_none()
         if account_row is None or (
             account_row.snapshot_hash != target.account_snapshot_hash
             or account_row.cycle_id != target.cycle_id
             or account_row.portfolio_id != target.portfolio_id
-            or PortfolioAccountSnapshot.model_validate(account_row.payload).as_of
-            != target.as_of
+            or PortfolioAccountSnapshot.model_validate(account_row.payload).as_of != target.as_of
         ):
             raise ValueError("PortfolioTarget 缺少匹配的权威账户快照")
         forecast_ids = target.considered_forecast_ids
@@ -238,14 +237,12 @@ class SqlPortfolioStore:
                 forecasts.c.forecast_id,
                 forecasts.c.kind,
                 forecasts.c.payload,
-            ).where(
-                forecasts.c.forecast_id.in_(forecast_ids)
-            )
+            ).where(forecasts.c.forecast_id.in_(forecast_ids))
         ).all()
         loaded = {
             row.forecast_id: (
                 BaseForecast.model_validate(row.payload)
-                if row.kind == ForecastKind.BASE.value
+                if row.kind == ForecastResultKind.BASE.value
                 else CalibratedForecast.model_validate(row.payload)
             )
             for row in rows
@@ -253,9 +250,7 @@ class SqlPortfolioStore:
         if set(loaded) != set(forecast_ids):
             raise ValueError("PortfolioTarget 引用了不存在的 Forecast")
         required_quote_keys = {
-            leg.instrument.key
-            for forecast in loaded.values()
-            for leg in forecast.target.legs
+            leg.instrument.key for forecast in loaded.values() for leg in forecast.target.legs
         }
         if {item.instrument.key for item in target.quotes} != required_quote_keys:
             raise ValueError("PortfolioTarget quotes 必须精确覆盖考虑集 Instruments")
@@ -266,7 +261,7 @@ class SqlPortfolioStore:
                     != (sleeve.edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS)
                 )
                 or loaded[forecast_id].target != sleeve.forecast_target
-                or loaded[forecast_id].forecast_family != sleeve.forecast_family
+                or loaded[forecast_id].outcome_family_id != sleeve.forecast_family
                 for forecast_id in sleeve.forecast_ids
             ):
                 raise ValueError("PortfolioTarget Sleeve 与 Forecast edge basis/身份不一致")
@@ -283,13 +278,14 @@ class SqlCapitalCycleStore:
             with self._engine.begin() as connection:
                 account = connection.execute(
                     select(portfolio_account_snapshots.c.payload).where(
-                        portfolio_account_snapshots.c.snapshot_id
-                        == record.account_snapshot_id
+                        portfolio_account_snapshots.c.snapshot_id == record.account_snapshot_id
                     )
                 ).scalar_one_or_none()
-                if account is None or PortfolioAccountSnapshot.model_validate(
-                    account
-                ).portfolio_id != record.portfolio_id:
+                if (
+                    account is None
+                    or PortfolioAccountSnapshot.model_validate(account).portfolio_id
+                    != record.portfolio_id
+                ):
                     raise ValueError("CapitalCycleRecord 缺少匹配账户快照")
                 if record.target_id is not None:
                     target = connection.execute(
@@ -333,9 +329,7 @@ class SqlCapitalCycleStore:
         except IntegrityError:
             existing = self.get(record.record_id)
             if existing != record:
-                raise ValueError(
-                    "CapitalCycleRecord evaluation 已存在且内容不同"
-                ) from None
+                raise ValueError("CapitalCycleRecord evaluation 已存在且内容不同") from None
             return False
 
     def get(self, record_id: str) -> CapitalCycleRecord | None:
@@ -399,9 +393,7 @@ class SqlPortfolioPerformanceStore:
         except IntegrityError:
             existing = self.for_end_snapshot(end.snapshot_id)
             if existing != intervals[-1]:
-                raise ValueError(
-                    "Portfolio Performance end snapshot 已存在且内容不同"
-                ) from None
+                raise ValueError("Portfolio Performance end snapshot 已存在且内容不同") from None
         return intervals[-1]
 
     def _account(self, snapshot_id: str) -> PortfolioAccountSnapshot | None:
@@ -411,17 +403,13 @@ class SqlPortfolioPerformanceStore:
                     portfolio_account_snapshots.c.snapshot_id == snapshot_id
                 )
             ).scalar_one_or_none()
-        return (
-            None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
-        )
+        return None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
 
     def _is_latest(self, end: PortfolioAccountSnapshot) -> bool:
         with self._engine.connect() as connection:
             snapshot_id = connection.execute(
                 select(portfolio_account_snapshots.c.snapshot_id)
-                .where(
-                    portfolio_account_snapshots.c.portfolio_id == end.portfolio_id
-                )
+                .where(portfolio_account_snapshots.c.portfolio_id == end.portfolio_id)
                 .order_by(
                     portfolio_account_snapshots.c.as_of.desc(),
                     portfolio_account_snapshots.c.revision.desc(),
@@ -441,11 +429,7 @@ class SqlPortfolioPerformanceStore:
                     portfolio_performance_intervals.c.end_snapshot_id == snapshot_id
                 )
             ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else PortfolioPerformanceInterval.model_validate(payload)
-        )
+        return None if payload is None else PortfolioPerformanceInterval.model_validate(payload)
 
     def latest(
         self,
@@ -463,11 +447,7 @@ class SqlPortfolioPerformanceStore:
                 )
                 .limit(1)
             ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else PortfolioPerformanceInterval.model_validate(payload)
-        )
+        return None if payload is None else PortfolioPerformanceInterval.model_validate(payload)
 
     def count(self, *, portfolio_id: str) -> int:
         with self._engine.connect() as connection:
@@ -475,10 +455,7 @@ class SqlPortfolioPerformanceStore:
                 connection.scalar(
                     select(func.count())
                     .select_from(portfolio_performance_intervals)
-                    .where(
-                        portfolio_performance_intervals.c.portfolio_id
-                        == portfolio_id
-                    )
+                    .where(portfolio_performance_intervals.c.portfolio_id == portfolio_id)
                 )
                 or 0
             )
@@ -490,9 +467,7 @@ class SqlPortfolioPerformanceStore:
         with self._engine.connect() as connection:
             boundary_payload = connection.execute(
                 select(portfolio_performance_intervals.c.payload)
-                .where(
-                    portfolio_performance_intervals.c.portfolio_id == end.portfolio_id
-                )
+                .where(portfolio_performance_intervals.c.portfolio_id == end.portfolio_id)
                 .order_by(
                     portfolio_performance_intervals.c.end_revision.desc(),
                     portfolio_performance_intervals.c.interval_id.desc(),

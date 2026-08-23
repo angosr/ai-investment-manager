@@ -185,7 +185,7 @@ def test_outcome_evaluation_poll_uses_absolute_utc_buckets() -> None:
     assert _seconds_until_next_poll(after_slow_run, poll_seconds=300) == 293
 
 
-def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
+def test_outcome_supervisor_settles_registered_forecast_cohorts_in_existing_loop(
     app_config,
 ) -> None:
     class Settler:
@@ -212,9 +212,8 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
         candidate = Settler(SimpleNamespace(settled=1, unscorable=2))
         forecast = Settler(SimpleNamespace(settled=3, abstained=4, unscorable=5))
         target_forecast = Settler(
-            SimpleNamespace(settled=9, abstained=10, unscorable=11)
+            SimpleNamespace(settled=9, outcome_unavailable=10, pending=11)
         )
-        assessment = Settler(SimpleNamespace(settled=6, abstained=7, unscorable=8))
         coordinator = Coordinator(stop)
         supervisor = OutcomeEvaluationSupervisor(
             coordinator=coordinator,
@@ -222,7 +221,6 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
             candidate_settler=candidate,
             forecast_settler=forecast,
             target_forecast_settler=target_forecast,
-            assessment_settler=assessment,
             clock=lambda: datetime(2026, 8, 20, 12, tzinfo=UTC),
         )
 
@@ -232,7 +230,6 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
             len(candidate.calls)
             == len(forecast.calls)
             == len(target_forecast.calls)
-            == len(assessment.calls)
             == 1
         )
         assert supervisor.health.candidate_settled == 1
@@ -241,11 +238,8 @@ def test_outcome_supervisor_settles_context_assessments_in_existing_loop(
         assert supervisor.health.forecast_abstained == 4
         assert supervisor.health.forecast_unscorable == 5
         assert supervisor.health.target_forecast_settled == 9
-        assert supervisor.health.target_forecast_abstained == 10
-        assert supervisor.health.target_forecast_unscorable == 11
-        assert supervisor.health.assessment_settled == 6
-        assert supervisor.health.assessment_abstained == 7
-        assert supervisor.health.assessment_unscorable == 8
+        assert supervisor.health.target_forecast_outcome_unavailable == 10
+        assert supervisor.health.target_forecast_pending == 11
         assert len(coordinator.requests) == 1
 
     asyncio.run(scenario())

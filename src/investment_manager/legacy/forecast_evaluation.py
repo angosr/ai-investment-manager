@@ -13,7 +13,7 @@ from sqlalchemy import and_, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.models import AssessmentOutcomeStatus, DirectionalView
 from investment_manager.forecast.tables import codex_runs
 from investment_manager.governance.models import EvaluationPlan, EvaluationStage, FailedExperiment
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
@@ -106,9 +106,7 @@ class ForecastEvaluationReport(FrozenModel):
             raise ValueError("预测评价窗口和发布时间顺序非法")
         if (self.pipeline_version is None) == (self.analysis_behavior_hash is None):
             raise ValueError("预测评价必须且只能选择 Pipeline 或分析行为作用域")
-        if tuple(sorted(set(self.source_pipeline_versions))) != (
-            self.source_pipeline_versions
-        ):
+        if tuple(sorted(set(self.source_pipeline_versions))) != (self.source_pipeline_versions):
             raise ValueError("预测评价来源 Pipeline 必须唯一且有序")
         if self.pipeline_version is not None and self.source_pipeline_versions != (
             self.pipeline_version,
@@ -136,9 +134,7 @@ class ForecastEvaluationReport(FrozenModel):
 class ForwardForecastEvaluationSpec(FrozenModel):
     """Result-before-known contract for one behavior-equivalent forecast cohort."""
 
-    version: Literal["forward-forecast-evaluation-spec-v1"] = (
-        "forward-forecast-evaluation-spec-v1"
-    )
+    version: Literal["forward-forecast-evaluation-spec-v1"] = "forward-forecast-evaluation-spec-v1"
     plan_id: str
     analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     outcome_evaluation_version: str
@@ -148,9 +144,7 @@ class ForwardForecastEvaluationSpec(FrozenModel):
     horizons_minutes: tuple[int, ...] = Field(min_length=1)
     minimum_non_overlapping_samples: int = Field(default=30, ge=2)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
-    report_version: Literal["analysis-forecast-report-v3"] = (
-        "analysis-forecast-report-v3"
-    )
+    report_version: Literal["analysis-forecast-report-v3"] = "analysis-forecast-report-v3"
     lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
     baseline_id: Literal["always-up-on-ai-scored-timestamps-v1"] = (
         "always-up-on-ai-scored-timestamps-v1"
@@ -170,8 +164,7 @@ class ForwardForecastEvaluationSpec(FrozenModel):
         ):
             raise ValueError("前向预测周期必须为唯一、升序正整数")
         required_span = timedelta(
-            minutes=max(self.horizons_minutes)
-            * self.minimum_non_overlapping_samples
+            minutes=max(self.horizons_minutes) * self.minimum_non_overlapping_samples
         )
         if self.signal_window_end - self.signal_window_start < required_span:
             raise ValueError("前向预测窗口不足以形成预登记非重叠样本")
@@ -246,12 +239,8 @@ class ForwardForecastEvaluationCatalog:
         return target
 
     def load(self, result_id: str) -> ForwardForecastEvaluationResult:
-        raw = json.loads(
-            (self._root / f"{result_id}.json").read_text(encoding="utf-8")
-        )
-        if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(
-            raw.get("result")
-        ):
+        raw = json.loads((self._root / f"{result_id}.json").read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("result_hash") != content_hash(raw.get("result")):
             raise ValueError("前向预测评价制品内容哈希不匹配")
         envelope = _ForwardForecastEvaluationEnvelope.model_validate(raw)
         if envelope.result.result_id != result_id:
@@ -273,9 +262,7 @@ def failed_forward_forecast_experiment(
     )
     return FailedExperiment(
         experiment_id=stable_id("failed_forward_forecast", result.result_id),
-        hypothesis_fingerprint=content_hash(
-            {"hypothesis": hypothesis.strip().lower()}
-        ),
+        hypothesis_fingerprint=content_hash({"hypothesis": hypothesis.strip().lower()}),
         evidence_ids=(f"hypothesis:{hypothesis}", result.result_id),
         rejected_at=require_utc(rejected_at),
         reason_codes=("FORWARD_FORECAST_FAILED", *result.reason_codes),
@@ -295,13 +282,9 @@ def build_forward_forecast_evaluation_plan(
         plan_id=spec.plan_id,
         registered_at=registered,
         base_manifest_id=base_manifest_id,
-        primary_metric=(
-            "average_directional_return_bps_delta_lower_bound_vs_always_up"
-        ),
+        primary_metric=("average_directional_return_bps_delta_lower_bound_vs_always_up"),
         minimum_sample_size=(
-            spec.minimum_non_overlapping_samples
-            * len(spec.symbols)
-            * len(spec.horizons_minutes)
+            spec.minimum_non_overlapping_samples * len(spec.symbols) * len(spec.horizons_minutes)
         ),
         hard_guardrails=(
             "NON_OVERLAPPING_SAMPLE_SUFFICIENT_EACH_SCOPE",
@@ -330,9 +313,7 @@ def validate_forward_forecast_evaluation_plan(
     if plan.candidate_spec_hash != content_hash(spec):
         raise ValueError("前向预测行为、窗口、作用域或门槛与预登记规格不一致")
     expected_size = (
-        spec.minimum_non_overlapping_samples
-        * len(spec.symbols)
-        * len(spec.horizons_minutes)
+        spec.minimum_non_overlapping_samples * len(spec.symbols) * len(spec.horizons_minutes)
     )
     if (
         plan.minimum_sample_size != expected_size
@@ -362,9 +343,7 @@ class SqlAnalysisForecastOutcomeStore:
             outcome_counts = (
                 select(
                     analysis_forecast_outcomes.c.proposal_id,
-                    func.count(analysis_forecast_outcomes.c.outcome_id).label(
-                        "outcome_count"
-                    ),
+                    func.count(analysis_forecast_outcomes.c.outcome_id).label("outcome_count"),
                 )
                 .group_by(analysis_forecast_outcomes.c.proposal_id)
                 .subquery()
@@ -404,16 +383,18 @@ class SqlAnalysisForecastOutcomeStore:
                 AnalysisProposal.model_validate(row["proposal"]).proposal_id
                 for row in proposal_rows
             )
-            existing_keys = set(
-                connection.execute(
-                    select(
-                        analysis_forecast_outcomes.c.proposal_id,
-                        analysis_forecast_outcomes.c.view_horizon_minutes,
-                    ).where(
-                        analysis_forecast_outcomes.c.proposal_id.in_(proposal_ids)
-                    )
-                ).tuples()
-            ) if proposal_ids else set()
+            existing_keys = (
+                set(
+                    connection.execute(
+                        select(
+                            analysis_forecast_outcomes.c.proposal_id,
+                            analysis_forecast_outcomes.c.view_horizon_minutes,
+                        ).where(analysis_forecast_outcomes.c.proposal_id.in_(proposal_ids))
+                    ).tuples()
+                )
+                if proposal_ids
+                else set()
+            )
             cycle_ids = tuple(str(row["cycle_id"]) for row in proposal_rows)
             run_rows = (
                 tuple(
@@ -528,8 +509,7 @@ class SqlAnalysisForecastOutcomeStore:
         scope_filter = (
             analysis_forecast_outcomes.c.pipeline_version == pipeline_version
             if pipeline_version is not None
-            else analysis_forecast_outcomes.c.analysis_behavior_hash
-            == analysis_behavior_hash
+            else analysis_forecast_outcomes.c.analysis_behavior_hash == analysis_behavior_hash
         )
         with self._engine.connect() as connection:
             payloads = connection.execute(
@@ -545,9 +525,7 @@ class SqlAnalysisForecastOutcomeStore:
                     analysis_forecast_outcomes.c.outcome_id,
                 )
             ).scalars()
-            return tuple(
-                AnalysisForecastOutcome.model_validate(payload) for payload in payloads
-            )
+            return tuple(AnalysisForecastOutcome.model_validate(payload) for payload in payloads)
 
     def visible_outcomes_for_signal_window(
         self,
@@ -584,16 +562,12 @@ class SqlAnalysisForecastOutcomeStore:
                     )
                 ).scalars()
             )
-        outcomes = tuple(
-            AnalysisForecastOutcome.model_validate(payload) for payload in payloads
-        )
+        outcomes = tuple(AnalysisForecastOutcome.model_validate(payload) for payload in payloads)
         if any(
             item.symbol not in spec.symbols
             or item.view_horizon_minutes not in spec.horizons_minutes
             or item.analysis_behavior_hash != spec.analysis_behavior_hash
-            or not spec.signal_window_start
-            <= item.signal_observed_at
-            < spec.signal_window_end
+            or not spec.signal_window_start <= item.signal_observed_at < spec.signal_window_end
             for item in outcomes
         ):
             raise ValueError("前向预测查询混入预登记 signal-time 作用域外结果")
@@ -631,12 +605,8 @@ class AnalysisForecastEvaluator:
         if self.lower_confidence_z <= 0:
             raise ValueError("预测评价置信下界 z 必须为正")
         ids = [item.outcome_id for item in outcomes]
-        proposal_horizons = [
-            (item.proposal_id, item.view_horizon_minutes) for item in outcomes
-        ]
-        if len(ids) != len(set(ids)) or len(proposal_horizons) != len(
-            set(proposal_horizons)
-        ):
+        proposal_horizons = [(item.proposal_id, item.view_horizon_minutes) for item in outcomes]
+        if len(ids) != len(set(ids)) or len(proposal_horizons) != len(set(proposal_horizons)):
             raise ValueError("预测评价结果或 Proposal 周期不得重复")
         if any(
             (
@@ -651,16 +621,10 @@ class AnalysisForecastEvaluator:
         ):
             raise ValueError("预测评价包含作用域外或发布时间后才可见的结果")
 
-        ordered = tuple(
-            sorted(outcomes, key=lambda item: (item.evaluation_at, item.outcome_id))
-        )
-        source_pipeline_versions = tuple(
-            sorted({item.pipeline_version for item in ordered})
-        )
+        ordered = tuple(sorted(outcomes, key=lambda item: (item.evaluation_at, item.outcome_id)))
+        source_pipeline_versions = tuple(sorted({item.pipeline_version for item in ordered}))
         scopes: list[ForecastScopeMetrics] = []
-        scope_keys = sorted(
-            {(item.symbol, item.view_horizon_minutes) for item in ordered}
-        )
+        scope_keys = sorted({(item.symbol, item.view_horizon_minutes) for item in ordered})
         for symbol, horizon in scope_keys:
             scoped = tuple(
                 item
@@ -668,7 +632,7 @@ class AnalysisForecastEvaluator:
                 if item.symbol == symbol and item.view_horizon_minutes == horizon
             )
             scored = tuple(
-                item for item in scoped if item.status == ForecastOutcomeStatus.SETTLED
+                item for item in scoped if item.status == AssessmentOutcomeStatus.SETTLED
             )
             independent = _non_overlapping(scored)
             returns = tuple(
@@ -677,13 +641,9 @@ class AnalysisForecastEvaluator:
                 if item.directional_return_bps is not None
             )
             market_returns = tuple(
-                item.market_return_bps
-                for item in independent
-                if item.market_return_bps is not None
+                item.market_return_bps for item in independent if item.market_return_bps is not None
             )
-            if len(returns) != len(independent) or len(market_returns) != len(
-                independent
-            ):
+            if len(returns) != len(independent) or len(market_returns) != len(independent):
                 raise ValueError("SETTLED 方向预测缺少可比收益事实")
             correct = sum(item.direction_correct is True for item in independent)
             always_up_correct = sum(item > 0 for item in market_returns)
@@ -691,15 +651,9 @@ class AnalysisForecastEvaluator:
                 Decimal(correct) / Decimal(len(independent)) if independent else None
             )
             always_up_accuracy = (
-                Decimal(always_up_correct) / Decimal(len(independent))
-                if independent
-                else None
+                Decimal(always_up_correct) / Decimal(len(independent)) if independent else None
             )
-            average_return = (
-                sum(returns, Decimal("0")) / Decimal(len(returns))
-                if returns
-                else None
-            )
+            average_return = sum(returns, Decimal("0")) / Decimal(len(returns)) if returns else None
             always_up_average = (
                 sum(market_returns, Decimal("0")) / Decimal(len(market_returns))
                 if market_returns
@@ -709,9 +663,7 @@ class AnalysisForecastEvaluator:
                 directional - baseline
                 for directional, baseline in zip(returns, market_returns, strict=True)
             )
-            sample_sufficient = (
-                len(independent) >= self.minimum_non_overlapping_samples
-            )
+            sample_sufficient = len(independent) >= self.minimum_non_overlapping_samples
             scopes.append(
                 ForecastScopeMetrics(
                     symbol=symbol,
@@ -719,12 +671,10 @@ class AnalysisForecastEvaluator:
                     outcome_count=len(scoped),
                     scored_count=len(scored),
                     abstained_count=sum(
-                        item.status == ForecastOutcomeStatus.ABSTAINED
-                        for item in scoped
+                        item.status == AssessmentOutcomeStatus.ABSTAINED for item in scoped
                     ),
                     unscorable_count=sum(
-                        item.status == ForecastOutcomeStatus.UNSCORABLE
-                        for item in scoped
+                        item.status == AssessmentOutcomeStatus.UNSCORABLE for item in scoped
                     ),
                     non_overlapping_scored_count=len(independent),
                     correct_count=correct,
@@ -740,8 +690,7 @@ class AnalysisForecastEvaluator:
                     always_up_average_return_bps=always_up_average,
                     directional_accuracy_delta_vs_always_up=(
                         directional_accuracy - always_up_accuracy
-                        if directional_accuracy is not None
-                        and always_up_accuracy is not None
+                        if directional_accuracy is not None and always_up_accuracy is not None
                         else None
                     ),
                     average_directional_return_bps_delta_vs_always_up=(
@@ -762,9 +711,7 @@ class AnalysisForecastEvaluator:
         limitations = ["NON_TRADABLE_DIRECTIONAL_FORECAST_ONLY"]
         if not conclusive:
             limitations.append("NON_OVERLAPPING_SAMPLE_TOO_SMALL")
-        source_hash = content_hash(
-            [item.model_dump(mode="json") for item in ordered]
-        )
+        source_hash = content_hash([item.model_dump(mode="json") for item in ordered])
         scope = {
             "pipeline_version": pipeline_version,
             "analysis_behavior_hash": analysis_behavior_hash,
@@ -809,9 +756,7 @@ def evaluate_forward_forecast_plan(
         item.analysis_behavior_hash != spec.analysis_behavior_hash
         or item.symbol not in spec.symbols
         or item.view_horizon_minutes not in spec.horizons_minutes
-        or not spec.signal_window_start
-        <= item.signal_observed_at
-        < spec.signal_window_end
+        or not spec.signal_window_start <= item.signal_observed_at < spec.signal_window_end
         for item in outcomes
     ):
         raise ValueError("前向预测评价包含预登记 signal-time 作用域外结果")
@@ -823,20 +768,14 @@ def evaluate_forward_forecast_plan(
         outcomes=outcomes,
         outcome_evaluation_version=spec.outcome_evaluation_version,
         analysis_behavior_hash=spec.analysis_behavior_hash,
-        window_start=spec.signal_window_start
-        + timedelta(minutes=min(spec.horizons_minutes)),
-        window_end=spec.signal_window_end
-        + timedelta(minutes=max(spec.horizons_minutes)),
+        window_start=spec.signal_window_start + timedelta(minutes=min(spec.horizons_minutes)),
+        window_end=spec.signal_window_end + timedelta(minutes=max(spec.horizons_minutes)),
         published_at=published,
     )
     expected_scopes = tuple(
-        (symbol, horizon)
-        for symbol in spec.symbols
-        for horizon in spec.horizons_minutes
+        (symbol, horizon) for symbol in spec.symbols for horizon in spec.horizons_minutes
     )
-    observed_scopes = tuple(
-        (scope.symbol, scope.view_horizon_minutes) for scope in report.scopes
-    )
+    observed_scopes = tuple((scope.symbol, scope.view_horizon_minutes) for scope in report.scopes)
     reasons: list[str] = []
     if observed_scopes != expected_scopes:
         reasons.append("EXPECTED_SCOPE_MISSING")
@@ -844,8 +783,7 @@ def evaluate_forward_forecast_plan(
         reasons.append("NON_OVERLAPPING_SAMPLE_TOO_SMALL")
     if any(
         scope.baseline_id != spec.baseline_id
-        or scope.average_directional_return_bps_delta_lower_bound_vs_always_up
-        is None
+        or scope.average_directional_return_bps_delta_lower_bound_vs_always_up is None
         or scope.average_directional_return_bps_delta_lower_bound_vs_always_up <= 0
         for scope in report.scopes
     ):
@@ -904,9 +842,7 @@ class AnalysisForecastOutcomeSettler:
             proposal = forecast.proposal
             directional = forecast.forecast
             signal_at = forecast.available_at or forecast.analysis_as_of
-            evaluation_at = signal_at + timedelta(
-                minutes=directional.horizon_minutes
-            )
+            evaluation_at = signal_at + timedelta(minutes=directional.horizon_minutes)
             if evaluation_at > now:
                 pending += 1
                 continue
@@ -934,7 +870,7 @@ class AnalysisForecastOutcomeSettler:
             if forecast.available_at is None or forecast.source_run_id is None:
                 outcome = AnalysisForecastOutcome(
                     **common,
-                    status=ForecastOutcomeStatus.UNSCORABLE,
+                    status=AssessmentOutcomeStatus.UNSCORABLE,
                     reason_code="CODEX_COMPLETION_TIME_MISSING_OR_AMBIGUOUS",
                 )
                 unscorable += int(self.store.record(outcome))
@@ -953,7 +889,7 @@ class AnalysisForecastOutcomeSettler:
             if not fresh_reference:
                 outcome = AnalysisForecastOutcome(
                     **common,
-                    status=ForecastOutcomeStatus.UNSCORABLE,
+                    status=AssessmentOutcomeStatus.UNSCORABLE,
                     reason_code="REFERENCE_MARKET_DATA_MISSING_AT_FORECAST_AVAILABILITY",
                 )
                 unscorable += int(self.store.record(outcome))
@@ -973,13 +909,13 @@ class AnalysisForecastOutcomeSettler:
             )
             if fresh_trade:
                 assert trade is not None
-                market_return = (
-                    trade.price / reference_trade.price - Decimal("1")
-                ) * Decimal("10000")
+                market_return = (trade.price / reference_trade.price - Decimal("1")) * Decimal(
+                    "10000"
+                )
                 if directional.directional_view == DirectionalView.UNCERTAIN:
                     outcome = AnalysisForecastOutcome(
                         **common,
-                        status=ForecastOutcomeStatus.ABSTAINED,
+                        status=AssessmentOutcomeStatus.ABSTAINED,
                         exit_price=trade.price,
                         exit_event_time=trade.event_time,
                         market_return_bps=market_return,
@@ -994,7 +930,7 @@ class AnalysisForecastOutcomeSettler:
                 )
                 outcome = AnalysisForecastOutcome(
                     **common,
-                    status=ForecastOutcomeStatus.SETTLED,
+                    status=AssessmentOutcomeStatus.SETTLED,
                     exit_price=trade.price,
                     exit_event_time=trade.event_time,
                     market_return_bps=market_return,
@@ -1009,7 +945,7 @@ class AnalysisForecastOutcomeSettler:
                 continue
             outcome = AnalysisForecastOutcome(
                 **common,
-                status=ForecastOutcomeStatus.UNSCORABLE,
+                status=AssessmentOutcomeStatus.UNSCORABLE,
                 reason_code="MARKET_DATA_MISSING_AT_FORECAST_HORIZON",
             )
             unscorable += int(self.store.record(outcome))
@@ -1065,10 +1001,7 @@ def _non_overlapping(
         outcomes,
         key=lambda item: (item.signal_observed_at, item.evaluation_at, item.outcome_id),
     ):
-        if (
-            last_evaluation_at is not None
-            and outcome.signal_observed_at < last_evaluation_at
-        ):
+        if last_evaluation_at is not None and outcome.signal_observed_at < last_evaluation_at:
             continue
         selected.append(outcome)
         last_evaluation_at = outcome.evaluation_at
@@ -1084,7 +1017,5 @@ def _mean_lower_bound(
         return None
     count = Decimal(len(values))
     mean = sum(values, Decimal("0")) / count
-    variance = sum(((item - mean) ** 2 for item in values), Decimal("0")) / (
-        count - 1
-    )
+    variance = sum(((item - mean) ** 2 for item in values), Decimal("0")) / (count - 1)
     return mean - z * (variance / count).sqrt()

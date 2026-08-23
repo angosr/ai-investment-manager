@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api/client";
 import type {
+  AssessmentEvidence,
   AssessmentInputSnapshot,
   AssessmentRecordDetail,
   AssessmentRecordRow as Row,
@@ -9,63 +10,14 @@ import type {
 import { hhmm } from "../lib/format";
 import styles from "./CycleRow.module.css";
 
-const DIRECTION: Record<string, string> = {
-  UP: "看涨",
-  DOWN: "看跌",
-  UNCERTAIN: "方向不明",
-};
-
-const OUTCOME: Record<string, string> = {
-  SETTLED: "已结算",
-  ABSTAINED: "主动观望",
-  UNSCORABLE: "不可评价",
-};
-
-const UNCERTAINTY: Record<string, string> = {
-  LOW: "低",
-  MEDIUM: "中",
-  HIGH: "高",
-  UNKNOWN: "未知",
-};
-
-const PRICED: Record<string, string> = {
-  NOT_PRICED: "尚未计价",
-  PARTIAL: "部分计价",
-  MOSTLY_PRICED: "大部分已计价",
-  UNKNOWN: "计价程度未知",
-};
-
-const DRIVER_STATUS: Record<string, string> = {
-  CONFIRMED: "已确认事实",
-  INFERRED: "有证据推断",
-  UNVERIFIED: "未验证假设",
-};
-
-const CAPITAL_STATUS: Record<string, string> = {
-  BASE_UNCHANGED: "程序基线不变",
-  ENTRY_VETO_CANDIDATE: "入场否决研究候选",
-  INSUFFICIENT_EVIDENCE: "证据不足，不改变基线",
-  SUPPORT: "支持程序动作",
-  NEUTRAL: "不改变程序动作",
-  CAUTION: "谨慎执行程序动作",
-  OPPOSE: "反对本次程序动作",
-  INSUFFICIENT: "增量证据不足",
-};
-
-const HYPOTHESIS_ROLE: Record<string, string> = {
-  PRIMARY: "主假设",
-  ALTERNATIVE: "替代假设",
-  TAIL_RISK: "尾部风险",
-};
-
-const MECHANISM_RELATIONSHIP: Record<string, string> = {
+const RELATIONSHIP: Record<string, string> = {
   SUPPORTS: "强化",
   OFFSETS: "抵消",
   THREATENS: "反转威胁",
   ALTERNATIVE: "竞争解释",
 };
 
-const TRANSMISSION_STAGE: Record<string, string> = {
+const STAGE: Record<string, string> = {
   PENDING: "尚待传导",
   PROPAGATING: "正在传导",
   PRICED: "已被主要计价",
@@ -81,48 +33,6 @@ const COVERAGE_STATUS: Record<string, string> = {
   NOT_CONFIGURED: "尚未接入",
 };
 
-const CAUSAL_DOMAIN: Record<string, string> = {
-  FISCAL_DEBT: "财政与主权债务",
-  MONETARY_INFLATION: "货币政策与通胀就业",
-  REGULATION_LEGISLATION: "监管与立法",
-  INSTITUTIONAL_FLOWS: "机构资金流",
-  SPOT_DERIVATIVES: "现货与衍生品",
-  ONCHAIN_SUPPLY: "链上与供给",
-  CROSS_ASSET_EXTERNAL: "跨资产与外部冲击",
-};
-
-const CAPABILITY: Record<string, string> = {
-  AGENCY_RULEMAKING: "监管机构正式规则",
-  BINANCE_PERPETUAL: "Binance 永续市场",
-  BINANCE_SPOT: "Binance 现货市场",
-  BTC_ETF_AGGREGATE_FLOW: "BTC ETF 合计资金流",
-  BTC_ETF_ARKB_HOLDINGS: "ARKB 发行人持仓",
-  BTC_ETF_BITB_HOLDINGS: "BITB 发行人持仓",
-  BTC_ETF_IBIT_HOLDINGS: "IBIT 发行人持仓",
-  CREDIT: "信用市场",
-  DEBT_ISSUANCE: "国债发行",
-  DEBT_REPURCHASE: "国债回购",
-  EMPLOYMENT_SURPRISE: "就业数据相对预期差",
-  ENERGY: "能源市场",
-  EQUITIES: "股票市场",
-  ETH_ETF_AGGREGATE_FLOW: "ETH ETF 合计资金流",
-  EXCHANGE_BALANCES: "交易所链上余额",
-  FISCAL_CALENDAR: "财政日程",
-  GOLD: "黄金市场",
-  INFLATION_SURPRISE: "通胀数据相对预期差",
-  LEGISLATION_STATUS: "法案正式进度",
-  MULTI_VENUE_SPOT: "多交易场所现货",
-  OFFICIAL_EVENT_CALENDAR: "官方事件日程",
-  OPTIONS_POSITIONING: "期权仓位",
-  POLICY_DECISIONS: "政策决定",
-  POLICY_IMPLEMENTATION: "政策执行工具",
-  REALIZED_SUPPLY: "链上已实现供给",
-  STABLECOIN_SUPPLY: "稳定币供给",
-  TREASURY_CASH: "财政现金",
-  USD: "美元",
-  UST_YIELD_CURVE: "美债收益率曲线",
-};
-
 export function AssessmentRow({ row }: { row: Row }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<AssessmentRecordDetail | null>(null);
@@ -134,19 +44,14 @@ export function AssessmentRow({ row }: { row: Row }) {
     if (next && detail === null) {
       try {
         setDetail(await api.assessmentRecord(row.assessment_id));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
       }
     }
   }, [detail, open, row.assessment_id]);
 
-  const category = row.capital_status === "ENTRY_VETO_CANDIDATE"
-    || row.capital_status === "OPPOSE"
-    || row.directional_view_count > 0
-    ? "pending"
-    : "no-action";
   return (
-    <div className={`${styles.cyc} ${styles[category]} ${open ? styles.open : ""}`}>
+    <div className={`${styles.cyc} ${styles["no-action"]} ${open ? styles.open : ""}`}>
       <button
         className={`${styles.row} ${styles.assessmentRow}`}
         aria-expanded={open}
@@ -157,18 +62,16 @@ export function AssessmentRow({ row }: { row: Row }) {
           <span className={styles.summary}>{row.summary}</span>
           <span className={styles.reason}>{row.mechanism}</span>
         </span>
-        <span className={`${styles.pill} ${styles[category]}`}>
-          {row.capital_status
-            ? CAPITAL_STATUS[row.capital_status]
-            : row.directional_view_count > 0
-            ? `${row.directional_view_count} 个方向判断`
-            : "无可靠方向"}
+        <span className={`${styles.pill} ${styles["no-action"]}`}>
+          {row.driver_count} 条机制 · {row.evidence_count} 条引用
         </span>
         <span className={styles.caret}>›</span>
       </button>
       {open ? (
         <div className={styles.detail}>
-          {detail ? <AssessmentDetail detail={detail} /> : <p className={styles.loading}>{error ?? "载入中…"}</p>}
+          {detail
+            ? <AssessmentDetail detail={detail} />
+            : <p className={styles.loading}>{error ?? "载入中…"}</p>}
         </div>
       ) : null}
     </div>
@@ -177,15 +80,13 @@ export function AssessmentRow({ row }: { row: Row }) {
 
 function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
   const [snapshotOpen, setSnapshotOpen] = useState(false);
-  const [worldContextOpen, setWorldContextOpen] = useState(false);
-  const snapshot = detail.input_snapshot;
-
+  const [worldOpen, setWorldOpen] = useState(false);
   return (
     <>
       <div className={styles.snapshotActions}>
         <button
           className={styles.snapBtn}
-          disabled={!snapshot}
+          disabled={!detail.input_snapshot}
           aria-pressed={snapshotOpen}
           onClick={() => setSnapshotOpen(!snapshotOpen)}
         >
@@ -193,200 +94,55 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
         </button>
         <button
           className={styles.snapBtn}
-          aria-pressed={worldContextOpen}
-          onClick={() => setWorldContextOpen(!worldContextOpen)}
+          aria-pressed={worldOpen}
+          onClick={() => setWorldOpen(!worldOpen)}
         >
           查看当时世界认知
         </button>
-        {!snapshot ? <span className={styles.snapshotUnavailable}>历史记录未保留输入包</span> : null}
+        {!detail.input_snapshot ? (
+          <span className={styles.snapshotUnavailable}>历史记录未保留输入包</span>
+        ) : null}
       </div>
-      {snapshotOpen && snapshot ? <SnapshotView snapshot={snapshot} /> : null}
-      {worldContextOpen ? <WorldContextSnapshot detail={detail} /> : null}
+      {snapshotOpen && detail.input_snapshot
+        ? <SnapshotView snapshot={detail.input_snapshot} />
+        : null}
+      {worldOpen ? <WorldModelView detail={detail} /> : null}
     </>
   );
 }
 
-function WorldContextSnapshot({ detail }: { detail: AssessmentRecordDetail }) {
-  if (detail.schema_version === "world-model-assessment-v1") {
-    return <CurrentWorldModel detail={detail} />;
-  }
-  const legacyEventReferences = detail.cited_evidence.filter(
-    (item) => item.kind === "INTELLIGENCE_EVENT",
-  );
+function WorldModelView({ detail }: { detail: AssessmentRecordDetail }) {
   return (
     <div className={styles.snapshotPanel}>
       <SnapshotHeader
         title="当时世界认知"
         stateId={detail.assessment_id}
         asOf={detail.at}
-        identityLabel="assessment_id"
-      />
-      <div className={styles.snapshotQuestion}>
-        分析时点 {detail.as_of} · 世界认知形成并可用时间 {detail.at}
-      </div>
-      <SnapshotSection title="结构性基准与主导传导链">
-        <p className={styles.thesis}>{detail.mechanism}</p>
-      </SnapshotSection>
-      {detail.capital_relevance ? (
-        <SnapshotSection title="对当前资本任务的增量判断">
-          <ul className={styles.analysisList}>
-            <li>
-              <b>
-                {CAPITAL_STATUS[detail.capital_relevance.status]
-                  ?? detail.capital_relevance.status}
-              </b>
-              {` · ${detail.capital_relevance.thesis}`}
-              <div>{detail.capital_relevance.transmission}</div>
-              {detail.capital_relevance.evidence.map((item) => (
-                <div key={item.evidence_id}>
-                  引用：{hhmm(item.at)} · {item.source} · {item.title}
-                </div>
-              ))}
-              <div>
-                证伪：{detail.capital_relevance.invalidation_conditions.join("；")}
-              </div>
-              <div>研究旁路 · 资本权限：无</div>
-            </li>
-          </ul>
-        </SnapshotSection>
-      ) : null}
-      <SnapshotSection title="关键驱动及引用">
-        {detail.drivers.length > 0 ? (
-          <ul className={styles.analysisList}>
-            {detail.drivers.map((driver) => (
-              <li key={driver.statement}>
-                <b>{DRIVER_STATUS[driver.status] ?? driver.status}</b>
-                {` · ${driver.statement}`}
-                <div>{driver.transmission}</div>
-                {driver.evidence.map((item) => (
-                  <div key={item.evidence_id}>
-                    引用：{hhmm(item.at)} · {item.source} · {item.title}
-                  </div>
-                ))}
-                <div>证伪：{driver.invalidation_conditions.join("；")}</div>
-              </li>
-            ))}
-          </ul>
-        ) : <p className={styles.snapshotEmpty}>当前没有足以改变结构性基准的主导变化</p>}
-      </SnapshotSection>
-      {detail.views.length > 0 ? <SnapshotSection title="资产与时域判断">
-        <div className={styles.viewGrid}>
-          {detail.views.map((view) => (
-            <div className={styles.viewCard} key={`${view.asset}-${view.horizon_minutes}`}>
-              <div className={styles.viewHead}>
-                <b>{view.asset} · {view.horizon_minutes} 分钟</b>
-                <span data-direction={view.direction}>
-                  {DIRECTION[view.direction] ?? view.direction}
-                </span>
-              </div>
-              <div className={styles.viewMeta}>
-                不确定性 {UNCERTAINTY[view.uncertainty] ?? view.uncertainty}
-                {` · ${PRICED[view.already_priced] ?? view.already_priced}`}
-                {` · ${view.evidence_count} 条证据`}
-              </div>
-              {view.outcome ? (
-                <div className={styles.viewOutcome}>{assessmentOutcome(view.outcome)}</div>
-              ) : null}
-              <div className={styles.invalidation}>
-                <span>失效条件</span>
-                <ul>
-                  {view.invalidation_conditions.map((condition) => (
-                    <li key={condition}>{condition}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ))}
-        </div>
-      </SnapshotSection> : null}
-      <SnapshotList title="反向证据" empty="无" items={detail.contradictions} />
-      <SnapshotList title="尚缺信息" empty="无" items={detail.data_gaps} />
-      <SnapshotSection title="关联事件及经济影响状态">
-        {detail.event_references.length > 0 ? (
-          <ul className={styles.snapshotList}>
-            {detail.event_references.map((item) => (
-              <li key={item.evidence_id}>
-                <b>
-                  {item.impact_state === "ACTIVE" ? "仍影响未来" : "已过时"}
-                  {` · ${hhmm(item.event_time)} · ${item.source}`}
-                </b>
-                {` · ${item.title}`}
-                <div>{item.rationale}</div>
-                {item.stale_at ? <div>首次判定过时：{item.stale_at}</div> : null}
-              </li>
-            ))}
-          </ul>
-        ) : legacyEventReferences.length > 0 ? (
-          <ul className={styles.snapshotList}>
-            {legacyEventReferences.map((item) => (
-              <li key={item.evidence_id}>
-                <b>历史引用（尚无影响状态） · {hhmm(item.at)} · {item.source}</b>
-                {` · ${item.title}`}
-              </li>
-            ))}
-          </ul>
-        ) : <p className={styles.snapshotEmpty}>本次世界认知没有关联事件</p>}
-      </SnapshotSection>
-      <SnapshotSection title="本次认知实际引用的事实与事件">
-        {detail.cited_evidence.length > 0 ? (
-          <ul className={styles.snapshotList}>
-            {detail.cited_evidence.map((item) => (
-              <li key={item.evidence_id}>
-                <b>{hhmm(item.at)} · {item.source}</b>
-                {` · ${item.title}`}
-                {item.detail ? <div>{item.detail}</div> : null}
-              </li>
-            ))}
-          </ul>
-        ) : <p className={styles.snapshotEmpty}>本次认知没有引用可解析的冻结证据</p>}
-      </SnapshotSection>
-    </div>
-  );
-}
-
-function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
-  return (
-    <div className={styles.snapshotPanel}>
-      <SnapshotHeader
-        title="当时世界认知"
-        stateId={detail.assessment_id}
-        asOf={detail.at}
-        identityLabel="assessment_id"
       />
       <div className={styles.snapshotQuestion}>
         证据截止 {detail.as_of} · 认知可用 {detail.at}
       </div>
-      {detail.synthesis ? (
-        <SnapshotSection title={`联合判断 · ${detail.synthesis_horizon_hours} 小时`}>
-          <p className={styles.thesis}>{detail.synthesis}</p>
-        </SnapshotSection>
-      ) : null}
+      <SnapshotSection title={`联合判断 · ${detail.synthesis_horizon_hours} 小时`}>
+        <p className={styles.thesis}>{detail.synthesis}</p>
+      </SnapshotSection>
       {detail.mechanisms.map((mechanism) => (
         <SnapshotSection
           key={mechanism.mechanism_id}
-          title={`${MECHANISM_RELATIONSHIP[mechanism.relationship]} · ${TRANSMISSION_STAGE[mechanism.transmission_stage]} · ${mechanism.horizon_hours} 小时`}
+          title={`${RELATIONSHIP[mechanism.relationship] ?? mechanism.relationship} · ${STAGE[mechanism.transmission_stage] ?? mechanism.transmission_stage} · ${mechanism.horizon_hours} 小时`}
         >
           <p className={styles.thesis}>{mechanism.claim}</p>
           <ol className={styles.analysisList}>
             {mechanism.causal_chain.map((node, index) => (
               <li key={`${mechanism.mechanism_id}-${index}`}>
                 <b>{node.statement}</b>
-                {node.evidence.map((item) => (
-                  <div key={item.evidence_id}>
-                    引用：{hhmm(item.at)} · {item.source} · {item.title}
-                  </div>
-                ))}
+                <EvidenceRefs evidence={node.evidence} />
               </li>
             ))}
           </ol>
-          {mechanism.conflicting_evidence.length > 0 ? (
+          {mechanism.conflicting_evidence.length ? (
             <div className={styles.invalidation}>
               <span>反向证据</span>
-              <ul>
-                {mechanism.conflicting_evidence.map((item) => (
-                  <li key={item.evidence_id}>{item.source} · {item.title}</li>
-                ))}
-              </ul>
+              <EvidenceRefs evidence={mechanism.conflicting_evidence} />
             </div>
           ) : null}
           <div className={styles.invalidation}>
@@ -394,14 +150,14 @@ function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
             <ul>
               {mechanism.verification_tests.map((test) => (
                 <li key={test.feature_selector}>
-                  {test.feature_selector} · {test.evaluation_window_minutes} 分钟窗口 · 支持 {test.supports_predicate.operator} {test.supports_predicate.value} · 反驳 {test.contradicts_predicate.operator} {test.contradicts_predicate.value}
-                  {test.latest_observation ? (
-                    <div>
-                      最新验证：{test.latest_observation.resolution} · 值 {test.latest_observation.value} · 支持连续 {test.latest_observation.support_streak} · 反驳连续 {test.latest_observation.contradiction_streak}
-                    </div>
-                  ) : (
-                    <div>尚无到期后的程序观测</div>
-                  )}
+                  {test.feature_selector} · {test.evaluation_window_minutes} 分钟 ·
+                  支持 {test.supports_predicate.operator} {test.supports_predicate.value} ·
+                  反驳 {test.contradicts_predicate.operator} {test.contradicts_predicate.value}
+                  <div>
+                    {test.latest_observation
+                      ? `最新：${test.latest_observation.resolution}，值 ${test.latest_observation.value}，支持连续 ${test.latest_observation.support_streak}，反驳连续 ${test.latest_observation.contradiction_streak}`
+                      : "尚无到期后的程序观测"}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -414,151 +170,63 @@ function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
           </div>
         </SnapshotSection>
       ))}
-      {detail.hypotheses.map((hypothesis) => (
-        <SnapshotSection
-          key={hypothesis.hypothesis_id}
-          title={`${HYPOTHESIS_ROLE[hypothesis.role]} · ${hypothesis.horizon_hours} 小时`}
-        >
-          <p className={styles.thesis}>{hypothesis.claim}</p>
-          <ol className={styles.analysisList}>
-            {hypothesis.causal_chain.map((node, index) => (
-              <li key={`${hypothesis.hypothesis_id}-${index}`}>
-                <b>{node.statement}</b>
-                {node.evidence.map((item) => (
-                  <div key={item.evidence_id}>
-                    引用：{hhmm(item.at)} · {item.source} · {item.title}
-                  </div>
-                ))}
-              </li>
-            ))}
-          </ol>
-          {hypothesis.conflicting_evidence.length > 0 ? (
-            <div className={styles.invalidation}>
-              <span>反向证据</span>
-              <ul>
-                {hypothesis.conflicting_evidence.map((item) => (
-                  <li key={item.evidence_id}>{item.source} · {item.title}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div className={styles.invalidation}>
-            <span>下一项关键观测</span>
-            <div>{hypothesis.next_observation} · 复核 {hypothesis.next_review_at}</div>
-            <span>失效条件</span>
-            <ul>
-              {hypothesis.invalidation_conditions.map((condition) => (
-                <li key={condition}>{condition}</li>
-              ))}
-            </ul>
-          </div>
-        </SnapshotSection>
-      ))}
-      {detail.capital_implication ? (
-        <SnapshotSection title="对当前程序策略的增量作用">
-          <div className={styles.marketSnapshot}>
-            <b>
-              {CAPITAL_STATUS[detail.capital_implication.effect]
-                ?? detail.capital_implication.effect}
-            </b>
-            <span>{detail.capital_implication.incremental_reason}</span>
-            <span>{detail.capital_implication.transmission}</span>
-            {detail.capital_implication.evidence.map((item) => (
-              <span key={item.evidence_id}>
-                引用：{hhmm(item.at)} · {item.source} · {item.title}
-              </span>
-            ))}
-            <span>
-              失效条件：{detail.capital_implication.invalidation_conditions.join("；")}
-            </span>
-            <small>研究结论 · 资本权限：无 · 未通过配对评估前仅记录影子结果</small>
-          </div>
-        </SnapshotSection>
-      ) : null}
-      {detail.decision_blockers.length > 0 ? (
-        <SnapshotSection title="会改变资本动作的关键未知">
-          <ul className={styles.analysisList}>
-            {detail.decision_blockers.map((item) => (
-              <li key={item.question}>
-                <b>{item.question}</b>
-                <div>若是：{item.action_if_yes}</div>
-                <div>若否：{item.action_if_no}</div>
-                <div>所需观测：{item.observation_needed}</div>
-              </li>
-            ))}
-          </ul>
-        </SnapshotSection>
-      ) : null}
-      <SnapshotSection title="关联事件及经济影响状态">
-        {detail.event_references.length > 0 ? (
+      <SnapshotSection title="关联事件及未来影响状态">
+        {detail.event_references.length ? (
           <ul className={styles.snapshotList}>
             {detail.event_references.map((item) => (
               <li key={item.evidence_id}>
                 <b>
-                  {item.impact_state === "ACTIVE" ? "仍影响未来" : "影响已消退"}
-                  {` · ${hhmm(item.event_time)} · ${item.source}`}
+                  {item.impact_state === "ACTIVE" ? "仍影响未来" : "影响已消退"} ·
+                  {hhmm(item.event_time)} · {item.source}
                 </b>
                 {` · ${item.title}`}
                 <div>{item.rationale}</div>
               </li>
             ))}
           </ul>
-        ) : <p className={styles.snapshotEmpty}>当前假设未引用事件型证据</p>}
+        ) : <p className={styles.snapshotEmpty}>当前机制未引用事件型证据</p>}
       </SnapshotSection>
       <SnapshotSection title="本次认知实际引用的冻结证据">
-        {detail.cited_evidence.length > 0 ? (
-          <ul className={styles.snapshotList}>
-            {detail.cited_evidence.map((item) => (
-              <li key={item.evidence_id}>
-                <b>{hhmm(item.at)} · {item.source}</b>
-                {` · ${item.title}`}
-                {item.detail ? <div>{item.detail}</div> : null}
-              </li>
-            ))}
-          </ul>
-        ) : <p className={styles.snapshotEmpty}>没有可解析的引用证据</p>}
+        {detail.cited_evidence.length
+          ? <EvidenceRefs evidence={detail.cited_evidence} detailed />
+          : <p className={styles.snapshotEmpty}>没有可解析的引用证据</p>}
       </SnapshotSection>
     </div>
   );
 }
 
-function assessmentOutcome(outcome: AssessmentRecordDetail["views"][number]["outcome"]): string {
-  if (!outcome) return "";
-  const direction = outcome.direction_correct === null
-    ? ""
-    : outcome.direction_correct
-      ? " · 方向正确"
-      : " · 方向错误";
-  const market = outcome.market_return_bps === null
-    ? ""
-    : ` · 市场变化 ${outcome.market_return_bps} bp`;
-  return `${OUTCOME[outcome.status] ?? outcome.status}${direction}${market}`;
+function EvidenceRefs({
+  evidence,
+  detailed = false,
+}: {
+  evidence: AssessmentEvidence[];
+  detailed?: boolean;
+}) {
+  return (
+    <ul className={styles.snapshotList}>
+      {evidence.map((item) => (
+        <li key={item.evidence_id}>
+          {hhmm(item.at)} · {item.source} · {item.title}
+          {detailed && item.detail ? <div>{item.detail}</div> : null}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
+  const states = [
+    ...(snapshot.state_features?.regime_states ?? []),
+    ...(snapshot.state_features?.flow_states ?? []),
+  ];
   return (
     <div className={styles.snapshotPanel}>
       <SnapshotHeader
         title="AI 输入快照"
         stateId={snapshot.analysis_scope}
         asOf={snapshot.as_of}
-        identityLabel="analysis_scope"
       />
       <div className={styles.snapshotQuestion}>{snapshot.question}</div>
-      {snapshot.capital_objective ? (
-        <SnapshotSection title="本轮唯一资本问题">
-          <div className={styles.marketSnapshot}>
-            <b>{snapshot.capital_objective.objective_id}</b>
-            <span>
-              {snapshot.capital_objective.producer_id} · {snapshot.capital_objective.producer_version}
-            </span>
-            <span>
-              程序基线已覆盖：{snapshot.capital_objective.base_decision_inputs.join("、")}
-            </span>
-            <span>AI 仅判断增量入场风险，不具有资本权限</span>
-          </div>
-        </SnapshotSection>
-      ) : null}
       <div className={styles.snapshotGrid}>
         <SnapshotSection title="组合状态">
           <dl className={styles.snapshotKv}>
@@ -568,121 +236,64 @@ function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
             <dd>{snapshot.portfolio.daily_pnl} / {snapshot.portfolio.drawdown_fraction}</dd>
             <dt>挂单 / 对账 / 熔断</dt>
             <dd>
-              {snapshot.portfolio.open_order_count} / {snapshot.portfolio.reconciled ? "正常" : "异常"} / {snapshot.portfolio.kill_switch_active ? "开启" : "关闭"}
+              {snapshot.portfolio.open_order_count} / {snapshot.portfolio.reconciled ? "正常" : "异常"} /
+              {snapshot.portfolio.kill_switch_active ? "开启" : "关闭"}
             </dd>
           </dl>
-          <SnapshotList
-            title="持仓"
-            empty="空仓"
-            items={snapshot.portfolio.positions.map(
-              (position) => `${position.market_symbol} · ${position.quantity} @ ${position.average_price}`,
-            )}
-          />
         </SnapshotSection>
         <SnapshotSection title="市场状态">
           {snapshot.asset_states.map((asset) => (
             <div className={styles.marketSnapshot} key={asset.asset}>
               <b>{asset.asset} · {asset.market_symbol}</b>
-              <span>last {asset.last}</span>
-              <span>regime {asset.regime} · return {asset.return_fraction}</span>
+              <span>last {asset.last} · regime {asset.regime} · return {asset.return_fraction}</span>
               <span>vol {asset.realized_volatility} · spread {asset.spread_bps} bp · volume {asset.volume_ratio}</span>
             </div>
           ))}
         </SnapshotSection>
       </div>
-      <SnapshotSection title="现货与永续结构">
-        {snapshot.derivative_states.length > 0 ? (
-          snapshot.derivative_states.map((state) => (
-            <div className={styles.marketSnapshot} key={state.evidence_ref}>
-              <b>{state.asset} · {state.funding_window_hours} 小时资金费率窗口</b>
-              <span>
-                可执行空头基差 {state.executable_short_basis_bps} bp · 永续价差 {state.perpetual_spread_bps} bp
-              </span>
-              <span>
-                最近/均值/波动/最低 funding：{state.last_funding_rate_bps} / {state.trailing_funding_rate_mean_bps ?? "—"} / {state.trailing_funding_rate_stddev_bps ?? "—"} / {state.trailing_funding_rate_min_bps ?? "—"} bp
-              </span>
-              <span>
-                正值占比 {state.trailing_funding_positive_fraction ?? "—"} · 样本 {state.funding_settlement_count}
-              </span>
-            </div>
-          ))
-        ) : <p className={styles.snapshotEmpty}>本次没有可用的衍生品结构快照</p>}
-      </SnapshotSection>
+      <SnapshotList
+        title="连续状态特征"
+        empty="本次没有连续状态特征"
+        items={states.map((item) => `${item.type} · ${item.at} · ${item.state}`)}
+      />
       <SnapshotList
         title="触发变化"
         empty="没有结构化变化"
         items={snapshot.deltas.map(
-          (delta) => `${delta.materiality} · ${delta.category} · ${delta.reason_codes.join(" / ")}`,
+          (item) => `${item.materiality} · ${item.category} · ${item.reason_codes.join(" / ")}`,
         )}
       />
       <SnapshotList
         title="确认事实"
         empty="没有确认事实"
-        items={snapshot.facts.map(
-          (fact) => `${fact.fact_type} · ${fact.decision_materiality}：${fact.claim}`,
-        )}
+        items={snapshot.facts.map((item) => `${item.fact_type}：${item.claim}`)}
       />
       <SnapshotList
-        title="新闻证据"
-        empty="没有新闻证据"
+        title="事件证据"
+        empty="没有事件证据"
         items={snapshot.intelligence_events.map(
-          (event) => `${event.source} · ${event.title}${event.body ? ` — ${event.body}` : ""}`,
+          (item) => `${item.source} · ${item.title}${item.body ? ` — ${item.body}` : ""}`,
         )}
       />
       {snapshot.previous_context ? (
         <SnapshotSection title="继承的上一轮世界认知">
-          <div className={styles.marketSnapshot}>
-            {(snapshot.previous_context.hypotheses ?? []).map((hypothesis) => (
-              <span key={hypothesis.hypothesis_id}>
-                {HYPOTHESIS_ROLE[hypothesis.role]} · {hypothesis.claim}
-              </span>
+          <p className={styles.thesis}>{snapshot.previous_context.synthesis}</p>
+          <ul className={styles.snapshotList}>
+            {snapshot.previous_context.mechanisms.map((item) => (
+              <li key={item.id}>
+                {RELATIONSHIP[item.relationship] ?? item.relationship} ·
+                {STAGE[item.stage] ?? item.stage} · {item.claim} · 复核 {item.review_at}
+              </li>
             ))}
-            {snapshot.previous_context.market_mechanism ? (
-              <b>{snapshot.previous_context.market_mechanism}</b>
-            ) : null}
-            {(snapshot.previous_context.drivers ?? []).map((driver) => (
-              <span key={`${driver.status}-${driver.statement}`}>
-                {DRIVER_STATUS[driver.status] ?? driver.status} · {driver.statement} → {driver.transmission}
-              </span>
-            ))}
-            {snapshot.previous_context.capital_relevance ? (
-              <span>
-                上轮资本判断：{CAPITAL_STATUS[snapshot.previous_context.capital_relevance.status]
-                  ?? snapshot.previous_context.capital_relevance.status} · {snapshot.previous_context.capital_relevance.thesis}
-              </span>
-            ) : null}
-            {snapshot.previous_context.capital_implication ? (
-              <span>
-                上轮资本含义：
-                {CAPITAL_STATUS[snapshot.previous_context.capital_implication.effect]
-                  ?? snapshot.previous_context.capital_implication.effect}
-                {` · ${snapshot.previous_context.capital_implication.incremental_reason}`}
-              </span>
-            ) : null}
-          </div>
+          </ul>
         </SnapshotSection>
       ) : null}
       <SnapshotList
-        title="因果信息覆盖"
-        empty="没有覆盖合同"
-        items={snapshot.capability_summary.map((item) => {
-          const covered = item.covered_capabilities.map(
-            (capability) => CAPABILITY[capability] ?? capability,
-          );
-          const missing = item.missing_capabilities.map(
-            (capability) => CAPABILITY[capability] ?? capability,
-          );
-          return `${CAUSAL_DOMAIN[item.domain] ?? item.domain}：${COVERAGE_STATUS[item.status] ?? item.status}${
-            covered.length > 0 ? `；已接入 ${covered.join("、")}` : ""}${
-            missing.length > 0 ? `；仍缺 ${missing.join("、")}` : ""
-          }`;
-        })}
-      />
-      <SnapshotList
-        title="输入容量"
-        items={[
-          `本次未发送：${snapshot.capacity_summary.omitted_fact_count} 条背景事实、${snapshot.capacity_summary.omitted_intelligence_event_count} 条背景事件；缺失引用 ${snapshot.capacity_summary.missing_fact_count} 条`,
-        ]}
+        title="未接入的合同化能力"
+        empty="本轮没有合同化能力缺口"
+        items={snapshot.capability_summary.map(
+          (item) => `${item.domain} · ${COVERAGE_STATUS[item.status] ?? item.status} · ${item.missing_capabilities.join("、")}`,
+        )}
       />
     </div>
   );
@@ -692,17 +303,15 @@ function SnapshotHeader({
   title,
   stateId,
   asOf,
-  identityLabel = "state_id",
 }: {
   title: string;
   stateId: string;
   asOf: string;
-  identityLabel?: string;
 }) {
   return (
     <div className={styles.snapshotHeader}>
       <b>{title}</b>
-      <span>{asOf} · {identityLabel} {stateId}</span>
+      <span>{asOf} · ID {stateId}</span>
     </div>
   );
 }
@@ -719,21 +328,19 @@ function SnapshotSection({ title, children }: { title: string; children: ReactNo
 function SnapshotList({
   title,
   items,
-  empty,
+  empty = "无",
 }: {
   title: string;
   items: string[];
   empty?: string;
 }) {
-  const visible = items.filter(Boolean);
   return (
-    <section className={styles.snapshotSection}>
-      <div className={styles.h}>{title}</div>
-      {visible.length > 0 ? (
+    <SnapshotSection title={title}>
+      {items.length ? (
         <ul className={styles.snapshotList}>
-          {visible.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+          {items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
         </ul>
-      ) : <p className={styles.snapshotEmpty}>{empty ?? "无"}</p>}
-    </section>
+      ) : <p className={styles.snapshotEmpty}>{empty}</p>}
+    </SnapshotSection>
   );
 }

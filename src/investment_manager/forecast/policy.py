@@ -45,8 +45,7 @@ class CalibrationPolicy(StrictConfig):
         for scoped in by_scope.values():
             ordered = sorted(scoped, key=lambda item: item.valid_from)
             if any(
-                current.valid_from < previous.valid_until
-                for previous, current in pairwise(ordered)
+                current.valid_from < previous.valid_until for previous, current in pairwise(ordered)
             ):
                 raise ValueError("同一校准作用域的有效期不得重叠")
         return self
@@ -165,7 +164,6 @@ class CodexRuntimePolicy(StrictConfig):
 class ContextAssessmentPolicy(StrictConfig):
     version: str
     enabled: bool = False
-    opportunity_review_poll_seconds: int = Field(default=5, ge=1, le=60)
     review_trigger_symbol: str | None = Field(
         default=None,
         pattern=r"^[A-Z0-9]+$",

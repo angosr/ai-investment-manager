@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import ValidationInfo, model_validator
+from pydantic import model_validator
 
 from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 from investment_manager.execution.policy import (
@@ -78,12 +78,7 @@ class AppConfig(StrictConfig):
     deployment: DeploymentPolicy
 
     @model_validator(mode="after")
-    def cross_domain_invariants_hold(self, info: ValidationInfo):
-        if (
-            isinstance(info.context, dict)
-            and info.context.get("historical_read_only") is True
-        ):
-            return self
+    def cross_domain_invariants_hold(self):
         if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:
             raise ValueError("DecisionState 与 Assessment mandate scope 必须一致")
         mandate_symbols = tuple(
@@ -228,18 +223,11 @@ class AppConfig(StrictConfig):
         return self
 
 
-def load_config(
-    path: str | Path,
-    *,
-    historical_read_only: bool = False,
-) -> AppConfig:
+def load_config(path: str | Path) -> AppConfig:
     """加载严格配置；小型环境文件可用 ``extends`` 继承同目录基线。"""
 
     config_path = Path(path).resolve()
-    return AppConfig.model_validate(
-        _load_config_mapping(config_path, stack=()),
-        context={"historical_read_only": historical_read_only},
-    )
+    return AppConfig.model_validate(_load_config_mapping(config_path, stack=()))
 
 
 def _load_config_mapping(config_path: Path, *, stack: tuple[Path, ...]) -> dict[str, Any]:

@@ -114,6 +114,7 @@ class PortfolioDecisionPipeline:
             account=account,
             sleeves=sleeves,
             quotes=quotes,
+            execution_specs=execution_specs,
             decision_valid_until=decision_valid_until,
         )
         if target is None:
@@ -191,6 +192,7 @@ class PortfolioDecisionPipeline:
             account=account,
             sleeves=sleeves,
             quotes=quotes,
+            execution_specs=execution_specs,
             reason_codes=tuple(
                 item.reason_code for item in review.rule_results if item.state == GuardState.FAIL
             ),
@@ -262,9 +264,7 @@ class PortfolioDecisionPipeline:
         quotes: tuple[ExecutableQuote, ...],
     ) -> tuple[ExecutableQuote, ...]:
         required = {
-            leg.instrument.key
-            for sleeve in target.sleeves
-            for leg in sleeve.forecast_target.legs
+            leg.instrument.key for sleeve in target.sleeves for leg in sleeve.forecast_target.legs
         }
         return tuple(item for item in quotes if item.instrument.key in required)
 

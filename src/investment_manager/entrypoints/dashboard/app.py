@@ -51,8 +51,6 @@ def create_app(
     config: AppConfig,
     database_url: str,
     *,
-    assessment_database_url: str | None = None,
-    assessment_config: AppConfig | None = None,
     web_dist: Path | None = None,
     stream_interval_seconds: float = 3.0,
     slow_refresh_every_ticks: int = 5,
@@ -61,25 +59,9 @@ def create_app(
         raise ValueError("Dashboard SSE 刷新间隔必须为正数")
     if slow_refresh_every_ticks < 1:
         raise ValueError("Dashboard 慢速刷新倍数必须至少为 1")
-    if (assessment_database_url is None) != (assessment_config is None):
-        raise ValueError("Assessment 历史库与冻结配置必须同时提供")
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
-    assessment_engine = (
-        build_engine(assessment_database_url)
-        if assessment_database_url is not None
-        else None
-    )
-    assessment_reader = (
-        DashboardReader(assessment_engine, assessment_config)
-        if assessment_engine is not None
-        else None
-    )
-    assessment_store = (
-        SqlContextAssessmentStore(assessment_engine)
-        if assessment_engine is not None
-        else None
-    )
+    assessment_store = SqlContextAssessmentStore(engine)
     capital_reader = CapitalDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
@@ -123,12 +105,9 @@ def create_app(
 
         def read_health() -> dict:
             capital_overview = capital_reader.overview(now=now)
-            quality_reader = assessment_reader or (
-                reader if config.assessment.enabled else None
-            )
             assessment_quality = (
-                quality_reader.assessment_quality_status(now=now)
-                if quality_reader is not None
+                reader.assessment_quality_status(now=now)
+                if config.assessment.enabled
                 else None
             )
             return assemble_health(
@@ -177,11 +156,9 @@ def create_app(
         )
 
     async def assessment_cycles(request: Request) -> JSONResponse:
-        if assessment_reader is None:
-            return _json({"cycles": [], "next_cursor": None})
         limit = _parse_limit(request)
         rows = await run_in_threadpool(
-            assessment_reader.list_cycles,
+            reader.list_cycles,
             cursor=_parse_cursor(request),
             limit=limit + 1,
         )
@@ -198,10 +175,8 @@ def create_app(
         )
 
     async def assessment_cycle_detail(request: Request) -> JSONResponse:
-        if assessment_reader is None:
-            return _json({"detail": "assessment archive is not configured"}, status_code=404)
         facts = await run_in_threadpool(
-            assessment_reader.get_cycle,
+            reader.get_cycle,
             request.path_params["cycle_id"],
         )
         if facts is None:
@@ -209,17 +184,15 @@ def create_app(
         return _json(ser.cycle_detail(facts))
 
     async def assessment_records(request: Request) -> JSONResponse:
-        if assessment_reader is None:
-            return _json({"assessments": [], "quality": None, "next_cursor": None})
         limit = _parse_limit(request)
         rows, quality = await asyncio.gather(
             run_in_threadpool(
-                assessment_reader.list_assessments,
+                reader.list_assessments,
                 cursor=_parse_cursor(request),
                 limit=limit + 1,
             ),
             run_in_threadpool(
-                assessment_reader.assessment_quality_status,
+                reader.assessment_quality_status,
                 now=datetime.now(UTC),
             ),
         )
@@ -240,24 +213,15 @@ def create_app(
         )
 
     async def assessment_record_detail(request: Request) -> JSONResponse:
-        if assessment_reader is None:
-            return _json(
-                {"detail": "assessment archive is not configured"},
-                status_code=404,
-            )
         record = await run_in_threadpool(
-            assessment_reader.get_assessment,
+            reader.get_assessment,
             request.path_params["assessment_id"],
         )
         if record is None:
             return _json({"detail": "assessment not found"}, status_code=404)
-        observations = (
-            await run_in_threadpool(
-                assessment_store.mechanism_observations,
-                record.assessment.assessment_id,
-            )
-            if assessment_store is not None
-            else ()
+        observations = await run_in_threadpool(
+            assessment_store.mechanism_observations,
+            record.assessment.assessment_id,
         )
         return _json(ser.assessment_detail(record, observations=observations))
 
@@ -291,19 +255,11 @@ def create_app(
     async def events(request: Request) -> JSONResponse:
         cursor = _parse_cursor(request)
         limit = _parse_limit(request)
-        primary, assessment = await asyncio.gather(
-            run_in_threadpool(reader.list_events, cursor=cursor, limit=limit + 1),
-            (
-                run_in_threadpool(
-                    assessment_reader.list_events,
-                    cursor=cursor,
-                    limit=limit + 1,
-                )
-                if assessment_reader is not None
-                else asyncio.sleep(0, result=[])
-            ),
+        found = await run_in_threadpool(
+            reader.list_events,
+            cursor=cursor,
+            limit=limit + 1,
         )
-        found = _merge_events(primary, assessment, limit=limit + 1)
         page = page_slice(
             found,
             limit=limit,
@@ -347,20 +303,16 @@ def create_app(
 
     async def accounts(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
-        account_reader = assessment_reader or reader
-        account_config = assessment_config or config
         statuses, calls = await asyncio.gather(
-            run_in_threadpool(account_reader.accounts, now=now),
-            run_in_threadpool(account_reader.ai_calls_last_hour, now=now),
+            run_in_threadpool(reader.accounts, now=now),
+            run_in_threadpool(reader.ai_calls_last_hour, now=now),
         )
         return _json(
             {
                 "accounts": [ser.account_status(status) for status in statuses],
                 "call_activity": {
                     "last_hour": calls,
-                    "minimum_interval_seconds": (
-                        account_config.trigger.minimum_call_interval_seconds
-                    ),
+                    "minimum_interval_seconds": config.trigger.minimum_call_interval_seconds,
                 },
             }
         )
@@ -433,17 +385,6 @@ def _parse_cursor(request: Request) -> PageCursor | None:
     if raw is None:
         return None
     return decode_page_cursor(raw)
-
-
-def _merge_events(primary, assessment, *, limit: int):
-    """Merge the capital and assessment ledgers without duplicating shared facts."""
-
-    unique = {event.event_id: event for event in (*primary, *assessment)}
-    return sorted(
-        unique.values(),
-        key=lambda event: (event.at, event.event_id),
-        reverse=True,
-    )[:limit]
 
 
 async def _invalid_page_cursor(_request: Request, exc: Exception) -> JSONResponse:

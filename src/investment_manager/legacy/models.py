@@ -13,7 +13,7 @@ from investment_manager.execution.models import (
     ProgramExitCondition,
     Side,
 )
-from investment_manager.forecast.models import DirectionalView, ForecastOutcomeStatus
+from investment_manager.forecast.models import AssessmentOutcomeStatus, DirectionalView
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
@@ -298,9 +298,11 @@ class CandidateOutcome(FrozenModel):
             item is not None for item in (*outcome_values, *execution_values)
         ):
             raise ValueError("UNSCORABLE CandidateOutcome 不得伪造执行或收益")
-        if self.evaluation_version == "outcome-window-v8" and self.status == (
-            CandidateOutcomeStatus.SETTLED
-        ) and any(item is None for item in execution_values):
+        if (
+            self.evaluation_version == "outcome-window-v8"
+            and self.status == (CandidateOutcomeStatus.SETTLED)
+            and any(item is None for item in execution_values)
+        ):
             raise ValueError("outcome-window-v8 必须包含完整入场与可见性事实")
         if any(item is None for item in execution_values) and any(
             item is not None for item in execution_values
@@ -333,7 +335,7 @@ class AnalysisForecastOutcome(FrozenModel):
     directional_view: DirectionalView
     confidence: UnitInterval
     view_horizon_minutes: int = Field(gt=0)
-    status: ForecastOutcomeStatus
+    status: AssessmentOutcomeStatus
     signal_observed_at: datetime
     evaluation_at: datetime
     settled_at: datetime
@@ -358,13 +360,13 @@ class AnalysisForecastOutcome(FrozenModel):
             raise ValueError("方向预测评价时间必须晚于信号时间")
         if self.settled_at < self.evaluation_at:
             raise ValueError("方向预测不能在评价时间前结算")
-        if self.status == ForecastOutcomeStatus.UNSCORABLE:
+        if self.status == AssessmentOutcomeStatus.UNSCORABLE:
             if any(item is not None for item in (*market_facts, *directional_facts)):
                 raise ValueError("UNSCORABLE 方向预测不得伪造行情或方向结果")
             return self
         if any(item is None for item in market_facts):
             raise ValueError("可结算方向预测必须包含完整到期行情")
-        if self.status == ForecastOutcomeStatus.ABSTAINED:
+        if self.status == AssessmentOutcomeStatus.ABSTAINED:
             if self.directional_view != DirectionalView.UNCERTAIN or any(
                 item is not None for item in directional_facts
             ):

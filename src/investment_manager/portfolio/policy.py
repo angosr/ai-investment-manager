@@ -6,6 +6,10 @@ from investment_manager.execution.planning.planner import (
     InstrumentExecutionSpec,
     TradePlannerPolicy,
 )
+from investment_manager.forecast.contracts import (
+    ForecastBenchmarkProbability,
+    ForecastOutcomeBucket,
+)
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.portfolio.decision import PortfolioDecisionPolicy
 from investment_manager.portfolio.models import MockCandidateAuthorization
@@ -41,15 +45,51 @@ class CashCarryProgramPolicy(StrictConfig):
     version: str
     enabled: bool = False
     producer_id: str = Field(min_length=1)
-    producer_version: str = Field(min_length=1)
-    forecast_family: str = Field(min_length=1)
-    horizon_hours: int = Field(gt=0, le=720)
-    entry_validity_minutes: int = Field(gt=0, le=240)
+    producer_behavior_id: str = Field(min_length=1)
+    outcome_family_id: str = Field(min_length=1)
+    contract_version: str = Field(min_length=1)
+    horizon_minutes: int = Field(gt=0, le=43_200)
+    validity_minutes: int = Field(gt=0, le=43_200)
+    completion_deadline_seconds: int = Field(gt=0)
+    minimum_remaining_horizon_minutes: int = Field(gt=0)
+    outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
+    forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
     funding_lookback_hours: int = Field(gt=0, le=720)
     minimum_funding_samples: int = Field(ge=1, le=90)
     minimum_positive_funding_fraction: Decimal = Field(ge=0, le=1)
     funding_projection_haircut: Decimal = Field(ge=0, le=1)
-    estimated_variable_cost_bps: Decimal = Field(ge=0)
+    forecast_dispersion_bps: Decimal = Field(gt=0)
+
+
+class ContextForecastPolicy(StrictConfig):
+    """One pre-registered Context forecast question; no portfolio discretion."""
+
+    version: str
+    enabled: bool = False
+    producer_id: str = Field(min_length=1)
+    producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    outcome_family_id: str = Field(min_length=1)
+    contract_version: str = Field(min_length=1)
+    target_instrument_key: str = Field(min_length=1)
+    horizon_minutes: int = Field(gt=0, le=43_200)
+    cadence_minutes: int = Field(gt=0, le=43_200)
+    validity_minutes: int = Field(gt=0, le=1_440)
+    completion_deadline_seconds: int = Field(gt=0)
+    minimum_remaining_horizon_minutes: int = Field(gt=0)
+    maximum_world_model_age_seconds: int = Field(gt=0)
+    maximum_quote_age_seconds: int = Field(gt=0)
+    maximum_reanchor_move_bps: Decimal = Field(gt=0)
+    required_feature_keys: tuple[str, ...] = ()
+    outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
+    forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
+
+    @model_validator(mode="after")
+    def feature_keys_are_canonical(self):
+        if tuple(sorted(set(self.required_feature_keys))) != self.required_feature_keys:
+            raise ValueError("Context Forecast 必需特征必须唯一且排序")
+        if self.cadence_minutes > self.horizon_minutes:
+            raise ValueError("Context Forecast cadence 不能长于预测周期")
+        return self
 
 
 class CapitalPolicy(StrictConfig):
@@ -64,6 +104,7 @@ class CapitalPolicy(StrictConfig):
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
     cash_carry_program: CashCarryProgramPolicy | None = None
+    context_forecast: ContextForecastPolicy | None = None
     mock_candidate_authorizations: tuple[MockCandidateAuthorization, ...] = ()
 
     @model_validator(mode="after")
@@ -78,7 +119,11 @@ class CapitalPolicy(StrictConfig):
         if self.enabled and not self.decision.enabled:
             raise ValueError("启用 Capital 时 PortfolioDecision 必须启用")
         identities = tuple(
-            (item.producer_id, item.producer_version, item.forecast_family)
+            (
+                item.producer_id,
+                item.producer_behavior_id,
+                item.outcome_family_id,
+            )
             for item in self.mock_candidate_authorizations
         )
         if len(identities) > 1:
@@ -92,15 +137,33 @@ class CapitalPolicy(StrictConfig):
                 for item in self.mock_candidate_authorizations
                 if (
                     item.producer_id,
-                    item.producer_version,
-                    item.forecast_family,
+                    item.producer_behavior_id,
+                    item.outcome_family_id,
                 )
                 == (
                     program.producer_id,
-                    program.producer_version,
-                    program.forecast_family,
+                    program.producer_behavior_id,
+                    program.outcome_family_id,
                 )
             )
             if len(matching) != 1:
                 raise ValueError("启用 CashCarry Program 必须绑定唯一 Mock authorization")
+        context = self.context_forecast
+        if context is not None and context.enabled:
+            matching = tuple(
+                item
+                for item in self.mock_candidate_authorizations
+                if (
+                    item.producer_id,
+                    item.producer_behavior_id,
+                    item.outcome_family_id,
+                )
+                == (
+                    context.producer_id,
+                    context.producer_behavior_id,
+                    context.outcome_family_id,
+                )
+            )
+            if len(matching) != 1:
+                raise ValueError("启用 Context Forecast 必须绑定唯一 Mock authorization")
         return self

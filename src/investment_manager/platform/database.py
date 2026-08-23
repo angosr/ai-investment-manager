@@ -1,11 +1,35 @@
 from __future__ import annotations
 
-from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "c4a8e2f7b901"
+DATABASE_SCHEMA_VERSION = "g4b8d1e6f302"
+
+# Immutable audit remnants from the retired physical CAP/CONTEXT split.  They
+# have no repository or runtime consumer; declaring them here only prevents
+# schema tooling from mistaking preserved history for drift.
+historical_fact_store_identities = Table(
+    "historical_fact_store_identities",
+    metadata,
+    Column("singleton_key", String(32), primary_key=True),
+    Column("store_id", String(64), nullable=False),
+    Column("role", String(32), nullable=False),
+    Column("claimed_at", DateTime(timezone=True), nullable=False),
+)
+historical_fact_cohort_quarantines = Table(
+    "historical_fact_cohort_quarantines",
+    metadata,
+    Column("quarantine_id", String(128), primary_key=True),
+    Column("store_id", String(64), nullable=False),
+    Column("manifest_id", String(128), nullable=False),
+    Column("pipeline_id", String(128), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=True),
+    Column("reason_code", String(64), nullable=False),
+    Column("quarantined_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
 
 
 def build_engine(database_url: str, *, echo: bool = False) -> Engine:

@@ -111,7 +111,6 @@ decision_state:
     minimum_background_source_reliability: "0.70"
     # AI 投影的上限；精简后的通用分析契约约 2K，完整提示仍须低于 runtime 的 16K 硬上限。
     maximum_packet_characters: 12500
-    maximum_previous_context_drivers: 3
 
 strategy:
   strategy_id: price-trend
@@ -137,7 +136,6 @@ capital:
     version: portfolio-net-edge-v4
     portfolio_id: primary
     enabled: true
-    eligible_forecast_roles: [PROGRAM_BASE]
     minimum_conservative_net_bps: "5"
     maximum_total_exposure_fraction: "0.30"
     maximum_single_sleeve_fraction: "0.30"
@@ -152,7 +150,7 @@ capital:
     maximum_daily_loss: "200"
     maximum_drawdown_fraction: "0.05"
     maximum_gross_exposure_fraction: "0.30"
-    maximum_net_delta_fraction: "0.02"
+    maximum_net_delta_fraction: "0.15"
     maximum_instrument_fraction: "0.15"
     maximum_margin_fraction: "0.30"
     maximum_stress_loss_fraction: "0.01"
@@ -196,15 +194,91 @@ capital:
     version: cash-carry-program-v1
     enabled: false
     producer_id: btc-cash-carry
-    producer_version: btc-cash-carry-v1
-    forecast_family: btc-delta-neutral-carry
-    horizon_hours: 168
-    entry_validity_minutes: 30
+    producer_behavior_id: btc-cash-carry-behavior-v1
+    outcome_family_id: btc-delta-neutral-carry
+    contract_version: btc-cash-carry-7d-v1
+    horizon_minutes: 10080
+    validity_minutes: 30
+    completion_deadline_seconds: 30
+    minimum_remaining_horizon_minutes: 10020
+    outcome_buckets:
+      - bucket_id: LARGE_LOSS
+        upper_bps: "-100"
+        representative_bps: "-200"
+      - bucket_id: LOSS
+        lower_bps: "-100"
+        upper_bps: "0"
+        representative_bps: "-50"
+      - bucket_id: SMALL_GAIN
+        lower_bps: "0"
+        upper_bps: "100"
+        representative_bps: "50"
+      - bucket_id: LARGE_GAIN
+        lower_bps: "100"
+        representative_bps: "200"
+    forecast_benchmark:
+      - bucket_id: LARGE_LOSS
+        probability: "0.10"
+      - bucket_id: LOSS
+        probability: "0.40"
+      - bucket_id: SMALL_GAIN
+        probability: "0.40"
+      - bucket_id: LARGE_GAIN
+        probability: "0.10"
     funding_lookback_hours: 168
     minimum_funding_samples: 12
     minimum_positive_funding_fraction: "0.60"
     funding_projection_haircut: "0.50"
-    estimated_variable_cost_bps: "25"
+    forecast_dispersion_bps: "100"
+  context_forecast:
+    version: btc-context-forecast-v1
+    enabled: false
+    producer_id: codex-world-model-forecast
+    producer_behavior_id: "f2645412c69006cd99364a26f8236c449cd2450d78e96cfe1abeecf5a7140c41"
+    outcome_family_id: btc-spot-directional-4h
+    contract_version: btc-spot-directional-4h-v1
+    target_instrument_key: BINANCE:SPOT:BTCUSDT
+    horizon_minutes: 240
+    cadence_minutes: 240
+    validity_minutes: 60
+    completion_deadline_seconds: 1500
+    minimum_remaining_horizon_minutes: 210
+    maximum_world_model_age_seconds: 21600
+    maximum_quote_age_seconds: 300
+    maximum_reanchor_move_bps: "100"
+    required_feature_keys:
+      - asset_state:BTC.realized_volatility
+      - asset_state:BTC.return_fraction
+    outcome_buckets:
+      - bucket_id: LARGE_LOSS
+        upper_bps: "-150"
+        representative_bps: "-250"
+      - bucket_id: LOSS
+        lower_bps: "-150"
+        upper_bps: "-50"
+        representative_bps: "-100"
+      - bucket_id: FLAT
+        lower_bps: "-50"
+        upper_bps: "50"
+        representative_bps: "0"
+      - bucket_id: GAIN
+        lower_bps: "50"
+        upper_bps: "150"
+        representative_bps: "100"
+      - bucket_id: LARGE_GAIN
+        lower_bps: "150"
+        representative_bps: "250"
+    forecast_benchmark:
+      - bucket_id: LARGE_LOSS
+        probability: "0.10"
+      - bucket_id: LOSS
+        probability: "0.20"
+      - bucket_id: FLAT
+        probability: "0.40"
+      - bucket_id: GAIN
+        probability: "0.20"
+      - bucket_id: LARGE_GAIN
+        probability: "0.10"
 
 composition:
   version: calibrated-net-edge-v1
@@ -251,7 +325,6 @@ outcome_evaluation:
   version: outcome-window-v9
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
-  assessment_version: context-assessment-outcome-v1
   maximum_funding_gap_hours: 12
   window_hours: 24
   settlement_grace_minutes: 120
@@ -446,10 +519,10 @@ codex_runtime:
   version: codex-runtime-v7
   enabled: false
   isolation_verified: false
-  binary: /usr/bin/codex
-  bundle_root: /var/lib/investment-manager/codex-runs
+  binary: /usr/lib/node_modules/@openai/codex/bin/codex.js
+  bundle_root: /home/aiuser/work/ttt/market-intel/.runtime/codex-runs
   expected_cli_version: codex-cli 0.149.0
-  expected_binary_sha256: null
+  expected_binary_sha256: 134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
   model: gpt-5.6-sol
   reasoning_effort: high
   maximum_prompt_characters: 16000
@@ -462,7 +535,6 @@ codex_runtime:
 
 assessment:
   version: context-assessment-v31
-  opportunity_review_poll_seconds: 5
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
@@ -482,16 +554,16 @@ assessment:
 codex_accounts:
   version: local-directory-account-registry-v2
   accounts:
-    - account_id: codex-a
-      codex_home: /replace/with/approved/codex-a
+    - account_id: .codex
+      codex_home: /home/aiuser/.codex
       enabled: false
       capacity_weight: "1"
-    - account_id: codex-b
-      codex_home: /replace/with/approved/codex-b
+    - account_id: .codex2
+      codex_home: /home/aiuser/.codex2
       enabled: false
       capacity_weight: "1"
-    - account_id: codex-c
-      codex_home: /replace/with/approved/codex-c
+    - account_id: .codex_affine_pb
+      codex_home: /home/aiuser/.codex_affine_pb
       enabled: false
       capacity_weight: "1"
 

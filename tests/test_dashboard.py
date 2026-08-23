@@ -92,18 +92,12 @@ def test_assessment_evidence_catalog_resolves_derivative_state() -> None:
 
 
 def test_world_cognition_summary_is_not_reduced_to_current_product() -> None:
-    assessment = SimpleNamespace(capital_relevance=object(), drivers=())
+    assessment = SimpleNamespace(synthesis_horizon_hours=72, mechanisms=(object(), object()))
 
     summary = ser._assessment_summary(assessment)
 
-    assert summary == "当前未确认足以改变世界模型基准的主导因素"
+    assert summary == "联合世界模型 · 72 小时 · 2 个活跃机制"
     assert "BTC" not in summary
-
-    with_drivers = SimpleNamespace(
-        capital_relevance=object(),
-        drivers=(object(), object()),
-    )
-    assert ser._assessment_summary(with_drivers) == "当前世界模型识别出 2 个重要驱动"
 
 
 def test_health_uses_authoritative_per_scope_heartbeat() -> None:
@@ -406,7 +400,7 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
         ),
         target=SimpleNamespace(
             as_of=now,
-            reason_codes=("CASH_SELECTED_NO_ELIGIBLE_FORECAST",),
+            reason_codes=("CASH_SELECTED_NO_POSITIVE_NET_EDGE",),
         ),
     )
     reader = SimpleNamespace(

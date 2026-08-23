@@ -15,10 +15,6 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
-from investment_manager.forecast.context.settlement import (
-    AssessmentViewOutcomeSettler,
-    SqlAssessmentViewOutcomeStore,
-)
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
@@ -233,17 +229,13 @@ class OutcomeEvaluationSupervisorHealth:
     forecast_abstained: int = 0
     forecast_unscorable: int = 0
     target_forecast_settled: int = 0
-    target_forecast_abstained: int = 0
-    target_forecast_unscorable: int = 0
-    assessment_settled: int = 0
-    assessment_abstained: int = 0
-    assessment_unscorable: int = 0
+    target_forecast_outcome_unavailable: int = 0
+    target_forecast_pending: int = 0
     last_workflow_id: str | None = None
     last_error_class: str | None = None
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
     last_target_forecast_error_class: str | None = None
-    last_assessment_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -253,7 +245,6 @@ class OutcomeEvaluationSupervisor:
     candidate_settler: CandidateOutcomeSettler
     forecast_settler: AnalysisForecastOutcomeSettler
     target_forecast_settler: ForecastOutcomeSettler
-    assessment_settler: AssessmentViewOutcomeSettler
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -293,8 +284,10 @@ class OutcomeEvaluationSupervisor:
                     as_of=now,
                 )
                 self.health.target_forecast_settled += target_result.settled
-                self.health.target_forecast_abstained += target_result.abstained
-                self.health.target_forecast_unscorable += target_result.unscorable
+                self.health.target_forecast_outcome_unavailable += (
+                    target_result.outcome_unavailable
+                )
+                self.health.target_forecast_pending += target_result.pending
                 self.health.last_target_forecast_error_class = None
             except asyncio.CancelledError:
                 raise
@@ -302,20 +295,6 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_target_forecast_error_class != type(exc).__name__:
                     logger.exception("target forecast settlement failed")
                 self.health.last_target_forecast_error_class = type(exc).__name__
-            try:
-                assessment_result = await asyncio.to_thread(
-                    self.assessment_settler.settle, as_of=now
-                )
-                self.health.assessment_settled += assessment_result.settled
-                self.health.assessment_abstained += assessment_result.abstained
-                self.health.assessment_unscorable += assessment_result.unscorable
-                self.health.last_assessment_error_class = None
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if self.health.last_assessment_error_class != type(exc).__name__:
-                    logger.exception("context assessment settlement failed")
-                self.health.last_assessment_error_class = type(exc).__name__
             eligible = now - timedelta(minutes=policy.settlement_grace_minutes)
             window_seconds = int(window.total_seconds())
             window_end = datetime.fromtimestamp(
@@ -393,13 +372,6 @@ def assemble_outcome_evaluation(
                 maximum_spot_age_seconds=config.risk.maximum_market_age_seconds,
                 maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
                 maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
-                settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
-            ),
-            assessment_settler=AssessmentViewOutcomeSettler(
-                engine=engine,
-                store=SqlAssessmentViewOutcomeStore(engine),
-                evaluation_version=config.outcome_evaluation.assessment_version,
-                maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
                 settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
             ),
         ),

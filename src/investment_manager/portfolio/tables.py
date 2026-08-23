@@ -115,6 +115,13 @@ portfolio_target_forecasts = Table(
     ),
 )
 
+historical_portfolio_target_forecasts = Table(
+    "historical_portfolio_target_forecasts",
+    metadata,
+    Column("target_id", String(128), primary_key=True),
+    Column("forecast_id", String(128), primary_key=True),
+)
+
 capital_cycle_records = Table(
     "capital_cycle_records",
     metadata,

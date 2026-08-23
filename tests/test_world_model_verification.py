@@ -7,7 +7,6 @@ from investment_manager.forecast.context.verification import (
 )
 from investment_manager.forecast.models import (
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
     ContextCausalNode,
     ContextMechanism,
     ContextMechanismRelationship,
@@ -75,7 +74,6 @@ def _assessment() -> ContextAssessment:
         next_review_at=NOW + timedelta(hours=1),
     )
     return ContextAssessment.model_construct(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V2,
         assessment_id="assessment-1",
         available_at=NOW,
         mechanisms=(mechanism,),

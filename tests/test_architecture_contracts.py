@@ -30,16 +30,11 @@ CLI_CONTRACT = {
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": (
-        "config,database_url,assessment_database_url,assessment_config,"
-        "assessment_release_manifest,capital_config,capital_release_manifest,"
-        "release_manifest,host,port,web_dist"
+        "config,database_url,release_manifest,host,port,web_dist"
     ),
     "diagnose-legacy-analysis-forecasts": (
         "config,database_url,window_start,window_end,published_at,pipeline_version,"
         "analysis_behavior_hash,minimum_non_overlapping_samples"
-    ),
-    "evaluate-assessment-forward-plan": (
-        "database_url,plan_id,published_at,capital_database_url,evaluation_catalog"
     ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
@@ -63,21 +58,6 @@ CLI_CONTRACT = {
         "blind_evaluation_catalog,starting_equity,spread_bps,include_trades,register_only"
     ),
     "phase-a-audit": "config,project_root",
-    "quarantine-wrong-store-cohort": (
-        "database_url,manifest_id,pipeline_id,expected_role,evidence_ref,analysis_behavior_hash"
-    ),
-    "register-assessment-forward-plan": (
-        "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
-        "analysis_behavior_hash,minimum_non_overlapping_samples"
-    ),
-    "register-context-capital-forward-plan": (
-        "config,database_url,release_manifest,capital_config,capital_release_manifest,"
-        "plan_id,signal_window_start,signal_window_end,minimum_opportunities"
-    ),
-    "opportunity-review-service": (
-        "config,database_url,release_manifest,capital_database_url,capital_config,"
-        "capital_release_manifest"
-    ),
     "replay-event-triggers": (
         "config,database_url,event_dataset_id,replay_start,replay_end,"
         "analysis_duration_seconds,admission_order,event_catalog,include_batches"
@@ -202,9 +182,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 82
+    assert len(contract) == 90
     assert content_hash(contract) == (
-        "fe4af07f40ce76c4436a78af7ee6b8504fa36fe1ddab33814ca779e4fc8cf0b1"
+        "cf9a3eb0287fb37572f6c29c0e28c6b78b187e4c36a4e5b99da98bd3e9b388cd"
     )
 
 
@@ -220,11 +200,6 @@ def test_cli_subcommand_parameter_contract_is_frozen() -> None:
 
 def test_cli_commands_are_owned_by_change_reason() -> None:
     expected = {
-        "entrypoints/cli/assessment_commands.py": {
-            "evaluate-assessment-forward-plan",
-            "register-assessment-forward-plan",
-            "register-context-capital-forward-plan",
-        },
         "entrypoints/cli/commands.py": {
             "build-edge-calibration",
             "diagnose-legacy-analysis-forecasts",
@@ -239,12 +214,8 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "binance-testnet-audit",
             "binance-testnet-order-test",
         },
-        "entrypoints/cli/fact_store_commands.py": {
-            "quarantine-wrong-store-cohort",
-        },
         "entrypoints/cli/service_commands.py": {
             "assessment-worker",
-            "opportunity-review-service",
             "submit-context-assessment",
             "market-stream",
             "trigger-service",
@@ -289,22 +260,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         assert actual == names
 
 
-def test_context_assessment_management_path_does_not_import_legacy() -> None:
-    owned_paths = (
-        PACKAGE_ROOT / "entrypoints" / "cli" / "assessment_commands.py",
-        PACKAGE_ROOT / "governance" / "evaluation" / "assessment.py",
-    )
-    for path in owned_paths:
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("investment_manager.legacy"), path
-            if isinstance(node, ast.Import):
-                assert not any(
-                    alias.name.startswith("investment_manager.legacy")
-                    for alias in node.names
-                ), path
-
-
 def test_current_internal_module_graph_has_no_cycles() -> None:
     graph = _internal_import_graph()
     visiting: set[str] = set()
@@ -345,12 +300,15 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "tables.py",
         },
             "forecast": {
+                "contract_repository.py",
+                "contracts.py",
                 "models.py",
-            "programs.py",
-            "policy.py",
-            "repository.py",
-            "settlement.py",
-            "tables.py",
+                "programs.py",
+                "policy.py",
+                "repository.py",
+                "results.py",
+                "settlement.py",
+                "tables.py",
         },
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
@@ -601,7 +559,7 @@ def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
     owners = {
         "DirectionalView": "forecast/models.py",
         "EdgeCalibration": "forecast/models.py",
-        "ForecastOutcomeStatus": "forecast/models.py",
+        "ForecastResultKind": "forecast/results.py",
         "PanelEvidence": "state/panel.py",
         "PanelSnapshot": "state/panel.py",
         "MetricObservation": "governance/evaluation/metrics.py",
@@ -893,26 +851,21 @@ def test_scheduling_tables_and_entry_modules_have_one_owner() -> None:
 
 def test_new_forecast_chain_has_one_domain_owner() -> None:
     moved_models = {
-        "AssessmentUncertainty",
         "BaseForecast",
         "CalibratedForecast",
         "ContextAssessment",
-        "ContextView",
         "ExposureDirection",
         "ForecastLeg",
-        "ForecastReferencePrice",
-        "ForecastRole",
         "ForecastTarget",
-        "PricedState",
     }
     owned_tables = {
-        "assessment_view_outcomes",
         "codex_account_capacity",
         "codex_account_leases",
         "codex_runs",
         "context_assessments",
         "forecast_outcomes",
         "forecasts",
+        "historical_assessment_view_outcomes",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

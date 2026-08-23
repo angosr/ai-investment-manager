@@ -24,11 +24,9 @@ from investment_manager.forecast.context.executor import (
     AssessmentExecution,
     AssessmentExecutionStatus,
 )
-from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.tables import (
     assessment_executions,
-    assessment_view_outcomes,
     codex_account_capacity,
     codex_account_leases,
     codex_runs,
@@ -66,11 +64,6 @@ from investment_manager.market.tables import (
     market_trades,
     perpetual_market_states,
     perpetual_quotes,
-)
-from investment_manager.platform.fact_store import (
-    analysis_behavior_not_quarantined,
-    manifest_not_quarantined,
-    pipeline_not_quarantined,
 )
 from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
@@ -110,10 +103,9 @@ class CycleRow:
 
 @dataclass(frozen=True, slots=True)
 class AssessmentRecord:
-    """One current ContextAssessment and its independently settled views."""
+    """One current WorldModel and the packet that produced it."""
 
     assessment: ContextAssessment
-    outcomes: tuple[AssessmentViewOutcome, ...] = ()
     packet: DecisionPacket | None = None
 
 
@@ -260,11 +252,6 @@ class DashboardReader:
     ) -> list[AssessmentRecord]:
         query = (
             select(context_assessments.c.payload)
-            .where(
-                analysis_behavior_not_quarantined(
-                    context_assessments.c.analysis_behavior_hash
-                )
-            )
             .order_by(
                 context_assessments.c.available_at.desc(),
                 context_assessments.c.assessment_id.desc(),
@@ -298,9 +285,6 @@ class DashboardReader:
                     )
                     .where(
                         context_assessments.c.assessment_id == assessment_id,
-                        analysis_behavior_not_quarantined(
-                            context_assessments.c.analysis_behavior_hash
-                        ),
                     )
                 )
                 .mappings()
@@ -308,24 +292,9 @@ class DashboardReader:
             )
             if row is None:
                 return None
-            outcome_payloads = (
-                connection.execute(
-                    select(assessment_view_outcomes.c.payload)
-                    .where(assessment_view_outcomes.c.assessment_id == assessment_id)
-                    .order_by(
-                        assessment_view_outcomes.c.asset,
-                        assessment_view_outcomes.c.horizon_minutes,
-                    )
-                )
-                .scalars()
-                .all()
-            )
         assessment = ContextAssessment.model_validate(row["assessment_payload"])
         return AssessmentRecord(
             assessment=assessment,
-            outcomes=tuple(
-                AssessmentViewOutcome.model_validate(payload) for payload in outcome_payloads
-            ),
             packet=DecisionPacket.model_validate(row["packet_payload"]),
         )
 
@@ -344,9 +313,6 @@ class DashboardReader:
                 .where(
                     context_assessments.c.available_at >= cutoff,
                     context_assessments.c.available_at <= now,
-                    analysis_behavior_not_quarantined(
-                        context_assessments.c.analysis_behavior_hash
-                    ),
                 )
                 .order_by(
                     context_assessments.c.available_at.desc(),
@@ -492,9 +458,7 @@ class DashboardReader:
             .limit(limit)
         )
         if cursor is not None:
-            query = query.where(
-                older_than(normalized_events.c.event_time, cursor_identity, cursor)
-            )
+            query = query.where(older_than(normalized_events.c.event_time, cursor_identity, cursor))
         with self._engine.connect() as connection:
             payloads = connection.execute(query).scalars().all()
         parsed = tuple(IntelligenceEvent.model_validate(payload) for payload in payloads)
@@ -570,7 +534,6 @@ class DashboardReader:
             )
             .where(
                 analysis_trigger_events.c.trigger_type != "INTELLIGENCE_INSERTED",
-                pipeline_not_quarantined(analysis_trigger_events.c.pipeline_id),
             )
             .order_by(
                 analysis_trigger_events.c.occurred_at.desc(),
@@ -862,8 +825,6 @@ class DashboardReader:
                 ).where(
                     analysis_trigger_plans.c.pipeline_id == pipeline,
                     analysis_trigger_plans.c.is_current.is_(True),
-                    pipeline_not_quarantined(analysis_trigger_plans.c.pipeline_id),
-                    manifest_not_quarantined(analysis_trigger_plans.c.manifest_id),
                 )
             ).all()
             manifest_ids = {manifest_id for _, manifest_id, _ in plan_rows}
@@ -880,43 +841,16 @@ class DashboardReader:
             if assessment_mode:
                 overdue_analyses = (
                     select(
-                        context_assessments.c.assessment_id.label("proposal_id"),
-                        decision_packets.c.as_of.label("analysis_at"),
+                        literal(None).label("proposal_id"),
+                        literal(None).label("analysis_at"),
                     )
-                    .join(
-                        decision_packets,
-                        decision_packets.c.packet_id == context_assessments.c.packet_id,
-                    )
-                    .outerjoin(
-                        assessment_view_outcomes,
-                        assessment_view_outcomes.c.assessment_id
-                        == context_assessments.c.assessment_id,
-                    )
-                    .where(
-                        decision_packets.c.as_of <= forecast_cutoff,
-                        context_assessments.c.analysis_behavior_hash == behavior_hash,
-                        analysis_behavior_not_quarantined(
-                            context_assessments.c.analysis_behavior_hash
-                        ),
-                    )
-                    .group_by(
-                        context_assessments.c.assessment_id,
-                        context_assessments.c.view_count,
-                        decision_packets.c.as_of,
-                    )
-                    .having(
-                        func.count(assessment_view_outcomes.c.outcome_id)
-                        < context_assessments.c.view_count
-                    )
+                    .where(False)
                     .subquery()
                 )
                 latest_assessment_completed = connection.execute(
                     select(func.max(context_assessments.c.available_at)).where(
                         context_assessments.c.analysis_behavior_hash == behavior_hash,
                         context_assessments.c.available_at <= now,
-                        analysis_behavior_not_quarantined(
-                            context_assessments.c.analysis_behavior_hash
-                        ),
                     )
                 ).scalar_one_or_none()
                 if latest_assessment_completed is not None:

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -14,10 +15,19 @@ from investment_manager.forecast.context.application import (
     AssessmentCommand,
     AssessmentWorkflowStatus,
 )
-from investment_manager.forecast.context.contract import AssessStructuredOutput
+from investment_manager.forecast.context.contract import WorldModelStructuredOutput
+from investment_manager.forecast.context.estimate import (
+    ContextForecastStructuredOutput,
+    ContextForecastTargetState,
+)
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
+)
+from investment_manager.forecast.context.producer import (
+    ContextForecastProducer,
+    MarketContextTargetStateProvider,
+    context_spot_forecast_contract,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.service import (
@@ -26,33 +36,34 @@ from investment_manager.forecast.context.service import (
     AssessmentTemporalWorker,
     WorldModelReviewScheduler,
 )
-from investment_manager.forecast.context.settlement import (
-    AssessmentViewOutcome,
-    AssessmentViewOutcomeSettler,
-    SqlAssessmentViewOutcomeStore,
-)
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import (
+    ForecastNoEstimate,
+    ForecastPermission,
+    ForecastProducerBinding,
+    ForecastProducerKind,
+)
 from investment_manager.forecast.models import (
-    AssessmentUncertainty,
     ContextAssessment,
-    ContextAssessmentSchemaVersion,
     ContextCausalNode,
     ContextMechanism,
     ContextMechanismRelationship,
     ContextTransmissionStage,
     ContextVerificationPredicate,
     ContextVerificationTest,
-    ContextView,
-    DirectionalView,
-    PricedState,
 )
-from investment_manager.forecast.tables import assessment_executions, assessment_view_outcomes
-from investment_manager.market.models import MarketTrade
-from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import BaseForecast
+from investment_manager.forecast.tables import assessment_executions
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.market.models import ClosedMarketBar, MarketQuote, MarketTrade
+from investment_manager.market.repository import InMemoryMarketDataStore, SqlMarketDataStore
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.models import build_initial_trigger_plan
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.schema import create_schema
+from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import (
     DecisionPacket,
     PacketAssetState,
@@ -120,8 +131,6 @@ def _packet() -> DecisionPacket:
             ),
         ),
         facts=(),
-        active_hypotheses=(),
-        previous_assessment_refs=(),
         data_quality_codes=(),
         coverage_gap_codes=(),
         missing_fact_revision_ids=(),
@@ -139,44 +148,47 @@ def _assessment() -> ContextAssessment:
         analysis_behavior_hash="b" * 64,
         decision_packet_hash=_packet().content_hash,
         trigger_ids=("delta-1",),
-        market_mechanism="A policy revision changes the discount-rate path.",
-        views=(
-            ContextView(
-                asset="BTC",
-                horizon_minutes=240,
-                direction=DirectionalView.UP,
-                already_priced=PricedState.PARTIAL,
-                uncertainty=AssessmentUncertainty.MEDIUM,
-                evidence_ids=("delta-1",),
-                invalidation_conditions=("policy-reversal",),
+        synthesis="政策修订正在改变贴现率路径。",
+        synthesis_horizon_hours=24,
+        mechanisms=(
+            ContextMechanism(
+                mechanism_id="mechanism-1",
+                relationship=ContextMechanismRelationship.SUPPORTS,
+                claim="政策修订正在改变贴现率路径。",
+                horizon_hours=24,
+                causal_chain=(
+                    ContextCausalNode(statement="政策发生修订。", evidence_ids=("delta-1",)),
+                    ContextCausalNode(statement="贴现率路径改变。", evidence_ids=("delta-1",)),
+                ),
+                transmission_stage=ContextTransmissionStage.PROPAGATING,
+                verification_tests=(
+                    ContextVerificationTest(
+                        feature_selector="asset_state:BTC.return_fraction",
+                        evaluation_window_minutes=240,
+                        supports_predicate=ContextVerificationPredicate(
+                            operator="GT", value=Decimal("0")
+                        ),
+                        contradicts_predicate=ContextVerificationPredicate(
+                            operator="LT", value=Decimal("0")
+                        ),
+                    ),
+                ),
+                invalidation_conditions=("政策撤回",),
+                next_review_at=NOW + timedelta(hours=1),
             ),
         ),
     )
 
 
-def _reference_trade(**updates) -> MarketTrade:
-    values = {
-        "trade_id": "trade-reference-1",
-        "symbol": "BTCUSDT",
-        "aggregate_trade_id": 1,
-        "event_time": NOW + timedelta(seconds=19),
-        "observed_at": NOW + timedelta(seconds=20),
-        "price": Decimal("70010"),
-        "quantity": Decimal("1"),
-        "buyer_is_maker": False,
-        "source": "binance",
-    }
-    values.update(updates)
-    return MarketTrade(**values)
-
-
 def _world_output_payload(claim: str) -> dict:
     return {
-        "assessment": {
-            "hypotheses": [
+        "world_model": {
+            "synthesis": claim,
+            "synthesis_horizon_hours": 24,
+            "mechanisms": [
                 {
                     "continuity_ref": None,
-                    "role": "PRIMARY",
+                    "relationship": "SUPPORTS",
                     "claim": claim,
                     "horizon_hours": 24,
                     "causal_chain": [
@@ -189,14 +201,20 @@ def _world_output_payload(claim: str) -> dict:
                             "evidence_ids": ["fact-revision-1"],
                         },
                     ],
+                    "transmission_stage": "PROPAGATING",
                     "conflicting_evidence_ids": [],
-                    "next_observation": "观察利率与风险资产响应。",
+                    "verification_tests": [
+                        {
+                            "feature_selector": "asset_state:BTC.return_fraction",
+                            "evaluation_window_minutes": 240,
+                            "supports_predicate": {"operator": "GT", "value": "0"},
+                            "contradicts_predicate": {"operator": "LT", "value": "0"},
+                        }
+                    ],
                     "invalidation_conditions": ["政策变化被正式撤回"],
                     "next_review_at": (NOW + timedelta(hours=1)).isoformat(),
                 }
             ],
-            "capital_implication": None,
-            "decision_blockers": [],
             "event_relevance_updates": [],
         }
     }
@@ -204,23 +222,21 @@ def _world_output_payload(claim: str) -> dict:
 
 def test_assessment_output_boundary_rejects_duplicate_evidence_items() -> None:
     payload = _world_output_payload("政策变化正在通过风险溢价影响资产定价。")
-    payload["assessment"]["hypotheses"][0]["causal_chain"][0]["evidence_ids"] = [
+    payload["world_model"]["mechanisms"][0]["causal_chain"][0]["evidence_ids"] = [
         "delta-1",
         "delta-1",
     ]
 
     with pytest.raises(ValidationError, match="不能重复引用证据"):
-        AssessStructuredOutput.model_validate(payload)
+        WorldModelStructuredOutput.model_validate(payload)
 
 
-def test_assessment_output_requires_exactly_one_primary_hypothesis() -> None:
+def test_assessment_output_requires_at_least_one_mechanism() -> None:
     payload = _world_output_payload("当前最可能的解释。")
-    duplicate = dict(payload["assessment"]["hypotheses"][0])
-    duplicate["claim"] = "另一个主解释。"
-    payload["assessment"]["hypotheses"].append(duplicate)
+    payload["world_model"]["mechanisms"] = []
 
-    with pytest.raises(ValidationError, match="只能包含一个 PRIMARY"):
-        AssessStructuredOutput.model_validate(payload)
+    with pytest.raises(ValidationError, match="at least 1"):
+        WorldModelStructuredOutput.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -233,99 +249,9 @@ def test_assessment_output_requires_exactly_one_primary_hypothesis() -> None:
 def test_language_preference_does_not_become_a_hardcoded_validity_gate(
     text: str,
 ) -> None:
-    output = AssessStructuredOutput.model_validate(_world_output_payload(text))
+    output = WorldModelStructuredOutput.model_validate(_world_output_payload(text))
 
-    assert output.assessment.hypotheses[0].claim == text
-
-
-def test_assessment_view_outcome_charges_latency_and_settles_once() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    create_market_schema(engine)
-    evidence = SqlContextAssessmentStore(engine)
-    packet = _packet()
-    assessment = _assessment()
-    evidence.record_packet(packet)
-    evidence.record_assessment(packet.packet_id, assessment)
-    market = SqlMarketDataStore(engine)
-    reference = _reference_trade()
-    evaluation_at = assessment.available_at + timedelta(minutes=240)
-    exit_trade = _reference_trade(
-        trade_id="trade-exit-1",
-        aggregate_trade_id=2,
-        event_time=evaluation_at,
-        observed_at=evaluation_at,
-        price=Decimal("70710.10"),
-    )
-    market.put_trade(reference)
-    market.put_trade(exit_trade)
-    store = SqlAssessmentViewOutcomeStore(engine)
-    settler = AssessmentViewOutcomeSettler(
-        engine=engine,
-        store=store,
-        evaluation_version="assessment-outcome-v1",
-        maximum_market_age_seconds=30,
-        settlement_grace_minutes=5,
-    )
-
-    pending_query = {
-        "analysis_behavior_hash": assessment.analysis_behavior_hash,
-        "evaluation_version": "assessment-outcome-v1",
-        "signal_window_start": NOW,
-        "signal_window_end": NOW + timedelta(hours=1),
-    }
-    assert store.pending_assessment_count(**pending_query) == 1
-    before_maturity = settler.settle(as_of=evaluation_at - timedelta(seconds=1))
-    settled = settler.settle(as_of=evaluation_at + timedelta(seconds=1))
-    replayed = settler.settle(as_of=evaluation_at + timedelta(seconds=2))
-
-    assert before_maturity.pending == 1
-    assert settled.settled == 1
-    assert replayed.settled == 0
-    assert store.pending_assessment_count(**pending_query) == 0
-    with engine.connect() as connection:
-        payload = connection.execute(select(assessment_view_outcomes.c.payload)).scalar_one()
-    outcome = AssessmentViewOutcome.model_validate(payload)
-    assert outcome.reference_price == Decimal("70010")
-    assert outcome.exit_price == Decimal("70710.10")
-    assert outcome.market_return_bps == Decimal("100")
-    assert outcome.directional_return_bps == Decimal("100")
-    assert outcome.signal_observed_at == assessment.available_at
-    assert store.visible_outcomes(
-        analysis_behavior_hash=assessment.analysis_behavior_hash,
-        evaluation_version="assessment-outcome-v1",
-        signal_window_start=NOW,
-        signal_window_end=NOW + timedelta(hours=1),
-        published_at=evaluation_at + timedelta(seconds=1),
-    ) == (outcome,)
-
-
-def test_missing_signal_time_market_data_is_unscorable_not_packet_price() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    create_market_schema(engine)
-    evidence = SqlContextAssessmentStore(engine)
-    packet = _packet()
-    assessment = _assessment()
-    evidence.record_packet(packet)
-    evidence.record_assessment(packet.packet_id, assessment)
-    evaluation_at = assessment.available_at + timedelta(minutes=240)
-    store = SqlAssessmentViewOutcomeStore(engine)
-
-    result = AssessmentViewOutcomeSettler(
-        engine=engine,
-        store=store,
-        evaluation_version="assessment-outcome-v1",
-        maximum_market_age_seconds=30,
-        settlement_grace_minutes=5,
-    ).settle(as_of=evaluation_at + timedelta(minutes=6))
-
-    assert result.unscorable == 1
-    with engine.connect() as connection:
-        payload = connection.execute(select(assessment_view_outcomes.c.payload)).scalar_one()
-    outcome = AssessmentViewOutcome.model_validate(payload)
-    assert outcome.reference_price is None
-    assert outcome.reason_code == ("REFERENCE_MARKET_DATA_MISSING_AT_ASSESSMENT_AVAILABILITY")
+    assert output.world_model.mechanisms[0].claim == text
 
 
 class _CountingContextAnalyst:
@@ -361,6 +287,254 @@ class _FailingContextAnalyst:
             output=None,
             reason_code="CODEX_ACCOUNTS_UNAVAILABLE",
         )
+
+
+class _FixedProbabilityAnalyst:
+    def __init__(self, completed_at: datetime) -> None:
+        self.completed_at = completed_at
+        self.calls = 0
+
+    def estimate(self, *, slot, assessment, packet, target_state) -> AnalystResult:
+        self.calls += 1
+        return AnalystResult(
+            success=True,
+            output=ContextForecastStructuredOutput.model_validate(
+                {
+                    "forecast": {
+                        "decision_slot_id": slot.slot_id,
+                        "outcome_probabilities": [
+                            {"bucket_id": "LARGE_LOSS", "probability": "0.05"},
+                            {"bucket_id": "LOSS", "probability": "0.10"},
+                            {"bucket_id": "FLAT", "probability": "0.20"},
+                            {"bucket_id": "GAIN", "probability": "0.35"},
+                            {"bucket_id": "LARGE_GAIN", "probability": "0.30"},
+                        ],
+                        "mechanism_contributions": [
+                            {
+                                "mechanism_id": assessment.mechanisms[0].mechanism_id,
+                                "effect": "UPSIDE",
+                                "rationale": "政策传导对未来四小时风险偏好形成可证伪上行贡献。",
+                            }
+                        ],
+                        "evidence_refs": ["delta-1"],
+                        "invalidation_conditions": ["政策传导在目标窗口内被市场响应反驳"],
+                    }
+                }
+            ),
+            reason_code="CODEX_OK",
+            completed_at=self.completed_at,
+        )
+
+
+class _PacketTargetStateProvider:
+    def __init__(self, packet: DecisionPacket) -> None:
+        self.packet = packet
+
+    def build(self, *, as_of: datetime) -> ContextForecastTargetState:
+        return ContextForecastTargetState(
+            as_of=as_of,
+            asset_states=self.packet.asset_states,
+            derivative_states=self.packet.derivative_states,
+            input_refs=("target-state-test-ref",),
+        )
+
+
+def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
+    config = load_config("config/investment-manager.yaml")
+    policy = config.capital.context_forecast
+    assert policy is not None
+    instrument = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.key == policy.target_instrument_key
+    )
+    contract = context_spot_forecast_contract(
+        policy=policy,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.CONTEXT.value,
+            policy.producer_id,
+            policy.producer_behavior_id,
+            ForecastPermission.MOCK.value,
+            policy.required_feature_keys,
+            policy.maximum_world_model_age_seconds,
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=policy.producer_id,
+        producer_behavior_id=policy.producer_behavior_id,
+        permission=ForecastPermission.MOCK,
+        required_feature_keys=policy.required_feature_keys,
+        maximum_world_model_age_seconds=policy.maximum_world_model_age_seconds,
+    )
+    packet = _packet()
+    return ContextForecastProducer(
+        policy=policy,
+        contract=contract,
+        binding=binding,
+        market=SqlMarketDataStore(engine),
+        contexts=SqlContextAssessmentStore(engine),
+        contracts=SqlForecastContractStore(engine),
+        forecasts=SqlForecastStore(engine),
+        instrument=instrument,
+        analyst=analyst,
+        target_states=_PacketTargetStateProvider(packet),
+        analysis_scope="crypto-portfolio",
+    )
+
+
+def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    assessment = contexts.record_assessment(packet.packet_id, _assessment())
+    completed_at = assessment.available_at + timedelta(seconds=10)
+    analyst = _FixedProbabilityAnalyst(completed_at)
+    producer = _context_forecast_producer(engine, analyst)
+    market = SqlMarketDataStore(engine)
+    for index, observed_at in enumerate((NOW, completed_at), start=1):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"context-quote-{index}",
+                symbol="BTCUSDT",
+                observed_at=observed_at,
+                bid=Decimal("69999"),
+                bid_quantity=Decimal("10"),
+                ask=Decimal("70001"),
+                ask_quantity=Decimal("10"),
+                update_id=index,
+                source="test",
+            )
+        )
+
+    first = producer.produce(as_of=assessment.available_at)
+    replayed = producer.produce(as_of=assessment.available_at)
+
+    assert isinstance(first, BaseForecast)
+    assert replayed == first
+    assert first.world_model_id == assessment.assessment_id
+    assert first.expected_gross_bps == Decimal("87.5")
+    assert first.mechanism_contributions[0].mechanism_id == "mechanism-1"
+    assert first.evidence_refs == ("delta-1",)
+    assert first.analysis_input_json is not None
+    analysis_input = json.loads(first.analysis_input_json)
+    assert analysis_input["purpose"] == "FORECAST_ESTIMATE"
+    assert datetime.fromisoformat(
+        analysis_input["decision_slot"]["information_cutoff_at"]
+    ) == assessment.available_at
+    assert datetime.fromisoformat(analysis_input["target_state"]["as_of"]) == (
+        assessment.available_at
+    )
+    assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
+    assert first.analysis_input_hash == content_hash(analysis_input)
+    assert analyst.calls == 1
+
+
+def test_context_forecast_records_stale_world_model_without_calling_codex() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    contexts.record_assessment(packet.packet_id, _assessment())
+    analyst = _FixedProbabilityAnalyst(NOW + timedelta(hours=2))
+    producer = _context_forecast_producer(engine, analyst)
+    SqlMarketDataStore(engine).put_quote(
+        MarketQuote(
+            quote_id="context-stale-cutoff",
+            symbol="BTCUSDT",
+            observed_at=NOW,
+            bid=Decimal("69999"),
+            bid_quantity=Decimal("10"),
+            ask=Decimal("70001"),
+            ask_quantity=Decimal("10"),
+            update_id=1,
+            source="test",
+        )
+    )
+
+    result = producer.produce(as_of=NOW + timedelta(hours=2))
+
+    assert isinstance(result, ForecastNoEstimate)
+    assert result.reason.value == "WORLD_MODEL_STALE"
+    assert result.detail == "WORLD_MODEL_MECHANISM_REVIEW_DUE"
+    assert analyst.calls == 0
+
+
+def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
+    config = load_config("config/investment-manager.yaml")
+    policy = config.capital.context_forecast
+    assert policy is not None
+    spot = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.key == policy.target_instrument_key
+    )
+    market = InMemoryMarketDataStore()
+    closes = (Decimal("70000"), Decimal("70100"), Decimal("70200"))
+    for index, close in enumerate(closes):
+        open_at = NOW - timedelta(minutes=15 - index * 5)
+        market.put_bar(
+            ClosedMarketBar(
+                symbol=spot.symbol,
+                interval="5m",
+                open_time=open_at,
+                close_time=open_at + timedelta(minutes=5),
+                observed_at=open_at + timedelta(minutes=5),
+                open=close - Decimal("20"),
+                high=close + Decimal("30"),
+                low=close - Decimal("30"),
+                close=close,
+                volume=Decimal("10") + index,
+                source="test",
+            )
+        )
+    market.put_quote(
+        MarketQuote(
+            quote_id="fresh-target-quote",
+            symbol=spot.symbol,
+            observed_at=NOW,
+            bid=Decimal("70199"),
+            bid_quantity=Decimal("2"),
+            ask=Decimal("70201"),
+            ask_quantity=Decimal("2"),
+            source="test",
+        )
+    )
+    market.put_trade(
+        MarketTrade(
+            trade_id="fresh-target-trade",
+            symbol=spot.symbol,
+            aggregate_trade_id=1,
+            event_time=NOW,
+            observed_at=NOW,
+            price=Decimal("70200"),
+            quantity=Decimal("0.1"),
+            buyer_is_maker=False,
+            source="test",
+        )
+    )
+
+    state = MarketContextTargetStateProvider(
+        market=market,
+        feature_policy=config.feature,
+        spot=spot,
+        perpetual=None,
+        interval="5m",
+        bar_window=3,
+        funding_lookback_hours=24,
+        maximum_quote_skew_seconds=15,
+    ).build(as_of=NOW)
+
+    assert state.as_of == NOW
+    assert state.asset_states[0].last == Decimal("70200")
+    assert state.asset_states[0].return_fraction > 0
+    assert "asset_state:BTC.realized_volatility" in state.feature_selectors
 
 
 def test_assessment_execution_replay_never_calls_codex_twice() -> None:
@@ -443,7 +617,6 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
         next_review_at=NOW + timedelta(minutes=5),
     )
     world_model = ContextAssessment(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V2,
         assessment_id="world-model-review-1",
         analysis_scope=packet.analysis_scope,
         mandate_version=packet.mandate_version,
@@ -481,6 +654,8 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     scheduler.reconcile_latest(packet.analysis_scope)
     first = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)
     scheduler.schedule(world_model)
+    scheduler.publish_update(world_model)
+    scheduler.publish_update(world_model)
     replayed = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)
 
     assert replayed == first
@@ -489,6 +664,18 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     wakeup = first.scheduled_wakeups[0]
     assert wakeup.wake_at == mechanism.next_review_at
     assert wakeup.hypothesis == f"{WORLD_MODEL_REVIEW_MARKER}{world_model.assessment_id}"
+    update_messages = tuple(
+        item
+        for item in triggers.pending_outbox(
+            as_of=world_model.available_at + timedelta(minutes=20)
+        )
+        if item.message_kind == "TRIGGER_CREATED"
+        and item.payload["trigger"]["trigger_type"] == "WORLD_MODEL_UPDATED"
+    )
+    assert len(update_messages) == 1
+    assert update_messages[0].payload["trigger"]["evidence_ids"] == [
+        world_model.assessment_id
+    ]
 
 
 def test_assessment_command_identity_covers_packet_and_behavior() -> None:

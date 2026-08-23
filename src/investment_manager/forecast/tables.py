@@ -65,7 +65,6 @@ context_assessments = Table(
     Column("analysis_scope", String(128), nullable=False),
     Column("available_at", DateTime(timezone=True), nullable=False),
     Column("analysis_behavior_hash", String(64), nullable=False),
-    Column("view_count", Integer, nullable=False),
     Column("payload", JSON, nullable=False),
     UniqueConstraint(
         "packet_id",
@@ -129,8 +128,103 @@ Index(
     context_mechanism_observations.c.observed_at,
 )
 
-opportunity_reviews = Table(
-    "opportunity_reviews",
+forecast_contracts = Table(
+    "forecast_contracts",
+    metadata,
+    Column("contract_id", String(128), primary_key=True),
+    Column("contract_version", String(128), nullable=False),
+    Column("outcome_family_id", String(128), nullable=False),
+    Column("target_id", String(128), nullable=False),
+    Column("horizon_minutes", Integer, nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_forecast_contracts_family_version",
+    forecast_contracts.c.outcome_family_id,
+    forecast_contracts.c.contract_version,
+)
+
+forecast_producer_bindings = Table(
+    "forecast_producer_bindings",
+    metadata,
+    Column("binding_id", String(128), primary_key=True),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column("producer_kind", String(32), nullable=False),
+    Column("producer_id", String(128), nullable=False),
+    Column("producer_behavior_id", String(128), nullable=False),
+    Column("permission", String(32), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "contract_id",
+        "producer_behavior_id",
+        name="uq_forecast_binding_contract_behavior",
+    ),
+)
+
+forecast_decision_slots = Table(
+    "forecast_decision_slots",
+    metadata,
+    Column("slot_id", String(128), primary_key=True),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column("slot_as_of", DateTime(timezone=True), nullable=False),
+    Column("information_cutoff_at", DateTime(timezone=True), nullable=False),
+    Column("completion_deadline_at", DateTime(timezone=True), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "contract_id",
+        "slot_as_of",
+        name="uq_forecast_decision_slot_contract_time",
+    ),
+)
+Index(
+    "ix_forecast_decision_slots_evaluation",
+    forecast_decision_slots.c.evaluation_at,
+    forecast_decision_slots.c.slot_id,
+)
+
+forecast_no_estimates = Table(
+    "forecast_no_estimates",
+    metadata,
+    Column("result_id", String(128), primary_key=True),
+    Column(
+        "slot_id",
+        ForeignKey("forecast_decision_slots.slot_id"),
+        nullable=False,
+    ),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column("producer_kind", String(32), nullable=False),
+    Column("producer_id", String(128), nullable=False),
+    Column("producer_behavior_id", String(128), nullable=False),
+    Column("reason", String(64), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "slot_id",
+        "producer_behavior_id",
+        name="uq_forecast_no_estimate_slot_behavior",
+    ),
+)
+Index(
+    "ix_forecast_no_estimates_behavior_time",
+    forecast_no_estimates.c.producer_behavior_id,
+    forecast_no_estimates.c.completed_at,
+)
+
+historical_opportunity_reviews = Table(
+    "historical_opportunity_reviews",
     metadata,
     Column("review_id", String(128), primary_key=True),
     Column("opportunity_id", String(128), nullable=False),
@@ -139,19 +233,13 @@ opportunity_reviews = Table(
     Column("content_hash", String(64), nullable=False, unique=True),
     Column("payload", JSON, nullable=False),
 )
-Index(
-    "ix_opportunity_reviews_opportunity_time",
-    opportunity_reviews.c.opportunity_id,
-    opportunity_reviews.c.created_at,
-)
-
-opportunity_assessments = Table(
-    "opportunity_assessments",
+historical_opportunity_assessments = Table(
+    "historical_opportunity_assessments",
     metadata,
     Column("assessment_id", String(128), primary_key=True),
     Column(
         "review_id",
-        ForeignKey("opportunity_reviews.review_id"),
+        String(128),
         nullable=False,
     ),
     Column("opportunity_id", String(128), nullable=False),
@@ -159,27 +247,13 @@ opportunity_assessments = Table(
     Column("analysis_behavior_hash", String(64), nullable=False),
     Column("available_at", DateTime(timezone=True), nullable=False),
     Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "review_id",
-        "analysis_behavior_hash",
-        name="uq_opportunity_assessment_review_behavior",
-    ),
-)
-Index(
-    "ix_opportunity_assessments_opportunity_time",
-    opportunity_assessments.c.opportunity_id,
-    opportunity_assessments.c.available_at,
 )
 
-assessment_view_outcomes = Table(
-    "assessment_view_outcomes",
+historical_assessment_view_outcomes = Table(
+    "historical_assessment_view_outcomes",
     metadata,
     Column("outcome_id", String(128), primary_key=True),
-    Column(
-        "assessment_id",
-        ForeignKey("context_assessments.assessment_id"),
-        nullable=False,
-    ),
+    Column("assessment_id", String(128), nullable=False),
     Column("analysis_behavior_hash", String(64), nullable=False),
     Column("asset", String(64), nullable=False),
     Column("symbol", String(64), nullable=False),
@@ -194,25 +268,31 @@ assessment_view_outcomes = Table(
     Column("settled_at", DateTime(timezone=True), nullable=False),
     Column("directional_return_bps", Numeric(38, 18), nullable=True),
     Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "assessment_id",
-        "asset",
-        "horizon_minutes",
-        "evaluation_version",
-        name="uq_assessment_view_outcome_identity",
-    ),
-)
-Index(
-    "ix_assessment_view_outcomes_cohort",
-    assessment_view_outcomes.c.analysis_behavior_hash,
-    assessment_view_outcomes.c.asset,
-    assessment_view_outcomes.c.symbol,
-    assessment_view_outcomes.c.horizon_minutes,
-    assessment_view_outcomes.c.evaluation_at,
 )
 
-forecasts = Table(
-    "forecasts",
+historical_context_assessments = Table(
+    "historical_context_assessments",
+    metadata,
+    Column("assessment_id", String(128), primary_key=True),
+    Column("packet_id", String(128), nullable=False),
+    Column("analysis_scope", String(128), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_historical_assessment_view_outcomes_cohort",
+    historical_assessment_view_outcomes.c.analysis_behavior_hash,
+    historical_assessment_view_outcomes.c.asset,
+    historical_assessment_view_outcomes.c.symbol,
+    historical_assessment_view_outcomes.c.horizon_minutes,
+    historical_assessment_view_outcomes.c.evaluation_at,
+)
+
+# Immutable facts produced by the retired score/direction forecast runtime.  They
+# remain queryable for audit, but no active repository writes or reads them.
+historical_forecasts = Table(
+    "historical_forecasts",
     metadata,
     Column("forecast_id", String(128), primary_key=True),
     Column("kind", String(16), nullable=False),
@@ -223,23 +303,63 @@ forecasts = Table(
     Column("available_at", DateTime(timezone=True), nullable=False),
     Column("evaluation_at", DateTime(timezone=True), nullable=False),
     Column("valid_until", DateTime(timezone=True), nullable=False),
-    Column("base_forecast_id", ForeignKey("forecasts.forecast_id"), nullable=True),
-    Column(
-        "assessment_id",
-        ForeignKey("context_assessments.assessment_id"),
-        nullable=True,
-    ),
+    Column("base_forecast_id", String(128), nullable=True),
+    Column("assessment_id", String(128), nullable=True),
     Column("payload", JSON, nullable=False),
 )
+
+historical_forecast_outcomes = Table(
+    "historical_forecast_outcomes",
+    metadata,
+    Column("outcome_id", String(128), primary_key=True),
+    Column("forecast_id", String(128), nullable=False),
+    Column("evaluation_version", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=False),
+    Column("gross_target_return_bps", Numeric(38, 18), nullable=True),
+    Column("payload", JSON, nullable=False),
+)
+
+forecasts = Table(
+    "forecasts",
+    metadata,
+    Column("forecast_id", String(128), primary_key=True),
+    Column("kind", String(16), nullable=False),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column(
+        "decision_slot_id",
+        ForeignKey("forecast_decision_slots.slot_id"),
+        nullable=False,
+    ),
+    Column("producer_id", String(128), nullable=False),
+    Column("producer_behavior_id", String(128), nullable=False),
+    Column("outcome_family_id", String(128), nullable=False),
+    Column("target_id", String(128), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=False),
+    Column("base_forecast_id", ForeignKey("forecasts.forecast_id"), nullable=True),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "decision_slot_id",
+        "producer_behavior_id",
+        "kind",
+        name="uq_forecast_slot_behavior_kind",
+    ),
+)
 Index(
-    "ix_forecasts_pending_evaluation",
-    forecasts.c.evaluation_at,
-    forecasts.c.forecast_id,
+    "ix_forecasts_contract_slot",
+    forecasts.c.contract_id,
+    forecasts.c.decision_slot_id,
 )
 Index(
     "ix_forecasts_producer_target",
     forecasts.c.producer_id,
-    forecasts.c.producer_version,
+    forecasts.c.producer_behavior_id,
     forecasts.c.target_id,
     forecasts.c.available_at,
 )
@@ -248,7 +368,16 @@ forecast_outcomes = Table(
     "forecast_outcomes",
     metadata,
     Column("outcome_id", String(128), primary_key=True),
-    Column("forecast_id", ForeignKey("forecasts.forecast_id"), nullable=False),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column(
+        "decision_slot_id",
+        ForeignKey("forecast_decision_slots.slot_id"),
+        nullable=False,
+    ),
     Column("evaluation_version", String(128), nullable=False),
     Column("status", String(32), nullable=False),
     Column("evaluation_at", DateTime(timezone=True), nullable=False),
@@ -256,7 +385,7 @@ forecast_outcomes = Table(
     Column("gross_target_return_bps", Numeric(38, 18), nullable=True),
     Column("payload", JSON, nullable=False),
     UniqueConstraint(
-        "forecast_id",
+        "decision_slot_id",
         "evaluation_version",
         name="uq_forecast_outcome_identity",
     ),
@@ -265,5 +394,5 @@ Index(
     "ix_forecast_outcomes_cohort",
     forecast_outcomes.c.evaluation_version,
     forecast_outcomes.c.evaluation_at,
-    forecast_outcomes.c.forecast_id,
+    forecast_outcomes.c.decision_slot_id,
 )

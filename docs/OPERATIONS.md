@@ -119,41 +119,10 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 
 ### 前瞻证据稳定窗口
 
-- 已预登记的 `ContextCapitalForwardSpec.analysis_behavior_hash` 是证据带不可变身份。在其 `signal_window_end` 前，不得改变 DecisionPacket 契约、Assessment mandate、模型、提示词、输出 Schema 或 Codex 执行契约；不影响该行为哈希的运维变更可以独立发布。
-- 前瞻结果只有 `PASSED`、`FAILED`、`INCONCLUSIVE` 三态。缺少作用域或非重叠样本不足只能是 `INCONCLUSIVE`；只有样本充分且配对增量下界未过门槛才进入 `FailedExperiment`，禁止把证据不足写成负面知识。
-- 只有安全、权限、数据正确性或已证实会污染决策的故障可中断稳定窗口。中断时保留旧计划为未完整历史事实，不追加新 Pipeline 样本；新版必须在任何结果到期前重新预登记完整窗口。
-- 评价期间的开发不停止，但实时 Analyst 输入、模型、提示词、Panel、Proposal、Trigger 和信息归一化语义必须保持冻结；否则样本量会在每次“优化”时归零，无法证明 AI 增量价值。
-
-行为版本冻结后、首个自然程序机会前登记资本配对评价窗口：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager register-assessment-forward-plan \
-  --config '<冻结运行配置>' \
-  --release-manifest '<同一冻结 ReleaseManifest>' \
-  --plan-id '<唯一计划 ID>' \
-  --signal-window-start '<未来 UTC 起点>' \
-  --signal-window-end '<固定 UTC 终点>' \
-  --minimum-capital-opportunities 12
-```
-
-登记命令先逐项核对冻结配置、ReleaseManifest、代码提交和 checkout 洁净度，再从语义行为制品自行计算
-`analysis_behavior_hash`；计划直接绑定该运行 Manifest，不借用全局 Champion。调用方不需要也不能替换行为身份；
-可选参数只用于显式核对，传入值不一致会失败关闭。
-
-只有终点、最后一个自然 Forecast 周期和七天结算宽限全部过去后，才运行
-`evaluate-assessment-forward-plan --plan-id ... --published-at '<当前 UTC>' --capital-database-url '<资本事实库>'`。
-命令从 Context 事实库读取冻结行为的 Assessment，从角色隔离的 Capital 事实库读取同一 Producer 的 BaseForecast
-及权威 Outcome。每个机会只配对机会出现前 24 小时内最新认知；缺失、过期或失败自动保持 Program Base，不能删样本。
-`ENTRY_VETO_CANDIDATE` 只形成现金反事实，其他状态保持基线；两侧使用同一实际 Forecast Outcome，并从基线扣除
-冻结的完整往返成本。自然机会少于 12、仍有未结算 Forecast 或费用后配对收益增量保守下界不为正都不能通过。
-结果进入内容寻址制品；样本充分但失败才登记负面治理事实，通过仍需显式变更提案和新 Mock 授权，不能自行接入资本。
-
-`dynamic-carry-point-in-time-v2` 已退役。其最终淘汰证据是
-`.runtime/dynamic-carry-replays/dynamic_carry_intraday_replay_3d256fcb7296c85d7848.json`，内容哈希为
-`b10811677926447410f6b4904311e9e49be5e9402b5e3da1641cd5ad57a05ddb`。该偏乐观盘中诊断在全部可表达的
-Heartbeat 相位均为费用后亏损，因此 `capital-shadow-dynamic-v7` 已记录不可变失效事实。主线不再保留该
-候选的配置、生产者或诊断命令；失败制品和 Git 历史足以审计，不得以同一标签继续微调或重新授权。
+- ForecastContract、producer behavior、槽规则、输入投影、模型、Prompt 或成本语义任一改变，都必须使新行为身份生效，不继承旧样本的成绩。
+- 每个预登记槽都必须形成 `BaseForecast` 或明确 `NO_ESTIMATE`；两者和未成交预测都永久保留，Outcome 不因 Portfolio 选择现金而缺失。
+- 前瞻证据只来自 Outcome 发生前已持久化的 Forecast。样本不足只能是证据不足，不能记为策略失败；只有费用后、非重叠、同风险基线对比达到事前标准，才能扩大权限。
+- 评价期间可以继续修复不改变行为哈希的运维故障；任何改变预测行为的优化都自动开始新 cohort，旧 Forecast/Outcome 仍保留但不混合评分。
 
 部署私有配置必须满足：
 

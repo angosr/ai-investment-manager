@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
+from investment_manager.decision_cycle.capital import CapitalTriggerConsumer
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
@@ -90,6 +91,20 @@ class RecordingBatchConsumer:
         return None
 
 
+class RecordingCapital:
+    portfolio_id = "primary"
+
+    def __init__(self) -> None:
+        self.produce_calls = []
+        self.review_calls = []
+
+    def produce(self, **kwargs):
+        self.produce_calls.append(kwargs)
+
+    def review(self, batch):
+        self.review_calls.append(batch)
+
+
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
@@ -160,6 +175,89 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     assert dispatches == ()
     assert producer.as_of == NOW
     assert consumer.batch == batch
+
+
+def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_config) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    capital = RecordingCapital()
+    consumer = CapitalTriggerConsumer(capital, context_cadence_minutes=240)
+    for index, created_at in enumerate((NOW, NOW + timedelta(minutes=20)), start=1):
+        trigger = build_trigger_event(
+            trigger_type=AnalysisTriggerType.HEARTBEAT,
+            symbol=plan.symbol,
+            pipeline_id=plan.pipeline_id,
+            occurred_at=created_at,
+            observed_at=created_at,
+            priority=1,
+            dedup_key=f"cadence-heartbeat-{index}",
+        )
+        consumer.consume(
+            build_trigger_batch(
+                plan=plan,
+                triggers=(trigger,),
+                created_at=created_at,
+                deadline=created_at + timedelta(minutes=5),
+            )
+        )
+
+    assert [item["as_of"] for item in capital.produce_calls] == [
+        datetime(2026, 8, 18, 12, tzinfo=UTC),
+        datetime(2026, 8, 18, 12, tzinfo=UTC),
+    ]
+    assert capital.produce_calls[0]["cause_id"] == capital.produce_calls[1]["cause_id"]
+    assert not capital.review_calls
+
+
+def test_world_model_update_runs_forecast_without_dispatching_another_assessment(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.WORLD_MODEL_UPDATED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=100,
+        dedup_key="world-model-1",
+        evidence_ids=("world-model-1",),
+    )
+    capital = RecordingCapital()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=RecordingPacketPreparation(),
+        assessment_history=EmptyAssessmentHistory(),
+        program_batch_consumers=(CapitalTriggerConsumer(capital, 240),),
+    ).build(batch)
+
+    assert dispatches == ()
+    assert capital.produce_calls[0]["trigger_batch_id"] == batch.batch_id
 
 
 def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:

@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { CapitalAction } from "../api/types";
 import { hhmm } from "../lib/format";
 import styles from "./CapitalActions.module.css";
 
-const ROUTINE_OUTCOMES = new Set(["NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
+const ROUTINE_OUTCOMES = new Set(["CASH", "NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
 
 const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
+  CASH: { badge: "未下单", title: "保持现金" },
   NO_OPPORTUNITY: { badge: "未下单", title: "保持现金" },
   HOLD: { badge: "仓位不变", title: "保持当前仓位" },
   TARGET_DECIDED: { badge: "已形成目标", title: "准备调整仓位" },
-  OPPORTUNITY_ALREADY_DECIDED: { badge: "未重复下单", title: "同一机会已经处理" },
+  FORECAST_ALREADY_DECIDED: { badge: "未重复下单", title: "同一预测已经处理" },
+  OPPORTUNITY_ALREADY_DECIDED: { badge: "未重复下单", title: "同一历史机会已经处理" },
   RISK_EXIT: { badge: "风险退出", title: "退出风险仓位" },
   PENDING: { badge: "处理中", title: "资金决策仍在处理" },
   RISK_REJECTED: { badge: "风控阻止", title: "交易被风控阻止" },
@@ -19,13 +21,21 @@ const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
 };
 
 const REASON_LABELS: Record<string, string> = {
-  NO_ACTIVE_CAPITAL_OPPORTUNITY: "没有处于有效期内且可用于交易的信号",
-  CASH_SELECTED_NO_ELIGIBLE_FORECAST: "候选信号扣除费用和不确定性后，不如持有现金",
-  POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED: "保守估计的费用后优势为正，达到资金配置门槛",
+  NO_REGISTERED_FORECAST_SOURCE: "当前没有装配可运行的预测源",
+  "FORECAST_NO_ESTIMATE:WORLD_MODEL_UNAVAILABLE": "没有可用于本次预测的世界认知",
+  "FORECAST_NO_ESTIMATE:WORLD_MODEL_STALE": "世界认知已到复核时点，不能用于新仓位",
+  "FORECAST_NO_ESTIMATE:REQUIRED_FEATURE_MISSING": "预测合同要求的市场特征缺失",
+  "FORECAST_NO_ESTIMATE:MARKET_INPUT_INVALID": "点时市场报价缺失或已经过期",
+  "FORECAST_NO_ESTIMATE:PRODUCER_FAILED": "概率预测调用未形成结构有效的结果",
+  "FORECAST_NO_ESTIMATE:DEADLINE_MISSED": "概率预测超过合同完成期限",
+  "FORECAST_NO_ESTIMATE:STALE_BEFORE_AVAILABLE": "分析期间市场已发生重大移动，原预测不可交易",
+  "FORECAST_NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON": "分析完成时剩余交易窗口不足",
+  CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整成本后没有达到入场门槛，选择现金",
+  POSITIVE_NET_EDGE_SELECTED: "预测扣除完整成本后达到入场门槛",
   REBALANCE_BELOW_MINIMUM: "仓位变化太小，不足以覆盖交易成本",
-  UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST: "没有新信号改变现有仓位目标",
-  NO_NEW_OPPORTUNITY_HOLDING_REVIEWED: "已复核现有持仓，未出现退出或加仓条件",
-  PROGRAMMATIC_RISK_EXIT: "程序化风险规则要求退出",
+  EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",
+  PROGRAMMATIC_RISK_REVIEW: "完成程序化账户、持仓和硬风险复核",
+  HOLDING_RISK_REVIEWED: "现有持仓已经完成程序化风险复核",
 };
 
 const TRIGGER_LABELS: Record<string, string> = {
@@ -35,6 +45,8 @@ const TRIGGER_LABELS: Record<string, string> = {
   POSITION_RECHECK: "持仓风险复查",
   AGENT_WAKEUP: "主 Agent 要求立即检查",
   HEARTBEAT: "例行定时检查",
+  WORLD_MODEL_UPDATED: "世界认知完成更新",
+  FORECAST_CADENCE: "固定预测时点",
 };
 
 interface ActionGroup {
@@ -84,10 +96,13 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
     (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
   );
   const repeated = group.actions.length > 1;
-  const candidate = action.candidate_economics[0];
+  const candidates = action.candidate_economics;
+  const candidate = candidates[0];
   const zeroImpact = new Set([
     "NO_OPPORTUNITY",
+    "CASH",
     "HOLD",
+    "FORECAST_ALREADY_DECIDED",
     "OPPORTUNITY_ALREADY_DECIDED",
     "RISK_REJECTED",
     "NO_ORDER",
@@ -120,15 +135,53 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dd>{triggers.join("；") || "系统状态变化"}</dd>
             <dt>判断依据</dt>
             <dd>{reasons.join("；") || action.summary}</dd>
-            {candidate ? (
-              <>
+            {candidates.map((item) => (
+              <Fragment key={item.forecast_id}>
                 <dt>候选经济性</dt>
                 <dd>
-                  毛收益 {formatBps(candidate.gross_bps)} bp − 完整开平仓成本 {formatBps(candidate.estimated_round_trip_cost_bps)} bp
-                  = 费用后 {formatBps(candidate.net_bps)} bp；入场门槛 {formatBps(candidate.entry_threshold_bps)} bp
+                  毛收益 {formatBps(item.gross_bps)} bp − 完整开平仓成本 {formatBps(item.estimated_round_trip_cost_bps)} bp
+                  = 费用后 {formatBps(item.net_bps)} bp；入场门槛 {formatBps(item.entry_threshold_bps)} bp
                 </dd>
-              </>
-            ) : null}
+                <dt>概率预测</dt>
+                <dd>
+                  {item.outcome_probabilities.map((bucket) => (
+                    <span key={bucket.bucket_id}>
+                      {bucket.bucket_id} {formatPercent(bucket.probability)}　
+                    </span>
+                  ))}
+                </dd>
+                <dt>认知如何影响预测</dt>
+                <dd>
+                  {item.mechanism_contributions.length
+                    ? item.mechanism_contributions.map((contribution) => (
+                      <div key={contribution.mechanism_id}>
+                        {effectLabel(contribution.effect)} · {contribution.rationale}
+                      </div>
+                    ))
+                    : "该预测源不使用世界认知"}
+                </dd>
+                <dt>预测时点</dt>
+                <dd>
+                  信息截止 {item.information_cutoff_at} · 完成 {item.available_at} · 有效至 {item.valid_until}
+                </dd>
+                <dt>审计身份</dt>
+                <dd>
+                  Forecast {item.forecast_id}
+                  {item.world_model_id ? ` · WorldModel ${item.world_model_id}` : ""}
+                </dd>
+                {item.analysis_input ? (
+                  <>
+                    <dt>AI 输入</dt>
+                    <dd>
+                      <details className={styles.snapshot}>
+                        <summary>查看这次 AI 看到的信息快照</summary>
+                        <pre>{JSON.stringify(item.analysis_input, null, 2)}</pre>
+                      </details>
+                    </dd>
+                  </>
+                ) : null}
+              </Fragment>
+            ))}
             <dt>资金影响</dt>
             <dd>
               {zeroImpact
@@ -156,6 +209,21 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
 function formatBps(value: string): string {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
+}
+
+function formatPercent(value: string): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : value;
+}
+
+function effectLabel(effect: string): string {
+  const labels: Record<string, string> = {
+    UPSIDE: "增加上行概率",
+    DOWNSIDE: "增加下行概率",
+    UNCERTAINTY: "扩大不确定性",
+    NO_MATERIAL_EFFECT: "没有实质影响",
+  };
+  return labels[effect] ?? effect;
 }
 
 function riskStatus(action: CapitalAction): string {

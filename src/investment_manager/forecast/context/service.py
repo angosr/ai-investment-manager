@@ -28,10 +28,7 @@ from investment_manager.forecast.context.workflow import (
     AssessmentWorkflowRequest,
     ContextAssessmentWorkflow,
 )
-from investment_manager.forecast.models import (
-    ContextAssessment,
-    ContextAssessmentSchemaVersion,
-)
+from investment_manager.forecast.models import ContextAssessment
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -74,13 +71,28 @@ class WorldModelReviewScheduler:
         if latest is not None:
             self.schedule(latest)
 
+    def publish_update(self, assessment: ContextAssessment) -> None:
+        """Publish one durable downstream trigger after the WorldModel is persisted."""
+
+        plan = self.triggers.plan_for_scope(
+            symbol=self.symbol,
+            pipeline_id=self.pipeline_id,
+        )
+        self.triggers.record_trigger(
+            build_trigger_event(
+                trigger_type=AnalysisTriggerType.WORLD_MODEL_UPDATED,
+                symbol=self.symbol,
+                pipeline_id=self.pipeline_id,
+                occurred_at=assessment.available_at,
+                observed_at=assessment.available_at,
+                priority=100,
+                dedup_key=stable_id("world_model_updated", assessment.assessment_id),
+                evidence_ids=(assessment.assessment_id,),
+                plan_revision=plan.revision,
+            )
+        )
+
     def schedule(self, assessment: ContextAssessment) -> None:
-        if (
-            assessment.schema_version
-            != ContextAssessmentSchemaVersion.WORLD_MODEL_V2
-            or not assessment.mechanisms
-        ):
-            return
         now = max(require_utc(self.clock()), assessment.available_at)
         latest = self.assessments.latest_before(
             analysis_scope=assessment.analysis_scope,
@@ -111,8 +123,7 @@ class WorldModelReviewScheduler:
                         review_at,
                     ),
                     wake_at=review_at,
-                    expires_at=review_at
-                    + timedelta(seconds=self.trigger_expiry_seconds),
+                    expires_at=review_at + timedelta(seconds=self.trigger_expiry_seconds),
                     reason=reason,
                     hypothesis=marker,
                 )
@@ -167,8 +178,7 @@ class WorldModelReviewScheduler:
                             review_at,
                         ),
                         review_reason=reason,
-                        expires_at=now
-                        + timedelta(seconds=self.trigger_expiry_seconds),
+                        expires_at=now + timedelta(seconds=self.trigger_expiry_seconds),
                         plan_revision=active_plan.revision,
                     )
                 )
@@ -231,9 +241,7 @@ class AssessmentTemporalCoordinator:
             handle = self.client.get_workflow_handle(request.workflow_id)
             existing_hash = await handle.query(ContextAssessmentWorkflow.input_hash)
             if existing_hash != request.input_hash:
-                raise ValueError(
-                    "相同 ContextAssessment workflow_id 的冻结输入不同"
-                ) from None
+                raise ValueError("相同 ContextAssessment workflow_id 的冻结输入不同") from None
             raw_result = await handle.result()
         return AssessmentWorkflowExecution.model_validate(raw_result)
 
@@ -290,11 +298,15 @@ def assemble_assessment_application(
         trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
     )
     scheduler.reconcile_latest(config.assessment.mandate.analysis_scope)
+    def complete_world_model(assessment: ContextAssessment) -> None:
+        scheduler.schedule(assessment)
+        scheduler.publish_update(assessment)
+
     return AssessmentApplication(
         ContextAssessmentExecutor(
             assessments,
             analyst,
-            on_success=scheduler.schedule,
+            on_success=complete_world_model,
         )
     )
 

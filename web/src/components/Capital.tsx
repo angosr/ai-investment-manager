@@ -3,13 +3,21 @@ import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
 const REASON_LABELS: Record<string, string> = {
-  NO_ACTIVE_CAPITAL_OPPORTUNITY: "当前没有合格机会",
-  CASH_SELECTED_NO_ELIGIBLE_FORECAST: "当前选择现金",
+  NO_REGISTERED_FORECAST_SOURCE: "未装配预测源，保持现金",
+  "FORECAST_NO_ESTIMATE:WORLD_MODEL_UNAVAILABLE": "世界认知不可用，保持现金",
+  "FORECAST_NO_ESTIMATE:WORLD_MODEL_STALE": "世界认知待复核，保持现金",
+  "FORECAST_NO_ESTIMATE:REQUIRED_FEATURE_MISSING": "合同特征缺失，保持现金",
+  "FORECAST_NO_ESTIMATE:MARKET_INPUT_INVALID": "市场输入无效，保持现金",
+  "FORECAST_NO_ESTIMATE:PRODUCER_FAILED": "概率预测失败，保持现金",
+  "FORECAST_NO_ESTIMATE:DEADLINE_MISSED": "概率预测超时，保持现金",
+  "FORECAST_NO_ESTIMATE:STALE_BEFORE_AVAILABLE": "分析期间行情已改变，保持现金",
+  "FORECAST_NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON": "剩余交易窗口不足，保持现金",
+  CASH_SELECTED_NO_POSITIVE_NET_EDGE: "费用后优势不足，保持现金",
   REBALANCE_BELOW_MINIMUM: "变动低于最小再平衡金额",
-  POSITIVE_CONSERVATIVE_NET_EDGE_SELECTED: "保守净优势通过",
-  UNCHANGED_SLEEVE_WITHOUT_NEW_FORECAST: "原持仓保持不变",
-  NO_NEW_OPPORTUNITY_HOLDING_REVIEWED: "已复核持仓，暂无新机会",
-  PROGRAMMATIC_RISK_EXIT: "程序化风险退出",
+  POSITIVE_NET_EDGE_SELECTED: "费用后优势通过",
+  EXPIRED_FORECAST_EXIT: "预测失效，退出仓位",
+  PROGRAMMATIC_RISK_REVIEW: "程序化风险复核完成",
+  HOLDING_RISK_REVIEWED: "持仓风险复核完成",
 };
 
 export function Capital({ data }: { data: CapitalOverview | null }) {
