@@ -260,10 +260,12 @@ Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账�
 恢复非终态组并检查持仓风险；最小调仓门槛只可在原 Forecast 仍有效时冻结当前 gross target，不能替过期判断续命。
 自然信号、官方事件、数据发布和主 Agent 复核可以形成持久化 `ScheduledWakeup`；其时间来自证据或候选本身，
 不能由组合层虚构统一日历。授权、Producer 身份或自然 cadence 变化都必须产生新的 Release/行为身份。
-每个冻结 TriggerBatch 还以自身 batch ID 作为 cause 追加一条 `CapitalCycleRecord`，直接保存品种、触发类型、
-账户快照、Forecast/Target 引用与终态；因此无 Target 时也必须明确记录“无注册来源、NO_ESTIMATE、费用后现金、
-组合拒绝或风险拒绝”，不能统称无机会；多品种同一时刻触发不会
-依赖时间近似关联或互相覆盖。Dashboard 只投影该记录，不从“缺少 Target”反推行动。
+各品种协调器都可更新市场与 WorldModel，但只有 Mandate 指定的 owner coordinator 能写组合账户、风险和执行，
+避免同一账户被跨品种批次乱序投影。owner 对形成 Forecast/Target 的机会评估和实际持仓风险处置，以冻结
+TriggerBatch 的 batch ID 作为 cause 追加 `CapitalCycleRecord`，直接保存品种、触发类型、账户快照、
+Forecast/Target 引用与终态；因此有资本判断时必须明确记录“NO_ESTIMATE、费用后现金、组合拒绝或风险拒绝”，
+不能统称无机会。全现金且没有 Forecast 的保护性检查只进入可观测健康状态，不伪装成人类需要阅读的资本行动。
+Dashboard 只投影真实 `CapitalCycleRecord`，不从“缺少 Target”反推行动。
 历史 carry 制品仅是研究和 counterfactual，不能进入主动资本链。`CapitalCycleService`
 允许零个合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
 未来候选必须以显式 `CapitalForecastSource` 接入同一 Portfolio、Risk、TradePlan、持久化 Mock Product Venue

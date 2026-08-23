@@ -119,12 +119,21 @@ class CapitalForecastSource:
 
 @dataclass(frozen=True, slots=True)
 class CapitalTriggerConsumer:
-    """Protect every trigger and create one idempotent Context cadence slot."""
+    """Own capital on one coordinator and create idempotent Context slots."""
 
     capital: CapitalCycleService
     context_cadence_minutes: int | None = None
+    owner_symbol: str | None = None
 
-    def consume(self, batch: TriggerBatch) -> PortfolioPipelineResult | TradePlanExecutionResult:
+    def consume(
+        self,
+        batch: TriggerBatch,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult | None:
+        # Trigger plans are per market symbol, while the account is portfolio
+        # scoped. Exactly one coordinator may append account/risk/execution
+        # facts; the assessment path remains free to observe every asset.
+        if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
+            return None
         if any(
             item.trigger_type == AnalysisTriggerType.WORLD_MODEL_UPDATED
             for item in batch.triggers

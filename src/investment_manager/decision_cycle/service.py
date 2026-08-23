@@ -91,6 +91,7 @@ def run_trigger_service(
                             and config.capital.context_forecast.enabled
                             else None
                         ),
+                        owner_symbol=config.assessment.review_trigger_symbol,
                     )
                     if config.assessment.enabled
                     else capital_consumer,

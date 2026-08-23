@@ -215,6 +215,44 @@ def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_confi
     assert not capital.review_calls
 
 
+def test_capital_trigger_consumer_has_one_portfolio_scope_owner(app_config) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol="ETHUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=1,
+        dedup_key="non-owner-heartbeat",
+    )
+    capital = RecordingCapital()
+
+    result = CapitalTriggerConsumer(
+        capital,
+        context_cadence_minutes=240,
+        owner_symbol="BTCUSDT",
+    ).consume(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert result is None
+    assert not capital.produce_calls
+    assert not capital.review_calls
+
+
 def test_world_model_update_runs_forecast_without_dispatching_another_assessment(
     app_config,
 ) -> None:
