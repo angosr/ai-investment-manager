@@ -28,21 +28,21 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-capital-shadow-v4"
+    assert config.pipeline.version == "world-forecast-capital-shadow-v5"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v26"
-    assert config.information.normalizer_version == "trendradar-collector-v8"
-    assert config.decision_state.version == "portfolio-state-v32"
+    assert config.information.version == "information-intake-v27"
+    assert config.information.normalizer_version == "trendradar-collector-v9"
+    assert config.decision_state.version == "portfolio-state-v33"
     assert config.decision_state.official_fact_policy.version == "official-fact-v12"
     assert config.decision_state.delta_policy.version == "state-delta-v14"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v36"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v16"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v37"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v17"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 6_000
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.version == "context-assessment-v31"
+    assert config.assessment.version == "context-assessment-v32"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(

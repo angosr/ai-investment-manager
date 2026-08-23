@@ -1,9 +1,40 @@
 import re
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 
 from investment_manager.information.models import CausalDomain
 from investment_manager.kernel.configuration import StrictConfig
+
+
+class OfficialEventFeed(StrictConfig):
+    """Pinned first-party release feed; discovery and relevance remain separate."""
+
+    stream_id: str
+    url: str
+
+    @field_validator("stream_id")
+    @classmethod
+    def stream_id_must_be_safe(cls, value: str) -> str:
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", value) is None:
+            raise ValueError("official event feed stream id 非法")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_pinned_government_https(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or not parsed.hostname.endswith(".gov")
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("official event feed 必须是无凭据、无查询的固定 .gov HTTPS URL")
+        return value
 
 
 class CoverageRequirement(StrictConfig):
@@ -85,6 +116,7 @@ class InformationPolicy(StrictConfig):
     read_limit: int = Field(default=100, ge=1, le=1000)
     request_timeout_seconds: int = Field(default=15, ge=1, le=60)
     collection_interval_seconds: int = Field(default=60, ge=10, le=600)
+    official_event_feeds: tuple[OfficialEventFeed, ...] = ()
     fed_monetary_poll_seconds: int = Field(default=15, ge=10, le=300)
     fed_calendar_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
     treasury_buyback_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
@@ -102,6 +134,16 @@ class InformationPolicy(StrictConfig):
         le=86_400,
     )
     coverage_requirements: tuple[CoverageRequirement, ...] = ()
+
+    @field_validator("official_event_feeds")
+    @classmethod
+    def official_event_feeds_must_be_unique_and_sorted(
+        cls, feeds: tuple[OfficialEventFeed, ...]
+    ) -> tuple[OfficialEventFeed, ...]:
+        identities = tuple(item.stream_id for item in feeds)
+        if identities != tuple(sorted(set(identities))):
+            raise ValueError("official event feeds 必须按 stream_id 唯一且排序")
+        return feeds
 
     @model_validator(mode="after")
     def official_metric_cadence_must_be_ordered(self):

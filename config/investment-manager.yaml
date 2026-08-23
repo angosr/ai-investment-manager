@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v32
+  version: portfolio-state-v33
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v12
@@ -94,8 +94,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v36
-    schema_version: decision-packet-v16
+    version: decision-packet-policy-v37
+    schema_version: decision-packet-v17
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
@@ -129,7 +129,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: product-capital-v11
+  version: product-capital-v12
   enabled: false
   settlement_asset: USDT
   decision:
@@ -231,10 +231,10 @@ capital:
     funding_projection_haircut: "0.50"
     forecast_dispersion_bps: "100"
   context_forecast:
-    version: btc-context-forecast-v2
+    version: btc-context-forecast-v3
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "43dc11ae5cb10728619bed7efa442ec4fe9857e7b13ae9a27213c4f6d38af752"
+    producer_behavior_id: "3d5666c4dcd1669fd090d21a57f8ccc19826f862bd0beb4cb7f14e1bdd63a297"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v1
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -418,8 +418,8 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v26
-  normalizer_version: trendradar-collector-v8
+  version: information-intake-v27
+  normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
@@ -429,6 +429,17 @@ information:
   read_limit: 100
   request_timeout_seconds: 15
   collection_interval_seconds: 60
+  official_event_feeds:
+    - stream_id: bea-economic-releases
+      url: https://apps.bea.gov/rss/rss.xml
+    - stream_id: cftc-press-releases
+      url: https://www.cftc.gov/RSS/RSSGP/rssgp.xml
+    - stream_id: cftc-speeches-testimony
+      url: https://www.cftc.gov/RSS/RSSST/rssst.xml
+    - stream_id: sec-press-releases
+      url: https://www.sec.gov/news/pressreleases.rss
+    - stream_id: sec-speeches-statements
+      url: https://www.sec.gov/news/speeches-statements.rss
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
   treasury_buyback_poll_seconds: 21600
@@ -534,7 +545,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v31
+  version: context-assessment-v32
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

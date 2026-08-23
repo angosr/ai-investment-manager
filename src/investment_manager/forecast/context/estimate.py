@@ -37,7 +37,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v3"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v4"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -183,7 +183,6 @@ def context_forecast_input_projection(
             "as_of": target_state.as_of,
             "asset_states": target_state.asset_states,
             "derivative_states": target_state.derivative_states,
-            "data_quality_codes": packet.data_quality_codes,
             "coverage_gap_codes": packet.coverage_gap_codes,
         },
     }

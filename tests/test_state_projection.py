@@ -134,20 +134,6 @@ class _PointInTimeMarketStore:
         )
 
 
-class _PointInTimeAccountReader:
-    def __init__(self, account) -> None:
-        self.account = account
-
-    def account_for_cycle(self, *, cycle_id, as_of, initial_quote_balance):
-        return self.account.model_copy(
-            update={
-                "cycle_id": cycle_id,
-                "as_of": as_of,
-                "observed_at": as_of,
-            }
-        )
-
-
 def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
     app_config,
     replay_input,
@@ -328,7 +314,6 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
     )
     preparation = DecisionPacketPreparation(
         market_store=_PointInTimeMarketStore(replay_input.market),
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=InMemoryEventStore(),
         facts=facts,
         projector=projector,
@@ -343,7 +328,6 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         clock=lambda: OBSERVED_AT + timedelta(minutes=2),
     )
@@ -460,7 +444,6 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
     facts = SqlFactStateStore(engine)
     preparation = DecisionPacketPreparation(
         market_store=market_store,
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=InMemoryEventStore(),
         facts=facts,
         projector=SqlStateProjector(
@@ -479,7 +462,6 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         perpetual_instruments=(instrument,),
         funding_history_lookback_hours=24,
@@ -543,7 +525,6 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
     )
     common = {
         "market_store": _PointInTimeMarketStore(replay_input.market),
-        "account_reader": _PointInTimeAccountReader(replay_input.account),
         "event_reader": InMemoryEventStore(),
         "facts": facts,
         "projector": projector,
@@ -551,7 +532,6 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
         "market_interval": app_config.market_data.interval,
         "market_bar_window": app_config.market_data.bar_window,
         "market_source": app_config.market_data.version,
-        "initial_quote_balance": app_config.shadow.initial_quote_balance,
         "maximum_market_age_seconds": app_config.risk.maximum_market_age_seconds,
         "clock": lambda: OBSERVED_AT + timedelta(minutes=2),
     }
@@ -625,7 +605,6 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
     )
     preparation = DecisionPacketPreparation(
         market_store=_PointInTimeMarketStore(replay_input.market),
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=events,
         facts=facts,
         projector=projector,
@@ -641,7 +620,6 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         clock=lambda: OBSERVED_AT + timedelta(minutes=2),
     )
@@ -705,6 +683,7 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
     assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
     assert prepared.status == PacketPreparationStatus.READY
     assert prepared.packet is not None
+    assert prepared.packet.portfolio is None
     assert prepared.packet.deltas[0].category == "INTELLIGENCE_EVENT"
     assert prepared.packet.facts == ()
     assert len(prepared.packet.intelligence_events) == 1
@@ -743,7 +722,6 @@ def test_explicit_review_receives_recent_background_intelligence(
     events.put(event)
     preparation = DecisionPacketPreparation(
         market_store=_PointInTimeMarketStore(replay_input.market),
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=events,
         facts=SqlFactStateStore(engine),
         projector=SqlStateProjector(
@@ -762,7 +740,6 @@ def test_explicit_review_receives_recent_background_intelligence(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         clock=lambda: event_at,
     )
@@ -833,7 +810,6 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
     events.put(event)
     preparation = DecisionPacketPreparation(
         market_store=_PointInTimeMarketStore(replay_input.market),
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=events,
         facts=SqlFactStateStore(engine),
         projector=SqlStateProjector(
@@ -852,7 +828,6 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         clock=lambda: event_at,
     )
@@ -896,7 +871,6 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
     facts = SqlFactStateStore(engine)
     preparation = DecisionPacketPreparation(
         market_store=_PointInTimeMarketStore(replay_input.market),
-        account_reader=_PointInTimeAccountReader(replay_input.account),
         event_reader=InMemoryEventStore(),
         facts=facts,
         projector=SqlStateProjector(
@@ -915,7 +889,6 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
         clock=lambda: OBSERVED_AT + timedelta(minutes=3),
     )

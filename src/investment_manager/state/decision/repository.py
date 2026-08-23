@@ -187,17 +187,15 @@ class SqlDecisionPacketAssembler:
         tuple[MarketSnapshot, ...],
         tuple[FeatureSnapshot, ...],
         tuple[DerivativeContextSnapshot, ...],
-        AccountSnapshot,
+        AccountSnapshot | None,
         tuple[IntelligenceEvent, ...],
     ]:
-        if state.account_snapshot_ref is None:
-            raise ValueError("DecisionPacket StateSnapshot 缺少 Account evidence ref")
         refs = (
             *state.market_snapshot_refs,
             *state.feature_snapshot_refs,
             *state.derivative_snapshot_refs,
             *state.intelligence_event_refs,
-            state.account_snapshot_ref,
+            *((state.account_snapshot_ref,) if state.account_snapshot_ref is not None else ()),
         )
         evidence = self._evidence.get_many(refs)
         missing = tuple(sorted(set(refs) - set(evidence)))
@@ -248,9 +246,12 @@ class SqlDecisionPacketAssembler:
                 key=lambda item: item.evidence_id,
             )
         )
-        account_entry = evidence[state.account_snapshot_ref]
-        if account_entry[0] != StateEvidenceKind.ACCOUNT or not isinstance(
-            account_entry[1], AccountSnapshot
-        ):
-            raise ValueError("DecisionPacket Account evidence 类型不一致")
-        return markets, features, derivatives, account_entry[1], intelligence_events
+        account = None
+        if state.account_snapshot_ref is not None:
+            account_entry = evidence[state.account_snapshot_ref]
+            if account_entry[0] != StateEvidenceKind.ACCOUNT or not isinstance(
+                account_entry[1], AccountSnapshot
+            ):
+                raise ValueError("DecisionPacket Account evidence 类型不一致")
+            account = account_entry[1]
+        return markets, features, derivatives, account, intelligence_events

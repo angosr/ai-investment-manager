@@ -281,6 +281,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "omitted_intelligence_event_refs",
         "packet_id",
         "policy_version",
+        "portfolio",
         "schema_version",
         "state_id",
         "trigger_ids",
@@ -870,7 +871,9 @@ class DecisionPacket(FrozenModel):
     question: str
     trigger_ids: tuple[str, ...] = Field(min_length=1)
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
-    portfolio: PacketPortfolioState
+    # Read-only historical field. Current WorldModel packets do not carry
+    # portfolio state; capital truth belongs exclusively to Portfolio.
+    portfolio: PacketPortfolioState | None = None
     asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
     derivative_states: tuple[PacketDerivativeState, ...] = ()
     deltas: tuple[PacketDelta, ...] = ()
@@ -1025,7 +1028,7 @@ class DecisionPacketBuilder:
         facts: tuple[VisibleFact, ...],
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
         review_requests: tuple[PacketReviewRequest, ...] = (),
-        account: AccountSnapshot,
+        account: AccountSnapshot | None = None,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...] = (),
@@ -1101,7 +1104,9 @@ class DecisionPacketBuilder:
             "question": mandate.question,
             "trigger_ids": trigger_ids,
             "required_views": required_views,
-            "portfolio": self._portfolio_state(account),
+            "portfolio": (
+                self._portfolio_state(account) if account is not None else None
+            ),
             "asset_states": asset_states,
             "derivative_states": derivative_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
@@ -1180,7 +1185,7 @@ class DecisionPacketBuilder:
         review_requests: tuple[PacketReviewRequest, ...],
         facts: tuple[VisibleFact, ...],
         intelligence_events: tuple[IntelligenceEvent, ...],
-        account: AccountSnapshot,
+        account: AccountSnapshot | None,
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...],
@@ -1201,10 +1206,14 @@ class DecisionPacketBuilder:
             raise ValueError("PacketReviewRequest 必须按 review_id 唯一且排序")
         if any(item.requested_at > state.as_of for item in review_requests):
             raise ValueError("PacketReviewRequest requested_at 晚于 StateSnapshot")
-        if account.as_of > state.as_of or account.observed_at > state.as_of:
-            raise ValueError("账户事实晚于 StateSnapshot as_of")
-        if state.account_snapshot_ref != content_hash(account):
-            raise ValueError("账户事实与 StateSnapshot account_snapshot_ref 不一致")
+        if account is None:
+            if state.account_snapshot_ref is not None:
+                raise ValueError("StateSnapshot 有账户引用但缺少账户事实")
+        else:
+            if account.as_of > state.as_of or account.observed_at > state.as_of:
+                raise ValueError("账户事实晚于 StateSnapshot as_of")
+            if state.account_snapshot_ref != content_hash(account):
+                raise ValueError("账户事实与 StateSnapshot account_snapshot_ref 不一致")
         symbols = tuple(item.market_symbol for item in mandate.assets)
         if tuple(sorted(item.symbol for item in markets)) != tuple(sorted(symbols)):
             raise ValueError("MarketSnapshot 集合与 Mandate assets 不一致")

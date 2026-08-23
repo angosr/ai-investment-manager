@@ -960,6 +960,16 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
         for node in ast.walk(risk_portfolio)
     )
 
+    world_service = ast.parse(
+        (PACKAGE_ROOT / "state" / "decision" / "service.py").read_text()
+    )
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and node.module.startswith("investment_manager.execution")
+        for node in ast.walk(world_service)
+    )
+
     owned_tables = {
         "portfolio_account_snapshots",
         "portfolio_target_forecasts",

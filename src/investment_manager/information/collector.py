@@ -9,7 +9,10 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from typing import Any, ClassVar, Protocol
+from urllib.parse import urlparse
+from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
 import anyio
@@ -19,6 +22,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import Field, field_validator
 
 from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.policy import OfficialEventFeed
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -277,6 +281,149 @@ class NewsNowSource:
         raise ValueError("NewsNow pubDate 缺失或格式非法")
 
 
+class OfficialRssSource:
+    """Read one pinned government release feed as high-provenance event evidence."""
+
+    def __init__(
+        self,
+        feed: OfficialEventFeed,
+        *,
+        maximum_age_seconds: int,
+        timeout_seconds: int = 15,
+        maximum_bytes: int = 2_000_000,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if maximum_age_seconds < 1 or timeout_seconds < 1 or maximum_bytes < 1:
+            raise ValueError("official RSS age/timeout/size 必须为正数")
+        self.source_id = f"official-rss:{feed.stream_id}"
+        self._feed = feed
+        self._maximum_age = timedelta(seconds=maximum_age_seconds)
+        self._timeout_seconds = timeout_seconds
+        self._maximum_bytes = maximum_bytes
+        self._transport = transport
+        self._validators: dict[str, str] = {}
+
+    def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
+        observed_at = require_utc(observed_at)
+        headers = {
+            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml",
+            "User-Agent": "investment-manager-official-events/1.0",
+            **self._validators,
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(self._feed.url, headers=headers)
+        if response.status_code == 304:
+            return ()
+        response.raise_for_status()
+        if str(response.url) != self._feed.url:
+            raise ValueError("official RSS 响应 URL 与固定请求不一致")
+        if not response.content or len(response.content) > self._maximum_bytes:
+            raise ValueError("official RSS 响应为空或超过大小上限")
+        self._validators = {
+            name: value
+            for name, value in (
+                ("If-None-Match", response.headers.get("etag")),
+                ("If-Modified-Since", response.headers.get("last-modified")),
+            )
+            if value
+        }
+        return self._parse(response.content, observed_at=observed_at)
+
+    def _parse(
+        self,
+        content: bytes,
+        *,
+        observed_at: datetime,
+    ) -> tuple[RawIntelligenceItem, ...]:
+        try:
+            root = ElementTree.fromstring(content)
+        except ElementTree.ParseError as exc:
+            raise ValueError("official RSS XML 非法") from exc
+        entries = tuple(
+            node for node in root.iter() if _xml_local_name(node.tag) in {"item", "entry"}
+        )
+        items: list[RawIntelligenceItem] = []
+        for entry in entries:
+            title = _xml_child_text(entry, ("title",))
+            published = _xml_child_text(entry, ("pubDate", "published", "updated", "date"))
+            url = _xml_entry_url(entry)
+            if not title or not published or not url:
+                continue
+            event_time = _parse_feed_time(published)
+            if event_time > observed_at:
+                raise ValueError("official RSS 发布时间晚于系统观测时间")
+            if observed_at - event_time > self._maximum_age:
+                continue
+            guid = _xml_child_text(entry, ("guid", "id")) or url
+            body = _xml_child_text(entry, ("description", "summary", "content")) or title
+            items.append(
+                RawIntelligenceItem(
+                    source_item_id=stable_id(
+                        "official_rss_item",
+                        self._feed.stream_id,
+                        guid,
+                        event_time.isoformat(),
+                    ),
+                    source=f"official:{self._feed.stream_id}",
+                    acquisition_route="official-rss-v1",
+                    event_time=event_time,
+                    observed_at=observed_at,
+                    title=_bounded_external_text(title, maximum_length=1_000),
+                    body=_bounded_external_text(body, maximum_length=20_000),
+                    url=url,
+                    source_reliability=Decimal("1"),
+                    rank=0,
+                )
+            )
+        return tuple(items)
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_child_text(element: ElementTree.Element, names: tuple[str, ...]) -> str:
+    for child in element:
+        if _xml_local_name(child.tag) in names:
+            value = "".join(child.itertext()).strip()
+            if value:
+                return value
+    return ""
+
+
+def _xml_entry_url(element: ElementTree.Element) -> str | None:
+    for child in element:
+        if _xml_local_name(child.tag) != "link":
+            continue
+        value = (child.get("href") or child.text or "").strip()
+        parsed = urlparse(value)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.hostname.endswith(".gov")
+            and parsed.username is None
+        ):
+            return _bounded_external_url(value)
+    return None
+
+
+def _parse_feed_time(value: str) -> datetime:
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("official RSS 时间格式非法") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("official RSS 时间必须包含时区")
+    return parsed.astimezone(UTC)
+
+
 class EventNormalizer:
     _base_asset_aliases: ClassVar[dict[str, tuple[str, ...]]] = {
         "BTC": ("bitcoin", "比特币"),
@@ -289,10 +436,23 @@ class EventNormalizer:
         "dollar index",
         "dxy",
         "inflation",
+        "24-hour trading",
+        "24/7 trading",
+        "employment situation",
+        "gross domestic product",
+        "gdp",
+        "personal consumption expenditures",
+        "personal income",
+        "innovation advisory committee",
+        "pce",
+        "payroll",
+        "producer price index",
+        "prediction market",
+        "ppi",
+        "unemployment rate",
         "interest rate",
         "tariff",
         "sanction",
-        "sec ",
         "oil",
         "hormuz",
         "美联储",
@@ -316,9 +476,6 @@ class EventNormalizer:
         "digital asset",
         "加密货币",
         "数字资产",
-    )
-    _v7_crypto_context_keywords: ClassVar[tuple[str, ...]] = (
-        *_crypto_context_keywords,
         "blockchain",
         "stablecoin",
         "crypto exchange",
@@ -328,24 +485,25 @@ class EventNormalizer:
         "稳定币",
         "加密交易所",
     )
-    _legacy_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
-        "federal reserve",
-        "cpi",
-        "rate decision",
-        "sanction",
-        "hormuz",
-        "美联储",
-        "利率决议",
-        "降息",
-        "加息",
-        "制裁",
-        "霍尔木兹",
-    )
-    # v6 只让可辨识的宏观冲击跨越高影响触发门槛。“美联储”或“制裁”
-    # 单独出现仍作为低优先级背景保留，避免例行操作和非加密地缘快讯制造无效调用。
-    _refined_critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
+    # Only a concrete macro release/shock crosses the AI wake-up threshold.
+    # Broad agency mentions remain background evidence.
+    _critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
         "cpi",
         "consumer price index",
+        "24-hour trading",
+        "24/7 trading",
+        "employment situation",
+        "gross domestic product",
+        "gdp",
+        "personal consumption expenditures",
+        "personal income",
+        "innovation advisory committee",
+        "pce",
+        "payroll",
+        "producer price index",
+        "prediction market",
+        "ppi",
+        "unemployment rate",
         "rate decision",
         "rate cut",
         "rate hike",
@@ -363,7 +521,7 @@ class EventNormalizer:
     def __init__(
         self,
         *,
-        version: str = "intelligence-normalizer-v4",
+        version: str = "intelligence-normalizer-v8",
         universe: tuple[str, ...] = ("BTCUSDT", "ETHUSDT"),
         quote_asset: str = "USDT",
     ) -> None:
@@ -389,7 +547,7 @@ class EventNormalizer:
         )
         relevance = Decimal("1")
         if not symbols:
-            if self._version.endswith(("v6", "v7")) and self._has_crypto_context(text):
+            if self._has_crypto_context(text):
                 symbols = self._universe
                 relevance = Decimal("0.85")
             else:
@@ -439,37 +597,23 @@ class EventNormalizer:
         )
 
     def _has_cross_asset_relevance(self, text: str) -> bool:
-        if any(
-            keyword in text
-            for keyword in self._cross_asset_keywords
-            if not (self._version.endswith("v7") and keyword == "sec ")
-        ):
+        if any(keyword in text for keyword in self._cross_asset_keywords):
             return True
-        if self._version.endswith("v4"):
-            return "etf" in text
         return "etf" in text and any(
             self._contains_symbol_keyword(text, keyword)
             for keyword in self._crypto_context_keywords
         )
 
     def _has_crypto_context(self, text: str) -> bool:
-        keywords = (
-            self._v7_crypto_context_keywords
-            if self._version.endswith("v7")
-            else self._crypto_context_keywords
-        )
         return any(
             self._contains_symbol_keyword(text, keyword)
-            for keyword in keywords
+            for keyword in self._crypto_context_keywords
         )
 
     def _has_critical_cross_asset_relevance(self, text: str) -> bool:
-        if not self._version.endswith(("v6", "v7")):
-            # 历史 v4/v5 使用子串匹配；回放时必须保持原语义。
-            return any(keyword in text for keyword in self._legacy_critical_cross_asset_keywords)
         return any(
             self._contains_symbol_keyword(text, keyword)
-            for keyword in self._refined_critical_cross_asset_keywords
+            for keyword in self._critical_cross_asset_keywords
         )
 
     @staticmethod
@@ -543,6 +687,7 @@ class CollectionResult:
     read_count: int
     normalized_count: int
     inserted_count: int
+    failed_source_ids: tuple[str, ...] = ()
 
 
 class InformationCollector:
@@ -561,16 +706,27 @@ class InformationCollector:
 
     def collect(self, *, observed_at: datetime) -> CollectionResult:
         read_count = normalized_count = inserted_count = 0
+        failed_source_ids: list[str] = []
         for source in self._sources:
-            for raw in source.read(observed_at=observed_at):
-                read_count += 1
-                event = self._normalizer.normalize(raw)
-                if event is None:
-                    continue
-                normalized_count += 1
-                if self._store.put(event):
-                    inserted_count += 1
-        return CollectionResult(read_count, normalized_count, inserted_count)
+            try:
+                items = source.read(observed_at=observed_at)
+                for raw in items:
+                    read_count += 1
+                    event = self._normalizer.normalize(raw)
+                    if event is None:
+                        continue
+                    normalized_count += 1
+                    if self._store.put(event):
+                        inserted_count += 1
+            except Exception:
+                logger.exception("information source failed: %s", source.source_id)
+                failed_source_ids.append(source.source_id)
+        return CollectionResult(
+            read_count,
+            normalized_count,
+            inserted_count,
+            tuple(failed_source_ids),
+        )
 
 
 @dataclass(slots=True)
@@ -580,6 +736,7 @@ class InformationCollectorHealth:
     inserted_count: int = 0
     last_success_at: datetime | None = None
     last_error_class: str | None = None
+    failed_source_ids: tuple[str, ...] = ()
 
 
 class InformationCollectorService:
@@ -611,7 +768,10 @@ class InformationCollectorService:
                 self.health.read_count += result.read_count
                 self.health.inserted_count += result.inserted_count
                 self.health.last_success_at = observed_at
-                self.health.last_error_class = None
+                self.health.failed_source_ids = result.failed_source_ids
+                self.health.last_error_class = (
+                    "SOURCE_READ_FAILED" if result.failed_source_ids else None
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

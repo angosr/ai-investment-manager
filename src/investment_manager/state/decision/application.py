@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
 
 from pydantic import Field, model_validator
 
-from investment_manager.execution.account_repository import AccountSnapshotReader
 from investment_manager.information.coverage import SqlInformationCoverageStore
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
 from investment_manager.information.policy import CoverageRequirement
@@ -95,7 +93,6 @@ class DecisionPacketPreparation:
         self,
         *,
         market_store: MarketDataStore,
-        account_reader: AccountSnapshotReader,
         event_reader: IntelligenceEventReader,
         facts: SqlFactStateStore,
         projector: SqlStateProjector,
@@ -104,7 +101,6 @@ class DecisionPacketPreparation:
         market_interval: str,
         market_bar_window: int,
         market_source: str,
-        initial_quote_balance: Decimal,
         maximum_market_age_seconds: int,
         coverage_reader: SqlInformationCoverageStore | None = None,
         coverage_requirements: tuple[CoverageRequirement, ...] = (),
@@ -128,7 +124,6 @@ class DecisionPacketPreparation:
         if tuple(sorted(set(perpetual_symbols))) != perpetual_symbols:
             raise ValueError("DecisionPacket perpetual_instruments 必须按 symbol 唯一且排序")
         self._market_store = market_store
-        self._account_reader = account_reader
         self._event_reader = event_reader
         self._facts = facts
         self._projector = projector
@@ -137,7 +132,6 @@ class DecisionPacketPreparation:
         self._market_interval = market_interval
         self._market_bar_window = market_bar_window
         self._market_source = market_source
-        self._initial_quote_balance = initial_quote_balance
         self._maximum_market_age_seconds = maximum_market_age_seconds
         self._coverage_reader = coverage_reader
         self._coverage_requirements = coverage_requirements
@@ -254,12 +248,6 @@ class DecisionPacketPreparation:
             mandate=mandate,
             markets=markets,
         )
-        account = self._account_reader.account_for_cycle(
-            cycle_id=analysis_id,
-            as_of=as_of,
-            initial_quote_balance=self._initial_quote_balance,
-        )
-        data_quality_codes = () if account.reconciled else ("ACCOUNT_UNRECONCILED",)
         information_coverage: tuple[DomainCoverageSnapshot, ...] = ()
         coverage_gap_codes: tuple[str, ...] = ()
         if self._coverage_reader is not None:
@@ -278,7 +266,6 @@ class DecisionPacketPreparation:
             markets=markets,
             features=feature_snapshots,
             derivatives=derivatives,
-            account=account,
             intelligence_events=intelligence_events,
             material_intelligence_event_refs=tuple(
                 sorted(content_hash(item) for item in triggered_events)
@@ -286,7 +273,7 @@ class DecisionPacketPreparation:
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
             market_affected_assets=market_affected_assets,
-            data_quality_codes=data_quality_codes,
+            data_quality_codes=(),
             coverage_gap_codes=coverage_gap_codes,
             information_coverage=information_coverage,
         )

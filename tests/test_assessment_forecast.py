@@ -15,7 +15,10 @@ from investment_manager.forecast.context.application import (
     AssessmentCommand,
     AssessmentWorkflowStatus,
 )
-from investment_manager.forecast.context.contract import WorldModelStructuredOutput
+from investment_manager.forecast.context.contract import (
+    WorldModelStructuredOutput,
+    assessment_input_projection,
+)
 from investment_manager.forecast.context.estimate import (
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
@@ -439,6 +442,8 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
         assessment.available_at
     )
     assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
+    assert "portfolio" not in assessment_input_projection(packet)
+    assert "data_quality_codes" not in analysis_input["target_state"]
     assert "verification_tests" not in analysis_input["world_model"]["mechanisms"][0]
     assert "next_review_at" not in analysis_input["world_model"]["mechanisms"][0]
     assert "continuity_ref" not in analysis_input["world_model"]["mechanisms"][0]

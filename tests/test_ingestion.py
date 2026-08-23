@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, func, select
 
@@ -15,9 +16,11 @@ from investment_manager.information.collector import (
     InformationCollectorService,
     InMemoryEventStore,
     NewsNowSource,
+    OfficialRssSource,
     RawIntelligenceItem,
     TrendRadarMcpSource,
 )
+from investment_manager.information.policy import OfficialEventFeed
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
 from investment_manager.scheduling.tables import analysis_trigger_events
@@ -42,6 +45,13 @@ class FakeNewsNowTransport:
     def fetch(self, source_id: str):
         self.calls.append(source_id)
         return self.responses[source_id]
+
+
+class FailingSource:
+    source_id = "failed-source"
+
+    def read(self, *, observed_at):
+        raise OSError(f"unavailable at {observed_at.isoformat()}")
 
 
 def _response() -> str:
@@ -236,6 +246,59 @@ def test_newsnow_fast_source_skips_items_older_than_trigger_window() -> None:
     assert [item.title for item in items] == ["fresh item"]
 
 
+def test_official_rss_source_emits_only_fresh_first_party_items() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel>
+      <item><guid>fresh</guid><title>SEC proposes crypto asset rule</title>
+        <link>https://www.sec.gov/newsroom/fresh</link>
+        <description>Official digital asset proposal.</description>
+        <pubDate>Tue, 18 Aug 2026 11:59:00 GMT</pubDate></item>
+      <item><guid>stale</guid><title>Old crypto release</title>
+        <link>https://www.sec.gov/newsroom/stale</link>
+        <pubDate>Tue, 18 Aug 2026 11:40:00 GMT</pubDate></item>
+    </channel></rss>"""
+    source = OfficialRssSource(
+        OfficialEventFeed(
+            stream_id="sec-press-releases",
+            url="https://www.sec.gov/news/pressreleases.rss",
+        ),
+        maximum_age_seconds=900,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=xml, request=request)
+        ),
+    )
+
+    items = source.read(observed_at=observed_at)
+    event = EventNormalizer(version="official-test-v8").normalize(items[0])
+
+    assert len(items) == 1
+    assert items[0].source == "official:sec-press-releases"
+    assert items[0].source_reliability == Decimal("1")
+    assert event is not None
+    assert event.trigger_priority == 85
+
+
+def test_official_macro_release_has_ai_trigger_priority() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    event = EventNormalizer(version="official-test-v8").normalize(
+        RawIntelligenceItem(
+            source_item_id="bea-gdp",
+            source="official:bea-economic-releases",
+            acquisition_route="official-rss-v1",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title="GDP (Advance Estimate), 2nd Quarter 2026",
+            source_reliability=Decimal("1"),
+            rank=0,
+        )
+    )
+
+    assert event is not None
+    assert event.symbols == ("BTCUSDT", "ETHUSDT")
+    assert event.trigger_priority == 85
+
+
 def test_sql_event_store_deduplicates_and_respects_observed_at_visibility() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     source = TrendRadarMcpSource(FakeMcpTransport(_response()))
@@ -381,6 +444,21 @@ def test_collector_service_runs_bounded_collector_and_stops_cleanly() -> None:
     assert service.health.last_error_class is None
 
 
+def test_collector_isolates_source_failure_without_blocking_first_party_feed() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    healthy = TrendRadarMcpSource(FakeMcpTransport(_response()))
+    store = InMemoryEventStore()
+    result = InformationCollector(
+        (FailingSource(), healthy),
+        EventNormalizer(),
+        store,
+    ).collect(observed_at=observed_at)
+
+    assert result.failed_source_ids == ("failed-source",)
+    assert result.inserted_count == 1
+    assert len(store.visible(symbol="BTCUSDT", as_of=observed_at)) == 1
+
+
 def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     event = EventNormalizer(universe=("BTCUSDT", "ETHUSDT")).normalize(
@@ -395,7 +473,7 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
     )
 
     assert event is not None
-    assert event.normalizer_version == "intelligence-normalizer-v4"
+    assert event.normalizer_version == "intelligence-normalizer-v8"
     assert event.symbols == ("BTCUSDT", "ETHUSDT")
     assert event.relevance == Decimal("0.85")
     assert event.impact == Decimal("0.8415")
@@ -476,14 +554,10 @@ def test_dollar_denominated_unrelated_news_does_not_route_to_crypto() -> None:
     assert natural_gas_quote is None
 
 
-def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
+def test_normalizer_requires_crypto_context_for_generic_etf_route() -> None:
     observed_at = datetime(2026, 8, 19, 1, 28, tzinfo=UTC)
-    legacy = EventNormalizer(
-        version="trendradar-collector-v4",
-        universe=("BTCUSDT", "ETHUSDT"),
-    )
-    candidate = EventNormalizer(
-        version="trendradar-collector-v5",
+    normalizer = EventNormalizer(
+        version="trendradar-collector-v8",
         universe=("BTCUSDT", "ETHUSDT"),
     )
     unrelated_titles = (
@@ -501,10 +575,9 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
             title=title,
             rank=1,
         )
-        assert legacy.normalize(item) is not None
-        assert candidate.normalize(item) is None
+        assert normalizer.normalize(item) is None
 
-    contextual = candidate.normalize(
+    contextual = normalizer.normalize(
         RawIntelligenceItem(
             source_item_id="crypto-etf",
             source="wire",
@@ -514,7 +587,7 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
             rank=1,
         )
     )
-    reversed_context = candidate.normalize(
+    reversed_context = normalizer.normalize(
         RawIntelligenceItem(
             source_item_id="etf-crypto-context",
             source="wire",
@@ -524,7 +597,7 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
             rank=1,
         )
     )
-    cryptography = candidate.normalize(
+    cryptography = normalizer.normalize(
         RawIntelligenceItem(
             source_item_id="etf-cryptography",
             source="wire",
@@ -534,7 +607,7 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
             rank=1,
         )
     )
-    direct = candidate.normalize(
+    direct = normalizer.normalize(
         RawIntelligenceItem(
             source_item_id="bitcoin-etf",
             source="wire",
@@ -546,21 +619,17 @@ def test_v5_requires_crypto_context_for_generic_etf_route() -> None:
     )
 
     assert contextual is not None
-    assert contextual.normalizer_version == "trendradar-collector-v5"
+    assert contextual.normalizer_version == "trendradar-collector-v8"
     assert reversed_context is not None
     assert cryptography is None
     assert direct is not None
     assert direct.relevance == Decimal("1")
 
 
-def test_v6_keeps_broad_macro_context_without_high_impact_trigger() -> None:
+def test_normalizer_keeps_broad_macro_context_without_high_impact_trigger() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
-    legacy = EventNormalizer(
-        version="trendradar-collector-v5",
-        universe=("BTCUSDT", "ETHUSDT"),
-    )
-    refined = EventNormalizer(
-        version="trendradar-collector-v6",
+    normalizer = EventNormalizer(
+        version="trendradar-collector-v8",
         universe=("BTCUSDT", "ETHUSDT"),
     )
 
@@ -580,20 +649,19 @@ def test_v6_keeps_broad_macro_context_without_high_impact_trigger() -> None:
             title=title,
             rank=1,
         )
-        old_event = legacy.normalize(item)
-        new_event = refined.normalize(item)
-        assert old_event is not None and old_event.relevance == Decimal("0.85")
-        assert new_event is not None and new_event.relevance == Decimal("0.50")
+        event = normalizer.normalize(item)
+        assert event is not None and event.relevance == Decimal("0.50")
 
 
-def test_v6_high_impact_requires_crypto_context_or_specific_macro_shock() -> None:
+def test_normalizer_high_impact_requires_crypto_context_or_specific_macro_shock() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     normalizer = EventNormalizer(
-        version="trendradar-collector-v6",
+        version="trendradar-collector-v8",
         universe=("BTCUSDT", "ETHUSDT"),
     )
     cases = (
         ("A major crypto exchange halts withdrawals", Decimal("0.85")),
+        ("CFTC Innovation Advisory Committee publishes its agenda", Decimal("0.85")),
         ("Federal Reserve rate decision raises rates", Decimal("0.85")),
         ("非农就业数据大幅低于预期", Decimal("0.85")),
         ("霍尔木兹海峡航运中断", Decimal("0.85")),
@@ -615,14 +683,10 @@ def test_v6_high_impact_requires_crypto_context_or_specific_macro_shock() -> Non
         assert event.impact == Decimal("0.8415")
 
 
-def test_v7_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
+def test_normalizer_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
     observed_at = datetime(2026, 8, 20, 21, 8, tzinfo=UTC)
-    legacy = EventNormalizer(
-        version="trendradar-collector-v6",
-        universe=("BTCUSDT", "ETHUSDT"),
-    )
-    refined = EventNormalizer(
-        version="trendradar-collector-v7",
+    normalizer = EventNormalizer(
+        version="trendradar-collector-v8",
         universe=("BTCUSDT", "ETHUSDT"),
     )
     unrelated = RawIntelligenceItem(
@@ -644,11 +708,9 @@ def test_v7_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
         rank=1,
     )
 
-    legacy_event = legacy.normalize(unrelated)
-    assert legacy_event is not None and legacy_event.relevance == Decimal("0.50")
-    assert refined.normalize(unrelated) is None
+    assert normalizer.normalize(unrelated) is None
 
-    relevant = refined.normalize(crypto_enforcement)
+    relevant = normalizer.normalize(crypto_enforcement)
     assert relevant is not None
     assert relevant.symbols == ("BTCUSDT", "ETHUSDT")
     assert relevant.relevance == Decimal("0.85")

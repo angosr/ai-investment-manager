@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy.engine import Engine
 
-from investment_manager.execution.account_repository import SqlAccountSnapshotReader
-from investment_manager.execution.reconciliation.repository import (
-    SqlReconciliationReportStore,
-)
 from investment_manager.information.coverage import SqlInformationCoverageStore
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.features import FeatureEngine
@@ -25,13 +21,6 @@ def assemble_decision_packet_preparation(
 
     return DecisionPacketPreparation(
         market_store=SqlMarketDataStore(engine),
-        account_reader=SqlAccountSnapshotReader(
-            engine,
-            maximum_reconciliation_age_seconds=(
-                config.reconciliation.maximum_report_age_seconds
-            ),
-            reports=SqlReconciliationReportStore(engine),
-        ),
         event_reader=SqlEventStore(engine),
         facts=SqlFactStateStore(engine),
         projector=SqlStateProjector(
@@ -47,7 +36,6 @@ def assemble_decision_packet_preparation(
         market_interval=config.market_data.interval,
         market_bar_window=config.market_data.bar_window,
         market_source=config.market_data.version,
-        initial_quote_balance=config.shadow.initial_quote_balance,
         maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
         coverage_reader=SqlInformationCoverageStore(engine),
         coverage_requirements=config.information.coverage_requirements,

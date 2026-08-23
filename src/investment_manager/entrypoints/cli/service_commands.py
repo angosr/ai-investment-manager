@@ -35,6 +35,7 @@ from investment_manager.information.collector import (
     InformationCollector,
     InformationCollectorService,
     NewsNowSource,
+    OfficialRssSource,
     StreamableHttpMcpTransport,
     TrendRadarMcpSource,
 )
@@ -400,6 +401,14 @@ def information_collector(
         source_timezone=policy.source_timezone,
     )
     sources = [source]
+    sources.extend(
+        OfficialRssSource(
+            feed,
+            maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
+            timeout_seconds=policy.request_timeout_seconds,
+        )
+        for feed in policy.official_event_feeds
+    )
     if policy.newsnow_sources:
         sources.append(
             NewsNowSource(

@@ -66,7 +66,7 @@ class SqlStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...] = (),
-        account: AccountSnapshot,
+        account: AccountSnapshot | None = None,
         intelligence_events: tuple[IntelligenceEvent, ...] = (),
         material_intelligence_event_refs: tuple[str, ...] | None = None,
         intelligence_affected_assets: tuple[str, ...] = (),
@@ -100,7 +100,7 @@ class SqlStateProjector:
             intelligence_event_refs=tuple(
                 content_hash(item) for item in intelligence_events
             ),
-            account_snapshot_ref=content_hash(account),
+            account_snapshot_ref=(content_hash(account) if account is not None else None),
             data_quality_codes=data_quality_codes,
             coverage_gap_codes=coverage_gap_codes,
             information_coverage=information_coverage,
@@ -202,7 +202,8 @@ class SqlStateProjector:
             self._evidence.put_feature(feature)
         for derivative in derivatives:
             self._evidence.put_derivative(derivative)
-        self._evidence.put_account(account)
+        if account is not None:
+            self._evidence.put_account(account)
         for event in intelligence_events:
             self._evidence.put_intelligence(event)
 
@@ -213,7 +214,7 @@ class SqlStateProjector:
         markets: tuple[MarketSnapshot, ...],
         features: tuple[FeatureSnapshot, ...],
         derivatives: tuple[DerivativeContextSnapshot, ...],
-        account: AccountSnapshot,
+        account: AccountSnapshot | None,
         intelligence_events: tuple[IntelligenceEvent, ...],
     ) -> None:
         market_symbols = tuple(item.symbol for item in markets)
@@ -243,7 +244,9 @@ class SqlStateProjector:
             for item in derivatives
         ):
             raise ValueError("State projection 不能使用其他时点的 Derivative evidence")
-        if account.as_of > as_of or account.observed_at > as_of:
+        if account is not None and (
+            account.as_of > as_of or account.observed_at > as_of
+        ):
             raise ValueError("State projection 不能使用 as_of 之后的 Account evidence")
         event_ids = tuple(item.evidence_id for item in intelligence_events)
         if tuple(sorted(set(event_ids))) != event_ids:
