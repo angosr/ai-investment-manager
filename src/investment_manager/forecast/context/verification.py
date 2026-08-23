@@ -21,7 +21,7 @@ from investment_manager.state.decision.packet import (
     continuous_fact_numeric_values,
 )
 
-WORLD_MODEL_VERIFICATION_POLICY_VERSION = "mechanism-lineage-v2"
+WORLD_MODEL_VERIFICATION_POLICY_VERSION = "independent-observation-v3"
 
 
 def observe_world_model(
@@ -53,16 +53,26 @@ def observe_world_model(
             and item.test_contract_hash is not None
         ):
             previous_by_mechanism_contract[(item.mechanism_id, item.test_contract_hash)] = item
-    values = packet_feature_values(packet)
+    features = packet_feature_observations(packet)
     observations: list[ContextMechanismObservation] = []
     for mechanism in assessment.mechanisms:
+        baseline_evidence_ids = {
+            evidence_id
+            for node in mechanism.causal_chain
+            for evidence_id in node.evidence_ids
+        } | set(mechanism.conflicting_evidence_ids)
         for index, test in enumerate(mechanism.verification_tests):
             if packet.as_of > assessment.available_at + timedelta(
                 minutes=test.evaluation_window_minutes
             ):
                 continue
-            value = values.get(test.feature_selector)
-            if value is None:
+            feature = features.get(test.feature_selector)
+            if feature is None:
+                continue
+            value, feature_observation_ref = feature
+            # Evidence that built the hypothesis is its baseline, not a future
+            # confirmation. Wait for a genuinely new canonical fact revision.
+            if feature_observation_ref in baseline_evidence_ids:
                 continue
             test_id = verification_test_id(
                 assessment_id=assessment.assessment_id,
@@ -81,6 +91,16 @@ def observe_world_model(
                 prior = previous_by_mechanism_contract.get(
                     (mechanism.continuity_ref, test_contract_hash)
                 )
+            # A canonical fact revision is immutable. Repackaging the same daily or
+            # weekly revision in multiple intraday packets is not new evidence and
+            # must not advance persistence. Market features have no external
+            # revision ref and remain independent point-in-time observations.
+            if (
+                feature_observation_ref is not None
+                and prior is not None
+                and prior.feature_observation_ref == feature_observation_ref
+            ):
+                continue
             support_streak = (
                 (prior.support_streak if prior is not None else 0) + 1
                 if match == ContextVerificationMatch.SUPPORTS
@@ -99,8 +119,7 @@ def observe_world_model(
                 resolution = ContextVerificationResolution.CONTRADICTED
             else:
                 resolution = ContextVerificationResolution.PENDING
-            observation_id = stable_id(
-                "world_mechanism_observation",
+            observation_identity = (
                 assessment.assessment_id,
                 mechanism.mechanism_id,
                 test_id,
@@ -111,6 +130,12 @@ def observe_world_model(
                 support_streak,
                 contradiction_streak,
                 resolution,
+            )
+            if feature_observation_ref is not None:
+                observation_identity = (*observation_identity, feature_observation_ref)
+            observation_id = stable_id(
+                "world_mechanism_observation",
+                *observation_identity,
                 test_contract_hash,
                 WORLD_MODEL_VERIFICATION_POLICY_VERSION,
             )
@@ -123,6 +148,7 @@ def observe_world_model(
                 verification_policy_version=WORLD_MODEL_VERIFICATION_POLICY_VERSION,
                 packet_id=packet.packet_id,
                 feature_selector=test.feature_selector,
+                feature_observation_ref=feature_observation_ref,
                 observed_at=packet.as_of,
                 value=value,
                 match=match,
@@ -178,7 +204,18 @@ def predicate_match(
 
 
 def packet_feature_values(packet: DecisionPacket) -> dict[str, Decimal]:
-    values: dict[str, Decimal] = {}
+    return {
+        selector: value
+        for selector, (value, _) in packet_feature_observations(packet).items()
+    }
+
+
+def packet_feature_observations(
+    packet: DecisionPacket,
+) -> dict[str, tuple[Decimal, str | None]]:
+    """Return executable values with an identity for externally versioned facts."""
+
+    values: dict[str, tuple[Decimal, str | None]] = {}
     for item in packet.asset_states:
         for field in (
             "last",
@@ -188,7 +225,10 @@ def packet_feature_values(packet: DecisionPacket) -> dict[str, Decimal]:
             "spread_bps",
             "volume_ratio",
         ):
-            values[f"asset_state:{item.asset}.{field}"] = Decimal(str(getattr(item, field)))
+            values[f"asset_state:{item.asset}.{field}"] = (
+                Decimal(str(getattr(item, field))),
+                None,
+            )
     for item in packet.derivative_states:
         for field in (
             "mark_index_premium_bps",
@@ -205,10 +245,16 @@ def packet_feature_values(packet: DecisionPacket) -> dict[str, Decimal]:
         ):
             raw = getattr(item, field)
             if raw is not None:
-                values[f"derivative_state:{item.asset}.{field}"] = Decimal(str(raw))
+                values[f"derivative_state:{item.asset}.{field}"] = (
+                    Decimal(str(raw)),
+                    None,
+                )
     for item in getattr(packet, "facts", ()):
         for field, value in continuous_fact_numeric_values(item).items():
-            values[f"fact_state:{item.fact_type}.{field}"] = value
+            values[f"fact_state:{item.fact_type}.{field}"] = (
+                value,
+                item.revision_id,
+            )
     return values
 
 

@@ -323,6 +323,7 @@ class ContextMechanismObservation(FrozenModel):
     verification_policy_version: str | None = Field(default=None, min_length=1)
     packet_id: str = Field(min_length=1)
     feature_selector: str = Field(min_length=1, max_length=240)
+    feature_observation_ref: str | None = Field(default=None, min_length=1)
     observed_at: datetime
     value: Decimal
     match: ContextVerificationMatch
@@ -354,6 +355,8 @@ class ContextMechanismObservation(FrozenModel):
             self.contradiction_streak,
             self.resolution,
         )
+        if self.feature_observation_ref is not None:
+            identity = (*identity, self.feature_observation_ref)
         expected = (
             stable_id(
                 "world_mechanism_observation",
