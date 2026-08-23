@@ -129,7 +129,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: product-capital-v14
+  version: product-capital-v15
   enabled: false
   settlement_asset: USDT
   decision:

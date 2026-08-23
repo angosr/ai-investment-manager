@@ -229,6 +229,7 @@ class CapitalDashboardReader:
         ).where(
             capital_cycle_records.c.outcome.not_in(
                 (
+                    CapitalCycleOutcome.CASH.value,
                     CapitalCycleOutcome.NO_OPPORTUNITY.value,
                     CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED.value,
                 )
@@ -379,11 +380,7 @@ class CapitalDashboardReader:
             target=target,
             forecasts=forecasts,
         )
-        if record.outcome in {
-            CapitalCycleOutcome.CASH,
-            CapitalCycleOutcome.NO_OPPORTUNITY,
-            CapitalCycleOutcome.HOLD,
-        }:
+        if record.outcome in {CapitalCycleOutcome.CASH, CapitalCycleOutcome.HOLD}:
             return CapitalActivity(
                 activity_id=record.record_id,
                 at=record.evaluated_at,

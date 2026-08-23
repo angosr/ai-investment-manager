@@ -492,9 +492,7 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert not account.positions
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
-    activity = CapitalDashboardReader(engine, config).activity()[0]
-    assert activity.outcome == "CASH"
-    assert activity.reason_codes == ("NO_REGISTERED_FORECAST_SOURCE",)
+    assert CapitalDashboardReader(engine, config).activity() == ()
 
 
 def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
@@ -510,6 +508,7 @@ def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
         symbol="BTCUSDT",
         trigger_types=("HEARTBEAT",),
     )
+    assert CapitalDashboardReader(engine, config).activity() == ()
     with engine.begin() as connection:
         connection.execute(
             update(capital_cycle_records).values(outcome="NO_OPPORTUNITY")
@@ -549,6 +548,7 @@ def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
             connection.scalar(select(func.count()).select_from(portfolio_account_snapshots))
             == 1
         )
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
 
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:

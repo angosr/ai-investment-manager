@@ -318,10 +318,10 @@ class CapitalCycleService:
                 portfolio_id=self._config.capital.decision.portfolio_id
             )
             # A recovered cadence slot may predate the account ledger head.  Its
-            # no-estimate result is still auditable, but capital facts must never
-            # be projected backwards or create a fictitious PnL interval.
-            if account_head is not None:
-                completed_at = max(completed_at, account_head.as_of)
+            # no-estimate result already lives in the Forecast audit trail; it is
+            # not a new capital decision and must not create an action receipt.
+            if account_head is not None and completed_at < account_head.as_of:
+                return self._observe(as_of=account_head.as_of)
             return self._finish(
                 result=self._observe(as_of=completed_at),
                 requested_at=completed_at,
