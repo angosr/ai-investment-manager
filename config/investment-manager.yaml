@@ -545,7 +545,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v32
+  version: context-assessment-v33
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

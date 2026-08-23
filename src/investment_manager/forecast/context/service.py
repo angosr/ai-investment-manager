@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -45,6 +46,8 @@ from investment_manager.scheduling.policy import TemporalPolicy
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import AppConfig
 
+logger = logging.getLogger(__name__)
+
 WORLD_MODEL_REVIEW_MARKER = "world_model_review:"
 
 
@@ -61,15 +64,27 @@ class WorldModelReviewScheduler:
     trigger_expiry_seconds: int
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
-    def reconcile_latest(self, analysis_scope: str) -> None:
+    def reconcile_latest(self, analysis_scope: str) -> bool:
         """Restore the latest model's wakeup after a release cutover or restart."""
 
         latest = self.assessments.latest_before(
             analysis_scope=analysis_scope,
             as_of=require_utc(self.clock()),
         )
-        if latest is not None:
+        if latest is None:
+            return True
+        try:
             self.schedule(latest)
+        except KeyError:
+            # Trigger service owns plan creation and may start just after this
+            # worker. New assessments remain valid and schedule their own review
+            # once the current plan exists.
+            logger.warning(
+                "world model review wakeup deferred until trigger plan is ready",
+                extra={"pipeline_id": self.pipeline_id, "symbol": self.symbol},
+            )
+            return False
+        return True
 
     def publish_update(self, assessment: ContextAssessment) -> None:
         """Publish one durable downstream trigger after the WorldModel is persisted."""

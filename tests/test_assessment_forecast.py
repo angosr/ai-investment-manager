@@ -734,6 +734,28 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     ]
 
 
+def test_review_recovery_does_not_crash_before_trigger_plan(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    assessments = SqlContextAssessmentStore(engine)
+    packet = _packet()
+    assessment = _assessment()
+    assessments.record_packet(packet)
+    assessments.record_assessment(packet.packet_id, assessment)
+    scheduler = WorldModelReviewScheduler(
+        assessments=assessments,
+        triggers=SqlTriggerRepository(engine, app_config.trigger),
+        symbol="BTCUSDT",
+        pipeline_id="plan-not-ready-v1",
+        manifest_id="manifest-not-ready-v1",
+        minimum_call_interval_seconds=app_config.trigger.minimum_call_interval_seconds,
+        trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
+        clock=lambda: NOW + timedelta(minutes=1),
+    )
+
+    assert not scheduler.reconcile_latest(packet.analysis_scope)
+
+
 def test_assessment_command_identity_covers_packet_and_behavior() -> None:
     command = AssessmentCommand.create(
         packet=_packet(),

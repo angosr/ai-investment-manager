@@ -28,7 +28,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-capital-shadow-v9"
+    assert config.pipeline.version == "world-forecast-capital-shadow-v10"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.capital.enabled
     assert config.information.version == "information-intake-v27"
@@ -42,7 +42,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_fact_characters == 6_000
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.version == "context-assessment-v32"
+    assert config.assessment.version == "context-assessment-v33"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(
