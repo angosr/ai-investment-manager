@@ -314,6 +314,14 @@ class CapitalCycleService:
             completed_at = max(
                 (requested_at, *(item.completed_at for item in no_estimates))
             )
+            account_head = self._portfolio.head_account(
+                portfolio_id=self._config.capital.decision.portfolio_id
+            )
+            # A recovered cadence slot may predate the account ledger head.  Its
+            # no-estimate result is still auditable, but capital facts must never
+            # be projected backwards or create a fictitious PnL interval.
+            if account_head is not None:
+                completed_at = max(completed_at, account_head.as_of)
             return self._finish(
                 result=self._observe(as_of=completed_at),
                 requested_at=completed_at,
@@ -801,6 +809,12 @@ class CapitalCycleService:
                 cycle_id=cycle_id,
                 portfolio_id=portfolio_id,
             )
+            if account is None:
+                head = self._portfolio.head_account(portfolio_id=portfolio_id)
+                if head is not None and head.as_of > as_of:
+                    raise ValueError("Capital account 不允许倒序投影")
+                if head is not None and head.as_of == as_of:
+                    account = head
             if account is None:
                 account = self._accounts.project(
                     cycle_id=cycle_id,

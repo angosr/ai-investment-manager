@@ -54,6 +54,7 @@ from investment_manager.portfolio.models import (
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
+    portfolio_account_snapshots,
     portfolio_performance_intervals,
     portfolio_targets,
 )
@@ -516,6 +517,38 @@ def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
         assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
     assert CapitalDashboardReader(engine, config).activity() == ()
+
+
+def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    old_slot = NOW - timedelta(hours=1)
+    _put_market(market, config, at=old_slot, sequence=62)
+    _put_market(market, config, at=NOW, sequence=63)
+    service = assemble_capital_cycle(config, engine, forecast_sources=())
+    service.produce(
+        as_of=NOW,
+        cause_id="current-cash-observation",
+        trigger_batch_id="current-cash-observation",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    service.produce(
+        as_of=old_slot,
+        cause_id="recovered-old-cadence",
+        trigger_batch_id="recovered-old-cadence",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(select(func.count()).select_from(portfolio_account_snapshots))
+            == 1
+        )
 
 
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:

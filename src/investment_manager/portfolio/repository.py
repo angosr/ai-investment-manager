@@ -120,6 +120,22 @@ class SqlPortfolioStore:
             ).scalar_one_or_none()
         return None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
 
+    def head_account(self, *, portfolio_id: str) -> PortfolioAccountSnapshot | None:
+        """Return the causal head of one portfolio account ledger."""
+
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(portfolio_account_snapshots.c.payload)
+                .where(portfolio_account_snapshots.c.portfolio_id == portfolio_id)
+                .order_by(
+                    portfolio_account_snapshots.c.revision.desc(),
+                    portfolio_account_snapshots.c.as_of.desc(),
+                    portfolio_account_snapshots.c.snapshot_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return None if payload is None else PortfolioAccountSnapshot.model_validate(payload)
+
     def account_for_cycle(
         self,
         *,

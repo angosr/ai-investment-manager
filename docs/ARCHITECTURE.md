@@ -265,6 +265,8 @@ Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账�
 TriggerBatch 的 batch ID 作为 cause 追加 `CapitalCycleRecord`，直接保存品种、触发类型、账户快照、
 Forecast/Target 引用与终态；因此有资本判断时必须明确记录“NO_ESTIMATE、费用后现金、组合拒绝或风险拒绝”，
 不能统称无机会。全现金且没有 Forecast 的保护性检查只进入可观测健康状态，不伪装成人类需要阅读的资本行动。
+账户账本以 revision 为唯一因果头且只允许时间单调前进；版本切换后恢复的旧 Forecast cadence 可保存无估计原因，
+但只能复用当时已存在的账户头，不能倒序插入账户、重算历史或制造绩效区间。
 Dashboard 只投影真实 `CapitalCycleRecord`，不从“缺少 Target”反推行动。
 迁移前把 heartbeat 写成 `NO_OPPORTUNITY` 的只读收据仍保留在审计库中，但不再进入用户行动流或分页计数。
 历史 carry 制品仅是研究和 counterfactual，不能进入主动资本链。`CapitalCycleService`
