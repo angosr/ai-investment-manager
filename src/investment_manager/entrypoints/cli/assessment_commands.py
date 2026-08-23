@@ -146,6 +146,18 @@ def register_context_capital_forward_plan(
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
     ],
+    capital_config: Annotated[
+        Path,
+        typer.Option("--capital-config", exists=True, dir_okay=False),
+    ],
+    capital_release_manifest: Annotated[
+        Path,
+        typer.Option(
+            "--capital-release-manifest",
+            exists=True,
+            dir_okay=False,
+        ),
+    ],
     plan_id: Annotated[str, typer.Option()],
     signal_window_start: Annotated[str, typer.Option()],
     signal_window_end: Annotated[str, typer.Option()],
@@ -153,21 +165,29 @@ def register_context_capital_forward_plan(
 ) -> None:
     """在首个程序机会前冻结候选级 Context 配对评价。"""
 
-    loaded, manifest = load_runtime_release(config, release_manifest)
-    program = loaded.capital.cash_carry_program
+    context_loaded, context_manifest = load_runtime_release(config, release_manifest)
+    capital_loaded, capital_manifest = load_runtime_release(
+        capital_config,
+        capital_release_manifest,
+    )
+    if not context_loaded.assessment.enabled or not context_loaded.codex_runtime.enabled:
+        raise typer.BadParameter("Context Release 没有启用 WorldModel/Codex")
+    program = capital_loaded.capital.cash_carry_program
     if program is None or not program.enabled:
-        raise typer.BadParameter("当前 Release 没有启用的自然 Program producer")
+        raise typer.BadParameter("Capital Release 没有启用的自然 Program producer")
     registered_at = datetime.now(UTC)
     try:
         spec = ContextCapitalForwardSpec(
             plan_id=plan_id,
             opportunity_analysis_behavior_hash=opportunity_review_behavior_hash(
-                loaded.codex_runtime
+                context_loaded.codex_runtime
             ),
             producer_id=program.producer_id,
             producer_version=program.producer_version,
             forecast_family=program.forecast_family,
-            forecast_evaluation_version=loaded.outcome_evaluation.forecast_version,
+            forecast_evaluation_version=(
+                capital_loaded.outcome_evaluation.forecast_version
+            ),
             signal_window_start=parse_utc_option(
                 signal_window_start, name="signal-window-start"
             ),
@@ -176,7 +196,7 @@ def register_context_capital_forward_plan(
             ),
             minimum_opportunity_count=minimum_opportunities,
             round_trip_cost_bps=program.estimated_variable_cost_bps,
-            lower_confidence_z=loaded.calibration.lower_confidence_z,
+            lower_confidence_z=capital_loaded.calibration.lower_confidence_z,
         )
         engine = runtime_engine(
             database_url,
@@ -184,10 +204,11 @@ def register_context_capital_forward_plan(
             claim_fact_store=True,
         )
         governance = SqlGovernanceRepository(engine)
-        governance.record_release(manifest)
+        governance.record_release(context_manifest)
+        governance.record_release(capital_manifest)
         plan = build_context_capital_forward_plan(
             spec=spec,
-            base_manifest_id=manifest.manifest_id,
+            base_manifest_id=context_manifest.manifest_id,
             registered_at=registered_at,
         )
         governance.register_plan(plan)
@@ -199,6 +220,8 @@ def register_context_capital_forward_plan(
                 "evaluation_plan": plan.model_dump(mode="json"),
                 "context_capital_spec": spec.model_dump(mode="json"),
                 "context_capital_spec_hash": content_hash(spec),
+                "context_manifest_id": context_manifest.manifest_id,
+                "capital_manifest_id": capital_manifest.manifest_id,
             },
             ensure_ascii=False,
             indent=2,

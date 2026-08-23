@@ -124,7 +124,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 每个来源月档必须通过同目录官方 SHA-256，标准化观察值固定在结算 60 秒后才可见；下载时间、全部来源摘要与规范化内容共同冻结，旧制品不原地更新。首个“28 日动量 + SMA200 + 资金费率拥挤否决”候选已按 BTC/ETH 分别预登记：ETH 未通过 walk-forward 保守下界，BTC 虽通过 walk-forward，但在一次性盲区中同时未达到交易数、盈利因子和保守下界门槛，因此已经从活动注册表退役，没有接入 Shadow，也没有为迁就结果搜索阈值。不可变评价制品保留失败身份；资金费率数据合同和 `--funding-dataset-id` 组合能力保留给结构不同的新假设。
 
-方向独立的现货/永续 carry 只保留受限研究入口和不可变结果，不再拥有生产 Producer、Mock 授权、日历触发或 Dashboard 候选。历史 BTC 规格虽在五折 walk-forward 为正，但保守年化仅约 0.777%，且历史 blind 窗口已被更早候选消费，不能形成独立晋级证据；ETH/BNB 规格也未形成更优的可授权结果。交易所官方月档只是历史数据传输格式，研究按月分组只属于该实验的数据合同，绝不能决定世界模型的复核节奏或资本日历。
+现役 Shadow 只运行一个受限的 BTC 现货/永续 cash-carry 实验 Producer。它按点时可执行买卖价、历史资金费率折扣和完整模型化成本生成 `BaseForecast`；净 Edge 未达到冻结门槛时不制造候选或订单。它尚未通过 blind 和前向绝对收益门禁，因此只拥有精确 Mock authorization，不能被描述为已获利策略。历史文件的分片格式不参与世界模型复核节奏或资本日历。
 
 `screen-signals` 是正式回测前的廉价拒绝层：复用生产特征、候选接口和统一往返成本，以收盘信号、下一根开盘和固定持有周期计算原始机会，只用非重叠样本，并与采用相同成本的周期性现货多头比较。读取器流式校验完整历史制品哈希，但只物化显式开发窗口与特征预热；任何结果标签都不得跨越 `--signal-end`，因此该终点必须位于预留盲区之前。它不回放止损、程序退出、仓位、频率、风控或回撤，只能淘汰/排序弱假设；`promising_for_exact_backtest=true` 也不能登记为通过、不能校准边际或获得交易资格。
 
@@ -134,15 +134,9 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 
-当前 Context 行为不再评价短周期方向。存在合格程序候选时，`register-assessment-forward-plan` 可按冻结配置登记
-`context-capital-forward-spec-v1`：精确绑定行为哈希、Producer、资本问题、成本、自然机会窗口和最少机会数。
-每个机会只使用机会出现前 24 小时内最新的世界认知；Codex 失败、结果缺失或过期一律回退 Program Base，
-不会选择性删除失败样本。`ENTRY_VETO_CANDIDATE` 的反事实收益为现金 0，其余状态保持基线；Forecast 自然结算后，
-`evaluate-assessment-forward-plan` 同时只读 Context 与 Capital 两个角色隔离事实库，计算同一机会费用后的配对收益差
-及其保守下界。样本不足、Program 结果未结算或增量下界不为正都不能通过，更不能自行获得资本权限。
+当前 Context 行为不再评价短周期方向。`register-context-capital-forward-plan` 必须同时绑定冻结的 Context Release 与 Capital Release，并登记 `context-capital-forward-spec-v2`：精确冻结候选复核行为哈希、Producer 身份、成本、自然机会窗口和最少机会数。每个机会只使用其出现时已经可见的 WorldModel 和账户快照；Codex 失败、缺失或晚于 `valid_until` 一律保持 Program Base，不会选择性删除失败样本。只有及时完成的 `OPPOSE` 形成不入场的零收益反事实，其余效果保持基线。评价按同一 `forecast_id` 读取 Context 的 `OpportunityAssessment` 与 Capital 的自然 `ForecastOutcome`，同时要求 Program Base 自身平均费用后收益为正、样本充分、全部结果已结算且 AI 增量保守下界为正。任何单项失败都不能获得资本权限。
 
-旧 v71 及更早的 Directional View、结果和前向计划保持不可变可读，只为历史计划收尾；单腿 Forecast 投影与校准生产
-代码已经删除。`diagnose-legacy-analysis-forecasts` 只允许事后诊断旧 Proposal 结果，不能作为当前链晋级证据。
+旧 Directional View、结果和计划只作为不可变历史读取；旧方向写入路径不得重新接入现役世界模型或资本链。
 
 旧方向标签仍可按冻结 Pipeline、品种和周期生成诊断：
 

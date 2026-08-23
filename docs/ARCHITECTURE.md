@@ -722,8 +722,9 @@ kernel/platform
 1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
    的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
    契约，不能恢复旧分支。
-2. **投资对象与预测接线（已完成）**：ContextAssessment 已绑定精确 carry Producer 与唯一资本问题，并拥有
-   自然机会前向预登记、Program fallback、同机会费用后配对门禁和内容寻址结果；旧方向计划只收尾历史 View。
+2. **投资对象与预测接线（已完成）**：WorldModel 独立维护世界解释；候选级 OpportunityAssessment 才绑定精确
+   carry `forecast_id`、当时 WorldModel、账户快照与成本。Context/Capital 双 Release 前向预登记、Program fallback、
+   同机会费用后配对门禁和内容寻址结果已接通；旧方向计划只收尾历史 View。
    `InstrumentId + ForecastTarget` 已成为 Base 与
    Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
    可成交价/funding 结算和 carry ProgramBase 生产已接线。ProgramBase/carry 未获权限时仍不能影响资本。

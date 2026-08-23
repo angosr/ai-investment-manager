@@ -71,8 +71,8 @@ CLI_CONTRACT = {
         "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
     "register-context-capital-forward-plan": (
-        "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
-        "minimum_opportunities"
+        "config,database_url,release_manifest,capital_config,capital_release_manifest,"
+        "plan_id,signal_window_start,signal_window_end,minimum_opportunities"
     ),
     "opportunity-review-service": (
         "config,database_url,release_manifest,capital_database_url,capital_config,"
