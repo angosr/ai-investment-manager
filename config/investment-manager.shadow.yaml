@@ -41,11 +41,11 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: cash-observation-shadow-v1
+  version: world-forecast-capital-shadow-v1
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。
-  namespace: shadow-capital-20260822-v10
+  namespace: shadow-world-forecast-capital-v1
 
 deployment:
   stage: SHADOW
