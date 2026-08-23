@@ -320,6 +320,7 @@ class ContextMechanismObservation(FrozenModel):
     mechanism_id: str = Field(min_length=1)
     test_id: str = Field(min_length=1)
     test_contract_hash: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    verification_policy_version: str | None = Field(default=None, min_length=1)
     packet_id: str = Field(min_length=1)
     feature_selector: str = Field(min_length=1, max_length=240)
     observed_at: datetime
@@ -355,6 +356,13 @@ class ContextMechanismObservation(FrozenModel):
         )
         expected = (
             stable_id(
+                "world_mechanism_observation",
+                *identity,
+                self.test_contract_hash,
+                self.verification_policy_version,
+            )
+            if self.verification_policy_version is not None
+            else stable_id(
                 "world_mechanism_observation",
                 *identity,
                 self.test_contract_hash,

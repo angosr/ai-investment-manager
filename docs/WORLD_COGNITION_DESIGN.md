@@ -38,7 +38,7 @@ Context Veto Research ──────────┼→ 同机会 Outcome →
 截至 2026-08-23，本轮实现已经完成以下事实链：
 
 1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已连续产出 V2 WorldModel。2026-08-23 06:23 UTC 的前瞻更新没有机械延续旧结论：它保留 BTC 主动卖压与杠杆放大路径，同时识别 ETH 主动资金已转为抵消力量，撤销了“BTC/ETH 同步卖压”的过度外推。
-2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。显式 `continuity_ref` 且测试合同完全相同的后继机制继承连续计数；改阈值、窗口或谓词会产生新合同并清零，避免每次更新 WorldModel 都让验证永久停在 `PENDING`。
+2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。只有验证规则版本相同、显式 `continuity_ref` 指向直接前代且测试合同完全相同，后继机制才继承连续计数；规则语义升级或改变阈值、窗口、谓词都会保守清零。这样既避免每次更新 WorldModel 都永久停在 `PENDING`，也避免旧算法的派生状态污染新算法。
 3. Capital v28 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
 4. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
 5. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
@@ -447,14 +447,14 @@ Coverage、账号、机器、账户对账和服务健康位于各自区域。所
 
 ## 16. 实施状态与唯一后续顺序
 
-已完成：DecisionPacket v16 世界更新、WorldModel v2、可跨显式机制延续且由同轮 AI 消费的自动观测、真实 Codex V2 连续成功、自然 cash-carry Producer、候选级复核契约与 Codex 适配器、跨事实库常驻复核服务、精确入场否决配对评价、网页机制验证展示。上述完成指代码和运行结构可用，不指盈利通过。
+已完成：DecisionPacket 世界更新、WorldModel v2、按验证规则版本隔离且可跨显式机制延续并由同轮 AI 消费的自动观测、真实 Codex V2 连续成功、自然 cash-carry Producer、候选级复核契约与 Codex 适配器、跨事实库常驻复核服务、精确入场否决配对评价、网页机制验证展示。上述完成指代码和运行结构可用，不指盈利通过。
 
 后续只按证据顺序推进，不能跳级：
 
-1. 发布新 Context/Capital Release，迁移两个事实库并启动 opportunity-review-service；
+1. 用新验证规则完成一次保守清零和后续连续观测，确认机制之间、规则版本之间均无计数串线；
 2. 对 cash-carry 的在线同一公式做完整历史回放和一次性 blind；失败则删除或替换 Producer，不调低真实成本制造通过；
-3. 等待自然正 Edge BaseForecast，验证候选级 Codex 能在 `valid_until` 前完成并形成首份 OpportunityAssessment；
-4. 按预登记窗口持续结算 Program 绝对费用后结果和 `OPPOSE` 增量；样本不足只报告进度；
+3. 在预登记窗口收集自然正 Edge BaseForecast，验证候选级 Codex 能在 `valid_until` 前完成并形成 OpportunityAssessment；
+4. 持续结算 Program 绝对费用后结果和 `OPPOSE` 增量；样本不足只报告进度；
 5. 只有 Program 绝对门禁与 Context 增量门禁都通过，才申请 ContextPolicy 的正式 Mock 资本影响；
 6. 只有确实需要部分规模和持仓动态管理时，再实现双组合路径账本，随后才允许 `CAUTION` 改变规模。
 

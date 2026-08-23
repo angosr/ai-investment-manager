@@ -18,6 +18,8 @@ from investment_manager.forecast.models import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.state.decision.packet import DecisionPacket
 
+WORLD_MODEL_VERIFICATION_POLICY_VERSION = "mechanism-lineage-v2"
+
 
 def observe_world_model(
     assessment: ContextAssessment,
@@ -36,16 +38,18 @@ def observe_world_model(
     if packet.as_of <= assessment.available_at:
         return ()
     previous_by_test: dict[str, ContextMechanismObservation] = {}
-    previous_by_mechanism_contract: dict[
-        tuple[str, str], ContextMechanismObservation
-    ] = {}
+    previous_by_mechanism_contract: dict[tuple[str, str], ContextMechanismObservation] = {}
     for item in sorted(previous, key=lambda value: (value.observed_at, value.observation_id)):
-        if item.assessment_id == assessment.assessment_id:
+        if (
+            item.verification_policy_version == WORLD_MODEL_VERIFICATION_POLICY_VERSION
+            and item.assessment_id == assessment.assessment_id
+        ):
             previous_by_test[item.test_id] = item
-        if item.test_contract_hash is not None:
-            previous_by_mechanism_contract[
-                (item.mechanism_id, item.test_contract_hash)
-            ] = item
+        if (
+            item.verification_policy_version == WORLD_MODEL_VERIFICATION_POLICY_VERSION
+            and item.test_contract_hash is not None
+        ):
+            previous_by_mechanism_contract[(item.mechanism_id, item.test_contract_hash)] = item
     values = packet_feature_values(packet)
     observations: list[ContextMechanismObservation] = []
     for mechanism in assessment.mechanisms:
@@ -88,10 +92,7 @@ def observe_world_model(
                 resolution = ContextVerificationResolution.AMBIGUOUS
             elif support_streak >= test.supports_predicate.persistence_observations:
                 resolution = ContextVerificationResolution.SUPPORTED
-            elif (
-                contradiction_streak
-                >= test.contradicts_predicate.persistence_observations
-            ):
+            elif contradiction_streak >= test.contradicts_predicate.persistence_observations:
                 resolution = ContextVerificationResolution.CONTRADICTED
             else:
                 resolution = ContextVerificationResolution.PENDING
@@ -108,6 +109,7 @@ def observe_world_model(
                 contradiction_streak,
                 resolution,
                 test_contract_hash,
+                WORLD_MODEL_VERIFICATION_POLICY_VERSION,
             )
             observation = ContextMechanismObservation(
                 observation_id=observation_id,
@@ -115,6 +117,7 @@ def observe_world_model(
                 mechanism_id=mechanism.mechanism_id,
                 test_id=test_id,
                 test_contract_hash=test_contract_hash,
+                verification_policy_version=WORLD_MODEL_VERIFICATION_POLICY_VERSION,
                 packet_id=packet.packet_id,
                 feature_selector=test.feature_selector,
                 observed_at=packet.as_of,
@@ -126,9 +129,9 @@ def observe_world_model(
             )
             observations.append(observation)
             previous_by_test[test_id] = observation
-            previous_by_mechanism_contract[
-                (mechanism.mechanism_id, test_contract_hash)
-            ] = observation
+            previous_by_mechanism_contract[(mechanism.mechanism_id, test_contract_hash)] = (
+                observation
+            )
     return tuple(observations)
 
 
