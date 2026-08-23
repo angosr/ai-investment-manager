@@ -57,7 +57,14 @@ from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.forecast.tables import assessment_executions
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.market.models import ClosedMarketBar, MarketQuote, MarketTrade
+from investment_manager.market.models import (
+    ClosedMarketBar,
+    InstrumentId,
+    InstrumentProduct,
+    MarketQuote,
+    MarketTrade,
+)
+from investment_manager.market.perpetual.models import PerpetualMarketState, PerpetualQuote
 from investment_manager.market.repository import InMemoryMarketDataStore, SqlMarketDataStore
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.models import build_initial_trigger_plan
@@ -519,12 +526,52 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
             source="test",
         )
     )
+    perpetual = InstrumentId(
+        product=InstrumentProduct.USD_M_PERPETUAL,
+        symbol=spot.symbol,
+        base_asset=spot.base_asset,
+        quote_asset=spot.quote_asset,
+        settlement_asset=spot.quote_asset,
+    )
+    exchange_time = NOW - timedelta(seconds=1)
+    market.put_perpetual_state(
+        PerpetualMarketState(
+            state_id=stable_id(
+                "perpetual_market_state",
+                perpetual.key,
+                exchange_time.isoformat(),
+            ),
+            instrument=perpetual,
+            exchange_time=exchange_time,
+            observed_at=NOW,
+            mark_price=Decimal("70205"),
+            index_price=Decimal("70200"),
+            last_funding_rate=Decimal("0.0001"),
+            interest_rate=Decimal("0.0001"),
+            next_funding_time=NOW + timedelta(hours=4),
+            source="test",
+        )
+    )
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", perpetual.key, 42),
+            instrument=perpetual,
+            exchange_time=exchange_time,
+            observed_at=NOW,
+            bid=Decimal("70204"),
+            bid_quantity=Decimal("2"),
+            ask=Decimal("70206"),
+            ask_quantity=Decimal("2"),
+            update_id=42,
+            source="test",
+        )
+    )
 
     state = MarketContextTargetStateProvider(
         market=market,
         feature_policy=config.feature,
         spot=spot,
-        perpetual=None,
+        perpetual=perpetual,
         interval="5m",
         bar_window=3,
         funding_lookback_hours=24,
@@ -534,6 +581,7 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
     assert state.as_of == NOW
     assert state.asset_states[0].last == Decimal("70200")
     assert state.asset_states[0].return_fraction > 0
+    assert state.derivative_states[0].mark_index_premium_bps > 0
     assert "asset_state:BTC.realized_volatility" in state.feature_selectors
 
 

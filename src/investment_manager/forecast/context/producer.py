@@ -116,7 +116,11 @@ class MarketContextTargetStateProvider:
             if state is not None and quote is not None:
                 aligned_spot = self.market.latest_spot_quote(
                     instrument=self.spot,
-                    evaluation_at=quote.exchange_time,
+                    # Spot bookTicker has no exchange timestamp.  Align the two
+                    # feeds on their local visibility clock; using the perpetual
+                    # exchange timestamp can incorrectly skip a spot quote that
+                    # was observed milliseconds before the perpetual response.
+                    evaluation_at=quote.observed_at,
                     visible_at=at,
                 )
                 if aligned_spot is None:
