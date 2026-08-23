@@ -16,7 +16,10 @@ from investment_manager.forecast.models import (
     ContextVerificationTest,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.state.decision.packet import DecisionPacket
+from investment_manager.state.decision.packet import (
+    DecisionPacket,
+    continuous_fact_numeric_values,
+)
 
 WORLD_MODEL_VERIFICATION_POLICY_VERSION = "mechanism-lineage-v2"
 
@@ -203,6 +206,9 @@ def packet_feature_values(packet: DecisionPacket) -> dict[str, Decimal]:
             raw = getattr(item, field)
             if raw is not None:
                 values[f"derivative_state:{item.asset}.{field}"] = Decimal(str(raw))
+    for item in getattr(packet, "facts", ()):
+        for field, value in continuous_fact_numeric_values(item).items():
+            values[f"fact_state:{item.fact_type}.{field}"] = value
     return values
 
 

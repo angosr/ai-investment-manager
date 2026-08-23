@@ -23,11 +23,13 @@ from investment_manager.forecast.context.contract import (
     ContextVerificationTestDraft,
     WorldModelDraft,
     WorldModelStructuredOutput,
+    assessment_available_feature_selectors,
     build_assess_prompt,
     finalize_context_assessment,
     finalize_world_model,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.forecast.context.verification import packet_feature_values
 from investment_manager.forecast.models import (
     ContextCapitalEffect,
     ContextCapitalImplication,
@@ -72,6 +74,7 @@ from investment_manager.state.decision.packet import (
     PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
+    continuous_fact_numeric_values,
     decision_packet_analysis_projection,
     replace_packet_previous_context,
 )
@@ -904,6 +907,25 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
         ),
         "flow_states": (),
     }
+    numeric_metric = packet.facts[1].model_copy(
+        update={
+            "claim": (
+                "effective_date=2026-08-16; tga_balance_usd_m=800000 USD_MILLIONS; "
+                "tga_change_5d_usd_m=-31510 USD_MILLIONS."
+            )
+        }
+    )
+    numeric_packet = packet.model_copy(
+        update={"facts": (packet.facts[0], numeric_metric)}
+    )
+
+    assert continuous_fact_numeric_values(numeric_metric) == {
+        "tga_balance_usd_m": Decimal("800000"),
+        "tga_change_5d_usd_m": Decimal("-31510"),
+    }
+    selector = "fact_state:US_TREASURY_CASH_SNAPSHOT.tga_change_5d_usd_m"
+    assert selector in assessment_available_feature_selectors(numeric_packet)
+    assert packet_feature_values(numeric_packet)[selector] == Decimal("-31510")
 
 
 def test_packet_keeps_treasury_calendar_context_beyond_event_window(
@@ -1622,6 +1644,47 @@ def test_finalize_assessment_writes_only_current_world_model_schema(
     assert assessment.drivers == ()
     assert assessment.data_gaps == ()
     assert assessment.views == ()
+
+
+def test_world_model_continuous_cause_requires_connected_fact_test(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    continuous = packet.facts[0].model_copy(
+        update={
+            "fact_type": "US_TREASURY_CASH_SNAPSHOT",
+            "claim": "tga_change_5d_usd_m=-31510 USD_MILLIONS.",
+        }
+    )
+    packet = packet.model_copy(update={"facts": (continuous, *packet.facts[1:])})
+    mechanism = _world_model_output().world_model.mechanisms[0]
+    causal_chain = tuple(
+        node.model_copy(update={"evidence_ids": (continuous.revision_id,)})
+        for node in mechanism.causal_chain
+    )
+    output = _world_model_output().model_copy(
+        update={
+            "world_model": _world_model_output().world_model.model_copy(
+                update={
+                    "mechanisms": (
+                        mechanism.model_copy(update={"causal_chain": causal_chain}),
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="同一事实类型的数值测试因果路径",
+    ):
+        finalize_world_model(
+            output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
 
 
 def test_world_model_requires_exactly_one_primary() -> None:

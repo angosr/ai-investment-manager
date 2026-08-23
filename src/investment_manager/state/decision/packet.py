@@ -232,6 +232,25 @@ def _analysis_state_feature(item: PacketFact) -> dict[str, object]:
     return projected
 
 
+def continuous_fact_numeric_values(item: PacketFact) -> dict[str, Decimal]:
+    """Recover numeric fields from deterministic canonical metric claims."""
+
+    if item.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES:
+        return {}
+    claim = item.claim.split(". This is", 1)[0].rstrip(". ")
+    values: dict[str, Decimal] = {}
+    for part in claim.split(";"):
+        key, separator, raw = part.strip().partition("=")
+        if not separator or not key or key == "change_context":
+            continue
+        candidate = raw.strip().split(maxsplit=1)[0].rstrip(".")
+        try:
+            values[key] = Decimal(candidate)
+        except ArithmeticError:
+            continue
+    return values
+
+
 def _analysis_verification_test(test: dict) -> tuple[object, ...]:
     """Keep one prior test executable while removing structurally empty fields."""
 

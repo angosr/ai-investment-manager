@@ -40,6 +40,7 @@ Context Veto Research ──────────┼→ 同机会 Outcome →
 1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已连续产出 V2 WorldModel。2026-08-23 06:23 UTC 的前瞻更新没有机械延续旧结论：它保留 BTC 主动卖压与杠杆放大路径，同时识别 ETH 主动资金已转为抵消力量，撤销了“BTC/ETH 同步卖压”的过度外推。
 2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。只有验证规则版本相同、显式 `continuity_ref` 指向直接前代且测试合同完全相同，后继机制才继承连续计数；规则语义升级或改变阈值、窗口、谓词都会保守清零。这样既避免每次更新 WorldModel 都永久停在 `PENDING`，也避免旧算法的派生状态污染新算法。
 3. WorldModel 成功持久化后，最早 `next_review_at` 会同步进入现有耐久 TriggerPlan；新模型替换旧模型尚未发生的机制复核，已到期复核转成幂等立即触发，与相邻官方日程小于系统最小调用间隔时复用同一唤醒。该链复用 Outbox 和 Temporal，不依赖偶然新闻或进程内定时器。
+   2026-08-23 08:46 UTC 的 v92 切换已验证重启对账：worker 未等待新事件，直接把最新模型的 16:05 复核恢复到新计划；08:54 新模型成功后，同一计划又以新 assessment 身份原子替换旧唤醒。账号租约、容量探测、单账号时限、故障切换、activity 和批次截止时间现在由配置不变量约束，避免外层编排在账号路由完成前取消调用。
 4. Capital v33 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
 5. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
 6. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
@@ -274,6 +275,8 @@ VerificationTest
 ```
 
 selector 和 predicate 只能使用 Packet 声明为可用的 StateFeature 字段与运算符；AI 不能发明指标。缺少所需能力时只能提出可建设的验证需求，不能生成一个永远无法结算的测试。验证不要求伪造精确概率或价格目标，但必须明确什么可观测关系会支持或反驳该机制。到期后由程序绑定实际观测，AI 只在证据语义需要解释时参与复核。
+
+连续官方指标与 ETF 资金流由既有 Canonical Fact 确定性投影为 `fact_state:<fact_type>.<numeric_field>`，与行情和衍生品 selector 使用同一结算器。只要 Mechanism 的因果链引用了连续事实，至少一个验证测试必须连接到所引用的事实类型；BTC/ETH 继续涨跌只能验证结果端，不能单独确认利率、美元、财政或资金流原因。该约束防止多个竞争解释用同一币价结果同时“自证正确”，不增加第二套特征库。
 
 机制数量不由任意业务常量决定，也不能无限增长。每项机制必须至少满足一条：改变 synthesis、改变某类 OpportunityAssessment、解释当前重大持仓风险。语义重复的机制合并；只有背景价值、没有独立验证或资本后果的内容不进入。容量不足时按边际决策价值省略并留审计计数，不能截断因果链。
 
