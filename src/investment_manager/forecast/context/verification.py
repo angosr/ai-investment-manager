@@ -15,7 +15,7 @@ from investment_manager.forecast.models import (
     ContextVerificationResolution,
     ContextVerificationTest,
 )
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.state.decision.packet import DecisionPacket
 
 
@@ -36,10 +36,12 @@ def observe_world_model(
     if packet.as_of <= assessment.available_at:
         return ()
     previous_by_test: dict[str, ContextMechanismObservation] = {}
+    previous_by_contract: dict[str, ContextMechanismObservation] = {}
     for item in sorted(previous, key=lambda value: (value.observed_at, value.observation_id)):
-        if item.assessment_id != assessment.assessment_id:
-            raise ValueError("机制历史观测不属于待评价世界模型")
-        previous_by_test[item.test_id] = item
+        if item.assessment_id == assessment.assessment_id:
+            previous_by_test[item.test_id] = item
+        if item.test_contract_hash is not None:
+            previous_by_contract[item.test_contract_hash] = item
     values = packet_feature_values(packet)
     observations: list[ContextMechanismObservation] = []
     for mechanism in assessment.mechanisms:
@@ -57,12 +59,15 @@ def observe_world_model(
                 test_index=index,
                 test=test,
             )
+            test_contract_hash = verification_test_contract_hash(test)
             match = predicate_match(
                 value,
                 supports=test.supports_predicate,
                 contradicts=test.contradicts_predicate,
             )
-            prior = previous_by_test.get(test_id)
+            prior = previous_by_test.get(test_id) or previous_by_contract.get(
+                test_contract_hash
+            )
             support_streak = (
                 (prior.support_streak if prior is not None else 0) + 1
                 if match == ContextVerificationMatch.SUPPORTS
@@ -96,12 +101,14 @@ def observe_world_model(
                 support_streak,
                 contradiction_streak,
                 resolution,
+                test_contract_hash,
             )
             observation = ContextMechanismObservation(
                 observation_id=observation_id,
                 assessment_id=assessment.assessment_id,
                 mechanism_id=mechanism.mechanism_id,
                 test_id=test_id,
+                test_contract_hash=test_contract_hash,
                 packet_id=packet.packet_id,
                 feature_selector=test.feature_selector,
                 observed_at=packet.as_of,
@@ -113,6 +120,7 @@ def observe_world_model(
             )
             observations.append(observation)
             previous_by_test[test_id] = observation
+            previous_by_contract[test_contract_hash] = observation
     return tuple(observations)
 
 
@@ -130,6 +138,12 @@ def verification_test_id(
         test_index,
         test,
     )
+
+
+def verification_test_contract_hash(test: ContextVerificationTest) -> str:
+    """Stable verification identity that survives an explicit mechanism continuation."""
+
+    return content_hash(test)
 
 
 def predicate_match(

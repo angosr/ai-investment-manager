@@ -65,6 +65,9 @@ from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
 from investment_manager.platform.fact_store import FactStoreRole
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
+from investment_manager.scheduling.application import (
+    set_trigger_heartbeat as apply_trigger_heartbeat,
+)
 from investment_manager.scheduling.application import trigger_now as apply_trigger_now
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.repository import SqlTriggerRepository
@@ -353,6 +356,55 @@ def trigger_now(
                 "plan_id": result.plan.plan_id,
                 "revision": result.plan.revision,
                 "trigger_ids": [item.trigger_id for item in result.emitted_triggers],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("set-trigger-heartbeat")
+def set_trigger_heartbeat(
+    symbol: Annotated[str, typer.Option("--symbol")],
+    heartbeat_minutes: Annotated[int, typer.Option("--heartbeat-minutes", min=1)],
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
+) -> None:
+    """调整当前非实盘 TriggerPlan 的耐久 heartbeat；不立即触发分析。"""
+
+    loaded, manifest = load_runtime_release(config, release_manifest)
+    if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
+        raise ValueError("set-trigger-heartbeat 只允许 SHADOW 或 TESTNET")
+    if symbol not in loaded.market_data.symbols:
+        raise ValueError("symbol 不在当前行情白名单")
+    result = apply_trigger_heartbeat(
+        repository=SqlTriggerRepository(
+            runtime_engine(
+                database_url,
+                fact_store_role=configured_fact_store_role(loaded),
+                claim_fact_store=True,
+            ),
+            loaded.trigger,
+        ),
+        symbol=symbol,
+        pipeline_id=loaded.pipeline.version,
+        manifest_id=manifest.manifest_id,
+        heartbeat_seconds=heartbeat_minutes * 60,
+        now=datetime.now(UTC),
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "plan_id": result.plan.plan_id,
+                "revision": result.plan.revision,
+                "heartbeat_seconds": result.plan.heartbeat_seconds,
             },
             ensure_ascii=False,
             indent=2,

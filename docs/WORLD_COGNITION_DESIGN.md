@@ -38,7 +38,7 @@ Context Veto Research ──────────┼→ 同机会 Outcome →
 截至 2026-08-23，本轮实现已经完成以下事实链：
 
 1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已连续产出 V2 WorldModel。2026-08-23 06:23 UTC 的前瞻更新没有机械延续旧结论：它保留 BTC 主动卖压与杠杆放大路径，同时识别 ETH 主动资金已转为抵消力量，撤销了“BTC/ETH 同步卖压”的过度外推。
-2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；下一轮 WorldModel 会消费最新结算，网页也显示该结果。首批七项观测已追加保存，因各自窗口尚未成熟而保持 `PENDING`，没有提前判胜负。
+2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。显式 `continuity_ref` 且测试合同完全相同的后继机制继承连续计数；改阈值、窗口或谓词会产生新合同并清零，避免每次更新 WorldModel 都让验证永久停在 `PENDING`。
 3. Capital v28 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
 4. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
 5. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
@@ -447,7 +447,7 @@ Coverage、账号、机器、账户对账和服务健康位于各自区域。所
 
 ## 16. 实施状态与唯一后续顺序
 
-已完成：DecisionPacket v16 世界更新、WorldModel v2、后续机制自动观测、真实 Codex V2 首次成功、自然 cash-carry Producer、候选级复核契约与 Codex 适配器、跨事实库常驻复核服务、精确入场否决配对评价、网页机制验证展示。上述完成指代码和运行结构可用，不指盈利通过。
+已完成：DecisionPacket v16 世界更新、WorldModel v2、可跨显式机制延续且由同轮 AI 消费的自动观测、真实 Codex V2 连续成功、自然 cash-carry Producer、候选级复核契约与 Codex 适配器、跨事实库常驻复核服务、精确入场否决配对评价、网页机制验证展示。上述完成指代码和运行结构可用，不指盈利通过。
 
 后续只按证据顺序推进，不能跳级：
 

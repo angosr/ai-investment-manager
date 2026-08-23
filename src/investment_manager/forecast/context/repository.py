@@ -146,7 +146,7 @@ class SqlContextAssessmentStore:
         """Append deterministic observations before the next model update runs."""
 
         self.record_packet(packet)
-        previous = self.mechanism_observations(assessment.assessment_id)
+        previous = self.mechanism_lineage_observations(assessment)
         observations = observe_world_model(assessment, packet, previous=previous)
         recorded: list[ContextMechanismObservation] = []
         for observation in observations:
@@ -198,6 +198,46 @@ class SqlContextAssessmentStore:
                     context_mechanism_observations.c.assessment_id == assessment_id
                 )
                 .order_by(
+                    context_mechanism_observations.c.observed_at,
+                    context_mechanism_observations.c.observation_id,
+                )
+            ).scalars()
+            return tuple(
+                ContextMechanismObservation.model_validate(item) for item in payloads
+            )
+
+    def mechanism_lineage_observations(
+        self,
+        assessment: ContextAssessment,
+    ) -> tuple[ContextMechanismObservation, ...]:
+        """Read current and immediate continuity observations for streak carryover."""
+
+        continuity_refs = tuple(
+            sorted(
+                {
+                    item.continuity_ref
+                    for item in assessment.mechanisms
+                    if item.continuity_ref is not None
+                }
+            )
+        )
+        with self._engine.connect() as connection:
+            statement = select(context_mechanism_observations.c.payload).where(
+                context_mechanism_observations.c.assessment_id
+                == assessment.assessment_id
+            )
+            if continuity_refs:
+                statement = select(context_mechanism_observations.c.payload).where(
+                    (
+                        context_mechanism_observations.c.assessment_id
+                        == assessment.assessment_id
+                    )
+                    | context_mechanism_observations.c.mechanism_id.in_(
+                        continuity_refs
+                    )
+                )
+            payloads = connection.execute(
+                statement.order_by(
                     context_mechanism_observations.c.observed_at,
                     context_mechanism_observations.c.observation_id,
                 )

@@ -90,6 +90,9 @@ CLI_CONTRACT = {
         "event_catalog,spread_bps,minimum_non_overlapping_samples,"
         "minimum_net_return_bps_lower_bound,minimum_incremental_return_bps_lower_bound"
     ),
+    "set-trigger-heartbeat": (
+        "symbol,heartbeat_minutes,config,database_url,release_manifest"
+    ),
     "shadow-audit": "config,release_manifest,project_root",
     "submit-context-assessment": "input_path,config,deadline_minutes",
     "trigger-now": "symbol,request_id,reason,config,database_url,release_manifest",
@@ -246,6 +249,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "market-stream",
             "trigger-service",
             "trigger-now",
+            "set-trigger-heartbeat",
             "outcome-evaluation-service",
             "governance-service",
             "information-collector",

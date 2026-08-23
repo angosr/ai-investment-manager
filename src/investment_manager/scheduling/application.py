@@ -8,6 +8,7 @@ from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
     ScheduledWakeup,
+    SetHeartbeat,
     TriggerNow,
     TriggerPlanApplyResult,
     build_initial_trigger_plan,
@@ -133,6 +134,33 @@ def trigger_now(
             plan=plan,
             submitted_at=now,
             operations=(TriggerNow(request_id=request_id, reason=reason),),
+        ),
+        now=now,
+        current_manifest_id=manifest_id,
+    )
+
+
+def set_trigger_heartbeat(
+    *,
+    repository: SqlTriggerRepository,
+    symbol: str,
+    pipeline_id: str,
+    manifest_id: str,
+    heartbeat_seconds: int | None,
+    now: datetime,
+) -> TriggerPlanApplyResult:
+    """Apply one durable, auditable heartbeat change to the current plan."""
+
+    plan = repository.plan_for_scope(symbol=symbol, pipeline_id=pipeline_id)
+    if plan.manifest_id != manifest_id:
+        raise ValueError("TriggerPlan 不属于当前 ReleaseManifest")
+    if plan.heartbeat_seconds == heartbeat_seconds:
+        return TriggerPlanApplyResult(plan=plan)
+    return repository.apply_patch(
+        build_trigger_plan_patch(
+            plan=plan,
+            submitted_at=now,
+            operations=(SetHeartbeat(heartbeat_seconds=heartbeat_seconds),),
         ),
         now=now,
         current_manifest_id=manifest_id,

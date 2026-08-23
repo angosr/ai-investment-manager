@@ -69,6 +69,7 @@ from investment_manager.state.decision.packet import (
     PacketReviewRequest,
     VisibleFact,
     decision_packet_analysis_projection,
+    replace_packet_previous_context,
 )
 from investment_manager.state.facts import (
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
@@ -1410,6 +1411,32 @@ def test_analysis_projection_does_not_anchor_new_model_on_legacy_prose(
     }
     assert previous.assessment_id not in prompt
     assert previous.market_mechanism not in prompt
+
+
+def test_replacing_previous_context_refreezes_packet_identity(
+    app_config,
+    replay_input,
+) -> None:
+    previous = PacketPreviousContext(
+        assessment_id="assessment-refrozen",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=replay_input.market.as_of - timedelta(hours=1),
+        available_at=replay_input.market.as_of - timedelta(minutes=59),
+        market_mechanism="仅用于验证不可变 Packet 重新冻结。",
+        views=(),
+    )
+    _, packet = _packet(app_config, replay_input)
+
+    refrozen = replace_packet_previous_context(packet, previous)
+
+    assert refrozen.previous_context == previous
+    assert refrozen.packet_id != packet.packet_id
+    assert refrozen.content_hash != packet.content_hash
+    assert refrozen.state_id == packet.state_id
+    assert refrozen.trigger_ids == packet.trigger_ids
 
 
 def _capital_mandate() -> AnalysisMandate:

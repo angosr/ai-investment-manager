@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from investment_manager.scheduling.application import ensure_trigger_plans, trigger_now
+from investment_manager.scheduling.application import (
+    ensure_trigger_plans,
+    set_trigger_heartbeat,
+    trigger_now,
+)
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
 from investment_manager.scheduling.models import (
     AddWakeup,
@@ -343,6 +347,46 @@ def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(
     assert len(result.emitted_triggers) == 1
     assert result.emitted_triggers[0].trigger_type == AnalysisTriggerType.AGENT_WAKEUP
     assert result.emitted_triggers[0].review_reason == "risk review"
+
+
+def test_set_trigger_heartbeat_updates_plan_without_emitting_call(
+    app_config,
+    replay_input,
+) -> None:
+    now = replay_input.market.as_of
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now,
+        heartbeat_seconds=3600,
+    )
+
+    class Repository:
+        def plan_for_scope(self, *, symbol, pipeline_id):
+            assert (symbol, pipeline_id) == (plan.symbol, plan.pipeline_id)
+            return plan
+
+        def apply_patch(self, patch, *, now, current_manifest_id):
+            return TriggerPlanGate(app_config.trigger).apply(
+                plan,
+                patch,
+                now=now,
+                current_manifest_id=current_manifest_id,
+            )
+
+    result = set_trigger_heartbeat(
+        repository=Repository(),
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        manifest_id=plan.manifest_id,
+        heartbeat_seconds=900,
+        now=now,
+    )
+
+    assert result.plan.revision == 2
+    assert result.plan.heartbeat_seconds == 900
+    assert result.emitted_triggers == ()
 
 
 def test_shared_trigger_timing_preserves_specific_rules_cooldown_and_expiry(

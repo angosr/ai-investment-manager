@@ -45,6 +45,7 @@ from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_MECHANISM_CHARACTERS,
     PREVIOUS_CONTEXT_STATEMENT_CHARACTERS,
     PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+    DecisionPacket,
     PacketPreviousCapitalImplication,
     PacketPreviousCapitalRelevance,
     PacketPreviousCausalNode,
@@ -59,6 +60,7 @@ from investment_manager.state.decision.packet import (
     PacketPreviousVerificationTest,
     PacketPreviousView,
     PacketReviewRequest,
+    replace_packet_previous_context,
 )
 from investment_manager.state.panel import sanitize_external_text
 
@@ -94,8 +96,8 @@ class AssessmentHistoryReader(Protocol):
         self,
         *,
         assessment: ContextAssessment,
-        packet: object,
-    ) -> tuple[object, ...]: ...
+        packet: DecisionPacket,
+    ) -> tuple[ContextMechanismObservation, ...]: ...
 
     def mechanism_observations(
         self,
@@ -202,20 +204,34 @@ class TriggerDispatchBuilder:
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None
+                packet = prepared.packet
                 if (
                     previous is not None
                     and previous.schema_version
                     == ContextAssessmentSchemaVersion.WORLD_MODEL_V2
                 ):
-                    self._assessment_history.observe_mechanisms(
+                    recorded_observations = self._assessment_history.observe_mechanisms(
                         assessment=previous,
-                        packet=prepared.packet,
+                        packet=packet,
                     )
+                    if recorded_observations:
+                        current_context = _previous_context(
+                            previous,
+                            observations=(
+                                *previous_observations,
+                                *recorded_observations,
+                            ),
+                        )
+                        assert current_context is not None
+                        packet = replace_packet_previous_context(
+                            packet,
+                            current_context,
+                        )
                 command = AssessmentCommand.create(
-                    packet=prepared.packet,
+                    packet=packet,
                     analysis_behavior_hash=assess_behavior_hash(
                         self._config.codex_runtime,
-                        prepared.packet,
+                        packet,
                     ),
                 )
                 assessment_request = AssessmentWorkflowRequest.create(

@@ -1122,6 +1122,28 @@ class DecisionPacket(FrozenModel):
         return self
 
 
+def replace_packet_previous_context(
+    packet: DecisionPacket,
+    previous_context: PacketPreviousContext,
+) -> DecisionPacket:
+    """Re-freeze a prepared packet after deterministic context verification.
+
+    Market/fact preparation must happen before mechanism predicates can be
+    evaluated.  Rebuilding the immutable identity keeps the actual analyst
+    input and the audited packet identical after those observations are added.
+    """
+
+    content = {
+        name: getattr(packet, name)
+        for name in DecisionPacket.model_fields
+        if name not in {"packet_id", "content_hash", "previous_context"}
+    }
+    return DecisionPacket.create(
+        **content,
+        previous_context=previous_context,
+    )
+
+
 def _decision_packet_content_hash(packet: DecisionPacket) -> str:
     payload = packet.model_dump(
         mode="json",

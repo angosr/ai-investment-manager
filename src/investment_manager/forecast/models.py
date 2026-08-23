@@ -319,6 +319,7 @@ class ContextMechanismObservation(FrozenModel):
     assessment_id: str = Field(min_length=1)
     mechanism_id: str = Field(min_length=1)
     test_id: str = Field(min_length=1)
+    test_contract_hash: str | None = Field(default=None, pattern=SHA256_PATTERN)
     packet_id: str = Field(min_length=1)
     feature_selector: str = Field(min_length=1, max_length=240)
     observed_at: datetime
@@ -340,8 +341,7 @@ class ContextMechanismObservation(FrozenModel):
                 raise ValueError("反驳观测的连续计数不一致")
         elif self.support_streak or self.contradiction_streak:
             raise ValueError("非单向观测不得延续连续计数")
-        expected = stable_id(
-            "world_mechanism_observation",
+        identity = (
             self.assessment_id,
             self.mechanism_id,
             self.test_id,
@@ -352,6 +352,15 @@ class ContextMechanismObservation(FrozenModel):
             self.support_streak,
             self.contradiction_streak,
             self.resolution,
+        )
+        expected = (
+            stable_id(
+                "world_mechanism_observation",
+                *identity,
+                self.test_contract_hash,
+            )
+            if self.test_contract_hash is not None
+            else stable_id("world_mechanism_observation", *identity)
         )
         if self.observation_id != expected:
             raise ValueError("世界机制观测 ID 与内容不一致")
