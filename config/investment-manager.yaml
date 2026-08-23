@@ -461,9 +461,10 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v30
+  version: context-assessment-v31
   opportunity_review_poll_seconds: 5
   enabled: false
+  review_trigger_symbol: BTCUSDT
   mandate:
     version: primary-portfolio-mandate-v9
     analysis_scope: primary-portfolio

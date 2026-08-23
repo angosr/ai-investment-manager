@@ -21,8 +21,10 @@ from investment_manager.forecast.context.executor import (
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.service import (
+    WORLD_MODEL_REVIEW_MARKER,
     AssessmentTemporalCoordinator,
     AssessmentTemporalWorker,
+    WorldModelReviewScheduler,
 )
 from investment_manager.forecast.context.settlement import (
     AssessmentViewOutcome,
@@ -33,6 +35,13 @@ from investment_manager.forecast.context.workflow import AssessmentWorkflowReque
 from investment_manager.forecast.models import (
     AssessmentUncertainty,
     ContextAssessment,
+    ContextAssessmentSchemaVersion,
+    ContextCausalNode,
+    ContextMechanism,
+    ContextMechanismRelationship,
+    ContextTransmissionStage,
+    ContextVerificationPredicate,
+    ContextVerificationTest,
     ContextView,
     DirectionalView,
     PricedState,
@@ -41,6 +50,8 @@ from investment_manager.forecast.tables import assessment_executions, assessment
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
+from investment_manager.scheduling.models import build_initial_trigger_plan
+from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     DecisionPacket,
@@ -374,6 +385,110 @@ def test_assessment_execution_replay_never_calls_codex_twice() -> None:
     with engine.connect() as connection:
         executions = tuple(connection.execute(select(assessment_executions.c.payload)).scalars())
     assert len(executions) == 2
+
+
+def test_assessment_success_observer_is_retried_with_authoritative_result() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    assessment = _assessment()
+    observed: list[str] = []
+    executor = ContextAssessmentExecutor(
+        SqlContextAssessmentStore(engine),
+        _CountingContextAnalyst(assessment),
+        on_success=lambda item: observed.append(item.assessment_id),
+    )
+
+    executor.execute(_packet())
+    executor.execute(_packet())
+
+    assert observed == [assessment.assessment_id, assessment.assessment_id]
+
+
+def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    assessments = SqlContextAssessmentStore(engine)
+    packet = _packet()
+    mechanism = ContextMechanism(
+        mechanism_id="mechanism-review-1",
+        relationship=ContextMechanismRelationship.SUPPORTS,
+        claim="现货需求正在抵消衍生品卖压。",
+        horizon_hours=24,
+        causal_chain=(
+            ContextCausalNode(
+                statement="现货主动买盘高于卖盘。",
+                evidence_ids=("fact-revision-1",),
+            ),
+            ContextCausalNode(
+                statement="买盘开始抵消价格下行。",
+                evidence_ids=("delta-1",),
+            ),
+        ),
+        transmission_stage=ContextTransmissionStage.PROPAGATING,
+        verification_tests=(
+            ContextVerificationTest(
+                feature_selector="asset_state:BTC.return_fraction",
+                evaluation_window_minutes=240,
+                supports_predicate=ContextVerificationPredicate(
+                    operator="GTE",
+                    value=Decimal("0"),
+                ),
+                contradicts_predicate=ContextVerificationPredicate(
+                    operator="LT",
+                    value=Decimal("0"),
+                ),
+            ),
+        ),
+        invalidation_conditions=("价格继续下跌且现货买盘转弱。",),
+        next_review_at=NOW + timedelta(minutes=5),
+    )
+    world_model = ContextAssessment(
+        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V2,
+        assessment_id="world-model-review-1",
+        analysis_scope=packet.analysis_scope,
+        mandate_version=packet.mandate_version,
+        as_of=packet.as_of,
+        available_at=NOW + timedelta(seconds=20),
+        analysis_behavior_hash="c" * 64,
+        decision_packet_hash=packet.content_hash,
+        trigger_ids=packet.trigger_ids,
+        synthesis="加密内部卖压仍占主导，现货需求提供抵消。",
+        synthesis_horizon_hours=24,
+        mechanisms=(mechanism,),
+    )
+    assessments.record_packet(packet)
+    assessments.record_assessment(packet.packet_id, world_model)
+    triggers = SqlTriggerRepository(engine, app_config.trigger)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-review-v1",
+        manifest_id="manifest-review-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    triggers.create_plan(plan)
+    scheduler = WorldModelReviewScheduler(
+        assessments=assessments,
+        triggers=triggers,
+        symbol="BTCUSDT",
+        pipeline_id=plan.pipeline_id,
+        manifest_id=plan.manifest_id,
+        minimum_call_interval_seconds=app_config.trigger.minimum_call_interval_seconds,
+        trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
+        clock=lambda: NOW + timedelta(seconds=30),
+    )
+
+    scheduler.schedule(world_model)
+    first = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)
+    scheduler.schedule(world_model)
+    replayed = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)
+
+    assert replayed == first
+    assert first.revision == 2
+    assert len(first.scheduled_wakeups) == 1
+    wakeup = first.scheduled_wakeups[0]
+    assert wakeup.wake_at == mechanism.next_review_at
+    assert wakeup.hypothesis == f"{WORLD_MODEL_REVIEW_MARKER}{world_model.assessment_id}"
 
 
 def test_assessment_command_identity_covers_packet_and_behavior() -> None:

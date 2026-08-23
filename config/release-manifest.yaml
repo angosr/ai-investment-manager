@@ -26,7 +26,7 @@ component_versions:
   - [pipeline, off-pipeline-v6]
   - [proposal, codex-proposal-v8]
   - [codex_runtime, codex-runtime-v6]
-  - [assessment, context-assessment-v30]
+  - [assessment, context-assessment-v31]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
   - [governance, governance-cycle-v2]

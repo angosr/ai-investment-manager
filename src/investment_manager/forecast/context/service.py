@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import ValidationError
@@ -26,10 +28,142 @@ from investment_manager.forecast.context.workflow import (
     AssessmentWorkflowRequest,
     ContextAssessmentWorkflow,
 )
+from investment_manager.forecast.models import (
+    ContextAssessment,
+    ContextAssessmentSchemaVersion,
+)
+from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.platform.temporal import SingleActivityWorker
+from investment_manager.scheduling.models import (
+    AddWakeup,
+    AnalysisTriggerType,
+    DeleteWakeup,
+    ScheduledWakeup,
+    build_trigger_event,
+    build_trigger_plan_patch,
+)
 from investment_manager.scheduling.policy import TemporalPolicy
+from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import AppConfig
+
+WORLD_MODEL_REVIEW_MARKER = "world_model_review:"
+
+
+@dataclass(frozen=True, slots=True)
+class WorldModelReviewScheduler:
+    """Keep one durable review wakeup for the latest portfolio WorldModel."""
+
+    assessments: SqlContextAssessmentStore
+    triggers: SqlTriggerRepository
+    symbol: str
+    pipeline_id: str
+    manifest_id: str
+    minimum_call_interval_seconds: int
+    trigger_expiry_seconds: int
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+    def schedule(self, assessment: ContextAssessment) -> None:
+        if (
+            assessment.schema_version
+            != ContextAssessmentSchemaVersion.WORLD_MODEL_V2
+            or not assessment.mechanisms
+        ):
+            return
+        now = max(require_utc(self.clock()), assessment.available_at)
+        latest = self.assessments.latest_before(
+            analysis_scope=assessment.analysis_scope,
+            as_of=now,
+        )
+        if latest is None or latest.assessment_id != assessment.assessment_id:
+            return
+        review_at = min(item.next_review_at for item in assessment.mechanisms)
+        marker = f"{WORLD_MODEL_REVIEW_MARKER}{assessment.assessment_id}"
+        reason = f"世界模型机制到期复核：{assessment.assessment_id}"
+        for _attempt in range(3):
+            plan = self.triggers.plan_for_scope(
+                symbol=self.symbol,
+                pipeline_id=self.pipeline_id,
+            )
+            obsolete = tuple(
+                item
+                for item in plan.scheduled_wakeups
+                if item.hypothesis.startswith(WORLD_MODEL_REVIEW_MARKER)
+                and item.hypothesis != marker
+            )
+            operations = [DeleteWakeup(wakeup_id=item.wakeup_id) for item in obsolete]
+            if review_at > now:
+                desired = ScheduledWakeup(
+                    wakeup_id=stable_id(
+                        "world_model_review_wakeup",
+                        assessment.assessment_id,
+                        review_at,
+                    ),
+                    wake_at=review_at,
+                    expires_at=review_at
+                    + timedelta(seconds=self.trigger_expiry_seconds),
+                    reason=reason,
+                    hypothesis=marker,
+                )
+                current = next(
+                    (
+                        item
+                        for item in plan.scheduled_wakeups
+                        if item.wakeup_id == desired.wakeup_id
+                    ),
+                    None,
+                )
+                if current is not None and current != desired:
+                    raise ValueError("世界模型复核唤醒身份绑定了不同内容")
+                conflicts = any(
+                    item.wakeup_id != desired.wakeup_id
+                    and not item.hypothesis.startswith(WORLD_MODEL_REVIEW_MARKER)
+                    and abs((item.wake_at - review_at).total_seconds())
+                    < self.minimum_call_interval_seconds
+                    for item in plan.scheduled_wakeups
+                )
+                if current is None and not conflicts:
+                    operations.append(AddWakeup(wakeup=desired))
+            active_plan = plan
+            if operations:
+                try:
+                    result = self.triggers.apply_patch(
+                        build_trigger_plan_patch(
+                            plan=plan,
+                            submitted_at=now,
+                            operations=tuple(operations),
+                        ),
+                        now=now,
+                        current_manifest_id=self.manifest_id,
+                    )
+                    active_plan = result.plan
+                except ValueError as exc:
+                    if "revision" in str(exc) or "并发" in str(exc):
+                        continue
+                    raise
+            if review_at <= now:
+                self.triggers.record_trigger(
+                    build_trigger_event(
+                        trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+                        symbol=self.symbol,
+                        pipeline_id=self.pipeline_id,
+                        occurred_at=review_at,
+                        observed_at=now,
+                        priority=90,
+                        dedup_key=stable_id(
+                            "world_model_review_due",
+                            assessment.assessment_id,
+                            review_at,
+                        ),
+                        review_reason=reason,
+                        expires_at=now
+                        + timedelta(seconds=self.trigger_expiry_seconds),
+                        plan_revision=active_plan.revision,
+                    )
+                )
+            return
+        raise ValueError("世界模型复核计划并发更新失败")
 
 
 @dataclass(slots=True)
@@ -120,6 +254,7 @@ def assemble_assessment_application(
     database_url: str,
     *,
     code_version: str,
+    manifest_id: str,
 ) -> AssessmentApplication:
     engine = build_engine(database_url)
     require_current_schema(engine)
@@ -131,10 +266,24 @@ def assemble_assessment_application(
         audit=SqlCodexAuditStore(engine),
     )
     config.codex_runtime.bundle_root.mkdir(parents=True, exist_ok=True)
+    assessments = SqlContextAssessmentStore(engine)
+    review_symbol = config.assessment.review_trigger_symbol
+    if review_symbol is None:
+        raise ValueError("ContextAssessment 缺少复核协调 symbol")
+    scheduler = WorldModelReviewScheduler(
+        assessments=assessments,
+        triggers=SqlTriggerRepository(engine, config.trigger),
+        symbol=review_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id=manifest_id,
+        minimum_call_interval_seconds=config.trigger.minimum_call_interval_seconds,
+        trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
+    )
     return AssessmentApplication(
         ContextAssessmentExecutor(
-            SqlContextAssessmentStore(engine),
+            assessments,
             analyst,
+            on_success=scheduler.schedule,
         )
     )
 

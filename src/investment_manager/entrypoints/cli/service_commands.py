@@ -130,6 +130,7 @@ def assessment_worker(
         loaded,
         database_url,
         code_version=manifest.code_version,
+        manifest_id=manifest.manifest_id,
     )
     run_assessment_worker_process(config=loaded, application=application)
 

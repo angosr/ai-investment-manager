@@ -96,6 +96,10 @@ class AppConfig(StrictConfig):
         )
         if self.assessment.enabled and set(perpetual_symbols) != set(mandate_symbols):
             raise ValueError("启用 ContextAssessment 时 Perpetual universe 必须完整覆盖 Mandate")
+        if self.assessment.enabled and (
+            self.assessment.review_trigger_symbol not in mandate_symbols
+        ):
+            raise ValueError("启用 ContextAssessment 时必须指定 Mandate 内的复核协调 symbol")
         mandate_horizons = tuple(
             sorted(
                 {

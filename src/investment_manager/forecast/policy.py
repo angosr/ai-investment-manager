@@ -166,4 +166,8 @@ class ContextAssessmentPolicy(StrictConfig):
     version: str
     enabled: bool = False
     opportunity_review_poll_seconds: int = Field(default=5, ge=1, le=60)
+    review_trigger_symbol: str | None = Field(
+        default=None,
+        pattern=r"^[A-Z0-9]+$",
+    )
     mandate: AnalysisMandate

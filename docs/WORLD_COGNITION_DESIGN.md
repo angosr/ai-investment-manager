@@ -39,10 +39,11 @@ Context Veto Research ──────────┼→ 同机会 Outcome →
 
 1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已连续产出 V2 WorldModel。2026-08-23 06:23 UTC 的前瞻更新没有机械延续旧结论：它保留 BTC 主动卖压与杠杆放大路径，同时识别 ETH 主动资金已转为抵消力量，撤销了“BTC/ETH 同步卖压”的过度外推。
 2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。只有验证规则版本相同、显式 `continuity_ref` 指向直接前代且测试合同完全相同，后继机制才继承连续计数；规则语义升级或改变阈值、窗口、谓词都会保守清零。这样既避免每次更新 WorldModel 都永久停在 `PENDING`，也避免旧算法的派生状态污染新算法。
-3. Capital v33 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
-4. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
-5. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
-6. 前向门禁同时要求 Program Base 自身平均费用后收益为正、自然样本充分、无未结算结果、Context 增量保守下界为正。AI 不能通过否决一个本来就亏损的 Program 获得盈利资格。
+3. WorldModel 成功持久化后，最早 `next_review_at` 会同步进入现有耐久 TriggerPlan；新模型替换旧模型尚未发生的机制复核，已到期复核转成幂等立即触发，与相邻官方日程小于系统最小调用间隔时复用同一唤醒。该链复用 Outbox 和 Temporal，不依赖偶然新闻或进程内定时器。
+4. Capital v33 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
+5. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
+6. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
+7. 前向门禁同时要求 Program Base 自身平均费用后收益为正、自然样本充分、无未结算结果、Context 增量保守下界为正。AI 不能通过否决一个本来就亏损的 Program 获得盈利资格。
 
 仍未完成且不能声称完成：
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
@@ -115,10 +116,12 @@ class ContextAssessmentExecutor:
         store: ContextAssessmentStore,
         analyst: ContextAnalyst,
         *,
+        on_success: Callable[[ContextAssessment], None] | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
         self._analyst = analyst
+        self._on_success = on_success
         self._clock = clock
 
     def execute(
@@ -139,6 +142,8 @@ class ContextAssessmentExecutor:
             analysis_behavior_hash=behavior_hash,
         )
         if existing is not None:
+            if self._on_success is not None:
+                self._on_success(existing)
             execution = AssessmentExecution.create(
                 status=AssessmentExecutionStatus.SUCCEEDED,
                 packet_id=authoritative_packet.packet_id,
@@ -175,6 +180,8 @@ class ContextAssessmentExecutor:
             authoritative_packet.packet_id,
             result.output,
         )
+        if self._on_success is not None:
+            self._on_success(authoritative)
         execution = AssessmentExecution.create(
             status=AssessmentExecutionStatus.SUCCEEDED,
             packet_id=authoritative_packet.packet_id,
