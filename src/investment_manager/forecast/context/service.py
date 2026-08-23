@@ -64,6 +64,16 @@ class WorldModelReviewScheduler:
     trigger_expiry_seconds: int
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
+    def reconcile_latest(self, analysis_scope: str) -> None:
+        """Restore the latest model's wakeup after a release cutover or restart."""
+
+        latest = self.assessments.latest_before(
+            analysis_scope=analysis_scope,
+            as_of=require_utc(self.clock()),
+        )
+        if latest is not None:
+            self.schedule(latest)
+
     def schedule(self, assessment: ContextAssessment) -> None:
         if (
             assessment.schema_version
@@ -279,6 +289,7 @@ def assemble_assessment_application(
         minimum_call_interval_seconds=config.trigger.minimum_call_interval_seconds,
         trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
     )
+    scheduler.reconcile_latest(config.assessment.mandate.analysis_scope)
     return AssessmentApplication(
         ContextAssessmentExecutor(
             assessments,

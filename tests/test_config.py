@@ -225,3 +225,56 @@ def test_enabled_codex_runtime_requires_frozen_binary_digest() -> None:
             model="test-model",
             reasoning_effort="low",
         )
+
+
+def _enabled_assessment_payload() -> tuple[type, dict]:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["assessment"]["enabled"] = True
+    for account in payload["codex_accounts"]["accounts"][:3]:
+        account["enabled"] = True
+    payload["codex_runtime"].update(
+        {
+            "enabled": True,
+            "isolation_verified": True,
+            "expected_binary_sha256": "a" * 64,
+        }
+    )
+    return type(config), payload
+
+
+def test_enabled_assessment_requires_lease_to_cover_one_codex_call() -> None:
+    config_type, payload = _enabled_assessment_payload()
+    payload["codex_runtime"]["lease_ttl_seconds"] = payload["codex_runtime"][
+        "timeout_seconds"
+    ]
+
+    with pytest.raises(ValidationError, match="账号租约必须长于"):
+        config_type.model_validate(payload)
+
+
+def test_enabled_assessment_activity_covers_capacity_and_account_failover() -> None:
+    config_type, payload = _enabled_assessment_payload()
+    enabled_accounts = sum(item["enabled"] for item in payload["codex_accounts"]["accounts"])
+    attempts = min(
+        enabled_accounts,
+        1 + payload["codex_runtime"]["max_account_switches"],
+    )
+    payload["temporal"]["activity_start_to_close_seconds"] = (
+        enabled_accounts * payload["codex_runtime"]["capacity_probe_timeout_seconds"]
+        + attempts * payload["codex_runtime"]["timeout_seconds"]
+    )
+
+    with pytest.raises(ValidationError, match="容量探测和账号故障切换"):
+        config_type.model_validate(payload)
+
+
+def test_enabled_assessment_deadline_covers_activity_schedule() -> None:
+    config_type, payload = _enabled_assessment_payload()
+    payload["shadow"]["analysis_deadline_seconds"] = (
+        payload["temporal"]["activity_schedule_to_close_seconds"] - 1
+    )
+
+    with pytest.raises(ValidationError, match="分析截止时间必须覆盖"):
+        config_type.model_validate(payload)

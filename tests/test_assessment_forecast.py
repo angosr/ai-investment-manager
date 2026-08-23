@@ -478,7 +478,7 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
         clock=lambda: NOW + timedelta(seconds=30),
     )
 
-    scheduler.schedule(world_model)
+    scheduler.reconcile_latest(packet.analysis_scope)
     first = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)
     scheduler.schedule(world_model)
     replayed = triggers.plan_for_scope(symbol="BTCUSDT", pipeline_id=plan.pipeline_id)

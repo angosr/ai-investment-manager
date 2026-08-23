@@ -284,7 +284,7 @@ trigger:
   dispatcher_advisory_lock_key: 817221901
 
 temporal:
-  version: temporal-analysis-v1
+  version: temporal-analysis-v2
   address: 127.0.0.1:7233
   namespace: default
   task_queue: investment-manager-analysis-v1
@@ -296,8 +296,8 @@ temporal:
   version_evaluation_task_queue: investment-manager-version-evaluation-v1
   release_task_queue: investment-manager-release-v1
   trigger_task_queue: investment-manager-trigger-v1
-  activity_start_to_close_seconds: 240
-  activity_schedule_to_close_seconds: 600
+  activity_start_to_close_seconds: 660
+  activity_schedule_to_close_seconds: 690
   retry_initial_seconds: 2
   retry_maximum_seconds: 30
   retry_backoff_coefficient: 2.0
@@ -339,9 +339,9 @@ market_data:
   funding_history_lookback_hours: 720
 
 shadow:
-  version: shadow-simulation-v1
+  version: shadow-simulation-v2
   initial_quote_balance: "10000"
-  analysis_deadline_seconds: 300
+  analysis_deadline_seconds: 720
   lifecycle_poll_seconds: 10
 
 information:
@@ -443,7 +443,7 @@ proposal:
 # 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
 # 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v6
+  version: codex-runtime-v7
   enabled: false
   isolation_verified: false
   binary: /usr/bin/codex
@@ -453,12 +453,12 @@ codex_runtime:
   model: gpt-5.6-sol
   reasoning_effort: high
   maximum_prompt_characters: 16000
-  timeout_seconds: 180
+  timeout_seconds: 300
   capacity_probe_timeout_seconds: 10
   capacity_ttl_seconds: 60
   transient_failure_cooldown_seconds: 300
-  lease_ttl_seconds: 240
-  max_account_switches: 2
+  lease_ttl_seconds: 330
+  max_account_switches: 1
 
 assessment:
   version: context-assessment-v31

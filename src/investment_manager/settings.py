@@ -136,6 +136,36 @@ class AppConfig(StrictConfig):
             raise ValueError("DecisionState 风险因子必须属于 Assessment mandate")
         if self.assessment.enabled and not self.codex_runtime.enabled:
             raise ValueError("启用 ContextAssessment 前必须启用受控 Codex runtime")
+        if self.assessment.enabled:
+            enabled_account_count = sum(
+                item.enabled for item in self.codex_accounts.accounts
+            )
+            account_attempt_count = min(
+                enabled_account_count,
+                1 + self.codex_runtime.max_account_switches,
+            )
+            capacity_probe_budget = (
+                enabled_account_count
+                * self.codex_runtime.capacity_probe_timeout_seconds
+            )
+            invocation_budget = (
+                account_attempt_count * self.codex_runtime.timeout_seconds
+            )
+            if self.codex_runtime.lease_ttl_seconds <= self.codex_runtime.timeout_seconds:
+                raise ValueError("Codex 账号租约必须长于单账号调用超时")
+            if self.temporal.activity_start_to_close_seconds <= (
+                capacity_probe_budget + invocation_budget
+            ):
+                raise ValueError(
+                    "ContextAssessment activity 时限必须覆盖容量探测和账号故障切换"
+                )
+            if (
+                self.shadow.analysis_deadline_seconds
+                < self.temporal.activity_schedule_to_close_seconds
+            ):
+                raise ValueError(
+                    "ContextAssessment 分析截止时间必须覆盖 activity schedule-to-close"
+                )
         if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
             raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
