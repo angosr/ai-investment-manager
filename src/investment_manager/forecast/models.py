@@ -324,6 +324,7 @@ class ContextMechanismObservation(FrozenModel):
     packet_id: str = Field(min_length=1)
     feature_selector: str = Field(min_length=1, max_length=240)
     feature_observation_ref: str | None = Field(default=None, min_length=1)
+    feature_observed_at: datetime | None = None
     observed_at: datetime
     value: Decimal
     match: ContextVerificationMatch
@@ -332,6 +333,7 @@ class ContextMechanismObservation(FrozenModel):
     resolution: ContextVerificationResolution
 
     _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_feature_observed_at = field_validator("feature_observed_at")(optional_utc)
 
     @model_validator(mode="after")
     def identity_and_resolution_are_consistent(self):
@@ -356,7 +358,11 @@ class ContextMechanismObservation(FrozenModel):
             self.resolution,
         )
         if self.feature_observation_ref is not None:
-            identity = (*identity, self.feature_observation_ref)
+            identity = (
+                *identity,
+                self.feature_observation_ref,
+                self.feature_observed_at,
+            )
         expected = (
             stable_id(
                 "world_mechanism_observation",

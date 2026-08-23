@@ -82,11 +82,17 @@ def _assessment() -> ContextAssessment:
     )
 
 
-def _packet(packet_id: str, *, at: datetime, return_fraction: str) -> DecisionPacket:
+def _packet(
+    packet_id: str,
+    *,
+    at: datetime,
+    return_fraction: str,
+    source_at: datetime | None = None,
+) -> DecisionPacket:
     asset = PacketAssetState(
         asset="BTC",
         market_symbol="BTCUSDT",
-        observed_at=at,
+        observed_at=source_at or at,
         bid=Decimal("100"),
         ask=Decimal("101"),
         last=Decimal("100.5"),
@@ -188,6 +194,49 @@ def test_world_model_test_requires_consecutive_point_in_time_observations() -> N
     )
     assert second[0].resolution == ContextVerificationResolution.SUPPORTED
     assert second[0].support_streak == 2
+
+
+def test_repeated_market_snapshot_does_not_fabricate_persistence() -> None:
+    assessment = _assessment()
+    source_at = NOW + timedelta(minutes=15)
+    first = observe_world_model(
+        assessment,
+        _packet(
+            "packet-1",
+            at=NOW + timedelta(minutes=30),
+            source_at=source_at,
+            return_fraction="0.02",
+        ),
+    )
+
+    repeated = observe_world_model(
+        assessment,
+        _packet(
+            "packet-2",
+            at=NOW + timedelta(minutes=60),
+            source_at=source_at,
+            return_fraction="0.02",
+        ),
+        previous=first,
+    )
+
+    assert repeated == ()
+
+
+def test_feature_observed_before_assessment_is_not_future_evidence() -> None:
+    assessment = _assessment()
+
+    observation = observe_world_model(
+        assessment,
+        _packet(
+            "packet-1",
+            at=NOW + timedelta(minutes=30),
+            source_at=NOW - timedelta(minutes=1),
+            return_fraction="0.02",
+        ),
+    )
+
+    assert observation == ()
 
 
 def test_repeated_fact_revision_does_not_fabricate_persistence() -> None:

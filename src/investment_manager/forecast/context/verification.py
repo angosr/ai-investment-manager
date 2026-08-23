@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from investment_manager.forecast.models import (
@@ -18,10 +19,18 @@ from investment_manager.forecast.models import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.state.decision.packet import (
     DecisionPacket,
+    PacketDerivativeState,
     continuous_fact_numeric_values,
 )
 
-WORLD_MODEL_VERIFICATION_POLICY_VERSION = "independent-observation-v3"
+WORLD_MODEL_VERIFICATION_POLICY_VERSION = "source-observation-v4"
+
+
+@dataclass(frozen=True, slots=True)
+class PacketFeatureObservation:
+    value: Decimal
+    source_ref: str
+    source_observed_at: datetime
 
 
 def observe_world_model(
@@ -69,7 +78,11 @@ def observe_world_model(
             feature = features.get(test.feature_selector)
             if feature is None:
                 continue
-            value, feature_observation_ref = feature
+            value = feature.value
+            feature_observation_ref = feature.source_ref
+            feature_observed_at = feature.source_observed_at
+            if feature_observed_at <= assessment.available_at:
+                continue
             # Evidence that built the hypothesis is its baseline, not a future
             # confirmation. Wait for a genuinely new canonical fact revision.
             if feature_observation_ref in baseline_evidence_ids:
@@ -132,7 +145,11 @@ def observe_world_model(
                 resolution,
             )
             if feature_observation_ref is not None:
-                observation_identity = (*observation_identity, feature_observation_ref)
+                observation_identity = (
+                    *observation_identity,
+                    feature_observation_ref,
+                    feature_observed_at,
+                )
             observation_id = stable_id(
                 "world_mechanism_observation",
                 *observation_identity,
@@ -149,6 +166,7 @@ def observe_world_model(
                 packet_id=packet.packet_id,
                 feature_selector=test.feature_selector,
                 feature_observation_ref=feature_observation_ref,
+                feature_observed_at=feature_observed_at,
                 observed_at=packet.as_of,
                 value=value,
                 match=match,
@@ -205,18 +223,23 @@ def predicate_match(
 
 def packet_feature_values(packet: DecisionPacket) -> dict[str, Decimal]:
     return {
-        selector: value
-        for selector, (value, _) in packet_feature_observations(packet).items()
+        selector: observation.value
+        for selector, observation in packet_feature_observations(packet).items()
     }
 
 
 def packet_feature_observations(
     packet: DecisionPacket,
-) -> dict[str, tuple[Decimal, str | None]]:
+) -> dict[str, PacketFeatureObservation]:
     """Return executable values with an identity for externally versioned facts."""
 
-    values: dict[str, tuple[Decimal, str | None]] = {}
+    values: dict[str, PacketFeatureObservation] = {}
     for item in packet.asset_states:
+        source_ref = stable_id(
+            "asset_state_observation",
+            item.market_symbol,
+            item.observed_at,
+        )
         for field in (
             "last",
             "return_fraction",
@@ -225,9 +248,10 @@ def packet_feature_observations(
             "spread_bps",
             "volume_ratio",
         ):
-            values[f"asset_state:{item.asset}.{field}"] = (
-                Decimal(str(getattr(item, field))),
-                None,
+            values[f"asset_state:{item.asset}.{field}"] = PacketFeatureObservation(
+                value=Decimal(str(getattr(item, field))),
+                source_ref=source_ref,
+                source_observed_at=item.observed_at,
             )
     for item in packet.derivative_states:
         for field in (
@@ -245,17 +269,49 @@ def packet_feature_observations(
         ):
             raw = getattr(item, field)
             if raw is not None:
+                source_observed_at, source_family = _derivative_feature_source(item, field)
                 values[f"derivative_state:{item.asset}.{field}"] = (
-                    Decimal(str(raw)),
-                    None,
+                    PacketFeatureObservation(
+                        value=Decimal(str(raw)),
+                        source_ref=stable_id(
+                            "derivative_feature_observation",
+                            item.asset,
+                            source_family,
+                            source_observed_at,
+                        ),
+                        source_observed_at=source_observed_at,
+                    )
                 )
     for item in getattr(packet, "facts", ()):
         for field, value in continuous_fact_numeric_values(item).items():
-            values[f"fact_state:{item.fact_type}.{field}"] = (
-                value,
-                item.revision_id,
+            values[f"fact_state:{item.fact_type}.{field}"] = PacketFeatureObservation(
+                value=value,
+                source_ref=item.revision_id,
+                source_observed_at=item.observed_at,
             )
     return values
+
+
+def _derivative_feature_source(
+    item: PacketDerivativeState,
+    field: str,
+) -> tuple[datetime, str]:
+    if field.startswith("spot_"):
+        assert item.spot_flow_observed_at is not None
+        return item.spot_flow_observed_at, "spot_flow"
+    if field in {
+        "open_interest_change_fraction",
+        "global_long_account_fraction",
+        "taker_buy_sell_ratio",
+    }:
+        assert item.positioning_observed_at is not None
+        return item.positioning_observed_at, "positioning"
+    if field.startswith("last_funding_") or field.startswith("trailing_funding_"):
+        return (
+            item.next_funding_time - timedelta(hours=8),
+            f"funding:{item.next_funding_time.isoformat()}",
+        )
+    return item.observed_at, "market"
 
 
 def _matches(value: Decimal, predicate: ContextVerificationPredicate) -> bool:

@@ -38,7 +38,7 @@ Context Veto Research ──────────┼→ 同机会 Outcome →
 截至 2026-08-23，本轮实现已经完成以下事实链：
 
 1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已连续产出 V2 WorldModel。2026-08-23 06:23 UTC 的前瞻更新没有机械延续旧结论：它保留 BTC 主动卖压与杠杆放大路径，同时识别 ETH 主动资金已转为抵消力量，撤销了“BTC/ETH 同步卖压”的过度外推。
-2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。事实类特征以不可变 `revision_id` 作为观测身份：构建机制时已经引用的版本属于基线，不能充当未来确认；同一版本被多个行情 Packet 重复携带也不增加连续次数，只有新事实修订才是新观测。行情和衍生品则继续按新点时时间切片结算。只有验证规则版本相同、显式 `continuity_ref` 指向直接前代且测试合同完全相同，后继机制才继承连续计数；规则语义升级或改变阈值、窗口、谓词都会保守清零。这样既避免每次更新 WorldModel 都永久停在 `PENDING`，也避免旧算法、既有证据或重复封装制造伪验证。
+2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、来源观测身份/时点、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；当前 Packet 在冻结最终输入身份之前写入观测，因此同轮 Codex 会真实看到结算结果。每种 selector 都绑定自己的真实来源频率：事实使用不可变 `revision_id`，行情使用市场快照时点，资金费率使用结算周期，现货流和衍生品仓位分别使用各自窗口时点。来源时点不晚于 WorldModel 形成时间属于基线，不能充当未来确认；同一来源被多个 Packet 重复携带也不增加连续次数。只有验证规则版本相同、显式 `continuity_ref` 指向直接前代且测试合同完全相同，后继机制才继承连续计数；规则语义升级或改变阈值、窗口、谓词都会保守清零。这样既避免每次更新 WorldModel 都永久停在 `PENDING`，也避免旧算法、不同频率错配、既有证据或重复封装制造伪验证。
 3. WorldModel 成功持久化后，最早 `next_review_at` 会同步进入现有耐久 TriggerPlan；新模型替换旧模型尚未发生的机制复核，已到期复核转成幂等立即触发，与相邻官方日程小于系统最小调用间隔时复用同一唤醒。该链复用 Outbox 和 Temporal，不依赖偶然新闻或进程内定时器。
    2026-08-23 08:46 UTC 的 v92 切换已验证重启对账：worker 未等待新事件，直接把最新模型的 16:05 复核恢复到新计划；08:54 新模型成功后，同一计划又以新 assessment 身份原子替换旧唤醒。账号租约、容量探测、单账号时限、故障切换、activity 和批次截止时间现在由配置不变量约束，避免外层编排在账号路由完成前取消调用。
 4. Capital v33 正以 10,000 USDT 自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 仍为负，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
@@ -280,7 +280,7 @@ selector 和 predicate 只能使用 Packet 声明为可用的 StateFeature 字�
 
 连续官方指标与 ETF 资金流由既有 Canonical Fact 确定性投影为 `fact_state:<fact_type>.<numeric_field>`，与行情和衍生品 selector 使用同一结算器。只要 Mechanism 的因果链引用了连续事实，至少一个验证测试必须连接到所引用的事实类型；BTC/ETH 继续涨跌只能验证结果端，不能单独确认利率、美元、财政或资金流原因。该约束防止多个竞争解释用同一币价结果同时“自证正确”，不增加第二套特征库。
 
-持久性按独立观测而不是 Packet 数量计算。`fact_state` 必须携带来源 `revision_id`：assessment 已见版本为基线、重复版本跳过、新版本才推进 streak；`asset_state` 和 `derivative_state` 没有外部修订身份，按新的点时快照推进。任何改变这套语义的版本升级都会清零旧 streak，禁止历史派生计数跨算法污染。
+持久性按独立来源观测而不是 Packet 数量计算。`fact_state` 携带 `revision_id`，`asset_state` 携带行情时点，`derivative_state` 依字段携带资金费率周期、现货流窗口、仓位窗口或市场快照身份；每项都同时保存来源时点与评价 Packet 时点。assessment 已见或更早的来源为基线、重复来源跳过、新来源才推进 streak。任何改变这套语义的版本升级都会清零旧 streak，禁止历史派生计数跨算法污染。
 
 机制数量不由任意业务常量决定，也不能无限增长。每项机制必须至少满足一条：改变 synthesis、改变某类 OpportunityAssessment、解释当前重大持仓风险。语义重复的机制合并；只有背景价值、没有独立验证或资本后果的内容不进入。容量不足时按边际决策价值省略并留审计计数，不能截断因果链。
 
