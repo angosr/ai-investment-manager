@@ -79,9 +79,12 @@ def register_assessment_forward_plan(
         end = parse_utc_option(signal_window_end, name="signal-window-end")
         objective = loaded.assessment.mandate.capital_objective
         if objective is not None:
-            evidence = loaded.carry_forecast.evidence
-            if evidence is None:
-                raise ValueError("Context Capital 前向评价缺少已冻结 Carry 成本证据")
+            round_trip_cost_bps = sum(
+                (item.fee_bps for item in loaded.capital.execution_specs),
+                start=loaded.frequency.latency_bps
+                + loaded.frequency.adverse_selection_bps
+                + loaded.frequency.uncertainty_buffer_bps,
+            )
             spec = ContextCapitalForwardSpec(
                 plan_id=plan_id,
                 analysis_scope=loaded.assessment.mandate.analysis_scope,
@@ -94,7 +97,7 @@ def register_assessment_forward_plan(
                 signal_window_start=start,
                 signal_window_end=end,
                 minimum_opportunity_count=minimum_capital_opportunities,
-                round_trip_cost_bps=evidence.round_trip_cost_bps,
+                round_trip_cost_bps=round_trip_cost_bps,
                 lower_confidence_z=loaded.calibration.lower_confidence_z,
             )
         else:

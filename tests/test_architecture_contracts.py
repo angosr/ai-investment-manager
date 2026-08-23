@@ -349,9 +349,8 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "policy.py",
             "tables.py",
         },
-        "forecast": {
-            "carry.py",
-            "models.py",
+            "forecast": {
+                "models.py",
             "policy.py",
             "repository.py",
             "settlement.py",
@@ -533,7 +532,6 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "DecisionStatePolicy": "state/policy.py",
         "StrategyPolicy": "forecast/policy.py",
         "CalibrationPolicy": "forecast/policy.py",
-        "CarryForecastPolicy": "forecast/policy.py",
         "AiMode": "forecast/policy.py",
         "PipelinePolicy": "forecast/policy.py",
         "ProposalPolicy": "forecast/policy.py",

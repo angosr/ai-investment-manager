@@ -352,7 +352,7 @@ class CapitalContextObjective(FrozenModel):
     """One research-only capital question; never an order or allocation permission."""
 
     objective_id: str = Field(min_length=1)
-    decision_kind: Literal["CARRY_ENTRY_VETO"] = "CARRY_ENTRY_VETO"
+    decision_kind: Literal["PROGRAM_ENTRY_VETO"] = "PROGRAM_ENTRY_VETO"
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)

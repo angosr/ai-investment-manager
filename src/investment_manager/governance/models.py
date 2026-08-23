@@ -632,7 +632,6 @@ _CONFIG_COMPONENT_NAMES = (
     "decision_state",
     "strategy",
     "calibration",
-    "carry_forecast",
     "capital",
     "composition",
     "frequency",
@@ -663,12 +662,6 @@ def validate_manifest_component_versions(
 
     declared = dict(manifest.component_versions)
     current = {name: getattr(config, name).version for name in _CONFIG_COMPONENT_NAMES}
-    retired_dynamic = config.dynamic_carry_forecast
-    if retired_dynamic is not None:
-        version = retired_dynamic.get("version")
-        if not isinstance(version, str) or not version:
-            raise ValueError("退役 Dynamic Carry 历史配置缺少版本身份")
-        current["dynamic_carry_forecast"] = version
     if declared != current:
         raise ValueError("ReleaseManifest 与当前类型化行为配置版本不一致")
 
@@ -680,19 +673,6 @@ def validate_manifest_against_config(
     require_configuration_hash: bool = False,
 ) -> None:
     validate_manifest_component_versions(manifest, config)
-    if config.capital.enabled:
-        from investment_manager.forecast.carry import validate_carry_evidence
-
-        evidence = config.carry_forecast.evidence
-        if evidence is None:
-            raise ValueError("Capital Release 缺少 Carry evidence")
-        expected_artifact = ReleaseArtifact(
-            artifact_id=evidence.source_evaluation_id,
-            sha256=evidence.source_artifact_sha256,
-        )
-        if expected_artifact not in manifest.artifacts:
-            raise ValueError("Capital ReleaseManifest 未绑定 Carry evidence 制品")
-        validate_carry_evidence(evidence)
     if manifest.configuration_hash is None:
         if require_configuration_hash:
             raise ValueError("运行 ReleaseManifest 缺少完整配置哈希")

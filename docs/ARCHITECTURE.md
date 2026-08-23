@@ -58,12 +58,12 @@ Observation
 | Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
 | Evaluation | 结算结果并更新机制权限证据 | 读取盲区后改写原计划 |
 
-程序机制直接产生 `BaseForecast`，当前唯一候选是 BTC 现货与永续的月度 carry。AI 只产生研究态
-`ContextAssessment`，回答一个绑定精确 Producer 身份的资本问题：程序化 funding、basis、成本、流动性、保证金和
-交易场所检查之外，是否出现足以否决下一次入场的增量风险。它不能产生 Forecast、仓位或订单，也不能直接改变
-Program Base。只有在未来窗口中冻结同一程序基线与确定性 `Program + Context` 规则、完成逐次配对评价并取得显式
-Mock 授权后，一个新版本的确定性门控才可进入 Portfolio；Assessment 本身永远不是资本权限。只有 Portfolio 能决定
-经济目标，只有 Risk 能授予风险，只有 Execution 能产生订单。
+程序机制直接产生 `BaseForecast`；当前没有通过独立证据门槛的主动候选。AI 只产生研究态
+`ContextAssessment`，维护组合级可证伪世界模型。只有出现绑定精确 Producer 身份的合格程序机会时，它才回答
+程序输入之外是否存在足以否决入场的增量风险。它不能产生 Forecast、仓位或订单，也不能直接改变 Program Base。
+只有在未来窗口中冻结同一程序基线与确定性 `Program + Context` 规则、完成逐次配对评价并取得显式 Mock 授权后，
+一个新版本的确定性门控才可进入 Portfolio；Assessment 本身永远不是资本权限。只有 Portfolio 能决定经济目标，
+只有 Risk 能授予风险，只有 Execution 能产生订单。
 
 现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
 `TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
@@ -384,23 +384,18 @@ TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序�
 `observed_at` 之前最后可见的 Spot 报价，并对两者观测偏差设置同一配置化上限。超过上限时 Forecast
 不产生机会、世界认知不形成该衍生品证据、Risk 对新增风险整组拒绝且持仓复核延后；不得用插值、
 后到报价或降低门槛制造套利。两条 quote identity 必须共同进入不可变输入引用，保证回放使用同一价格对。
-统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线；BTC carry
-只在每个 UTC 月首 30 分钟生成一份 BaseForecast，以匹配已评价的月初同数量再平衡策略；已持久化的
-Forecast 把月末经济 horizon 与月首开仓有效期分开；窗口结束后 Producer 不再返回该机会。月度规则只
-属于这个 carry Producer，Capital 不拥有日历或全局再平衡周期。`CapitalCycleService` 以当前各合格
+统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线。已退役的 calendar carry
+不再产生 Forecast、授权、定时唤醒或网页候选；其研究结果不能恢复生产身份。`CapitalCycleService` 以当前各合格
 Producer 返回的 Forecast ID 集合形成幂等机会周期；PortfolioTarget 自身已唯一绑定 cycle、账户、
 Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账本。后续不同 cadence 的 Producer
 可以在同一组合链协作，且不能绕过统一 Portfolio、Risk 和 grouped Execution。没有新机会时仅重放账户、
 恢复非终态组并检查持仓风险；最小调仓门槛直接冻结当前 gross target，而不是只追加原因码。
-已授权 Mock Producer 的未来自然信号窗口在 Trigger Service 启动时物化为同一 `TriggerPlan` 的持久化
-`ScheduledWakeup`，有效期直接取 Producer 的入场窗口。它与官方日历及主 Agent 唤醒共存，不依赖
-Heartbeat 相位碰巧命中，也不允许在窗口结束后补单；授权、Producer 身份或自然 cadence 变化都必须产生
-新的 Release/行为身份。
+自然信号、官方事件、数据发布和主 Agent 复核可以形成持久化 `ScheduledWakeup`；其时间来自证据或候选本身，
+不能由组合层虚构统一日历。授权、Producer 身份或自然 cadence 变化都必须产生新的 Release/行为身份。
 每个冻结 TriggerBatch 还以自身 batch ID 作为 cause 追加一条 `CapitalCycleRecord`，直接保存品种、触发类型、
 账户快照、Forecast/Target 引用与终态；因此无 Target 的无机会/保持也是权威事实，多品种同一时刻触发不会
 依赖时间近似关联或互相覆盖。Dashboard 只投影该记录，不从“缺少 Target”反推行动。
-月度 carry 的历史制品本身仅是研究和 counterfactual，不自动进入主动资本链；只有绑定精确 Producer
-身份、有效期、资本上限和前向评价计划的 Mock authorization 才能暂时装配该候选。`CapitalCycleService`
+历史 carry 制品仅是研究和 counterfactual，不能进入主动资本链。`CapitalCycleService`
 允许零个合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
 未来候选必须以显式 `CapitalForecastSource` 接入同一 Portfolio、Risk、TradePlan、持久化 Mock Product Venue
 与账户投影，并绑定事前登记的 Mock authorization。持仓主动风险退出在每次
@@ -466,8 +461,7 @@ FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整
 
 同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
 并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。calendar carry 的不可变历史 Evidence 不会单独获得真实订单权限；精确的 Mock authorization 只允许
-同一候选在模拟盘收集前向证据。主动链同时最多装配一个机制明确、事前登记的
+结论。退役候选的不可变历史 Evidence 不会获得生产权限。主动链同时最多装配一个机制明确、事前登记的
 challenger；没有授权或没有自然信号时保持现金。已经失败的
 `dynamic-carry-point-in-time-v2` 生产代码和装配已删除，只保留内容寻址失败制品与不可变计划失效事实。新候选
 必须在结构和信息来源上与它不同，先完成低成本拒绝型回放，再进入同一模拟资本链，避免在同一标签上调参。

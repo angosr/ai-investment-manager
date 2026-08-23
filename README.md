@@ -35,7 +35,7 @@
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
 - 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
 - 固定一手状态适配器：Treasury 回购日程与实际结果、TGA、Treasury 收益率、Fed 广义美元、RRP、SOMA、EFFR/SOFR 与 iShares IBIT 日持仓统一保存原始响应、语义修订与高密度事实；历史异常度在程序侧计算，背景波动不占用 AI 主导因素注意力。回购计划上限与实际接受金额严格分离，IBIT 只作为单基金部分观测，不冒充 ETF 合计净流入。
-- `DecisionPacket → ContextAssessmentWorkflow` 研究链：每个 Packet 绑定精确 carry Producer 与唯一资本问题，Codex 只判断程序基线之外的入场否决风险并维护可引用世界认知；它不再强制生成短周期方向观点，失败关闭且没有交易权限。旧 `AnalysisCycleWorkflow` 已退出 Trigger 调度，只保留迁移期回放代码。
+- `DecisionPacket → ContextAssessmentWorkflow` 研究链：Codex 维护可引用、可证伪的组合级世界模型；只有存在独立合格的程序候选和预登记资本问题时，才评价世界模型是否应否决该候选。它不强制生成短周期方向观点，失败关闭且没有交易权限。旧 `AnalysisCycleWorkflow` 已退出 Trigger 调度，只保留迁移期回放代码。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
 - `OutcomeEvaluationWorkflow`：固定窗口和结算宽限期后聚合实际运行周期与权威逐笔结果；未决持仓保持 `INCOMPLETE`，完整报告给出费用后净收益、Profit Factor、最大回撤和永不交易基线增量。
@@ -50,9 +50,9 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-主线已经完成首条 `BaseForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 资本切片：主动链唯一候选是获得显式 Mock 授权的 BTC Spot Long / USD-M Perpetual Short 月度 calendar carry；它只在月首自然窗口按点时 basis、funding 和现实成本选择持仓或现金。已失败的 dynamic carry 生产路径已经删除，只保留不可变失败证据；历史 blind 窗口因重叠不可再用，所以真实订单权限仍严格禁用。每个触发批次都追加一条不可变 `CapitalCycleRecord`，包括无机会、保持、风控退出和执行结果；Trigger 先恢复非终态 group、按真实 funding/费用/可成交价更新账户并复核持仓风险，再评价新的点时机会。低于最小调仓金额时 Target 冻结当前暴露，Planner 不会生成无效订单。
+主线已经完成 `BaseForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 的通用资本切片。月初专属 BTC calendar carry 与已失败的 dynamic carry 均已退出生产路径，只保留不可变研究结果；当前没有通过独立证据门槛的主动候选，因此权威资本状态是现金，而不是等待某个日历日期。每个触发批次都追加一条不可变 `CapitalCycleRecord`，包括无机会、保持、风控退出和执行结果；Trigger 先恢复非终态 group、按真实 funding、费用和可成交价更新账户并复核持仓风险，再评价显式装配的候选。低于最小调仓金额时 Target 冻结当前暴露，Planner 不会生成无效订单。
 
-尚未完成且不能由仓库自行假定完成：长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，真正 PUSH/STREAM 的低延迟新闻源，以及“程序基线 vs 确定性 Context 否决规则”的前向配对增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。私有 Challenger 的真实 Codex ContextAssessment 只维护世界认知并判断程序基线之外的 carry 入场风险，明确标记研究旁路且无资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：合格且经济意义充分的程序候选、长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，真正 PUSH/STREAM 的低延迟新闻源，以及“程序基线 vs 确定性 Context 否决规则”的前向配对增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。ContextAssessment 当前只维护研究级世界模型，无资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
@@ -124,7 +124,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 每个来源月档必须通过同目录官方 SHA-256，标准化观察值固定在结算 60 秒后才可见；下载时间、全部来源摘要与规范化内容共同冻结，旧制品不原地更新。首个“28 日动量 + SMA200 + 资金费率拥挤否决”候选已按 BTC/ETH 分别预登记：ETH 未通过 walk-forward 保守下界，BTC 虽通过 walk-forward，但在一次性盲区中同时未达到交易数、盈利因子和保守下界门槛，因此已经从活动注册表退役，没有接入 Shadow，也没有为迁就结果搜索阈值。不可变评价制品保留失败身份；资金费率数据合同和 `--funding-dataset-id` 组合能力保留给结构不同的新假设。
 
-方向独立的现货/永续 carry 使用单独且受限的研究入口。`fetch-binance-carry-history` 引用同窗口的现货与 SHA 校验资金费率制品，再内容寻址冻结 USD-M 合约成交、标记、指数、溢价日线、结算前 8 小时标记价收盘和当前合约规则；REST 费率必须与官方月档逐条匹配。`carry-walk-forward` 只允许精确登记的同数量双腿规格，不接受任意仓位参数；当前保留原每腿 50% 评价语义和与组合总敞口 30% 一致的每腿 15% 语义，两者共享双腿成本、10% 保守维持保证金和 100 bps 单腿失败压力。`carry-blind-evaluate` 复用全局一次性盲区锁，在认领成功前不读取尾窗标签。当前 Capital v9 实际绑定的 BTC 15%/leg 制品已事前登记并完成五折 walk-forward：5/5 折为正，简单年化均值约 1.970%、保守下界约 0.777%、最大回撤约 0.232%、最大固定单腿失败损失约 0.150%，最低保证金缓冲约 75.43%；其历史 blind 窗口已被更早候选消费，系统拒绝再次揭示。生产配置不再复制 50%/leg 的统计量：它绑定仓库内源评价文件、结果哈希、规格哈希、数据集、策略、成本、样本数和 30% gross，Capital ReleaseManifest 还必须绑定文件 SHA-256，任一漂移均在启动时失败关闭。ETH 50% 规格因保证金越界失败；事前登记的 15% 规格虽通过 walk-forward 与唯一 blind，但 blind 费用后年收益仅约 0.281%，在同一资本上限下被 BTC 候选支配，因此不接生产。BNB 同时未通过收益下界、正收益折、回撤和保证金门槛。`register-carry-forward-plan` 只允许在未来窗口开始前冻结至少十二个完整 UTC 日历月及精确 policy version；历史结果本身不授予权限，当前仍只有 BTC 获得持久化 Mock Shadow 资格，Testnet/LIVE 与真实期货下单适配器均未开放。
+方向独立的现货/永续 carry 只保留受限研究入口和不可变结果，不再拥有生产 Producer、Mock 授权、日历触发或 Dashboard 候选。历史 BTC 规格虽在五折 walk-forward 为正，但保守年化仅约 0.777%，且历史 blind 窗口已被更早候选消费，不能形成独立晋级证据；ETH/BNB 规格也未形成更优的可授权结果。交易所官方月档只是历史数据传输格式，研究按月分组只属于该实验的数据合同，绝不能决定世界模型的复核节奏或资本日历。
 
 `screen-signals` 是正式回测前的廉价拒绝层：复用生产特征、候选接口和统一往返成本，以收盘信号、下一根开盘和固定持有周期计算原始机会，只用非重叠样本，并与采用相同成本的周期性现货多头比较。读取器流式校验完整历史制品哈希，但只物化显式开发窗口与特征预热；任何结果标签都不得跨越 `--signal-end`，因此该终点必须位于预留盲区之前。它不回放止损、程序退出、仓位、频率、风控或回撤，只能淘汰/排序弱假设；`promising_for_exact_backtest=true` 也不能登记为通过、不能校准边际或获得交易资格。
 
@@ -134,9 +134,9 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
 
-当前 Context 行为不再评价短周期方向。`register-assessment-forward-plan` 会根据冻结配置登记
-`context-capital-forward-spec-v1`：精确绑定行为哈希、carry Producer、资本问题、费用、自然机会窗口和最少 12 个
-月度机会。每个机会只使用机会出现前 24 小时内最新的世界认知；Codex 失败、结果缺失或过期一律回退 Program Base，
+当前 Context 行为不再评价短周期方向。存在合格程序候选时，`register-assessment-forward-plan` 可按冻结配置登记
+`context-capital-forward-spec-v1`：精确绑定行为哈希、Producer、资本问题、成本、自然机会窗口和最少机会数。
+每个机会只使用机会出现前 24 小时内最新的世界认知；Codex 失败、结果缺失或过期一律回退 Program Base，
 不会选择性删除失败样本。`ENTRY_VETO_CANDIDATE` 的反事实收益为现金 0，其余状态保持基线；Forecast 自然结算后，
 `evaluate-assessment-forward-plan` 同时只读 Context 与 Capital 两个角色隔离事实库，计算同一机会费用后的配对收益差
 及其保守下界。样本不足、Program 结果未结算或增量下界不为正都不能通过，更不能自行获得资本权限。

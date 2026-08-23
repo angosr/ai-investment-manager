@@ -33,19 +33,20 @@ from investment_manager.governance.models import ReleaseManifest
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId
 from investment_manager.settings import load_config
+from investment_manager.state.decision.packet import CapitalContextObjective
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
 
 
 def _spec() -> ContextCapitalForwardSpec:
     return ContextCapitalForwardSpec(
-        plan_id="context-carry-forward-v1",
+        plan_id="context-program-forward-v1",
         analysis_scope="primary-portfolio",
         analysis_behavior_hash="a" * 64,
-        objective_id="btc-calendar-carry-entry-veto-v1",
-        producer_id="btc-spot-perp-carry",
-        producer_version="btc-carry-monthly-first-open-v4",
-        forecast_family="delta-neutral-funding-carry",
+        objective_id="program-entry-veto-v1",
+        producer_id="program-candidate",
+        producer_version="program-candidate-v1",
+        forecast_family="program-opportunity",
         forecast_evaluation_version="analysis-forecast-v3",
         signal_window_start=START,
         signal_window_end=START + timedelta(days=84),
@@ -73,9 +74,9 @@ def _forecast_and_outcome(index: int, *, gross_bps: Decimal):
     forecast_id = f"forecast-{index}"
     forecast = BaseForecast(
         forecast_id=forecast_id,
-        producer_id="btc-spot-perp-carry",
-        producer_version="btc-carry-monthly-first-open-v4",
-        forecast_family="delta-neutral-funding-carry",
+        producer_id="program-candidate",
+        producer_version="program-candidate-v1",
+        forecast_family="program-opportunity",
         target=target,
         horizon_minutes=60,
         direction=DirectionalView.UP,
@@ -139,7 +140,7 @@ def _assessment(index: int, status: ContextCapitalRelevanceStatus):
         trigger_ids=(f"trigger-{index}",),
         market_mechanism="外生风险通过交易场所完整性影响双腿 carry。",
         capital_relevance=ContextCapitalRelevance(
-            objective_id="btc-calendar-carry-entry-veto-v1",
+            objective_id="program-entry-veto-v1",
             status=status,
             thesis="当前增量风险需要在自然机会中配对验证。",
             transmission="外生事件可能破坏双腿同时成交与资金费率持续性。",
@@ -184,7 +185,7 @@ def _world_assessment(index: int, effect: ContextCapitalEffect):
             ),
         ),
         capital_implication=ContextCapitalImplication(
-            objective_id="btc-calendar-carry-entry-veto-v1",
+            objective_id="program-entry-veto-v1",
             effect=effect,
             incremental_reason="程序基线之外出现交易场所完整性风险。",
             transmission="外生冲击通过双腿流动性与 funding 持续性破坏 carry。",
@@ -297,8 +298,24 @@ def test_context_worker_can_start_before_the_signal_window() -> None:
     )
 
     config = load_config("config/investment-manager.yaml")
-    objective = config.assessment.mandate.capital_objective
-    assert objective is not None
+    objective = CapitalContextObjective(
+        objective_id="program-entry-veto-v1",
+        producer_id="program-candidate",
+        producer_version="program-candidate-v1",
+        forecast_family="program-opportunity",
+        base_decision_inputs=("COSTS", "RISK"),
+    )
+    config = config.model_copy(
+        update={
+            "assessment": config.assessment.model_copy(
+                update={
+                    "mandate": config.assessment.mandate.model_copy(
+                        update={"capital_objective": objective}
+                    )
+                }
+            )
+        }
+    )
     spec = _spec().model_copy(
         update={
             "analysis_behavior_hash": configured_assess_behavior_hash(config),

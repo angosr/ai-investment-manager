@@ -15,7 +15,6 @@ from investment_manager.governance.models import (
     FailedExperiment,
     GovernanceGate,
     PromotionGate,
-    ReleaseArtifact,
     ReleaseManifest,
     StageOutcome,
     StageResult,
@@ -154,13 +153,14 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
 def test_runtime_release_binds_complete_configuration_content() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
     historical = load_release_manifest("config/release-manifest.testnet-v3.yaml")
-    component_versions = (
-        *tuple(
-            (name, getattr(config, name).version)
-            for name, _version in historical.component_versions
-        ),
-        ("carry_forecast", config.carry_forecast.version),
-        ("capital", config.capital.version),
+    current_names = tuple(
+        name
+        for name, _version in load_release_manifest(
+            "config/release-manifest.yaml"
+        ).component_versions
+    )
+    component_versions = tuple(
+        (name, getattr(config, name).version) for name in current_names
     )
     manifest = historical.model_copy(
         update={
@@ -217,45 +217,6 @@ def test_read_only_component_validation_does_not_rehash_historical_config() -> N
     validate_manifest_component_versions(manifest, config)
     with pytest.raises(ValueError, match="完整配置内容不一致"):
         validate_manifest_against_config(manifest, config)
-
-
-def test_capital_release_binds_verified_carry_artifact() -> None:
-    config = load_config("config/investment-manager.shadow.yaml")
-    historical = load_release_manifest("config/release-manifest.yaml")
-    evidence = config.carry_forecast.evidence
-    assert evidence is not None
-    manifest = historical.model_copy(
-        update={
-            "component_versions": tuple(
-                (name, getattr(config, name).version)
-                for name, _version in historical.component_versions
-            ),
-            "configuration_hash": content_hash(config),
-        }
-    )
-
-    with pytest.raises(ValueError, match="未绑定 Carry evidence 制品"):
-        validate_manifest_against_config(
-            manifest,
-            config,
-            require_configuration_hash=True,
-        )
-
-    bound = manifest.model_copy(
-        update={
-            "artifacts": (
-                ReleaseArtifact(
-                    artifact_id=evidence.source_evaluation_id,
-                    sha256=evidence.source_artifact_sha256,
-                ),
-            )
-        }
-    )
-    validate_manifest_against_config(
-        bound,
-        config,
-        require_configuration_hash=True,
-    )
 
 
 def test_legacy_release_manifest_keeps_immutable_payload_shape() -> None:

@@ -127,38 +127,6 @@ calibration:
   lower_confidence_z: "1.96"
   artifacts: []
 
-carry_forecast:
-  version: btc-carry-monthly-first-open-v4
-  rebalance_policy_version: monthly-first-open-v2
-  evaluated_policy_version: spot-perp-calendar-month-risk-30pct-v3
-  enabled: true
-  producer_id: btc-spot-perp-carry
-  forecast_family: delta-neutral-funding-carry
-  symbol: BTCUSDT
-  base_asset: BTC
-  quote_asset: USDT
-  maximum_monthly_entry_delay_minutes: 30
-  funding_interval_hours: 8
-  expected_edge_half_life_seconds: 31536000
-  evidence:
-    version: carry-walk-forward-calendar-risk-30pct-v3
-    source_evaluation_id: carry_walk_forward_9f306b67253a4d6ffa2f
-    source_result_hash: 52bbafdfb75693d227dee79b584d70a4a2c1574cdebbef9ca6f258256381fc83
-    source_evaluation_spec_hash: 9186e85339dd4a7061335d6a8803a833aa025eb52140602d3d2f5a2f9781982d
-    source_dataset_id: historical_carry_dataset_e605f49c521fdc68e910
-    source_artifact_path: config/evidence/carry_walk_forward_9f306b67253a4d6ffa2f.json
-    source_artifact_sha256: f67293b22ccc817af36cef241988a6385ed7a7125a77c7de6f36fa52cfb9022b
-    evaluated_policy_version: spot-perp-calendar-month-risk-30pct-v3
-    evaluated_gross_exposure_fraction: "0.30"
-    expected_annualized_net_fraction: "0.01969669908440934004761743988"
-    conservative_annualized_net_fraction: "0.00777031374855142609417636994"
-    independent_sample_count: 5
-    round_trip_cost_bps: "20"
-    published_at: 2026-08-21T10:03:30Z
-    valid_from: 2026-08-21T10:03:30Z
-    valid_until: 2027-08-01T00:00:00Z
-    blind_status: UNAVAILABLE_OVERLAPPING_WINDOW
-
 capital:
   version: product-capital-v8
   enabled: false
@@ -478,19 +446,12 @@ codex_runtime:
   max_account_switches: 2
 
 assessment:
-  version: context-assessment-v29
+  version: context-assessment-v30
   enabled: false
   mandate:
-    version: primary-portfolio-mandate-v8
+    version: primary-portfolio-mandate-v9
     analysis_scope: primary-portfolio
-    question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；只判断该模型相对程序化 BTC 现货与永续 carry 基线的增量支持、谨慎或反对作用。
-    capital_objective:
-      objective_id: btc-calendar-carry-entry-veto-v1
-      decision_kind: CARRY_ENTRY_VETO
-      producer_id: btc-spot-perp-carry
-      producer_version: btc-carry-monthly-first-open-v4
-      forecast_family: delta-neutral-funding-carry
-      base_decision_inputs: [BASIS, COSTS, FUNDING, LIQUIDITY, MARGIN, VENUE]
+    question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；不为没有独立盈利证据的候选制造资本结论。
     assets:
       - asset: BTC
         market_symbol: BTCUSDT

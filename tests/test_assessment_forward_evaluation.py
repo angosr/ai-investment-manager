@@ -24,10 +24,6 @@ from investment_manager.governance.evaluation.assessment import (
     validate_assessment_forward_plan,
     validate_assessment_runtime_plan,
 )
-from investment_manager.governance.evaluation.context_capital import (
-    ContextCapitalForwardSpec,
-    build_context_capital_forward_plan,
-)
 from investment_manager.governance.models import load_release_manifest
 from investment_manager.kernel.identity import stable_id
 from investment_manager.settings import load_config
@@ -160,25 +156,26 @@ def test_assessment_worker_requires_one_exact_current_behavior_plan() -> None:
         update={"manifest_id": "release-context-runtime-test"}
     )
     start = datetime(2026, 8, 21, 17, tzinfo=UTC)
-    objective = config.assessment.mandate.capital_objective
-    assert objective is not None
-    evidence = config.carry_forecast.evidence
-    assert evidence is not None
-    spec = ContextCapitalForwardSpec(
+    scopes = tuple(
+        AssessmentEvaluationScope(
+            asset=asset.asset,
+            symbol=asset.market_symbol,
+            horizon_minutes=horizon,
+        )
+        for asset in config.assessment.mandate.assets
+        for horizon in asset.horizons_minutes
+    )
+    spec = AssessmentForwardEvaluationSpec(
         plan_id="context-runtime-plan",
         analysis_scope=config.assessment.mandate.analysis_scope,
         analysis_behavior_hash=configured_assess_behavior_hash(config),
-        objective_id=objective.objective_id,
-        producer_id=objective.producer_id,
-        producer_version=objective.producer_version,
-        forecast_family=objective.forecast_family,
-        forecast_evaluation_version=config.outcome_evaluation.forecast_version,
+        outcome_evaluation_version=config.outcome_evaluation.assessment_version,
         signal_window_start=start,
-        signal_window_end=start + timedelta(days=84),
-        minimum_opportunity_count=3,
-        round_trip_cost_bps=evidence.round_trip_cost_bps,
+        signal_window_end=start + timedelta(days=2),
+        scopes=scopes,
+        minimum_non_overlapping_samples=2,
     )
-    plan = build_context_capital_forward_plan(
+    plan = build_assessment_forward_plan(
         spec=spec,
         base_manifest_id=manifest.manifest_id,
         registered_at=start - timedelta(hours=1),
@@ -202,7 +199,7 @@ def test_assessment_worker_requires_one_exact_current_behavior_plan() -> None:
             config=config,
             manifest=manifest,
             plans=(
-                build_context_capital_forward_plan(
+                build_assessment_forward_plan(
                     spec=spec.model_copy(
                         update={"analysis_behavior_hash": "f" * 64}
                     ),

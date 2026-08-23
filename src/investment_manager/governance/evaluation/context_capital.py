@@ -65,12 +65,9 @@ class ContextCapitalForwardSpec(FrozenModel):
     _utc_signal_end = field_validator("signal_window_end")(require_utc)
 
     @model_validator(mode="after")
-    def window_can_contain_natural_monthly_opportunities(self):
+    def window_is_ordered(self):
         if not self.signal_window_start < self.signal_window_end:
             raise ValueError("Context Capital 前向窗口起点必须早于终点")
-        minimum_span = timedelta(days=28 * self.minimum_opportunity_count)
-        if self.signal_window_end - self.signal_window_start < minimum_span:
-            raise ValueError("Context Capital 前向窗口不足以形成预登记自然机会")
         return self
 
 
@@ -125,7 +122,7 @@ class ContextCapitalForwardResult(FrozenModel):
     reason_codes: tuple[str, ...]
     limitations: tuple[str, ...] = (
         "SHADOW_COUNTERFACTUAL_NOT_LIVE_AUTHORITY",
-        "CONTEXT_CAN_ONLY_VETO_ENTRY_NOT_SIZE_OR_CREATE_TRADES",
+        "CONTEXT_CAN_ONLY_VETO_PROGRAM_ENTRY_NOT_SIZE_OR_CREATE_TRADES",
         "PROGRAM_FALLBACK_ON_MISSING_OR_STALE_CONTEXT",
     )
 
@@ -532,7 +529,7 @@ def failed_context_capital_experiment(
     if result.outcome != ContextCapitalForwardOutcome.FAILED:
         raise ValueError("只有样本充分且未通过的 Context Capital 结果可登记失败")
     hypothesis = (
-        f"Context 行为 {result.plan_id} 对程序 carry 入场的确定性否决，"
+        f"Context 行为 {result.plan_id} 对程序候选入场的确定性否决，"
         "能产生为正的费用后配对收益增量保守下界"
     )
     return FailedExperiment(

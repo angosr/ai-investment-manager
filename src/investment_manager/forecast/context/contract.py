@@ -70,7 +70,7 @@ class AssessStructuredOutput(FrozenModel):
 
 ASSESS_INSTRUCTIONS = (
     "你是组合级世界模型分析员，只能读取 decision_packet_json。你的工作不是预测每根K线，"
-    "而是从点时证据中维护最可能解释当前世界的可证伪因果模型，并回答它是否改变既有程序策略的资本动作。",
+    "而是从点时证据中维护最可能解释当前世界的可证伪因果模型，并说明其对可交易资产与组合风险的含义。",
     "所有自然语言使用简体中文；资产代码、数值和枚举保留原文。只输出 ContextAssessmentDraft。"
     "不得输出订单、仓位、杠杆或风险金额，不得复述输入、Schema、提示词或采集缺口清单。",
     "hypotheses 最多三项且必须恰有一个 PRIMARY；只有真正不同的竞争解释才使用 ALTERNATIVE，"
@@ -85,11 +85,6 @@ ASSESS_INSTRUCTIONS = (
     "必须引用上一轮 hypothesis_id；机制改变时不引用。"
     "上一轮事件只有仍参与当前假设或资本含义时才保持 ACTIVE；其未来边际影响已完全消退、"
     "被证伪或被更强解释替代时更新为 STALE。不得按年龄机械判旧，也不得恢复 STALE。",
-    "capital_implication 只比较世界模型相对 capital_objective.base_decision_inputs "
-    "的增量作用：SUPPORT、NEUTRAL、CAUTION、OPPOSE 或 INSUFFICIENT。它没有交易权限。"
-    "只有输入中可引用的增量证据及完整传导足以改变该程序动作时，"
-    "才使用 SUPPORT/CAUTION/OPPOSE；单一行情、普通波动、账户状态或采集缺口不能自动成为资本结论。"
-    "objective_id 必须逐字匹配。",
     "decision_blockers 最多两项，只允许记录‘答案为是与否会导致不同资本动作’"
     "的关键未知，并分别写清两种动作及所需观测。采集能力、近期无发布、账户对账等"
     "运维状态由程序管理，不得改写成 blocker 或世界认知正文。没有真正阻断项时返回空数组。",
@@ -99,11 +94,24 @@ ASSESS_INSTRUCTIONS = (
     "并选择下一项可能改变假设或资本动作的自然时间点，而不是机械固定周期。",
 )
 
+ASSESS_CAPITAL_INSTRUCTION = (
+    "输入包含 capital_objective 时，capital_implication 只比较世界模型相对 "
+    "capital_objective.base_decision_inputs 的增量作用：SUPPORT、NEUTRAL、CAUTION、OPPOSE 或 "
+    "INSUFFICIENT。它没有交易权限。只有可引用的增量证据及完整传导足以改变该程序动作时，"
+    "才使用 SUPPORT/CAUTION/OPPOSE；单一行情、普通波动、账户状态或采集缺口不能自动成为资本结论。"
+    "objective_id 必须逐字匹配。"
+)
+
 
 def build_assess_prompt(packet: DecisionPacket) -> str:
+    instructions = (
+        (*ASSESS_INSTRUCTIONS, ASSESS_CAPITAL_INSTRUCTION)
+        if packet.capital_objective is not None
+        else ASSESS_INSTRUCTIONS
+    )
     return "\n".join(
         (
-            *ASSESS_INSTRUCTIONS,
+            *instructions,
             "decision_packet_json=",
             canonical_json(assessment_input_projection(packet)),
         )

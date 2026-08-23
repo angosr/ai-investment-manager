@@ -58,20 +58,6 @@ export interface CapitalOverview {
       return_fraction: string;
     } | null;
   };
-  candidate: {
-    symbol: string;
-    base_asset: string;
-    quote_asset: string;
-    producer_id: string;
-    producer_version: string;
-    forecast_family: string;
-    authorization_status: "NOT_AUTHORIZED" | "ACTIVE";
-    maximum_allocation_fraction: string | null;
-    next_entry_at: string | null;
-    next_entry_expires_at: string | null;
-    conservative_annualized_net_fraction: string | null;
-    real_order_authorized: false;
-  } | null;
 }
 
 export interface CapitalAction {
@@ -227,7 +213,7 @@ export interface AssessmentInputSnapshot {
   question: string;
   capital_objective?: {
     objective_id: string;
-    decision_kind: "CARRY_ENTRY_VETO";
+    decision_kind: "PROGRAM_ENTRY_VETO";
     producer_id: string;
     producer_version: string;
     forecast_family: string;

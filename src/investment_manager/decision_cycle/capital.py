@@ -26,7 +26,6 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
-from investment_manager.forecast.carry import CarryForecastProducer
 from investment_manager.forecast.repository import Forecast, SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -721,11 +720,7 @@ def assemble_capital_cycle(
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     if forecast_sources is None:
-        forecast_sources = _configured_forecast_sources(
-            config=config,
-            market=market,
-            forecasts=forecasts,
-        )
+        forecast_sources = ()
     portfolio = SqlPortfolioStore(engine)
     performance = SqlPortfolioPerformanceStore(engine)
     risks = SqlPortfolioRiskStore(engine)
@@ -782,64 +777,4 @@ def assemble_capital_cycle(
             portfolio_store=portfolio,
         ),
         cycle_records=SqlCapitalCycleStore(engine),
-    )
-
-
-def _configured_forecast_sources(
-    *,
-    config: AppConfig,
-    market: SqlMarketDataStore,
-    forecasts: SqlForecastStore,
-) -> tuple[CapitalForecastSource, ...]:
-    """Resolve the one explicitly authorized Mock producer; cash needs no source."""
-
-    permissions = config.capital.mock_candidate_authorizations
-    if not permissions:
-        return ()
-    permission = permissions[0]
-    policy = config.carry_forecast
-    expected_identity = (
-        policy.producer_id,
-        policy.version,
-        policy.forecast_family,
-    )
-    authorized_identity = (
-        permission.producer_id,
-        permission.producer_version,
-        permission.forecast_family,
-    )
-    if not policy.enabled or authorized_identity != expected_identity:
-        raise ValueError("Capital Mock authorization 没有匹配的已启用 Forecast producer")
-
-    # Carry target fixes both legs at one half of gross exposure. Opening and
-    # closing each leg therefore makes its round-trip fee per gross notional
-    # equal to the sum of the two configured one-way leg fees.
-    round_trip_fee_bps = sum(
-        (item.fee_bps for item in config.capital.execution_specs), Decimal("0")
-    )
-    estimated_variable_cost_bps = (
-        round_trip_fee_bps
-        + config.frequency.latency_bps
-        + config.frequency.adverse_selection_bps
-        + config.frequency.uncertainty_buffer_bps
-    )
-    return (
-        CapitalForecastSource(
-            forecast_family=policy.forecast_family,
-            producer=CarryForecastProducer(
-                policy=policy,
-                market=market,
-                store=forecasts,
-                maximum_spot_age_seconds=config.risk.maximum_market_age_seconds,
-                maximum_perpetual_age_seconds=(
-                    config.market_data.perpetual_poll_seconds * 3
-                ),
-                maximum_quote_skew_seconds=(
-                    config.market_data.maximum_cross_market_quote_skew_seconds
-                ),
-            ),
-            estimated_variable_cost_bps=estimated_variable_cost_bps,
-            risk_template=config.capital.sleeve_risk,
-            mock_authorization=permission,
-        ),
     )

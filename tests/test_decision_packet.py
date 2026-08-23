@@ -1362,10 +1362,10 @@ def _capital_mandate() -> AnalysisMandate:
     return _mandate().model_copy(
         update={
             "capital_objective": CapitalContextObjective(
-                objective_id="btc-calendar-carry-entry-veto-v1",
-                producer_id="btc-spot-perp-carry",
-                producer_version="btc-carry-monthly-first-open-v4",
-                forecast_family="delta-neutral-funding-carry",
+                objective_id="program-entry-veto-v1",
+                producer_id="program-candidate",
+                producer_version="program-candidate-v1",
+                forecast_family="program-opportunity",
                 base_decision_inputs=(
                     "BASIS",
                     "COSTS",
@@ -1384,7 +1384,7 @@ def _capital_assessment_output() -> AssessStructuredOutput:
             "assessment": base.assessment.model_copy(
                 update={
                     "capital_implication": ContextCapitalImplication(
-                        objective_id="btc-calendar-carry-entry-veto-v1",
+                        objective_id="program-entry-veto-v1",
                         effect=ContextCapitalEffect.NEUTRAL,
                         incremental_reason="当前世界证据没有增加程序基线尚未覆盖的入场风险。",
                         transmission=(

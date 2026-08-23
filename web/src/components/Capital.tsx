@@ -12,14 +12,8 @@ const REASON_LABELS: Record<string, string> = {
   PROGRAMMATIC_RISK_EXIT: "程序化风险退出",
 };
 
-const AUTHORIZATION_LABELS: Record<string, string> = {
-  NOT_AUTHORIZED: "未获 Mock 授权",
-  ACTIVE: "Mock 授权有效",
-};
-
 export function Capital({ data }: { data: CapitalOverview | null }) {
   const account = data?.account;
-  const candidate = data?.candidate;
   const reasons = data?.decision.reason_codes ?? [];
 
   return (
@@ -47,32 +41,6 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
       )}
 
       <div className={styles.section}>
-        {candidate ? (
-          <>
-            <div className={styles.row}>
-              <span>当前唯一候选</span>
-              <b>{candidate.base_asset} 现货多 + 永续空 carry</b>
-            </div>
-            <div className={styles.row}>
-              <span>候选权限</span>
-              <b>
-                {AUTHORIZATION_LABELS[candidate.authorization_status]
-                  ?? candidate.authorization_status} · 真实订单关闭
-              </b>
-            </div>
-            <div className={styles.row}>
-              <span>下一自然窗口</span>
-              <b>{formatUtcWindow(candidate.next_entry_at, candidate.next_entry_expires_at)}</b>
-            </div>
-            <div className={styles.row}>
-              <span>配置证据 / 上限</span>
-              <b>
-                保守年化 {formatPercent(candidate.conservative_annualized_net_fraction)}
-                {` · 最大 ${formatPercent(candidate.maximum_allocation_fraction)}`}
-              </b>
-            </div>
-          </>
-        ) : null}
         <div className={styles.row}>
           <span>最新决策</span>
           <b>
@@ -132,18 +100,4 @@ function Metric({ label, value }: { label: string; value: string }) {
       <b>{value}</b>
     </div>
   );
-}
-
-function formatUtcWindow(start: string | null, end: string | null): string {
-  if (!start || !end) return "无后续已授权窗口";
-  const begin = new Date(start);
-  const finish = new Date(end);
-  const date = begin.toISOString().slice(0, 10);
-  const clock = (value: Date) => value.toISOString().slice(11, 16);
-  return `${date} ${clock(begin)}–${clock(finish)} UTC`;
-}
-
-function formatPercent(value: string | null): string {
-  if (value === null) return "—";
-  return `${(Number(value) * 100).toFixed(2)}%`;
 }

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
@@ -13,49 +12,6 @@ from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.state.decision.packet import AnalysisMandate
 
 
-class CarryEvidencePolicy(StrictConfig):
-    """Explicit Shadow-only release of one immutable carry evaluation."""
-
-    version: str
-    source_evaluation_id: str
-    source_result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_dataset_id: str
-    source_artifact_path: Path
-    source_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    evaluated_policy_version: str
-    evaluated_gross_exposure_fraction: Decimal = Field(gt=0, le=1)
-    expected_annualized_net_fraction: Decimal = Field(gt=0)
-    conservative_annualized_net_fraction: Decimal = Field(gt=0)
-    independent_sample_count: int = Field(gt=1)
-    round_trip_cost_bps: Decimal = Field(ge=0)
-    published_at: datetime
-    valid_from: datetime
-    valid_until: datetime
-    blind_status: str = Field(pattern=r"^UNAVAILABLE_[A-Z0-9_]+$")
-
-    @field_validator("source_artifact_path")
-    @classmethod
-    def artifact_path_is_portable_and_identity_bound(cls, value: Path) -> Path:
-        if value.is_absolute() or ".." in value.parts:
-            raise ValueError("Carry evidence 制品路径必须是仓库内相对路径")
-        if value.name != f"{value.stem}.json" or value.stem == "":
-            raise ValueError("Carry evidence 制品必须是 JSON 文件")
-        return value
-
-    @model_validator(mode="after")
-    def evidence_is_bounded_and_explicitly_not_live_authorized(self):
-        if self.conservative_annualized_net_fraction > (
-            self.expected_annualized_net_fraction
-        ):
-            raise ValueError("Carry 保守年化净收益不能高于均值")
-        if not self.published_at <= self.valid_from < self.valid_until:
-            raise ValueError("Carry evidence 发布和有效时间顺序非法")
-        if self.source_artifact_path.name != f"{self.source_evaluation_id}.json":
-            raise ValueError("Carry evidence 制品文件名必须绑定评价 ID")
-        return self
-
-
 class StrategyPolicy(StrictConfig):
     strategy_id: str = "price-trend"
     version: str
@@ -65,33 +21,6 @@ class StrategyPolicy(StrictConfig):
     stop_atr_multiple: Decimal = Decimal("1.5")
     horizon_minutes: int = Field(default=60, gt=0)
     expected_edge_half_life_seconds: int = Field(default=900, ge=1, le=86400)
-
-
-class CarryForecastPolicy(StrictConfig):
-    version: str
-    rebalance_policy_version: str = Field(min_length=1)
-    evaluated_policy_version: str
-    enabled: bool = False
-    producer_id: str = "btc-spot-perp-carry"
-    forecast_family: str = "delta-neutral-funding-carry"
-    symbol: str = Field(default="BTCUSDT", pattern=r"^[A-Z0-9]{5,32}$")
-    base_asset: str = Field(default="BTC", pattern=r"^[A-Z0-9._-]+$")
-    quote_asset: str = Field(default="USDT", pattern=r"^[A-Z0-9._-]+$")
-    maximum_monthly_entry_delay_minutes: int = Field(default=30, ge=1, le=1_440)
-    funding_interval_hours: int = Field(default=8, ge=1, le=24)
-    expected_edge_half_life_seconds: int = Field(ge=1, le=31_536_000)
-    evidence: CarryEvidencePolicy | None = None
-
-    @model_validator(mode="after")
-    def symbol_and_evidence_must_match(self):
-        if self.symbol != f"{self.base_asset}{self.quote_asset}":
-            raise ValueError("Carry Forecast symbol 必须匹配 base/quote asset")
-        if self.evidence is not None and (
-            self.evidence.evaluated_policy_version
-            != self.evaluated_policy_version
-        ):
-            raise ValueError("Carry evidence 必须绑定已评价的月度策略版本")
-        return self
 
 
 class CalibrationPolicy(StrictConfig):

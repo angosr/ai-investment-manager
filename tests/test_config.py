@@ -39,9 +39,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v14"
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.mandate.capital_objective is not None
-    assert config.assessment.version == "context-assessment-v29"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v8"
+    assert config.assessment.mandate.capital_objective is None
+    assert config.assessment.version == "context-assessment-v30"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -114,26 +114,6 @@ def test_capital_can_observe_cash_without_an_active_candidate() -> None:
 
     assert config.capital.enabled
     assert config.capital.mock_candidate_authorizations == ()
-
-
-def test_retired_dynamic_carry_is_read_only_and_cannot_be_reenabled() -> None:
-    root = Path(__file__).resolve().parents[1]
-    config = load_config(root / "config" / "investment-manager.yaml")
-    payload = config.model_dump(mode="python")
-    payload["dynamic_carry_forecast"] = {
-        "version": "dynamic-carry-point-in-time-v2",
-        "enabled": False,
-    }
-
-    historical = type(config).model_validate(payload)
-    assert historical.dynamic_carry_forecast == {
-        "version": "dynamic-carry-point-in-time-v2",
-        "enabled": False,
-    }
-
-    payload["dynamic_carry_forecast"]["enabled"] = True
-    with pytest.raises(ValidationError, match="只允许只读解析已禁用历史身份"):
-        type(config).model_validate(payload)
 
 
 def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:

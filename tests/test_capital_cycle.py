@@ -16,15 +16,18 @@ from investment_manager.entrypoints.dashboard.capital import (
 )
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
-from investment_manager.forecast.carry import _carry_target
 from investment_manager.forecast.models import (
     BaseForecast,
     DirectionalView,
+    ExposureDirection,
+    ForecastLeg,
+    ForecastQuantityMode,
     ForecastReferencePrice,
+    ForecastTarget,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.market.models import InstrumentProduct, MarketQuote
+from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
@@ -59,6 +62,38 @@ _TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
 _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
 
 
+def _test_delta_neutral_target() -> ForecastTarget:
+    instruments = (
+        InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+        ),
+        InstrumentId(
+            product=InstrumentProduct.USD_M_PERPETUAL,
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        ),
+    )
+    return ForecastTarget.create(
+        tuple(
+            ForecastLeg(
+                instrument=instrument,
+                direction=(
+                    ExposureDirection.LONG
+                    if instrument.product == InstrumentProduct.SPOT
+                    else ExposureDirection.SHORT
+                ),
+                gross_weight=Decimal("0.5"),
+            )
+            for instrument in instruments
+        ),
+        quantity_mode=ForecastQuantityMode.SAME_BASE_QUANTITY,
+    )
+
+
 @dataclass(frozen=True)
 class _FixedMockForecastProducer:
     store: SqlForecastStore
@@ -67,11 +102,7 @@ class _FixedMockForecastProducer:
 
     def produce(self, *, as_of: datetime) -> BaseForecast:
         available_at = as_of + timedelta(seconds=self.available_delay_seconds)
-        target = _carry_target(
-            symbol="BTCUSDT",
-            base_asset="BTC",
-            quote_asset="USDT",
-        )
+        target = _test_delta_neutral_target()
         reference_prices = tuple(
             ForecastReferencePrice(
                 instrument_id=item.instrument.key,
@@ -314,52 +345,6 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert activity.reason_codes == ("NO_ACTIVE_CAPITAL_OPPORTUNITY",)
 
 
-def test_capital_cycle_assembles_the_exact_configured_mock_carry_candidate() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    config = load_config("config/investment-manager.shadow.yaml")
-    carry = config.carry_forecast
-    authorization = MockCandidateAuthorization(
-        version="test-carry-mock-authorization-v1",
-        producer_id=carry.producer_id,
-        producer_version=carry.version,
-        forecast_family=carry.forecast_family,
-        hypothesis_fingerprint="b" * 64,
-        maximum_allocation_fraction=Decimal("0.30"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
-    )
-    configured = config.model_copy(
-        update={
-            "capital": config.capital.model_copy(
-                update={"mock_candidate_authorizations": (authorization,)}
-            )
-        }
-    )
-    market = SqlMarketDataStore(engine)
-    _put_market(market, configured, at=NOW, sequence=7)
-
-    result = assemble_capital_cycle(configured, engine).produce(
-        as_of=NOW,
-        cause_id="configured-carry-candidate-batch",
-        trigger_batch_id="configured-carry-candidate-batch",
-        symbol="BTCUSDT",
-        trigger_types=("HEARTBEAT",),
-    )
-
-    assert isinstance(result, TradePlanExecutionResult)
-    assert len(result.groups) == 1
-    assert len(result.groups[0].target_legs) == 2
-    account = SqlPortfolioStore(engine).latest_account(
-        portfolio_id=configured.capital.decision.portfolio_id,
-        as_of=NOW,
-    )
-    assert account is not None
-    assert account.positions
-    target = result.account.sleeves[0]
-    assert target.forecast_family == carry.forecast_family
-
-
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -433,10 +418,6 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert dto["performance"]["cumulative_net_pnl"] == "-3.08315"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
     assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
-    assert dto["candidate"]["symbol"] == "BTCUSDT"
-    assert dto["candidate"]["base_asset"] == "BTC"
-    assert dto["candidate"]["quote_asset"] == "USDT"
-    assert dto["candidate"]["real_order_authorized"] is False
     activity = CapitalDashboardReader(engine, config).activity()
     assert len(activity) == 2
     activity_by_symbol = {item.symbol: item for item in activity}
@@ -454,7 +435,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert first_page[0].activity_id != second_page[0].activity_id
 
 
-def test_explicit_mock_candidate_can_trade_outside_monthly_window_via_same_chain() -> None:
+def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

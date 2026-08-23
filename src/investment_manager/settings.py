@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field, ValidationInfo, model_validator
+from pydantic import ValidationInfo, model_validator
 
 from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 from investment_manager.execution.policy import (
@@ -16,7 +16,6 @@ from investment_manager.execution.policy import (
 from investment_manager.forecast.policy import (
     AiMode,
     CalibrationPolicy,
-    CarryForecastPolicy,
     CodexAccountRegistry,
     CodexRuntimePolicy,
     ContextAssessmentPolicy,
@@ -57,14 +56,6 @@ class AppConfig(StrictConfig):
     decision_state: DecisionStatePolicy
     strategy: StrategyPolicy
     calibration: CalibrationPolicy
-    carry_forecast: CarryForecastPolicy
-    # Read-only identity compatibility for frozen releases created before the
-    # rejected Dynamic Carry candidate was retired. Current runtime composition
-    # has no producer or policy path for this payload.
-    dynamic_carry_forecast: dict[str, Any] | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
     capital: CapitalPolicy
     composition: CompositionPolicy
     frequency: FrequencyPolicy
@@ -88,9 +79,6 @@ class AppConfig(StrictConfig):
 
     @model_validator(mode="after")
     def cross_domain_invariants_hold(self, info: ValidationInfo):
-        retired_dynamic = self.dynamic_carry_forecast
-        if retired_dynamic is not None and retired_dynamic.get("enabled") is not False:
-            raise ValueError("退役 Dynamic Carry 配置只允许只读解析已禁用历史身份")
         if (
             isinstance(info.context, dict)
             and info.context.get("historical_read_only") is True
@@ -146,27 +134,13 @@ class AppConfig(StrictConfig):
             raise ValueError("启用 ContextAssessment 前必须启用受控 Codex runtime")
         if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
             raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
-        objective = self.assessment.mandate.capital_objective
-        if self.assessment.enabled and objective is None:
-            raise ValueError("启用 ContextAssessment 时必须绑定一个明确资本问题")
-        if objective is not None and (
-            objective.producer_id != self.carry_forecast.producer_id
-            or objective.producer_version != self.carry_forecast.version
-            or objective.forecast_family != self.carry_forecast.forecast_family
-        ):
-            raise ValueError("ContextAssessment 资本问题必须绑定当前 Carry producer 身份")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
-        if self.carry_forecast.enabled:
-            if self.carry_forecast.symbol not in self.market_data.symbols:
-                raise ValueError("Carry Forecast symbol 必须属于 Spot 行情 universe")
-            if self.carry_forecast.symbol not in set(perpetual_symbols):
-                raise ValueError("Carry Forecast 必须配置同 symbol 的 Perpetual 行情")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前 Capital 候选权限只允许 SHADOW Mock")
-            if self.capital.settlement_asset != self.carry_forecast.quote_asset:
-                raise ValueError("Capital 与 Shadow 结算资产必须一致")
+            if self.capital.settlement_asset != self.binance_testnet.quote_asset:
+                raise ValueError("Capital 与行情结算资产必须一致")
             if (
                 self.market_data.maximum_cross_market_quote_skew_seconds * 1_000
                 < self.market_data.quote_persist_interval_ms
@@ -180,12 +154,6 @@ class AppConfig(StrictConfig):
         permissions = self.capital.mock_candidate_authorizations
         if permissions and not self.capital.enabled:
             raise ValueError("禁用 Capital 时不得保留 Mock candidate authorization")
-        if (
-            permissions
-            and self.trigger.heartbeat_minutes
-            > self.carry_forecast.maximum_monthly_entry_delay_minutes
-        ):
-            raise ValueError("Capital 心跳必须覆盖 Carry 入场窗口")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols
