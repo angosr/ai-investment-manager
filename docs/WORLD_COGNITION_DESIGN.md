@@ -1,6 +1,6 @@
 # 世界认知与资本协作设计
 
-状态：**目标设计与迁移验收规范，当前实现尚未达标。**
+状态：**现役设计与验收规范。世界模型、机制验证和候选级研究复核已经接通；盈利证据尚未形成。**
 
 本文只定义一条能够被模拟盘和费用后结果验证的现役目标路径。任何“已完成”“可用”或“具有盈利价值”的结论都必须由运行事实支持，不能以 Schema、Prompt、网页展示或一次成功调用代替。
 
@@ -10,49 +10,48 @@
 
 盈利系统必须同时拥有两种能力：
 
-1. `Opportunity`：由程序策略或受控的 AI 研究路径产生、可重复计算的收益机会；
+1. `Opportunity`：现役代码直接使用程序产生的不可变 `BaseForecast`，不复制第二套候选对象；
 2. `WorldModel`：解释程序基线没有表达的外生环境、传导变化和尾部风险。
 
 二者只有在具体候选或持仓上相遇，世界认知才可能产生资本价值：
 
 ```text
 Evidence → StateFeature → WORLD_UPDATE → WorldModel
+                                    ↓ 后续点时特征
+                              MechanismObservation
 
-StateFeature → OpportunityProducer → Opportunity
+StateFeature → OpportunityProducer → BaseForecast(Opportunity)
 
-Opportunity + WorldModel + Portfolio
-              ↓ CAPITAL_REVIEW
+BaseForecast + 当时可见 WorldModel + Account
+              ↓ OpportunityReviewInput
       OpportunityAssessment
               ↓
 Program Baseline ───────────────┐
-Program + Context Overlay ──────┼→ Portfolio → Risk → Execution → Outcome
-                               └→ 同机会、同成本配对评价
+Context Veto Research ──────────┼→ 同机会 Outcome → 扣费配对评价
+                               └→ 通过后才可申请 Portfolio 权限
 ```
 
 系统不能只有 WorldModel，也不能只有没有上下文的 Program。前者只会生成叙事，后者只能重复历史相关性。两者都不能绕过 Portfolio、Risk 和 Execution。
 
-## 2. 当前运行事实与根因
+## 2. 当前运行事实与剩余差距
 
-截至 2026-08-23 的审查结果表明，当前系统不是“认知还不够深”，而是主闭环断开：
+截至 2026-08-23，本轮实现已经完成以下事实链：
 
-1. 当前 WorldModel Mandate 不再绑定旧 carry 目标，但 `DecisionPacket v14` 仍强制要求 `capital_objective`，导致新行为无法生成 Packet；网页显示的是旧行为的历史认知。
-2. Context 与 Capital 运行在隔离事实库，当前没有权威 `WorldModel → OpportunityAssessment → CapitalDecision` 消费路径。
-3. Capital 装配的 `program_forecast_producers` 和 `forecast_sources` 均为空，因此没有自然候选、预测、订单或成交。
-4. 现有 Context 资本评价只能反事实否决旧 Program 入场，不能创建机会、调整规模或管理持仓，而且当前没有可配对的 Program。
-5. 唯一通过开发期 walk-forward 的趋势候选未通过 blind；现阶段不存在已证明可获得正式资本权限的策略。
-6. 旧认知输入约 16K tokens，仍主要得到围绕单一 carry 候选的浅层解释，说明输入密度、任务边界和输出消费者同时失效。
+1. `DecisionPacket v16` 的 `WORLD_UPDATE` 不再依赖资本目标；真实 Codex 已成功产出一份 V2 WorldModel，包含三条相互强化、抵消和竞争的机制、六项证据及可程序结算条件。
+2. 每条机制的测试由后续点时 Packet 自动评价，追加保存值、支持/反驳连续次数及 `SUPPORTED / CONTRADICTED / PENDING / AMBIGUOUS`；下一轮 WorldModel 会消费最新结算，网页也显示该结果。
+3. Capital 已自然运行一个实验性 BTC Spot/Perpetual cash-carry Producer。当前盘口、折价资金费率投影和 25bps 成本下净 Edge 约为 `-18.23bps`，因此没有生成 BaseForecast 或订单；这是正确拒绝，不是 AI 门禁。
+4. 候选级 `OpportunityReviewInput → OpportunityAssessment` 已实现并绑定精确 `forecast_id + world_model_id + account_snapshot_id + cost`。独立常驻服务只复核仍在入场有效期内的自然机会；失败或超时保持 Program Base，不阻塞资本。
+5. 旧“按时间寻找最近世界报告”的资本评价已由精确机会配对替代。当前研究 Policy 只有及时完成的 `OPPOSE` 可以构造“不入场”反事实；晚到、缺失和其他效果都保持基线，不能制造 Alpha 或放大仓位。
+6. 前向门禁同时要求 Program Base 自身平均费用后收益为正、自然样本充分、无未结算结果、Context 增量保守下界为正。AI 不能通过否决一个本来就亏损的 Program 获得盈利资格。
 
-因此迁移优先级不是继续增加新闻源或 Prompt 条款，而是恢复以下最小闭环：
+仍未完成且不能声称完成：
 
-```text
-可生成 WorldModel
-→ 可产生自然 Opportunity
-→ 可形成候选级 OpportunityAssessment
-→ 可运行基线与叠加两套模拟组合
-→ 可结算费用后增量
-```
+- 当前市场尚未出现满足净 Edge 的自然 BaseForecast，因此没有真实 OpportunityAssessment、模拟成交或费用后配对样本；
+- cash-carry Producer 仍是未通过 blind 的实验假设，不能为了制造订单降低成本或门槛；
+- 只有入场否决具有精确的单机会反事实。部分降仓、持仓动态管理和路径依赖必须在双研究组合账本完成后再启用；
+- 尚无证据证明 Program 绝对收益为正，也无证据证明 WorldModel 提供正增量，更不能宣称持续盈利。
 
-在这条链闭合前，系统只能称为数据与研究基础设施，不能称为可用投资系统。
+因此当前系统是**闭环结构已接通、盈利假设等待自然前向证据的研究模拟系统**，不是已盈利系统。
 
 ## 3. 最少权威概念
 
@@ -63,7 +62,7 @@ Program + Context Overlay ──────┼→ Portfolio → Risk → Execut
 | `Evidence` | 原始载荷、事实修订、新闻事件、市场与账户观测及其点时可见性 | 因果和方向判断 |
 | `StateFeature` | 基于 Evidence 的确定性压缩、对齐、异常和成本状态 | 自由文本解释、资本授权 |
 | `WorldModel` | 当前综合判断、并行因果机制、相互抵消关系、传导进度和验证条件 | 候选收益、订单和仓位 |
-| `Opportunity` | 一个可重复的收益候选及其成本、时域、退出与失效条件 | 判断新闻真假、最终仓位 |
+| `BaseForecast / Opportunity` | 一个可重复的收益候选及其成本前 Edge、时域、目标和输入引用；现役只有一个事实对象 | 判断新闻真假、最终仓位 |
 | `OpportunityAssessment` | WorldModel 对一个具体 Opportunity 或现有持仓的增量影响 | 改写 WorldModel、直接下单 |
 | `PortfolioTarget` | 在现金、持仓、候选、相关性、成本和风险预算间形成组合目标 | 维护世界解释和执行状态 |
 
@@ -92,7 +91,12 @@ Risk、Execution 和 Governance 仍是独立职责，但不再创造第二套投
 
 ## 5. 两种分析用途
 
-沿用一套 `DecisionPacket` 基础设施，但使用显式、互斥的 `purpose`，避免再建立两套事实链。
+两种调用共享 Evidence、WorldModel、Codex 路由、行为身份和审计原则，但不强行共享同一个大输入对象：
+
+- `WORLD_UPDATE` 使用高密度 `DecisionPacket v16`；
+- 候选复核使用更小的 `OpportunityReviewInput`，精确冻结 BaseForecast、WorldModel、成本和账户身份。
+
+这不是两套认知事实链。WorldModel 只有一个写入口，OpportunityAssessment 只有一个候选复核入口；分开输入是为了避免把与候选无关的完整 Packet 再次发送给 Codex。
 
 ### 5.1 `WORLD_UPDATE`
 
@@ -112,13 +116,13 @@ Risk、Execution 和 Governance 仍是独立职责，但不再创造第二套投
 - 不输出 OpportunityAssessment、目标仓位或订单字段；
 - 没有重大新机制时，仍维护当前综合判断并结算到期验证，而不是拒绝形成认知。
 
-### 5.2 `CAPITAL_REVIEW`
+### 5.2 候选级 `CAPITAL_REVIEW`
 
 用途：判断 WorldModel 相对一个具体 Opportunity 或持仓基线增加了什么。
 
 最小输入：
 
-- 不可变 `opportunity_id` 或 `holding_review_id`；
+- 不可变 BaseForecast（其 `forecast_id` 就是 `opportunity_id`）或未来的 `holding_review_id`；
 - Program 已使用的基础输入、预期收益、成本、有效期与失效条件；
 - 当前 WorldModel 引用；
 - 当前组合、现金、相关敞口和候选冲突摘要；
@@ -131,7 +135,7 @@ Risk、Execution 和 Governance 仍是独立职责，但不再创造第二套投
 - 只能输出 OpportunityAssessment；
 - Program 已经使用的 funding、basis、价格趋势或成本不得再次冒充 AI 增量。
 
-`DecisionPacket` 的校验必须按 `purpose` 判断字段，而不能再对所有 Packet 强制要求资本目标。
+现役 `DecisionPacket` 仍保留互斥 purpose 以正确读取迁移期冻结事实，但新候选复核不再把 `capital_objective` 塞回世界更新 Packet。候选输入本身即是资本问题，减少重复字段和错误耦合。
 
 ## 6. Evidence、Coverage 与数据建设
 
@@ -282,25 +286,20 @@ Canonical Fact 使用事实修订语义，不套用新闻过时机制。
 
 ### 9.1 唯一 Opportunity 契约
 
-所有机会无论来自趋势、carry、事件、跨资产、组合再平衡还是 AI 研究，都进入同一契约：
+现役所有程序机会直接使用 `BaseForecast`。以下是其投资语义，不再另建一份 `Opportunity` Schema 或表：
 
 ```text
-Opportunity
-  opportunity_id
-  producer_id + behavior_hash
-  origin                 PROGRAM | AI_RESEARCH
-  instruments_and_legs
-  direction_or_structure
-  horizon + valid_until
-  edge_estimate          可为空；必须带方法、样本和行为身份
-  modeled_cost
-  sizing_inputs
-  evidence_refs[]
-  entry_conditions
-  exit_and_invalidation
+BaseForecast
+  forecast_id            即 opportunity_id
+  producer_id + producer_version + forecast_family
+  target.legs + quantity_mode
+  direction + horizon_minutes + valid_until
+  raw_score              成本前假设，不代表已校准
+  reference_prices
+  input_refs[] + unknowns[]
 ```
 
-Program 负责可重复地产生候选，不能因为世界认知不确定就停止发现机会。`edge_estimate` 只能来自冻结研究或可校准模型，不能让 AI 凭叙事填写预期 bps。没有合格 edge estimate 的候选仍可用预登记的固定实验风险在隔离模拟组合收集样本，但 Portfolio 不得把它与已校准候选当成同等收益估计。
+Program 负责可重复地产生候选，不能因为世界认知不确定就停止发现机会。`raw_score` 只能来自冻结程序，不能让 AI 凭叙事填写预期 bps。成本由 Producer/Portfolio 的类型化 Policy 单独冻结，复核输入会核对 `baseline_net_edge = raw_score - modeled_cost`。没有校准的 BaseForecast 只能凭精确 Mock authorization 在隔离模拟组合收集样本，不能与 CalibratedForecast 获得同等权限。
 
 AI 可以从 WorldModel 提出新交易 Thesis，但初始只能由确定性适配器转换为 `AI_RESEARCH` Opportunity，并进入隔离模拟组合；它不能直接获得正式资本权限。
 
@@ -332,14 +331,16 @@ OpportunityAssessment
 
 Portfolio 同时比较：现金、现有持仓、Program 基线候选、获准的 Context Overlay、相关性、成本、换手和风险贡献，形成唯一 PortfolioTarget。
 
-模拟阶段必须并行维护至少两个逻辑组合，复用同一行情、Opportunity、成本和执行模型：
+完整的路径依赖评价阶段必须并行维护至少两个逻辑组合，复用同一行情、Opportunity、成本和执行模型：
 
 1. `PROGRAM_BASELINE`：完全不使用世界认知；
 2. `PROGRAM_CONTEXT`：使用当时冻结的 WorldModel 和 ContextPolicy。
 
 必要时 `AI_RESEARCH` 使用第三个隔离组合，但不能与 Context Overlay 混在一起归因。三者不是三套执行系统，只是同一组合与执行引擎上的不同评价账户。
 
-同一个 Opportunity 在有效期内必须先冻结 baseline target，再冻结引用确切 `world_model_id` 的 overlay target；两者都在当时可见信息下独立记账和执行，不能在看到后续价格后补造反事实动作。机会生命周期结束时按同一退出、费用和资金费率语义配对结算。路径依赖导致后续账户状态不同是评价结果的一部分，不能用共享虚拟成交把差异抹平。
+当前 `context-overlay-research-v1` 只评价“完整入场或不入场”：仅及时完成且为 `OPPOSE` 的候选产生零收益反事实，其他效果保持基线。此时同一 BaseForecast 的已结算 Outcome 与同一成本足以精确评价一次入场否决，不需要为零仓位制造虚假订单。
+
+只有要启用 `CAUTION` 部分降仓、持仓中减险或多个机会竞争时，才必须启动独立 `PROGRAM_BASELINE / PROGRAM_CONTEXT` 组合账本：同一个 Opportunity 在有效期内先冻结 baseline target，再冻结引用确切 `world_model_id` 的 overlay target；两者独立记账和执行。路径依赖不能用共享虚拟成交抹平。在该账本完成并通过评价前，现役 Policy 的 `CAUTION` 不改变资本。
 
 Risk 对所有组合执行相同的账户新鲜度、gross/net exposure、集中度、压力损失、保证金、交易状态和临时未对冲约束。极端事件可以触发立即风险复核，但自动减险仍需要预先授权的规则；Codex 延迟不能阻塞程序化止损、保证金保护或交易所故障保护。
 
@@ -442,36 +443,20 @@ Prompt 不重复 Schema、数据源百科、历史错误词表或网页文案。
 
 Coverage、账号、机器、账户对账和服务健康位于各自区域。所有事件、Assessment、资本行动、订单和结果永久保存并分页，不制造虚假条目，不用最近 N 条限制替代数据保留。
 
-## 16. 一次性迁移顺序
+## 16. 实施状态与唯一后续顺序
 
-迁移可以分提交，但上线只能切到一条目标路径，不允许新旧双写、fallback 或历史结果冒充现役。
+已完成：DecisionPacket v16 世界更新、WorldModel v2、后续机制自动观测、真实 Codex V2 首次成功、自然 cash-carry Producer、候选级复核契约与 Codex 适配器、跨事实库常驻复核服务、精确入场否决配对评价、网页机制验证展示。上述完成指代码和运行结构可用，不指盈利通过。
 
-### 16.1 恢复可运行契约
+后续只按证据顺序推进，不能跳级：
 
-1. 为 DecisionPacket 增加互斥的 `WORLD_UPDATE / CAPITAL_REVIEW` purpose；
-2. 移除 WORLD_UPDATE 必须绑定 capital objective 的错误不变量；
-3. 当前行为成功生成首份 WorldModel，并让触发失败原因进入健康与网页；
-4. 当前读路径只展示当前行为，旧 Assessment 保持不可变历史读取；
-5. 只在迁移时按当前可见 Evidence/StateFeature 做一次冷启动重建；之后只增量维护，不反复扫描全库，也不倒填历史可见时间。
+1. 发布新 Context/Capital Release，迁移两个事实库并启动 opportunity-review-service；
+2. 对 cash-carry 的在线同一公式做完整历史回放和一次性 blind；失败则删除或替换 Producer，不调低真实成本制造通过；
+3. 等待自然正 Edge BaseForecast，验证候选级 Codex 能在 `valid_until` 前完成并形成首份 OpportunityAssessment；
+4. 按预登记窗口持续结算 Program 绝对费用后结果和 `OPPOSE` 增量；样本不足只报告进度；
+5. 只有 Program 绝对门禁与 Context 增量门禁都通过，才申请 ContextPolicy 的正式 Mock 资本影响；
+6. 只有确实需要部分规模和持仓动态管理时，再实现双组合路径账本，随后才允许 `CAUTION` 改变规模。
 
-### 16.2 恢复机会与模拟闭环
-
-1. 接入至少一个自然运行的 OpportunityProducer；
-2. 该 Producer 必须复用回测与在线同一信号、成本、退出和时间语义；
-3. 同时启动 Program Baseline 与 Program+Context 隔离模拟组合；
-4. 产生第一批自然模拟订单、成交、退出和费用后结果；
-5. 没有通过 blind 的策略只能作为 RESEARCH，不得伪装为正式盈利能力。
-
-### 16.3 接通世界认知增量
-
-1. 实现候选级 CAPITAL_REVIEW；
-2. 冻结初始 ContextPolicy，默认只允许保持、降险或拒绝新增风险；
-3. 结算同 Opportunity 的 baseline 与 overlay 结果；
-4. 只有配对结果通过预登记条件后，才授予正式资本影响。
-
-### 16.4 清理旧设计
-
-删除所有已被替代的：
+仍须继续删除或隔离的迁移遗留：
 
 - carry/monthly/first-open 目标、配置、文案和触发残留；
 - 新写 `market_mechanism/drivers/data_gaps/capital_relevance` 路径；

@@ -35,8 +35,9 @@ Context 运行使用两个角色隔离的 PostgreSQL 事实库，避免研究输
 Observation
   → CanonicalFactRevision
   → StateSnapshot / MaterialDelta
-  → DecisionPacket
-  → Program BaseForecast + research-only ContextAssessment
+  ├→ DecisionPacket v16 → WorldModel v2 → MechanismObservation
+  └→ Program BaseForecast
+  → BaseForecast + 当时可见 WorldModel → research-only OpportunityAssessment
   → Mock-authorized Program BaseForecast
   → PortfolioTarget
   → RiskDecision
@@ -58,12 +59,12 @@ Observation
 | Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
 | Evaluation | 结算结果并更新机制权限证据 | 读取盲区后改写原计划 |
 
-程序机制直接产生 `BaseForecast`；当前没有通过独立证据门槛的主动候选。AI 只产生研究态
-`ContextAssessment`，维护组合级可证伪世界模型。只有出现绑定精确 Producer 身份的合格程序机会时，它才回答
-程序输入之外是否存在足以否决入场的增量风险。它不能产生 Forecast、仓位或订单，也不能直接改变 Program Base。
-只有在未来窗口中冻结同一程序基线与确定性 `Program + Context` 规则、完成逐次配对评价并取得显式 Mock 授权后，
-一个新版本的确定性门控才可进入 Portfolio；Assessment 本身永远不是资本权限。只有 Portfolio 能决定经济目标，
-只有 Risk 能授予风险，只有 Execution 能产生订单。
+程序机制直接产生 `BaseForecast`，它同时是唯一 Opportunity 事实，不复制第二套候选对象。AI 有两个互斥输出：
+`WorldModel v2` 维护组合级可证伪因果机制；`OpportunityAssessment` 只评价某个精确 BaseForecast 相对程序输入的
+增量风险。后者绑定 `forecast_id + world_model_id + account_snapshot_id + cost`，没有订单和资本字段。
+后续点时 Packet 会程序结算 WorldModel 的验证测试并把连续支持/反驳结果送入下一次更新。当前研究映射只有及时的
+`OPPOSE` 可形成不入场反事实，其余结果保持 Program Base；Program 自身绝对费用后为正且 Context 配对增量保守
+下界为正之前，AI 不影响 Portfolio。只有 Portfolio 决定经济目标，只有 Risk 授予风险，只有 Execution 产生订单。
 
 现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
 `TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
@@ -93,7 +94,7 @@ State 内容身份和 Assessment 权威复用共同抑制重复 Codex 调用。
 
 #### 3.1.1 世界认知不是新增账本，而是现有证据链的可评价投影
 
-本节记录当前已部署实现及其边界；下一现役版本的根因审查、完整目标结构、数据能力、程序化事件窗、AI 契约、决策接口、评价和一次性迁移/删除标准统一见 [`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md)。迁移完成后本节只保留系统边界摘要，不复制该详细规范。
+现役规范、已完成事实和剩余盈利证据统一见 [`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md)。本小节其后保留的是 V1 迁移背景，只用于解释不可变历史字段；其中 `market_mechanism / drivers / capital_relevance / capital_objective` 均不是现役 V2 写路径，不能作为新实现依据。现役结构只有 `synthesis + mechanisms + verification_tests`，候选影响由独立 `OpportunityAssessment` 表达。
 
 “世界认知”不建立第二套 Observation/Fact/State，也不等同于最新价格趋势或一段 AI 摘要。它是
 `DecisionPacket → ContextAssessment` 对当前决策有效证据的有状态投影：State 冻结事实，Packet 做点时压缩，
@@ -577,7 +578,7 @@ Market 不知道预测、组合和订单意图。
 
 ### Forecast
 
-拥有 BaseForecast、ContextAssessment、CalibratedForecast、校准制品和预测结果。程序 Forecast 通过明确 producer identity 注册；ContextAssessment 是绑定资本问题的研究事实，不再投影为单腿 AI Forecast。行为、输入投影、工具或提示词实质变化即产生新版本。未获权限的 Program Forecast 只能进入影子结算；Context 只有通过同机会费用后配对评价后，才可由一个新的确定性门控候选申请 Mock 权限。
+拥有 BaseForecast、WorldModel/ContextAssessment、OpportunityAssessment、机制观测、CalibratedForecast、校准制品和预测结果。程序 Forecast 通过明确 producer identity 注册；WorldModel 不绑定资本问题，OpportunityAssessment 精确绑定一个 BaseForecast 和当时可见 WorldModel。行为、输入投影、工具或提示词实质变化即产生新身份。未获权限的 Program Forecast 只能进入影子结算；候选级 Context 只有通过同机会费用后配对评价后，才可申请版本化 Mock Policy 权限。
 
 ### Portfolio
 

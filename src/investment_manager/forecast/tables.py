@@ -96,6 +96,81 @@ Index(
     assessment_executions.c.completed_at,
 )
 
+context_mechanism_observations = Table(
+    "context_mechanism_observations",
+    metadata,
+    Column("observation_id", String(128), primary_key=True),
+    Column(
+        "assessment_id",
+        ForeignKey("context_assessments.assessment_id"),
+        nullable=False,
+    ),
+    Column("mechanism_id", String(128), nullable=False),
+    Column("test_id", String(128), nullable=False),
+    Column(
+        "packet_id",
+        ForeignKey("decision_packets.packet_id"),
+        nullable=False,
+    ),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("resolution", String(32), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "assessment_id",
+        "test_id",
+        "packet_id",
+        name="uq_context_mechanism_observation",
+    ),
+)
+Index(
+    "ix_context_mechanism_observations_test_time",
+    context_mechanism_observations.c.assessment_id,
+    context_mechanism_observations.c.test_id,
+    context_mechanism_observations.c.observed_at,
+)
+
+opportunity_reviews = Table(
+    "opportunity_reviews",
+    metadata,
+    Column("review_id", String(128), primary_key=True),
+    Column("opportunity_id", String(128), nullable=False),
+    Column("world_model_id", String(128), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_opportunity_reviews_opportunity_time",
+    opportunity_reviews.c.opportunity_id,
+    opportunity_reviews.c.created_at,
+)
+
+opportunity_assessments = Table(
+    "opportunity_assessments",
+    metadata,
+    Column("assessment_id", String(128), primary_key=True),
+    Column(
+        "review_id",
+        ForeignKey("opportunity_reviews.review_id"),
+        nullable=False,
+    ),
+    Column("opportunity_id", String(128), nullable=False),
+    Column("world_model_id", String(128), nullable=False),
+    Column("analysis_behavior_hash", String(64), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "review_id",
+        "analysis_behavior_hash",
+        name="uq_opportunity_assessment_review_behavior",
+    ),
+)
+Index(
+    "ix_opportunity_assessments_opportunity_time",
+    opportunity_assessments.c.opportunity_id,
+    opportunity_assessments.c.available_at,
+)
+
 assessment_view_outcomes = Table(
     "assessment_view_outcomes",
     metadata,

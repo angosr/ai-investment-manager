@@ -238,8 +238,6 @@ class ContextPredicateOperator(StrEnum):
     LT = "LT"
     LTE = "LTE"
     BETWEEN = "BETWEEN"
-    CHANGE_GT = "CHANGE_GT"
-    CHANGE_LT = "CHANGE_LT"
 
 
 class ContextHypothesisRole(StrEnum):
@@ -297,6 +295,66 @@ class ContextVerificationTest(FrozenModel):
     def predicates_must_differ(self):
         if self.supports_predicate == self.contradicts_predicate:
             raise ValueError("支持与反驳条件不能相同")
+        return self
+
+
+class ContextVerificationMatch(StrEnum):
+    SUPPORTS = "SUPPORTS"
+    CONTRADICTS = "CONTRADICTS"
+    NEITHER = "NEITHER"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class ContextVerificationResolution(StrEnum):
+    PENDING = "PENDING"
+    SUPPORTED = "SUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class ContextMechanismObservation(FrozenModel):
+    """One immutable program evaluation of a WorldModel verification test."""
+
+    observation_id: str = Field(min_length=1)
+    assessment_id: str = Field(min_length=1)
+    mechanism_id: str = Field(min_length=1)
+    test_id: str = Field(min_length=1)
+    packet_id: str = Field(min_length=1)
+    feature_selector: str = Field(min_length=1, max_length=240)
+    observed_at: datetime
+    value: Decimal
+    match: ContextVerificationMatch
+    support_streak: int = Field(ge=0)
+    contradiction_streak: int = Field(ge=0)
+    resolution: ContextVerificationResolution
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_resolution_are_consistent(self):
+        if self.match == ContextVerificationMatch.SUPPORTS:
+            if self.support_streak < 1 or self.contradiction_streak != 0:
+                raise ValueError("支持观测的连续计数不一致")
+        elif self.match == ContextVerificationMatch.CONTRADICTS:
+            if self.contradiction_streak < 1 or self.support_streak != 0:
+                raise ValueError("反驳观测的连续计数不一致")
+        elif self.support_streak or self.contradiction_streak:
+            raise ValueError("非单向观测不得延续连续计数")
+        expected = stable_id(
+            "world_mechanism_observation",
+            self.assessment_id,
+            self.mechanism_id,
+            self.test_id,
+            self.packet_id,
+            self.observed_at,
+            str(self.value),
+            self.match,
+            self.support_streak,
+            self.contradiction_streak,
+            self.resolution,
+        )
+        if self.observation_id != expected:
+            raise ValueError("世界机制观测 ID 与内容不一致")
         return self
 
 

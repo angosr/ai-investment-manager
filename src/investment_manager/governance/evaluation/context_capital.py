@@ -1,3 +1,5 @@
+"""Forward paired evidence for Program Base versus candidate-specific Context veto."""
+
 from __future__ import annotations
 
 import json
@@ -11,62 +13,57 @@ from pydantic import Field, field_validator, model_validator
 from sqlalchemy import and_, select
 from sqlalchemy.engine import Engine
 
+from investment_manager.forecast.context.review import OpportunityAssessment
 from investment_manager.forecast.models import (
     BaseForecast,
-    ContextAssessment,
     ContextCapitalEffect,
-    ContextCapitalRelevanceStatus,
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
 from investment_manager.forecast.tables import (
-    context_assessments,
     forecast_outcomes,
     forecasts,
+    opportunity_assessments,
 )
 from investment_manager.governance.models import (
     EvaluationPlan,
     EvaluationStage,
     FailedExperiment,
-    ReleaseManifest,
 )
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.platform.artifacts import write_json_artifact
-from investment_manager.platform.fact_store import analysis_behavior_not_quarantined
-from investment_manager.settings import AppConfig
 
 
 class ContextCapitalForwardSpec(FrozenModel):
-    """Frozen pairing of one Context behavior with one program capital task."""
+    """Pre-registered exact cohort and candidate-review behavior."""
 
-    version: Literal["context-capital-forward-spec-v1"] = "context-capital-forward-spec-v1"
+    version: Literal["context-capital-forward-spec-v2"] = (
+        "context-capital-forward-spec-v2"
+    )
     plan_id: str = Field(min_length=1)
-    analysis_scope: str = Field(min_length=1)
-    analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    objective_id: str = Field(min_length=1)
+    opportunity_analysis_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     producer_id: str = Field(min_length=1)
     producer_version: str = Field(min_length=1)
     forecast_family: str = Field(min_length=1)
     forecast_evaluation_version: str = Field(min_length=1)
+    overlay_policy_version: Literal["context-overlay-research-v1"] = (
+        "context-overlay-research-v1"
+    )
     signal_window_start: datetime
     signal_window_end: datetime
-    maximum_context_age_hours: int = Field(default=24, ge=1, le=168)
-    minimum_opportunity_count: int = Field(default=12, ge=3)
+    minimum_opportunity_count: int = Field(default=30, ge=3)
     settlement_grace_days: int = Field(default=7, ge=0, le=31)
     round_trip_cost_bps: Decimal = Field(ge=0)
     lower_confidence_z: Decimal = Field(default=Decimal("1.96"), gt=0)
-    pairing_rule: Literal["latest-prior-context-or-program-fallback-v1"] = (
-        "latest-prior-context-or-program-fallback-v1"
-    )
 
     _utc_signal_start = field_validator("signal_window_start")(require_utc)
     _utc_signal_end = field_validator("signal_window_end")(require_utc)
 
     @model_validator(mode="after")
     def window_is_ordered(self):
-        if not self.signal_window_start < self.signal_window_end:
+        if self.signal_window_start >= self.signal_window_end:
             raise ValueError("Context Capital 前向窗口起点必须早于终点")
         return self
 
@@ -74,7 +71,8 @@ class ContextCapitalForwardSpec(FrozenModel):
 class ContextCapitalOpportunity(FrozenModel):
     forecast_id: str = Field(min_length=1)
     assessment_id: str | None = None
-    context_status: ContextCapitalRelevanceStatus | ContextCapitalEffect | None = None
+    world_model_id: str | None = None
+    effect: ContextCapitalEffect | None = None
     available_at: datetime
     base_net_return_bps: Decimal
     context_net_return_bps: Decimal
@@ -85,13 +83,13 @@ class ContextCapitalOpportunity(FrozenModel):
 
     @model_validator(mode="after")
     def paired_returns_are_consistent(self):
-        if self.return_delta_bps != (self.context_net_return_bps - self.base_net_return_bps):
+        if self.return_delta_bps != self.context_net_return_bps - self.base_net_return_bps:
             raise ValueError("Context Capital 配对收益差无法核对")
-        expected_fallback = self.assessment_id is None
-        if self.used_program_fallback != expected_fallback:
+        missing = self.assessment_id is None
+        if self.used_program_fallback != missing:
             raise ValueError("Context Capital fallback 身份不一致")
-        if expected_fallback != (self.context_status is None):
-            raise ValueError("Context Capital Assessment 引用不完整")
+        if missing != (self.world_model_id is None or self.effect is None):
+            raise ValueError("Context Capital OpportunityAssessment 引用不完整")
         return self
 
 
@@ -102,7 +100,9 @@ class ContextCapitalForwardOutcome(StrEnum):
 
 
 class ContextCapitalForwardResult(FrozenModel):
-    version: Literal["context-capital-forward-result-v1"] = "context-capital-forward-result-v1"
+    version: Literal["context-capital-forward-result-v2"] = (
+        "context-capital-forward-result-v2"
+    )
     result_id: str
     evaluation_spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     plan_id: str = Field(min_length=1)
@@ -122,8 +122,8 @@ class ContextCapitalForwardResult(FrozenModel):
     reason_codes: tuple[str, ...]
     limitations: tuple[str, ...] = (
         "SHADOW_COUNTERFACTUAL_NOT_LIVE_AUTHORITY",
-        "CONTEXT_CAN_ONLY_VETO_PROGRAM_ENTRY_NOT_SIZE_OR_CREATE_TRADES",
-        "PROGRAM_FALLBACK_ON_MISSING_OR_STALE_CONTEXT",
+        "ONLY_EXACT_OPPORTUNITY_OPPOSE_CAN_VETO_ENTRY",
+        "MISSING_OR_LATE_AI_RESULT_PRESERVES_PROGRAM_BASE",
     )
 
     _utc_published_at = field_validator("published_at")(require_utc)
@@ -137,7 +137,7 @@ class ContextCapitalForwardResult(FrozenModel):
         ):
             raise ValueError("Context Capital natural_opportunity_count 不一致")
         if self.veto_count != sum(
-            _is_entry_veto(item.context_status) for item in self.opportunities
+            item.effect == ContextCapitalEffect.OPPOSE for item in self.opportunities
         ):
             raise ValueError("Context Capital veto_count 不一致")
         if self.fallback_count != sum(item.used_program_fallback for item in self.opportunities):
@@ -209,12 +209,13 @@ def build_context_capital_forward_plan(
         primary_metric="paired_net_return_delta_lower_bound_bps",
         minimum_sample_size=spec.minimum_opportunity_count,
         hard_guardrails=(
+            "PROGRAM_BASE_AVERAGE_NET_RETURN_POSITIVE",
             "NATURAL_OPPORTUNITY_COUNT_SUFFICIENT",
             "NO_INCOMPLETE_PROGRAM_FORECAST_OUTCOMES",
             "PAIRED_NET_RETURN_DELTA_LOWER_BOUND_POSITIVE",
         ),
         required_stages=(EvaluationStage.SHADOW,),
-        fixed_regression_suite_version="context-capital-forward-regression-v1",
+        fixed_regression_suite_version="context-capital-forward-regression-v2",
         candidate_spec_hash=content_hash(spec),
         candidate_spec_snapshot=spec.model_dump(mode="json"),
     )
@@ -240,56 +241,6 @@ def validate_context_capital_forward_plan(
         raise ValueError("Context Capital 前向窗口尚未完整结算")
 
 
-def validate_context_capital_runtime_plan(
-    *,
-    config: AppConfig,
-    manifest: ReleaseManifest,
-    plans: tuple[EvaluationPlan, ...],
-    started_at: datetime,
-) -> tuple[ContextCapitalForwardSpec, EvaluationPlan]:
-    from investment_manager.forecast.context.analyst import (
-        configured_assess_behavior_hash,
-    )
-
-    started = require_utc(started_at)
-    objective = config.assessment.mandate.capital_objective
-    if objective is None:
-        raise ValueError("当前 Context 行为没有资本目标")
-    candidates: list[tuple[ContextCapitalForwardSpec, EvaluationPlan]] = []
-    for plan in plans:
-        snapshot = plan.candidate_spec_snapshot
-        if not isinstance(snapshot, dict) or snapshot.get("version") != (
-            "context-capital-forward-spec-v1"
-        ):
-            continue
-        spec = ContextCapitalForwardSpec.model_validate(snapshot)
-        expected = build_context_capital_forward_plan(
-            spec=spec,
-            base_manifest_id=manifest.manifest_id,
-            registered_at=plan.registered_at,
-        )
-        if plan != expected:
-            raise ValueError("Context Capital EvaluationPlan 与运行 Release 不一致")
-        if (
-            spec.analysis_scope != config.assessment.mandate.analysis_scope
-            or spec.analysis_behavior_hash != configured_assess_behavior_hash(config)
-            or spec.objective_id != objective.objective_id
-            or spec.producer_id != objective.producer_id
-            or spec.producer_version != objective.producer_version
-            or spec.forecast_family != objective.forecast_family
-            or spec.forecast_evaluation_version != config.outcome_evaluation.forecast_version
-        ):
-            raise ValueError("Context Capital EvaluationPlan 与当前行为不一致")
-        if plan.registered_at > started:
-            raise ValueError("Context Capital EvaluationPlan 晚于本次服务启动")
-        if started >= spec.signal_window_end:
-            raise ValueError("Context Capital Worker 启动时前向信号窗口已结束")
-        candidates.append((spec, plan))
-    if len(candidates) != 1:
-        raise ValueError("Context Capital Release 必须恰好绑定一个当前行为计划")
-    return candidates[0]
-
-
 def load_context_capital_inputs(
     *,
     context_engine: Engine,
@@ -298,7 +249,7 @@ def load_context_capital_inputs(
     published_at: datetime,
 ) -> tuple[
     tuple[tuple[BaseForecast, ForecastOutcome], ...],
-    tuple[ContextAssessment, ...],
+    tuple[OpportunityAssessment, ...],
     tuple[str, ...],
 ]:
     published = require_utc(published_at)
@@ -310,19 +261,21 @@ def load_context_capital_inputs(
         ),
     )
     with capital_engine.connect() as connection:
-        rows = connection.execute(
-            select(forecasts.c.payload, forecast_outcomes.c.payload)
-            .select_from(joined)
-            .where(
-                forecasts.c.kind == "BASE",
-                forecasts.c.producer_id == spec.producer_id,
-                forecasts.c.producer_version == spec.producer_version,
-                forecasts.c.forecast_family == spec.forecast_family,
-                forecasts.c.available_at >= spec.signal_window_start,
-                forecasts.c.available_at < spec.signal_window_end,
-            )
-            .order_by(forecasts.c.available_at, forecasts.c.forecast_id)
-        ).all()
+        rows = tuple(
+            connection.execute(
+                select(forecasts.c.payload, forecast_outcomes.c.payload)
+                .select_from(joined)
+                .where(
+                    forecasts.c.kind == "BASE",
+                    forecasts.c.producer_id == spec.producer_id,
+                    forecasts.c.producer_version == spec.producer_version,
+                    forecasts.c.forecast_family == spec.forecast_family,
+                    forecasts.c.available_at >= spec.signal_window_start,
+                    forecasts.c.available_at < spec.signal_window_end,
+                )
+                .order_by(forecasts.c.available_at, forecasts.c.forecast_id)
+            ).all()
+        )
     settled: list[tuple[BaseForecast, ForecastOutcome]] = []
     incomplete: list[str] = []
     for forecast_payload, outcome_payload in rows:
@@ -340,23 +293,28 @@ def load_context_capital_inputs(
             incomplete.append(forecast.forecast_id)
             continue
         settled.append((forecast, outcome))
-    context_start = spec.signal_window_start - timedelta(hours=spec.maximum_context_age_hours)
+    ids = tuple(item.forecast_id for item, _ in settled)
     with context_engine.connect() as connection:
-        payloads = connection.execute(
-            select(context_assessments.c.payload)
-            .where(
-                context_assessments.c.analysis_behavior_hash == spec.analysis_behavior_hash,
-                analysis_behavior_not_quarantined(context_assessments.c.analysis_behavior_hash),
-                context_assessments.c.available_at >= context_start,
-                context_assessments.c.available_at < spec.signal_window_end,
-                context_assessments.c.available_at <= published,
-            )
-            .order_by(
-                context_assessments.c.available_at,
-                context_assessments.c.assessment_id,
-            )
-        ).scalars()
-        assessments = tuple(ContextAssessment.model_validate(item) for item in payloads)
+        payloads = (
+            connection.execute(
+                select(opportunity_assessments.c.payload)
+                .where(
+                    opportunity_assessments.c.opportunity_id.in_(ids),
+                    opportunity_assessments.c.analysis_behavior_hash
+                    == spec.opportunity_analysis_behavior_hash,
+                    opportunity_assessments.c.available_at <= published,
+                )
+                .order_by(
+                    opportunity_assessments.c.available_at,
+                    opportunity_assessments.c.assessment_id,
+                )
+            ).scalars()
+            if ids
+            else ()
+        )
+        assessments = tuple(
+            OpportunityAssessment.model_validate(item) for item in payloads
+        )
     return tuple(settled), assessments, tuple(sorted(incomplete))
 
 
@@ -364,7 +322,7 @@ def evaluate_context_capital_forward_plan(
     *,
     spec: ContextCapitalForwardSpec,
     forecasts_and_outcomes: tuple[tuple[BaseForecast, ForecastOutcome], ...],
-    assessments: tuple[ContextAssessment, ...],
+    assessments: tuple[OpportunityAssessment, ...],
     incomplete_forecast_ids: tuple[str, ...],
     published_at: datetime,
 ) -> ContextCapitalForwardResult:
@@ -376,6 +334,17 @@ def evaluate_context_capital_forward_plan(
         raise ValueError("Context Capital incomplete Forecast 必须唯一且排序")
     if set(forecast_ids).intersection(incomplete_forecast_ids):
         raise ValueError("Context Capital 完整与不完整 Forecast cohort 重叠")
+    assessment_by_opportunity: dict[str, OpportunityAssessment] = {}
+    for assessment in sorted(
+        assessments,
+        key=lambda item: (item.available_at, item.assessment_id),
+    ):
+        if assessment.analysis_behavior_hash != spec.opportunity_analysis_behavior_hash:
+            raise ValueError("OpportunityAssessment 不属于预登记行为")
+        if assessment.opportunity_id in assessment_by_opportunity:
+            raise ValueError("同一 Program Forecast 不能出现多个权威机会复核结果")
+        assessment_by_opportunity[assessment.opportunity_id] = assessment
+    opportunities: list[ContextCapitalOpportunity] = []
     for forecast, outcome in forecasts_and_outcomes:
         if (
             forecast.producer_id != spec.producer_id
@@ -384,47 +353,23 @@ def evaluate_context_capital_forward_plan(
             or not spec.signal_window_start <= forecast.available_at < spec.signal_window_end
             or outcome.forecast_id != forecast.forecast_id
             or outcome.evaluation_version != spec.forecast_evaluation_version
-        ):
-            raise ValueError("Context Capital 输入不属于预登记 Program cohort")
-    assessment_ids = tuple(item.assessment_id for item in assessments)
-    if len(set(assessment_ids)) != len(assessment_ids):
-        raise ValueError("Context Capital 不能重复读取 Assessment")
-    if any(
-        item.analysis_scope != spec.analysis_scope
-        or item.analysis_behavior_hash != spec.analysis_behavior_hash
-        for item in assessments
-    ):
-        raise ValueError("Context Capital Assessment 不属于预登记行为 cohort")
-    ordered_assessments = tuple(
-        sorted(assessments, key=lambda item: (item.available_at, item.assessment_id))
-    )
-    opportunities: list[ContextCapitalOpportunity] = []
-    for forecast, outcome in forecasts_and_outcomes:
-        if (
-            outcome.status != ForecastOutcomeStatus.SETTLED
-            or outcome.settled_at is None
-            or outcome.settled_at > published
+            or outcome.status != ForecastOutcomeStatus.SETTLED
             or outcome.gross_target_return_bps is None
         ):
-            raise ValueError("Context Capital 完整 cohort 含不可结算 Outcome")
-        eligible = tuple(
-            item
-            for item in ordered_assessments
-            if item.available_at <= forecast.available_at
-            and forecast.available_at - item.available_at
-            <= timedelta(hours=spec.maximum_context_age_hours)
-            and _capital_objective_id(item) == spec.objective_id
-        )
-        assessment = eligible[-1] if eligible else None
+            raise ValueError("Context Capital 输入不属于预登记且已结算的 Program cohort")
+        assessment = assessment_by_opportunity.get(forecast.forecast_id)
+        # An answer after entry expiry could not have changed the original action.
+        if assessment is not None and assessment.available_at > forecast.valid_until:
+            assessment = None
         base_net = outcome.gross_target_return_bps - spec.round_trip_cost_bps
-        context_status = _capital_status(assessment)
-        veto = _is_entry_veto(context_status)
+        veto = assessment is not None and assessment.effect == ContextCapitalEffect.OPPOSE
         context_net = Decimal("0") if veto else base_net
         opportunities.append(
             ContextCapitalOpportunity(
                 forecast_id=forecast.forecast_id,
-                assessment_id=(assessment.assessment_id if assessment is not None else None),
-                context_status=context_status,
+                assessment_id=assessment.assessment_id if assessment else None,
+                world_model_id=assessment.world_model_id if assessment else None,
+                effect=assessment.effect if assessment else None,
                 available_at=forecast.available_at,
                 base_net_return_bps=base_net,
                 context_net_return_bps=context_net,
@@ -443,11 +388,18 @@ def evaluate_context_capital_forward_plan(
         reasons.add("PROGRAM_FORECAST_OUTCOMES_INCOMPLETE")
     if len(paired) < spec.minimum_opportunity_count:
         reasons.add("NATURAL_OPPORTUNITY_COUNT_INSUFFICIENT")
+    if base_mean is None or base_mean <= 0:
+        reasons.add("PROGRAM_BASE_AVERAGE_NET_RETURN_NOT_POSITIVE")
     if delta_lower is None or delta_lower <= 0:
         reasons.add("PAIRED_NET_RETURN_DELTA_LOWER_BOUND_NOT_POSITIVE")
     if incomplete_forecast_ids or len(paired) < spec.minimum_opportunity_count:
         outcome = ContextCapitalForwardOutcome.INCONCLUSIVE
-    elif delta_lower is None or delta_lower <= 0:
+    elif (
+        base_mean is None
+        or base_mean <= 0
+        or delta_lower is None
+        or delta_lower <= 0
+    ):
         outcome = ContextCapitalForwardOutcome.FAILED
     else:
         outcome = ContextCapitalForwardOutcome.PASSED
@@ -455,7 +407,7 @@ def evaluate_context_capital_forward_plan(
         {
             "forecasts": tuple(item.forecast_id for item, _ in forecasts_and_outcomes),
             "outcomes": tuple(item.outcome_id for _, item in forecasts_and_outcomes),
-            "assessments": tuple(item.assessment_id for item in ordered_assessments),
+            "assessments": tuple(item.assessment_id for item in assessments),
             "incomplete": incomplete_forecast_ids,
         }
     )
@@ -481,7 +433,7 @@ def evaluate_context_capital_forward_plan(
         incomplete_forecast_ids=incomplete_forecast_ids,
         natural_opportunity_count=len(paired) + len(incomplete_forecast_ids),
         paired_opportunity_count=len(paired),
-        veto_count=sum(_is_entry_veto(item.context_status) for item in paired),
+        veto_count=sum(item.effect == ContextCapitalEffect.OPPOSE for item in paired),
         fallback_count=sum(item.used_program_fallback for item in paired),
         base_average_net_return_bps=base_mean,
         context_average_net_return_bps=context_mean,
@@ -492,35 +444,6 @@ def evaluate_context_capital_forward_plan(
     )
 
 
-def _capital_objective_id(assessment: ContextAssessment) -> str | None:
-    if assessment.capital_implication is not None:
-        return assessment.capital_implication.objective_id
-    if assessment.capital_relevance is not None:
-        return assessment.capital_relevance.objective_id
-    return None
-
-
-def _capital_status(
-    assessment: ContextAssessment | None,
-) -> ContextCapitalRelevanceStatus | ContextCapitalEffect | None:
-    if assessment is None:
-        return None
-    if assessment.capital_implication is not None:
-        return assessment.capital_implication.effect
-    if assessment.capital_relevance is not None:
-        return assessment.capital_relevance.status
-    return None
-
-
-def _is_entry_veto(
-    status: ContextCapitalRelevanceStatus | ContextCapitalEffect | None,
-) -> bool:
-    return status in {
-        ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE,
-        ContextCapitalEffect.OPPOSE,
-    }
-
-
 def failed_context_capital_experiment(
     result: ContextCapitalForwardResult,
     *,
@@ -529,7 +452,7 @@ def failed_context_capital_experiment(
     if result.outcome != ContextCapitalForwardOutcome.FAILED:
         raise ValueError("只有样本充分且未通过的 Context Capital 结果可登记失败")
     hypothesis = (
-        f"Context 行为 {result.plan_id} 对程序候选入场的确定性否决，"
+        f"候选级 Context 行为 {result.plan_id} 对程序机会的精确否决，"
         "能产生为正的费用后配对收益增量保守下界"
     )
     return FailedExperiment(

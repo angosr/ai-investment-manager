@@ -395,6 +395,13 @@ function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
               {mechanism.verification_tests.map((test) => (
                 <li key={test.feature_selector}>
                   {test.feature_selector} · {test.evaluation_window_minutes} 分钟窗口 · 支持 {test.supports_predicate.operator} {test.supports_predicate.value} · 反驳 {test.contradicts_predicate.operator} {test.contradicts_predicate.value}
+                  {test.latest_observation ? (
+                    <div>
+                      最新验证：{test.latest_observation.resolution} · 值 {test.latest_observation.value} · 支持连续 {test.latest_observation.support_streak} · 反驳连续 {test.latest_observation.contradiction_streak}
+                    </div>
+                  ) : (
+                    <div>尚无到期后的程序观测</div>
+                  )}
                 </li>
               ))}
             </ul>

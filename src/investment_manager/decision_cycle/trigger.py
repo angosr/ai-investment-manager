@@ -12,6 +12,7 @@ from temporalio.exceptions import ApplicationError
 
 from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.verification import verification_test_id
 from investment_manager.forecast.context.workflow import (
     ASSESSMENT_WORKFLOW_NAME,
     AssessmentWorkflowRequest,
@@ -19,6 +20,7 @@ from investment_manager.forecast.context.workflow import (
 from investment_manager.forecast.models import (
     ContextAssessment,
     ContextAssessmentSchemaVersion,
+    ContextMechanismObservation,
 )
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import stable_id
@@ -52,6 +54,7 @@ from investment_manager.state.decision.packet import (
     PacketPreviousEventReference,
     PacketPreviousHypothesis,
     PacketPreviousMechanism,
+    PacketPreviousVerificationObservation,
     PacketPreviousVerificationPredicate,
     PacketPreviousVerificationTest,
     PacketPreviousView,
@@ -86,6 +89,18 @@ class AssessmentHistoryReader(Protocol):
         analysis_scope: str,
         as_of: datetime,
     ) -> ContextAssessment | None: ...
+
+    def observe_mechanisms(
+        self,
+        *,
+        assessment: ContextAssessment,
+        packet: object,
+    ) -> tuple[object, ...]: ...
+
+    def mechanism_observations(
+        self,
+        assessment_id: str,
+    ) -> tuple[ContextMechanismObservation, ...]: ...
 
 
 class AnalysisCallDeferred(Exception):
@@ -164,6 +179,15 @@ class TriggerDispatchBuilder:
                 analysis_scope=self._config.assessment.mandate.analysis_scope,
                 as_of=as_of,
             )
+            previous_observations = (
+                self._assessment_history.mechanism_observations(
+                    previous.assessment_id
+                )
+                if previous is not None
+                and previous.schema_version
+                == ContextAssessmentSchemaVersion.WORLD_MODEL_V2
+                else ()
+            )
             prepared = self._packet_preparation.prepare(
                 analysis_id=stable_id("assessment_input", batch.batch_id),
                 as_of=as_of,
@@ -171,10 +195,22 @@ class TriggerDispatchBuilder:
                 intelligence_evidence_ids=intelligence_evidence_ids,
                 market_shock_symbols=market_shock_symbols,
                 review_requests=review_requests,
-                previous_context=_previous_context(previous),
+                previous_context=_previous_context(
+                    previous,
+                    observations=previous_observations,
+                ),
             )
             if prepared.status == PacketPreparationStatus.READY:
                 assert prepared.packet is not None
+                if (
+                    previous is not None
+                    and previous.schema_version
+                    == ContextAssessmentSchemaVersion.WORLD_MODEL_V2
+                ):
+                    self._assessment_history.observe_mechanisms(
+                        assessment=previous,
+                        packet=prepared.packet,
+                    )
                 command = AssessmentCommand.create(
                     packet=prepared.packet,
                     analysis_behavior_hash=assess_behavior_hash(
@@ -212,6 +248,8 @@ class TriggerDispatchBuilder:
 
 def _previous_context(
     assessment: ContextAssessment | None,
+    *,
+    observations: tuple[ContextMechanismObservation, ...] = (),
 ) -> PacketPreviousContext | None:
     if assessment is None:
         return None
@@ -239,6 +277,13 @@ def _previous_context(
     if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V2:
         assert assessment.synthesis is not None
         assert assessment.synthesis_horizon_hours is not None
+        latest_observation_by_test = {
+            item.test_id: item
+            for item in sorted(
+                observations,
+                key=lambda value: (value.observed_at, value.observation_id),
+            )
+        }
         return PacketPreviousContext(
             schema_version=assessment.schema_version.value,
             **common,
@@ -279,8 +324,32 @@ def _previous_context(
                             contradicts_predicate=PacketPreviousVerificationPredicate(
                                 **test.contradicts_predicate.model_dump()
                             ),
+                            latest_observation=(
+                                PacketPreviousVerificationObservation(
+                                    observed_at=observation.observed_at,
+                                    value=observation.value,
+                                    match=observation.match.value,
+                                    support_streak=observation.support_streak,
+                                    contradiction_streak=(
+                                        observation.contradiction_streak
+                                    ),
+                                    resolution=observation.resolution.value,
+                                )
+                                if (
+                                    observation := latest_observation_by_test.get(
+                                        verification_test_id(
+                                            assessment_id=assessment.assessment_id,
+                                            mechanism_id=item.mechanism_id,
+                                            test_index=index,
+                                            test=test,
+                                        )
+                                    )
+                                )
+                                is not None
+                                else None
+                            ),
                         )
-                        for test in item.verification_tests
+                        for index, test in enumerate(item.verification_tests)
                     ),
                     invalidation_conditions=tuple(
                         sanitize_external_text(

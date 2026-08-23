@@ -37,6 +37,7 @@ from investment_manager.entrypoints.dashboard.resources import (
     sample_host_resources,
 )
 from investment_manager.entrypoints.dashboard.stream import refresh_events
+from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.platform.database import build_engine
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.settings import AppConfig
@@ -64,9 +65,19 @@ def create_app(
         raise ValueError("Assessment 历史库与冻结配置必须同时提供")
     engine = build_engine(database_url)
     reader = DashboardReader(engine, config)
-    assessment_reader = (
-        DashboardReader(build_engine(assessment_database_url), assessment_config)
+    assessment_engine = (
+        build_engine(assessment_database_url)
         if assessment_database_url is not None
+        else None
+    )
+    assessment_reader = (
+        DashboardReader(assessment_engine, assessment_config)
+        if assessment_engine is not None
+        else None
+    )
+    assessment_store = (
+        SqlContextAssessmentStore(assessment_engine)
+        if assessment_engine is not None
         else None
     )
     capital_reader = CapitalDashboardReader(engine, config)
@@ -240,7 +251,15 @@ def create_app(
         )
         if record is None:
             return _json({"detail": "assessment not found"}, status_code=404)
-        return _json(ser.assessment_detail(record))
+        observations = (
+            await run_in_threadpool(
+                assessment_store.mechanism_observations,
+                record.assessment.assessment_id,
+            )
+            if assessment_store is not None
+            else ()
+        )
+        return _json(ser.assessment_detail(record, observations=observations))
 
     async def cycles(request: Request) -> JSONResponse:
         cursor = _parse_cursor(request)

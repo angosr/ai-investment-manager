@@ -1,17 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from investment_manager.forecast.context.review import (
+    MechanismOpportunityEffect,
+    MechanismOpportunityImpact,
+    OpportunityAssessment,
+)
 from investment_manager.forecast.models import (
     BaseForecast,
-    ContextAssessment,
-    ContextAssessmentSchemaVersion,
     ContextCapitalEffect,
-    ContextCapitalImplication,
-    ContextCapitalRelevance,
-    ContextCapitalRelevanceStatus,
-    ContextCausalNode,
-    ContextHypothesis,
-    ContextHypothesisRole,
     DirectionalView,
     ExposureDirection,
     ForecastKind,
@@ -27,40 +24,34 @@ from investment_manager.governance.evaluation.context_capital import (
     ContextCapitalForwardSpec,
     build_context_capital_forward_plan,
     evaluate_context_capital_forward_plan,
-    validate_context_capital_runtime_plan,
 )
-from investment_manager.governance.models import ReleaseManifest
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId
-from investment_manager.settings import load_config
-from investment_manager.state.decision.packet import CapitalContextObjective
 
-START = datetime(2026, 9, 1, tzinfo=UTC)
+START = datetime(2026, 8, 23, tzinfo=UTC)
+BEHAVIOR = "a" * 64
 
 
 def _spec() -> ContextCapitalForwardSpec:
     return ContextCapitalForwardSpec(
-        plan_id="context-program-forward-v1",
-        analysis_scope="primary-portfolio",
-        analysis_behavior_hash="a" * 64,
-        objective_id="program-entry-veto-v1",
+        plan_id="candidate-context-forward-v2",
+        opportunity_analysis_behavior_hash=BEHAVIOR,
         producer_id="program-candidate",
         producer_version="program-candidate-v1",
         forecast_family="program-opportunity",
         forecast_evaluation_version="analysis-forecast-v3",
         signal_window_start=START,
-        signal_window_end=START + timedelta(days=84),
+        signal_window_end=START + timedelta(days=4),
         minimum_opportunity_count=3,
         round_trip_cost_bps=Decimal("20"),
+        lower_confidence_z=Decimal("0.1"),
     )
 
 
 def _forecast_and_outcome(index: int, *, gross_bps: Decimal):
-    available_at = START + timedelta(days=index * 28)
+    available_at = START + timedelta(days=index)
     instrument = InstrumentId.binance_spot(
-        symbol="BTCUSDT",
-        base_asset="BTC",
-        quote_asset="USDT",
+        symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT"
     )
     target = ForecastTarget.create(
         (
@@ -71,9 +62,8 @@ def _forecast_and_outcome(index: int, *, gross_bps: Decimal):
             ),
         )
     )
-    forecast_id = f"forecast-{index}"
     forecast = BaseForecast(
-        forecast_id=forecast_id,
+        forecast_id=f"forecast-{index}",
         producer_id="program-candidate",
         producer_version="program-candidate-v1",
         forecast_family="program-opportunity",
@@ -81,24 +71,19 @@ def _forecast_and_outcome(index: int, *, gross_bps: Decimal):
         horizon_minutes=60,
         direction=DirectionalView.UP,
         reference_prices=(
-            ForecastReferencePrice(
-                instrument_id=instrument.key,
-                price=Decimal("100"),
-            ),
+            ForecastReferencePrice(instrument_id=instrument.key, price=Decimal("100")),
         ),
         observed_at=available_at,
         available_at=available_at,
         valid_until=available_at + timedelta(minutes=30),
-        raw_score=Decimal("1"),
+        raw_score=Decimal("30"),
         input_refs=(f"input-{index}",),
     )
     outcome = ForecastOutcome(
         outcome_id=stable_id(
-            "forecast_outcome",
-            forecast_id,
-            "analysis-forecast-v3",
+            "forecast_outcome", forecast.forecast_id, "analysis-forecast-v3"
         ),
-        forecast_id=forecast_id,
+        forecast_id=forecast.forecast_id,
         forecast_kind=ForecastKind.BASE,
         producer_id=forecast.producer_id,
         producer_version=forecast.producer_version,
@@ -127,81 +112,64 @@ def _forecast_and_outcome(index: int, *, gross_bps: Decimal):
     return forecast, outcome
 
 
-def _assessment(index: int, status: ContextCapitalRelevanceStatus):
-    available_at = START + timedelta(days=index * 28, hours=-1)
-    return ContextAssessment(
-        assessment_id=f"assessment-{index}",
-        analysis_scope="primary-portfolio",
-        mandate_version="primary-portfolio-mandate-v6",
-        as_of=available_at - timedelta(minutes=1),
-        available_at=available_at,
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash=f"{index + 1:064x}",
-        trigger_ids=(f"trigger-{index}",),
-        market_mechanism="外生风险通过交易场所完整性影响双腿 carry。",
-        capital_relevance=ContextCapitalRelevance(
-            objective_id="program-entry-veto-v1",
-            status=status,
-            thesis="当前增量风险需要在自然机会中配对验证。",
-            transmission="外生事件可能破坏双腿同时成交与资金费率持续性。",
-            evidence_ids=(f"evidence-{index}",),
-            invalidation_conditions=("双腿流动性与 funding 恢复稳定",),
-        ),
+def _assessment(
+    forecast: BaseForecast,
+    *,
+    effect: ContextCapitalEffect,
+    late: bool = False,
+) -> OpportunityAssessment:
+    available_at = forecast.valid_until + timedelta(seconds=1) if late else (
+        forecast.available_at + timedelta(minutes=1)
     )
-
-
-def _world_assessment(index: int, effect: ContextCapitalEffect):
-    available_at = START + timedelta(days=index * 28, hours=-1)
-    evidence_id = f"evidence-{index}"
-    return ContextAssessment(
-        schema_version=ContextAssessmentSchemaVersion.WORLD_MODEL_V1,
-        assessment_id=f"world-assessment-{index}",
-        analysis_scope="primary-portfolio",
-        mandate_version="primary-portfolio-mandate-v8",
-        as_of=available_at - timedelta(minutes=1),
-        available_at=available_at,
-        analysis_behavior_hash="a" * 64,
-        decision_packet_hash=f"{index + 10:064x}",
-        trigger_ids=(f"trigger-world-{index}",),
-        hypotheses=(
-            ContextHypothesis(
-                hypothesis_id=f"hypothesis-{index}",
-                role=ContextHypothesisRole.PRIMARY,
-                claim="外生冲击正在破坏双腿 carry 的成交完整性。",
-                horizon_hours=24,
-                causal_chain=(
-                    ContextCausalNode(
-                        statement="外生冲击已经发生。",
-                        evidence_ids=(evidence_id,),
-                    ),
-                    ContextCausalNode(
-                        statement="双腿流动性响应显示成交完整性下降。",
-                        evidence_ids=(evidence_id,),
-                    ),
+    payload = {
+        "review_id": f"review-{forecast.forecast_id}",
+        "opportunity_id": forecast.forecast_id,
+        "world_model_id": f"world-{forecast.forecast_id}",
+        "analysis_behavior_hash": BEHAVIOR,
+        "available_at": available_at,
+        "effect": effect,
+        "incremental_reason": "世界机制相对程序基线改变了该机会的尾部风险。",
+        "mechanism_impacts": (
+            MechanismOpportunityImpact(
+                mechanism_id="mechanism-1",
+                effect=(
+                    MechanismOpportunityEffect.OPPOSES
+                    if effect == ContextCapitalEffect.OPPOSE
+                    else MechanismOpportunityEffect.NEUTRAL
                 ),
-                next_observation="观察双腿盘口与 funding 是否恢复。",
-                invalidation_conditions=("双腿流动性恢复且 funding 稳定",),
-                next_review_at=available_at + timedelta(hours=1),
+                transmission_to_opportunity="流动性传导作用于候选收益。",
+                evidence_ids=("evidence-1",)
+                if effect == ContextCapitalEffect.OPPOSE
+                else (),
             ),
         ),
-        capital_implication=ContextCapitalImplication(
-            objective_id="program-entry-veto-v1",
-            effect=effect,
-            incremental_reason="程序基线之外出现交易场所完整性风险。",
-            transmission="外生冲击通过双腿流动性与 funding 持续性破坏 carry。",
-            evidence_ids=(evidence_id,),
-            invalidation_conditions=("双腿成交与 funding 恢复稳定",),
-        ),
+        "invalidation_conditions": ("流动性传导反转。",),
+    }
+    return OpportunityAssessment(
+        assessment_id=stable_id("opportunity_assessment", content_hash(payload)),
+        **payload,
     )
 
 
-def test_context_veto_is_evaluated_only_as_paired_incremental_return() -> None:
+def test_exact_candidate_veto_can_only_pass_when_program_base_is_profitable() -> None:
     spec = _spec()
-    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
+    inputs = (
+        _forecast_and_outcome(0, gross_bps=Decimal("60")),
+        _forecast_and_outcome(1, gross_bps=Decimal("60")),
+        _forecast_and_outcome(2, gross_bps=Decimal("-10")),
+    )
     assessments = tuple(
-        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE) for index in range(3)
+        _assessment(forecast, effect=effect)
+        for (forecast, _), effect in zip(
+            inputs,
+            (
+                ContextCapitalEffect.NEUTRAL,
+                ContextCapitalEffect.NEUTRAL,
+                ContextCapitalEffect.OPPOSE,
+            ),
+            strict=True,
+        )
     )
-
     result = evaluate_context_capital_forward_plan(
         spec=spec,
         forecasts_and_outcomes=inputs,
@@ -209,22 +177,22 @@ def test_context_veto_is_evaluated_only_as_paired_incremental_return() -> None:
         incomplete_forecast_ids=(),
         published_at=spec.signal_window_end + timedelta(days=40),
     )
-
     assert result.outcome == ContextCapitalForwardOutcome.PASSED
-    assert result.natural_opportunity_count == 3
-    assert result.paired_opportunity_count == 3
-    assert result.veto_count == 3
-    assert result.fallback_count == 0
-    assert result.base_average_net_return_bps == Decimal("-30")
-    assert result.context_average_net_return_bps == Decimal("0")
-    assert result.return_delta_lower_bound_bps == Decimal("30.00")
+    assert result.veto_count == 1
+    assert result.base_average_net_return_bps > 0
+    assert result.context_average_net_return_bps > result.base_average_net_return_bps
+    assert result.return_delta_lower_bound_bps > 0
 
 
-def test_new_world_model_oppose_effect_uses_the_same_paired_veto_evaluation() -> None:
+def test_context_cannot_rescue_an_unprofitable_program_base() -> None:
     spec = _spec()
-    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
-    assessments = tuple(_world_assessment(index, ContextCapitalEffect.OPPOSE) for index in range(3))
-
+    inputs = tuple(
+        _forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3)
+    )
+    assessments = tuple(
+        _assessment(forecast, effect=ContextCapitalEffect.OPPOSE)
+        for forecast, _ in inputs
+    )
     result = evaluate_context_capital_forward_plan(
         spec=spec,
         forecasts_and_outcomes=inputs,
@@ -232,122 +200,49 @@ def test_new_world_model_oppose_effect_uses_the_same_paired_veto_evaluation() ->
         incomplete_forecast_ids=(),
         published_at=spec.signal_window_end + timedelta(days=40),
     )
-
-    assert result.outcome == ContextCapitalForwardOutcome.PASSED
-    assert result.veto_count == 3
-    assert result.context_average_net_return_bps == Decimal("0")
+    assert result.outcome == ContextCapitalForwardOutcome.FAILED
+    assert "PROGRAM_BASE_AVERAGE_NET_RETURN_NOT_POSITIVE" in result.reason_codes
 
 
-def test_missing_context_falls_back_to_program_and_cannot_create_alpha() -> None:
+def test_missing_or_late_ai_result_preserves_program_base() -> None:
     spec = _spec()
-    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("50")) for index in range(3))
+    inputs = tuple(
+        _forecast_and_outcome(index, gross_bps=Decimal("50")) for index in range(3)
+    )
+    late = _assessment(inputs[0][0], effect=ContextCapitalEffect.OPPOSE, late=True)
+    result = evaluate_context_capital_forward_plan(
+        spec=spec,
+        forecasts_and_outcomes=inputs,
+        assessments=(late,),
+        incomplete_forecast_ids=(),
+        published_at=spec.signal_window_end + timedelta(days=40),
+    )
+    assert result.outcome == ContextCapitalForwardOutcome.FAILED
+    assert result.fallback_count == 3
+    assert result.average_return_delta_bps == 0
 
+
+def test_incomplete_natural_opportunity_prevents_false_pass() -> None:
+    spec = _spec()
+    inputs = tuple(
+        _forecast_and_outcome(index, gross_bps=Decimal("50")) for index in range(3)
+    )
     result = evaluate_context_capital_forward_plan(
         spec=spec,
         forecasts_and_outcomes=inputs,
         assessments=(),
-        incomplete_forecast_ids=(),
-        published_at=spec.signal_window_end + timedelta(days=40),
-    )
-
-    assert result.outcome == ContextCapitalForwardOutcome.FAILED
-    assert result.fallback_count == 3
-    assert result.average_return_delta_bps == Decimal("0")
-    assert result.return_delta_lower_bound_bps == Decimal("0.00")
-
-
-def test_incomplete_natural_opportunity_prevents_a_false_pass() -> None:
-    spec = _spec()
-    inputs = tuple(_forecast_and_outcome(index, gross_bps=Decimal("-10")) for index in range(3))
-    assessments = tuple(
-        _assessment(index, ContextCapitalRelevanceStatus.ENTRY_VETO_CANDIDATE) for index in range(3)
-    )
-
-    result = evaluate_context_capital_forward_plan(
-        spec=spec,
-        forecasts_and_outcomes=inputs,
-        assessments=assessments,
         incomplete_forecast_ids=("forecast-unscorable",),
         published_at=spec.signal_window_end + timedelta(days=40),
     )
-
     assert result.outcome == ContextCapitalForwardOutcome.INCONCLUSIVE
-    assert result.natural_opportunity_count == 4
-    assert result.paired_opportunity_count == 3
-    assert result.incomplete_forecast_ids == ("forecast-unscorable",)
     assert "PROGRAM_FORECAST_OUTCOMES_INCOMPLETE" in result.reason_codes
 
 
-def test_context_capital_plan_is_registered_before_the_first_opportunity() -> None:
-    spec = _spec()
-
+def test_context_capital_plan_is_registered_before_first_opportunity() -> None:
     plan = build_context_capital_forward_plan(
-        spec=spec,
-        base_manifest_id="release-context-v72",
+        spec=_spec(),
+        base_manifest_id="release-v1",
         registered_at=START - timedelta(minutes=1),
     )
-
-    assert plan.minimum_sample_size == 3
     assert plan.primary_metric == "paired_net_return_delta_lower_bound_bps"
-    assert plan.candidate_spec_hash
-
-
-def test_context_worker_can_start_before_the_signal_window() -> None:
-    from investment_manager.forecast.context.analyst import (
-        configured_assess_behavior_hash,
-    )
-
-    config = load_config("config/investment-manager.yaml")
-    objective = CapitalContextObjective(
-        objective_id="program-entry-veto-v1",
-        producer_id="program-candidate",
-        producer_version="program-candidate-v1",
-        forecast_family="program-opportunity",
-        base_decision_inputs=("COSTS", "RISK"),
-    )
-    config = config.model_copy(
-        update={
-            "assessment": config.assessment.model_copy(
-                update={
-                    "mandate": config.assessment.mandate.model_copy(
-                        update={"capital_objective": objective}
-                    )
-                }
-            )
-        }
-    )
-    spec = _spec().model_copy(
-        update={
-            "analysis_behavior_hash": configured_assess_behavior_hash(config),
-            "analysis_scope": config.assessment.mandate.analysis_scope,
-            "objective_id": objective.objective_id,
-            "producer_id": objective.producer_id,
-            "producer_version": objective.producer_version,
-            "forecast_family": objective.forecast_family,
-            "forecast_evaluation_version": config.outcome_evaluation.forecast_version,
-        }
-    )
-    manifest = ReleaseManifest(
-        manifest_id="release-context-test",
-        created_at=START - timedelta(days=2),
-        status="CHALLENGER",
-        code_version="test-code",
-        configuration_hash=content_hash(config),
-        component_versions=(),
-        constitution_version="constitution-v1",
-    )
-    plan = build_context_capital_forward_plan(
-        spec=spec,
-        base_manifest_id=manifest.manifest_id,
-        registered_at=START - timedelta(days=2),
-    )
-
-    selected_spec, selected_plan = validate_context_capital_runtime_plan(
-        config=config,
-        manifest=manifest,
-        plans=(plan,),
-        started_at=START - timedelta(days=1),
-    )
-
-    assert selected_spec == spec
-    assert selected_plan == plan
+    assert "PROGRAM_BASE_AVERAGE_NET_RETURN_POSITIVE" in plan.hard_guardrails

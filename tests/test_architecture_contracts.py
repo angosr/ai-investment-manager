@@ -68,7 +68,15 @@ CLI_CONTRACT = {
     ),
     "register-assessment-forward-plan": (
         "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
-        "analysis_behavior_hash,minimum_non_overlapping_samples,minimum_capital_opportunities"
+        "analysis_behavior_hash,minimum_non_overlapping_samples"
+    ),
+    "register-context-capital-forward-plan": (
+        "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
+        "minimum_opportunities"
+    ),
+    "opportunity-review-service": (
+        "config,database_url,release_manifest,capital_database_url,capital_config,"
+        "capital_release_manifest"
     ),
     "replay-event-triggers": (
         "config,database_url,event_dataset_id,replay_start,replay_end,"
@@ -191,9 +199,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 79
+    assert len(contract) == 82
     assert content_hash(contract) == (
-        "a3256bdb73919795e14d8c16a09aa762e8eeb466a7f8fafd17cbdbdb4128e610"
+        "fe4af07f40ce76c4436a78af7ee6b8504fa36fe1ddab33814ca779e4fc8cf0b1"
     )
 
 
@@ -212,6 +220,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         "entrypoints/cli/assessment_commands.py": {
             "evaluate-assessment-forward-plan",
             "register-assessment-forward-plan",
+            "register-context-capital-forward-plan",
         },
         "entrypoints/cli/commands.py": {
             "build-edge-calibration",
@@ -232,6 +241,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         },
         "entrypoints/cli/service_commands.py": {
             "assessment-worker",
+            "opportunity-review-service",
             "submit-context-assessment",
             "market-stream",
             "trigger-service",
@@ -332,6 +342,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
         },
             "forecast": {
                 "models.py",
+            "programs.py",
             "policy.py",
             "repository.py",
             "settlement.py",

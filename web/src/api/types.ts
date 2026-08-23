@@ -136,6 +136,14 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
       evaluation_window_minutes: number;
       supports_predicate: VerificationPredicate;
       contradicts_predicate: VerificationPredicate;
+      latest_observation: {
+        observed_at: string;
+        value: string;
+        match: "SUPPORTS" | "CONTRADICTS" | "NEITHER" | "AMBIGUOUS";
+        support_streak: number;
+        contradiction_streak: number;
+        resolution: "PENDING" | "SUPPORTED" | "CONTRADICTED" | "AMBIGUOUS";
+      } | null;
     }[];
     invalidation_conditions: string[];
     next_review_at: string;

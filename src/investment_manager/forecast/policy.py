@@ -165,4 +165,5 @@ class CodexRuntimePolicy(StrictConfig):
 class ContextAssessmentPolicy(StrictConfig):
     version: str
     enabled: bool = False
+    opportunity_review_poll_seconds: int = Field(default=5, ge=1, le=60)
     mandate: AnalysisMandate

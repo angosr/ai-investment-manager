@@ -77,6 +77,7 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v13",
     "decision-packet-v14",
     "decision-packet-v15",
+    "decision-packet-v16",
 }
 _CALENDAR_CONTEXT_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
@@ -825,10 +826,21 @@ class PacketPreviousDecisionBlocker(FrozenModel):
 
 
 class PacketPreviousVerificationPredicate(FrozenModel):
-    operator: Literal["GT", "GTE", "LT", "LTE", "BETWEEN", "CHANGE_GT", "CHANGE_LT"]
+    operator: Literal["GT", "GTE", "LT", "LTE", "BETWEEN"]
     value: Decimal
     upper_value: Decimal | None = None
     persistence_observations: int = Field(default=1, ge=1, le=24)
+
+
+class PacketPreviousVerificationObservation(FrozenModel):
+    observed_at: datetime
+    value: Decimal
+    match: Literal["SUPPORTS", "CONTRADICTS", "NEITHER", "AMBIGUOUS"]
+    support_streak: int = Field(ge=0)
+    contradiction_streak: int = Field(ge=0)
+    resolution: Literal["PENDING", "SUPPORTED", "CONTRADICTED", "AMBIGUOUS"]
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
 
 
 class PacketPreviousVerificationTest(FrozenModel):
@@ -836,6 +848,10 @@ class PacketPreviousVerificationTest(FrozenModel):
     evaluation_window_minutes: int = Field(gt=0, le=525_600)
     supports_predicate: PacketPreviousVerificationPredicate
     contradicts_predicate: PacketPreviousVerificationPredicate
+    latest_observation: PacketPreviousVerificationObservation | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PacketPreviousMechanism(FrozenModel):
@@ -1082,7 +1098,7 @@ class DecisionPacket(FrozenModel):
             self.capital_objective is None
         ):
             raise ValueError("DecisionPacket v13+ 必须绑定一个明确资本问题")
-        if self.schema_version == "decision-packet-v15":
+        if self.schema_version in {"decision-packet-v15", "decision-packet-v16"}:
             if (
                 self.purpose == DecisionPacketPurpose.WORLD_UPDATE
                 and self.capital_objective is not None
@@ -1111,7 +1127,7 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
-    if packet.schema_version != "decision-packet-v15":
+    if packet.schema_version not in {"decision-packet-v15", "decision-packet-v16"}:
         payload.pop("purpose", None)
     if packet.schema_version not in _CURRENT_PACKET_SCHEMAS:
         payload["active_hypotheses"] = packet.active_hypotheses

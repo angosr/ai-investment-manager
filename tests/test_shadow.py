@@ -74,6 +74,12 @@ class EmptyAssessmentHistory:
     def latest_before(self, *, analysis_scope, as_of):
         return None
 
+    def observe_mechanisms(self, *, assessment, packet):
+        return ()
+
+    def mechanism_observations(self, assessment_id):
+        return ()
+
 
 class RecordingBatchConsumer:
     def __init__(self) -> None:

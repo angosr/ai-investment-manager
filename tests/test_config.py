@@ -35,8 +35,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v32"
     assert config.decision_state.official_fact_policy.version == "official-fact-v12"
     assert config.decision_state.delta_policy.version == "state-delta-v14"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v34"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v15"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v35"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v16"
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.assessment.mandate.capital_objective is None

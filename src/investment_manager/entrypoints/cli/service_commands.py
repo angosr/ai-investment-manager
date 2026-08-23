@@ -21,6 +21,9 @@ from investment_manager.entrypoints.cli.support import (
 )
 from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
+from investment_manager.forecast.context.opportunity_service import (
+    assemble_opportunity_review_service,
+)
 from investment_manager.forecast.context.service import (
     AssessmentTemporalCoordinator,
     assemble_assessment_application,
@@ -60,6 +63,7 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
+from investment_manager.platform.fact_store import FactStoreRole
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.application import trigger_now as apply_trigger_now
 from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPublisher
@@ -125,6 +129,67 @@ def assessment_worker(
         code_version=manifest.code_version,
     )
     run_assessment_worker_process(config=loaded, application=application)
+
+
+@app.command("opportunity-review-service")
+def opportunity_review_service(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(
+            envvar="INVESTMENT_MANAGER_DATABASE_URL",
+            help="可写 Context 事实库",
+        ),
+    ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ],
+    capital_database_url: Annotated[
+        str,
+        typer.Option(
+            envvar="INVESTMENT_MANAGER_CAPITAL_DATABASE_URL",
+            help="只读 Capital 事实库",
+        ),
+    ],
+    capital_config: Annotated[
+        Path,
+        typer.Option("--capital-config", exists=True, dir_okay=False),
+    ],
+    capital_release_manifest: Annotated[
+        Path,
+        typer.Option(
+            "--capital-release-manifest",
+            exists=True,
+            dir_okay=False,
+        ),
+    ],
+) -> None:
+    """持续复核仍可入场的自然 Program 机会；只写研究事实，不阻塞资本。"""
+
+    context_loaded, context_manifest = load_runtime_release(config, release_manifest)
+    capital_loaded, _ = load_read_only_release_identity(
+        capital_config,
+        capital_release_manifest,
+    )
+    context_engine = runtime_engine(
+        database_url,
+        fact_store_role=FactStoreRole.CONTEXT,
+        claim_fact_store=True,
+    )
+    capital_engine = runtime_engine(
+        capital_database_url,
+        fact_store_role=FactStoreRole.CAPITAL,
+        claim_fact_store=False,
+    )
+    service = assemble_opportunity_review_service(
+        context_config=context_loaded,
+        capital_config=capital_loaded,
+        context_manifest=context_manifest,
+        context_engine=context_engine,
+        capital_engine=capital_engine,
+    )
+    asyncio.run(service.run(asyncio.Event()))
 
 
 @app.command("submit-context-assessment")

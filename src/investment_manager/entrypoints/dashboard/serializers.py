@@ -111,11 +111,24 @@ def assessment_row(record: AssessmentRecord) -> dict:
     }
 
 
-def assessment_detail(record: AssessmentRecord) -> dict:
+def assessment_detail(
+    record: AssessmentRecord,
+    *,
+    observations=(),
+) -> dict:
     assessment = record.assessment
     outcomes = {(item.asset, item.horizon_minutes): item for item in record.outcomes}
     evidence_catalog = _assessment_evidence_catalog(record.packet)
     cited_ids = _assessment_cited_ids(assessment)
+    from investment_manager.forecast.context.verification import verification_test_id
+
+    latest_observation_by_test = {
+        item.test_id: item
+        for item in sorted(
+            observations,
+            key=lambda value: (value.observed_at, value.observation_id),
+        )
+    }
     return {
         **assessment_row(record),
         "as_of": fmt.iso(assessment.as_of),
@@ -171,8 +184,25 @@ def assessment_detail(record: AssessmentRecord) -> dict:
                     evidence_catalog,
                 ),
                 "verification_tests": [
-                    test.model_dump(mode="json")
-                    for test in mechanism.verification_tests
+                    {
+                        **test.model_dump(mode="json"),
+                        "latest_observation": (
+                            observation.model_dump(mode="json")
+                            if (
+                                observation := latest_observation_by_test.get(
+                                    verification_test_id(
+                                        assessment_id=assessment.assessment_id,
+                                        mechanism_id=mechanism.mechanism_id,
+                                        test_index=index,
+                                        test=test,
+                                    )
+                                )
+                            )
+                            is not None
+                            else None
+                        ),
+                    }
+                    for index, test in enumerate(mechanism.verification_tests)
                 ],
                 "invalidation_conditions": list(mechanism.invalidation_conditions),
                 "next_review_at": fmt.iso(mechanism.next_review_at),

@@ -156,6 +156,34 @@ class SqlForecastStore:
             ).scalar_one_or_none()
         return None if payload is None else BaseForecast.model_validate(payload)
 
+    def active_base_forecasts(
+        self,
+        *,
+        producer_id: str,
+        producer_version: str,
+        forecast_family: str,
+        as_of: datetime,
+        limit: int = 100,
+    ) -> tuple[BaseForecast, ...]:
+        if limit < 1:
+            raise ValueError("active BaseForecast limit 必须为正数")
+        now = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(forecasts.c.payload)
+                .where(
+                    forecasts.c.kind == ForecastKind.BASE.value,
+                    forecasts.c.producer_id == producer_id,
+                    forecasts.c.producer_version == producer_version,
+                    forecasts.c.forecast_family == forecast_family,
+                    forecasts.c.available_at <= now,
+                    forecasts.c.valid_until > now,
+                )
+                .order_by(forecasts.c.available_at, forecasts.c.forecast_id)
+                .limit(limit)
+            ).scalars()
+            return tuple(BaseForecast.model_validate(item) for item in payloads)
+
     def pending(
         self,
         *,

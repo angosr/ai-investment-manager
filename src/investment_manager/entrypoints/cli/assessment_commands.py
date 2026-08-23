@@ -18,6 +18,9 @@ from investment_manager.entrypoints.cli.support import (
 from investment_manager.forecast.context.analyst import (
     configured_assess_behavior_hash,
 )
+from investment_manager.forecast.context.opportunity_analyst import (
+    opportunity_review_behavior_hash,
+)
 from investment_manager.forecast.context.settlement import (
     SqlAssessmentViewOutcomeStore,
 )
@@ -62,7 +65,6 @@ def register_assessment_forward_plan(
     signal_window_end: Annotated[str, typer.Option()],
     analysis_behavior_hash: Annotated[str | None, typer.Option()] = None,
     minimum_non_overlapping_samples: Annotated[int, typer.Option(min=2)] = 30,
-    minimum_capital_opportunities: Annotated[int, typer.Option(min=3)] = 12,
 ) -> None:
     """在首个结果发生前冻结当前 Context 行为的前向评价窗口。"""
 
@@ -77,58 +79,34 @@ def register_assessment_forward_plan(
     try:
         start = parse_utc_option(signal_window_start, name="signal-window-start")
         end = parse_utc_option(signal_window_end, name="signal-window-end")
-        objective = loaded.assessment.mandate.capital_objective
-        if objective is not None:
-            round_trip_cost_bps = sum(
-                (item.fee_bps for item in loaded.capital.execution_specs),
-                start=loaded.frequency.latency_bps
-                + loaded.frequency.adverse_selection_bps
-                + loaded.frequency.uncertainty_buffer_bps,
-            )
-            spec = ContextCapitalForwardSpec(
-                plan_id=plan_id,
-                analysis_scope=loaded.assessment.mandate.analysis_scope,
-                analysis_behavior_hash=expected_behavior_hash,
-                objective_id=objective.objective_id,
-                producer_id=objective.producer_id,
-                producer_version=objective.producer_version,
-                forecast_family=objective.forecast_family,
-                forecast_evaluation_version=(loaded.outcome_evaluation.forecast_version),
-                signal_window_start=start,
-                signal_window_end=end,
-                minimum_opportunity_count=minimum_capital_opportunities,
-                round_trip_cost_bps=round_trip_cost_bps,
-                lower_confidence_z=loaded.calibration.lower_confidence_z,
-            )
-        else:
-            spec = AssessmentForwardEvaluationSpec(
-                plan_id=plan_id,
-                analysis_scope=loaded.assessment.mandate.analysis_scope,
-                analysis_behavior_hash=expected_behavior_hash,
-                outcome_evaluation_version=(loaded.outcome_evaluation.assessment_version),
-                signal_window_start=start,
-                signal_window_end=end,
-                scopes=tuple(
-                    sorted(
-                        (
-                            AssessmentEvaluationScope(
-                                asset=asset.asset,
-                                symbol=asset.market_symbol,
-                                horizon_minutes=horizon,
-                            )
-                            for asset in loaded.assessment.mandate.assets
-                            for horizon in asset.horizons_minutes
-                        ),
-                        key=lambda item: (
-                            item.asset,
-                            item.symbol,
-                            item.horizon_minutes,
-                        ),
-                    )
-                ),
-                minimum_non_overlapping_samples=minimum_non_overlapping_samples,
-                settlement_grace_minutes=(loaded.outcome_evaluation.settlement_grace_minutes),
-            )
+        spec = AssessmentForwardEvaluationSpec(
+            plan_id=plan_id,
+            analysis_scope=loaded.assessment.mandate.analysis_scope,
+            analysis_behavior_hash=expected_behavior_hash,
+            outcome_evaluation_version=(loaded.outcome_evaluation.assessment_version),
+            signal_window_start=start,
+            signal_window_end=end,
+            scopes=tuple(
+                sorted(
+                    (
+                        AssessmentEvaluationScope(
+                            asset=asset.asset,
+                            symbol=asset.market_symbol,
+                            horizon_minutes=horizon,
+                        )
+                        for asset in loaded.assessment.mandate.assets
+                        for horizon in asset.horizons_minutes
+                    ),
+                    key=lambda item: (
+                        item.asset,
+                        item.symbol,
+                        item.horizon_minutes,
+                    ),
+                )
+            ),
+            minimum_non_overlapping_samples=minimum_non_overlapping_samples,
+            settlement_grace_minutes=(loaded.outcome_evaluation.settlement_grace_minutes),
+        )
         engine = runtime_engine(
             database_url,
             fact_store_role=configured_fact_store_role(loaded),
@@ -136,18 +114,10 @@ def register_assessment_forward_plan(
         )
         governance = SqlGovernanceRepository(engine)
         governance.record_release(manifest)
-        plan = (
-            build_context_capital_forward_plan(
-                spec=spec,
-                base_manifest_id=manifest.manifest_id,
-                registered_at=registered_at,
-            )
-            if isinstance(spec, ContextCapitalForwardSpec)
-            else build_assessment_forward_plan(
-                spec=spec,
-                base_manifest_id=manifest.manifest_id,
-                registered_at=registered_at,
-            )
+        plan = build_assessment_forward_plan(
+            spec=spec,
+            base_manifest_id=manifest.manifest_id,
+            registered_at=registered_at,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -158,6 +128,77 @@ def register_assessment_forward_plan(
                 "evaluation_plan": plan.model_dump(mode="json"),
                 "context_spec": spec.model_dump(mode="json"),
                 "context_spec_hash": content_hash(spec),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("register-context-capital-forward-plan")
+def register_context_capital_forward_plan(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="Context 事实库"),
+    ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ],
+    plan_id: Annotated[str, typer.Option()],
+    signal_window_start: Annotated[str, typer.Option()],
+    signal_window_end: Annotated[str, typer.Option()],
+    minimum_opportunities: Annotated[int, typer.Option(min=3)] = 30,
+) -> None:
+    """在首个程序机会前冻结候选级 Context 配对评价。"""
+
+    loaded, manifest = load_runtime_release(config, release_manifest)
+    program = loaded.capital.cash_carry_program
+    if program is None or not program.enabled:
+        raise typer.BadParameter("当前 Release 没有启用的自然 Program producer")
+    registered_at = datetime.now(UTC)
+    try:
+        spec = ContextCapitalForwardSpec(
+            plan_id=plan_id,
+            opportunity_analysis_behavior_hash=opportunity_review_behavior_hash(
+                loaded.codex_runtime
+            ),
+            producer_id=program.producer_id,
+            producer_version=program.producer_version,
+            forecast_family=program.forecast_family,
+            forecast_evaluation_version=loaded.outcome_evaluation.forecast_version,
+            signal_window_start=parse_utc_option(
+                signal_window_start, name="signal-window-start"
+            ),
+            signal_window_end=parse_utc_option(
+                signal_window_end, name="signal-window-end"
+            ),
+            minimum_opportunity_count=minimum_opportunities,
+            round_trip_cost_bps=program.estimated_variable_cost_bps,
+            lower_confidence_z=loaded.calibration.lower_confidence_z,
+        )
+        engine = runtime_engine(
+            database_url,
+            fact_store_role=FactStoreRole.CONTEXT,
+            claim_fact_store=True,
+        )
+        governance = SqlGovernanceRepository(engine)
+        governance.record_release(manifest)
+        plan = build_context_capital_forward_plan(
+            spec=spec,
+            base_manifest_id=manifest.manifest_id,
+            registered_at=registered_at,
+        )
+        governance.register_plan(plan)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "evaluation_plan": plan.model_dump(mode="json"),
+                "context_capital_spec": spec.model_dump(mode="json"),
+                "context_capital_spec_hash": content_hash(spec),
             },
             ensure_ascii=False,
             indent=2,
@@ -201,7 +242,7 @@ def evaluate_assessment_forward_plan_command(
     reject_invalidated_evaluation_plan(governance, plan_id)
     snapshot = plan.candidate_spec_snapshot
     try:
-        if snapshot.get("version") == "context-capital-forward-spec-v1":
+        if snapshot.get("version") == "context-capital-forward-spec-v2":
             spec = ContextCapitalForwardSpec.model_validate(snapshot)
             validate_context_capital_forward_plan(
                 spec=spec,

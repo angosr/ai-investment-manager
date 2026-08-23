@@ -11,10 +11,6 @@ from pydantic import Field, field_validator, model_validator
 
 from investment_manager.forecast.context.settlement import AssessmentViewOutcome
 from investment_manager.forecast.models import ForecastOutcomeStatus
-from investment_manager.governance.evaluation.context_capital import (
-    ContextCapitalForwardSpec,
-    validate_context_capital_runtime_plan,
-)
 from investment_manager.governance.models import (
     EvaluationPlan,
     EvaluationStage,
@@ -228,19 +224,10 @@ def validate_assessment_runtime_plan(
     manifest: ReleaseManifest,
     plans: tuple[EvaluationPlan, ...],
     started_at: datetime,
-) -> tuple[ContextCapitalForwardSpec, EvaluationPlan] | None:
-    """Require a forward plan only when Context can change a program action."""
-
-    if config.assessment.mandate.capital_objective is not None:
-        return validate_context_capital_runtime_plan(
-            config=config,
-            manifest=manifest,
-            plans=plans,
-            started_at=started_at,
-        )
+) -> None:
+    """World updates never hold capital authority and need no capital gate."""
 
     require_utc(started_at)
-    return None
 
 
 def evaluate_assessment_forward_plan(
