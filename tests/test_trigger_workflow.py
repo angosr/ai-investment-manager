@@ -222,6 +222,68 @@ def test_trigger_coordinator_consumes_valid_batch_with_no_enabled_consumer(
     asyncio.run(scenario())
 
 
+def test_trigger_created_before_first_workflow_task_is_not_lost(app_config) -> None:
+    async def scenario() -> None:
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def build_no_dispatch(_raw_batch):
+            return {"workflow_dispatches": []}
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            trigger_queue = "trigger-prestart-signal-test"
+            temporal = app_config.temporal.model_copy(
+                update={"trigger_task_queue": trigger_queue}
+            )
+            config = app_config.model_copy(update={"temporal": temporal})
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=NOW,
+                heartbeat_seconds=None,
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.AGENT_WAKEUP,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=100,
+                dedup_key="prestart-immediate-review",
+                review_reason="立即复核",
+            )
+            handle = await env.client.start_workflow(
+                TriggerCoordinatorWorkflow.run,
+                build_trigger_coordinator_input(plan, config),
+                id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                task_queue=trigger_queue,
+            )
+            await handle.signal(
+                TRIGGER_SIGNAL,
+                {
+                    "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                    "trigger": event.model_dump(mode="json"),
+                },
+            )
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[build_no_dispatch],
+            ):
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["completed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert status["completed_batches"] == 1, status
+                assert status["pending_count"] == 0
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
 def test_trigger_coordinator_uses_most_specific_matching_event_rule() -> None:
     coordinator = TriggerCoordinatorWorkflow()
     coordinator._plan = {
@@ -375,7 +437,6 @@ def test_trigger_signal_can_arrive_before_workflow_run_initializes_settings(
         dedup_key="signal-before-run",
     )
     coordinator = TriggerCoordinatorWorkflow()
-    coordinator._plan = plan.model_dump(mode="json")
 
     coordinator.deliver(
         {
@@ -384,10 +445,8 @@ def test_trigger_signal_can_arrive_before_workflow_run_initializes_settings(
         }
     )
 
-    assert tuple(coordinator._pending) == (event.trigger_id,)
-    coordinator._settings = {"maximum_pending_triggers": 1}
-    coordinator._trim_pending()
-    assert tuple(coordinator._pending) == (event.trigger_id,)
+    assert tuple(coordinator._prestart_triggers) == (event.trigger_id,)
+    assert not coordinator._pending
 
 
 def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(

@@ -37,6 +37,7 @@ class TriggerCoordinatorWorkflow:
         self._settings: dict[str, Any] = {}
         self._plan: dict[str, Any] | None = None
         self._pending: dict[str, dict[str, Any]] = {}
+        self._prestart_triggers: dict[str, dict[str, Any]] = {}
         self._seen: set[str] = set()
         self._seen_order: list[str] = []
         self._consumed_wakeups: set[str] = set()
@@ -83,11 +84,26 @@ class TriggerCoordinatorWorkflow:
                 self._plan = raw_plan
                 self._signal_sequence += 1
             return
-        if kind != TriggerOutboxKind.TRIGGER_CREATED.value or self._plan is None:
+        if kind != TriggerOutboxKind.TRIGGER_CREATED.value:
             return
         raw_trigger = message.get("trigger")
         if not isinstance(raw_trigger, dict):
             return
+        trigger_id = raw_trigger.get("trigger_id")
+        if (
+            not isinstance(trigger_id, str)
+            or trigger_id in self._seen
+            or trigger_id in self._prestart_triggers
+        ):
+            return
+        if self._plan is None:
+            self._prestart_triggers[trigger_id] = raw_trigger
+            self._signal_sequence += 1
+            return
+        self._accept_trigger(raw_trigger)
+
+    def _accept_trigger(self, raw_trigger: dict[str, Any]) -> None:
+        assert self._plan is not None
         trigger_id = raw_trigger.get("trigger_id")
         if not isinstance(trigger_id, str) or trigger_id in self._seen:
             return
@@ -109,14 +125,23 @@ class TriggerCoordinatorWorkflow:
     @workflow.run
     async def run(self, request: dict[str, Any]) -> dict[str, Any]:
         self._settings = request["settings"]
-        self._plan = request["plan"]
         state = request.get("runtime_state") or {}
         self._last_analysis_at = _parse_optional_time(state.get("last_analysis_at"))
         self._consumed_wakeups = set(state.get("consumed_wakeups", []))
-        self._seen_order = list(state.get("seen_trigger_ids", []))
+        signal_seen = tuple(self._seen_order)
+        self._seen_order = list(dict.fromkeys((*state.get("seen_trigger_ids", []), *signal_seen)))
         self._seen = set(self._seen_order)
         self._completed_batches = int(state.get("completed_batches", 0))
         self._failed_batches = int(state.get("failed_batches", 0))
+        initial_plan = request["plan"]
+        current_revision = self._plan.get("revision") if self._plan else 0
+        if int(initial_plan.get("revision", 0)) > int(current_revision):
+            self._plan = initial_plan
+        assert self._plan is not None
+        prestart = tuple(self._prestart_triggers.values())
+        self._prestart_triggers.clear()
+        for raw_trigger in prestart:
+            self._accept_trigger(raw_trigger)
         started_at = workflow.now()
 
         while not self._stopping:
