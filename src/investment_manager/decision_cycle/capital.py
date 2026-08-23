@@ -26,6 +26,7 @@ from investment_manager.execution.planning.planner import TradePlan, TradePlanne
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
 from investment_manager.execution.venue.product_mock import SqlMockProductVenue
+from investment_manager.forecast.programs import CashCarryForecastProducer
 from investment_manager.forecast.repository import Forecast, SqlForecastStore
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -720,7 +721,50 @@ def assemble_capital_cycle(
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     if forecast_sources is None:
-        forecast_sources = ()
+        program = config.capital.cash_carry_program
+        if program is None or not program.enabled:
+            forecast_sources = ()
+        else:
+            authorization = next(
+                item
+                for item in config.capital.mock_candidate_authorizations
+                if (
+                    item.producer_id,
+                    item.producer_version,
+                    item.forecast_family,
+                )
+                == (
+                    program.producer_id,
+                    program.producer_version,
+                    program.forecast_family,
+                )
+            )
+            spot = next(
+                item.instrument
+                for item in config.capital.execution_specs
+                if item.instrument.product == InstrumentProduct.SPOT
+            )
+            perpetual = next(
+                item.instrument
+                for item in config.capital.execution_specs
+                if item.instrument.product != InstrumentProduct.SPOT
+            )
+            forecast_sources = (
+                CapitalForecastSource(
+                    forecast_family=program.forecast_family,
+                    producer=CashCarryForecastProducer(
+                        policy=program,
+                        market=market,
+                        forecasts=forecasts,
+                        spot=spot,
+                        perpetual=perpetual,
+                        minimum_entry_net_bps=authorization.minimum_entry_net_bps,
+                    ),
+                    estimated_variable_cost_bps=program.estimated_variable_cost_bps,
+                    risk_template=config.capital.sleeve_risk,
+                    mock_authorization=authorization,
+                ),
+            )
     portfolio = SqlPortfolioStore(engine)
     performance = SqlPortfolioPerformanceStore(engine)
     risks = SqlPortfolioRiskStore(engine)

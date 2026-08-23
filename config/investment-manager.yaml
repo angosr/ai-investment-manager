@@ -128,7 +128,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: product-capital-v8
+  version: product-capital-v9
   enabled: false
   settlement_asset: USDT
   decision:
@@ -190,6 +190,19 @@ capital:
     funding_stress_bps: "30"
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
+  cash_carry_program:
+    version: cash-carry-program-v1
+    enabled: false
+    producer_id: btc-cash-carry
+    producer_version: btc-cash-carry-v1
+    forecast_family: btc-delta-neutral-carry
+    horizon_hours: 168
+    entry_validity_minutes: 30
+    funding_lookback_hours: 168
+    minimum_funding_samples: 12
+    minimum_positive_funding_fraction: "0.60"
+    funding_projection_haircut: "0.50"
+    estimated_variable_cost_bps: "25"
 
 composition:
   version: calibrated-net-edge-v1

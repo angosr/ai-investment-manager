@@ -40,6 +40,7 @@ from investment_manager.portfolio.models import (
     MockCandidateAuthorization,
     PortfolioEdgeBasis,
 )
+from investment_manager.portfolio.policy import CashCarryProgramPolicy
 from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
@@ -433,6 +434,64 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     )
     assert len(first_page) == len(second_page) == 1
     assert first_page[0].activity_id != second_page[0].activity_id
+
+
+def test_configured_cash_carry_program_uses_the_authoritative_capital_path() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    base = load_config("config/investment-manager.shadow.yaml")
+    authorization = MockCandidateAuthorization(
+        version="cash-carry-forward-authorization-v1",
+        producer_id="btc-cash-carry",
+        producer_version="btc-cash-carry-v1",
+        forecast_family="btc-delta-neutral-carry",
+        hypothesis_fingerprint="b" * 64,
+        maximum_allocation_fraction=Decimal("0.10"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("-5"),
+    )
+    program = CashCarryProgramPolicy(
+        version="cash-carry-program-v1",
+        enabled=True,
+        producer_id=authorization.producer_id,
+        producer_version=authorization.producer_version,
+        forecast_family=authorization.forecast_family,
+        horizon_hours=168,
+        entry_validity_minutes=30,
+        funding_lookback_hours=72,
+        minimum_funding_samples=3,
+        minimum_positive_funding_fraction=Decimal("0.66"),
+        funding_projection_haircut=Decimal("0.5"),
+        estimated_variable_cost_bps=Decimal("20"),
+    )
+    config = base.model_copy(
+        update={
+            "capital": base.capital.model_copy(
+                update={
+                    "cash_carry_program": program,
+                    "mock_candidate_authorizations": (authorization,),
+                }
+            )
+        }
+    )
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=700)
+    _put_funding_history(market, config, at=NOW)
+
+    result = assemble_capital_cycle(config, engine).produce(
+        as_of=NOW,
+        cause_id="configured-carry-program",
+        trigger_batch_id="configured-carry-program",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert result.groups and result.groups[0].terminal
+    target = SqlPortfolioStore(engine).target_for_cycle(result.groups[0].cycle_id)
+    assert target is not None
+    assert target.sleeves[0].forecast_family == program.forecast_family
+    assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
 
 
 def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain() -> None:

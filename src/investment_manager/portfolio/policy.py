@@ -35,6 +35,23 @@ class SleeveRiskTemplate(StrictConfig):
     derivative_initial_margin_fraction: Decimal = Field(gt=0, le=1)
 
 
+class CashCarryProgramPolicy(StrictConfig):
+    """Point-in-time hypothesis policy for the isolated cash-and-carry challenger."""
+
+    version: str
+    enabled: bool = False
+    producer_id: str = Field(min_length=1)
+    producer_version: str = Field(min_length=1)
+    forecast_family: str = Field(min_length=1)
+    horizon_hours: int = Field(gt=0, le=720)
+    entry_validity_minutes: int = Field(gt=0, le=240)
+    funding_lookback_hours: int = Field(gt=0, le=720)
+    minimum_funding_samples: int = Field(ge=1, le=90)
+    minimum_positive_funding_fraction: Decimal = Field(ge=0, le=1)
+    funding_projection_haircut: Decimal = Field(ge=0, le=1)
+    estimated_variable_cost_bps: Decimal = Field(ge=0)
+
+
 class CapitalPolicy(StrictConfig):
     """One explicit assembly contract for the product-qualified capital path."""
 
@@ -46,6 +63,7 @@ class CapitalPolicy(StrictConfig):
     planner: TradePlannerPolicy
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
+    cash_carry_program: CashCarryProgramPolicy | None = None
     mock_candidate_authorizations: tuple[MockCandidateAuthorization, ...] = ()
 
     @model_validator(mode="after")
@@ -67,4 +85,22 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital 同时只允许一个 Mock challenger")
         if len(set(identities)) != len(identities):
             raise ValueError("Capital Mock candidate authorization 不得重复")
+        program = self.cash_carry_program
+        if program is not None and program.enabled:
+            matching = tuple(
+                item
+                for item in self.mock_candidate_authorizations
+                if (
+                    item.producer_id,
+                    item.producer_version,
+                    item.forecast_family,
+                )
+                == (
+                    program.producer_id,
+                    program.producer_version,
+                    program.forecast_family,
+                )
+            )
+            if len(matching) != 1:
+                raise ValueError("启用 CashCarry Program 必须绑定唯一 Mock authorization")
         return self
