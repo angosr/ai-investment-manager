@@ -51,6 +51,9 @@ from investment_manager.state.decision.packet import (
     PacketPreviousDriver,
     PacketPreviousEventReference,
     PacketPreviousHypothesis,
+    PacketPreviousMechanism,
+    PacketPreviousVerificationPredicate,
+    PacketPreviousVerificationTest,
     PacketPreviousView,
     PacketReviewRequest,
 )
@@ -233,6 +236,64 @@ def _previous_context(
             for item in assessment.event_references
         ),
     }
+    if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V2:
+        assert assessment.synthesis is not None
+        assert assessment.synthesis_horizon_hours is not None
+        return PacketPreviousContext(
+            schema_version=assessment.schema_version.value,
+            **common,
+            synthesis=sanitize_external_text(
+                assessment.synthesis,
+                maximum_length=2_000,
+            )[0],
+            synthesis_horizon_hours=assessment.synthesis_horizon_hours,
+            mechanisms=tuple(
+                PacketPreviousMechanism(
+                    mechanism_id=item.mechanism_id,
+                    continuity_ref=item.continuity_ref,
+                    relationship=item.relationship.value,
+                    claim=sanitize_external_text(
+                        item.claim,
+                        maximum_length=1_200,
+                    )[0],
+                    horizon_hours=item.horizon_hours,
+                    causal_chain=tuple(
+                        PacketPreviousCausalNode(
+                            statement=sanitize_external_text(
+                                node.statement,
+                                maximum_length=PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS,
+                            )[0],
+                            evidence_ids=node.evidence_ids,
+                        )
+                        for node in item.causal_chain
+                    ),
+                    transmission_stage=item.transmission_stage.value,
+                    conflicting_evidence_ids=item.conflicting_evidence_ids,
+                    verification_tests=tuple(
+                        PacketPreviousVerificationTest(
+                            feature_selector=test.feature_selector,
+                            evaluation_window_minutes=test.evaluation_window_minutes,
+                            supports_predicate=PacketPreviousVerificationPredicate(
+                                **test.supports_predicate.model_dump()
+                            ),
+                            contradicts_predicate=PacketPreviousVerificationPredicate(
+                                **test.contradicts_predicate.model_dump()
+                            ),
+                        )
+                        for test in item.verification_tests
+                    ),
+                    invalidation_conditions=tuple(
+                        sanitize_external_text(
+                            condition,
+                            maximum_length=PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
+                        )[0]
+                        for condition in item.invalidation_conditions
+                    ),
+                    next_review_at=item.next_review_at,
+                )
+                for item in assessment.mechanisms
+            ),
+        )
     if assessment.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V1:
         return PacketPreviousContext(
             schema_version=assessment.schema_version.value,

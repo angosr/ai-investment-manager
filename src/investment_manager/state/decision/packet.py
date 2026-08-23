@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
+from enum import StrEnum
 from itertools import groupby
 from typing import Literal
 
@@ -75,6 +76,7 @@ _CURRENT_PACKET_SCHEMAS = {
     "decision-packet-v12",
     "decision-packet-v13",
     "decision-packet-v14",
+    "decision-packet-v15",
 }
 _CALENDAR_CONTEXT_FACT_TYPES = {
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
@@ -88,6 +90,11 @@ PREVIOUS_CONTEXT_STATEMENT_CHARACTERS = 300
 PREVIOUS_CONTEXT_TRANSMISSION_CHARACTERS = 500
 PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS = 200
 PREVIOUS_CONTEXT_LIST_ITEMS = 3
+
+
+class DecisionPacketPurpose(StrEnum):
+    WORLD_UPDATE = "WORLD_UPDATE"
+    CAPITAL_REVIEW = "CAPITAL_REVIEW"
 
 
 class DecisionPacketCapacityError(ValueError):
@@ -251,7 +258,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 ),
             }
             previous = payload["previous_context"]
-        else:
+        elif packet.previous_context.schema_version == "world-model-assessment-v1":
             # Previous hypotheses are derived state, not evidence.  The next
             # analysis only needs their stable identity and falsifiable edge
             # to decide continuity.  Re-sending old causal nodes, conflicts,
@@ -284,6 +291,24 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                         "invalidation_conditions",
                     )
                 }
+        else:
+            previous["mechanisms"] = tuple(
+                {
+                    key: mechanism[key]
+                    for key in (
+                        "mechanism_id",
+                        "continuity_ref",
+                        "relationship",
+                        "claim",
+                        "horizon_hours",
+                        "transmission_stage",
+                        "verification_tests",
+                        "invalidation_conditions",
+                        "next_review_at",
+                    )
+                }
+                for mechanism in previous["mechanisms"]
+            )
         for field_name in (
             "analysis_behavior_hash",
             "analysis_scope",
@@ -799,6 +824,36 @@ class PacketPreviousDecisionBlocker(FrozenModel):
     observation_needed: str = Field(min_length=1, max_length=500)
 
 
+class PacketPreviousVerificationPredicate(FrozenModel):
+    operator: Literal["GT", "GTE", "LT", "LTE", "BETWEEN", "CHANGE_GT", "CHANGE_LT"]
+    value: Decimal
+    upper_value: Decimal | None = None
+    persistence_observations: int = Field(default=1, ge=1, le=24)
+
+
+class PacketPreviousVerificationTest(FrozenModel):
+    feature_selector: str = Field(min_length=1, max_length=240)
+    evaluation_window_minutes: int = Field(gt=0, le=525_600)
+    supports_predicate: PacketPreviousVerificationPredicate
+    contradicts_predicate: PacketPreviousVerificationPredicate
+
+
+class PacketPreviousMechanism(FrozenModel):
+    mechanism_id: str = Field(min_length=1)
+    continuity_ref: str | None = Field(default=None, min_length=1)
+    relationship: Literal["SUPPORTS", "OFFSETS", "THREATENS", "ALTERNATIVE"]
+    claim: str = Field(min_length=1, max_length=1_200)
+    horizon_hours: int = Field(gt=0, le=17_520)
+    causal_chain: tuple[PacketPreviousCausalNode, ...] = Field(min_length=2)
+    transmission_stage: Literal["PENDING", "PROPAGATING", "PRICED", "REVERSING"]
+    conflicting_evidence_ids: tuple[str, ...] = ()
+    verification_tests: tuple[PacketPreviousVerificationTest, ...] = Field(min_length=1)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+    next_review_at: datetime
+
+    _utc_next_review_at = field_validator("next_review_at")(require_utc)
+
+
 class PacketPreviousContext(FrozenModel):
     """Latest inherited world model; derived evidence, never a first-party fact."""
 
@@ -806,6 +861,7 @@ class PacketPreviousContext(FrozenModel):
     schema_version: Literal[
         "legacy-context-assessment-v1",
         "world-model-assessment-v1",
+        "world-model-assessment-v2",
     ] = "legacy-context-assessment-v1"
     analysis_scope: str | None = Field(default=None, min_length=1)
     mandate_version: str | None = Field(default=None, min_length=1)
@@ -842,6 +898,9 @@ class PacketPreviousContext(FrozenModel):
         default=(),
         max_length=2,
     )
+    synthesis: str | None = Field(default=None, min_length=1, max_length=2_000)
+    synthesis_horizon_hours: int | None = Field(default=None, gt=0, le=17_520)
+    mechanisms: tuple[PacketPreviousMechanism, ...] = ()
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -862,6 +921,32 @@ class PacketPreviousContext(FrozenModel):
             if self.hypotheses or self.capital_implication or self.decision_blockers:
                 raise ValueError("历史上一轮世界认知不得混入新字段")
             return self
+        if self.schema_version == "world-model-assessment-v2":
+            if any(
+                (
+                    self.market_mechanism is not None,
+                    bool(self.drivers),
+                    self.capital_relevance is not None,
+                    bool(self.views),
+                    bool(self.contradictions),
+                    bool(self.data_gaps),
+                    bool(self.hypotheses),
+                    self.capital_implication is not None,
+                    bool(self.decision_blockers),
+                )
+            ):
+                raise ValueError("WorldModel v2 上下文不得混入历史或资本字段")
+            if self.synthesis is None or self.synthesis_horizon_hours is None:
+                raise ValueError("WorldModel v2 上下文必须包含综合判断及其时域")
+            if not self.mechanisms:
+                raise ValueError("WorldModel v2 上下文至少需要一个机制")
+            return self
+        if (
+            self.synthesis is not None
+            or self.synthesis_horizon_hours is not None
+            or self.mechanisms
+        ):
+            raise ValueError("WorldModel v1 上下文不得混入 v2 字段")
         if any(
             (
                 self.market_mechanism is not None,
@@ -887,6 +972,7 @@ class DecisionPacket(FrozenModel):
     as_of: datetime
     state_id: str
     question: str
+    purpose: DecisionPacketPurpose = DecisionPacketPurpose.WORLD_UPDATE
     capital_objective: CapitalContextObjective | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -996,6 +1082,17 @@ class DecisionPacket(FrozenModel):
             self.capital_objective is None
         ):
             raise ValueError("DecisionPacket v13+ 必须绑定一个明确资本问题")
+        if self.schema_version == "decision-packet-v15":
+            if (
+                self.purpose == DecisionPacketPurpose.WORLD_UPDATE
+                and self.capital_objective is not None
+            ):
+                raise ValueError("WORLD_UPDATE 不得绑定资本目标")
+            if (
+                self.purpose == DecisionPacketPurpose.CAPITAL_REVIEW
+                and self.capital_objective is None
+            ):
+                raise ValueError("CAPITAL_REVIEW 必须绑定资本目标")
         coverage_domains = tuple(item.domain.value for item in self.information_coverage)
         if tuple(sorted(set(coverage_domains))) != coverage_domains:
             raise ValueError("DecisionPacket information_coverage 必须按领域唯一且排序")
@@ -1014,6 +1111,8 @@ def _decision_packet_content_hash(packet: DecisionPacket) -> str:
         mode="json",
         exclude={"packet_id", "content_hash"},
     )
+    if packet.schema_version != "decision-packet-v15":
+        payload.pop("purpose", None)
     if packet.schema_version not in _CURRENT_PACKET_SCHEMAS:
         payload["active_hypotheses"] = packet.active_hypotheses
         payload["previous_assessment_refs"] = packet.previous_assessment_refs
@@ -1159,6 +1258,11 @@ class DecisionPacketBuilder:
             "as_of": state.as_of,
             "state_id": state.state_id,
             "question": mandate.question,
+            "purpose": (
+                DecisionPacketPurpose.CAPITAL_REVIEW
+                if mandate.capital_objective is not None
+                else DecisionPacketPurpose.WORLD_UPDATE
+            ),
             "capital_objective": mandate.capital_objective,
             "trigger_ids": trigger_ids,
             "required_views": required_views,

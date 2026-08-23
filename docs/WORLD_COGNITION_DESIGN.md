@@ -1,145 +1,179 @@
-# 世界认知系统设计
+# 世界认知与资本协作设计
 
-状态：现役设计与迁移验收规范。`world-model-assessment-v1` 已替换新写入、Prompt、Packet 投影和网页主展示；旧 Assessment 只保留不可变历史读取。资本价值仍必须由预登记的 Program Base 配对结果证明，不能把上线或一次成功输出写成盈利完成。
+状态：**目标设计与迁移验收规范，当前实现尚未达标。**
 
-## 1. 设计结论
+本文只定义一条能够被模拟盘和费用后结果验证的现役目标路径。任何“已完成”“可用”或“具有盈利价值”的结论都必须由运行事实支持，不能以 Schema、Prompt、网页展示或一次成功调用代替。
 
-世界认知不是新闻摘要、宏观报告、行情预测器或数据覆盖看板。它是在一个真实可见时点，基于同一事实链维护的**当前最佳因果模型**：现实世界现在处于什么状态，主要解释是什么，竞争解释是什么，传导走到哪里，下一项什么观测能证明判断对错，以及这对当前唯一资本问题有什么增量影响。
+## 1. 结论
 
-整个模块只保留四个权威概念：
+世界认知是系统在一个真实可见时点，对宏观流动性、政策、风险偏好、资金行为、市场结构和组合脆弱性的**当前最佳可证伪因果解释**。它不是新闻摘要、行情复述、数据缺口清单，也不是独立交易策略。
 
-1. `Evidence`：外部世界实际留下的原始或规范化证据；
-2. `StateFeature`：程序基于 Evidence 计算的点时状态；
-3. `WorldModel`：AI 以一个 PRIMARY 和必要竞争 Hypothesis 维护的有状态因果解释；
-4. `CapitalImplication`：WorldModel 对当前一个资本问题的研究性影响。
+盈利系统必须同时拥有两种能力：
 
-除此之外不再增加知识图谱、向量记忆、情景账本、独立推理账本、多 Agent 辩论层或按数据源建立的业务模块。
+1. `Opportunity`：由程序策略或受控的 AI 研究路径产生、可重复计算的收益机会；
+2. `WorldModel`：解释程序基线没有表达的外生环境、传导变化和尾部风险。
 
-目标链路只有一条：
+二者只有在具体候选或持仓上相遇，世界认知才可能产生资本价值：
 
 ```text
-Evidence → StateFeature → DecisionPacket → WorldModel
-                                      └──→ CapitalImplication
-CapitalImplication → Evaluation ──通过──→ ContextPolicy
-Program + ContextPolicy → CapitalDecision → Portfolio → Risk → Execution → Outcome
+Evidence → StateFeature → WORLD_UPDATE → WorldModel
+
+StateFeature → OpportunityProducer → Opportunity
+
+Opportunity + WorldModel + Portfolio
+              ↓ CAPITAL_REVIEW
+      OpportunityAssessment
+              ↓
+Program Baseline ───────────────┐
+Program + Context Overlay ──────┼→ Portfolio → Risk → Execution → Outcome
+                               └→ 同机会、同成本配对评价
 ```
 
-其中 WorldModel 与 CapitalImplication 都没有下单权限；未通过评价时 ContextPolicy 不存在，CapitalDecision 只使用 Program Base。Program 负责产生可重复的收益机会，Portfolio 负责组合，Risk 负责硬约束，Execution 负责成交与恢复。世界认知只提供程序基线没有表达的外生环境、因果变化和尾部风险。
+系统不能只有 WorldModel，也不能只有没有上下文的 Program。前者只会生成叙事，后者只能重复历史相关性。两者都不能绕过 Portfolio、Risk 和 Execution。
 
-## 2. 当前问题的根因
+## 2. 当前运行事实与根因
 
-当前实现并非完全没有数据。最新认知已经能引用 Treasury 回购结果、收益率、RRP、ETF 流、监管提案和 Binance 市场结构。它仍然不够有用，根因是语义和协作方式错误：
+截至 2026-08-23 的审查结果表明，当前系统不是“认知还不够深”，而是主闭环断开：
 
-1. `data_gaps` 把数据建设待办、推理未知和账户故障混在一起，导致 Coverage 清单取代认知正文；
-2. 日度 ETF、滞后美元、日终收益率和分钟级加密结构没有事件时间对齐，AI 只能在不可比窗口间猜因果；
-3. 缺少发布前冻结的市场预期，无法判断“事实重要”还是“相对预期真正改变定价”；
-4. 单项事实必须先成为 `CANDIDATE` 才能支撑 Driver，阻断了多个普通事实联合形成强证据；
-5. `market_mechanism` 是大段自由文本，上一轮只能通过另一段文本继承，容易换词复述和错误自我强化；
-6. Coverage 按领域内所有来源近似取最差值，没有区分“同一能力的替代来源”和“不同能力的互补数据”；
-7. 世界认知引用偏重新闻事件，实际参与推理的官方事实与程序状态在视觉上被弱化；
-8. 当前评价能检查结构和引用，却还不能证明世界认知是否改善费用后资本结果。
+1. 当前 WorldModel Mandate 不再绑定旧 carry 目标，但 `DecisionPacket v14` 仍强制要求 `capital_objective`，导致新行为无法生成 Packet；网页显示的是旧行为的历史认知。
+2. Context 与 Capital 运行在隔离事实库，当前没有权威 `WorldModel → OpportunityAssessment → CapitalDecision` 消费路径。
+3. Capital 装配的 `program_forecast_producers` 和 `forecast_sources` 均为空，因此没有自然候选、预测、订单或成交。
+4. 现有 Context 资本评价只能反事实否决旧 Program 入场，不能创建机会、调整规模或管理持仓，而且当前没有可配对的 Program。
+5. 唯一通过开发期 walk-forward 的趋势候选未通过 blind；现阶段不存在已证明可获得正式资本权限的策略。
+6. 旧认知输入约 16K tokens，仍主要得到围绕单一 carry 候选的浅层解释，说明输入密度、任务边界和输出消费者同时失效。
 
-这些问题共享一个根因：证据、程序状态、因果解释、数据健康和资本动作没有保持严格职责边界。解决方案必须重画边界，而不是继续加 Prompt 条款或数据字段。
+因此迁移优先级不是继续增加新闻源或 Prompt 条款，而是恢复以下最小闭环：
 
-## 3. 模块职责与禁止重叠
+```text
+可生成 WorldModel
+→ 可产生自然 Opportunity
+→ 可形成候选级 OpportunityAssessment
+→ 可运行基线与叠加两套模拟组合
+→ 可结算费用后增量
+```
 
-| 模块 | 唯一拥有 | 明确不拥有 |
+在这条链闭合前，系统只能称为数据与研究基础设施，不能称为可用投资系统。
+
+## 3. 最少权威概念
+
+现役设计只保留六个投资语义，其他内容必须归入其中或删除：
+
+| 概念 | 唯一职责 | 明确不负责 |
 |---|---|---|
-| Information | 原始载荷、Observation、Fact Revision、IntelligenceEvent、来源轮询健康 | 异常方向、因果判断、资本含义 |
-| State | 点时市场/宏观/资金/事件特征，全部带算法版本和输入引用 | 新闻语义、主导机制、交易倾向 |
-| World Cognition | PRIMARY/ALTERNATIVE/TAIL_RISK Hypothesis、证据冲突、下一验证点、认知引用生命周期和研究性 CapitalImplication | 原始事件/事实生命周期、数据源健康、账户安全、订单、仓位 |
-| Capital Decision | Program 候选与已晋升 Context Policy 的资本提案 | 重写世界模型、直接消费未晋升 AI 文本、绕过 Risk |
-| Portfolio | 现金、持仓、候选、相关性、成本和风险贡献的组合目标 | 判断新闻真假、维护事件生命周期 |
-| Risk | 对账、敞口、压力、保证金和最终交易约束 | 预测收益、创造机会 |
-| Execution | 订单身份、成交、恢复、对账和保护 | 策略、世界认知、资本配置 |
-| Governance | 行为身份、评价计划、结果和权限晋退 | 在线业务决策 |
+| `Evidence` | 原始载荷、事实修订、新闻事件、市场与账户观测及其点时可见性 | 因果和方向判断 |
+| `StateFeature` | 基于 Evidence 的确定性压缩、对齐、异常和成本状态 | 自由文本解释、资本授权 |
+| `WorldModel` | 当前综合判断、并行因果机制、相互抵消关系、传导进度和验证条件 | 候选收益、订单和仓位 |
+| `Opportunity` | 一个可重复的收益候选及其成本、时域、退出与失效条件 | 判断新闻真假、最终仓位 |
+| `OpportunityAssessment` | WorldModel 对一个具体 Opportunity 或现有持仓的增量影响 | 改写 WorldModel、直接下单 |
+| `PortfolioTarget` | 在现金、持仓、候选、相关性、成本和风险预算间形成组合目标 | 维护世界解释和执行状态 |
 
-跨模块只能传递不可变内容引用，不能共享可变对象或互相修改结论。任何新需求先确定唯一所有者；如果两个模块都想裁决同一件事，设计即不合格。
+Risk、Execution 和 Governance 仍是独立职责，但不再创造第二套投资判断：
 
-## 4. 不变量
+- Risk 只拥有对账、敞口、压力、保证金、交易状态和硬约束；
+- Execution 只拥有订单身份、成交、保护、恢复和对账；
+- Governance 只拥有行为身份、评价、权限授予与撤回。
 
-1. 任一决策输入必须满足 `event_time <= observed_at <= packet.as_of`；今天看到的历史数据不能倒填为过去已知。
-2. 原始载荷、事实、程序特征、世界模型和资本结果追加保存，不能原地改写或混在同一记录。
-3. 世界认知始终形成恰好一个当前最佳 PRIMARY；数据不完整只能收窄它的陈述边界，不能成为“拒绝形成认知”的理由。
-4. 行情、Funding、OI、期权和资金流可以验证或反驳外生原因，不能单独证明外生原因。
-5. 未核验新闻最多形成待验证 Hypothesis，转载数量不等于独立来源数量。
-6. 上一轮 WorldModel 是派生上下文，不是事实；延续判断必须重新绑定当前仍有效的证据。
-7. WorldModel 不产生订单字段、仓位金额、杠杆或资本权限。
-8. Input Projection、Prompt、Schema、模型或运行契约变化后生成新行为身份，不继承旧评价。
-9. 结构或内容质量不佳必须真实展示并进入评价，不能通过文风、中文词表或“深度门禁”隐藏。
-10. 没有消费者、回放、健康记录和评价计划的数据源或特征不得进入生产。
+禁止新增独立 Outlook、Baseline Narrative、知识图谱、向量记忆、情景账本、多 Agent 辩论层或数据源专属业务模块。若新对象没有独立不变量或消费者，应合并或删除。
 
-## 5. Evidence 与数据覆盖
+## 4. 核心不变量
 
-### 5.1 Evidence 仍使用现有事实链
+1. 任一输入必须满足 `event_time <= observed_at <= packet.as_of`；今天看到的历史数据不能倒填为过去已知。
+2. Evidence、StateFeature、WorldModel、Opportunity、资本决策和结果均追加保存，不能原地改写或混写。
+3. `WORLD_UPDATE` 不要求存在 Opportunity 或资本目标；没有持仓也必须能维护世界认知。
+4. `CAPITAL_REVIEW` 必须绑定一个不可变 Opportunity 或持仓复核目标，以及当时可见的 WorldModel 引用。
+5. 一次 AI 调用只能更新 WorldModel 或复核资本候选，不能同时改写世界解释并据此裁决同一候选。
+6. WorldModel 始终有且只有一个当前综合判断。证据不足应缩小判断边界，不能返回空认知或把 Coverage 清单当认知。
+7. OpportunityAssessment 没有订单字段；未经晋升的 AI 结果只能影响隔离的研究模拟组合。
+8. Portfolio 只能消费结构化 Opportunity 和已授权的 ContextPolicy，不能解析自由文本下单。
+9. 现金、拒绝交易和减险是正式决策；模拟盘可以运行未晋升候选，但必须隔离并标记为实验资本。
+10. 任一生产数据、特征、AI 输出和策略都必须有消费者、回放、评价与删除条件。
+11. Prompt、模型、输入投影、Schema、策略或映射政策变化后生成新行为身份，不继承旧结果。
+12. 世界认知质量不由长度、中文比例、术语或主观“深度”门禁决定；浅薄但合法的认知必须真实展示并结算。
 
-不建立“世界认知数据库”。外部数据仍按现有语义进入：
+## 5. 两种分析用途
+
+沿用一套 `DecisionPacket` 基础设施，但使用显式、互斥的 `purpose`，避免再建立两套事实链。
+
+### 5.1 `WORLD_UPDATE`
+
+用途：在材料变化后维护当前 WorldModel。
+
+最小输入：
+
+- 本次材料变化对应的 Evidence 和 StateFeature；
+- 上一份 WorldModel 的综合判断、活跃机制、引用和未完成验证；
+- 相关因果通道的能力摘要；
+- 已到期的官方日程或验证观测。
+
+约束：
+
+- `capital_objective` 和 Opportunity 必须为空；
+- 输出必须包含 WorldModel；
+- 不输出 OpportunityAssessment、目标仓位或订单字段；
+- 没有重大新机制时，仍维护当前综合判断并结算到期验证，而不是拒绝形成认知。
+
+### 5.2 `CAPITAL_REVIEW`
+
+用途：判断 WorldModel 相对一个具体 Opportunity 或持仓基线增加了什么。
+
+最小输入：
+
+- 不可变 `opportunity_id` 或 `holding_review_id`；
+- Program 已使用的基础输入、预期收益、成本、有效期与失效条件；
+- 当前 WorldModel 引用；
+- 当前组合、现金、相关敞口和候选冲突摘要；
+- Program 尚未表达的相关 Evidence/StateFeature。
+
+约束：
+
+- 必须绑定恰好一个复核目标；
+- WorldModel 在本次调用中只读；
+- 只能输出 OpportunityAssessment；
+- Program 已经使用的 funding、basis、价格趋势或成本不得再次冒充 AI 增量。
+
+`DecisionPacket` 的校验必须按 `purpose` 判断字段，而不能再对所有 Packet 强制要求资本目标。
+
+## 6. Evidence、Coverage 与数据建设
+
+### 6.1 唯一事实链
 
 - 官方原文和结构化官方数据 → `SourceObservation → CanonicalFactRevision`；
-- 聚合数据 → 明确标记 `AGGREGATOR/CONTRACTED` 的 Fact Revision；
-- 新闻、快讯和社区内容 → `IntelligenceEvent`；
-- 市场与账户观测 → 对应的 Market/Account Evidence。
+- 合同化或聚合数据 → 带明确来源等级和可见时间的 Fact Revision；
+- 新闻、快讯和社区线索 → `IntelligenceEvent`；
+- 市场、订单和账户 → 对应的 Market/Execution/Account Evidence。
 
-每项 Evidence 必须有来源、内容身份、事实时间、首次可见时间、修订规则和来源等级。事实身份不能因为标题、URL 或 AI 判断改变。
+每项 Evidence 必须有来源、内容身份、事实时间、首次可见时间、修订规则和来源等级。`.gov` 域名、转载数量或 AI 认可都不能替代这些属性。
 
-### 5.2 Coverage 只回答“数据能力是否可用”
+### 6.2 Coverage 只回答运行能力
 
-Coverage 不进入世界认知正文，也不判断市场方向。它按原子 `Capability` 管理，每项只声明：
+Coverage 按原子 `Capability` 管理，只说明某种语义是否可用、时效如何、由哪些合格来源满足。它不判断市场方向，也不进入世界认知正文。
 
-- 语义与更新节奏；
-- 能满足同一语义的 Provider；
-- 最少健康独立来源数；
-- 新鲜度、修订和失败条件。
+系统区分：
 
-如果两份数据语义互补，就定义为两个 Capability；如果语义相同且可替代，就属于同一个 Capability。这样只需要 `minimum_healthy_provider_count`，不需要 `ALL/ANY/QUORUM` 组合代数。
+- `coverage_gap`：数据能力未配置、失败或过期，只进入健康和建设队列；
+- `decision_blocker`：一个结果不同会改变具体 Capital Review 的未知变量；
+- 普通未入选事实：永久保留，但不进入上述两类。
 
-领域状态只是多个 Capability 的运维汇总。某个 Provider 失败但同一能力仍满足最少健康来源数时，Capability 继续可用；缺少一个互补能力只影响依赖它的判断，不能把整个世界模型标成无效。
+账户未对账、磁盘、服务和账号状态属于 Health/Risk，永远不是 WorldModel 的“信息缺口”。
 
-DecisionPacket 只接收按因果通道压缩的 `capability_summary`：当前可用的语义、不可用的语义和数据时效，不含 Provider 清单、轮询时间、错误明细或建设待办。它用于防止 AI 把“本轮未入选”误判成“系统没接入”，不能直接复制到 WorldModel。
+### 6.3 数据能力按决策断点增加
 
-### 5.3 “数据足够”的唯一标准
+当前优先因果通道是：
 
-世界数据不可能绝对完整。对当前资本问题，当且仅当不存在一项**结果不同会翻转 CapitalImplication**的未观测变量时，数据才是决策充分。
-
-因此系统区分：
-
-- `coverage_gap`：基础设施未配置、失败或过期，只进入健康与建设计划；
-- `decision_blocker`：一个具体未知，观测结果 A/B 会导致不同资本含义，最多两项进入 WorldModel；
-- 普通未入选事实：永久保留，但既不是 gap 也不是 blocker。
-
-账户未对账属于 Risk/Health，永远不是 world cognition blocker。
-
-### 5.4 最小因果覆盖
-
-当前 Binance 可交易组合只需要覆盖能够闭合主要收益与风险传导的能力：
-
-| 因果通道 | 最小状态 | 用途 |
+| 通道 | 最小能力 | 解决的问题 |
 |---|---|---|
-| 货币、通胀、就业 | 官方日历、实际值、修订、发布前预期、利率隐含路径 | 判断 surprise 与政策路径 |
-| 财政、主权债务 | 发债公告/结果、期限供给、投标结构、TGA、回购 | 判断长端利率与美元流动性 |
-| 美元、利率、跨资产 | 同一窗口的美元、国债、股票、信用、黄金、能源 | 验证金融条件与风险偏好传导 |
-| 监管、立法 | 法案动作、委员会/表决、最终规则、生效时间、官方日历 | 区分传闻、提案、通过和实施 |
-| 机构与体系内资金 | ETF 可核验净流/持仓、稳定币供应与 mint/burn | 判断边际资金是否真实持续 |
-| 多场所市场结构 | Binance 与独立现货场所、期权主场所的深度、basis、Funding、OI、IV/skew | 验证需求、拥挤、挤压和流动性 |
+| 货币、通胀、就业 | 官方日历、实际、修订、发布前点时预期、利率隐含路径 | 事实是否相对预期改变政策路径 |
+| 财政与主权债务 | 发债公告/结果、期限供给、投标结构、TGA、回购 | 财政变化是否经长端利率和流动性传导 |
+| 同步跨资产 | 美元、国债、股票、信用、黄金、能源的事件窗响应 | 外生金融条件是否真正被多市场确认 |
+| 监管与立法 | 法案动作、委员会/表决、最终规则、生效时间、官方日历 | 区分传闻、提案、通过和实施 |
+| 机构与体系内资金 | ETF 可核验净流/持仓、稳定币供给与 mint/burn | 边际资金是否真实、持续且尚未反转 |
+| 多场所市场结构 | 独立现货、期权、basis、funding、OI、深度和清算 | 验证需求、拥挤、挤压和可执行性 |
 
-交易所余额、实现供给和地址标签属于待评价扩展，不是第一版完整性的前置条件，因为来源归属误差可能大于增量价值。任何新增能力必须先回答它区分哪个 Hypothesis、结果如何改变 CapitalImplication，再决定是否接入。
+新增数据前必须先写出：它区分哪个活跃 Mechanism 或 Opportunity、可能怎样改变综合判断或 OpportunityAssessment、如何点时回放。无法回答则不接入。无限新闻源、通用情绪、钱包画像和“聪明钱”标签不是默认建设目标。
 
-### 5.5 接入优先级
+## 7. StateFeature 与高密度输入
 
-按当前推理断点排序，而不是按数据类别平铺：
-
-1. 经济发布前预期、官方实际值与修订；
-2. Treasury 发债公告和拍卖结果；
-3. 与加密事件同步的美元、利率、股票、信用、黄金和能源状态；
-4. 独立现货场所与期权结构；
-5. Congress.gov、SEC/CFTC/Federal Register 的正式状态与日历；
-6. 稳定币发行供给和可核验 ETF 资金。
-
-社交情绪大全、钱包画像大全、无限新闻源、通用向量库和“聪明钱”标签不作为生产前置。它们只有在点时研究证明对现有能力有费用后增量时才能加入。
-
-## 6. 唯一程序化状态：StateFeature
-
-AI 不读取 raw time series，也不自行计算 surprise、收益率、异常分位或跨场所深度。所有确定性处理都由现有 State 层产出同一种内容寻址结构：
+AI 不读取 raw time series，也不自行计算 surprise、异常分位、收益率、跨场所深度或费用。确定性处理统一投影为：
 
 ```text
 StateFeature
@@ -152,278 +186,348 @@ StateFeature
   algorithm_version
 ```
 
-`values` 必须服从 `feature_type + algorithm_version` 对应的最小类型化 Schema，不能成为任意 JSON 袋；所有字段都必须有明确单位且不能与其他字段互相推导。
+第一阶段只需要五类：
 
-`feature_type` 初始只允许五类：
-
-1. `EVENT_SURPRISE`：发布前冻结预期、实际值、修订和标准化偏差；
-2. `EVENT_RESPONSE`：同一事件锚点下跨资产和资金状态的窗口变化；
-3. `REGIME_STATE`：慢变量的结构状态与历史异常分位；
+1. `EVENT_SURPRISE`：点时预期、实际、修订与标准化偏差；
+2. `EVENT_RESPONSE`：同一事件锚点下的跨资产和资金响应；
+3. `REGIME_STATE`：慢变量状态及其历史异常位置；
 4. `FLOW_STATE`：ETF、稳定币和可核验资金的持续性与背离；
-5. `MARKET_STRUCTURE`：多场所深度、basis、Funding、OI 和期权结构。
+5. `MARKET_STRUCTURE`：多场所深度、basis、funding、OI 和期权结构。
 
-这五类共用同一表、同一引用和同一回放逻辑，不建立 `ExpectationSnapshot`、`EventWindowResponse`、`CausalEvidenceBundle` 三套模型。多个普通事实能否联合成为重要信息，由一个 StateFeature 的 `input_refs` 和确定性计算表达；程序只计算时序一致性和量级，不预编码利多或利空。
+每种 `feature_type + algorithm_version` 使用最小类型化 Schema，不能成为任意 JSON 袋。多个普通事实的联合意义由同一 StateFeature 的 `input_refs` 表达，不要求每条事实先被硬编码为“重大”。
 
-### 6.1 时间对齐
+### 7.1 时间对齐
 
-每类重大事件只由版本化 Policy 声明两个可选时点：
+事件政策最多声明两个有经济意义的窗口：
 
-- `decision_window`：第一个足以支持低频资本判断的成熟窗口；
-- `confirmation_window`：只有前一判断可能改变时才使用的持续性窗口。
+- `decision_window`：首个足以支持低频资本判断的成熟窗口；
+- `confirmation_window`：只有新结果可能改变判断时才使用。
 
-即时行情与 Risk 可在毫秒或秒级响应，但不要求 Codex 参与。没有必要为所有事件机械保存或调用 T+5m、T+1h、T+4h、T+1d 四套分析；具体窗口由事件类型和资本时域决定，最多一个决策窗口和一个确认窗口。
+程序和 Risk 可以立即响应，Codex 不承担毫秒级交易。没有发布前点时预期时，只能描述实际变化，不能使用“超预期”。不同频率数据只有在同一事件锚点或明确慢变量窗口下对齐后才能比较。
 
-没有可靠发布前预期时，StateFeature 只能记录实际变化，不能使用“超预期/低于预期”。不同频率数据只有被同一事件锚点或明确的慢变量窗口对齐后，才能进入同一因果比较。
+### 7.2 输入压缩
 
-## 7. DecisionPacket：一次调用所需的最小充分输入
+Packet 只保留“本次变化、活跃机制的证伪证据、必要背景”，并在 CAPITAL_REVIEW 时额外保留候选相关性与组合约束。它不携带 raw series、全量新闻、Provider 轮询明细、长期建设待办、旧 gaps 或不可读哈希墙。
 
-Packet 只包含：
+输入容量是信息密度约束，不是 AI 调用预算。16K tokens 不能成为常态；若压缩后仍过大，必须先减少重复状态、按因果通道选代表并解释省略内容，不能简单提高上限。网页“AI 输入快照”必须与真实模型投影完全一致。
 
-1. 本次材料变化对应的 Evidence 与 StateFeature；
-2. 上一 WorldModel 中活跃 Hypothesis 的最小结构与当前验证证据；
-3. 当前 Program、组合和资本问题所需的风险状态；
-4. 即将到期的下一验证点或重大官方日程；
-5. 每个相关因果通道的紧凑 `capability_summary`；
-6. 上一轮仍未解决且可能翻转 CapitalImplication 的 decision blocker。
+## 8. WorldModel
 
-选择顺序是“当前变化 → 活跃判断的证伪证据 → 当前资本相关性 → 结构背景”。每个相关因果通道先保留一个代表，再按边际决策价值竞争容量。字符上限是信息密度约束，不是 AI 调用预算。
-
-Packet 不携带 raw series、全量新闻、Provider/轮询明细、长期 Coverage 待办、旧 contradictions、旧 gaps 或不可读 omission 哈希。它们仍永久存在于审计事实中。网页“AI 输入快照”必须展示同一模型投影，不能把审计字段伪装成 AI 输入。
-
-## 8. WorldModel：唯一认知输出
-
-新 `ContextAssessment` 是一个最小信封：
+WorldModel 是当前组合 mandate 下的持久认知，而不是 BTC 专属报告：
 
 ```text
-ContextAssessment
-  world_model.hypotheses[]
-  capital_implication
-  decision_blockers[]
-  event_relevance_updates[]
+WorldModel
+  world_model_id
+  as_of
+  synthesis
+  synthesis_horizon
+  mechanisms[]
 ```
 
-先形成不受当前产品边界限制的 WorldModel，再独立回答资本问题；CapitalImplication 不能反向改写 PRIMARY。删除独立 Baseline、Outlook、自由文本 data gaps 与重复 citations 字段。WorldModel 的 PRIMARY 就是当前最佳世界状态和解释，网页一句话认知直接投影它的 claim，不再持久化第二份摘要。
+`synthesis` 是当前世界状态对可交易组合最有决策价值的联合解释。它必须同时说明当前占主导的流动性/风险偏好状态、正在强化或抵消它的力量、传导已经走到哪里以及最大的反转风险。它不是单独持久化的第二份摘要；网页标题、资本复核背景和历史快照都直接读取同一字段。
 
-### 8.1 Hypothesis
-
-最多三项，表达当前主解释、竞争解释和重要尾部风险：
+现实中的多个力量可以同时成立，不能强迫财政、货币、监管、机构资金与市场拥挤互相竞争为唯一主因。`mechanisms` 按边际决策价值排序，表达共同构成 synthesis 的并行机制：
 
 ```text
-continuity_ref       延续上一论题时只能选择已有引用；新 ID 由程序生成
-role                 PRIMARY | ALTERNATIVE | TAIL_RISK
-claim                可被未来事实证伪的判断
-horizon
-causal_chain[]       2..5 个 {statement, evidence_refs[]} 节点：原因 → 中介 → 资金/市场 → 组合影响
-conflicting_refs[]
-next_observation     最能区分当前解释与竞争解释的下一观测
-invalidation[]
-next_review_at
+Mechanism
+  mechanism_id           程序生成
+  continuity_ref         仅延续上一活跃判断时使用
+  relationship           SUPPORTS | OFFSETS | THREATENS | ALTERNATIVE
+  claim                  可被后续观测支持或反驳的机制判断
+  horizon
+  causal_chain[]         带 evidence_refs 的原因→中介→资金/市场→组合节点
+  transmission_stage     PENDING | PROPAGATING | PRICED | REVERSING
+  conflicting_refs[]
+  verification_tests[]
+  invalidation[]
+  next_review_at
 ```
 
-恰好一个 `PRIMARY`。它必须直接陈述当前宏观流动性、风险偏好、加密资金与脆弱性的最佳联合解释，不能写成“尚未确认主导因素”“数据不足”或价格趋势摘要。只有存在真实竞争解释时才输出 `ALTERNATIVE`，不能为了满足格式凑数；`TAIL_RISK` 只保留影响大且传导可描述的风险。
-
-Evidence 确认事实，Hypothesis 天然是推断，因此不再使用容易混淆的 `CONFIRMED driver` 标签。每个因果节点直接绑定自己的 Evidence/StateFeature refs，不再额外维护一份 supporting refs。Claim 的范围必须停在最后一个有证据的传导节点，不能用通用经济学补全缺失链条；完整因果链是否成立由冲突、下一观测和后续结算判断。
-
-AI 不能自行发明 continuity ID。新 Hypothesis 持久化时由程序根据冻结内容生成身份，下一轮才可以显式延续。上一轮 WorldModel 不能作为因果节点的唯一 evidence ref。
-
-### 8.2 CapitalImplication
-
-每个 Packet 只包含一个当前资本问题，因此只输出一个 CapitalImplication，不提前设计多目标数组：
+`verification_tests` 必须可由后续点时 Evidence 或 StateFeature 结算，而不是一句“继续观察市场”：
 
 ```text
-objective_id
-effect              SUPPORT | NEUTRAL | CAUTION | OPPOSE | INSUFFICIENT
-incremental_reason  相对 Program 已有输入新增了什么
-transmission
-evidence_refs[]
-invalidation[]
-capital_authority   NONE
+VerificationTest
+  feature_selector       capability + feature_type + field
+  evaluation_window
+  supports_predicate     operator + reference/value + persistence
+  contradicts_predicate  operator + reference/value + persistence
 ```
 
-`SUPPORT/OPPOSE` 不是买卖命令，只表示当前外生世界模型对 Program 候选的研究性影响。Funding、basis、成本或现有 Risk 输入如果已被 Program 使用，不能再次冒充增量原因。多个资本问题未来分别用同一冻结 WorldModel 评价；在真实需求出现前不扩展现役 Schema。
+selector 和 predicate 只能使用 Packet 声明为可用的 StateFeature 字段与运算符；AI 不能发明指标。缺少所需能力时只能提出可建设的验证需求，不能生成一个永远无法结算的测试。验证不要求伪造精确概率或价格目标，但必须明确什么可观测关系会支持或反驳该机制。到期后由程序绑定实际观测，AI 只在证据语义需要解释时参与复核。
 
-### 8.3 DecisionBlocker
+机制数量不由任意业务常量决定，也不能无限增长。每项机制必须至少满足一条：改变 synthesis、改变某类 OpportunityAssessment、解释当前重大持仓风险。语义重复的机制合并；只有背景价值、没有独立验证或资本后果的内容不进入。容量不足时按边际决策价值省略并留审计计数，不能截断因果链。
 
-最多两项，每项必须完整回答：
+其他要求：
+
+- synthesis 必须回答当前主导状态及其强化、抵消和反转力量，而不是“数据不足”或价格趋势；
+- Claim 只能到达最后一个有证据的传导节点，不能用通用经济学补完断链；
+- 价格、funding、OI 和清算可以确认传导与拥挤，不能单独证明外生原因；
+- `transmission_stage` 的改变必须引用 EVENT_RESPONSE 或 MARKET_STRUCTURE 等实际响应特征，不能凭叙事宣称“已经定价”；
+- 上一份 WorldModel 是派生上下文，不是事实；延续机制必须重新绑定当前仍有效的 Evidence/StateFeature，不能循环自证；
+- `ALTERNATIVE` 只表示对同一观测的竞争解释；同时成立但方向相反的力量使用 `OFFSETS`，不能混为一谈；
+- 当前产品不是认知边界，但与不可交易世界无关的百科内容不得进入；
+- 世界认知不标记自身“过时”。它始终是最新最佳状态；过时语义只作用于它引用的事件。
+
+### 8.1 引用与事件生命周期
+
+引用由 Mechanism 因果节点、冲突、验证结果和后续 OpportunityAssessment 的 Evidence/StateFeature refs 自动去重派生，AI 不再重复输出 citations。
+
+`IntelligenceEvent` 只有被认知实际使用后才进入引用集合。其对未来经济和定价的边际影响完全消退、被证伪或被新事实替代时标记 `STALE`；省略不等于删除，年龄本身不能判旧，已 STALE 不恢复。STALE 满 24 小时后只从后续当前引用集合移除，原始事件、历史 Packet、历史认知和当时引用永久保留。
+
+AI 对既有事件的显式判旧作为 WORLD_UPDATE 的 `event_relevance_updates` 返回，由程序校验其引用和理由后应用；它不是 WorldModel 的第二份事件列表，也不新增账本。
+
+Canonical Fact 使用事实修订语义，不套用新闻过时机制。
+
+## 9. Opportunity 与 OpportunityAssessment
+
+### 9.1 唯一 Opportunity 契约
+
+所有机会无论来自趋势、carry、事件、跨资产、组合再平衡还是 AI 研究，都进入同一契约：
 
 ```text
-question
-observation_needed
-action_if_yes
-action_if_no
+Opportunity
+  opportunity_id
+  producer_id + behavior_hash
+  origin                 PROGRAM | AI_RESEARCH
+  instruments_and_legs
+  direction_or_structure
+  horizon + valid_until
+  edge_estimate          可为空；必须带方法、样本和行为身份
+  modeled_cost
+  sizing_inputs
+  evidence_refs[]
+  entry_conditions
+  exit_and_invalidation
 ```
 
-若 Yes/No 不会改变 CapitalImplication，就不是 blocker，不进入 WorldModel。长期未配置能力进入 Coverage 建设计划；账户、磁盘、服务失败进入 Health/Risk。
+Program 负责可重复地产生候选，不能因为世界认知不确定就停止发现机会。`edge_estimate` 只能来自冻结研究或可校准模型，不能让 AI 凭叙事填写预期 bps。没有合格 edge estimate 的候选仍可用预登记的固定实验风险在隔离模拟组合收集样本，但 Portfolio 不得把它与已校准候选当成同等收益估计。
 
-### 8.4 引用由程序派生
+AI 可以从 WorldModel 提出新交易 Thesis，但初始只能由确定性适配器转换为 `AI_RESEARCH` Opportunity，并进入隔离模拟组合；它不能直接获得正式资本权限。
 
-网页引用是 Hypothesis 因果节点、冲突与 CapitalImplication 所有 Evidence/StateFeature refs 的去重并集，不要求 AI 再输出一份 citations。这样官方事实、市场状态、ETF 数据和新闻事件具有同等可追溯入口，不再把“世界认知引用”误解为新闻列表。
+模拟盘不以“尚未晋升”为由禁止实验交易。未晋升只表示不得影响正式资本组合，而不是不得收集前向收益样本。
 
-## 9. 连续性与事件生命周期
+### 9.2 OpportunityAssessment
 
-历史 Assessment 永久不变，当前 WorldModel 由最新合法 Assessment 直接投影。新一轮只继承活跃 Hypothesis、其引用和下一验证点，不携带完整历史文本。
+OpportunityAssessment 只回答相对 Program 基线新增了什么：
 
-延续 Hypothesis 必须引用本轮仍有效 Evidence 或 StateFeature；仅靠 previous assessment 循环自证时必须降级为 ALTERNATIVE、改写为未决判断或失效。
+```text
+OpportunityAssessment
+  opportunity_id | holding_review_id
+  world_model_id
+  mechanism_impacts[]
+  effect                 SUPPORT | NEUTRAL | CAUTION | OPPOSE | INSUFFICIENT
+  incremental_reason
+  transmission
+  evidence_refs[]
+  invalidation[]
+```
 
-IntelligenceEvent 只有首次被 Hypothesis/CapitalImplication 引用后才进入当前事件引用集合。AI 只输出显式 `event_relevance_updates`：当未来边际影响完全消退、被证伪或被新事实替代时标记 `STALE` 并说明原因。省略不等于删除，不能按年龄机械判旧，也不能恢复已 STALE 事件。STALE 满 24 小时后只从后续当前引用集合移除；原事件、历史认知与当时引用永久保留。
+每个 `mechanism_impact` 必须引用一个当时 WorldModel 中的 mechanism，说明它对该候选是支持、抵消、威胁还是无关。总 `effect` 必须由这些贡献和 Program 未覆盖的新增证据综合得到。这样可以区分“认知存在”与“哪条认知真正改变了这笔候选”，避免用一段宏观文字事后解释任何动作。
 
-CanonicalFactRevision 走事实修订/失效语义，不套用新闻过时机制。StateFeature 由新窗口产生新内容身份，不原地覆盖。
+`effect` 不直接对应订单，OpportunityAssessment 也不声明自己的权限。只有 Governance 授权的版本化 `ContextPolicy` 才能将其映射为有界行为，例如：保持基线、降低风险预算、拒绝新增风险或加速减险。初始政策不得放大 Program 基线仓位；扩大仓位必须单独证明费用后增量和尾部安全。
 
-## 10. AI 职责与 Prompt
+对 `INSUFFICIENT` 的处理是保持 Program 基线，而不是全局停止交易。只有具体未知的 Yes/No 会改变该候选动作时，才记录 DecisionBlocker；语义重复或不会改变动作的 blocker 必须合并或删除，数量由 Packet 信息密度管理而不是任意业务常量决定。
 
-AI 一次只做五件事：
+## 10. Portfolio、Risk 与执行
 
-1. 判断上一 PRIMARY 是否仍是当前最佳解释；
-2. 用当前证据更新 PRIMARY，并在真实存在时保留 ALTERNATIVE/TAIL_RISK；
-3. 比较支持与冲突，写出传导和下一验证观测；
-4. 回答 Packet 中唯一资本问题的增量影响；
-5. 只报告可能翻转该资本含义的 blocker。
+Portfolio 同时比较：现金、现有持仓、Program 基线候选、获准的 Context Overlay、相关性、成本、换手和风险贡献，形成唯一 PortfolioTarget。
 
-Prompt 只描述这五项任务和第 4 节不变量，不重复 Schema、数据源百科或历史错误词表。Schema 只校验时间、枚举、引用可见性、唯一性、objective 身份、事件生命周期和越权字段。
+模拟阶段必须并行维护至少两个逻辑组合，复用同一行情、Opportunity、成本和执行模型：
 
-禁止使用中文字符比例、关键词、固定句式或“是否足够深刻”的规则拒绝认知。表达质量进入评价；不可见引用、事实时间错误、循环自证、Schema 错误和资本越权仍失败关闭。失败不生成伪 WorldModel，账号切换或重试仍绑定同一 Packet 与 behavior。
+1. `PROGRAM_BASELINE`：完全不使用世界认知；
+2. `PROGRAM_CONTEXT`：使用当时冻结的 WorldModel 和 ContextPolicy。
 
-## 11. 触发与刷新
+必要时 `AI_RESEARCH` 使用第三个隔离组合，但不能与 Context Overlay 混在一起归因。三者不是三套执行系统，只是同一组合与执行引擎上的不同评价账户。
 
-State 持续更新，AI 只在 WorldModel 可能实质变化时运行：
+同一个 Opportunity 在有效期内必须先冻结 baseline target，再冻结引用确切 `world_model_id` 的 overlay target；两者都在当时可见信息下独立记账和执行，不能在看到后续价格后补造反事实动作。机会生命周期结束时按同一退出、费用和资金费率语义配对结算。路径依赖导致后续账户状态不同是评价结果的一部分，不能用共享虚拟成交把差异抹平。
+
+Risk 对所有组合执行相同的账户新鲜度、gross/net exposure、集中度、压力损失、保证金、交易状态和临时未对冲约束。极端事件可以触发立即风险复核，但自动减险仍需要预先授权的规则；Codex 延迟不能阻塞程序化止损、保证金保护或交易所故障保护。
+
+## 11. 触发、调度和 Codex 运行
+
+AI 只在 WorldModel 或具体资本判断可能实质改变时运行：
 
 - 官方事实发布、修订或法律状态跃迁；
 - StateFeature 达到版本化材料阈值；
-- PRIMARY 的 `next_observation` 或 `next_review_at` 到期；
-- 组合出现 Program 未覆盖的外生风险；
-- 主 Agent 发起有审计理由的立即或计划复核。
+- Mechanism 的验证窗口或 `next_review_at` 到期；
+- 新 Opportunity、持仓失效条件或组合外生风险出现；
+- 主 Agent 发起带审计理由的立即或未来复核。
 
-Heartbeat 只刷新 State 和到期计划，无材料变化时不调用 AI。新闻先进入 Evidence；低可靠线索可以触发原文核验，但不能直接升级成资本影响。
+禁止月度、每月首日或其他与经济机制无关的统一交易门槛。官方日历只是事件来源，不是交易频率。
 
-重大事件由日历预登记。程序与 Risk 在事件发生后立即响应；AI 在 `decision_window` 成熟时最多调用一次，只有 `confirmation_window` 的新状态可能改变 PRIMARY 或 CapitalImplication 时才再次调用。主 Agent 可以调整触发策略和未来时间点，但每次变更形成新 Policy 版本，不能把预设方向写进触发理由。
+Heartbeat 只更新状态和到期计划；无材料变化不调用 AI。普通新闻先入 Evidence，低可靠线索可以触发原文核验，但不能直接获得资本影响。
 
-## 12. 与盈利系统的协作
+同一 scope 的触发按材料身份合并，只保留一个进行中的冻结批次。高优先级立即触发不得因启动竞态、冷却、账号用量或普通新闻阈值静默丢失。触发成功必须以 Assessment 持久化为准，不能以 Outbox 已投递或 Workflow 无积压冒充成功；冻结批次失败、过期和重试原因必须可见。
 
-```text
-Program Forecast（收益机会、成本、有效期）
-       + ContextPolicy（由 CapitalImplication 前向评价后晋升；未通过则不存在）
-       + Current Portfolio（现金、持仓、相关性）
-       ↓
-Capital Decision → Portfolio Decision（目标持仓）
-       ↓
-Risk（对账、压力、保证金、硬约束）
-       ↓
-Execution（成交、恢复、保护）
-```
+同一材料既可能改变 WorldModel 又产生 Opportunity 时，执行顺序固定为：先完成 `WORLD_UPDATE` 并持久化 `world_model_id`，再让 `CAPITAL_REVIEW` 引用该身份。若程序判定材料不足以改变 WorldModel，CAPITAL_REVIEW 使用当时最新模型并记录该判断；WORLD_UPDATE 失败不能伪装成最新认知，Program Baseline 仍可运行，overlay 则以 `INSUFFICIENT` 保持基线。
 
-世界认知获得资本影响只有两条合法路径：
+Codex 不设会抑制紧急分析的固定调用预算。账号容量不足时根据新鲜、可验证的剩余能力自动切换账号；切换不改变 Packet、behavior 和评价身份。容量信息未知时不得伪装为已用尽，也不得静默停用分析。
 
-1. 某个 StateFeature/Hypothesis 经研究证明能改善 Program，转化为小而明确的版本化程序特征；
-2. CapitalImplication 与 Program Base 做前向配对评价，通过后晋升为可撤销、规则明确的 ContextPolicy。
+## 12. Prompt 与输出契约
 
-自由文本永远不直接映射订单。极端事件可先触发 Risk Review，但自动减险同样需要独立授权。世界认知没有发现增量时必须保持 Program Base，不为制造交易而降低标准。
+### 12.1 WORLD_UPDATE Prompt
 
-## 13. 评价与长期维护
+只要求 AI：
+
+1. 判断上一综合判断是否仍是当前最佳联合解释；
+2. 更新并行的强化、抵消、威胁和竞争机制；
+3. 标明每条机制传导已走到哪里、冲突是什么；
+4. 为新增或改变的机制给出可结算验证条件；
+5. 形成不依赖当前单一候选的 synthesis 和复核时间。
+
+### 12.2 CAPITAL_REVIEW Prompt
+
+只要求 AI：
+
+1. 读取 Program 已覆盖的输入，避免重复计数；
+2. 逐条判断相关 Mechanism 是否提供候选外的新增支持、反证或尾部风险；
+3. 输出 mechanism impacts、总 effect、完整传导、引用和失效条件；
+4. 只在结果会改变动作时输出 blocker。
+
+Prompt 不重复 Schema、数据源百科、历史错误词表或网页文案。Schema 只校验时间、引用可见性、唯一性、purpose 字段、目标身份和越权字段。不可见引用、事实时间错误、循环自证和资本越权失败关闭；文风、中文比例、固定短语和主观深度不构成拒绝理由。
+
+## 13. 评价与权限
 
 评价只保留三层：
 
-1. **证据正确性：**点时可见、修订处理、输入引用和窗口计算正确；
-2. **认知有效性：**PRIMARY/ALTERNATIVE 的后续支持或反驳、下一观测区分能力、错误持续时间和重大风险漏报；
-3. **资本增量：**相对 Program Base 的机会保留、错误阻断、费用后收益、回撤、换手和保守下界。
+1. **证据正确性**：点时可见、修订、对齐、引用和成本计算正确；
+2. **认知有效性**：Mechanism 验证通过率、错误持续时间、竞争解释区分力、重大风险漏报及 synthesis 修订是否及时；
+3. **资本增量**：Program+Context 相对 Program Baseline 的费用后收益、回撤、换手、错误否决、尾部保护和保守下界。
 
-每个 Hypothesis 在形成时已经给出 horizon、next_observation 和 invalidation，结算器据此标记支持、反驳、未决或不可评价。CapitalImplication 必须用非重叠、点时、同成本口径的 Program Base 做配对评价。文字长度、术语数量和主观“分析深度”不能作为晋升指标。
+评价归因必须下钻到 `mechanism_id`：统计它被哪些 OpportunityAssessment 使用、造成何种 baseline/overlay 差异以及后续结果。一个机制在自身时域内既没有完成验证，也从未改变候选或持仓风险，只是无法消费的背景叙事，应退出活跃 WorldModel；原历史事实继续保留。
 
-主 Agent 的迭代规则：
+权限分为两个实际阶段，不建立复杂等级体系：
 
-- 一次变更只验证一个主要假设；数据、StateFeature、Prompt、Schema 和 Capital Policy 不能同时改后声称某项有效；
-- 行为评价窗口内保持生产 behavior 冻结，研究在隔离分支进行；
-- 新能力先证明数据语义，再证明认知增量，最后证明资本增量；
-- 没有资本或风险增量的复杂能力不晋升，失败后删除生产路径；
-- 每次晋升必须说明新增的权威概念、状态和服务数量；本设计预期不新增长期服务；
-- 始终与无 AI Program Base 比较，防止世界认知退化为不可证伪的叙事装饰。
+- `RESEARCH`：允许在隔离模拟组合交易和结算，不影响正式组合；
+- `CAPITAL_POLICY`：通过预登记、非重叠、同成本配对评价后，允许按冻结映射影响正式组合。
 
-## 14. 网页展示
+任何 Program 本身还必须先证明绝对费用后收益合理；世界认知只能改善一个有经济意义的基线，不能把负期望策略包装成可用策略。
 
-“最新世界认知”只显示：
+每次评价必须冻结数据、机会生产行为、WorldModel 行为、ContextPolicy、成本、窗口、风险规则、样本门槛和通过条件。开发、walk-forward、一次性 blind 和真实前向结果严格分离。样本不足就是证据不足，不能重复揭盲或改窗口挽救失败结论。
 
-1. PRIMARY 的当前判断与传导；
-2. 真实存在的 ALTERNATIVE 和 TAIL_RISK；
-3. 当前 CapitalImplication，并标注“研究输入，无资本权限”；
-4. 最多两个 DecisionBlocker；
-5. 所有实际引用证据的去重列表。
+## 14. 主 Agent 长期迭代
 
-Coverage 建设、来源失败、账户对账和机器健康放在各自区域，默认不占世界认知正文。历史 AI 记录继续提供“AI 输入快照”和“当时世界认知”，通过永久分页读取。任何浅薄或错误认知真实展示并进入评价，不能用门禁遮盖。
+主 Agent 可以调整数据能力、StateFeature、触发、Prompt、Opportunity Producer、ContextPolicy 和组合参数，但必须遵循：
 
-## 15. 一次性迁移
+1. 一次变更只检验一个主要假设，不能同时改数据、Prompt、策略和风险后归因于某一项；
+2. 现役行为在评价窗口内冻结，研究行为隔离运行；
+3. 始终保留简单无 AI 基线，防止世界认知通过复杂叙事掩盖无增量；
+4. 同时观察绝对收益和相对增量，不能只优化准确率、调用成功率或交易次数；
+5. 定期检查机制结算、错误持续时间、错过机会、错误否决、回撤贡献和复杂度成本；
+6. 新模块必须说明替代了什么、增加几个长期概念、谁消费、如何回放以及何时删除；
+7. 连续无资本或风险增量的能力退出生产，保留不可变实验结果但删除执行路径；
+8. 不因历史投入、旧 Review 或当前架构形成局部最优，任何设计都可被同口径证据替换。
 
-开发可以分提交完成，但生产切换只允许一个目标结构，不双写新旧 Assessment。
+盈利不能被保证，但系统必须持续产生能够验证盈利假设的自然样本。长时间没有 Opportunity、交易或结果不是“谨慎”，而是研究闭环故障，必须在健康页明确报警。
 
-### 15.1 语义清理
+## 15. 网页与可观测性
 
-1. 从世界认知正文和网页移除全量 Coverage gaps、`ACCOUNT_UNRECONCILED` 和运行故障；
-2. Coverage 收敛为原子 Capability 与 `minimum_healthy_provider_count`；
-3. 网页引用改为所有实际 Evidence/StateFeature refs 的派生并集。
+“最新世界认知”位于收益曲线下方、事件列表上方，只显示当前行为版本最新成功的 WorldModel：
 
-### 15.2 状态与数据闭环
+- 当前 synthesis；
+- 按决策价值排序的强化、抵消、威胁与竞争机制及其传导阶段；
+- 各机制下一验证条件和复核时间；
+- 实际引用的 Evidence/StateFeature。
 
-1. 使用一种 StateFeature 接入预期差、事件响应、跨资产、资金和多场所结构；
-2. 优先补经济预期/实际、Treasury 发债、同步跨资产、多场所/期权；
-3. 所有特征复用现有 State 持久化、内容寻址、Packet 和回放，不新建服务。
+当前持仓和候选受到的世界认知影响由最新 OpportunityAssessment 单独展示，并精确引用 `world_model_id` 和 `mechanism_id`；不能把资本结论写回 synthesis，也不能让用户从宏观文字猜测它是否影响了仓位。
 
-### 15.3 WorldModel 切换
+不能用旧行为结果冒充当前最新认知。当前行为没有输出时，应明确显示契约失败、触发失败或尚未执行，并同时保留上一份历史认知的版本和时间标签。
 
-1. 一次性启用 Hypothesis/CapitalImplication/DecisionBlocker Schema；
-2. 旧 Assessment 永久只读，新行为不再写 `market_mechanism`、`drivers`、自由文本 `data_gaps`、独立 `outlook` 或重复 citations；
-3. Prompt 收敛为第 10 节五项任务，生成新 behavior identity 并登记前向评价；
-4. Shadow 验证引用、连续性、恢复、网页和结算后切换现役读路径，同时删除旧写路径、配置、测试和专属序列化。
+每次 AI 行动详情必须可查看：
 
-### 15.4 冷启动
+- 真实 AI 输入快照；
+- 当时冻结的 WorldModel；
+- 若为 CAPITAL_REVIEW，则展示 Opportunity、OpportunityAssessment 和最终是否影响组合；
+- 后续结算与基线对照。
 
-切换时只做一次当前时点重建：按每个 Capability 的有效时域读取当前仍有决策意义的官方状态、政策/法案、资金和市场结构，形成首份 WorldModel。今天首次采集的历史记录使用今天的 `observed_at`，可以支持今天判断，但不能进入过去回测。首份模型完成后只做增量维护，不反复扫描全部历史。
+Coverage、账号、机器、账户对账和服务健康位于各自区域。所有事件、Assessment、资本行动、订单和结果永久保存并分页，不制造虚假条目，不用最近 N 条限制替代数据保留。
 
-## 16. 明确删除的过度设计
+## 16. 一次性迁移顺序
 
-下列概念不进入实现：
+迁移可以分提交，但上线只能切到一条目标路径，不允许新旧双写、fallback 或历史结果冒充现役。
 
-- 独立 `Outlook`：与 Hypothesis 的未来条件、传导和失效重复；
-- 独立 Baseline 及其结构/周期/事件三套子模型：当前最佳状态由 PRIMARY 表达，时间尺度由 Hypothesis horizon 表达；
-- `ExpectationSnapshot / EventWindowResponse / CausalEvidenceBundle` 三套派生记录：统一为 StateFeature；
-- Provider `ALL/ANY/QUORUM` 代数：互补语义拆为原子 Capability，同义来源只使用最少健康数量；
-- 多资本目标数组：每个 Packet 只回答一个当前资本问题；
-- 单独 citations 输出：由真实引用自动派生；
-- 精确主观概率、置信等级和 priced-state 枚举：没有校准证据前不制造精度，相关判断写入 Hypothesis 传导与冲突；
-- 固定 T+5m/T+1h/T+4h/T+1d 的多次 AI 计划：每类事件最多一个决策窗口和一个必要确认窗口；
-- 图数据库、向量记忆、多 Agent 辩论、全库 RAG 和手工长期记忆文件。
+### 16.1 恢复可运行契约
 
-实施完成时还必须删除：
+1. 为 DecisionPacket 增加互斥的 `WORLD_UPDATE / CAPITAL_REVIEW` purpose；
+2. 移除 WORLD_UPDATE 必须绑定 capital objective 的错误不变量；
+3. 当前行为成功生成首份 WorldModel，并让触发失败原因进入健康与网页；
+4. 当前读路径只展示当前行为，旧 Assessment 保持不可变历史读取；
+5. 只在迁移时按当前可见 Evidence/StateFeature 做一次冷启动重建；之后只增量维护，不反复扫描全库，也不倒填历史可见时间。
 
-- 将 Coverage missing capabilities 复制进认知正文的 Prompt、序列化和前端逻辑；
-- 将账户或机器状态解释为世界认知缺口的逻辑；
-- 只允许单项 `CANDIDATE` 支撑因果判断的硬编码；
-- 旧 `market_mechanism/drivers/data_gaps/capital_relevance` 新写路径；
-- 只把 IntelligenceEvent 当作世界认知引用的展示；
+### 16.2 恢复机会与模拟闭环
+
+1. 接入至少一个自然运行的 OpportunityProducer；
+2. 该 Producer 必须复用回测与在线同一信号、成本、退出和时间语义；
+3. 同时启动 Program Baseline 与 Program+Context 隔离模拟组合；
+4. 产生第一批自然模拟订单、成交、退出和费用后结果；
+5. 没有通过 blind 的策略只能作为 RESEARCH，不得伪装为正式盈利能力。
+
+### 16.3 接通世界认知增量
+
+1. 实现候选级 CAPITAL_REVIEW；
+2. 冻结初始 ContextPolicy，默认只允许保持、降险或拒绝新增风险；
+3. 结算同 Opportunity 的 baseline 与 overlay 结果；
+4. 只有配对结果通过预登记条件后，才授予正式资本影响。
+
+### 16.4 清理旧设计
+
+删除所有已被替代的：
+
+- carry/monthly/first-open 目标、配置、文案和触发残留；
+- 新写 `market_mechanism/drivers/data_gaps/capital_relevance` 路径；
+- 将 Coverage 或账户故障复制进认知正文的逻辑；
 - 中文词表、固定短语和主观深度门禁；
-- 没有消费者、无法回放或未进入评价的数据适配器与特征。
+- 只有事件引用、没有事实与 StateFeature 引用的展示；
+- 无消费者、无法回放、未进入评价的数据适配器和特征；
+- 空 OpportunityProducer 装配却把“无机会”当健康的逻辑。
 
-## 17. 完成标准
+## 17. 验收标准
 
-下一版只有同时满足以下条件才算初版可用：
+### 17.1 世界认知可用
 
-- 线上只有 Evidence → StateFeature → Packet → WorldModel 一条路径；
-- 世界认知能明确给出一个当前 PRIMARY、必要的竞争解释和下一验证观测；
-- 不同频率证据已经程序化对齐，AI 不读取 raw series；
-- 任一结论可追到点时 Evidence、StateFeature 输入及原始来源；
-- Coverage 待办、账户对账和运行故障不再占据世界认知正文；
-- DecisionBlocker 每项都能证明 Yes/No 会改变 CapitalImplication；
-- CapitalImplication 没有资本权限，但能与 Program Base 做唯一、可回放的配对评价；
-- AI 成功率、延迟、引用正确性、Hypothesis 结算和资本增量可观测；
-- 重启后当前模型可恢复，历史认知与引用永久可查；
-- 第 16 节旧机制与过度设计已删除，不存在双写、fallback 或隐藏兼容路径；
-- 前向评价能回答：加入世界认知后，费用后收益或风险是否相对简单 Program Base 得到可重复改善。
+必须同时满足：
 
-## 18. 已核验的一手入口
+- 当前行为可从 WORLD_UPDATE 生成并恢复 WorldModel；
+- 所有准入的重大触发最终生成目标结果或留下可见终态失败，不能静默消失；
+- 触发至结果延迟、首次成功率、重试、账号切换、输入 tokens、被选与省略证据数量均按行为版本可观测；
+- synthesis 能联合解释当前状态，Mechanism 能表达并行强化、抵消、威胁与竞争关系；
+- 每项活跃 Mechanism 都有证据传导、冲突、可结算验证和失效条件；
+- 不同频率证据已程序化对齐，AI 不读取 raw data；
+- 任一结论可追到点时 Evidence、StateFeature 和原始来源；
+- 世界认知正文不再显示 Coverage 建设墙和账户运维故障；
+- 网页不使用旧行为或旧资本目标冒充当前认知。
 
-这些入口只证明关键 Capability 可以工程化获得，不意味着全部同时接入：
+### 17.2 投资系统初版可用
 
-- [BEA 发布日历](https://www.bea.gov/news/schedule/full/2026)与 [BLS 发布日历](https://www.bls.gov/schedule/2026/)：官方事件时间与实际发布；预期仍需合法的点时 `CONTRACTED` 来源。
-- [Treasury Fiscal Data — Upcoming Auctions](https://fiscaldata.treasury.gov/datasets/upcoming-auctions/)与 [TreasuryDirect 拍卖日程](https://www.treasurydirect.gov/auctions/when-auctions-happen/)：发债公告、拍卖和发行时间。
-- [Congress.gov API](https://api.congress.gov/)与 [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1)：法案动作和正式规则状态。
-- [Kraken Spot WebSocket v2 L2 Book](https://docs.kraken.com/exchange/api-reference/spot-websocket-v2/book)与 [Deribit 实时 Ticker/期权数据](https://docs.deribit.com/subscriptions/market-data/tickerinstrument_nameinterval)：独立现货深度与期权结构。
-- [Bitcoin Research Kit](https://github.com/bitcoinresearchkit/brk)：自托管链上研究路线；在证明地址归属与资本增量前不作为第一版前置。
+必须同时满足：
 
-采用原则始终一致：官方或点时数据形成 Evidence，程序形成 StateFeature，AI 维护 WorldModel，资本权限只由前向结果授予。
+- 至少一个 OpportunityProducer 自然产生候选；
+- Program Baseline 与 Program+Context 使用同一机会和成本运行；
+- 模拟订单、成交、退出、PnL 和拒绝原因均可追溯；
+- OpportunityAssessment 确实改变过研究组合决策，且影响可以回放；
+- 长时间零候选、零交易、零结果被识别为闭环故障，而不是正常健康状态。
+
+### 17.3 具备盈利证据
+
+只有预登记评价能够回答下列问题后才可宣称：
+
+- Program 本身在现实费用和风险下是否有正的保守收益证据；
+- Program+Context 相对 Program Baseline 是否带来可重复费用后增量；
+- 增量是否来自更高收益、更低回撤或更少尾部损失，而不是事后选样；
+- 结果是否在非重叠样本、blind 和真实前向阶段仍成立；
+- 新复杂度和 Codex 延迟是否值得。
+
+在此之前只能报告研究进度和真实结果，不能把系统稳定运行、认知文字质量或少量模拟盈利称为长期盈利能力。
+
+## 18. 明确不做
+
+- 不做依赖 Codex 延迟的高频或毫秒级交易；
+- 不让自由文本直接生成订单；
+- 不为了产生交易降低正式资本门槛；
+- 不因为正式资本未授权而禁止隔离模拟交易；
+- 不用月度、每月首日或固定日期代替经济触发；
+- 不按单个人物、会议或新闻建立业务模块；
+- 不用无限数据、无限上下文和复杂 Agent 组织冒充认知深度；
+- 不通过隐藏、过滤或改名掩盖浅薄认知、失败调用和无盈利事实。
+
+采用原则始终一致：程序处理确定性与速度，AI处理跨域因果和竞争解释，Portfolio处理资本取舍，Risk保护生存，Execution保证真实成交，Outcome决定任何能力能否继续存在。

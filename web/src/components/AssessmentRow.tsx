@@ -58,6 +58,20 @@ const HYPOTHESIS_ROLE: Record<string, string> = {
   TAIL_RISK: "尾部风险",
 };
 
+const MECHANISM_RELATIONSHIP: Record<string, string> = {
+  SUPPORTS: "强化",
+  OFFSETS: "抵消",
+  THREATENS: "反转威胁",
+  ALTERNATIVE: "竞争解释",
+};
+
+const TRANSMISSION_STAGE: Record<string, string> = {
+  PENDING: "尚待传导",
+  PROPAGATING: "正在传导",
+  PRICED: "已被主要计价",
+  REVERSING: "正在反转",
+};
+
 const COVERAGE_STATUS: Record<string, string> = {
   CURRENT: "完整",
   PARTIAL: "部分覆盖",
@@ -342,6 +356,57 @@ function CurrentWorldModel({ detail }: { detail: AssessmentRecordDetail }) {
       <div className={styles.snapshotQuestion}>
         证据截止 {detail.as_of} · 认知可用 {detail.at}
       </div>
+      {detail.synthesis ? (
+        <SnapshotSection title={`联合判断 · ${detail.synthesis_horizon_hours} 小时`}>
+          <p className={styles.thesis}>{detail.synthesis}</p>
+        </SnapshotSection>
+      ) : null}
+      {detail.mechanisms.map((mechanism) => (
+        <SnapshotSection
+          key={mechanism.mechanism_id}
+          title={`${MECHANISM_RELATIONSHIP[mechanism.relationship]} · ${TRANSMISSION_STAGE[mechanism.transmission_stage]} · ${mechanism.horizon_hours} 小时`}
+        >
+          <p className={styles.thesis}>{mechanism.claim}</p>
+          <ol className={styles.analysisList}>
+            {mechanism.causal_chain.map((node, index) => (
+              <li key={`${mechanism.mechanism_id}-${index}`}>
+                <b>{node.statement}</b>
+                {node.evidence.map((item) => (
+                  <div key={item.evidence_id}>
+                    引用：{hhmm(item.at)} · {item.source} · {item.title}
+                  </div>
+                ))}
+              </li>
+            ))}
+          </ol>
+          {mechanism.conflicting_evidence.length > 0 ? (
+            <div className={styles.invalidation}>
+              <span>反向证据</span>
+              <ul>
+                {mechanism.conflicting_evidence.map((item) => (
+                  <li key={item.evidence_id}>{item.source} · {item.title}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className={styles.invalidation}>
+            <span>程序化验证</span>
+            <ul>
+              {mechanism.verification_tests.map((test) => (
+                <li key={test.feature_selector}>
+                  {test.feature_selector} · {test.evaluation_window_minutes} 分钟窗口 · 支持 {test.supports_predicate.operator} {test.supports_predicate.value} · 反驳 {test.contradicts_predicate.operator} {test.contradicts_predicate.value}
+                </li>
+              ))}
+            </ul>
+            <span>失效条件 · 下次复核 {mechanism.next_review_at}</span>
+            <ul>
+              {mechanism.invalidation_conditions.map((condition) => (
+                <li key={condition}>{condition}</li>
+              ))}
+            </ul>
+          </div>
+        </SnapshotSection>
+      ))}
       {detail.hypotheses.map((hypothesis) => (
         <SnapshotSection
           key={hypothesis.hypothesis_id}

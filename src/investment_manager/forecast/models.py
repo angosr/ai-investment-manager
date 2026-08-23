@@ -215,6 +215,31 @@ class ContextAssessmentSchemaVersion(StrEnum):
 
     LEGACY = "legacy-context-assessment-v1"
     WORLD_MODEL_V1 = "world-model-assessment-v1"
+    WORLD_MODEL_V2 = "world-model-assessment-v2"
+
+
+class ContextMechanismRelationship(StrEnum):
+    SUPPORTS = "SUPPORTS"
+    OFFSETS = "OFFSETS"
+    THREATENS = "THREATENS"
+    ALTERNATIVE = "ALTERNATIVE"
+
+
+class ContextTransmissionStage(StrEnum):
+    PENDING = "PENDING"
+    PROPAGATING = "PROPAGATING"
+    PRICED = "PRICED"
+    REVERSING = "REVERSING"
+
+
+class ContextPredicateOperator(StrEnum):
+    GT = "GT"
+    GTE = "GTE"
+    LT = "LT"
+    LTE = "LTE"
+    BETWEEN = "BETWEEN"
+    CHANGE_GT = "CHANGE_GT"
+    CHANGE_LT = "CHANGE_LT"
 
 
 class ContextHypothesisRole(StrEnum):
@@ -241,6 +266,66 @@ class ContextCausalNode(FrozenModel):
     def evidence_must_be_unique(self):
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("因果节点不能重复引用证据")
+        return self
+
+
+class ContextVerificationPredicate(FrozenModel):
+    operator: ContextPredicateOperator
+    value: Decimal
+    upper_value: Decimal | None = None
+    persistence_observations: int = Field(default=1, ge=1, le=24)
+
+    @model_validator(mode="after")
+    def range_operator_must_have_a_valid_upper_bound(self):
+        if self.operator == ContextPredicateOperator.BETWEEN:
+            if self.upper_value is None or self.upper_value <= self.value:
+                raise ValueError("BETWEEN 验证条件必须提供更大的 upper_value")
+        elif self.upper_value is not None:
+            raise ValueError("只有 BETWEEN 验证条件可以提供 upper_value")
+        return self
+
+
+class ContextVerificationTest(FrozenModel):
+    """A deterministic, point-in-time-settleable mechanism test."""
+
+    feature_selector: str = Field(min_length=1, max_length=240)
+    evaluation_window_minutes: int = Field(gt=0, le=525_600)
+    supports_predicate: ContextVerificationPredicate
+    contradicts_predicate: ContextVerificationPredicate
+
+    @model_validator(mode="after")
+    def predicates_must_differ(self):
+        if self.supports_predicate == self.contradicts_predicate:
+            raise ValueError("支持与反驳条件不能相同")
+        return self
+
+
+class ContextMechanism(FrozenModel):
+    """One parallel causal force contributing to the current synthesis."""
+
+    mechanism_id: str = Field(min_length=1)
+    continuity_ref: str | None = Field(default=None, min_length=1)
+    relationship: ContextMechanismRelationship
+    claim: str = Field(min_length=1, max_length=1_200)
+    horizon_hours: int = Field(gt=0, le=17_520)
+    causal_chain: tuple[ContextCausalNode, ...] = Field(min_length=2)
+    transmission_stage: ContextTransmissionStage
+    conflicting_evidence_ids: tuple[str, ...] = ()
+    verification_tests: tuple[ContextVerificationTest, ...] = Field(min_length=1)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+    next_review_at: datetime
+
+    _utc_next_review_at = field_validator("next_review_at")(require_utc)
+
+    @model_validator(mode="after")
+    def references_and_conditions_must_be_unique(self):
+        if len(set(self.conflicting_evidence_ids)) != len(self.conflicting_evidence_ids):
+            raise ValueError("世界机制不能重复引用反向证据")
+        if len(set(self.invalidation_conditions)) != len(self.invalidation_conditions):
+            raise ValueError("世界机制不能重复失效条件")
+        selectors = tuple(item.feature_selector for item in self.verification_tests)
+        if len(set(selectors)) != len(selectors):
+            raise ValueError("同一世界机制不能重复验证同一特征")
         return self
 
 
@@ -453,6 +538,9 @@ class ContextAssessment(FrozenModel):
         default=(),
         max_length=2,
     )
+    synthesis: str | None = Field(default=None, min_length=1, max_length=2_000)
+    synthesis_horizon_hours: int | None = Field(default=None, gt=0, le=17_520)
+    mechanisms: tuple[ContextMechanism, ...] = ()
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -477,6 +565,38 @@ class ContextAssessment(FrozenModel):
             if self.hypotheses or self.capital_implication or self.decision_blockers:
                 raise ValueError("历史 ContextAssessment 不得混入新世界模型字段")
             return self
+        if self.schema_version == ContextAssessmentSchemaVersion.WORLD_MODEL_V2:
+            if any(
+                (
+                    self.market_mechanism is not None,
+                    bool(self.mechanism_evidence_ids),
+                    bool(self.drivers),
+                    self.capital_relevance is not None,
+                    bool(self.views),
+                    bool(self.contradictions),
+                    bool(self.data_gaps),
+                    bool(self.hypotheses),
+                    self.capital_implication is not None,
+                    bool(self.decision_blockers),
+                )
+            ):
+                raise ValueError("WorldModel v2 不得混入历史或资本复核字段")
+            if self.synthesis is None or self.synthesis_horizon_hours is None:
+                raise ValueError("WorldModel v2 必须包含综合判断及其时域")
+            if not self.mechanisms:
+                raise ValueError("WorldModel v2 至少需要一个可验证机制")
+            mechanism_ids = tuple(item.mechanism_id for item in self.mechanisms)
+            if len(set(mechanism_ids)) != len(mechanism_ids):
+                raise ValueError("WorldModel v2 不能重复 mechanism_id")
+            if any(item.next_review_at <= self.as_of for item in self.mechanisms):
+                raise ValueError("世界机制 next_review_at 必须晚于分析时点")
+            return self
+        if (
+            self.synthesis is not None
+            or self.synthesis_horizon_hours is not None
+            or self.mechanisms
+        ):
+            raise ValueError("WorldModel v1 不得混入 v2 字段")
         if any(
             (
                 self.market_mechanism is not None,

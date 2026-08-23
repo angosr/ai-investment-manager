@@ -90,9 +90,19 @@ def assessment_row(record: AssessmentRecord) -> dict:
         "at": fmt.iso(assessment.available_at),
         "scope": assessment.analysis_scope,
         "summary": _assessment_summary(assessment),
-        "mechanism": primary.claim if primary is not None else assessment.market_mechanism,
+        "mechanism": (
+            assessment.synthesis
+            if assessment.synthesis is not None
+            else primary.claim
+            if primary is not None
+            else assessment.market_mechanism
+        ),
         "driver_count": (
-            len(assessment.hypotheses) if primary is not None else len(assessment.drivers)
+            len(assessment.mechanisms)
+            if assessment.mechanisms
+            else len(assessment.hypotheses)
+            if primary is not None
+            else len(assessment.drivers)
         ),
         "evidence_count": len(cited_evidence_ids),
         "directional_view_count": len(directional),
@@ -135,6 +145,39 @@ def assessment_detail(record: AssessmentRecord) -> dict:
                 "next_review_at": fmt.iso(hypothesis.next_review_at),
             }
             for hypothesis in assessment.hypotheses
+        ],
+        "synthesis": assessment.synthesis,
+        "synthesis_horizon_hours": assessment.synthesis_horizon_hours,
+        "mechanisms": [
+            {
+                "mechanism_id": mechanism.mechanism_id,
+                "continuity_ref": mechanism.continuity_ref,
+                "relationship": mechanism.relationship.value,
+                "claim": mechanism.claim,
+                "horizon_hours": mechanism.horizon_hours,
+                "transmission_stage": mechanism.transmission_stage.value,
+                "causal_chain": [
+                    {
+                        "statement": node.statement,
+                        "evidence": _resolve_assessment_evidence(
+                            node.evidence_ids,
+                            evidence_catalog,
+                        ),
+                    }
+                    for node in mechanism.causal_chain
+                ],
+                "conflicting_evidence": _resolve_assessment_evidence(
+                    mechanism.conflicting_evidence_ids,
+                    evidence_catalog,
+                ),
+                "verification_tests": [
+                    test.model_dump(mode="json")
+                    for test in mechanism.verification_tests
+                ],
+                "invalidation_conditions": list(mechanism.invalidation_conditions),
+                "next_review_at": fmt.iso(mechanism.next_review_at),
+            }
+            for mechanism in assessment.mechanisms
         ],
         "capital_implication": (
             None
@@ -319,7 +362,9 @@ def _assessment_evidence_catalog(packet: DecisionPacket | None) -> dict[str, dic
             "kind": "PREVIOUS_CONTEXT",
             "title": "上一轮世界认知",
             "detail": (
-                previous_primary.claim
+                previous.synthesis
+                if previous.synthesis is not None
+                else previous_primary.claim
                 if previous_primary is not None
                 else previous.market_mechanism
             ),
@@ -506,6 +551,11 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
+    if getattr(assessment, "synthesis", None) is not None:
+        return (
+            f"联合世界模型 · {assessment.synthesis_horizon_hours} 小时"
+            f" · {len(assessment.mechanisms)} 个活跃机制"
+        )
     primary = _primary_hypothesis(assessment)
     if primary is not None:
         role_count = len(assessment.hypotheses) - 1
@@ -560,6 +610,10 @@ def _assessment_cited_ids(assessment) -> tuple[str, ...]:
         for node in hypothesis.causal_chain:
             ids.extend(node.evidence_ids)
         ids.extend(hypothesis.conflicting_evidence_ids)
+    for mechanism in assessment.mechanisms:
+        for node in mechanism.causal_chain:
+            ids.extend(node.evidence_ids)
+        ids.extend(mechanism.conflicting_evidence_ids)
     if assessment.capital_implication is not None:
         ids.extend(assessment.capital_implication.evidence_ids)
     return tuple(dict.fromkeys(ids))

@@ -21,21 +21,22 @@ from investment_manager.forecast.codex.router import (
 )
 from investment_manager.forecast.context.contract import (
     ASSESS_INSTRUCTIONS,
-    AssessStructuredOutput,
     ContextAssessmentContractError,
-    assessment_previous_hypothesis_ids,
+    WorldModelStructuredOutput,
+    assessment_available_feature_selectors,
+    assessment_previous_mechanism_ids,
     assessment_visible_event_ids,
     assessment_visible_evidence_ids,
     build_assess_prompt,
-    finalize_context_assessment,
+    finalize_world_model,
 )
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "world-model-input-v1"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v1"
+ASSESS_INPUT_VERSION = "world-model-input-v2"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v2"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -45,37 +46,30 @@ class AssessPromptCapacityError(ValueError):
 def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     """Constrain packet-dependent semantics before Codex sampling."""
 
-    schema = strict_output_schema(AssessStructuredOutput.model_json_schema())
+    if packet.capital_objective is not None:
+        raise ValueError("世界模型分析器不接受 CAPITAL_REVIEW Packet")
+
+    schema = strict_output_schema(WorldModelStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
-    draft = definitions["ContextAssessmentDraft"]
+    draft = definitions["WorldModelDraft"]
     evidence_ids = assessment_visible_evidence_ids(packet)
     causal_node = definitions["ContextCausalNode"]
     causal_node["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
-    hypothesis = definitions["ContextHypothesisDraft"]
-    hypothesis["properties"]["conflicting_evidence_ids"]["items"]["enum"] = list(evidence_ids)
-    previous_hypothesis_ids = assessment_previous_hypothesis_ids(packet)
-    continuity = hypothesis["properties"]["continuity_ref"]
-    continuity["anyOf"][0]["enum"] = list(previous_hypothesis_ids)
+    mechanism = definitions["ContextMechanismDraft"]
+    mechanism["properties"]["conflicting_evidence_ids"]["items"]["enum"] = list(evidence_ids)
+    previous_mechanism_ids = assessment_previous_mechanism_ids(packet)
+    continuity = mechanism["properties"]["continuity_ref"]
+    continuity["anyOf"][0]["enum"] = list(previous_mechanism_ids)
+    verification = definitions["ContextVerificationTestDraft"]
+    verification["properties"]["feature_selector"]["enum"] = list(
+        assessment_available_feature_selectors(packet)
+    )
     event_reference = definitions["ContextEventReferenceUpdate"]
     visible_event_ids = assessment_visible_event_ids(packet)
     if visible_event_ids:
         event_reference["properties"]["evidence_id"]["enum"] = list(visible_event_ids)
     event_reference_updates = draft["properties"]["event_relevance_updates"]
     event_reference_updates["maxItems"] = len(visible_event_ids)
-    if packet.capital_objective is not None:
-        capital = definitions["ContextCapitalImplication"]
-        draft["properties"]["capital_implication"] = {"$ref": "#/$defs/ContextCapitalImplication"}
-        capital["properties"]["objective_id"]["enum"] = [packet.capital_objective.objective_id]
-        capital["properties"]["evidence_ids"]["items"]["enum"] = list(evidence_ids)
-        capital["properties"]["evidence_ids"]["minItems"] = 1
-        capital["properties"]["evidence_ids"]["maxItems"] = 12
-        capital["properties"]["invalidation_conditions"]["minItems"] = 1
-        capital["properties"]["invalidation_conditions"]["maxItems"] = 5
-    else:
-        draft["properties"].pop("capital_implication")
-        draft["required"].remove("capital_implication")
-        definitions.pop("ContextCapitalEffect", None)
-        definitions.pop("ContextCapitalImplication", None)
     return schema
 
 
@@ -133,7 +127,7 @@ def _assess_behavior_hash(
             "packet_policy_version": packet_policy_version,
             "instructions": ASSESS_INSTRUCTIONS,
             "input_schema": DecisionPacket.model_json_schema(),
-            "output_schema": strict_output_schema(AssessStructuredOutput.model_json_schema()),
+            "output_schema": strict_output_schema(WorldModelStructuredOutput.model_json_schema()),
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
             "required_views": required_views,
@@ -267,13 +261,13 @@ class CodexContextAnalyst:
                     result.run_id,
                 )
             if (
-                not isinstance(result.output, AssessStructuredOutput)
+                not isinstance(result.output, WorldModelStructuredOutput)
                 or result.completed_at is None
                 or bundle.analysis_behavior_hash is None
             ):
                 continue
             try:
-                assessment = finalize_context_assessment(
+                assessment = finalize_world_model(
                     output=result.output,
                     packet=packet,
                     analysis_behavior_hash=bundle.analysis_behavior_hash,
@@ -329,7 +323,7 @@ def assemble_codex_context_analyst(
         config,
         leases=leases,
         audit=audit,
-        output_adapter=TypeAdapter(AssessStructuredOutput),
+        output_adapter=TypeAdapter(WorldModelStructuredOutput),
     )
     return CodexContextAnalyst(
         bundle_root,

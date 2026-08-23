@@ -19,9 +19,13 @@ from investment_manager.forecast.context.contract import (
     ContextAssessmentContractError,
     ContextAssessmentDraft,
     ContextHypothesisDraft,
-    assessment_visible_evidence_ids,
+    ContextMechanismDraft,
+    ContextVerificationTestDraft,
+    WorldModelDraft,
+    WorldModelStructuredOutput,
     build_assess_prompt,
     finalize_context_assessment,
+    finalize_world_model,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.models import (
@@ -30,6 +34,10 @@ from investment_manager.forecast.models import (
     ContextCausalNode,
     ContextEventImpactState,
     ContextHypothesisRole,
+    ContextMechanismRelationship,
+    ContextPredicateOperator,
+    ContextTransmissionStage,
+    ContextVerificationPredicate,
 )
 from investment_manager.information.aggregated_flows import (
     BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
@@ -448,6 +456,52 @@ def _assessment_output() -> AssessStructuredOutput:
                     next_observation="观察正式会议结果与跨资产风险溢价响应。",
                     invalidation_conditions=("官方撤回日程或市场响应否定该传导",),
                     next_review_at=datetime(2026, 9, 1, tzinfo=UTC),
+                ),
+            ),
+        )
+    )
+
+
+def _world_model_output() -> WorldModelStructuredOutput:
+    return WorldModelStructuredOutput(
+        world_model=WorldModelDraft(
+            synthesis=(
+                "监管日程变化提供外生风险溢价输入，市场响应尚在传导，"
+                "当前判断的主要反转风险是后续正式结果否定该路径。"
+            ),
+            synthesis_horizon_hours=168,
+            mechanisms=(
+                ContextMechanismDraft(
+                    relationship=ContextMechanismRelationship.SUPPORTS,
+                    claim="监管日程变化正在通过风险溢价影响加密资产定价。",
+                    horizon_hours=168,
+                    causal_chain=(
+                        ContextCausalNode(
+                            statement="官方监管日程发生了可验证变化。",
+                            evidence_ids=("revision-1",),
+                        ),
+                        ContextCausalNode(
+                            statement="市场材料变化提供了传导观察锚点。",
+                            evidence_ids=("delta-1",),
+                        ),
+                    ),
+                    transmission_stage=ContextTransmissionStage.PROPAGATING,
+                    verification_tests=(
+                        ContextVerificationTestDraft(
+                            feature_selector="asset_state:BTC.return_fraction",
+                            evaluation_window_minutes=240,
+                            supports_predicate=ContextVerificationPredicate(
+                                operator=ContextPredicateOperator.GT,
+                                value=Decimal("0"),
+                            ),
+                            contradicts_predicate=ContextVerificationPredicate(
+                                operator=ContextPredicateOperator.LT,
+                                value=Decimal("0"),
+                            ),
+                        ),
+                    ),
+                    invalidation_conditions=("正式结果撤回或市场响应反转",),
+                    next_review_at=datetime(2026, 8, 18, 18, tzinfo=UTC),
                 ),
             ),
         )
@@ -1419,13 +1473,15 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
         "contradictions",
     ):
         assert forbidden not in schema
-    assert '"hypotheses"' in schema
+    assert '"mechanisms"' in schema
+    assert '"synthesis"' in schema
+    assert '"verification_tests"' in schema
     assert '"causal_chain"' in schema
-    assert "可证伪因果模型" in prompt
+    assert "联合因果解释" in prompt
     assert "decision_packet_json=" in prompt
 
 
-def test_capital_objective_produces_one_research_implication_not_direction_views(
+def test_world_model_analyzer_rejects_capital_review_packet(
     app_config,
     replay_input,
 ) -> None:
@@ -1435,28 +1491,8 @@ def test_capital_objective_produces_one_research_implication_not_direction_views
         packet_schema_version="decision-packet-v13",
         mandate=_capital_mandate(),
     )
-    schema = assess_output_schema(packet)
-    draft = schema["$defs"]["ContextAssessmentDraft"]
-    capital = schema["$defs"]["ContextCapitalImplication"]
-
-    assert "capital_implication" in draft["properties"]
-    assert "views" not in draft["properties"]
-    assert capital["properties"]["objective_id"]["enum"] == [packet.capital_objective.objective_id]
-    assert capital["properties"]["evidence_ids"]["items"]["enum"] == list(
-        assessment_visible_evidence_ids(packet)
-    )
-
-    assessment = finalize_context_assessment(
-        output=_capital_assessment_output(),
-        packet=packet,
-        analysis_behavior_hash=HASH,
-        available_at=packet.as_of + timedelta(seconds=20),
-    )
-
-    assert assessment.capital_implication is not None
-    assert assessment.capital_implication.effect == ContextCapitalEffect.NEUTRAL
-    assert assessment.views == ()
-    assert assessment.market_mechanism is None
+    with pytest.raises(ValueError, match="不接受 CAPITAL_REVIEW"):
+        assess_output_schema(packet)
 
 
 def test_finalize_assessment_writes_only_current_world_model_schema(
@@ -1464,19 +1500,21 @@ def test_finalize_assessment_writes_only_current_world_model_schema(
     replay_input,
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    assessment = finalize_context_assessment(
-        output=_assessment_output(),
+    assessment = finalize_world_model(
+        output=_world_model_output(),
         packet=packet,
         analysis_behavior_hash=HASH,
         available_at=packet.as_of + timedelta(seconds=20),
     )
 
-    assert assessment.schema_version.value == "world-model-assessment-v1"
+    assert assessment.schema_version.value == "world-model-assessment-v2"
     assert assessment.analysis_behavior_hash == HASH
     assert assessment.decision_packet_hash == packet.content_hash
     assert assessment.trigger_ids == packet.trigger_ids
-    assert len(assessment.hypotheses) == 1
-    assert assessment.hypotheses[0].role == ContextHypothesisRole.PRIMARY
+    assert assessment.synthesis is not None
+    assert len(assessment.mechanisms) == 1
+    assert assessment.mechanisms[0].relationship == ContextMechanismRelationship.SUPPORTS
+    assert assessment.hypotheses == ()
     assert assessment.market_mechanism is None
     assert assessment.drivers == ()
     assert assessment.data_gaps == ()
@@ -1827,7 +1865,7 @@ def test_context_analyst_finalizes_assessment_without_trade_authority(
     router = _StaticRouter(
         AnalystResult(
             True,
-            _assessment_output(),
+            _world_model_output(),
             "CODEX_ANALYSIS_SUCCEEDED",
             ".codex",
             1,
@@ -1855,12 +1893,12 @@ def test_context_analyst_fails_closed_on_semantically_invalid_output(
     app_config, replay_input, tmp_path
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    payload = _assessment_output().model_dump()
-    payload["assessment"]["hypotheses"][0]["causal_chain"][0]["evidence_ids"] = ("not-visible",)
+    payload = _world_model_output().model_dump()
+    payload["world_model"]["mechanisms"][0]["causal_chain"][0]["evidence_ids"] = ("not-visible",)
     router = _StaticRouter(
         AnalystResult(
             True,
-            AssessStructuredOutput.model_validate(payload),
+            WorldModelStructuredOutput.model_validate(payload),
             "CODEX_ANALYSIS_SUCCEEDED",
             completed_at=packet.as_of + timedelta(seconds=20),
         )
@@ -1875,7 +1913,7 @@ def test_context_analyst_fails_closed_on_semantically_invalid_output(
 
     assert not result.success
     assert result.output is None
-    assert result.reason_code == "ASSESSMENT_EVIDENCE_NOT_VISIBLE"
+    assert result.reason_code == "WORLD_MODEL_EVIDENCE_NOT_VISIBLE"
     assert len(router.bundles) == 1
 
 
@@ -1897,7 +1935,7 @@ def test_context_analyst_retries_same_frozen_bundle_after_output_schema_failure(
             ),
             AnalystResult(
                 True,
-                _assessment_output(),
+                _world_model_output(),
                 "CODEX_ANALYSIS_SUCCEEDED",
                 ".codex2",
                 1,
@@ -1929,7 +1967,25 @@ def test_context_analyst_stops_immediately_after_deterministic_semantic_failure(
     app_config, replay_input, tmp_path
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    invalid = _capital_assessment_output()
+    invalid = _world_model_output().model_copy(
+        update={
+            "world_model": _world_model_output().world_model.model_copy(
+                update={
+                    "mechanisms": (
+                        _world_model_output().world_model.mechanisms[0].model_copy(
+                            update={
+                                "verification_tests": (
+                                    _world_model_output().world_model.mechanisms[0]
+                                    .verification_tests[0]
+                                    .model_copy(update={"feature_selector": "unknown:value"}),
+                                )
+                            }
+                        ),
+                    )
+                }
+            )
+        }
+    )
     router = _StaticRouter(
         tuple(
             AnalystResult(
@@ -1958,7 +2014,7 @@ def test_context_analyst_stops_immediately_after_deterministic_semantic_failure(
     result = analyst.assess(packet)
 
     assert not result.success
-    assert result.reason_code == "ASSESSMENT_CAPITAL_OBJECTIVE_UNAVAILABLE"
+    assert result.reason_code == "WORLD_MODEL_FEATURE_SELECTOR_NOT_AVAILABLE"
     assert result.run_id == "run-invalid-1"
     assert result.attempts == 1
     assert result.usage == {"total_tokens": 100}

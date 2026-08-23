@@ -94,8 +94,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v33
-    schema_version: decision-packet-v14
+    version: decision-packet-policy-v34
+    schema_version: decision-packet-v15
     maximum_facts: 12
     maximum_fact_characters: 4000
     maximum_characters_per_fact: 600

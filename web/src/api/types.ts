@@ -120,6 +120,26 @@ export interface Page<T> {
 
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
   as_of: string;
+  synthesis: string | null;
+  synthesis_horizon_hours: number | null;
+  mechanisms: {
+    mechanism_id: string;
+    continuity_ref: string | null;
+    relationship: "SUPPORTS" | "OFFSETS" | "THREATENS" | "ALTERNATIVE";
+    claim: string;
+    horizon_hours: number;
+    transmission_stage: "PENDING" | "PROPAGATING" | "PRICED" | "REVERSING";
+    causal_chain: { statement: string; evidence: AssessmentEvidence[] }[];
+    conflicting_evidence: AssessmentEvidence[];
+    verification_tests: {
+      feature_selector: string;
+      evaluation_window_minutes: number;
+      supports_predicate: VerificationPredicate;
+      contradicts_predicate: VerificationPredicate;
+    }[];
+    invalidation_conditions: string[];
+    next_review_at: string;
+  }[];
   hypotheses: {
     hypothesis_id: string;
     continuity_ref: string | null;
@@ -195,6 +215,13 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
   data_gaps: string[];
   cited_evidence: AssessmentEvidence[];
   input_snapshot: AssessmentInputSnapshot | null;
+}
+
+export interface VerificationPredicate {
+  operator: "GT" | "GTE" | "LT" | "LTE" | "BETWEEN" | "CHANGE_GT" | "CHANGE_LT";
+  value: string;
+  upper_value: string | null;
+  persistence_observations: number;
 }
 
 export interface AssessmentEvidence {

@@ -37,6 +37,20 @@ const HYPOTHESIS_ROLE: Record<string, string> = {
   TAIL_RISK: "尾部风险",
 };
 
+const MECHANISM_RELATIONSHIP: Record<string, string> = {
+  SUPPORTS: "强化",
+  OFFSETS: "抵消",
+  THREATENS: "反转威胁",
+  ALTERNATIVE: "竞争解释",
+};
+
+const TRANSMISSION_STAGE: Record<string, string> = {
+  PENDING: "尚待传导",
+  PROPAGATING: "正在传导",
+  PRICED: "已被主要计价",
+  REVERSING: "正在反转",
+};
+
 /** Latest immutable world-cognition snapshot plus the current update status. */
 export function LatestAssessment() {
   const latest = useLive(() => api.latestAssessment(), "cycles");
@@ -95,7 +109,19 @@ export function LatestAssessment() {
             <p className={styles.mechanism}>
               {detail?.mechanism ?? currentRow.mechanism}
             </p>
-            {detail && detail.hypotheses.length > 0 ? (
+            {detail && detail.mechanisms.length > 0 ? (
+              <div className={styles.drivers}>
+                {detail.mechanisms.map((mechanism) => (
+                  <div key={mechanism.mechanism_id} className={styles.driver}>
+                    <b>
+                      {MECHANISM_RELATIONSHIP[mechanism.relationship]} · {TRANSMISSION_STAGE[mechanism.transmission_stage]} · {mechanism.horizon_hours} 小时
+                    </b>
+                    <span>{mechanism.claim}</span>
+                    <small>复核时间：{mechanism.next_review_at}</small>
+                  </div>
+                ))}
+              </div>
+            ) : detail && detail.hypotheses.length > 0 ? (
               <div className={styles.drivers}>
                 {detail.hypotheses.map((hypothesis) => (
                   <div key={hypothesis.hypothesis_id} className={styles.driver}>
