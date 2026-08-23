@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine, func, insert, select
+from sqlalchemy import create_engine, func, insert, select, update
 
 from investment_manager.decision_cycle.capital import (
     CapitalForecastSource,
@@ -494,6 +494,28 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     activity = CapitalDashboardReader(engine, config).activity()[0]
     assert activity.outcome == "CASH"
     assert activity.reason_codes == ("NO_REGISTERED_FORECAST_SOURCE",)
+
+
+def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=61)
+    assemble_capital_cycle(config, engine, forecast_sources=()).produce(
+        as_of=NOW,
+        cause_id="retired-no-opportunity",
+        trigger_batch_id="retired-no-opportunity",
+        symbol="BTCUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            update(capital_cycle_records).values(outcome="NO_OPPORTUNITY")
+        )
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
+
+    assert CapitalDashboardReader(engine, config).activity() == ()
 
 
 def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:

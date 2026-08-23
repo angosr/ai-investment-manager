@@ -219,13 +219,20 @@ class CapitalDashboardReader:
         cursor: PageCursor | None = None,
         limit: int = 30,
     ) -> tuple[CapitalActivity, ...]:
-        """Project one concise action row per admitted capital trigger batch."""
+        """Project durable capital decisions, excluding retired no-op receipts."""
 
         if limit < 1 or limit > 101:
             raise ValueError("Capital activity internal limit 必须在 1..101")
         query = select(
             capital_cycle_records.c.evaluated_at,
             capital_cycle_records.c.payload,
+        ).where(
+            capital_cycle_records.c.outcome.not_in(
+                (
+                    CapitalCycleOutcome.NO_OPPORTUNITY.value,
+                    CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED.value,
+                )
+            )
         )
         if cursor is not None:
             query = query.where(

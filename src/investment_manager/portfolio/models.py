@@ -452,7 +452,7 @@ class CapitalCycleOutcome(StrEnum):
 
 
 class CapitalCycleRecord(FrozenModel):
-    """Immutable receipt of one admitted capital evaluation, including no-op."""
+    """Immutable receipt of an admitted evaluation with capital content."""
 
     record_id: str = Field(min_length=1)
     portfolio_id: str = Field(min_length=1)
