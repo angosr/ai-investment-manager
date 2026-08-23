@@ -165,3 +165,43 @@ def test_world_model_streak_continues_across_explicit_mechanism_lineage() -> Non
     assert second[0].assessment_id == "assessment-2"
     assert second[0].support_streak == 2
     assert second[0].resolution == ContextVerificationResolution.SUPPORTED
+
+
+def test_identical_tests_do_not_share_streak_across_unrelated_mechanisms() -> None:
+    assessment = _assessment()
+    first = observe_world_model(
+        assessment,
+        _packet("packet-1", at=NOW + timedelta(minutes=30), return_fraction="0.02"),
+    )
+    predecessor = assessment.mechanisms[0]
+    continued = predecessor.model_copy(
+        update={
+            "mechanism_id": "mechanism-2",
+            "continuity_ref": predecessor.mechanism_id,
+        }
+    )
+    unrelated = predecessor.model_copy(
+        update={
+            "mechanism_id": "mechanism-3",
+            "continuity_ref": None,
+            "relationship": ContextMechanismRelationship.ALTERNATIVE,
+        }
+    )
+    successor = assessment.model_copy(
+        update={
+            "assessment_id": "assessment-2",
+            "available_at": NOW + timedelta(minutes=31),
+            "mechanisms": (continued, unrelated),
+        }
+    )
+
+    observations = observe_world_model(
+        successor,
+        _packet("packet-2", at=NOW + timedelta(minutes=60), return_fraction="0.03"),
+        previous=first,
+    )
+
+    assert observations[0].support_streak == 2
+    assert observations[0].resolution == ContextVerificationResolution.SUPPORTED
+    assert observations[1].support_streak == 1
+    assert observations[1].resolution == ContextVerificationResolution.PENDING

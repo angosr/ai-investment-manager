@@ -36,12 +36,16 @@ def observe_world_model(
     if packet.as_of <= assessment.available_at:
         return ()
     previous_by_test: dict[str, ContextMechanismObservation] = {}
-    previous_by_contract: dict[str, ContextMechanismObservation] = {}
+    previous_by_mechanism_contract: dict[
+        tuple[str, str], ContextMechanismObservation
+    ] = {}
     for item in sorted(previous, key=lambda value: (value.observed_at, value.observation_id)):
         if item.assessment_id == assessment.assessment_id:
             previous_by_test[item.test_id] = item
         if item.test_contract_hash is not None:
-            previous_by_contract[item.test_contract_hash] = item
+            previous_by_mechanism_contract[
+                (item.mechanism_id, item.test_contract_hash)
+            ] = item
     values = packet_feature_values(packet)
     observations: list[ContextMechanismObservation] = []
     for mechanism in assessment.mechanisms:
@@ -65,9 +69,11 @@ def observe_world_model(
                 supports=test.supports_predicate,
                 contradicts=test.contradicts_predicate,
             )
-            prior = previous_by_test.get(test_id) or previous_by_contract.get(
-                test_contract_hash
-            )
+            prior = previous_by_test.get(test_id)
+            if prior is None and mechanism.continuity_ref is not None:
+                prior = previous_by_mechanism_contract.get(
+                    (mechanism.continuity_ref, test_contract_hash)
+                )
             support_streak = (
                 (prior.support_streak if prior is not None else 0) + 1
                 if match == ContextVerificationMatch.SUPPORTS
@@ -120,7 +126,9 @@ def observe_world_model(
             )
             observations.append(observation)
             previous_by_test[test_id] = observation
-            previous_by_contract[test_contract_hash] = observation
+            previous_by_mechanism_contract[
+                (mechanism.mechanism_id, test_contract_hash)
+            ] = observation
     return tuple(observations)
 
 
