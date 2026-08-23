@@ -151,6 +151,37 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
     return projected
 
 
+def _analysis_verification_test(test: dict) -> dict[str, object]:
+    """Keep one prior test executable while removing structurally empty fields."""
+
+    def predicate(value: dict) -> dict[str, object]:
+        projected = {
+            "operator": value["operator"],
+            "value": value["value"],
+            "persistence_observations": value["persistence_observations"],
+        }
+        if value.get("upper_value") is not None:
+            projected["upper_value"] = value["upper_value"]
+        return projected
+
+    projected: dict[str, object] = {
+        "feature_selector": test["feature_selector"],
+        "evaluation_window_minutes": test["evaluation_window_minutes"],
+        "supports_predicate": predicate(test["supports_predicate"]),
+        "contradicts_predicate": predicate(test["contradicts_predicate"]),
+    }
+    observation = test.get("latest_observation")
+    if observation is not None:
+        compact_observation = {
+            key: observation[key] for key in ("observed_at", "value", "match", "resolution")
+        }
+        for streak in ("support_streak", "contradiction_streak"):
+            if observation[streak]:
+                compact_observation[streak] = observation[streak]
+        projected["latest_observation"] = compact_observation
+    return projected
+
+
 def previous_context_is_decision_relevant(previous: PacketPreviousContext | None) -> bool:
     """Carry the latest compact structural baseline, including uncertain views.
 
@@ -295,18 +326,17 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         else:
             previous["mechanisms"] = tuple(
                 {
-                    key: mechanism[key]
-                    for key in (
-                        "mechanism_id",
-                        "continuity_ref",
-                        "relationship",
-                        "claim",
-                        "horizon_hours",
-                        "transmission_stage",
-                        "verification_tests",
-                        "invalidation_conditions",
-                        "next_review_at",
-                    )
+                    "mechanism_id": mechanism["mechanism_id"],
+                    "continuity_ref": mechanism["continuity_ref"],
+                    "relationship": mechanism["relationship"],
+                    "claim": mechanism["claim"],
+                    "horizon_hours": mechanism["horizon_hours"],
+                    "transmission_stage": mechanism["transmission_stage"],
+                    "verification_tests": tuple(
+                        _analysis_verification_test(test)
+                        for test in mechanism["verification_tests"]
+                    ),
+                    "next_review_at": mechanism["next_review_at"],
                 }
                 for mechanism in previous["mechanisms"]
             )

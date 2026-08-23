@@ -65,6 +65,10 @@ from investment_manager.state.decision.packet import (
     PacketPreviousDriver,
     PacketPreviousEventReference,
     PacketPreviousHypothesis,
+    PacketPreviousMechanism,
+    PacketPreviousVerificationObservation,
+    PacketPreviousVerificationPredicate,
+    PacketPreviousVerificationTest,
     PacketPreviousView,
     PacketReviewRequest,
     VisibleFact,
@@ -1413,6 +1417,76 @@ def test_analysis_projection_does_not_anchor_new_model_on_legacy_prose(
     assert previous.market_mechanism not in prompt
 
 
+def test_analysis_projection_compacts_prior_world_verification_without_losing_state(
+    app_config,
+    replay_input,
+) -> None:
+    predicate = PacketPreviousVerificationPredicate(
+        operator="GT",
+        value=Decimal("1"),
+        persistence_observations=2,
+    )
+    previous = PacketPreviousContext(
+        schema_version="world-model-assessment-v2",
+        assessment_id="assessment-prior-world-model",
+        analysis_scope="crypto-risk",
+        mandate_version="mandate-v1",
+        analysis_behavior_hash="a" * 64,
+        decision_packet_hash="b" * 64,
+        as_of=replay_input.market.as_of - timedelta(hours=1),
+        available_at=replay_input.market.as_of - timedelta(minutes=59),
+        synthesis="主动买盘正在抵消价格下行，但尚未形成反转。",
+        synthesis_horizon_hours=24,
+        mechanisms=(
+            PacketPreviousMechanism(
+                mechanism_id="mechanism-prior",
+                relationship="OFFSETS",
+                claim="主动买盘正在抵消价格下行。",
+                horizon_hours=24,
+                causal_chain=(
+                    PacketPreviousCausalNode(
+                        statement="主动买卖比上升。",
+                        evidence_ids=("fact-1",),
+                    ),
+                    PacketPreviousCausalNode(
+                        statement="价格下行幅度收窄。",
+                        evidence_ids=("fact-2",),
+                    ),
+                ),
+                transmission_stage="PROPAGATING",
+                verification_tests=(
+                    PacketPreviousVerificationTest(
+                        feature_selector="derivative_state:BTC.taker_buy_sell_ratio",
+                        evaluation_window_minutes=60,
+                        supports_predicate=predicate,
+                        contradicts_predicate=predicate.model_copy(update={"operator": "LTE"}),
+                        latest_observation=PacketPreviousVerificationObservation(
+                            observed_at=replay_input.market.as_of - timedelta(minutes=1),
+                            value=Decimal("1.2"),
+                            match="SUPPORTS",
+                            support_streak=2,
+                            contradiction_streak=0,
+                            resolution="SUPPORTED",
+                        ),
+                    ),
+                ),
+                invalidation_conditions=("主动买卖比连续低于或等于1。",),
+                next_review_at=replay_input.market.as_of + timedelta(hours=1),
+            ),
+        ),
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+
+    mechanism = decision_packet_analysis_projection(packet)["previous_context"]["mechanisms"][0]
+    test = mechanism["verification_tests"][0]
+
+    assert "invalidation_conditions" not in mechanism
+    assert "upper_value" not in test["supports_predicate"]
+    assert test["supports_predicate"]["persistence_observations"] == 2
+    assert test["latest_observation"]["support_streak"] == 2
+    assert "contradiction_streak" not in test["latest_observation"]
+
+
 def test_replacing_previous_context_refreezes_packet_identity(
     app_config,
     replay_input,
@@ -1999,10 +2073,13 @@ def test_context_analyst_stops_immediately_after_deterministic_semantic_failure(
             "world_model": _world_model_output().world_model.model_copy(
                 update={
                     "mechanisms": (
-                        _world_model_output().world_model.mechanisms[0].model_copy(
+                        _world_model_output()
+                        .world_model.mechanisms[0]
+                        .model_copy(
                             update={
                                 "verification_tests": (
-                                    _world_model_output().world_model.mechanisms[0]
+                                    _world_model_output()
+                                    .world_model.mechanisms[0]
                                     .verification_tests[0]
                                     .model_copy(update={"feature_selector": "unknown:value"}),
                                 )
