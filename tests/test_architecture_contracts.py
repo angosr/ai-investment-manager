@@ -27,14 +27,6 @@ CLI_CONTRACT = {
         "training_start,training_end,published_at,valid_from,valid_until,evaluation_version,"
         "source_calibration_ref,source_execution_policy_version,source_frequency_policy_version"
     ),
-    "carry-blind-evaluate": (
-        "database_url,source_evaluation_id,carry_catalog,spot_catalog,evaluation_catalog,"
-        "blind_catalog"
-    ),
-    "carry-walk-forward": (
-        "database_url,carry_dataset_id,plan_id,policy_version,carry_catalog,spot_catalog,"
-        "evaluation_catalog,register_only"
-    ),
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": (
@@ -48,10 +40,6 @@ CLI_CONTRACT = {
     ),
     "evaluate-assessment-forward-plan": (
         "database_url,plan_id,published_at,capital_database_url,evaluation_catalog"
-    ),
-    "evaluate-carry-forward-plan": (
-        "database_url,plan_id,carry_dataset_id,carry_catalog,spot_catalog,funding_catalog,"
-        "evaluation_catalog"
     ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
@@ -81,9 +69,6 @@ CLI_CONTRACT = {
     "register-assessment-forward-plan": (
         "config,database_url,release_manifest,plan_id,signal_window_start,signal_window_end,"
         "analysis_behavior_hash,minimum_non_overlapping_samples,minimum_capital_opportunities"
-    ),
-    "register-carry-forward-plan": (
-        "database_url,plan_id,symbol,observation_start,observation_end,policy_version"
     ),
     "replay-event-triggers": (
         "config,database_url,event_dataset_id,replay_start,replay_end,"
@@ -261,10 +246,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
-            "carry-walk-forward",
-            "carry-blind-evaluate",
-            "register-carry-forward-plan",
-            "evaluate-carry-forward-plan",
             "screen-signals",
             "walk-forward",
             "blind-evaluate",

@@ -149,19 +149,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 冻结的完整往返成本。自然机会少于 12、仍有未结算 Forecast 或费用后配对收益增量保守下界不为正都不能通过。
 结果进入内容寻址制品；样本充分但失败才登记负面治理事实，通过仍需显式变更提案和新 Mock 授权，不能自行接入资本。
 
-BTC carry 的历史盲区已经被其他候选消费，后续证据只能在未来数据产生前登记：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager register-carry-forward-plan \
-  --plan-id '<唯一计划 ID>' --symbol BTCUSDT \
-  --policy-version 'spot-perp-monthly-risk-30pct-v2' \
-  --observation-start '<未来月初 UTC>' \
-  --observation-end '<至少十二个完整日历月后的月初 UTC>'
-```
-
-窗口结束并经过七天结算宽限后，先用现有冻结命令生成精确同窗口的现货、资金费率和 carry 内容寻址数据，再从预登记的精确 Git 提交及 Python/Pydantic 环境运行 `evaluate-carry-forward-plan --plan-id ... --carry-dataset-id ...`。评价命令在读取调用方指定的数据制品前先校验成熟时间、代码版本和最小依赖环境，随后按 carry 引用加载现货与官方资金费率制品并逐条复核结算；数据窗口、来源、采集时间、资金费率身份或预登记规格任一不符都会失败关闭。连续账本费用后净收益不为正，或采用固定三个月滞后的保守 Newey-West 月度收益下界不为正，均不能通过。它只产生研究结果和失败实验事实，不创建永续适配器、订单或权限。
-
 `dynamic-carry-point-in-time-v2` 已退役。其最终淘汰证据是
 `.runtime/dynamic-carry-replays/dynamic_carry_intraday_replay_3d256fcb7296c85d7848.json`，内容哈希为
 `b10811677926447410f6b4904311e9e49be5e9402b5e3da1641cd5ad57a05ddb`。该偏乐观盘中诊断在全部可表达的
