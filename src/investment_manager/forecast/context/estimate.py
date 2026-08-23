@@ -37,7 +37,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v2"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v3"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -178,7 +178,7 @@ def context_forecast_input_projection(
             "evaluation_at": slot.evaluation_at,
         },
         "forecast_contract": contract,
-        "world_model": assessment,
+        "world_model": context_forecast_world_model_projection(assessment),
         "target_state": {
             "as_of": target_state.as_of,
             "asset_states": target_state.asset_states,
@@ -186,6 +186,44 @@ def context_forecast_input_projection(
             "data_quality_codes": packet.data_quality_codes,
             "coverage_gap_codes": packet.coverage_gap_codes,
         },
+    }
+
+
+def context_forecast_world_model_projection(
+    assessment: ContextAssessment,
+) -> dict[str, object]:
+    """Keep causal decision content; exclude WorldModel maintenance metadata."""
+
+    return {
+        "assessment_id": assessment.assessment_id,
+        "as_of": assessment.as_of,
+        "available_at": assessment.available_at,
+        "synthesis": assessment.synthesis,
+        "synthesis_horizon_hours": assessment.synthesis_horizon_hours,
+        "event_references": tuple(
+            {
+                "evidence_id": item.evidence_id,
+                "source": item.source,
+                "title": item.title,
+                "event_time": item.event_time,
+                "impact_state": item.impact_state,
+                "rationale": item.rationale,
+            }
+            for item in assessment.event_references
+        ),
+        "mechanisms": tuple(
+            {
+                "mechanism_id": item.mechanism_id,
+                "relationship": item.relationship,
+                "claim": item.claim,
+                "horizon_hours": item.horizon_hours,
+                "causal_chain": item.causal_chain,
+                "transmission_stage": item.transmission_stage,
+                "conflicting_evidence_ids": item.conflicting_evidence_ids,
+                "invalidation_conditions": item.invalidation_conditions,
+            }
+            for item in assessment.mechanisms
+        ),
     }
 
 
@@ -367,7 +405,14 @@ class CodexContextForecastAnalyst:
                     target_state=target_state,
                     target=target,
                 )
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        except ValueError as exc:
+            reason = (
+                "FORECAST_INPUT_TOO_LARGE"
+                if str(exc) == "FORECAST_ESTIMATE 输入超过 Codex 提示容量上限"
+                else "CODEX_BUNDLE_INVALID"
+            )
+            return AnalystResult(False, None, reason)
+        except (OSError, KeyError, json.JSONDecodeError):
             return AnalystResult(False, None, "CODEX_BUNDLE_INVALID")
         return self._router.run(bundle)
 

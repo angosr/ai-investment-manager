@@ -439,6 +439,9 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
         assessment.available_at
     )
     assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
+    assert "verification_tests" not in analysis_input["world_model"]["mechanisms"][0]
+    assert "next_review_at" not in analysis_input["world_model"]["mechanisms"][0]
+    assert "continuity_ref" not in analysis_input["world_model"]["mechanisms"][0]
     assert first.analysis_input_hash == content_hash(analysis_input)
     assert analyst.calls == 1
 

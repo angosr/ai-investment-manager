@@ -129,7 +129,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: product-capital-v9
+  version: product-capital-v10
   enabled: false
   settlement_asset: USDT
   decision:
@@ -231,10 +231,10 @@ capital:
     funding_projection_haircut: "0.50"
     forecast_dispersion_bps: "100"
   context_forecast:
-    version: btc-context-forecast-v1
+    version: btc-context-forecast-v2
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "f2645412c69006cd99364a26f8236c449cd2450d78e96cfe1abeecf5a7140c41"
+    producer_behavior_id: "43dc11ae5cb10728619bed7efa442ec4fe9857e7b13ae9a27213c4f6d38af752"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v1
     target_instrument_key: BINANCE:SPOT:BTCUSDT
