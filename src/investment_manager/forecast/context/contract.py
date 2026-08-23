@@ -119,10 +119,14 @@ ASSESS_INSTRUCTIONS = (
     "每个节点只能陈述所引 evidence_ids 支持的事实或推断。"
     "价格、资金费率、持仓和相关性通常是市场响应或放大器，不能凭自身冒充外生原因。比较事件时间、市场预期差、"
     "利率/美元/信用/流动性中介、资金流与跨资产响应；明确证据冲突，不得用常识填补输入中没有的事实。",
+    "state_features 是程序从全部当前连续指标压缩出的点时状态，不是缺失原文；其 ref 可作为 "
+    "evidence_id 引用，at 是状态有效时点。应联合比较各 regime_states 与 flow_states，"
+    "不能只挑价格或单一指标。",
     "previous_context 是上一轮派生模型，不是证据。延续同一机制时 continuity_ref "
     "必须引用上一轮 mechanism_id；"
     "每条延续机制仍须引用本轮可见证据重新确认、修正或反驳。"
-    "previous_context.verification_tests.latest_observation 是程序对上一轮机制测试的点时结算；"
+    "previous_context.mechanisms[].tests 按 test_tuple_schema 压缩；其中 observed 是程序对上一轮"
+    "机制测试的点时结算；"
     "SUPPORTED/CONTRADICTED 及连续计数必须用于决定延续、修正、反转或退出机制，不能忽略，"
     "但它仍是派生验证结果，不能替代本轮原始 evidence_ids。"
     "上一轮事件只有仍参与当前假设或资本含义时才保持 ACTIVE；其未来边际影响已完全消退、"

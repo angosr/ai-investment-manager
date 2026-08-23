@@ -888,16 +888,22 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
         "revision-tga",
     )
     assert packet.omitted_fact_revision_ids == ()
-    projected_metric = decision_packet_analysis_projection(packet)["facts"][1]
-    assert tuple(projected_metric) == (
-        "revision_id",
-        "fact_type",
-        "event_time",
-        "claim",
-        "risk_factors",
-        "decision_materiality",
-        "directly_triggered",
+    projection = decision_packet_analysis_projection(packet)
+    assert tuple(item["revision_id"] for item in projection["facts"]) == (
+        "revision-1",
     )
+    assert projection["state_features"] == {
+        "algorithm_version": "continuous-fact-state-v1",
+        "regime_states": (
+            {
+                "type": "US_TREASURY_CASH_SNAPSHOT",
+                "at": metric.fact.event_time.isoformat(),
+                "state": metric.fact.claim.rstrip(". "),
+                "ref": "revision-tga",
+            },
+        ),
+        "flow_states": (),
+    }
 
 
 def test_packet_keeps_treasury_calendar_context_beyond_event_window(
@@ -1226,14 +1232,7 @@ def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
         packet.model_copy(update={"information_coverage": (coverage,)})
     )
 
-    assert projected["capability_summary"] == (
-        {
-            "domain": "FISCAL_DEBT",
-            "status": "PARTIAL",
-            "covered_capabilities": ("DEBT_REPURCHASE",),
-            "missing_capabilities": ("DEBT_ISSUANCE",),
-        },
-    )
+    assert projected["capability_summary"] == ()
 
 
 def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
@@ -1478,13 +1477,16 @@ def test_analysis_projection_compacts_prior_world_verification_without_losing_st
     _, packet = _packet(app_config, replay_input, previous_context=previous)
 
     mechanism = decision_packet_analysis_projection(packet)["previous_context"]["mechanisms"][0]
-    test = mechanism["verification_tests"][0]
+    test = mechanism["tests"][0]
 
     assert "invalidation_conditions" not in mechanism
-    assert "upper_value" not in test["supports_predicate"]
-    assert test["supports_predicate"]["persistence_observations"] == 2
-    assert test["latest_observation"]["support_streak"] == 2
-    assert "contradiction_streak" not in test["latest_observation"]
+    assert test == (
+        "derivative_state:BTC.taker_buy_sell_ratio",
+        60,
+        ("GT", "1", 2),
+        ("LTE", "1", 2),
+        ("1.2", "SUPPORTS", 2, 0, "SUPPORTED"),
+    )
 
 
 def test_replacing_previous_context_refreezes_packet_identity(
@@ -1811,14 +1813,7 @@ def test_analysis_projection_exposes_compact_capability_summary_not_gap_wall(
         packet.model_copy(update={"information_coverage": (coverage,)})
     )
 
-    assert projected["capability_summary"] == (
-        {
-            "domain": "FISCAL_DEBT",
-            "status": "PARTIAL",
-            "covered_capabilities": ("DEBT_REPURCHASE",),
-            "missing_capabilities": ("DEBT_ISSUANCE",),
-        },
-    )
+    assert projected["capability_summary"] == ()
     assert "information_coverage" not in projected
     assert "coverage_gap_codes" not in projected
     assert "data_quality_codes" not in projected

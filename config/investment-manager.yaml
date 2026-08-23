@@ -94,10 +94,12 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v35
+    version: decision-packet-policy-v36
     schema_version: decision-packet-v16
-    maximum_facts: 12
-    maximum_fact_characters: 4000
+    # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
+    # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
+    maximum_facts: 20
+    maximum_fact_characters: 6000
     maximum_characters_per_fact: 600
     maximum_background_fact_distance_seconds: 172800
     maximum_calendar_context_distance_seconds: 604800

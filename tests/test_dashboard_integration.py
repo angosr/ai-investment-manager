@@ -502,11 +502,7 @@ def test_capital_dashboard_keeps_assessment_history_in_a_separate_read_only_stor
         packet.analysis_scope
     )
     assert "packet_id" not in assessment_detail.json()["input_snapshot"]
-    assert assessment_detail.json()["input_snapshot"]["capacity_summary"] == {
-        "missing_fact_count": len(packet.missing_fact_revision_ids),
-        "omitted_fact_count": len(packet.omitted_fact_revision_ids),
-        "omitted_intelligence_event_count": len(packet.omitted_intelligence_event_refs),
-    }
+    assert "capacity_summary" not in assessment_detail.json()["input_snapshot"]
     assert "omitted_intelligence_event_refs" not in assessment_detail.json()[
         "input_snapshot"
     ]
