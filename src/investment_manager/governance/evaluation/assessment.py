@@ -228,8 +228,8 @@ def validate_assessment_runtime_plan(
     manifest: ReleaseManifest,
     plans: tuple[EvaluationPlan, ...],
     started_at: datetime,
-) -> tuple[AssessmentForwardEvaluationSpec | ContextCapitalForwardSpec, EvaluationPlan]:
-    """Require one exact preregistered Context behavior before worker startup."""
+) -> tuple[ContextCapitalForwardSpec, EvaluationPlan] | None:
+    """Require a forward plan only when Context can change a program action."""
 
     if config.assessment.mandate.capital_objective is not None:
         return validate_context_capital_runtime_plan(
@@ -239,60 +239,8 @@ def validate_assessment_runtime_plan(
             started_at=started_at,
         )
 
-    from investment_manager.forecast.context.analyst import (
-        configured_assess_behavior_hash,
-    )
-
-    started = require_utc(started_at)
-    mandate = config.assessment.mandate
-    expected_scopes = tuple(
-        sorted(
-            (
-                AssessmentEvaluationScope(
-                    asset=asset.asset,
-                    symbol=asset.market_symbol,
-                    horizon_minutes=horizon,
-                )
-                for asset in mandate.assets
-                for horizon in asset.horizons_minutes
-            ),
-            key=lambda item: (item.asset, item.symbol, item.horizon_minutes),
-        )
-    )
-    candidates: list[tuple[AssessmentForwardEvaluationSpec, EvaluationPlan]] = []
-    for plan in plans:
-        snapshot = plan.candidate_spec_snapshot
-        if not isinstance(snapshot, dict) or snapshot.get("version") != (
-            "context-assessment-forward-spec-v1"
-        ):
-            continue
-        try:
-            spec = AssessmentForwardEvaluationSpec.model_validate(snapshot)
-            expected_plan = build_assessment_forward_plan(
-                spec=spec,
-                base_manifest_id=manifest.manifest_id,
-                registered_at=plan.registered_at,
-            )
-        except ValueError as exc:
-            raise ValueError("ContextAssessment EvaluationPlan 不是完整预登记合同") from exc
-        if plan != expected_plan:
-            raise ValueError("ContextAssessment EvaluationPlan 与运行 Release 不一致")
-        if (
-            spec.analysis_scope != mandate.analysis_scope
-            or spec.analysis_behavior_hash != configured_assess_behavior_hash(config)
-            or spec.outcome_evaluation_version != config.outcome_evaluation.assessment_version
-            or spec.settlement_grace_minutes != config.outcome_evaluation.settlement_grace_minutes
-            or spec.scopes != expected_scopes
-        ):
-            raise ValueError("ContextAssessment EvaluationPlan 与当前行为不一致")
-        if plan.registered_at > started:
-            raise ValueError("ContextAssessment EvaluationPlan 晚于本次服务启动")
-        if started >= spec.signal_window_end:
-            raise ValueError("ContextAssessment Worker 启动时预登记信号窗口已结束")
-        candidates.append((spec, plan))
-    if len(candidates) != 1:
-        raise ValueError("ContextAssessment Release 必须恰好绑定一个当前行为计划")
-    return candidates[0]
+    require_utc(started_at)
+    return None
 
 
 def evaluate_assessment_forward_plan(
