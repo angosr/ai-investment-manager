@@ -169,5 +169,6 @@ class ContextAssessmentPolicy(StrictConfig):
     review_trigger_symbol: str | None = Field(
         default=None,
         pattern=r"^[A-Z0-9]+$",
+        exclude_if=lambda value: value is None,
     )
     mandate: AnalysisMandate
