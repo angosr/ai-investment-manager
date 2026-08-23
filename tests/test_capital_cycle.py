@@ -212,7 +212,9 @@ class _NoForecastProducer:
         return result
 
 
-def _test_contract_and_binding() -> tuple[ForecastContract, ForecastProducerBinding]:
+def _test_contract_and_binding(
+    *, target: ForecastTarget | None = None
+) -> tuple[ForecastContract, ForecastProducerBinding]:
     buckets = (
         ForecastOutcomeBucket(
             bucket_id="LOSS",
@@ -234,7 +236,7 @@ def _test_contract_and_binding() -> tuple[ForecastContract, ForecastProducerBind
     contract = ForecastContract.create(
         contract_version="test-carry-contract-v1",
         outcome_family_id=_TEST_FORECAST_FAMILY,
-        target=_test_delta_neutral_target(),
+        target=target or _test_delta_neutral_target(),
         outcome_buckets=buckets,
         horizon_minutes=7 * 24 * 60,
         decision_slot_rule="test-slot-v1",
@@ -284,8 +286,9 @@ def _candidate_service(
     raw_score: Decimal = Decimal("40"),
     available_delay_seconds: int = 0,
     emit: bool = True,
+    target: ForecastTarget | None = None,
 ):
-    contract, binding = _test_contract_and_binding()
+    contract, binding = _test_contract_and_binding(target=target)
     contract_store = SqlForecastContractStore(engine)
     authorization = MockCandidateAuthorization(
         version="test-mock-candidate-authorization-v1",
@@ -700,6 +703,39 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert economics.net_bps < economics.entry_threshold_bps
     serialized = serialize_capital_activity((activity,))["actions"][0]
     assert serialized["candidate_economics"][0]["net_bps"] == str(economics.net_bps)
+
+
+def test_spot_only_forecast_receives_only_its_executable_quote() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=72)
+    spot = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.product == InstrumentProduct.SPOT
+    )
+    config, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("9"),
+        target=ForecastTarget.single_long(spot),
+    )
+
+    result = service.produce(
+        as_of=NOW,
+        cause_id="spot-only-candidate-batch",
+        trigger_batch_id="spot-only-candidate-batch",
+        symbol="BTCUSDT",
+        trigger_types=("WORLD_MODEL_UPDATED",),
+    )
+
+    assert result.outcome.value == "PLANNED"
+    assert result.trade_plan is not None
+    assert result.trade_plan.groups == ()
+    activity = CapitalDashboardReader(engine, config).activity()[0]
+    assert len(activity.candidate_economics) == 1
 
 
 def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -> None:

@@ -354,6 +354,7 @@ class CapitalCycleService:
             account=account,
             as_of=decision_at,
         )
+        decision_quotes = self._quotes_for_sleeves(sleeves=sleeves, quotes=quotes)
         risk_profiles = tuple(
             self._risk_profile(
                 item.sleeve_id,
@@ -366,7 +367,7 @@ class CapitalCycleService:
             as_of=decision_at,
             sleeves=sleeves,
             account=account,
-            quotes=quotes,
+            quotes=decision_quotes,
             risk_profiles=risk_profiles,
             execution_specs=self._config.capital.execution_specs,
         )
@@ -391,7 +392,7 @@ class CapitalCycleService:
         result = self._execution.run(
             plan_id=plan.plan_id,
             as_of=decision_at,
-            quotes=quotes,
+            quotes=decision_quotes,
         )
         self._performance.record(result.account)
         logger.info(
@@ -714,12 +715,16 @@ class CapitalCycleService:
                 )
             )
             profiles.append(self._risk_profile(position.sleeve_id, source))
+        decision_quotes = self._quotes_for_sleeves(
+            sleeves=tuple(sleeves),
+            quotes=quotes,
+        )
         protected = self._decisions.protect(
             cycle_id=cycle_id,
             as_of=as_of,
             sleeves=tuple(sleeves),
             account=account,
-            quotes=quotes,
+            quotes=decision_quotes,
             risk_profiles=tuple(profiles),
             execution_specs=self._config.capital.execution_specs,
         )
@@ -730,7 +735,7 @@ class CapitalCycleService:
                 as_of=as_of,
                 sleeves=tuple(sleeves),
                 account=account,
-                quotes=quotes,
+                quotes=decision_quotes,
                 risk_profiles=tuple(profiles),
                 execution_specs=self._config.capital.execution_specs,
             )
@@ -740,7 +745,7 @@ class CapitalCycleService:
         result = self._execution.run(
             plan_id=plan.plan_id,
             as_of=as_of,
-            quotes=quotes,
+            quotes=decision_quotes,
         )
         self._performance.record(result.account)
         logger.info(
@@ -844,6 +849,19 @@ class CapitalCycleService:
             ),
         ]
         return tuple(sorted(values, key=lambda item: item.instrument.key))
+
+    @staticmethod
+    def _quotes_for_sleeves(
+        *,
+        sleeves: tuple[PortfolioSleeveInput, ...],
+        quotes: tuple[ExecutableQuote, ...],
+    ) -> tuple[ExecutableQuote, ...]:
+        required = {
+            leg.instrument.key
+            for sleeve in sleeves
+            for leg in sleeve.forecast.target.legs
+        }
+        return tuple(item for item in quotes if item.instrument.key in required)
 
 
 def assemble_capital_cycle(
