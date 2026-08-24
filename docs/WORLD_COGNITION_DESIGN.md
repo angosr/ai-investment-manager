@@ -135,6 +135,8 @@ WorldModel 面向整个 mandate。低概率但可能造成重大损失的机制�
 
 WorldModel 在以下情况更新：出现材料事实修订或意外事件；活跃机制的验证点到期；固定低频状态复核；主 Agent 立即或未来安排复核。普通行情刷新和 heartbeat 不自动调用 AI，程序化风控也不等待 WorldModel。
 
+WorldModel 更新时钟与 Forecast 合同时钟是两个领域概念，但共用唯一 TriggerCoordinator：前者来自材料变化和显式复核计划；后者由已激活 ProducerBinding 与合同 cadence 确定性地产生槽边界到期事件。Forecast 槽不得靠 heartbeat、新闻或主 Agent 唤醒“顺带命中”，也不能为了准时 Forecast 强制生成一份没有材料变化的新 WorldModel。Heartbeat 只负责恢复遗漏终态、账户和风险复核。
+
 更新流程只有一条：
 
 1. 先持久化新 Evidence 和确定性 State；
@@ -211,6 +213,8 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 | 基线 | 无技巧概率、现金和被动 BTC Spot 暴露 |
 
 保持现役 ForecastContract、producer behavior、输入、成本、门槛和固定槽不变，直到预登记 cohort 达到停止条件或行为明确失败。事件更新只刷新 WorldModel并复核已有判断，不扩张样本；漏过截止的槽记录 `NO_ESTIMATE`，不得在看到后续行情后补跑。负 Forecast 选择现金是完整资本判断：它可以通过避开下跌创造价值，不能做空并不表示预测没有被消费。没有订单、尚无 Outcome 或短期现金状态都不是换产品、放宽门槛或提高频率的理由。
+
+现役槽边界必须由合同调度直接唤醒，并在任意 heartbeat 相位、普通 Release 和进程恢复下保持不变。若调度在截止后才恢复，只能为该槽记录 `NO_ESTIMATE`；不得调短 heartbeat、人工补触发或移动槽位来修饰覆盖率。
 
 现役 4h 是已经开始的隔离 Mock 证据合同，不是长期高频授权，也不能直接晋升为正式低频策略。它回答 Context 是否持续输出并按时结算、WorldModel 是否可能有诊断增量，以及长仓/现金选择在完成后真实成本下是否优于现金与被动 Spot；其已冻结的 cutoff 起点 proper score 若包含 Forecast 完成前行情，只能作诊断，不能授予权限。任何正式资本权限仍需使用完成后可执行 Outcome、并与目标低频持有和再平衡频率匹配的新合同重新验证。
 

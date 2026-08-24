@@ -4,7 +4,7 @@
 
 本文只定义长期稳定的领域边界、决策链和系统不变量。具体资产、时域、特征、模型、Prompt、阈值和资金规模属于可替换的实验或 Release，不得反向塑造架构。当前实现与本文不一致的部分是迁移债务，不是第二套合法设计。
 
-`AGENTS.md` 定义投资和工程原则；[`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md) 定义世界认知方法；[`DASHBOARD_DESIGN.md`](DASHBOARD_DESIGN.md) 定义只读投影。三者不得重复拥有同一业务裁决。
+`AGENTS.md` 定义投资和工程原则；[`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md) 定义世界认知方法；[`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 定义现实结果如何改变未来行为和权限；[`DASHBOARD_DESIGN.md`](DASHBOARD_DESIGN.md) 定义只读投影。这些文档不得重复拥有同一业务裁决。
 
 架构本身不产生盈利。它的作用是让每个投资判断都能被点时重建、现实执行、独立评价、限制权限并在失效后删除。
 
@@ -117,6 +117,10 @@ Evaluation 分开回答四个问题：
 
 每项实验在结果发生前冻结输入、行为身份、成本、基线、评价方法、样本边界和停止条件。评价读取所有预登记样本，包括无预测、未交易和失败样本。结果只能改变未来 Release 或权限，不能选择性改写历史。
 
+WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模型、State、合同、截止时间和输出 Schema 下，评价“读取 WorldModel”与“不读取 WorldModel”的 Forecast。对照结果只进入 Evaluation，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取与样本依赖和完整搜索历史相符的保守下界、校准、覆盖率和多个市场环境表现。静态无技巧分布不能替代滚动无条件分布、简单市场模型和可投资资本基线。
+
+任何实验资本资格必须引用不可变 EvaluationPlan；任何正式权限必须继续引用 EvaluationResult、producer behavior、ForecastContract 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
+
 AI 历史重放可验证数据、Schema 和稳定性，但不能排除模型训练知识泄漏，因此 AI Alpha 和资本权限只由真实前瞻样本证明。任何“已实现”“运行健康”“文字更深”或少量模拟盈利都不等于稳定盈利。
 
 Release 必须冻结所有会改变实际行为或用户所见事实的内容：代码、配置、Schema、Prompt/模型绑定、运行时外部制品和前端构建产物。进程从该提交的冻结 checkout 或内容寻址制品启动，不能从持续开发工作树或未登记的 `web/dist` 提供现役版本。切流 readiness 读取新 Release 自己的 Worker、调度、数据、账户和已启用生产者事实；事实尚未形成时显示 warming，不得用旧 Release 记录或“进程在线”冒充 ready，也不得为了 ready 伪造资本行动。
@@ -157,7 +161,9 @@ Scheduling 只表达“何时重新运行哪项用例”，触发来源只有四
 3. 行情、账户和持仓异常推动程序化 Risk 复核；
 4. 主 Agent 可立即触发或增删未来触发点，并永久记录理由和版本。
 
-Heartbeat 只恢复到期任务、结算、对账和预登记 Forecast 槽；只有命中尚未完成且仍在截止期内的槽，才允许为该槽调用一次 Forecast 生产者。它不自动更新 WorldModel，也不能在槽外重复调用 Codex。事件可以更新 WorldModel 或触发资本/风险复核，但不能额外制造 Forecast 样本。程序化市场保护和风险退出不等待 AI。相同任务身份只能产生一次有效运行，重试和账号切换不能制造新预测样本。
+Forecast 固定槽由同一个 TriggerCoordinator 根据已激活 Binding 和合同 cadence 在槽边界产生内部 `FORECAST_SLOT_DUE`，不得依赖 WorldModel heartbeat 的相位、主 Agent 临时时点或行情事件碰巧跨过槽边界。它只唤醒已预登记 Forecast 用例，不强制重做 WorldModel；事件仍只能更新认知或复核已有资本判断，不能额外制造 Forecast 样本。Pipeline/协调语义变更时新 Coordinator 必须继承同一 Binding 激活点并接管当前槽，纯 Release 继续使用原 Coordinator。
+
+Heartbeat 只恢复到期任务、结算、对账和遗漏的 Forecast 终态；它不自动更新 WorldModel，也不能在槽外重复调用 Codex。槽边界唤醒命中尚未完成且仍在截止期内的槽时调用一次 Forecast 生产者；迟到则保存 `NO_ESTIMATE`。程序化市场保护和风险退出不等待 AI。相同任务身份只能产生一次有效运行，重试、heartbeat 和账号切换不能制造新预测样本。
 
 触发批次只有成功、等待输入和终态失败三种处理结果。可恢复输入缺失保留同一冻结批次并按有界退避重试；Schema 或领域不变量失败只消费一次该批次、推进 heartbeat 锚点并暴露未恢复失败，不能在紧循环中重新生成同一 heartbeat。只有后续批次成功完成后才清除该异常状态，不能用进程存活或队列暂时为空冒充健康。
 

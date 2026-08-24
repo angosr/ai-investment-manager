@@ -226,6 +226,80 @@ def test_trigger_coordinator_consumes_valid_batch_with_no_enabled_consumer(
     asyncio.run(scenario())
 
 
+def test_forecast_slot_wakes_on_contract_boundary_without_heartbeat(app_config) -> None:
+    async def scenario() -> None:
+        batches: list[dict] = []
+
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def capture_forecast_slot(raw_batch):
+            batches.append(raw_batch)
+            return {"workflow_dispatches": []}
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            test_now = await env.get_current_time()
+            context = app_config.capital.context_forecast
+            assert context is not None
+            capital = app_config.capital.model_copy(
+                update={
+                    "enabled": True,
+                    "context_forecast": context.model_copy(
+                        update={"enabled": True, "cadence_minutes": 1}
+                    ),
+                }
+            )
+            trigger_queue = "forecast-slot-boundary-test"
+            temporal = app_config.temporal.model_copy(
+                update={"trigger_task_queue": trigger_queue}
+            )
+            config = app_config.model_copy(
+                update={"capital": capital, "temporal": temporal}
+            )
+            symbol = config.assessment.review_trigger_symbol
+            plan = build_initial_trigger_plan(
+                symbol=symbol,
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=test_now,
+                heartbeat_seconds=None,
+            )
+            next_slot = datetime.fromtimestamp(
+                (int(test_now.timestamp()) // 60 + 1) * 60,
+                tz=UTC,
+            )
+            coordinator_input = build_trigger_coordinator_input(
+                plan,
+                config,
+                context_forecast_activation_at=test_now,
+            )
+            assert coordinator_input["settings"]["context_forecast_cadence_seconds"] == 60
+
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[capture_forecast_slot],
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    coordinator_input,
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await env.sleep(next_slot - test_now + timedelta(seconds=1))
+                for _ in range(100):
+                    if batches:
+                        break
+                    await asyncio.sleep(0.01)
+                assert len(batches) == 1
+                trigger = batches[0]["triggers"][0]
+                assert trigger["trigger_type"] == AnalysisTriggerType.FORECAST_SLOT_DUE.value
+                assert datetime.fromisoformat(trigger["occurred_at"]) == next_slot
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
 def test_trigger_created_before_first_workflow_task_is_not_lost(app_config) -> None:
     async def scenario() -> None:
         @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)

@@ -111,7 +111,16 @@ def run_trigger_service(
         )
         dispatcher = TriggerOutboxDispatcherService(
             repository=repository,
-            dispatcher=TemporalTriggerDispatcher(client, config, repository),
+            dispatcher=TemporalTriggerDispatcher(
+                client,
+                config,
+                repository,
+                context_forecast_activation_at=(
+                    capital_consumer.context_activation_at
+                    if capital_consumer is not None
+                    else None
+                ),
+            ),
             poll_seconds=config.trigger.outbox_fallback_poll_seconds,
             wakeup=wakeup,
         )

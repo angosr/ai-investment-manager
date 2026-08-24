@@ -128,7 +128,7 @@ class WorldEvent:
     """世界事件时间线一行：一条采集到的新闻或一个触发事件。"""
 
     event_id: str
-    kind: str  # "NEWS" | "MARKET_SHOCK" | "POSITION_RECHECK" | "INTELLIGENCE_INSERTED"
+    kind: str  # Evidence or typed scheduling event; API preserves the exact kind.
     at: datetime
     source: str
     title: str
@@ -555,6 +555,7 @@ class DashboardReader:
             "POSITION_RECHECK": "持仓状态触发风险复检",
             "CANONICAL_FACT_REVISED": "关键事实修订触发重新分析",
             "HEARTBEAT": "例行状态检查",
+            "FORECAST_SLOT_DUE": "合同预测时点到期",
         }
         sources = {
             "MARKET_SHOCK": "Binance 行情",
@@ -562,6 +563,7 @@ class DashboardReader:
             "AGENT_WAKEUP": "主 Agent",
             "CANONICAL_FACT_REVISED": "事实协调器",
             "HEARTBEAT": "系统调度",
+            "FORECAST_SLOT_DUE": "预测调度",
         }
         events: list[WorldEvent] = []
         for row in rows:

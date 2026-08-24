@@ -26,7 +26,7 @@ Evidence → State → WorldModel → Forecast → PortfolioTarget
 - Portfolio 在现金、当前持有和合法候选之间比较真实未来成本。
 - Risk 对投资目标批准、缩减或拒绝；硬风险异常可直接签发只减险授权，但不能创造投资目标。
 - Execution 只消费 Risk 授权，并以稳定订单身份、恢复和对账收敛场所账户。
-- 动态事件更新 WorldModel 或复核持仓；Forecast 使用独立固定合同节拍。错过的槽位记录 `NO_ESTIMATE`，不事后补跑 AI。
+- 动态事件更新 WorldModel 或复核持仓；Forecast 由合同槽边界直接唤醒，不依赖 heartbeat 相位。错过的槽位记录 `NO_ESTIMATE`，不事后补跑 AI。
 - 模拟盘和未来正式盘在 Venue 边界以上必须使用同一条链；正式 Venue 尚未达到等价性，因此保持失败关闭。
 
 ## 目录

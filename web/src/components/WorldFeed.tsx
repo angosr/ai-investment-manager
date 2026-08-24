@@ -94,4 +94,5 @@ const EVENT_LABEL: Record<string, string> = {
   AGENT_WAKEUP: "AI 分析请求",
   CANONICAL_FACT_REVISED: "事实修订",
   HEARTBEAT: "例行检查",
+  FORECAST_SLOT_DUE: "预测时点",
 };

@@ -165,8 +165,14 @@ class TriggerDispatchBuilder:
             reviews_by_id[review.review_id] = review
         review_requests = tuple(reviews_by_id[item] for item in sorted(reviews_by_id))
         dispatches: list[AnalysisDispatchRequest] = []
-        assessment_triggered = any(
-            item != AnalysisTriggerType.WORLD_MODEL_UPDATED for item in trigger_types
+        assessment_triggered = bool(
+            trigger_types
+            & {
+                AnalysisTriggerType.CANONICAL_FACT_REVISED,
+                AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                AnalysisTriggerType.MARKET_SHOCK,
+                AnalysisTriggerType.AGENT_WAKEUP,
+            }
         )
         if self._config.assessment.enabled and assessment_triggered:
             assert self._packet_preparation is not None

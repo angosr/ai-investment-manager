@@ -160,13 +160,13 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
         heartbeat_seconds=900,
     )
     trigger = build_trigger_event(
-        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
         symbol="BTCUSDT",
         pipeline_id=config.pipeline.version,
         occurred_at=NOW,
         observed_at=NOW,
         priority=1,
-        dedup_key="heartbeat-1",
+        dedup_key="forecast-slot-1",
     )
     producer = RecordingForecastProducer()
     consumer = RecordingBatchConsumer()
@@ -188,6 +188,50 @@ def test_trigger_builder_advances_program_forecast_without_ai_dispatch(
     assert consumer.batch == batch
 
 
+def test_heartbeat_reviews_consumers_without_updating_world_model(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=1,
+        dedup_key="heartbeat-review-only",
+    )
+    preparation = RecordingPacketPreparation()
+    consumer = RecordingBatchConsumer()
+    batch = build_trigger_batch(
+        plan=plan,
+        triggers=(trigger,),
+        created_at=NOW,
+        deadline=NOW + timedelta(minutes=5),
+    )
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=preparation,
+        assessment_history=EmptyAssessmentHistory(),
+        program_batch_consumers=(consumer,),
+    ).build(batch)
+
+    assert dispatches == ()
+    assert preparation.intelligence_evidence_ids is None
+    assert consumer.batch == batch
+
+
 def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_config) -> None:
     config = _shadow_config(app_config)
     plan = build_initial_trigger_plan(
@@ -205,13 +249,13 @@ def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_confi
     )
     for index, created_at in enumerate((NOW, NOW + timedelta(minutes=20)), start=1):
         trigger = build_trigger_event(
-            trigger_type=AnalysisTriggerType.HEARTBEAT,
+            trigger_type=AnalysisTriggerType.FORECAST_SLOT_DUE,
             symbol=plan.symbol,
             pipeline_id=plan.pipeline_id,
             occurred_at=created_at,
             observed_at=created_at,
             priority=1,
-            dedup_key=f"cadence-heartbeat-{index}",
+            dedup_key=f"forecast-slot-due-{index}",
         )
         consumer.consume(
             build_trigger_batch(

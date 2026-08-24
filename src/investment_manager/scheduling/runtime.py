@@ -34,7 +34,20 @@ class OutboxWakeup(Protocol):
     def wait(self, timeout_seconds: float) -> bool: ...
 
 
-def build_trigger_coordinator_input(plan: AnalysisTriggerPlan, config: AppConfig) -> dict[str, Any]:
+def build_trigger_coordinator_input(
+    plan: AnalysisTriggerPlan,
+    config: AppConfig,
+    *,
+    context_forecast_activation_at: datetime | None = None,
+) -> dict[str, Any]:
+    context = config.capital.context_forecast
+    owns_context_forecast = (
+        config.capital.enabled
+        and context is not None
+        and context.enabled
+        and plan.symbol == config.assessment.review_trigger_symbol
+        and context_forecast_activation_at is not None
+    )
     return {
         "workflow_id": coordinator_workflow_id(plan.symbol, plan.pipeline_id),
         "plan": plan.model_dump(mode="json"),
@@ -52,6 +65,14 @@ def build_trigger_coordinator_input(plan: AnalysisTriggerPlan, config: AppConfig
             "retry_maximum_seconds": config.temporal.retry_maximum_seconds,
             "retry_backoff_coefficient": config.temporal.retry_backoff_coefficient,
             "retry_maximum_attempts": config.temporal.retry_maximum_attempts,
+            "context_forecast_cadence_seconds": (
+                context.cadence_minutes * 60 if owns_context_forecast else None
+            ),
+            "context_forecast_activation_at": (
+                context_forecast_activation_at.isoformat()
+                if owns_context_forecast and context_forecast_activation_at is not None
+                else None
+            ),
         },
     }
 
@@ -61,6 +82,7 @@ class TemporalTriggerDispatcher:
     client: Client
     config: AppConfig
     plans: SqlTriggerRepository
+    context_forecast_activation_at: datetime | None = None
 
     async def deliver(self, message: TriggerOutboxMessage) -> None:
         symbol, pipeline_id = message.aggregate_key.split(":", 1)
@@ -72,7 +94,11 @@ class TemporalTriggerDispatcher:
         with suppress(WorkflowAlreadyStartedError):
             await self.client.start_workflow(
                 TriggerCoordinatorWorkflow.run,
-                build_trigger_coordinator_input(plan, self.config),
+                build_trigger_coordinator_input(
+                    plan,
+                    self.config,
+                    context_forecast_activation_at=self.context_forecast_activation_at,
+                ),
                 id=workflow_id,
                 task_queue=self.config.temporal.trigger_task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,

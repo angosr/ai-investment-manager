@@ -48,7 +48,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-事件触发只更新 WorldModel或复核当前持仓，不直接改变固定 Forecast cohort。Context Forecast 按 ForecastContract 的固定 cadence 形成槽义务：
+事件触发只更新 WorldModel或复核当前持仓，不直接改变固定 Forecast cohort。Context Forecast 由 TriggerCoordinator 按 ProducerBinding 激活点和 ForecastContract cadence 在槽边界直接唤醒，不依赖 heartbeat 相位或临时时点：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
@@ -56,7 +56,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 - ProducerBinding 首次激活前已经开始的槽不归属于该行为，也不能追记为漏报；行为等价的新 Release 不重置该激活点；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
-Heartbeat 负责恢复到期任务、账户投影、对账和风险复核。全现金且没有新 Forecast/Target/订单时不生成行动条目。
+Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。全现金且没有新 Forecast/Target/订单时不生成行动条目。
 
 ## 5. Codex 账号
 

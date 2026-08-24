@@ -154,7 +154,12 @@ class CapitalTriggerConsumer:
         if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
             return None
         if self.context_cadence_minutes is not None and any(
-            item.trigger_type == AnalysisTriggerType.HEARTBEAT for item in batch.triggers
+            item.trigger_type
+            in {
+                AnalysisTriggerType.HEARTBEAT,
+                AnalysisTriggerType.FORECAST_SLOT_DUE,
+            }
+            for item in batch.triggers
         ):
             cadence_seconds = self.context_cadence_minutes * 60
             slot_at = datetime.fromtimestamp(
