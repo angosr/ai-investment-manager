@@ -113,7 +113,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。
 - Treasury 暂定回购日历每 6 小时检查一次，原文、操作修订和取消记录永久保留；首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核。计划上限不是实际接受金额，也不能视为 Fed QE；财政域在债务发行数据接入前仍应显示 `PARTIAL`。
 - IBIT、ARKB、BITB 官方持仓首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI；BTC/ETH 合计流量以显式 `AGGREGATOR` 来源独立入库。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；覆盖状态可在全部声明能力健康时显示 `CURRENT`，但不得把聚合流量升级为一手事实，也不得用持仓冒充净申赎。
-- release 切换时，`trigger-service` 会终止同一交易范围内旧 pipeline 的 durable coordinator；旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
+- release 切换时，`trigger-service` 会按每个已知 pipeline 的最后 TriggerPlan 终止同一交易范围内仍在运行的旧 durable coordinator；即使旧计划已没有 `is_current` revision，也不能漏过孤儿 Workflow。旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
 - `outcome-evaluation-service`：唯一的 Forecast 与历史结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，结算程序 Forecast，并继续收尾旧 Proposal 与旧 `ContextAssessment` Directional View；世界模型不产生短周期 View，不为它新增逐次方向结算服务。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
 

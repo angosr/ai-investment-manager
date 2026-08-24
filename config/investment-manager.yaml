@@ -341,7 +341,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v16
+  version: analysis-trigger-v17
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"

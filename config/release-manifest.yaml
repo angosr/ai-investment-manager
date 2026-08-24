@@ -18,7 +18,7 @@ component_versions:
   - [execution, mock-execution-v1]
   - [reconciliation, reconciliation-v1]
   - [outcome_evaluation, outcome-window-v9]
-  - [trigger, analysis-trigger-v16]
+  - [trigger, analysis-trigger-v17]
   - [temporal, temporal-analysis-v2]
   - [market_data, binance-public-shadow-v9]
   - [shadow, shadow-simulation-v2]

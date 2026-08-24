@@ -54,7 +54,7 @@ def run_trigger_service(
         )
         terminated = await terminate_superseded_trigger_coordinators(
             client=client,
-            plans=repository.current_plans_for_symbols(config.market_data.symbols),
+            plans=repository.latest_plans_for_all_pipelines(config.market_data.symbols),
             active_pipeline_id=config.pipeline.version,
         )
         if terminated and on_superseded is not None:

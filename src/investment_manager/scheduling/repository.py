@@ -268,6 +268,43 @@ class SqlTriggerRepository:
             ).scalars()
             return tuple(AnalysisTriggerPlan.model_validate(payload) for payload in payloads)
 
+    def latest_plans_for_all_pipelines(
+        self,
+        symbols: tuple[str, ...],
+    ) -> tuple[AnalysisTriggerPlan, ...]:
+        """Return the last known plan even when an old pipeline has no current row."""
+
+        if not symbols:
+            return ()
+        latest = (
+            select(
+                analysis_trigger_plans.c.symbol.label("symbol"),
+                analysis_trigger_plans.c.pipeline_id.label("pipeline_id"),
+                func.max(analysis_trigger_plans.c.revision).label("revision"),
+            )
+            .where(analysis_trigger_plans.c.symbol.in_(symbols))
+            .group_by(
+                analysis_trigger_plans.c.symbol,
+                analysis_trigger_plans.c.pipeline_id,
+            )
+            .subquery()
+        )
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(analysis_trigger_plans.c.payload)
+                .join(
+                    latest,
+                    (analysis_trigger_plans.c.symbol == latest.c.symbol)
+                    & (analysis_trigger_plans.c.pipeline_id == latest.c.pipeline_id)
+                    & (analysis_trigger_plans.c.revision == latest.c.revision),
+                )
+                .order_by(
+                    analysis_trigger_plans.c.symbol,
+                    analysis_trigger_plans.c.pipeline_id,
+                )
+            ).scalars()
+            return tuple(AnalysisTriggerPlan.model_validate(payload) for payload in payloads)
+
     def apply_patch(
         self,
         patch: TriggerPlanPatch,
