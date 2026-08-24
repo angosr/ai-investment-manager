@@ -130,6 +130,35 @@ def test_contract_identity_is_source_independent_and_slot_is_stable() -> None:
     assert program.contract_id == context.contract_id == contract.contract_id
 
 
+def test_capital_permission_is_venue_neutral_and_normalizes_legacy_storage() -> None:
+    contract = _contract()
+    permission = ForecastPermission.CAPITAL_CANDIDATE
+    assert permission.value == "CAPITAL_CANDIDATE"
+    assert ForecastPermission("MOCK") is permission
+
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.CONTEXT.value,
+            "codex",
+            "codex-v1",
+            permission.identity_value,
+            (),
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id="codex",
+        producer_behavior_id="codex-v1",
+        permission=permission,
+    )
+    legacy_payload = binding.model_dump(mode="json")
+    legacy_payload["permission"] = "MOCK"
+
+    assert ForecastProducerBinding.model_validate(legacy_payload) == binding
+    assert binding.model_dump(mode="json")["permission"] == "CAPITAL_CANDIDATE"
+
+
 def test_contract_rejects_probability_gap_and_untradeable_deadline() -> None:
     contract = _contract()
     payload = contract.model_dump(mode="python")

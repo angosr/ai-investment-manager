@@ -370,7 +370,7 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
             ForecastProducerKind.CONTEXT.value,
             policy.producer_id,
             policy.producer_behavior_id,
-            ForecastPermission.CAPITAL_CANDIDATE.value,
+            ForecastPermission.CAPITAL_CANDIDATE.identity_value,
             policy.required_feature_keys,
         ),
         contract_id=contract.contract_id,

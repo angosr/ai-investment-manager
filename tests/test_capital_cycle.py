@@ -266,7 +266,7 @@ def _test_contract_and_binding(
             ForecastProducerKind.PROGRAM.value,
             _TEST_PRODUCER_ID,
             _TEST_PRODUCER_VERSION,
-            ForecastPermission.CAPITAL_CANDIDATE.value,
+            ForecastPermission.CAPITAL_CANDIDATE.identity_value,
             (),
         ),
         contract_id=contract.contract_id,

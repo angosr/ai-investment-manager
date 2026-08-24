@@ -1058,7 +1058,7 @@ def assemble_capital_cycle(
                     ForecastProducerKind.CONTEXT.value,
                     context.producer_id,
                     context.producer_behavior_id,
-                    ForecastPermission.CAPITAL_CANDIDATE.value,
+                    ForecastPermission.CAPITAL_CANDIDATE.identity_value,
                     context.required_feature_keys,
                 ),
                 contract_id=contract.contract_id,

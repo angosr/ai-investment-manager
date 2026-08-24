@@ -24,10 +24,24 @@ class ForecastProducerKind(StrEnum):
 
 class ForecastPermission(StrEnum):
     RESEARCH = "RESEARCH"
-    # The stored value is retained so immutable pre-neutral-vocabulary bindings
-    # keep the same identity. Domain code only sees capital eligibility; venue
-    # selection remains a system-assembly concern.
-    CAPITAL_CANDIDATE = "MOCK"
+    CAPITAL_CANDIDATE = "CAPITAL_CANDIDATE"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        # Historical immutable bindings used the deployment-flavoured value
+        # "MOCK". Normalize it at the storage boundary; domain code only sees
+        # capital eligibility and never the venue mode.
+        if value == "MOCK":
+            return cls.CAPITAL_CANDIDATE
+        return None
+
+    @property
+    def identity_value(self) -> str:
+        # Binding identity predates the neutral vocabulary. Keep its hash stable
+        # without keeping the obsolete word in the domain value.
+        if self is ForecastPermission.CAPITAL_CANDIDATE:
+            return "MOCK"
+        return self.value
 
 
 class ForecastNoEstimateReason(StrEnum):
@@ -277,7 +291,7 @@ class ForecastProducerBinding(FrozenModel):
             self.producer_kind.value,
             self.producer_id,
             self.producer_behavior_id,
-            self.permission.value,
+            self.permission.identity_value,
             self.required_feature_keys,
         )
         if self.binding_id != expected:
