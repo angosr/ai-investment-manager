@@ -41,7 +41,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-spot-capital-shadow-v25
+  version: world-forecast-spot-capital-shadow-v26
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

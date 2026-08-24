@@ -7,7 +7,6 @@ Decimal 一律转字符串保精度，datetime 转 ISO8601。措辞与摘要拼�
 
 from __future__ import annotations
 
-import re
 from decimal import Decimal
 
 from investment_manager.entrypoints.dashboard import formatting as fmt
@@ -440,10 +439,8 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
-    """Return the first complete conclusion, never a clipped text prefix."""
-    synthesis = " ".join(assessment.synthesis.split())
-    sentence_end = re.search(r"[。！？!?](?:[”’\"']|$)?", synthesis)
-    return synthesis[: sentence_end.end()] if sentence_end else synthesis
+    """Use the highest-decision-value mechanism as the compact conclusion."""
+    return assessment.mechanisms[0].claim
 
 
 def _assessment_cited_ids(assessment) -> tuple[str, ...]:

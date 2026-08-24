@@ -89,23 +89,19 @@ def test_assessment_evidence_catalog_resolves_derivative_state() -> None:
     assert "OI 变化 0.02" in catalog[evidence_ref]["detail"]
 
 
-def test_world_cognition_summary_is_one_complete_conclusion() -> None:
+def test_world_cognition_summary_is_the_highest_value_mechanism() -> None:
     assessment = SimpleNamespace(
-        synthesis=(
-            "流动性改善正在强化风险偏好，但信用走阔仍限制持续性。"
-            "政策路径是下一阶段最大的反转风险。"
-        )
+        synthesis="完整联合认知不应该在列表中被截成前缀。",
+        mechanisms=(
+            SimpleNamespace(claim="流动性改善，但信用走阔仍限制风险偏好。"),
+            SimpleNamespace(claim="政策路径是下一阶段最大的反转风险。"),
+        ),
     )
 
     summary = ser._assessment_summary(assessment)
 
-    assert summary == "流动性改善正在强化风险偏好，但信用走阔仍限制持续性。"
-
-
-def test_world_cognition_summary_preserves_unpunctuated_synthesis() -> None:
-    assessment = SimpleNamespace(synthesis="流动性改善但信用条件仍有约束")
-
-    assert ser._assessment_summary(assessment) == assessment.synthesis
+    assert summary == assessment.mechanisms[0].claim
+    assert summary not in assessment.synthesis
 
 
 def test_health_uses_authoritative_per_scope_heartbeat() -> None:
