@@ -50,9 +50,9 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-主线已经具备 `Forecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → AccountSnapshot` 的通用资本基础。已证伪的 carry 运行路径已经退出，只保留不可变研究结果；当前现金状态不代表已经证明“没有机会”。目标方向实验和迁移边界以权威架构为准。
+主线已经具备 `Forecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → AccountSnapshot` 的通用资本基础。已证伪的 carry 运行路径已经退出，只保留不可变研究结果；当前现金状态不代表已经证明“没有机会”。现役 BTC Spot Forecast 行为保持冻结并连续结算，后续产品顺序以权威设计为准。
 
-尚未完成且不能由仓库自行假定完成：WorldModel 对 Forecast 的前瞻增量、可获得资本权限的方向 Forecast、USD-M 账户/保证金/资金流水权威对账，以及足以判断费用后长期增量的样本。当前结果可核对不等于已经盈利；Spot Testnet 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：WorldModel 对 Forecast 的前瞻增量、现役行为足够的同口径 Outcome、official Venue 与 simulated Venue 的等价性，以及足以判断费用后长期增量的样本。当前结果可核对不等于已经盈利；Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
@@ -218,7 +218,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-ma
   --release-manifest '<冻结 Shadow ReleaseManifest>' --host 127.0.0.1 --port 8093
 ```
 
-五个投资服务与只读 Dashboard 共享同一份 ReleaseManifest，但权限可分别收窄。Mock 账户投影和持仓复核由 `trigger-service` 的 Portfolio heartbeat 完成，不存在第二个对账进程；固定 Forecast 槽内的其余 heartbeat 仍须刷新账户，但全现金无变化时不生成行动噪音。旧 `temporal-worker` 与 `lifecycle-service` 不在当前无交易权限的 Assessment Shadow 中启动；前者没有主线消费者，后者只有在新 TradePlan 执行链获得权限并可能产生持仓后才需要。每个长期进程启动时都核对完整规范化配置哈希、类型化组件版本、实际 Git 提交和运行 checkout 洁净度；任一数值阈值、账号白名单或源码漂移都失败关闭。Codex 运行包同时记录精确 `code_version` 与配置哈希，不接受版本字符串相同但内容已变的配置。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
+投资服务与只读 Dashboard 共享同一份 ReleaseManifest，但权限可分别收窄。Mock 账户投影和持仓复核由同一资本 heartbeat 完成，不存在第二个对账进程；全现金且事实无变化时不生成行动噪音。目标部署必须从 Manifest 对应提交的冻结 checkout 启动，并核对完整配置、代码、Prompt/模型绑定和实际前端构建制品；当前 `web/dist` 尚未进入 ReleaseArtifact，完成前不能宣称前端与 Release 同内容冻结。Codex 运行包记录精确代码与配置身份，Shadow 不加载 Binance Secret。
 
 ### 运行 Binance Spot Testnet
 
