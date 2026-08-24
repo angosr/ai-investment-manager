@@ -11,7 +11,7 @@ component_versions:
   - [decision_state, portfolio-state-v36]
   - [strategy, price-trend-v4]
   - [calibration, edge-calibration-v1]
-  - [capital, spot-capital-v20]
+  - [capital, spot-capital-v21]
   - [composition, calibrated-net-edge-v1]
   - [frequency, frequency-v4]
   - [risk, risk-v1]

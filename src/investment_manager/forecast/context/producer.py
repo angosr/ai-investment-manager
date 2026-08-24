@@ -180,7 +180,7 @@ def context_spot_forecast_contract(
         allowed_orientations=(ForecastOrientation.CANONICAL,),
         outcome_buckets=policy.outcome_buckets,
         horizon_minutes=policy.horizon_minutes,
-        decision_slot_rule="fixed-utc-cadence-v3",
+        decision_slot_rule="fixed-utc-cadence-after-release-activation-v4",
         evaluation_trigger="contract-cadence-only-v2",
         information_cutoff_rule="fresh-target-state-at-slot-v2",
         completion_deadline_seconds=policy.completion_deadline_seconds,
