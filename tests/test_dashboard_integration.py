@@ -228,7 +228,7 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
 
     dto = ser.assessment_detail(AssessmentRecord(assessment=assessment, packet=packet))
 
-    assert dto["schema_version"] == "world-model-assessment-v2"
+    assert dto["schema_version"] == "world-model-assessment-v3"
     assert dto["synthesis"] == assessment.synthesis
     assert (
         dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]

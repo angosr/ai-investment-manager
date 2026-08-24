@@ -140,7 +140,7 @@ export interface CapitalAction {
 }
 
 export interface AssessmentRecordRow {
-  schema_version: "world-model-assessment-v2";
+  schema_version: "world-model-assessment-v2" | "world-model-assessment-v3";
   assessment_id: string;
   at: string;
   scope: string;
@@ -201,6 +201,11 @@ export interface AssessmentRecordDetail extends AssessmentRecordRow {
     }[];
     invalidation_conditions: string[];
     next_review_at: string;
+  }[];
+  retired_mechanisms: {
+    previous_mechanism_id: string;
+    rationale: string;
+    evidence: AssessmentEvidence[];
   }[];
   event_references: {
     evidence_id: string;

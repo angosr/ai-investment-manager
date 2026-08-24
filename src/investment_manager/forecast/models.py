@@ -365,6 +365,20 @@ class ContextMechanism(FrozenModel):
         return self
 
 
+class ContextMechanismRetirement(FrozenModel):
+    """Explicit removal of one mechanism from the immediately previous snapshot."""
+
+    previous_mechanism_id: str = Field(min_length=1)
+    rationale: str = Field(min_length=1, max_length=600)
+    evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def evidence_must_be_unique(self):
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("世界机制退休回执不能重复引用证据")
+        return self
+
+
 class ContextEventReference(FrozenModel):
     """Derived event relevance in one immutable world-cognition snapshot."""
 
@@ -392,7 +406,10 @@ class ContextEventReference(FrozenModel):
 class ContextAssessment(FrozenModel):
     """The sole current WorldModel schema; historical shapes live only in archives."""
 
-    schema_version: Literal["world-model-assessment-v2"] = "world-model-assessment-v2"
+    schema_version: Literal[
+        "world-model-assessment-v2",
+        "world-model-assessment-v3",
+    ] = "world-model-assessment-v3"
     assessment_id: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     mandate_version: str = Field(min_length=1)
@@ -405,6 +422,7 @@ class ContextAssessment(FrozenModel):
     synthesis: str = Field(min_length=1, max_length=2_000)
     synthesis_horizon_hours: int = Field(gt=0, le=17_520)
     mechanisms: tuple[ContextMechanism, ...] = Field(min_length=1)
+    retired_mechanisms: tuple[ContextMechanismRetirement, ...] = ()
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -421,6 +439,13 @@ class ContextAssessment(FrozenModel):
         mechanism_ids = tuple(item.mechanism_id for item in self.mechanisms)
         if len(set(mechanism_ids)) != len(mechanism_ids):
             raise ValueError("WorldModel 不能重复 mechanism_id")
+        retirement_ids = tuple(
+            item.previous_mechanism_id for item in self.retired_mechanisms
+        )
+        if len(set(retirement_ids)) != len(retirement_ids):
+            raise ValueError("WorldModel 不能重复退休同一上一轮机制")
+        if self.schema_version == "world-model-assessment-v2" and retirement_ids:
+            raise ValueError("v2 WorldModel 不包含机制退休回执")
         if any(item.next_review_at <= self.as_of for item in self.mechanisms):
             raise ValueError("世界假设 next_review_at 必须晚于分析时点")
         return self

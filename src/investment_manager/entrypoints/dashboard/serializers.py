@@ -155,6 +155,17 @@ def assessment_detail(
             }
             for mechanism in assessment.mechanisms
         ],
+        "retired_mechanisms": [
+            {
+                "previous_mechanism_id": item.previous_mechanism_id,
+                "rationale": item.rationale,
+                "evidence": _resolve_assessment_evidence(
+                    item.evidence_ids,
+                    evidence_catalog,
+                ),
+            }
+            for item in assessment.retired_mechanisms
+        ],
         "event_references": [
             {
                 "evidence_id": item.evidence_id,

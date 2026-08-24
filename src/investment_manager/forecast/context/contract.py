@@ -11,6 +11,7 @@ from investment_manager.forecast.models import (
     ContextEventReference,
     ContextMechanism,
     ContextMechanismRelationship,
+    ContextMechanismRetirement,
     ContextTransmissionStage,
     ContextVerificationPredicate,
     ContextVerificationTest,
@@ -64,6 +65,7 @@ class WorldModelDraft(FrozenModel):
     synthesis: str = Field(min_length=1, max_length=2_000)
     synthesis_horizon_hours: int = Field(gt=0, le=17_520)
     mechanisms: tuple[ContextMechanismDraft, ...] = Field(min_length=1)
+    retired_mechanisms: tuple[ContextMechanismRetirement, ...] = ()
     event_relevance_updates: tuple[ContextEventReferenceUpdate, ...] = ()
 
 
@@ -100,6 +102,10 @@ ASSESS_INSTRUCTIONS = (
     "若没有更晚的同类状态确认，不得称为当前市场预期，也不得与当前资产响应伪造同步因果。",
     "previous_context 是上一轮派生模型，不是证据。延续同一机制时 continuity_ref "
     "必须引用上一轮 mechanism_id；"
+    "上一轮每个 mechanism_id 必须且只能闭合一次：仍影响当前判断时由一个当前机制的 "
+    "continuity_ref 延续；影响已耗尽、被证伪、被更强解释替代或不再具有组合决策价值时，"
+    "写入 retired_mechanisms，并用本轮可见 evidence_ids 说明原因。不得静默省略上一轮机制。"
+    "synthesis 必须覆盖退休后仍留在当前快照中的全部主要机制。"
     "每条延续机制仍须引用本轮可见证据重新确认、修正或反驳。"
     "previous_context.mechanisms[].tests 按 test_tuple_schema 压缩；其中 observed 是程序对上一轮"
     "机制测试的点时结算；"
@@ -264,6 +270,7 @@ def finalize_world_model(
     continuity_refs = tuple(
         item.continuity_ref for item in draft.mechanisms if item.continuity_ref is not None
     )
+    retired_ids = tuple(item.previous_mechanism_id for item in draft.retired_mechanisms)
     unknown_continuity = tuple(sorted(set(continuity_refs) - previous_ids))
     if unknown_continuity:
         raise ContextAssessmentContractError(
@@ -274,6 +281,31 @@ def finalize_world_model(
         raise ContextAssessmentContractError(
             "WORLD_MODEL_CONTINUITY_DUPLICATED",
             "多个当前机制不能继承同一个上一轮机制",
+        )
+    unknown_retirements = tuple(sorted(set(retired_ids) - previous_ids))
+    if unknown_retirements:
+        raise ContextAssessmentContractError(
+            "WORLD_MODEL_RETIREMENT_NOT_VISIBLE",
+            f"世界机制退休了不可见的上一轮机制: {unknown_retirements}",
+        )
+    if len(set(retired_ids)) != len(retired_ids):
+        raise ContextAssessmentContractError(
+            "WORLD_MODEL_RETIREMENT_DUPLICATED",
+            "同一个上一轮机制不能被重复退休",
+        )
+    overlapping_dispositions = tuple(sorted(set(continuity_refs).intersection(retired_ids)))
+    if overlapping_dispositions:
+        raise ContextAssessmentContractError(
+            "WORLD_MODEL_DISPOSITION_CONFLICTED",
+            f"上一轮机制不能同时延续和退休: {overlapping_dispositions}",
+        )
+    unresolved_previous = tuple(
+        sorted(previous_ids - set(continuity_refs) - set(retired_ids))
+    )
+    if unresolved_previous:
+        raise ContextAssessmentContractError(
+            "WORLD_MODEL_MECHANISM_LIFECYCLE_UNRESOLVED",
+            f"上一轮机制必须延续或明确退休: {unresolved_previous}",
         )
     visible_evidence = set(assessment_visible_evidence_ids(packet))
     causal_evidence = {
@@ -295,6 +327,20 @@ def finalize_world_model(
             f"世界机制引用了不可见证据: {unknown_evidence}",
         )
     current_evidence = assessment_current_evidence_ids(packet)
+    retirement_evidence = {
+        evidence_id
+        for retirement in draft.retired_mechanisms
+        for evidence_id in retirement.evidence_ids
+    }
+    unknown_retirement_evidence = tuple(
+        sorted(retirement_evidence - current_evidence)
+    )
+    if unknown_retirement_evidence:
+        raise ContextAssessmentContractError(
+            "WORLD_MODEL_RETIREMENT_EVIDENCE_NOT_CURRENT",
+            "机制退休只能引用本轮可见证据: "
+            f"{unknown_retirement_evidence}",
+        )
     stale_continuity = tuple(
         index
         for index, mechanism in enumerate(draft.mechanisms)
@@ -396,6 +442,7 @@ def finalize_world_model(
         synthesis=draft.synthesis,
         synthesis_horizon_hours=draft.synthesis_horizon_hours,
         mechanisms=mechanisms,
+        retired_mechanisms=draft.retired_mechanisms,
         event_references=event_references,
     )
 

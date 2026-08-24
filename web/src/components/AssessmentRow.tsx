@@ -171,6 +171,18 @@ function WorldModelView({ detail }: { detail: AssessmentRecordDetail }) {
           </div>
         </SnapshotSection>
       ))}
+      {detail.retired_mechanisms.length ? (
+        <SnapshotSection title="本次退出的上一轮机制">
+          <ul className={styles.snapshotList}>
+            {detail.retired_mechanisms.map((item) => (
+              <li key={item.previous_mechanism_id}>
+                <b>{item.rationale}</b>
+                <EvidenceRefs evidence={item.evidence} />
+              </li>
+            ))}
+          </ul>
+        </SnapshotSection>
+      ) : null}
       <SnapshotSection title="关联事件及未来影响状态">
         {detail.event_references.length ? (
           <ul className={styles.snapshotList}>

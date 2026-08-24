@@ -29,6 +29,7 @@ from investment_manager.forecast.context.verification import packet_feature_valu
 from investment_manager.forecast.models import (
     ContextCausalNode,
     ContextMechanismRelationship,
+    ContextMechanismRetirement,
     ContextPredicateOperator,
     ContextTransmissionStage,
     ContextVerificationPredicate,
@@ -1354,6 +1355,7 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     ):
         assert forbidden not in schema
     assert '"mechanisms"' in schema
+    assert '"retired_mechanisms"' in schema
     assert '"synthesis"' in schema
     assert '"verification_tests"' in schema
     assert '"causal_chain"' in schema
@@ -1373,7 +1375,7 @@ def test_finalize_assessment_writes_only_current_world_model_schema(
         available_at=packet.as_of + timedelta(seconds=20),
     )
 
-    assert assessment.schema_version == "world-model-assessment-v2"
+    assert assessment.schema_version == "world-model-assessment-v3"
     assert assessment.analysis_behavior_hash == HASH
     assert assessment.decision_packet_hash == packet.content_hash
     assert assessment.trigger_ids == packet.trigger_ids
@@ -1487,6 +1489,171 @@ def test_world_model_continuity_can_only_reference_previous_mechanism(
     with pytest.raises(ContextAssessmentContractError, match="不可见的上一轮机制"):
         finalize_world_model(
             output=output,
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_world_model_requires_one_disposition_for_every_previous_mechanism(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-unresolved",
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="必须延续或明确退休",
+    ):
+        finalize_world_model(
+            output=_world_model_output(),
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_world_model_cannot_silently_drop_one_live_macro_mechanism(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-before-partial-update",
+    )
+    macro = previous.mechanisms[0].model_copy(
+        update={
+            "mechanism_id": "live-macro-rates-mechanism",
+            "claim": "政策利率与长端收益率仍在约束广义风险偏好。",
+        }
+    )
+    crypto = previous.mechanisms[0].model_copy(
+        update={
+            "mechanism_id": "live-crypto-flow-mechanism",
+            "claim": "加密内部资金结构仍在传导。",
+        }
+    )
+    previous = previous.model_copy(update={"mechanisms": (macro, crypto)})
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    output = _world_model_output()
+    continued_crypto = output.world_model.mechanisms[0].model_copy(
+        update={"continuity_ref": crypto.mechanism_id}
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match=macro.mechanism_id,
+    ):
+        finalize_world_model(
+            output=output.model_copy(
+                update={
+                    "world_model": output.world_model.model_copy(
+                        update={"mechanisms": (continued_crypto,)}
+                    )
+                }
+            ),
+            packet=packet,
+            analysis_behavior_hash=HASH,
+            available_at=packet.as_of + timedelta(seconds=20),
+        )
+
+
+def test_world_model_can_continue_every_previous_mechanism(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-continued",
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    output = _world_model_output()
+    continued = output.world_model.mechanisms[0].model_copy(
+        update={"continuity_ref": previous.mechanisms[0].mechanism_id}
+    )
+
+    assessment = finalize_world_model(
+        output=output.model_copy(
+            update={
+                "world_model": output.world_model.model_copy(
+                    update={"mechanisms": (continued,)}
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.mechanisms[0].continuity_ref == previous.mechanisms[0].mechanism_id
+    assert assessment.retired_mechanisms == ()
+
+
+def test_world_model_records_evidence_bound_mechanism_retirement(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-retired",
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    output = _world_model_output()
+    retirement = ContextMechanismRetirement(
+        previous_mechanism_id=previous.mechanisms[0].mechanism_id,
+        rationale="本轮正式事实已使上一轮传导解释失去当前决策价值。",
+        evidence_ids=("revision-1",),
+    )
+
+    assessment = finalize_world_model(
+        output=output.model_copy(
+            update={
+                "world_model": output.world_model.model_copy(
+                    update={"retired_mechanisms": (retirement,)}
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert assessment.retired_mechanisms == (retirement,)
+    assert assessment.schema_version == "world-model-assessment-v3"
+
+
+def test_world_model_retirement_requires_current_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-retirement-old-evidence",
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    output = _world_model_output()
+    retirement = ContextMechanismRetirement(
+        previous_mechanism_id=previous.mechanisms[0].mechanism_id,
+        rationale="错误地只使用上一轮旧证据退休机制。",
+        evidence_ids=("old-1",),
+    )
+
+    with pytest.raises(
+        ContextAssessmentContractError,
+        match="只能引用本轮可见证据",
+    ):
+        finalize_world_model(
+            output=output.model_copy(
+                update={
+                    "world_model": output.world_model.model_copy(
+                        update={"retired_mechanisms": (retirement,)}
+                    )
+                }
+            ),
             packet=packet,
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),

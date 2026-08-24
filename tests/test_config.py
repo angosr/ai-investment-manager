@@ -52,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.version == "context-assessment-v36"
+    assert config.assessment.version == "context-assessment-v37"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v24"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"

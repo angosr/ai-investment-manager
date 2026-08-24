@@ -36,7 +36,7 @@ from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
 ASSESS_INPUT_VERSION = "world-model-input-v3"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v3"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v4"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -57,6 +57,12 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     previous_mechanism_ids = assessment_previous_mechanism_ids(packet)
     continuity = mechanism["properties"]["continuity_ref"]
     continuity["anyOf"][0]["enum"] = list(previous_mechanism_ids)
+    retirement = definitions["ContextMechanismRetirement"]
+    retirement["properties"]["previous_mechanism_id"]["enum"] = list(
+        previous_mechanism_ids
+    )
+    retired_mechanisms = draft["properties"]["retired_mechanisms"]
+    retired_mechanisms["maxItems"] = len(previous_mechanism_ids)
     verification = definitions["ContextVerificationTestDraft"]
     verification["properties"]["feature_selector"]["enum"] = list(
         assessment_available_feature_selectors(packet)
