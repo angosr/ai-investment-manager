@@ -54,8 +54,10 @@ export function LatestAssessment() {
       {row ? (
         <div className={styles.layout}>
           <div>
-            <div className={styles.summary}>{row.summary}</div>
-            <p className={styles.mechanism}>{detail?.synthesis ?? row.mechanism}</p>
+            <p className={styles.synthesis}>{detail?.synthesis ?? row.synthesis}</p>
+            <div className={styles.meta}>
+              {row.synthesis_horizon_hours} 小时观察窗 · {row.driver_count} 个机制 · {row.evidence_count} 条引用
+            </div>
             <div className={styles.drivers}>
               {(detail?.mechanisms ?? []).map((mechanism) => (
                 <div key={mechanism.mechanism_id} className={styles.driver}>

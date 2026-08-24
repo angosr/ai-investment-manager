@@ -230,7 +230,7 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
     dto = ser.assessment_detail(AssessmentRecord(assessment=assessment, packet=packet))
 
     assert dto["schema_version"] == "world-model-assessment-v2"
-    assert dto["mechanism"] == assessment.synthesis
+    assert dto["synthesis"] == assessment.synthesis
     assert (
         dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]
         == evidence_id
@@ -442,7 +442,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         "input_snapshot"
     ]
     assert bad_assessment_detail.status_code == 200
-    assert bad_assessment_detail.json()["mechanism"] == bad_assessment.synthesis
+    assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": [], "next_cursor": None}
     assert events.status_code == 200

@@ -116,7 +116,8 @@ export interface AssessmentRecordRow {
   at: string;
   scope: string;
   summary: string;
-  mechanism: string;
+  synthesis: string;
+  synthesis_horizon_hours: number;
   driver_count: number;
   evidence_count: number;
 }
@@ -146,8 +147,6 @@ export interface Page<T> {
 
 export interface AssessmentRecordDetail extends AssessmentRecordRow {
   as_of: string;
-  synthesis: string;
-  synthesis_horizon_hours: number;
   mechanisms: {
     mechanism_id: string;
     continuity_ref: string | null;

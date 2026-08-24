@@ -89,13 +89,23 @@ def test_assessment_evidence_catalog_resolves_derivative_state() -> None:
     assert "OI 变化 0.02" in catalog[evidence_ref]["detail"]
 
 
-def test_world_cognition_summary_is_not_reduced_to_current_product() -> None:
-    assessment = SimpleNamespace(synthesis_horizon_hours=72, mechanisms=(object(), object()))
+def test_world_cognition_summary_is_one_complete_conclusion() -> None:
+    assessment = SimpleNamespace(
+        synthesis=(
+            "流动性改善正在强化风险偏好，但信用走阔仍限制持续性。"
+            "政策路径是下一阶段最大的反转风险。"
+        )
+    )
 
     summary = ser._assessment_summary(assessment)
 
-    assert summary == "联合世界模型 · 72 小时 · 2 个活跃机制"
-    assert "BTC" not in summary
+    assert summary == "流动性改善正在强化风险偏好，但信用走阔仍限制持续性。"
+
+
+def test_world_cognition_summary_preserves_unpunctuated_synthesis() -> None:
+    assessment = SimpleNamespace(synthesis="流动性改善但信用条件仍有约束")
+
+    assert ser._assessment_summary(assessment) == assessment.synthesis
 
 
 def test_health_uses_authoritative_per_scope_heartbeat() -> None:

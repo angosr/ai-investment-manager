@@ -4,16 +4,17 @@
   gap: 18px;
   padding-top: 6px;
 }
-.summary {
+.synthesis {
+  margin: 0;
   color: var(--text);
   font-size: 13px;
-  font-weight: 500;
-}
-.mechanism {
-  margin-top: 7px;
-  color: var(--muted);
-  font-size: 12px;
   line-height: 1.65;
+}
+.meta {
+  margin-top: 7px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
 }
 .capital {
   display: grid;

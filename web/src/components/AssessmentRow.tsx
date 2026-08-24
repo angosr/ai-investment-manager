@@ -57,10 +57,9 @@ export function AssessmentRow({
         <span className={styles.time}>{hhmm(row.at)}</span>
         <span className={styles.mid}>
           <span className={styles.summary}>{row.summary}</span>
-          <span className={styles.reason}>{row.mechanism}</span>
         </span>
         <span className={`${styles.pill} ${styles["no-action"]}`}>
-          {row.driver_count} 条机制 · {row.evidence_count} 条引用
+          {row.synthesis_horizon_hours} 小时 · {row.driver_count} 个机制 · {row.evidence_count} 条引用
         </span>
         <span className={styles.caret}>›</span>
       </button>

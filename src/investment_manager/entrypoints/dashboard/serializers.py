@@ -7,6 +7,7 @@ Decimal 一律转字符串保精度，datetime 转 ISO8601。措辞与摘要拼�
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from investment_manager.entrypoints.dashboard import formatting as fmt
@@ -80,7 +81,8 @@ def assessment_row(record: AssessmentRecord) -> dict:
         "at": fmt.iso(assessment.available_at),
         "scope": assessment.analysis_scope,
         "summary": _assessment_summary(assessment),
-        "mechanism": assessment.synthesis,
+        "synthesis": assessment.synthesis,
+        "synthesis_horizon_hours": assessment.synthesis_horizon_hours,
         "driver_count": len(assessment.mechanisms),
         "evidence_count": len(cited_evidence_ids),
     }
@@ -106,8 +108,6 @@ def assessment_detail(
     return {
         **assessment_row(record),
         "as_of": fmt.iso(assessment.as_of),
-        "synthesis": assessment.synthesis,
-        "synthesis_horizon_hours": assessment.synthesis_horizon_hours,
         "mechanisms": [
             {
                 "mechanism_id": mechanism.mechanism_id,
@@ -440,10 +440,10 @@ def reconciliation(report: ReconciliationReport | None) -> dict | None:
 
 # --- internals -----------------------------------------------------------
 def _assessment_summary(assessment) -> str:
-    return (
-        f"联合世界模型 · {assessment.synthesis_horizon_hours} 小时"
-        f" · {len(assessment.mechanisms)} 个活跃机制"
-    )
+    """Return the first complete conclusion, never a clipped text prefix."""
+    synthesis = " ".join(assessment.synthesis.split())
+    sentence_end = re.search(r"[。！？!?](?:[”’\"']|$)?", synthesis)
+    return synthesis[: sentence_end.end()] if sentence_end else synthesis
 
 
 def _assessment_cited_ids(assessment) -> tuple[str, ...]:
