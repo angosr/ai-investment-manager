@@ -160,6 +160,7 @@ def market_stream(
         window_seconds=loaded.trigger.volatility_window_seconds,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         sink=triggers,
+        analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
     )
     coverage = SqlInformationCoverageStore(engine)
 
@@ -447,6 +448,7 @@ def information_collector(
             pipeline_id=loaded.pipeline.version,
             trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
             max_visible_events=policy.read_limit,
+            analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
         ),
         poll_recorder=coverage_store if publication_sources else None,
         coverage_bindings={
@@ -467,6 +469,7 @@ def information_collector(
         pipeline_id=loaded.pipeline.version,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         required_freshness_seconds=loaded.risk.maximum_market_age_seconds,
+        analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
     )
     official_service = FedOfficialCollectorService(
         source=HttpFedOfficialSource(

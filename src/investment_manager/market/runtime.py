@@ -70,6 +70,7 @@ class MarketShockDetector:
         window_seconds: int,
         trigger_expiry_seconds: int,
         sink: TriggerSink,
+        analysis_owner_symbol: str | None = None,
     ) -> None:
         if relative_move_threshold <= 0:
             raise ValueError("市场冲击阈值必须为正数")
@@ -80,6 +81,7 @@ class MarketShockDetector:
         self._window_seconds = window_seconds
         self._trigger_expiry_seconds = trigger_expiry_seconds
         self._sink = sink
+        self._analysis_owner_symbol = analysis_owner_symbol
         self._windows: dict[str, _MarketShockWindow] = {}
 
     def observe(self, event: MarketEvent) -> bool:
@@ -131,12 +133,13 @@ class MarketShockDetector:
         priority = min(100, max(1, int(relative_move / self._threshold * 80)))
         trigger = build_trigger_event(
             trigger_type=AnalysisTriggerType.MARKET_SHOCK,
-            symbol=event.symbol,
+            symbol=self._analysis_owner_symbol or event.symbol,
             pipeline_id=self._pipeline_id,
             occurred_at=occurred_at,
             observed_at=observed_at,
             priority=priority,
             dedup_key=dedup_key,
+            affected_symbols=(event.symbol,),
             expires_at=observed_at + timedelta(seconds=self._trigger_expiry_seconds),
         )
         inserted = self._sink.record_trigger(trigger)

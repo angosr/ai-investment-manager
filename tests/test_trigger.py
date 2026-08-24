@@ -103,7 +103,7 @@ def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
         observed_at=now,
         headline="Federal Reserve monetary policy release",
         claim="Official statement published.",
-        affected_assets=("BTC", "ETH"),
+        affected_assets=("ETH",),
         risk_factors=("US_MONETARY_POLICY",),
         source_observation_ids=("fed-observation-1",),
         revision_hash="a" * 64,
@@ -138,6 +138,7 @@ def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
         required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
+        analysis_owner_symbol="BTCUSDT",
     )
 
     publisher.publish_recent(now)
@@ -153,6 +154,8 @@ def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
         and item.evidence_ids == (fact.revision_id,)
         for item in triggers.items.values()
     )
+    owner = next(item for item in triggers.items.values() if item.symbol == "BTCUSDT")
+    assert owner.affected_symbols == ("ETHUSDT",)
 
 
 def test_trigger_service_acquires_leadership_before_durable_release_setup(

@@ -762,6 +762,38 @@ def test_market_shock_detector_filters_ticks_before_creating_trigger(app_config)
     assert sink.triggers[0].dedup_key.startswith("rolling-trade-v2:300:")
 
 
+def test_market_shock_routes_to_portfolio_owner_without_losing_subject(app_config) -> None:
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.triggers = []
+
+        def record_trigger(self, trigger):
+            self.triggers.append(trigger)
+            return True
+
+    sink = RecordingSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.02"),
+        window_seconds=300,
+        trigger_expiry_seconds=900,
+        sink=sink,
+        analysis_owner_symbol="BTCUSDT",
+    )
+    first = _trade(NOW + timedelta(seconds=1), trade_id=1).model_copy(
+        update={"symbol": "ETHUSDT", "price": Decimal("100")}
+    )
+    shock = _trade(NOW + timedelta(seconds=2), trade_id=2).model_copy(
+        update={"symbol": "ETHUSDT", "price": Decimal("103")}
+    )
+
+    assert not detector.observe(first)
+    assert detector.observe(shock)
+    assert len(sink.triggers) == 1
+    assert sink.triggers[0].symbol == "BTCUSDT"
+    assert sink.triggers[0].affected_symbols == ("ETHUSDT",)
+
+
 def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
     class RecordingSink:
         def __init__(self):

@@ -147,8 +147,15 @@ class TriggerDispatchBuilder:
                 }
             )
         )
-        market_shock_symbols = (
-            (batch.symbol,) if AnalysisTriggerType.MARKET_SHOCK in trigger_types else ()
+        market_shock_symbols = tuple(
+            sorted(
+                {
+                    symbol
+                    for item in batch.triggers
+                    if item.trigger_type == AnalysisTriggerType.MARKET_SHOCK
+                    for symbol in (item.affected_symbols or (item.symbol,))
+                }
+            )
         )
         reviews_by_id: dict[str, PacketReviewRequest] = {}
         for trigger in batch.triggers:
@@ -174,7 +181,14 @@ class TriggerDispatchBuilder:
                 AnalysisTriggerType.AGENT_WAKEUP,
             }
         )
-        if self._config.assessment.enabled and assessment_triggered:
+        owns_portfolio_assessment = (
+            batch.symbol == self._config.assessment.review_trigger_symbol
+        )
+        if (
+            self._config.assessment.enabled
+            and assessment_triggered
+            and owns_portfolio_assessment
+        ):
             assert self._packet_preparation is not None
             assert self._assessment_history is not None
             previous = self._assessment_history.latest_before(

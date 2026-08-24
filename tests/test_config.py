@@ -40,7 +40,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v32"
+    assert config.information.version == "information-intake-v33"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.decision_state.version == "portfolio-state-v36"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
@@ -54,6 +54,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.assessment.version == "context-assessment-v36"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
+    assert config.trigger.version == "analysis-trigger-v24"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(
         item

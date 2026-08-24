@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -28,6 +28,7 @@ class SqlEventStore:
         pipeline_id: str = "default",
         trigger_expiry_seconds: int = 900,
         max_visible_events: int = 100,
+        analysis_owner_symbol: str | None = None,
     ) -> None:
         if trigger_expiry_seconds < 1:
             raise ValueError("事件触发有效期必须为正数")
@@ -37,6 +38,7 @@ class SqlEventStore:
         self._pipeline_id = pipeline_id
         self._trigger_expiry_seconds = trigger_expiry_seconds
         self._max_visible_events = max_visible_events
+        self._analysis_owner_symbol = analysis_owner_symbol
 
     def put(self, event: IntelligenceEvent) -> bool:
         payload = event.model_dump(mode="json")
@@ -53,7 +55,14 @@ class SqlEventStore:
                         payload=payload,
                     )
                 )
-                for symbol in event.symbols:
+                routing_symbols = set(event.symbols)
+                if self._analysis_owner_symbol is not None:
+                    routing_symbols.add(self._analysis_owner_symbol)
+                for symbol in sorted(routing_symbols):
+                    cross_scope_route = (
+                        symbol == self._analysis_owner_symbol
+                        and symbol not in event.symbols
+                    )
                     trigger = build_trigger_event(
                         trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
                         symbol=symbol,
@@ -63,6 +72,7 @@ class SqlEventStore:
                         priority=event.trigger_priority,
                         dedup_key=event.evidence_id,
                         evidence_ids=(event.evidence_id,),
+                        affected_symbols=event.symbols if cross_scope_route else (),
                         expires_at=event.observed_at
                         + timedelta(seconds=self._trigger_expiry_seconds),
                     )
@@ -104,21 +114,41 @@ class SqlEventStore:
             .distinct()
             .subquery()
         )
+        canonical_locator = func.coalesce(
+            normalized_events.c.payload["url"].as_string(),
+            normalized_events.c.evidence_id,
+        )
+        ranked = (
+            select(
+                normalized_events.c.payload.label("payload"),
+                normalized_events.c.event_time.label("event_time"),
+                normalized_events.c.evidence_id.label("evidence_id"),
+                func.row_number()
+                .over(
+                    partition_by=(normalized_events.c.source, canonical_locator),
+                    order_by=(
+                        normalized_events.c.observed_at.desc(),
+                        normalized_events.c.evidence_id.desc(),
+                    ),
+                )
+                .label("version_rank"),
+            )
+            .select_from(
+                normalized_events.join(
+                    routed_evidence,
+                    routed_evidence.c.evidence_id == normalized_events.c.evidence_id,
+                )
+            )
+            .where(normalized_events.c.observed_at <= as_of)
+            .subquery()
+        )
         with self._engine.connect() as connection:
             rows = connection.execute(
-                select(normalized_events.c.payload)
-                .select_from(
-                    normalized_events.join(
-                        routed_evidence,
-                        routed_evidence.c.evidence_id == normalized_events.c.evidence_id,
-                    )
-                )
-                .where(
-                    normalized_events.c.observed_at <= as_of,
-                )
+                select(ranked.c.payload)
+                .where(ranked.c.version_rank == 1)
                 .order_by(
-                    normalized_events.c.event_time.desc(),
-                    normalized_events.c.evidence_id.desc(),
+                    ranked.c.event_time.desc(),
+                    ranked.c.evidence_id.desc(),
                 )
                 .limit(self._max_visible_events)
             ).scalars()

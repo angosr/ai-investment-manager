@@ -450,6 +450,92 @@ def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app
     assert preparation.market_shock_symbols == ("BTCUSDT",)
 
 
+def test_non_owner_symbol_cannot_dispatch_portfolio_assessment(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol="ETHUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=90,
+        dedup_key="portfolio-event-on-non-owner",
+        evidence_ids=("portfolio-evidence",),
+        affected_symbols=("ETHUSDT",),
+    )
+    preparation = RecordingPacketPreparation()
+
+    dispatches = TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=preparation,
+        assessment_history=EmptyAssessmentHistory(),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert dispatches == ()
+    assert preparation.intelligence_evidence_ids is None
+
+
+def test_owner_routed_market_shock_preserves_affected_symbol(app_config) -> None:
+    config = _shadow_config(app_config).model_copy(
+        update={
+            "assessment": app_config.assessment.model_copy(update={"enabled": True}),
+            "codex_runtime": app_config.codex_runtime.model_copy(update={"enabled": True}),
+        }
+    )
+    plan = build_initial_trigger_plan(
+        symbol=config.assessment.review_trigger_symbol,
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.MARKET_SHOCK,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=NOW,
+        observed_at=NOW,
+        priority=90,
+        dedup_key="eth-shock-on-portfolio-owner",
+        affected_symbols=("ETHUSDT",),
+    )
+    preparation = RecordingPacketPreparation()
+
+    TriggerDispatchBuilder(
+        config=config,
+        packet_preparation=preparation,
+        assessment_history=EmptyAssessmentHistory(),
+    ).build(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=NOW,
+            deadline=NOW + timedelta(minutes=5),
+        )
+    )
+
+    assert preparation.market_shock_symbols == ("ETHUSDT",)
+
+
 def test_trigger_builder_preserves_agent_review_reason(app_config) -> None:
     config = _shadow_config(app_config).model_copy(
         update={

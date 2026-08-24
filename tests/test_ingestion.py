@@ -22,6 +22,7 @@ from investment_manager.information.collector import (
 )
 from investment_manager.information.models import (
     CausalDomain,
+    IntelligenceEvent,
     SourcePollRecord,
     SourcePollStatus,
 )
@@ -507,6 +508,88 @@ def test_sql_event_store_keeps_world_facts_visible_across_pipeline_releases() ->
     with engine.connect() as connection:
         pipelines = tuple(connection.scalars(select(analysis_trigger_events.c.pipeline_id)))
     assert pipelines == ("pipeline-v1",)
+
+
+def test_sql_event_store_routes_every_event_to_portfolio_analysis_owner() -> None:
+    observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    event = EventNormalizer().normalize(
+        RawIntelligenceItem(
+            source_item_id="eth-only-event",
+            source="wire",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title="Ethereum ETF inflow accelerates",
+            rank=1,
+        )
+    )
+    assert event is not None
+    assert event.symbols == ("ETHUSDT",)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(
+        engine,
+        pipeline_id="pipeline-v1",
+        analysis_owner_symbol="BTCUSDT",
+    )
+
+    assert store.put(event)
+
+    with engine.connect() as connection:
+        symbols = tuple(
+            connection.scalars(
+                select(analysis_trigger_events.c.symbol).order_by(
+                    analysis_trigger_events.c.symbol
+                )
+            )
+        )
+    assert symbols == ("BTCUSDT", "ETHUSDT")
+
+
+def test_sql_event_store_shows_only_latest_point_in_time_version_per_url() -> None:
+    observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(engine, pipeline_id="pipeline-v1")
+    first = IntelligenceEvent(
+        evidence_id="official-v1",
+        normalizer_version="normalizer-v1",
+        acquisition_route="official-publication-v1",
+        event_time=observed_at - timedelta(minutes=1),
+        observed_at=observed_at,
+        source="official:agency",
+        title="Official action",
+        body="Navigation noise followed by official action.",
+        url="https://agency.gov/releases/one",
+        symbols=("BTCUSDT",),
+        relevance=Decimal("1"),
+        impact=Decimal("1"),
+        source_reliability=Decimal("1"),
+        novelty=Decimal("1"),
+    )
+    latest = first.model_copy(
+        update={
+            "evidence_id": "official-v2",
+            "normalizer_version": "normalizer-v2",
+            "acquisition_route": "official-publication-v2",
+            "observed_at": observed_at + timedelta(seconds=30),
+            "body": "Official action without navigation noise.",
+        }
+    )
+
+    assert store.put(first)
+    assert store.put(latest)
+
+    visible = store.visible(
+        symbol="BTCUSDT",
+        as_of=latest.observed_at,
+    )
+    exact = store.exact(
+        evidence_ids=("official-v1", "official-v2"),
+        as_of=latest.observed_at,
+    )
+
+    assert visible == (latest,)
+    assert exact == (first, latest)
 
 
 def test_sql_event_store_preserves_first_acquisition_route_across_connectors() -> None:

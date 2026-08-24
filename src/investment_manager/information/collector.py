@@ -669,7 +669,21 @@ class InMemoryEventStore:
                 for item in self._events.values()
                 if symbol in item.symbols and item.observed_at <= as_of
             ]
-        return tuple(sorted(events, key=lambda item: (item.event_time, item.evidence_id)))
+        latest_by_locator: dict[tuple[str, str], IntelligenceEvent] = {}
+        for event in events:
+            locator = (event.source, event.url or event.evidence_id)
+            current = latest_by_locator.get(locator)
+            if current is None or (event.observed_at, event.evidence_id) > (
+                current.observed_at,
+                current.evidence_id,
+            ):
+                latest_by_locator[locator] = event
+        return tuple(
+            sorted(
+                latest_by_locator.values(),
+                key=lambda item: (item.event_time, item.evidence_id),
+            )
+        )
 
     def exact(
         self,

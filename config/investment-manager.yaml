@@ -302,7 +302,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v23
+  version: analysis-trigger-v24
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
@@ -380,7 +380,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v32
+  version: information-intake-v33
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

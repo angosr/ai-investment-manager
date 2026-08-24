@@ -55,6 +55,7 @@ class CanonicalFactTriggerPublisher:
         pipeline_id: str,
         trigger_expiry_seconds: int,
         required_freshness_seconds: int,
+        analysis_owner_symbol: str | None = None,
     ) -> None:
         if (
             trigger_expiry_seconds < 1
@@ -70,6 +71,12 @@ class CanonicalFactTriggerPublisher:
         self._assets_by_symbol = {
             symbol: asset for asset, symbol in self._symbols_by_asset.items()
         }
+        if (
+            analysis_owner_symbol is not None
+            and analysis_owner_symbol not in self._assets_by_symbol
+        ):
+            raise ValueError("CanonicalFact analysis owner 不属于 Mandate")
+        self._analysis_owner_symbol = analysis_owner_symbol
         self._rules = {item.fact_type: item for item in delta_policy.rules}
         self._pipeline_id = pipeline_id
         self._trigger_expiry_seconds = trigger_expiry_seconds
@@ -118,16 +125,34 @@ class CanonicalFactTriggerPublisher:
                     + ", ".join(unknown_assets)
                 )
             occurred_at = min(fact.event_time or fact.observed_at, fact.observed_at)
-            for asset in fact.affected_assets:
+            routing_symbols = {
+                self._symbols_by_asset[asset] for asset in fact.affected_assets
+            }
+            if self._analysis_owner_symbol is not None:
+                routing_symbols.add(self._analysis_owner_symbol)
+            directly_affected_symbols = tuple(
+                sorted(
+                    self._symbols_by_asset[asset]
+                    for asset in fact.affected_assets
+                )
+            )
+            for symbol in sorted(routing_symbols):
+                cross_scope_route = (
+                    symbol == self._analysis_owner_symbol
+                    and symbol not in directly_affected_symbols
+                )
                 trigger = build_trigger_event(
                     trigger_type=AnalysisTriggerType.CANONICAL_FACT_REVISED,
-                    symbol=self._symbols_by_asset[asset],
+                    symbol=symbol,
                     pipeline_id=self._pipeline_id,
                     occurred_at=occurred_at,
                     observed_at=fact.observed_at,
                     priority=_PRIORITY[rule.materiality],
                     dedup_key=fact.revision_id,
                     evidence_ids=(fact.revision_id,),
+                    affected_symbols=(
+                        directly_affected_symbols if cross_scope_route else ()
+                    ),
                     expires_at=fact.observed_at
                     + timedelta(seconds=self._trigger_expiry_seconds),
                 )

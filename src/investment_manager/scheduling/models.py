@@ -114,6 +114,7 @@ class AnalysisTriggerEvent(FrozenModel):
     priority: int = Field(ge=0, le=100)
     dedup_key: str
     evidence_ids: tuple[str, ...] = Field(default=(), max_length=100)
+    affected_symbols: tuple[str, ...] = Field(default=(), max_length=100)
     review_reason: str | None = Field(default=None, min_length=1, max_length=500)
     expires_at: datetime | None = None
     plan_revision: int | None = Field(default=None, ge=1)
@@ -143,6 +144,8 @@ class AnalysisTriggerEvent(FrozenModel):
             raise ValueError("AnalysisTriggerEvent trigger_id 与事实身份不一致")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("触发 evidence_ids 不得重复")
+        if tuple(sorted(set(self.affected_symbols))) != self.affected_symbols:
+            raise ValueError("触发 affected_symbols 必须唯一且排序")
         if (
             self.trigger_type != AnalysisTriggerType.AGENT_WAKEUP
             and self.review_reason is not None
@@ -161,6 +164,7 @@ def build_trigger_event(
     priority: int,
     dedup_key: str,
     evidence_ids: tuple[str, ...] = (),
+    affected_symbols: tuple[str, ...] = (),
     review_reason: str | None = None,
     expires_at: datetime | None = None,
     plan_revision: int | None = None,
@@ -185,6 +189,7 @@ def build_trigger_event(
         priority=priority,
         dedup_key=dedup_key,
         evidence_ids=tuple(sorted(evidence_ids)),
+        affected_symbols=tuple(sorted(set(affected_symbols))),
         review_reason=review_reason,
         expires_at=expires_at,
         plan_revision=plan_revision,
