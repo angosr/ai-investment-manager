@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from investment_manager.decision_cycle.portfolio import (
@@ -123,7 +123,14 @@ class CapitalTriggerConsumer:
 
     capital: CapitalCycleService
     context_cadence_minutes: int | None = None
+    context_completion_deadline_seconds: int | None = None
     owner_symbol: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.context_cadence_minutes is None) != (
+            self.context_completion_deadline_seconds is None
+        ):
+            raise ValueError("Context cadence 与完成截止秒数必须同时配置")
 
     def consume(
         self,
@@ -158,6 +165,13 @@ class CapitalTriggerConsumer:
                 int(batch.created_at.timestamp()) // cadence_seconds * cadence_seconds,
                 tz=UTC,
             )
+            assert self.context_completion_deadline_seconds is not None
+            if batch.created_at > slot_at + timedelta(
+                seconds=self.context_completion_deadline_seconds
+            ):
+                # A late-starting coordinator must not replay an old slot as if
+                # its Forecast and capital decision were still actionable.
+                return self.capital.review(batch)
             cadence_cause_id = stable_id(
                 "context_forecast_cadence",
                 self.capital.portfolio_id,

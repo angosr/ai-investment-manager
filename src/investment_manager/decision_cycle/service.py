@@ -91,6 +91,13 @@ def run_trigger_service(
                             and config.capital.context_forecast.enabled
                             else None
                         ),
+                        context_completion_deadline_seconds=(
+                            config.capital.context_forecast.completion_deadline_seconds
+                            if config.assessment.enabled
+                            and config.capital.context_forecast is not None
+                            and config.capital.context_forecast.enabled
+                            else None
+                        ),
                         owner_symbol=config.assessment.review_trigger_symbol,
                     )
                     if config.assessment.enabled

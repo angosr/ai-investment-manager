@@ -190,7 +190,11 @@ def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_confi
         heartbeat_seconds=900,
     )
     capital = RecordingCapital()
-    consumer = CapitalTriggerConsumer(capital, context_cadence_minutes=240)
+    consumer = CapitalTriggerConsumer(
+        capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+    )
     for index, created_at in enumerate((NOW, NOW + timedelta(minutes=20)), start=1):
         trigger = build_trigger_event(
             trigger_type=AnalysisTriggerType.HEARTBEAT,
@@ -213,6 +217,46 @@ def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_confi
     assert [item["as_of"] for item in capital.produce_calls] == [
         datetime(2026, 8, 18, 12, tzinfo=UTC),
     ]
+    assert len(capital.review_calls) == 1
+
+
+def test_capital_trigger_consumer_does_not_backfill_an_expired_cadence_slot(
+    app_config,
+) -> None:
+    config = _shadow_config(app_config)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id=config.pipeline.version,
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    created_at = NOW.replace(minute=50)
+    trigger = build_trigger_event(
+        trigger_type=AnalysisTriggerType.HEARTBEAT,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        occurred_at=created_at,
+        observed_at=created_at,
+        priority=1,
+        dedup_key="late-cadence-heartbeat",
+    )
+    capital = RecordingCapital()
+
+    CapitalTriggerConsumer(
+        capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+    ).consume(
+        build_trigger_batch(
+            plan=plan,
+            triggers=(trigger,),
+            created_at=created_at,
+            deadline=created_at + timedelta(minutes=5),
+        )
+    )
+
+    assert not capital.produce_calls
     assert len(capital.review_calls) == 1
 
 
@@ -239,6 +283,7 @@ def test_capital_trigger_consumer_has_one_portfolio_scope_owner(app_config) -> N
     result = CapitalTriggerConsumer(
         capital,
         context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
         owner_symbol="BTCUSDT",
     ).consume(
         build_trigger_batch(
@@ -292,7 +337,7 @@ def test_world_model_update_runs_forecast_without_dispatching_another_assessment
         config=config,
         packet_preparation=RecordingPacketPreparation(),
         assessment_history=EmptyAssessmentHistory(),
-        program_batch_consumers=(CapitalTriggerConsumer(capital, 240),),
+        program_batch_consumers=(CapitalTriggerConsumer(capital, 240, 1500),),
     ).build(batch)
 
     assert dispatches == ()
