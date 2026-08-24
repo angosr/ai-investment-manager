@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { api } from "../api/client";
 import type {
   AssessmentEvidence,
-  AssessmentInputSnapshot,
   AssessmentRecordDetail,
   AssessmentRecordRow as Row,
+  SnapshotPayload,
 } from "../api/types";
 import { hhmm } from "../lib/format";
 import styles from "./CycleRow.module.css";
@@ -24,16 +24,13 @@ const STAGE: Record<string, string> = {
   REVERSING: "正在反转",
 };
 
-const COVERAGE_STATUS: Record<string, string> = {
-  CURRENT: "完整",
-  PARTIAL: "部分覆盖",
-  NO_RECENT_PUBLICATION: "近期无发布",
-  SOURCE_STALE: "采集过期",
-  SOURCE_FAILED: "采集失败",
-  NOT_CONFIGURED: "尚未接入",
-};
-
-export function AssessmentRow({ row }: { row: Row }) {
+export function AssessmentRow({
+  row,
+  onOpenSnapshot,
+}: {
+  row: Row;
+  onOpenSnapshot: (snapshot: SnapshotPayload) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<AssessmentRecordDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +67,7 @@ export function AssessmentRow({ row }: { row: Row }) {
       {open ? (
         <div className={styles.detail}>
           {detail
-            ? <AssessmentDetail detail={detail} />
+            ? <AssessmentDetail detail={detail} onOpenSnapshot={onOpenSnapshot} />
             : <p className={styles.loading}>{error ?? "载入中…"}</p>}
         </div>
       ) : null}
@@ -78,21 +75,29 @@ export function AssessmentRow({ row }: { row: Row }) {
   );
 }
 
-function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
-  const [snapshotOpen, setSnapshotOpen] = useState(false);
+function AssessmentDetail({
+  detail,
+  onOpenSnapshot,
+}: {
+  detail: AssessmentRecordDetail;
+  onOpenSnapshot: (snapshot: SnapshotPayload) => void;
+}) {
   const [worldOpen, setWorldOpen] = useState(false);
   return (
     <>
       <div className={styles.snapshotActions}>
         <button
+          type="button"
           className={styles.snapBtn}
           disabled={!detail.input_snapshot}
-          aria-pressed={snapshotOpen}
-          onClick={() => setSnapshotOpen(!snapshotOpen)}
+          onClick={() => {
+            if (detail.input_snapshot) onOpenSnapshot(detail.input_snapshot);
+          }}
         >
           查看这次 AI 看到的信息快照
         </button>
         <button
+          type="button"
           className={styles.snapBtn}
           aria-pressed={worldOpen}
           onClick={() => setWorldOpen(!worldOpen)}
@@ -103,9 +108,6 @@ function AssessmentDetail({ detail }: { detail: AssessmentRecordDetail }) {
           <span className={styles.snapshotUnavailable}>历史记录未保留输入包</span>
         ) : null}
       </div>
-      {snapshotOpen && detail.input_snapshot
-        ? <SnapshotView snapshot={detail.input_snapshot} />
-        : null}
       {worldOpen ? <WorldModelView detail={detail} /> : null}
     </>
   );
@@ -214,91 +216,6 @@ function EvidenceRefs({
   );
 }
 
-function SnapshotView({ snapshot }: { snapshot: AssessmentInputSnapshot }) {
-  const states = [
-    ...(snapshot.state_features?.regime_states ?? []),
-    ...(snapshot.state_features?.flow_states ?? []),
-  ];
-  return (
-    <div className={styles.snapshotPanel}>
-      <SnapshotHeader
-        title="AI 输入快照"
-        stateId={snapshot.analysis_scope}
-        asOf={snapshot.as_of}
-      />
-      <div className={styles.snapshotQuestion}>{snapshot.question}</div>
-      <div className={styles.snapshotGrid}>
-        <SnapshotSection title="组合状态">
-          <dl className={styles.snapshotKv}>
-            <dt>权益 / 可用余额</dt>
-            <dd>{snapshot.portfolio.equity ?? "—"} / {snapshot.portfolio.quote_balance}</dd>
-            <dt>当日损益 / 回撤</dt>
-            <dd>{snapshot.portfolio.daily_pnl} / {snapshot.portfolio.drawdown_fraction}</dd>
-            <dt>挂单 / 对账 / 熔断</dt>
-            <dd>
-              {snapshot.portfolio.open_order_count} / {snapshot.portfolio.reconciled ? "正常" : "异常"} /
-              {snapshot.portfolio.kill_switch_active ? "开启" : "关闭"}
-            </dd>
-          </dl>
-        </SnapshotSection>
-        <SnapshotSection title="市场状态">
-          {snapshot.asset_states.map((asset) => (
-            <div className={styles.marketSnapshot} key={asset.asset}>
-              <b>{asset.asset} · {asset.market_symbol}</b>
-              <span>last {asset.last} · regime {asset.regime} · return {asset.return_fraction}</span>
-              <span>vol {asset.realized_volatility} · spread {asset.spread_bps} bp · volume {asset.volume_ratio}</span>
-            </div>
-          ))}
-        </SnapshotSection>
-      </div>
-      <SnapshotList
-        title="连续状态特征"
-        empty="本次没有连续状态特征"
-        items={states.map((item) => `${item.type} · ${item.at} · ${item.state}`)}
-      />
-      <SnapshotList
-        title="触发变化"
-        empty="没有结构化变化"
-        items={snapshot.deltas.map(
-          (item) => `${item.materiality} · ${item.category} · ${item.reason_codes.join(" / ")}`,
-        )}
-      />
-      <SnapshotList
-        title="确认事实"
-        empty="没有确认事实"
-        items={snapshot.facts.map((item) => `${item.fact_type}：${item.claim}`)}
-      />
-      <SnapshotList
-        title="事件证据"
-        empty="没有事件证据"
-        items={snapshot.intelligence_events.map(
-          (item) => `${item.source} · ${item.title}${item.body ? ` — ${item.body}` : ""}`,
-        )}
-      />
-      {snapshot.previous_context ? (
-        <SnapshotSection title="继承的上一轮世界认知">
-          <p className={styles.thesis}>{snapshot.previous_context.synthesis}</p>
-          <ul className={styles.snapshotList}>
-            {snapshot.previous_context.mechanisms.map((item) => (
-              <li key={item.id}>
-                {RELATIONSHIP[item.relationship] ?? item.relationship} ·
-                {STAGE[item.stage] ?? item.stage} · {item.claim} · 复核 {item.review_at}
-              </li>
-            ))}
-          </ul>
-        </SnapshotSection>
-      ) : null}
-      <SnapshotList
-        title="未接入的合同化能力"
-        empty="本轮没有合同化能力缺口"
-        items={snapshot.capability_summary.map(
-          (item) => `${item.domain} · ${COVERAGE_STATUS[item.status] ?? item.status} · ${item.missing_capabilities.join("、")}`,
-        )}
-      />
-    </div>
-  );
-}
-
 function SnapshotHeader({
   title,
   stateId,
@@ -322,25 +239,5 @@ function SnapshotSection({ title, children }: { title: string; children: ReactNo
       <div className={styles.h}>{title}</div>
       {children}
     </section>
-  );
-}
-
-function SnapshotList({
-  title,
-  items,
-  empty = "无",
-}: {
-  title: string;
-  items: string[];
-  empty?: string;
-}) {
-  return (
-    <SnapshotSection title={title}>
-      {items.length ? (
-        <ul className={styles.snapshotList}>
-          {items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
-        </ul>
-      ) : <p className={styles.snapshotEmpty}>{empty}</p>}
-    </SnapshotSection>
   );
 }

@@ -205,19 +205,9 @@ export interface AssessmentEvidence {
 
 export interface AssessmentInputSnapshot {
   analysis_scope: string;
-  mandate_version: string;
   as_of: string;
   question: string;
-  portfolio: {
-    quote_balance: string;
-    equity: string | null;
-    daily_pnl: string;
-    drawdown_fraction: string;
-    open_order_count: number;
-    kill_switch_active: boolean;
-    reconciled: boolean;
-    positions: { market_symbol: string; quantity: string; average_price: string }[];
-  };
+  required_views: { asset: string; horizon_minutes: number }[];
   asset_states: {
     asset: string;
     market_symbol: string;
@@ -229,7 +219,6 @@ export interface AssessmentInputSnapshot {
     spread_bps: string;
     volume_ratio: string;
     regime: string;
-    market_age_seconds: number;
   }[];
   derivative_states: {
     asset: string;
@@ -246,9 +235,20 @@ export interface AssessmentInputSnapshot {
     funding_settlement_count: number;
     funding_window_hours: number;
     next_funding_time: string;
+    spot_flow_observed_at?: string;
+    spot_flow_window_minutes?: number;
+    spot_taker_buy_sell_ratio?: string;
+    positioning_observed_at?: string;
+    positioning_window_minutes?: number;
     open_interest_change_fraction?: string;
     global_long_account_fraction?: string;
     taker_buy_sell_ratio?: string;
+  }[];
+  review_requests?: {
+    review_id: string;
+    requested_at: string;
+    reason: string;
+    evidence_ids: string[];
   }[];
   deltas: {
     delta_id: string;
@@ -262,6 +262,7 @@ export interface AssessmentInputSnapshot {
   facts: {
     revision_id: string;
     fact_type: string;
+    event_time?: string | null;
     claim: string;
     risk_factors: string[];
     decision_materiality: string;
@@ -278,11 +279,19 @@ export interface AssessmentInputSnapshot {
     symbols: string[];
     directly_triggered: boolean;
   }[];
-  previous_context: {
+  previous_context?: {
     assessment_id: string;
     as_of: string;
     synthesis: string;
     synthesis_horizon_hours: number;
+    event_references: {
+      evidence_id: string;
+      source: string;
+      title: string;
+      event_time: string;
+      impact_state: "ACTIVE";
+      rationale: string;
+    }[];
     mechanisms: {
       id: string;
       continuity: string | null;
@@ -290,9 +299,10 @@ export interface AssessmentInputSnapshot {
       claim: string;
       horizon_h: number;
       stage: "PENDING" | "PROPAGATING" | "PRICED" | "REVERSING";
+      tests: unknown[][];
       review_at: string;
     }[];
-  } | null;
+  };
   capability_summary: {
     domain: string;
     status: string;
@@ -300,9 +310,20 @@ export interface AssessmentInputSnapshot {
   }[];
   state_features?: {
     algorithm_version: string;
-    regime_states: { type: string; at: string; state: string; ref: string }[];
-    flow_states: { type: string; at: string; state: string; ref: string }[];
+    regime_states: AssessmentStateFeature[];
+    flow_states: AssessmentStateFeature[];
+    financing_states: AssessmentStateFeature[];
+    policy_states: AssessmentStateFeature[];
   };
+}
+
+export interface AssessmentStateFeature {
+  type: string;
+  at: string;
+  state: string;
+  ref: string;
+  document?: string;
+  tier?: string;
 }
 
 export type CycleCategory = "exec" | "pending" | "rejected" | "no-trade" | "no-action";
@@ -390,6 +411,8 @@ export interface Snapshot {
   evidence: SnapshotEvidence[];
   rules: string[];
 }
+
+export type SnapshotPayload = Snapshot | AssessmentInputSnapshot;
 
 export interface CycleDetail {
   cycle_id: string;

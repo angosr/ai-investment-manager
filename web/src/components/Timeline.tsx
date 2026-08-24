@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Snapshot } from "../api/types";
+import type { SnapshotPayload } from "../api/types";
 import type { AssessmentQuality } from "../api/types";
 import { useLive, usePagedLive } from "../hooks";
 import type { PagedLive } from "../hooks";
@@ -23,16 +23,16 @@ export function Timeline({
   onOpenSnapshot,
   capitalMode = false,
 }: {
-  onOpenSnapshot: (snapshot: Snapshot) => void;
+  onOpenSnapshot: (snapshot: SnapshotPayload) => void;
   capitalMode?: boolean;
 }) {
   if (capitalMode) {
-    return <CapitalTimeline />;
+    return <CapitalTimeline onOpenSnapshot={onOpenSnapshot} />;
   }
   return <LegacyTimeline onOpenSnapshot={onOpenSnapshot} />;
 }
 
-function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapshot) => void }) {
+function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: SnapshotPayload) => void }) {
   const [tab, setTab] = useState<Tab>("actions");
   const cycles = usePagedLive(
     (cursor) => api.cycles(cursor),
@@ -72,7 +72,11 @@ function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: Snapsho
   );
 }
 
-function CapitalTimeline() {
+function CapitalTimeline({
+  onOpenSnapshot,
+}: {
+  onOpenSnapshot: (snapshot: SnapshotPayload) => void;
+}) {
   const [tab, setTab] = useState<Tab>("actions");
   const actions = usePagedLive(
     (cursor) => api.capitalActivity(cursor),
@@ -115,7 +119,11 @@ function CapitalTimeline() {
             <AssessmentQualityLine quality={assessmentStatus.quality} />
           ) : null}
           {assessmentRecords.items.map((row) => (
-            <AssessmentRow key={row.assessment_id} row={row} />
+            <AssessmentRow
+              key={row.assessment_id}
+              row={row}
+              onOpenSnapshot={onOpenSnapshot}
+            />
           ))}
           {assessmentRecords.items.length === 0 ? (
             <p className={styles.empty}>尚无 AI 判断。</p>

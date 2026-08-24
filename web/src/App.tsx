@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "./api/client";
-import type { Snapshot } from "./api/types";
+import type { SnapshotPayload } from "./api/types";
 import { Accounts } from "./components/Accounts";
 import { Capital, CapitalPositions } from "./components/Capital";
 import { CapitalEquityHero } from "./components/CapitalEquityHero";
@@ -16,7 +16,7 @@ import styles from "./App.module.css";
 
 export function App() {
   const [, toggleTheme] = useTheme();
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<SnapshotPayload | null>(null);
   const health = useLive(() => api.health(), "health");
 
   return (
@@ -60,7 +60,7 @@ export function App() {
 function CapitalDashboard({
   onOpenSnapshot,
 }: {
-  onOpenSnapshot: (snapshot: Snapshot) => void;
+  onOpenSnapshot: (snapshot: SnapshotPayload) => void;
 }) {
   const capital = useLive(() => api.capital(), "capital");
   return (

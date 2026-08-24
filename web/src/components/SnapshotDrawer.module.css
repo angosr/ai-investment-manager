@@ -187,3 +187,25 @@
   color: var(--accent-line);
   font-weight: 700;
 }
+.rawDetails {
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rawDetails summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.raw {
+  margin: 10px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
