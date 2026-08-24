@@ -87,6 +87,7 @@ export interface CapitalAction {
   reason_codes: string[];
   risk_outcome: string | null;
   order_count: number;
+  candidate_economics_recorded: boolean;
   candidate_economics: {
     forecast_id: string;
     producer_id: string;
@@ -106,7 +107,12 @@ export interface CapitalAction {
     gross_bps: string;
     estimated_round_trip_cost_bps: string;
     net_bps: string;
-    entry_threshold_bps: string;
+    decision_threshold_bps: string;
+    current_gross_notional: string;
+    evaluation_gross_notional: string;
+    desired_gross_notional: string;
+    eligible: boolean;
+    reason_codes: string[];
   }[];
 }
 

@@ -119,7 +119,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
           </span>
           <span className={styles.summary}>
             {candidate && zeroImpact
-              ? `费用后预期 ${formatBps(candidate.net_bps)} bp，入场至少需要 ${formatBps(candidate.entry_threshold_bps)} bp`
+              ? `费用后预期 ${formatBps(candidate.net_bps)} bp，本次决策至少需要 ${formatBps(candidate.decision_threshold_bps)} bp`
               : reasons[0] ?? action.summary}
           </span>
         </span>
@@ -140,7 +140,12 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 <dt>候选经济性</dt>
                 <dd>
                   毛收益 {formatBps(item.gross_bps)} bp − 完整开平仓成本 {formatBps(item.estimated_round_trip_cost_bps)} bp
-                  = 费用后 {formatBps(item.net_bps)} bp；入场门槛 {formatBps(item.entry_threshold_bps)} bp
+                  = 费用后 {formatBps(item.net_bps)} bp；本次门槛 {formatBps(item.decision_threshold_bps)} bp
+                </dd>
+                <dt>资金比较</dt>
+                <dd>
+                  当时持仓 {formatUsdt(item.current_gross_notional)} USDT；按 {formatUsdt(item.evaluation_gross_notional)} USDT 评估；
+                  目标 {formatUsdt(item.desired_gross_notional)} USDT
                 </dd>
                 <dt>概率预测</dt>
                 <dd>
@@ -182,6 +187,12 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 ) : null}
               </Fragment>
             ))}
+            {!action.candidate_economics_recorded ? (
+              <>
+                <dt>候选经济性</dt>
+                <dd>该历史版本没有保存点时比较数据；系统不会用当前配置重算旧决策。</dd>
+              </>
+            ) : null}
             <dt>资金影响</dt>
             <dd>
               {zeroImpact
@@ -214,6 +225,11 @@ function formatBps(value: string): string {
 function formatPercent(value: string): string {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : value;
+}
+
+function formatUsdt(value: string): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
 }
 
 function effectLabel(effect: string): string {

@@ -277,6 +277,13 @@ def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> 
     assert sleeve.cost.fee_bps == Decimal("20.00")
     assert sleeve.cost.total_bps == Decimal("20.00")
     assert sleeve.decision_net_bps == Decimal("20.00")
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert candidate.decision_net_bps == Decimal("20.00")
+    assert candidate.minimum_net_bps == Decimal("5")
+    assert candidate.eligible
+    assert candidate.desired_gross_notional == Decimal("1000")
+    assert candidate.reason_codes == ("POSITIVE_NET_EDGE_SELECTED",)
 
 
 def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
@@ -291,6 +298,12 @@ def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
     assert target is not None
     assert target.sleeves == ()
     assert target.reason_codes == ("CASH_SELECTED_NO_POSITIVE_NET_EDGE",)
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert candidate.decision_net_bps == Decimal("0.00")
+    assert not candidate.eligible
+    assert candidate.desired_gross_notional == 0
+    assert candidate.reason_codes == ("NON_POSITIVE_NET_EDGE_CASH",)
 
 
 def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None:

@@ -730,10 +730,40 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     activity = CapitalDashboardReader(engine, config).activity()[0]
     assert activity.reason_codes == ("CASH_SELECTED_NO_POSITIVE_NET_EDGE",)
     assert len(activity.candidate_economics) == 1
+    assert activity.candidate_economics_recorded
     economics = activity.candidate_economics[0]
-    assert economics.net_bps < economics.entry_threshold_bps
+    assert economics.net_bps < economics.decision_threshold_bps
     serialized = serialize_capital_activity((activity,))["actions"][0]
     assert serialized["candidate_economics"][0]["net_bps"] == str(economics.net_bps)
+    assert serialized["candidate_economics_recorded"] is True
+
+    assert result.trade_plan is not None
+    target = SqlPortfolioStore(engine).target_for_cycle(result.trade_plan.cycle_id)
+    assert target is not None and target.candidate_evaluations is not None
+    frozen = target.candidate_evaluations[0]
+    changed_authorization = config.capital.mock_candidate_authorizations[0].model_copy(
+        update={"minimum_entry_net_bps": Decimal("999")}
+    )
+    changed_specs = tuple(
+        item.model_copy(update={"fee_bps": Decimal("999")})
+        for item in config.capital.execution_specs
+    )
+    changed_config = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={
+                    "mock_candidate_authorizations": (changed_authorization,),
+                    "execution_specs": changed_specs,
+                }
+            )
+        }
+    )
+    historical = CapitalDashboardReader(engine, changed_config).activity()[0]
+    assert historical.candidate_economics[0].net_bps == frozen.decision_net_bps
+    assert (
+        historical.candidate_economics[0].decision_threshold_bps
+        == frozen.minimum_net_bps
+    )
 
 
 def test_spot_only_forecast_receives_only_its_executable_quote() -> None:

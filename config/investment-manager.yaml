@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 panel:
-  version: panel-policy-v6
+  version: panel-policy-v7
   schema_version: panel-v1
   max_characters: 12000
   max_evidence: 20
@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v22
+  version: spot-capital-v23
   enabled: false
   settlement_asset: USDT
   decision:

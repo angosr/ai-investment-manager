@@ -40,10 +40,6 @@ from investment_manager.forecast.tables import (
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.kernel.time import require_utc
-from investment_manager.portfolio.decision import (
-    estimate_round_trip_cost,
-    remaining_forecast_gross_bps,
-)
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
@@ -93,7 +89,12 @@ class CapitalCandidateEconomics:
     gross_bps: Decimal
     estimated_round_trip_cost_bps: Decimal
     net_bps: Decimal
-    entry_threshold_bps: Decimal
+    decision_threshold_bps: Decimal
+    current_gross_notional: Decimal
+    evaluation_gross_notional: Decimal
+    desired_gross_notional: Decimal
+    eligible: bool
+    reason_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,7 @@ class CapitalActivity:
     reason_codes: tuple[str, ...] = ()
     risk_outcome: str | None = None
     order_count: int = 0
+    candidate_economics_recorded: bool = False
     candidate_economics: tuple[CapitalCandidateEconomics, ...] = ()
 
 
@@ -530,9 +532,11 @@ class CapitalDashboardReader:
         forecasts: dict[str, BaseForecast | CalibratedForecast],
     ) -> CapitalActivity:
         candidate_economics = self._candidate_economics(
-            record=record,
             target=target,
             forecasts=forecasts,
+        )
+        candidate_economics_recorded = (
+            target is not None and target.candidate_evaluations is not None
         )
         if record.outcome in {CapitalCycleOutcome.CASH, CapitalCycleOutcome.HOLD}:
             return CapitalActivity(
@@ -594,6 +598,7 @@ class CapitalDashboardReader:
                 outcome="PENDING",
                 summary="组合目标已生成，等待风险审核",
                 reason_codes=target.reason_codes,
+                candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
             )
         if risk.approved_target is None:
@@ -606,6 +611,7 @@ class CapitalDashboardReader:
                 summary="组合目标被程序化风控拒绝",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
             )
         if record.outcome in {
@@ -621,6 +627,7 @@ class CapitalDashboardReader:
                 summary="同一 Forecast 已经完成资本决策，本轮未重复下单",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
             )
         plan = plans.get(risk.approved_target.approved_target_id)
@@ -634,6 +641,7 @@ class CapitalDashboardReader:
                 summary="风险审核通过，等待交易计划",
                 reason_codes=target.reason_codes,
                 risk_outcome=risk.outcome.value,
+                candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
             )
         groups = tuple(groups_by_plan.get(plan.plan_id, ()))
@@ -657,67 +665,25 @@ class CapitalDashboardReader:
             reason_codes=target.reason_codes,
             risk_outcome=risk.outcome.value,
             order_count=order_count,
+            candidate_economics_recorded=candidate_economics_recorded,
             candidate_economics=candidate_economics,
         )
 
     def _candidate_economics(
         self,
         *,
-        record: CapitalCycleRecord,
         target: PortfolioTarget | None,
         forecasts: dict[str, BaseForecast | CalibratedForecast],
     ) -> tuple[CapitalCandidateEconomics, ...]:
         if target is None:
             return ()
-        quote_by_instrument = {item.instrument.key: item for item in target.quotes}
-        spec_by_instrument = {
-            item.instrument.key: item for item in self._config.capital.execution_specs
-        }
+        if target.candidate_evaluations is None:
+            return ()
         candidates = []
-        for forecast_id in record.forecast_ids:
-            forecast = forecasts.get(forecast_id)
-            if forecast is None or not {
-                item.instrument.key for item in forecast.target.legs
-            }.issubset(quote_by_instrument):
-                continue
-            if isinstance(forecast, BaseForecast):
-                permission = next(
-                    (
-                        item
-                        for item in self._config.capital.mock_candidate_authorizations
-                        if item.producer_id == forecast.producer_id
-                        and item.producer_behavior_id == forecast.producer_behavior_id
-                        and item.outcome_family_id == forecast.outcome_family_id
-                    ),
-                    None,
-                )
-                if permission is None:
-                    continue
-                threshold = permission.minimum_entry_net_bps
-            else:
-                threshold = self._config.capital.decision.minimum_conservative_net_bps
-            gross_bps = remaining_forecast_gross_bps(
-                forecast,
-                quote_by_instrument=quote_by_instrument,
-                as_of=target.as_of,
-            )
-            gross_notional = min(
-                target.reference_equity
-                * self._config.capital.decision.maximum_single_sleeve_fraction,
-                target.reference_equity
-                * (
-                    permission.maximum_allocation_fraction
-                    if isinstance(forecast, BaseForecast)
-                    else Decimal("1")
-                ),
-            )
-            cost_bps = estimate_round_trip_cost(
-                policy=self._config.capital.decision,
-                forecast=forecast,
-                gross_notional=gross_notional,
-                quote_by_instrument=quote_by_instrument,
-                spec_by_instrument=spec_by_instrument,
-            ).total_bps
+        for evaluation in target.candidate_evaluations:
+            forecast = forecasts.get(evaluation.forecast_id)
+            if forecast is None:
+                raise ValueError("PortfolioTarget candidate 缺少不可变 Forecast 引用")
             candidates.append(
                 CapitalCandidateEconomics(
                     forecast_id=forecast.forecast_id,
@@ -750,10 +716,15 @@ class CapitalDashboardReader:
                         and forecast.analysis_input_json is not None
                         else None
                     ),
-                    gross_bps=gross_bps,
-                    estimated_round_trip_cost_bps=cost_bps,
-                    net_bps=gross_bps - cost_bps,
-                    entry_threshold_bps=threshold,
+                    gross_bps=evaluation.decision_gross_bps,
+                    estimated_round_trip_cost_bps=evaluation.cost.total_bps,
+                    net_bps=evaluation.decision_net_bps,
+                    decision_threshold_bps=evaluation.minimum_net_bps,
+                    current_gross_notional=evaluation.current_gross_notional,
+                    evaluation_gross_notional=evaluation.evaluation_gross_notional,
+                    desired_gross_notional=evaluation.desired_gross_notional,
+                    eligible=evaluation.eligible,
+                    reason_codes=evaluation.reason_codes,
                 )
             )
         return tuple(candidates)
@@ -948,6 +919,7 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "reason_codes": list(item.reason_codes),
                 "risk_outcome": item.risk_outcome,
                 "order_count": item.order_count,
+                "candidate_economics_recorded": item.candidate_economics_recorded,
                 "candidate_economics": [
                     {
                         "forecast_id": candidate.forecast_id,
@@ -976,7 +948,14 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                             candidate.estimated_round_trip_cost_bps
                         ),
                         "net_bps": str(candidate.net_bps),
-                        "entry_threshold_bps": str(candidate.entry_threshold_bps),
+                        "decision_threshold_bps": str(candidate.decision_threshold_bps),
+                        "current_gross_notional": str(candidate.current_gross_notional),
+                        "evaluation_gross_notional": str(
+                            candidate.evaluation_gross_notional
+                        ),
+                        "desired_gross_notional": str(candidate.desired_gross_notional),
+                        "eligible": candidate.eligible,
+                        "reason_codes": list(candidate.reason_codes),
                     }
                     for candidate in item.candidate_economics
                 ],

@@ -15,6 +15,7 @@ from investment_manager.market.models import ExecutableQuote
 from investment_manager.portfolio.models import (
     MockCandidateAuthorization,
     PortfolioAccountSnapshot,
+    PortfolioCandidateEvaluation,
     PortfolioCostEstimate,
     PortfolioEdgeBasis,
     PortfolioTarget,
@@ -206,28 +207,26 @@ class PortfolioDecisionEngine:
             )
             for item in sleeves
         }
+        candidate_evaluations = {
+            item.sleeve_id: self._evaluate_candidate(
+                item,
+                quote_by_instrument=quote_by_instrument,
+                spec_by_instrument=spec_by_instrument,
+                as_of=as_of,
+                current_notional=current_by_sleeve[item.sleeve_id],
+                evaluation_notional=candidate_notional[item.sleeve_id],
+            )
+            for item in sleeves
+        }
         eligible = tuple(
             sorted(
                 (
                     item
                     for item in sleeves
-                    if self._is_eligible(
-                        item,
-                        quote_by_instrument=quote_by_instrument,
-                        spec_by_instrument=spec_by_instrument,
-                        as_of=as_of,
-                        current_notional=current_by_sleeve[item.sleeve_id],
-                        evaluation_notional=candidate_notional[item.sleeve_id],
-                    )
+                    if candidate_evaluations[item.sleeve_id].eligible
                 ),
                 key=lambda item: (
-                    -self._net_edge(
-                        item,
-                        quote_by_instrument=quote_by_instrument,
-                        spec_by_instrument=spec_by_instrument,
-                        as_of=as_of,
-                        gross_notional=candidate_notional[item.sleeve_id],
-                    ),
+                    -candidate_evaluations[item.sleeve_id].decision_net_bps,
                     0 if isinstance(item.forecast, CalibratedForecast) else 1,
                     item.sleeve_id,
                 ),
@@ -260,6 +259,8 @@ class PortfolioDecisionEngine:
                     if item.sleeve_id in eligible_ids
                     else "FORECAST_INVALID_CASH"
                     if not self._forecast_is_current(item.forecast, as_of=as_of)
+                    else "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
+                    if candidate_evaluations[item.sleeve_id].eligible
                     else "NON_POSITIVE_NET_EDGE_CASH"
                 ),
             )
@@ -297,6 +298,20 @@ class PortfolioDecisionEngine:
                 if current_by_sleeve[item.sleeve_id] > 0
             )
 
+        final_desired = {item.sleeve_id: item.desired_gross_notional for item in targets}
+        frozen_candidate_evaluations = tuple(
+            self._freeze_allocation_result(
+                candidate_evaluations[item.sleeve_id],
+                desired_notional=final_desired.get(item.sleeve_id, Decimal("0")),
+                capacity_selected=item.sleeve_id in eligible_ids,
+                rebalance_preserved=(
+                    below_rebalance_minimum
+                    and current_by_sleeve[item.sleeve_id] > 0
+                ),
+            )
+            for item in sorted(sleeves, key=lambda value: value.sleeve_id)
+        )
+
         reason_codes: set[str] = set()
         if eligible_ids:
             reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
@@ -325,6 +340,9 @@ class PortfolioDecisionEngine:
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
             "considered_forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
+            "candidate_evaluations": [
+                item.model_dump(mode="json") for item in frozen_candidate_evaluations
+            ],
             "quotes": [item.model_dump(mode="json") for item in quotes],
             "sleeves": [item.model_dump(mode="json") for item in targets],
             "reason_codes": tuple(sorted(reason_codes)),
@@ -334,7 +352,7 @@ class PortfolioDecisionEngine:
             **payload,
         )
 
-    def _is_eligible(
+    def _evaluate_candidate(
         self,
         item: PortfolioSleeveInput,
         *,
@@ -343,53 +361,84 @@ class PortfolioDecisionEngine:
         as_of: datetime,
         current_notional: Decimal,
         evaluation_notional: Decimal,
-    ) -> bool:
-        if not self._forecast_is_current(item.forecast, as_of=as_of):
-            return False
-        net_edge = self._net_edge(
+    ) -> PortfolioCandidateEvaluation:
+        forecast_current = self._forecast_is_current(item.forecast, as_of=as_of)
+        gross = remaining_forecast_gross_bps(
+            item.forecast,
+            quote_by_instrument=quote_by_instrument,
+            as_of=as_of,
+        )
+        cost = self._cost(
             item,
+            gross_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
             spec_by_instrument=spec_by_instrument,
-            as_of=as_of,
-            gross_notional=evaluation_notional,
         )
         if isinstance(item.forecast, CalibratedForecast):
-            return net_edge >= self._policy.minimum_conservative_net_bps
-        permission = item.mock_authorization
-        assert permission is not None
-        threshold = (
-            permission.minimum_hold_net_bps
-            if current_notional > 0
-            else permission.minimum_entry_net_bps
+            threshold = self._policy.minimum_conservative_net_bps
+            edge_basis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
+        else:
+            permission = item.mock_authorization
+            assert permission is not None
+            threshold = (
+                permission.minimum_hold_net_bps
+                if current_notional > 0
+                else permission.minimum_entry_net_bps
+            )
+            edge_basis = PortfolioEdgeBasis.MOCK_HYPOTHESIS
+        net = gross - cost.total_bps
+        eligible = forecast_current and net >= threshold
+        return PortfolioCandidateEvaluation(
+            sleeve_id=item.sleeve_id,
+            forecast_id=item.forecast.forecast_id,
+            edge_basis=edge_basis,
+            current_gross_notional=current_notional,
+            evaluation_gross_notional=evaluation_notional,
+            desired_gross_notional=Decimal("0"),
+            forecast_current=forecast_current,
+            decision_gross_bps=gross,
+            cost=cost,
+            decision_net_bps=net,
+            minimum_net_bps=threshold,
+            eligible=eligible,
+            reason_codes=(
+                "ELIGIBLE_FOR_ALLOCATION"
+                if eligible
+                else "FORECAST_INVALID_CASH"
+                if not forecast_current
+                else "NON_POSITIVE_NET_EDGE_CASH",
+            ),
         )
-        return net_edge >= threshold
+
+    @staticmethod
+    def _freeze_allocation_result(
+        candidate: PortfolioCandidateEvaluation,
+        *,
+        desired_notional: Decimal,
+        capacity_selected: bool,
+        rebalance_preserved: bool,
+    ) -> PortfolioCandidateEvaluation:
+        if rebalance_preserved:
+            reason = "REBALANCE_BELOW_MINIMUM_CURRENT_TARGET"
+        elif capacity_selected:
+            reason = "POSITIVE_NET_EDGE_SELECTED"
+        elif candidate.eligible:
+            reason = "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
+        elif not candidate.forecast_current:
+            reason = "FORECAST_INVALID_CASH"
+        else:
+            reason = "NON_POSITIVE_NET_EDGE_CASH"
+        return PortfolioCandidateEvaluation.model_validate(
+            {
+                **candidate.model_dump(mode="python"),
+                "desired_gross_notional": desired_notional,
+                "reason_codes": (reason,),
+            }
+        )
 
     @staticmethod
     def _forecast_is_current(forecast: Forecast, *, as_of: datetime) -> bool:
         return forecast.available_at <= as_of < forecast.valid_until
-
-    def _net_edge(
-        self,
-        item: PortfolioSleeveInput,
-        *,
-        quote_by_instrument: dict[str, ExecutableQuote],
-        spec_by_instrument: dict[str, InstrumentExecutionSpec],
-        as_of: datetime,
-        gross_notional: Decimal,
-    ) -> Decimal:
-        return (
-            remaining_forecast_gross_bps(
-                item.forecast,
-                quote_by_instrument=quote_by_instrument,
-                as_of=as_of,
-            )
-            - self._cost(
-                item,
-                gross_notional=gross_notional,
-                quote_by_instrument=quote_by_instrument,
-                spec_by_instrument=spec_by_instrument,
-            ).total_bps
-        )
 
     def _target(
         self,

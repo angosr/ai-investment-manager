@@ -383,6 +383,38 @@ class SleeveTarget(FrozenModel):
         return self
 
 
+class PortfolioCandidateEvaluation(FrozenModel):
+    """Complete point-in-time economics used to compare one forecast with cash."""
+
+    sleeve_id: str = Field(min_length=1)
+    forecast_id: str = Field(min_length=1)
+    edge_basis: PortfolioEdgeBasis
+    current_gross_notional: Money
+    evaluation_gross_notional: Money
+    desired_gross_notional: Money
+    forecast_current: bool
+    decision_gross_bps: Decimal
+    cost: PortfolioCostEstimate
+    decision_net_bps: Decimal
+    minimum_net_bps: Decimal
+    eligible: bool
+    reason_codes: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def economics_and_result_must_be_consistent(self):
+        if self.decision_net_bps != self.decision_gross_bps - self.cost.total_bps:
+            raise ValueError("Portfolio candidate 净收益必须等于毛收益减点时成本")
+        if self.cost.gross_notional != self.evaluation_gross_notional:
+            raise ValueError("Portfolio candidate 评估名义金额必须与成本模型一致")
+        if self.eligible != (
+            self.forecast_current and self.decision_net_bps >= self.minimum_net_bps
+        ):
+            raise ValueError("Portfolio candidate eligibility 与有效期、净收益和门槛不一致")
+        if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
+            raise ValueError("Portfolio candidate reason_codes 必须唯一且排序")
+        return self
+
+
 class PortfolioTarget(FrozenModel):
     target_id: str = Field(min_length=1)
     cycle_id: str = Field(min_length=1)
@@ -394,6 +426,10 @@ class PortfolioTarget(FrozenModel):
     account_snapshot_id: str = Field(min_length=1)
     account_snapshot_hash: str = Field(pattern=SHA256_PATTERN)
     considered_forecast_ids: tuple[str, ...] = ()
+    # ``None`` is reserved for immutable records written before candidate
+    # economics became part of the target contract.  New decisions always
+    # write a complete tuple, including an explicitly empty tuple.
+    candidate_evaluations: tuple[PortfolioCandidateEvaluation, ...] | None = None
     quotes: tuple[ExecutableQuote, ...] = ()
     sleeves: tuple[SleeveTarget, ...] = ()
     reason_codes: tuple[str, ...] = Field(min_length=1)
@@ -410,6 +446,17 @@ class PortfolioTarget(FrozenModel):
             raise ValueError("PortfolioTarget Sleeves 必须唯一且排序")
         if tuple(sorted(set(self.considered_forecast_ids))) != (self.considered_forecast_ids):
             raise ValueError("considered_forecast_ids 必须唯一且排序")
+        if self.candidate_evaluations is not None:
+            candidate_sleeve_ids = tuple(
+                item.sleeve_id for item in self.candidate_evaluations
+            )
+            if tuple(sorted(set(candidate_sleeve_ids))) != candidate_sleeve_ids:
+                raise ValueError("Portfolio candidate evaluations 必须按 Sleeve 唯一且排序")
+            candidate_forecast_ids = tuple(
+                sorted(item.forecast_id for item in self.candidate_evaluations)
+            )
+            if candidate_forecast_ids != self.considered_forecast_ids:
+                raise ValueError("Portfolio candidate evaluations 必须完整覆盖 Forecast 考虑集")
         referenced_forecasts = {
             forecast_id for sleeve in self.sleeves for forecast_id in sleeve.forecast_ids
         }
@@ -425,6 +472,23 @@ class PortfolioTarget(FrozenModel):
             raise ValueError("PortfolioTarget quotes 必须覆盖全部 Sleeve Legs")
         if any(item.as_of != self.as_of for item in self.quotes):
             raise ValueError("PortfolioTarget quotes 必须冻结在目标 as_of")
+        if self.candidate_evaluations is not None:
+            quote_refs = {item.source_quote_id for item in self.quotes}
+            if any(
+                not set(item.cost.quote_refs).issubset(quote_refs)
+                for item in self.candidate_evaluations
+            ):
+                raise ValueError("Portfolio candidate 成本引用必须来自冻结报价")
+            candidate_by_sleeve = {
+                item.sleeve_id: item for item in self.candidate_evaluations
+            }
+            if any(
+                sleeve.sleeve_id not in candidate_by_sleeve
+                or candidate_by_sleeve[sleeve.sleeve_id].desired_gross_notional
+                != sleeve.desired_gross_notional
+                for sleeve in self.sleeves
+            ):
+                raise ValueError("Portfolio Sleeve 目标必须与 candidate allocation 结果一致")
         if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
             raise ValueError("PortfolioTarget reason_codes 必须唯一且排序")
         for sleeve in self.sleeves:
