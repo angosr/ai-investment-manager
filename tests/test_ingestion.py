@@ -345,10 +345,12 @@ def test_official_publication_source_follows_only_bounded_same_host_entries() ->
             text=(
                 '<html><head><meta property="og:title" '
                 'content="Treasury expands digital asset sanctions" /></head>'
-                '<body><time datetime="2026-08-24T17:30:00Z"></time>'
-                "<main><h1>Treasury expands sanctions</h1>"
+                '<body><main><nav>Interest rates and sanctions navigation</nav>'
+                '<article><time datetime="2026-08-24T17:30:00Z"></time>'
+                "<h1>Treasury expands sanctions</h1>"
                 "<p>Official action expands sectoral sanctions to digital assets."
-                "<br>Nearly 60 designations were issued.</p></main></body></html>"
+                "<br>Nearly 60 designations were issued.</p></article>"
+                "</main></body></html>"
             ),
             request=request,
         )
@@ -373,6 +375,7 @@ def test_official_publication_source_follows_only_bounded_same_host_entries() ->
     assert requests == [index_url, entry_url, index_url]
     assert first[0].event_time == datetime(2026, 8, 24, 17, 30, tzinfo=UTC)
     assert first[0].source == "official:treasury-press-releases"
+    assert first[0].acquisition_route == "official-publication-v2"
     assert first[0].source_reliability == Decimal("1")
     assert "Nearly 60 designations" in first[0].body
     assert event is not None
@@ -396,8 +399,8 @@ def test_official_publication_source_uses_dated_action_url_as_time_fallback() ->
             200,
             text=(
                 '<meta property="og:title" content="Digital asset sanctions action">'
-                "<main><h1>Digital asset sanctions action</h1>"
-                "<p>OFAC issued an official determination.</p></main>"
+                "<main><h1>Digital asset sanctions action</h1><article>"
+                "<p>OFAC issued an official determination.</p></article></main>"
             ),
             request=request,
         )
@@ -417,6 +420,48 @@ def test_official_publication_source_uses_dated_action_url_as_time_fallback() ->
 
     assert item.event_time == datetime(2026, 8, 24, 12, tzinfo=UTC)
     assert item.url == entry_url
+
+
+def test_official_publication_source_does_not_treat_site_navigation_as_body() -> None:
+    observed_at = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    index_url = "https://home.treasury.gov/news/press-releases"
+    entry_url = "https://home.treasury.gov/news/press-releases/sb0614"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == index_url:
+            return httpx.Response(
+                200,
+                text='<a href="/news/press-releases/sb0614/">release</a>',
+                request=request,
+            )
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<meta property="og:title" content="Quantum readiness task force">'
+                '<main><nav>Digital assets sanctions interest rates</nav>'
+                '<article><time datetime="2026-08-24T19:00:00Z"></time>'
+                '<p>Agency systems will migrate to post-quantum cryptography.</p>'
+                '</article></main>'
+            ),
+            request=request,
+        )
+
+    source = OfficialPublicationSource(
+        OfficialPublicationFeed(
+            stream_id="treasury-press-releases",
+            index_url=index_url,
+            entry_path_pattern=r"^/news/press-releases/[a-z]{2}[0-9]+$",
+            domain=CausalDomain.REGULATION_LEGISLATION,
+        ),
+        maximum_age_seconds=172_800,
+        transport=httpx.MockTransport(handler),
+    )
+
+    item = source.read(observed_at=observed_at)[0]
+
+    assert "sanctions" not in item.body.lower()
+    assert EventNormalizer().normalize(item) is None
 
 
 def test_sql_event_store_deduplicates_and_respects_observed_at_visibility() -> None:

@@ -380,7 +380,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v31
+  version: information-intake-v32
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -523,7 +523,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v35
+  version: context-assessment-v36
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
