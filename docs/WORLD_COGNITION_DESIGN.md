@@ -1,7 +1,9 @@
 # 世界认知、预测与资本协作设计
 
-状态：**首个端到端实现已接通。WorldModel、Context Forecast、Mock Portfolio、Risk、Execution 与 Outcome 使用同一
-权威链路；认知是否具有费用后预测增量仍须由真实前瞻样本证明，不能因实现完成而宣称盈利。**
+状态：**首个 BTC Spot 多头端到端切片已经证明 WorldModel 能形成可结算分布，也暴露出负向判断无法由现货表达的
+产品断点。双向资本的最终设计已经冻结，实施时将把现役方向合同硬迁移为一个 BTC USDⓈ-M Perpetual 24h 规范收益
+合同，由同一分布确定性派生多头、空头和现金；现有 Spot 合同完成历史结算后退出现役。认知是否具有费用后预测
+增量仍须由真实前瞻样本证明，不能因设计或实现完成而宣称盈利。**
 
 本文不承诺盈利，也不把调用成功、文字深度、交易次数或系统健康称为盈利能力。它只定义一条能持续产生点时预测、自然资本决策、费用后结果和可证伪学习的最短闭环。
 
@@ -29,6 +31,8 @@ Evidence → StateFeature → WORLD_UPDATE → WorldModel
                   只读先前已结算样本的 Frozen ForecastPolicy
                                       ↓
                    一个目标一个权威 CalibratedForecast
+                                      ↓
+            确定性 Orientation Projection（多头 / 空头）
                                       ↓
                 Portfolio → Risk → Execution → Account Outcome
                                       ↓
@@ -88,6 +92,9 @@ Risk、Execution、Governance 和 Health 仍各自拥有硬约束、订单事实
 14. Forecast 收益从预测完成后首个真实可成交时点起算，不能从新闻发生、Packet 冻结或 AI 启动时间起算；Codex 延迟必须进入结果。
 15. 同一来源、合同和决策槽只有一个权威 Forecast 身份；重试、账号切换和相同材料重复投递不得制造独立样本。
 16. Context Forecast 引用的 WorldModel 必须在调用前已持久化，且其全部 Evidence/StateFeature 不晚于本槽 information cutoff；后生成的认知不能倒填旧槽。
+17. 反向 orientation 只能翻转同一可逆产品的规范 payoff；Spot 与 Perpetual、不同 Venue 或不同保证金资产不能因底层资产同名而互相镜像。
+18. Portfolio 选择的是目标经济状态而非订单；开仓、继续持有、退出和反转必须按当前持仓分别计算尚未发生的成本，历史沉没费用不得重复扣除。
+19. 一个方向合同只产生一个 Forecast Outcome 和一个统计样本；多头、空头、现金只是同一预测在资本层的可执行决策反事实。
 
 ## 5. Evidence、StateFeature 与信息密度
 
@@ -225,13 +232,43 @@ Target 和时域来自可交易 mandate 与经济机制，不由 AI 临时发明
 
 每个合同必须事前绑定两个简单基线：预测层使用历史基准分布或其他不读当前材料的 no-skill forecast；决策层根据投资对象使用现金与风险匹配的简单可投资基线，例如方向资产的被动暴露或 carry 的不交易。只赢现金但长期显著落后于同风险被动暴露，不能宣称资产管理有效；也不能用不适用于多腿 payoff 的 buy-and-hold 作为虚假强基线。
 
-一个 `outcome_family_id` 只预测一次规范化 payoff，例如 BTC 永续多头收益或现货多头/永续空头 carry 收益。若 Binance 产品与合同允许反向暴露，程序从同一概率分布确定性派生相反 orientation：收益区间取反、费用和保证金按该方向重新计算，不能再次调用 AI、建立第二份独立样本或把多空当作两项 Alpha。Portfolio 只能在允许且可执行的 orientations 中选择方向；Spot 不可卖空、多腿反向不等价或产品状态不允许时不得机械镜像。
+一个 `outcome_family_id` 只预测一次规范化 payoff，例如 BTC USDⓈ-M Perpetual 固定基准名义的多头价格收益，或现货多头/永续空头 carry 的组合收益。反向 orientation 只有在同一产品、相同乘数、相同结算资产和线性 payoff 可精确翻转时才成立；程序从同一概率分布确定性派生相反方向，不能再次调用 AI、建立第二份独立样本或把多空当作两项 Alpha。Spot 不可直接做空，Spot 与 Perpetual 的 basis、funding 和结算不同，多腿 Target 的反向也通常不等价，因此都不得机械镜像。
+
+### 7.1.1 首个双向方向合同
+
+首个双向切片只保留一个 BTC USDⓈ-M Perpetual 24h 方向合同，不同时把 Spot 多头和 Perpetual 多头做成两个可竞争 Alpha。24h 是首个前瞻实验冻结的经济时域，不继承旧 Spot 4h 参数：它使 Codex 延迟只占较小比例，也比 4h 更符合宏观与资金机制的传导、现实换手成本和低中频 mandate。每天一个自然槽保证连续样本；只有目标相关 MaterialDelta 才追加事件槽，重叠窗口按簇评价而不伪装成独立样本。若 24h 合同没有增量，发布新合同或撤销能力，不能在原合同上事后改时域。合同的规范方向是固定基准名义的 Perpetual 多头价格收益，允许 `CANONICAL` 与 `INVERSE`；AI 和 Program 都只对规范方向的冻结 buckets 输出一份概率。Portfolio 在同一时点派生：
+
+```text
+CANONICAL = 同产品多头
+INVERSE   = 同产品空头
+CASH      = 零目标暴露
+```
+
+规范标签明确冻结为 Binance Perpetual mark price 的简单收益，不把 funding 或可成交点差混入预测目标：
+
+```text
+R_canonical = (mark_at_horizon / mark_at_cutoff - 1) × 10,000 bps
+```
+
+cutoff 与 horizon 都使用合同规定时间附近、在允许时间容差内首次可见的同源 mark observation；缺失或超出容差则 Outcome 不可得，不能用后来数据插值。Mark 是交易所估值与风险参考，不是成交承诺。Portfolio 对每个 bucket 的冻结价格情景使用真实 entry bid/ask 重新计算线性合约剩余 payoff：多头为 `mark_scenario / entry_ask - 1`，空头为 `1 - mark_scenario / entry_bid`；随后再加入未来 signed funding 并扣除实际可执行成本。尾部仍使用合同事前冻结的保守代表情景，不能在看到结果后扩大或缩小。
+
+现有 BTC Spot 4h 合同已经产生的 Forecast 和 Outcome 继续按原合同结算并永久保留，但新双向合同具有新的合同身份、Producer behavior 和 Mock authorization，不能继承 Spot 样本或成绩。切流后 Spot 合同不再创建新槽、不再进入 Portfolio，也不保留兼容生产器。未来只有当前瞻结果证明产品路由本身具有增量，才可登记“Spot 或 Perpetual 承载同一方向敞口”的独立有限实验；在此之前不建立 Product Router。
+
+方向派生只改变资本表达，不改写 Forecast：
+
+- `BaseForecast` / `CalibratedForecast` 始终保存规范方向、原始 bucket 概率和共同 Forecast Outcome；
+- `INVERSE` 将每个线性价格情景按同产品 payoff 精确取反，并重新按 bucket 边界积分或以冻结情景代表值计算，不能只给期望 bps 加负号后丢失尾部；
+- cutoff 到完成后 entry anchor 的变换按价格比和合约乘数执行完整 payoff 代数，不能用“预测 bps 减已经发生 bps”的近似；
+- funding 是方向相关的未来现金流，费用、点差和滑点是方向与状态转换相关的成本，二者都在 Portfolio 时点重算，不能污染共同 Forecast Outcome；
+- 每个允许方向若报价、交易状态、资金费率时序、保证金信息或数量规则不可用，只把该方向标为不可执行，不使另一方向的 Forecast 消失。
+
+规范 Forecast 的结算使用合同冻结的同一 Perpetual 参考价格口径；可成交 Portfolio 结果从各自完成后首个真实 bid/ask 起算。Mark/index 可以承担估值、funding 和风险参考，不能冒充可成交价格；bid/ask 可以计算交易结果，不能反向改写共同预测标签。这样 proper score 衡量判断能力，费用后交易 PnL 衡量资本表达，两者不会混成一个对模型有利的标签。
 
 `evaluation_trigger` 是有经济含义的材料变化、状态成熟窗口或低频检查点，不是月初、每月或为了凑交易数的日历。相同 Target/时域的重复触发按材料身份合并。
 
 `completion_deadline` 和最小剩余可交易时长由各合同的经济 horizon 冻结，不能用全局超时常量替代。即使输出未超过调用超时，只要 entry anchor 到统一终点的剩余时长已不足以实现该 Target，仍记为 `NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON`；不得靠缩短持有期改变原标签。
 
-`outcome_buckets` 在结果发生前冻结互斥收益区间、边界归属、用于期望计算的保守代表收益和尾部处理方式。Program 和 Context 都输出同一组区间的概率，不让 AI 临时发明精确 bps；期望毛收益、区间覆盖和 proper score 由程序按同一合同计算。代表收益和尾部上限只能从严格历史训练段或经济边界冻结，不能用当前结果调整；若区间过粗到无法支持资本决策，应发布新合同并重新积累证据，而不是在 Portfolio 中补一个主观修正。`cost_semantics_version` 只冻结费用算法身份，当前实际费率、点差、滑点、funding/borrow 和退出成本仍在决策时从点时账户与市场状态计算，不能长期写死一个常数。
+`outcome_buckets` 在结果发生前冻结互斥收益区间、边界归属、用于期望计算的保守代表收益和尾部处理方式。Program 和 Context 都输出同一组区间的概率，不让 AI 临时发明精确 bps；期望毛收益、区间覆盖和 proper score 由程序按同一合同计算。代表收益和尾部上限只能从严格历史训练段或经济边界冻结，不能用当前结果调整；若区间过粗到无法支持资本决策，应发布新合同并重新积累证据，而不是在 Portfolio 中补一个主观修正。`cost_semantics_version` 只冻结建仓、调仓、退出等执行成本算法的身份；当前费率、bid/ask、深度与滑点参数仍在决策时从点时账户和市场事实读取。Funding、borrow 等持有期现金流按合同与方向单独计算并只计一次，不能因为字段名称中含 `cost` 就混入执行费用，也不能长期写死常数。
 
 Governance 将一个或多个 `producer_kind + producer_behavior_id` 绑定到同一合同，并在绑定中冻结该来源的必需特征、Context 最大 WorldModel 年龄和 Research/Capital 权限。Prompt、模型或程序公式改变只产生新的 Producer behavior；除非 Target、槽、标签、成本或结算语义真的变化，否则不得复制 ForecastContract。这样 Program、Context 和消融行为才能共享相同 decision slot 与 Outcome，来源变化也不会通过换合同逃避历史失败。
 
@@ -321,19 +358,45 @@ Policy 必须同时冻结证据最大年龄、最少有效样本、允许的状�
 Portfolio 同时比较：
 
 - 现金和现有持仓；
-- 每个 outcome family 唯一权威 Forecast 及其允许 orientation 的保守费用后 Edge；
+- 每个 outcome family 唯一权威 Forecast 及其允许、可执行 orientation 的保守费用后 Edge；
 - 预测不确定性、相关性、换手、容量和组合风险贡献；
 - 当前账户、未完成订单和可执行价格。
 
+Portfolio 对每个 family 形成一个短小的、内嵌在资本决策事实中的 orientation 比较表，不建立新服务或新账本。每项只记录规范 Forecast 引用、方向、执行 Target、当前持仓状态、价格 Edge、未来 funding、尚未发生的费用、保守净 Edge、可执行性和拒绝原因。现金也必须作为候选。最终只输出一个目标状态；未选方向只是同一决策的反事实，不形成 Forecast、Sleeve 或订单。
+
 多个 family、时域或多腿 Target 若共享同一产品风险，不得各自获得完整独立预算。Portfolio 先按 Forecast 来源与标签重叠估计依赖，再在产品 Leg 层净额化目标；无法可靠估计依赖时使用保守聚类上限或只保留 champion，不能把 BTC 24h、BTC 7d 和含 BTC 的 carry 当成三份独立 Alpha 相加。净额化只减少实际订单，不抹掉各 Forecast 和 Sleeve 的结果归因。
 
-只有 Portfolio 应用 `conservative_gross_edge - complete_cost > required_margin`。来源不得重复应用同一经济门槛。Portfolio 输出唯一 `PortfolioTarget`，并明确记录现金胜出的具体原因。
+只有 Portfolio 对完整方向经济结果应用资本门槛；来源不得重复扣成本、加入 funding 或应用同一门槛。Portfolio 输出唯一 `PortfolioTarget`，并明确记录现金胜出的具体原因。
 
-`complete_cost` 必须在每次决策时使用账户真实费率等级、可成交 bid/ask、订单规模相对深度、点时滑点模型、预期持有期 funding/borrow 以及退出缓冲计算；ForecastContract 只绑定算法版本。收益中已经计入的 funding 不能再次记为成本。`required_margin` 来自该来源的校准误差、模型不确定性和权限政策，任何固定下限都必须有点时评价和版本身份，不能为获得或阻止订单拍脑袋 hardcode。
+资本比较使用同一分解，避免把 funding、费用和不确定性混成一个无法归因的 buffer：
 
-Risk 对冻结目标执行账户新鲜度、gross/net exposure、集中度、压力损失、保证金、交易状态和临时失配硬约束。它不修改收益预测，也不能用风险规则制造正 Edge。程序化止损、保证金保护、交易所故障和对账冻结不等待 Codex。
+```text
+orientation_net_edge
+  = repriced_price_edge
+  + signed_expected_funding
+  - remaining_execution_cost
+```
 
-Execution 只把已授权 Target 转成可恢复订单状态机。模拟与正式模式在 Venue 以上使用相同数量、费用、funding、部分成交、补偿和账户投影语义。
+`remaining_execution_cost` 必须在每次决策时使用账户真实费率等级、可成交 bid/ask、订单规模相对深度、点时滑点模型和退出缓冲计算；ForecastContract 只绑定算法版本。Funding 是有符号现金流：正 funding 对多头为支出、对空头为收入，负 funding 相反；已进入 Forecast Target payoff 的 funding 不得重复加入。Portfolio 枚举候选持有窗口内实际结算点：当前可见的费率、上限和下一结算时间直接引用交易所事实，尚未公布的后续结算只能使用基于当时历史的冻结保守估计并暴露不确定性；必要输入缺失时方向不可执行。资金费率间隔不能固定假设为八小时。账户 PnL 最终只用逐次真实 funding 结算替换预测值，二者分栏归因。
+
+全部尚未发生的经济分量必须相对“当前持仓 → 候选目标”计算：
+
+- 现金到新方向：建仓成本、预计持有期 funding 和未来退出成本；
+- 同方向继续持有：只计算未来 funding、预计调仓和未来退出，已付建仓费用是沉没成本；
+- 当前方向到现金：只计算立即平仓成本；
+- 当前方向反转：计算平旧仓、开新仓、未来 funding 和退出的完整成本。
+
+Portfolio 仍只应用 `conservative_orientation_edge > required_margin`。`required_margin` 来自该来源的校准误差、模型不确定性和权限政策，不属于交易成本；任何固定下限都必须有点时评价和版本身份，不能为获得或阻止订单拍脑袋 hardcode。首个未校准 Mock challenger 使用事前冻结的小额 allocation 上限，不同时实验动态 sizing；先判断方向预测和资本表达是否有效，避免把仓位优化混入首个实验。
+
+一个 outcome family 在 Portfolio 中只有一个稳定 Sleeve 身份，不能因为 `CANONICAL` 与 `INVERSE` 的执行 Leg 方向不同而生成两个并存 Sleeve。Sleeve 绑定 portfolio、outcome family 与合同经济身份，当前 orientation 和执行 Target 是它的状态。由多转空或由空转多是同一 Sleeve 的目标变化，必须显式关闭旧方向后再建立新方向；不得通过两个相反 Sleeve 抵消成表面低净敞口却重复 gross、funding 和风险预算。
+
+Risk 对冻结目标执行账户新鲜度、gross/net exposure、集中度、压力损失、保证金、交易状态和临时失配硬约束。方向 Perpetual 还必须检查 mark 与可成交报价新鲜度、实际 margin mode、position mode、leverage/bracket、wallet/free collateral、initial/maintenance margin、liquidation buffer、ADL/强平事实及未来 funding 压力。这些账户量必须来自同一权威快照并能与产品持仓、未完成订单和权益核对，不能从目标 notional 反推一个看似正常的保证金状态。Risk 不修改收益预测，也不能用风险规则制造正 Edge。程序化止损、保证金保护、交易所故障和对账冻结不等待 Codex。
+
+首个双向 Mock 合同保持现有“经济 gross 不超过已分配权益”的无隐含杠杆原则，并冻结为单向净持仓、逐仓保证金和 1x leverage；对应风险模型按 100% 初始保证金计量。交易所 leverage 只是保证金实现参数，必须由 Policy 明示并与账户对账，不能提高 Portfolio 经济暴露上限。未来改变 margin mode 或 leverage 属于新的风险/执行 Policy，必须独立评价，不能在方向实验中一起调整。若实际账户处于 Hedge Mode，或 margin mode、leverage 与 Release 不符，禁止新增风险且不得由服务启动时擅自修改账户设置。逐仓限制单产品故障传染，但仍不能替代组合级现金、压力损失和强平缓冲。
+
+Execution 只把已授权 Target 转成可恢复订单状态机。模拟与正式模式在 Venue 以上使用相同数量、费用、funding、部分成交、补偿和账户投影语义。单向模式下反转必须执行 `REDUCE_TO_FLAT → 对账确认 → OPEN_NEW_ORIENTATION`；平仓单只能减险，不能因部分成交或重试穿越零点意外开出反向仓位。相同 Sleeve 存在非终态 group 时不得开始新的反转或新增风险，未知提交先按稳定 client order identity 查询，不能盲目补单。
+
+保护与退出是程序化职责：风险失效、Forecast 到期、保证金缓冲不足、账户不一致或 kill switch 都可以生成零目标并走同一 Risk/Execution 链。Liquidation price 只是最后风险边界，不是止损策略；保护单和主动退出必须在其之前留出经压力测试的恢复空间。Codex 超时或不可用不能阻止已有仓位减险。
 
 页面所称的 10,000 USDT 模拟账户只有一个权威 PortfolioPolicy，可以同时持有不同 outcome family，但同一 family 只执行当前获 Mock 授权 champion 的一个净 orientation。其他 Program、Context、消融或候选政策只在相同引擎上的逻辑影子账本形成反事实，不制造第二份“真实模拟持仓”，也不共享一份事后成交结果。所有实验共同受一个组合级实验风险预算约束，不能把多个局部授权相加后突破账户风险上限。
 
@@ -360,6 +423,8 @@ Forecast 的资本有效期不得超过其合同 horizon 或显式 validity。�
 
 - 费用后收益、回撤、换手、尾部损失和现金机会成本；
 - Program、Context、现金、风险匹配简单可投资基线和任何事前登记的可选组合在完全相同 Target、槽、成本和执行语义下比较；
+- 每个双向槽同时保存规范多头、派生空头与现金从同一 entry anchor 开始的费用后反事实，但只有规范 Forecast 计算一次 proper score、占一个样本；
+- 分别归因价格判断、funding 估计、状态转换成本、Risk 缩减与 Execution 偏差，不能把空头赚钱直接算成第二个预测命中；
 - 分离“预测正确但成本不值得交易”和“预测错误”；
 - 对每条 WorldModel Mechanism 统计其改变了哪些 Context Forecast、造成何种组合差异以及后续结果。
 
@@ -377,6 +442,8 @@ Program 可以使用当时点数据可重建的历史回放和 blind；今天的
 世界机制验证通过不等于可交易；Forecast 准确不等于费用后盈利；少量模拟盈利不等于正式资本证据。三者必须逐层成立。
 
 同一 Forecast 的一次入场或现金反事实可以直接由冻结 Outcome 评价；当某项政策会改变仓位并进一步影响后续现金、风险预算和再平衡时，各被评价政策必须在同一 Portfolio/Execution 引擎上使用独立逻辑账本重放各自路径。它们只是带不同 `policy_id` 的评价账户，不是多套服务、业务模式或订单实现；不得共享一份事后成交来抹平路径差异。
+
+首个双向 Mock 实验必须事前冻结唯一 Context behavior、Perpetual 合同、orientation 代数、账户模式、成本、funding、风险包络、自然触发和删除条件。它与旧 Spot 合同分别结算，不能合并为更大的样本。评价至少同时回答：规范概率是否优于 no-skill 分布；允许反向后是否相对现金和风险匹配被动多头改善费用后结果；利润是否主要来自方向判断而非偶然 funding；Codex 延迟、反转成本和强制退出是否吞噬 Edge。任何一项不成立都要定位到所属层，而不是继续扩写世界认知。
 
 Program 与 Context 的比较能判断哪种预测来源更有用，但不能单独证明 WorldModel 本身有增量。若要宣称“世界认知改善预测”，必须在预登记的非重叠诊断 cohort 上做最小配对消融：`CONTEXT_WITH_WORLD` 与 `CONTEXT_STATE_ONLY` 使用同一模型、Target 特征、Schema、信息截止时间和完成截止时间，唯一差异是是否提供冻结 WorldModel。消融只进入评价账本，不成为第三个资本来源；经济比较使用两者均已完成后的共同可成交锚点，任一侧超时都按预登记失败处理，不能选择性删除。若消融长期无增量，Context Forecast 应移除 WorldModel 输入，而不是继续用机制引用证明自身价值。
 
@@ -428,25 +495,25 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 - 当前 outcome family 的 Program、Context、允许 orientation 和权威 Forecast 对照；
 - 哪些机制实际改变了 Context Forecast；
 - Portfolio 为什么持仓或持有现金；
+- 同一 Forecast 下多头、空头、现金的价格 Edge、funding、剩余成本、净 Edge、可执行状态和选择结果；
+- 当前 Perpetual 的方向、gross、margin mode、leverage、mark、liquidation buffer、未实现/已实现 PnL、累计 funding 与保护状态；
 - 每份 Forecast 的信息截止、完成时间、可成交起算点、输入快照、行为身份、概率分布、点时成本、后续结算和基线对照。
 
 历史事件、WorldModel、Forecast、资本行动、订单和 Outcome 永久保留并分页。页面不制造虚假条目，也不把研究认知写成已经影响资本。
 
 ## 15. 从当前实现迁移的唯一顺序
 
-设计先行，实施不得并行制造第二条链：
+设计先行，双向切片按一条纵向路径硬迁移；任何阶段未通过都不并行保留第二条资本链：
 
-1. **冻结时间与分布合同：**先把 decision slot、信息截止、完成期限、成交起算点、收益区间和 cost semantics 写入 Forecast 身份；任何回放必须证明没有用 Packet 时间代替可成交时间。
-2. **修正职责边界：**Producer 在输入有效时始终保存概率 BaseForecast，把净 Edge 和点时完整成本唯一移到 Portfolio；资本记录只使用结构化结果，区分 NO_ESTIMATE、费用后 Edge 不足而持有现金、组合拒绝和风险拒绝。
-3. **冻结连续 cohort：**用现有 Governance/Forecast/Outcome 能力登记少量 Target/时域/触发/标签合同，不新建调度服务或第二事实库；先让 current carry 的负样本也可结算，并验证重试与重叠槽不会扩大样本数。
-4. **接入 Context Forecast（已完成首个 BTC Spot 4h 合同）：**现有 Codex、WorldModel、Forecast Repository 和
-   Settlement 已接入互斥 `FORECAST_ESTIMATE` purpose；AI 只输出合同概率，没有新的 Agent、知识图谱或订单旁路。
-5. **建立单源校准：**ForecastPolicy 只读取严格较早的已结算槽，先分别评价 Program、Context 和现金并选 champion；不预建组合器。
-6. **证明 WorldModel 增量：**在独立诊断 cohort 运行配对消融；没有增量就从 Context Forecast 删除 WorldModel 输入，不用叙事保护投入。
-7. **替换旧复核（已完成）：**`OpportunityAssessment/context-overlay-veto` 已停止新写，运行服务、Policy、页面、评价和
-   测试均已删除，只保留历史只读事实。
-8. **资本接线：**只有获得事前资本权限的 CalibratedForecast 才进入正式 Portfolio；首个 Mock champion 在前瞻窗口前冻结，按共享实验风险自然运行，其他政策只走影子账本，不强制订单；补齐 Forecast 到期后收敛现金与新 Forecast 重锚的持仓生命周期测试。
-9. **按断点扩展：**只有结算暴露出明确缺失机制时，才增加一个独立 Program 或 Context challenger；失败即退役，不保留空装配、默认组合和兼容层。
+1. **冻结新经济合同：**以 BTC USDⓈ-M Perpetual 24h 规范多头价格收益定义唯一方向 family，冻结每日自然槽、材料事件槽、共同 cutoff/终点、buckets、`CANONICAL/INVERSE`、完成期限、可成交重锚、funding 和决策基线。Spot 4h 合同停止扩展，但在切流前继续完成已存在槽的结算。
+2. **迁移 Context Producer：**复用现有 WorldModel、目标 StateFeature、Codex purpose、Forecast Repository 和 Settlement，只把目标产品与行为身份迁移为新合同；不增加 Agent、Prompt 分支、触发类型或第二份输入面板。合同改变必须产生新 behavior，不能继承 Spot 成绩。
+3. **实现唯一 Orientation Projection：**在 Forecast 与 Portfolio 之间完成同产品线性 payoff、精确重锚和方向翻转；每个槽仍只有一份 Forecast。方向候选比较作为现有资本决策的内嵌事实，不新建 `OrientedForecast` 表、策略服务或独立 Sleeve。
+4. **修正 Portfolio 状态转换经济学：**稳定一个 family 的 Sleeve 身份，统一比较多、空、现金；分别计算开仓、持有、退出和反转尚未发生的费用及 signed funding。首个 Mock 使用冻结小额 allocation，不同时引入动态 sizing、多个资产或组合器。
+5. **补齐方向 Perpetual 风险：**Risk 使用同一账户快照核对 position/margin mode、leverage bracket、mark、保证金、强平缓冲、ADL/强平和 funding 压力；保持经济 gross 无隐含杠杆。缺失或不一致只拒绝新增风险，减险仍走受限恢复。
+6. **补齐反转执行与账户恢复：**Planner/Execution 对同一 Sleeve 执行先平后开，Mock 与未来 Binance Venue 共用数量、费用、funding、部分成交、未知结果和对账语义。故障注入覆盖平仓部分成交、确认前崩溃、开仓拒绝和重启恢复。
+7. **统一结算和决策反事实：**Forecast Outcome 只结算规范方向一次；Evaluation 从共同 entry anchor 派生多、空、现金费用后反事实，并以真实选择形成账户 PnL。Dashboard 直接展示这些既有事实，不自行重算。
+8. **切流并删除旧路径：**新合同完成端到端回放、重启和 Mock 验收后，原子切换 Release；删除 Spot 专属 Context 生产器、Spot-only 校验、旧授权、旧配置和无消费者测试。旧 Forecast/Outcome 留在不可变账本，不保留生产兼容层。已退役且无消费者的 cash-carry 生产装配与禁用配置同时删除，历史研究制品不删除。
+9. **运行单一前瞻实验：**只运行这一位 Mock champion，连续结算自然槽并与现金、风险匹配被动多头和 no-skill forecast 比较。结果未证明增量前不扩 ETH、股票永续、Spot 路由、动态 sizing 或多来源组合；失败则撤销授权并删除现役实现。
 
 实施期间不得恢复月度、首日、固定日期交易，不得把 `AI_RESEARCH` 做成第三套资本链，也不得同时长期维护 OpportunityAssessment 与 Context Forecast 两套上下文投资语义。
 
@@ -463,6 +530,10 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 - 所有 Forecast 无论是否成交都能到期结算；
 - 本次校准只读取此前已结算样本，未来 Outcome 不回写当前决策；
 - 同一 outcome family/时域只有一个权威资本 Forecast，反向 orientation 不重复计样本；
+- 同一 Perpetual Forecast 能确定性派生多头和空头，Spot 不被错误当作同一 payoff；多、空、现金比较只产生一个目标状态；
+- cutoff 到 entry 的重锚使用完整 payoff 代数；funding 符号、沉没成本、持有成本和反转成本均有独立回归测试；
+- 同一 family 的方向反转不产生两个 Sleeve，执行必须先平后开，崩溃、部分成交和未知结果恢复后不存在意外反向仓位；
+- 新增风险前账户的 position mode、margin mode、leverage、bracket、保证金和报价已对账；经济 gross 不因交易所 leverage 放大；
 - 过期 Forecast 不能继续支撑持仓；Mock champion 不能按已观察结果事后切换；
 - 模拟订单、成交、退出、PnL 和拒绝原因可追溯；
 - 长期无预测、无结算和无资本影响分别报警，不能统称“无机会”。
@@ -492,6 +563,8 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 - Tallman 与 West 的[面向组合的 Predictive Decision Synthesis](https://arxiv.org/abs/2405.01598)把预测模型的不确定性、历史表现和组合目标共同纳入顺序决策。本设计采用“多个预测来源在共同决策目标下比较”的原则，但暂不采用完整动态贝叶斯或默认组合框架；当前样本和复杂度不足，先让 Program 与 Context 单源竞争，只有残差互补得到前瞻证据后才实验组合。
 - Federal Reserve 的[货币政策行动与声明事件研究](https://www.federalreserve.gov/econres/feds/do-actions-speak-louder-than-words-the-response-of-asset-prices-to-monetary-policy-actions-and-statements.htm)表明当前目标意外与未来政策路径意外是不同因子，后者对长端利率尤其重要。本设计因此不以一次目标利率变化代表完整政策冲击，而要求公告前预期、行动和未来路径分别留痕。
 - U.S. Treasury 通过[季度再融资流程](https://home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding)发布借款估计、融资结构、拍卖和回购安排；TreasuryDirect 的[官方拍卖查询](https://www.treasurydirect.gov/auctions/auction-query/)提供实际投标与分配结果。本设计用实际融资和吸收结构约束财政机制，禁止用回购上限、TGA 单点或官员表态替代净融资事实。
+- Binance USDⓈ-M 的[交易规则](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Exchange-Information)、[下单协议](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order)和[持仓模式](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Change-Position-Mode)表明产品过滤器、`positionSide`、`reduceOnly` 与账户模式共同决定订单是否合法。本设计因此把 orientation 保留在 Portfolio，把产品模式和减险语义留给 Risk/Execution，不让 AI 直接输出 BUY/SELL。
+- Binance 将[Mark Price 与 Funding](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price)、[实际 Funding 结算](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History)、[账户持仓](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Position-Information-V3)和[杠杆分层](https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Notional-and-Leverage-Brackets)作为不同事实提供。本设计据此分开预测标签、可成交报价、signed funding、保证金与强平风险，不用某一个价格或静态 margin 常量替代全部语义。
 
 这些研究是方法依据，不是本项目盈利证据。最终权限只读取本项目自己的点时、费用后、非重叠结果。
 
@@ -501,6 +574,9 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 - 不让 WorldModel、自由文本或单条新闻直接生成订单；
 - 不用一个低发生率 Program 作为 AI 产生资本样本的前置条件；
 - 不在 Producer 内隐藏负 Forecast 或复制 Portfolio 门槛；
+- 不为多头和空头分别调用 Codex、保存两个 Forecast 或累计两个预测样本；
+- 不把 Spot 与 Perpetual 当成同一 orientation，也不在首个双向实验中预建跨产品路由器；
+- 不用交易所 leverage 放大经济 gross，不把 liquidation price 当作止损；
 - 不为了下单降低真实成本、风险或正式资本证据要求；
 - 不用月度、首日、固定交易次数或固定日期代替经济触发；
 - 不建立第二事实库、知识图谱、向量记忆、多 Agent 辩论或数据源专属策略模块；
