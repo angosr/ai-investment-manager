@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from html.parser import HTMLParser
-from typing import Literal
+from typing import ClassVar, Literal
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
@@ -108,6 +108,8 @@ class FedMonetaryReleaseRecord(FrozenModel):
     kind: Literal[OfficialRecordKind.FED_MONETARY_RELEASE] = OfficialRecordKind.FED_MONETARY_RELEASE
     title: str = Field(min_length=1, max_length=1_000)
     summary: str = Field(default="", max_length=4_000)
+    policy_state: str | None = Field(default=None, min_length=1, max_length=2_000)
+    document_url: str | None = Field(default=None, min_length=1, max_length=2_000)
     source_url: str = Field(min_length=1, max_length=2_000)
 
     @model_validator(mode="after")
@@ -116,17 +118,91 @@ class FedMonetaryReleaseRecord(FrozenModel):
             raise ValueError("Fed release 必须引用 Federal Reserve observation")
         if self.observation.source_published_at is None:
             raise ValueError("Fed release observation 必须包含来源发布时间")
-        parsed = urlparse(self.source_url)
-        if parsed.scheme != "https" or parsed.hostname not in {
-            "federalreserve.gov",
-            "www.federalreserve.gov",
-        }:
-            raise ValueError("Fed RSS 记录必须引用 federalreserve.gov HTTPS 页面")
+        for candidate in (self.source_url, self.document_url):
+            if candidate is None:
+                continue
+            parsed = urlparse(candidate)
+            if parsed.scheme != "https" or parsed.hostname not in {
+                "federalreserve.gov",
+                "www.federalreserve.gov",
+            }:
+                raise ValueError("Fed RSS 记录必须引用 federalreserve.gov HTTPS 页面")
         _validate_record_observation(self, self.observation)
         return self
 
 
 OfficialRecord = FomcMeetingRecord | FedMonetaryReleaseRecord
+
+
+def fed_policy_document_eligible(record: FedMonetaryReleaseRecord) -> bool:
+    title = record.title.casefold()
+    return title.startswith("minutes of the federal open market committee") or title == (
+        "federal reserve issues fomc statement"
+    )
+
+
+def enrich_fed_monetary_release(
+    record: FedMonetaryReleaseRecord,
+    html: str,
+    *,
+    document_url: str,
+    observed_at: datetime,
+) -> FedMonetaryReleaseRecord:
+    """Attach a bounded, source-faithful policy state from the linked Fed page.
+
+    This extractor selects explicit sentences; it does not infer stance or asset
+    direction.  A changed Fed page becomes a new observation of the same logical
+    release and remains point-in-time auditable through its own raw payload.
+    """
+
+    if not fed_policy_document_eligible(record):
+        raise ValueError("Fed release 不是 FOMC 政策文件")
+    observed_at = require_utc(observed_at)
+    raw = build_raw_source_payload(
+        source_id=FED_SOURCE_ID,
+        source_url=document_url,
+        media_type="text/html",
+        observed_at=observed_at,
+        content=html.encode("utf-8"),
+    )
+    policy_state = _fed_policy_state(html)
+    published_at = record.observation.source_published_at
+    if published_at is None:
+        raise ValueError("Fed release observation 必须包含来源发布时间")
+    identity = {
+        "guid": record.observation.source_record_id,
+        "title": record.title,
+        "summary": record.summary,
+        "policy_state": policy_state,
+        "document_url": document_url,
+        "published_at": published_at.isoformat(),
+        "link": record.source_url,
+    }
+    payload_hash = content_hash(identity)
+    observation = SourceObservation(
+        observation_id=stable_id(
+            "source_observation",
+            FED_SOURCE_ID,
+            record.observation.source_record_id,
+            payload_hash,
+            observed_at.isoformat(),
+        ),
+        source_id=FED_SOURCE_ID,
+        source_tier=SourceTier.FIRST_PARTY,
+        source_record_id=record.observation.source_record_id,
+        observed_at=observed_at,
+        source_published_at=published_at,
+        payload_hash=payload_hash,
+        payload_ref=raw.payload_id,
+    )
+    return FedMonetaryReleaseRecord(
+        observation=observation,
+        title=record.title,
+        summary=record.summary,
+        policy_state=policy_state,
+        document_url=document_url,
+        source_url=record.source_url,
+    )
 
 
 class MarketCalendarEventRevision(FrozenModel):
@@ -368,6 +444,124 @@ def parse_fed_monetary_rss(
     return tuple(records)
 
 
+def _fed_policy_state(html: str) -> str:
+    parser = _FedPolicyTextParser()
+    parser.feed(html)
+    parser.close()
+    text = _clean_text(parser.parts)
+    sentences = tuple(
+        item.strip()
+        for item in re.split(r'(?<=[.!?])(?:["”])?\s+', text)
+        if item.strip()
+    )
+    selectors = (
+        (
+            "action",
+            (
+                "the committee decided to maintain the target range",
+                "the committee decided to raise the target range",
+                "the committee decided to lower the target range",
+            ),
+            1,
+        ),
+        (
+            "expectations",
+            (
+                "market was fully pricing",
+                "market priced in",
+                "median respondent to the desk survey",
+                "market-implied expected path",
+            ),
+            2,
+        ),
+        (
+            "constraints",
+            (
+                "inflation remained elevated",
+                "labor market conditions remained",
+                "economic activity had continued",
+            ),
+            2,
+        ),
+        (
+            "path",
+            (
+                "policy tightening would likely be necessary",
+                "policy easing would likely be appropriate",
+                "more restrictive policy stance",
+            ),
+            1,
+        ),
+        (
+            "division",
+            (
+                "voted against the decision",
+                "participants favored an increase",
+                "participants favored a decrease",
+                "members voted against",
+            ),
+            1,
+        ),
+        (
+            "balance_sheet",
+            (
+                "reserve management purchases",
+                "balance sheet policy",
+                "reserves in the system appeared",
+            ),
+            1,
+        ),
+    )
+    fields: list[str] = []
+    for name, markers, maximum in selectors:
+        matches: list[str] = []
+        for marker in markers:
+            for sentence in sentences:
+                marker_offset = sentence.casefold().find(marker)
+                if marker_offset < 0:
+                    continue
+                start = marker_offset if name == "action" else 0
+                compact = sentence[start : start + 320].rstrip()
+                if start:
+                    compact = compact[0].upper() + compact[1:]
+                if compact not in matches:
+                    matches.append(compact)
+                break
+            if len(matches) >= maximum:
+                break
+        if matches:
+            fields.append(f"{name}={' '.join(matches)}")
+    if not any(item.startswith("action=") for item in fields):
+        raise ValueError("Fed FOMC 文件缺少可验证政策行动")
+    state = "; ".join(fields)
+    if len(state) > 2_000:
+        state = state[:2_000].rsplit(" ", 1)[0]
+    return state
+
+
+class _FedPolicyTextParser(HTMLParser):
+    _IGNORED: ClassVar[frozenset[str]] = frozenset(
+        {"script", "style", "nav", "header", "footer", "noscript"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.casefold() in self._IGNORED:
+            self._ignored_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() in self._IGNORED and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth and data.strip():
+            self.parts.append(data)
+
+
 class _RawFomcMeeting:
     def __init__(self, year: int, month: str, date_text: str, row_text: str) -> None:
         self.year = year
@@ -555,6 +749,8 @@ def _official_record_payload(record: OfficialRecord) -> dict:
         "guid": record.observation.source_record_id,
         "title": record.title,
         "summary": record.summary,
+        **({"policy_state": record.policy_state} if record.policy_state else {}),
+        **({"document_url": record.document_url} if record.document_url else {}),
         "published_at": published_at.isoformat(),
         "link": record.source_url,
     }

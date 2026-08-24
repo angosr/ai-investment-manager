@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -17,6 +19,7 @@ from investment_manager.information.official.metrics import (
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
     TGA_STREAM_ID,
+    TREASURY_AUCTION_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import FED_PUBLIC_CALENDAR_URL
@@ -43,6 +46,7 @@ _TREASURY_YIELD_URL = (
     "https://home.treasury.gov/resource-center/data-chart-center/"
     "interest-rates/pages/xml"
 )
+_TREASURY_AUCTION_URL = "https://www.treasurydirect.gov/TA_WS/securities/search"
 _FED_BROAD_DOLLAR_URL = (
     "https://www.federalreserve.gov/feeds/data/H10_H10_JRXWTFB_N.B.xml"
 )
@@ -81,6 +85,12 @@ class OfficialRegulatoryDocument:
     stream_id: str
     source_url: str
     content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class FedPolicyDocument:
+    source_url: str
+    content: str
 
 
 class HttpFederalRegisterSource:
@@ -185,6 +195,7 @@ class HttpOfficialMetricSource:
         NYFED_RRP_STREAM_ID,
         NYFED_SOMA_STREAM_ID,
         TGA_STREAM_ID,
+        TREASURY_AUCTION_STREAM_ID,
         TREASURY_YIELD_STREAM_ID,
     )
 
@@ -257,6 +268,16 @@ class HttpOfficialMetricSource:
                     "filter": f"record_date:gte:{start}",
                     "sort": "-record_date,-account_type",
                     "page[size]": "5000",
+                },
+            )
+            return str(url), "application/json"
+        if stream_id == TREASURY_AUCTION_STREAM_ID:
+            start = (observed_at.date() - timedelta(days=60)).isoformat()
+            url = httpx.URL(
+                _TREASURY_AUCTION_URL,
+                params={
+                    "auctionDate": f"{start},{observed_at.date().isoformat()}",
+                    "format": "json",
                 },
             )
             return str(url), "application/json"
@@ -333,13 +354,44 @@ class HttpFedOfficialSource:
     def fetch_public_calendar(self) -> str | None:
         return self._fetch(FED_PUBLIC_CALENDAR_URL)
 
-    def _fetch(self, url: str) -> str | None:
-        if url == FED_FOMC_CALENDAR_URL:
-            accept = "text/html, application/xhtml+xml;q=0.9"
-        elif url == FED_PUBLIC_CALENDAR_URL:
-            accept = "application/json"
-        else:
-            accept = "application/rss+xml, application/xml, text/xml;q=0.9"
+    def fetch_monetary_document(self, url: str) -> FedPolicyDocument | None:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in {"federalreserve.gov", "www.federalreserve.gov"}
+            or not parsed.path.startswith(
+                ("/monetarypolicy/", "/newsevents/pressreleases/")
+            )
+        ):
+            raise ValueError("Fed 政策原文 URL 不在固定官方路径")
+        content = self._fetch(url, accept="text/html, application/xhtml+xml;q=0.9")
+        if content is None:
+            return None
+        minute_links = tuple(
+            urljoin(url, match)
+            for match in re.findall(r'href=["\']([^"\']+)["\']', content, re.IGNORECASE)
+            if "/monetarypolicy/fomcminutes" in match and match.endswith(".htm")
+        )
+        if minute_links:
+            document_url = minute_links[0]
+            document = self._fetch(
+                document_url,
+                accept="text/html, application/xhtml+xml;q=0.9",
+            )
+            if document is None:
+                return None
+            return FedPolicyDocument(source_url=document_url, content=document)
+        return FedPolicyDocument(source_url=url, content=content)
+
+    def _fetch(self, url: str, *, accept: str | None = None) -> str | None:
+        if accept is None:
+            if url == FED_FOMC_CALENDAR_URL:
+                accept = "text/html, application/xhtml+xml;q=0.9"
+            elif url == FED_PUBLIC_CALENDAR_URL:
+                accept = "application/json"
+            else:
+                accept = "application/rss+xml, application/xml, text/xml;q=0.9"
+        assert accept is not None
         headers = {
             "Accept": accept,
             "User-Agent": "investment-manager-official-source/1.0",

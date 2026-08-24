@@ -68,7 +68,7 @@ INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-m
 
 ## 实时 Shadow
 
-当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。固定一手端点还包括 Fed FOMC/Chair 日历和政策 RSS、Treasury TGA/收益率曲线、Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR，以及 Federal Register 的 SEC/CFTC 数字资产 Notice/Proposed Rule/Rule；固定的 ByKaranteli 公开 JSON 端点以 `AGGREGATOR` 等级提供 BTC/ETH 已结算交易日合计 ETF 净流量。监管流、宏观快速流和合计流量每 5 分钟、低频流每 15 分钟轮询；原始响应、语义修订和轮询结果均持久化，任一配置源不健康都会降低整个因果域覆盖。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
+当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。固定一手端点还包括 Fed FOMC/Chair 日历、政策 RSS 及其链接的 FOMC 原文，Treasury TGA/收益率曲线、TreasuryDirect 拍卖结果，Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR，以及 Federal Register 的 SEC/CFTC 数字资产 Notice/Proposed Rule/Rule；固定的 ByKaranteli 公开 JSON 端点以 `AGGREGATOR` 等级提供 BTC/ETH 已结算交易日合计 ETF 净流量。FOMC 原文只提取行动、预期、公开约束、路径、分歧和资产负债表原句，拍卖只计算供给与实际吸收结构，两者都不在采集层判断方向或隐藏动机。监管流、宏观快速流和合计流量每 5 分钟、低频流每 15 分钟轮询；原始响应、语义修订和轮询结果均持久化，任一配置源不健康都会降低整个因果域覆盖。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
 
 资讯标准化器保留直接资产事件，并用版本化有限词表路由跨资产宏观事件。关键跨资产事件可越过高优先级阈值，但同一波事件先按品种合并；一般跨资产事件只进入下一次面板。资讯触发具有固定有效期，过期触发丢弃但原始标准事件事实不删除。
 
@@ -111,7 +111,7 @@ Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角�
 - 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
 - FRED 的 S&P 500、高收益信用利差和 WTI 是显式 `AGGREGATOR` 日频证据，只承担跨资产传导核验；采集失败必须进入覆盖账本，且不得把它们解释成一手、实时或可直接交易信号。黄金能力未接入时该域应继续显示 `PARTIAL`。
 - Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。
-- Treasury 暂定回购日历每 6 小时检查一次，原文、操作修订和取消记录永久保留；首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核。计划上限不是实际接受金额，也不能视为 Fed QE；财政域在债务发行数据接入前仍应显示 `PARTIAL`。
+- Treasury 暂定回购日历每 6 小时检查一次，TreasuryDirect 已完成拍卖结果随低频指标轮询；原文、操作修订、取消记录和拍卖吸收永久保留。首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核；拍卖状态只汇总已完成的 14 日票据/附息债供给、投标覆盖和投资者吸收，不把尚未公布结果的公告当成已完成融资。回购计划上限、实际回购、财政发债、SOMA 附加认购和 Fed 资产购买必须分开，不得统称 QE。
 - IBIT、ARKB、BITB 官方持仓首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI；BTC/ETH 合计流量以显式 `AGGREGATOR` 来源独立入库。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；覆盖状态可在全部声明能力健康时显示 `CURRENT`，但不得把聚合流量升级为一手事实，也不得用持仓冒充净申赎。
 - release 切换时，`trigger-service` 会按每个已知 pipeline 的最后 TriggerPlan 终止同一交易范围内仍在运行的旧 durable coordinator；即使旧计划已没有 `is_current` revision，也不能漏过孤儿 Workflow。旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
 - `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。

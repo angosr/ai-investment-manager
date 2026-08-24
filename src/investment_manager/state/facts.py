@@ -175,7 +175,7 @@ def project_fed_monetary_release_fact(
         event_time=observation.source_published_at,
         observed_at=observation.observed_at,
         headline=record.title,
-        claim=record.summary or record.title,
+        claim=record.policy_state or record.summary or record.title,
         affected_assets=policy.affected_assets,
         risk_factors=policy.release_risk_factors,
         decision_materiality=FactDecisionMateriality.CANDIDATE,

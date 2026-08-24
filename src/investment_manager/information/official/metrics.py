@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from enum import StrEnum
 from html.parser import HTMLParser
@@ -24,6 +24,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 
 TREASURY_FISCAL_SOURCE_ID = "us-treasury-fiscal-data"
+TREASURY_DIRECT_SOURCE_ID = "us-treasury-direct"
 TREASURY_RATES_SOURCE_ID = "us-treasury-rates"
 FED_H10_SOURCE_ID = "federal-reserve-h10"
 NYFED_MARKETS_SOURCE_ID = "new-york-fed-markets"
@@ -33,6 +34,7 @@ BITWISE_SOURCE_ID = "bitwise"
 FRED_SOURCE_ID = "federal-reserve-bank-st-louis-fred"
 
 TGA_STREAM_ID = "treasury-tga-balance"
+TREASURY_AUCTION_STREAM_ID = "treasury-auction-results"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
 FED_BROAD_DOLLAR_STREAM_ID = "fed-broad-dollar"
 NYFED_RRP_STREAM_ID = "nyfed-reverse-repo"
@@ -46,6 +48,7 @@ FRED_HIGH_YIELD_OAS_STREAM_ID = "fred-us-high-yield-oas"
 FRED_WTI_STREAM_ID = "fred-wti"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
+TREASURY_AUCTION_FACT_TYPE = "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
 FED_BROAD_DOLLAR_FACT_TYPE = "FED_BROAD_DOLLAR_SNAPSHOT"
 NYFED_RRP_FACT_TYPE = "NYFED_REVERSE_REPO_SNAPSHOT"
@@ -61,6 +64,7 @@ US_WTI_OIL_FACT_TYPE = "US_WTI_OIL_SNAPSHOT"
 OFFICIAL_METRIC_FACT_TYPES = frozenset(
     {
         TGA_FACT_TYPE,
+        TREASURY_AUCTION_FACT_TYPE,
         TREASURY_YIELD_FACT_TYPE,
         FED_BROAD_DOLLAR_FACT_TYPE,
         NYFED_RRP_FACT_TYPE,
@@ -111,6 +115,15 @@ class OfficialMetricName(StrEnum):
     TGA_BALANCE_USD_M = "tga_balance_usd_m"
     TGA_CHANGE_1D_USD_M = "tga_change_1d_usd_m"
     TGA_CHANGE_5D_USD_M = "tga_change_5d_usd_m"
+    TREASURY_BILL_OFFERING_14D_USD_M = "treasury_bill_offering_14d_usd_m"
+    TREASURY_COUPON_OFFERING_14D_USD_M = "treasury_coupon_offering_14d_usd_m"
+    TREASURY_COUPON_BID_TO_COVER = "treasury_coupon_bid_to_cover"
+    TREASURY_COUPON_DIRECT_SHARE_PCT = "treasury_coupon_direct_share_pct"
+    TREASURY_COUPON_INDIRECT_SHARE_PCT = "treasury_coupon_indirect_share_pct"
+    TREASURY_COUPON_PRIMARY_DEALER_SHARE_PCT = (
+        "treasury_coupon_primary_dealer_share_pct"
+    )
+    TREASURY_COUPON_SOMA_ADDON_14D_USD_M = "treasury_coupon_soma_addon_14d_usd_m"
     TREASURY_2Y_PCT = "treasury_2y_pct"
     TREASURY_10Y_PCT = "treasury_10y_pct"
     TREASURY_30Y_PCT = "treasury_30y_pct"
@@ -209,6 +222,7 @@ class OfficialMetricSnapshot(FrozenModel):
         if parsed.scheme != "https" or parsed.hostname not in {
             "api.fiscaldata.treasury.gov",
             "home.treasury.gov",
+            "www.treasurydirect.gov",
             "www.federalreserve.gov",
             "markets.newyorkfed.org",
             "www.ishares.com",
@@ -283,6 +297,7 @@ def parse_official_metric_document(
     observed_at = require_utc(observed_at)
     parsers = {
         TGA_STREAM_ID: _parse_tga,
+        TREASURY_AUCTION_STREAM_ID: _parse_treasury_auctions,
         TREASURY_YIELD_STREAM_ID: _parse_treasury_yields,
         FED_BROAD_DOLLAR_STREAM_ID: _parse_broad_dollar,
         NYFED_RRP_STREAM_ID: _parse_rrp,
@@ -310,6 +325,119 @@ def parse_official_metric_document(
         source_url=source_url,
         observed_at=observed_at,
         payload_ref=raw.payload_id,
+    )
+
+
+def _parse_treasury_auctions(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    """Compress official auction results into current financing absorption.
+
+    TreasuryDirect publishes announcement rows before results are available.  Only
+    rows with accepted amounts are observations; announced future supply is not
+    silently treated as completed financing.  The state separates bills from
+    coupons and preserves who absorbed coupon duration without assigning an asset
+    direction or a hidden policy motive.
+    """
+
+    try:
+        document = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("TreasuryDirect auction JSON 非法") from exc
+    if not isinstance(document, list):
+        raise ValueError("TreasuryDirect auction JSON 必须为数组")
+    results: list[dict[str, object]] = []
+    for row in document:
+        if not isinstance(row, dict) or row.get("totalAccepted") in {None, ""}:
+            continue
+        auction_date = _date(row.get("auctionDate"), name="auction date")
+        if auction_date > observed_at.date():
+            continue
+        results.append({**row, "_auction_date": auction_date})
+    if not results:
+        raise ValueError("TreasuryDirect auction JSON 不含已公布结果")
+
+    latest_date = max(row["_auction_date"] for row in results)
+    window_start = latest_date - timedelta(days=13)
+    current = [row for row in results if row["_auction_date"] >= window_start]
+    bills = [row for row in current if row.get("type") == "Bill"]
+    coupons = [row for row in current if row.get("type") != "Bill"]
+
+    def total(rows: list[dict[str, object]], field: str) -> Decimal:
+        return sum((_decimal(row.get(field), name=field) for row in rows), Decimal("0"))
+
+    metrics = [
+        _metric(
+            OfficialMetricName.TREASURY_BILL_OFFERING_14D_USD_M,
+            total(bills, "offeringAmount") / Decimal("1000000"),
+            OfficialMetricUnit.USD_MILLIONS,
+        ),
+        _metric(
+            OfficialMetricName.TREASURY_COUPON_OFFERING_14D_USD_M,
+            total(coupons, "offeringAmount") / Decimal("1000000"),
+            OfficialMetricUnit.USD_MILLIONS,
+        ),
+    ]
+    if coupons:
+        offered = total(coupons, "offeringAmount")
+        accepted = total(coupons, "totalAccepted")
+        soma = total(coupons, "somaAccepted")
+        private_accepted = accepted - soma
+        if offered <= 0 or private_accepted <= 0:
+            raise ValueError("TreasuryDirect coupon auction 金额非法")
+        bid_to_cover = sum(
+            _decimal(row.get("bidToCoverRatio"), name="bidToCoverRatio")
+            * _decimal(row.get("offeringAmount"), name="offeringAmount")
+            for row in coupons
+        ) / offered
+        metrics.extend(
+            (
+                _metric(
+                    OfficialMetricName.TREASURY_COUPON_BID_TO_COVER,
+                    bid_to_cover,
+                    OfficialMetricUnit.INDEX,
+                ),
+                _metric(
+                    OfficialMetricName.TREASURY_COUPON_DIRECT_SHARE_PCT,
+                    total(coupons, "directBidderAccepted")
+                    / private_accepted
+                    * Decimal("100"),
+                    OfficialMetricUnit.PERCENT,
+                ),
+                _metric(
+                    OfficialMetricName.TREASURY_COUPON_INDIRECT_SHARE_PCT,
+                    total(coupons, "indirectBidderAccepted")
+                    / private_accepted
+                    * Decimal("100"),
+                    OfficialMetricUnit.PERCENT,
+                ),
+                _metric(
+                    OfficialMetricName.TREASURY_COUPON_PRIMARY_DEALER_SHARE_PCT,
+                    total(coupons, "primaryDealerAccepted")
+                    / private_accepted
+                    * Decimal("100"),
+                    OfficialMetricUnit.PERCENT,
+                ),
+                _metric(
+                    OfficialMetricName.TREASURY_COUPON_SOMA_ADDON_14D_USD_M,
+                    soma / Decimal("1000000"),
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
+            )
+        )
+    return _snapshot(
+        source_id=TREASURY_DIRECT_SOURCE_ID,
+        stream_id=TREASURY_AUCTION_STREAM_ID,
+        domain=CausalDomain.FISCAL_DEBT,
+        fact_type=TREASURY_AUCTION_FACT_TYPE,
+        effective_date=latest_date,
+        headline="U.S. Treasury auction absorption over the latest 14 days",
+        risk_factors=("US_FISCAL_LIQUIDITY", "US_INTEREST_RATES"),
+        metrics=tuple(metrics),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=_effective_at(latest_date, observed_at),
+        payload_ref=payload_ref,
     )
 
 
@@ -1310,6 +1438,8 @@ def _effective_at(value: date, observed_at: datetime) -> datetime:
 def _stream_source_id(stream_id: str) -> str:
     if stream_id == TGA_STREAM_ID:
         return TREASURY_FISCAL_SOURCE_ID
+    if stream_id == TREASURY_AUCTION_STREAM_ID:
+        return TREASURY_DIRECT_SOURCE_ID
     if stream_id == TREASURY_YIELD_STREAM_ID:
         return TREASURY_RATES_SOURCE_ID
     if stream_id == FED_BROAD_DOLLAR_STREAM_ID:

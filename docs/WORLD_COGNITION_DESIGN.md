@@ -134,6 +134,28 @@ AI 不读取 raw time series，也不自行计算收益、surprise、basis、异
 
 每项特征必须绑定算法版本、窗口和 Evidence 引用。新增数据只有能区分活跃机制、改善某个 Forecast 或改变组合风险时才接入；不能以“可能有用”为由扩建无限数据墙。
 
+#### 5.3.1 政策互动不是独立模型
+
+财政与货币政策互动仍使用同一 `Canonical Fact → StateFeature → Mechanism` 链，不建立“政策博弈服务”、人物画像、第二套知识库或不可结算的主观评分。程序只投影两类可以从一手材料复核的高密度状态：
+
+- `POLICY_STATE`：行动方、已实施工具、相对既有立场的变化、公开约束、决策分歧、未来路径预期及下一决策点；
+- `FINANCING_STATE`：财政融资规模和期限、拍卖实际吸收、投资者结构、回购与新发行的净关系，以及相对自身点时历史的异常程度。
+
+状态不得把官员动机、财政支配、QE、风险偏好或资产方向写成程序事实。讲话、纪要、声明、融资公告和拍卖结果先永久保存原文，再由来源专属、版本化解析器提取原文明确表达的行动、约束和数值；格式不满足合同就暴露 Coverage 缺口，不能猜测。市场预期必须来自公告前可见的期货、调查或价格状态；没有预期基准时只能记录行动，不能把行动幅度冒充 surprise。
+
+同一政策 Mechanism 的因果链按证据实际边界回答：
+
+```text
+行动方公开目标与约束
+  → 已实施工具或可信的未来路径变化
+  → 另一行动方及私人中介的可观察响应
+  → 利率、美元、信用或流动性中介
+  → 资金与跨资产响应
+  → mandate 组合含义
+```
+
+不是每条链都必须包含全部节点；缺少中间证据时停在已确认阶段并设置下一验证点。财政部回购、发债和现金变化不能被称为美联储 QE，美联储资产负债表变化也不能替代财政净融资；只有同窗证据证明二者共同改变私人部门可持有的久期、准备金或融资条件时，才能形成政策互动机制。
+
 ### 5.4 输入压缩
 
 输入只保留本次材料变化、活跃机制的支持/反驳证据、目标相关状态和稳定 mandate 边界。WorldModel 与 Forecast 不读取当前仓位来改变收益判断；持仓、现金和风险预算只进入 Portfolio。禁止发送 raw series、全量新闻、Provider 日志、历史 gap 清单或不可读哈希墙。
@@ -160,6 +182,7 @@ WorldModel 的价值边界：
 - 它不回答“应该买多少”，也不直接填交易 Edge；
 - 价格、funding、OI 和清算可验证传导结果，不能单独证明宏观外因；
 - 机制必须引用独立原因端和结果端证据，不能用同一价格同时证明多个外部故事；
+- 涉及政策互动的机制必须区分行动、市场事前预期、公开约束和已观察响应；不得从机构名称、官员措辞或单次 TGA/回购变化推断隐藏动机；
 - 上一份 WorldModel 只是上下文，不是事实，任何延续都要重新绑定当前证据；
 - 机制在自身经济时域结束后，若既无当前证据、不能改变 Context Forecast，也不对应 mandate 产品的重大尾部传导，就退出当前模型；历史永久保留。仍有当前证据且可能造成重大损失的低频尾部机制不能仅因样本少被删除，但在没有预授权规则前也不能直接减仓。当前实际持仓只由 Portfolio/Risk 消费，不能反向决定 WorldModel 是否保留某个现实机制。
 
@@ -444,6 +467,7 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 
 - Context Forecast 相对不使用 WorldModel 的同合同基线改善点时 proper score 或保守误差；
 - 改善能归因到具体 Mechanism，而不是更长文本或事后解释；
+- 政策事件 cohort 能区分行动、未来路径与财政供给冲击；公告前预期不可得的样本不得宣称 surprise，缺少中介或结果端证据的“博弈故事”不得计作机制命中；
 - 在费用后 Portfolio 结果上，Context 相对 Program/现金强基线表现出正保守增量；未来组合只有另行证明后才参与结论；
 - 结果经过非重叠、blind 和真实前瞻验证，且 Codex 延迟没有吞噬 Edge。
 
@@ -462,6 +486,8 @@ WorldModel、失败归因和外部研究都可以提出新的 Target、时域或
 - Gneiting、Balabdaoui 与 Raftery 的[概率预测校准与锐度研究](https://sites.stat.washington.edu/raftery/Research/PDF/Gneiting2007jrssb.pdf)强调按连续预测—观测对使用 proper scoring rules 评价，不应因预测来自专家还是算法而改变账本。本设计据此统一 Program 与 Context Forecast，并结算未成交预测。
 - Bailey 与 López de Prado 的[Deflated Sharpe Ratio](https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf)说明试验数量、选择偏差和非正态收益会夸大回测。本设计因此登记全部尝试和失败，不允许主 Agent 扫描大量变体后只保留赢家。
 - Tallman 与 West 的[面向组合的 Predictive Decision Synthesis](https://arxiv.org/abs/2405.01598)把预测模型的不确定性、历史表现和组合目标共同纳入顺序决策。本设计采用“多个预测来源在共同决策目标下比较”的原则，但暂不采用完整动态贝叶斯或默认组合框架；当前样本和复杂度不足，先让 Program 与 Context 单源竞争，只有残差互补得到前瞻证据后才实验组合。
+- Federal Reserve 的[货币政策行动与声明事件研究](https://www.federalreserve.gov/econres/feds/do-actions-speak-louder-than-words-the-response-of-asset-prices-to-monetary-policy-actions-and-statements.htm)表明当前目标意外与未来政策路径意外是不同因子，后者对长端利率尤其重要。本设计因此不以一次目标利率变化代表完整政策冲击，而要求公告前预期、行动和未来路径分别留痕。
+- U.S. Treasury 通过[季度再融资流程](https://home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding)发布借款估计、融资结构、拍卖和回购安排；TreasuryDirect 的[官方拍卖查询](https://www.treasurydirect.gov/auctions/auction-query/)提供实际投标与分配结果。本设计用实际融资和吸收结构约束财政机制，禁止用回购上限、TGA 单点或官员表态替代净融资事实。
 
 这些研究是方法依据，不是本项目盈利证据。最终权限只读取本项目自己的点时、费用后、非重叠结果。
 

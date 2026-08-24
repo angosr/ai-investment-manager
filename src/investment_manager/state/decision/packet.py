@@ -15,6 +15,7 @@ from investment_manager.information.models import (
     IntelligenceEvent,
     SourceTier,
 )
+from investment_manager.information.official.metrics import TREASURY_AUCTION_FACT_TYPE
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -37,6 +38,7 @@ from investment_manager.market.models import (
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.state.facts import (
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
+    FED_MONETARY_RELEASE_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
     TREASURY_BUYBACK_RESULT_FACT_TYPE,
@@ -121,6 +123,8 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
 def _continuous_fact_feature_type(item: PacketFact) -> str:
     """Map a continuous fact to one of the existing WorldModel feature families."""
 
+    if item.fact_type == TREASURY_AUCTION_FACT_TYPE:
+        return "FINANCING_STATE"
     if any(
         marker in risk_factor
         for risk_factor in item.risk_factors
@@ -195,6 +199,24 @@ def _analysis_state_feature(item: PacketFact) -> dict[str, object]:
     if item.decision_materiality == FactDecisionMateriality.CANDIDATE:
         projected["materiality"] = item.decision_materiality.value
     return projected
+
+
+def _analysis_policy_state(item: PacketFact) -> dict[str, object]:
+    return {
+        "type": item.fact_type,
+        "at": (item.event_time or item.observed_at).isoformat(),
+        "document": item.headline,
+        "state": item.claim,
+        "ref": item.revision_id,
+    }
+
+
+def _is_durable_policy_state(item: VisibleFact | PacketFact) -> bool:
+    """A verified policy stance remains current until superseded by a new release."""
+
+    fact_type = item.fact.fact_type if isinstance(item, VisibleFact) else item.fact_type
+    claim = item.fact.claim if isinstance(item, VisibleFact) else item.claim
+    return fact_type == FED_MONETARY_RELEASE_FACT_TYPE and claim.startswith("action=")
 
 
 def continuous_fact_numeric_values(item: PacketFact) -> dict[str, Decimal]:
@@ -338,15 +360,17 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     continuous_facts = tuple(
         item for item in packet.facts if item.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
     )
+    policy_facts = tuple(item for item in packet.facts if _is_durable_policy_state(item))
     payload["facts"] = tuple(
         _analysis_fact(item)
         for item in packet.facts
         if item.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES
+        and item not in policy_facts
     )
-    if continuous_facts:
+    if continuous_facts or policy_facts:
         feature_items = tuple(_analysis_state_feature(item) for item in continuous_facts)
         payload["state_features"] = {
-            "algorithm_version": "continuous-fact-state-v1",
+            "algorithm_version": "decision-state-feature-v2",
             "regime_states": tuple(
                 projected
                 for item, projected in zip(continuous_facts, feature_items, strict=True)
@@ -357,6 +381,12 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 for item, projected in zip(continuous_facts, feature_items, strict=True)
                 if _continuous_fact_feature_type(item) == "FLOW_STATE"
             ),
+            "financing_states": tuple(
+                projected
+                for item, projected in zip(continuous_facts, feature_items, strict=True)
+                if _continuous_fact_feature_type(item) == "FINANCING_STATE"
+            ),
+            "policy_states": tuple(_analysis_policy_state(item) for item in policy_facts),
         }
     previous = payload.get("previous_context")
     if previous is not None and not previous_context_is_decision_relevant(packet.previous_context):
@@ -1407,6 +1437,7 @@ class DecisionPacketBuilder:
             if (
                 item.fact.revision_id in direct_fact_ids
                 or item.fact.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
+                or _is_durable_policy_state(item)
                 or (
                     item.fact.decision_materiality == FactDecisionMateriality.CANDIDATE
                     and distance <= self._policy.maximum_calendar_context_distance_seconds
@@ -1442,6 +1473,7 @@ class DecisionPacketBuilder:
                 item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
                 item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES,
+                not _is_durable_policy_state(item),
                 item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
                 causal_channel_rank(item),
                 _SOURCE_RANK[item.highest_source_tier],
@@ -1462,6 +1494,7 @@ class DecisionPacketBuilder:
             is_collapsible_context = (
                 item.fact.fact_type in _EXTENDED_CONTEXT_FACT_TYPES
                 or item.fact.decision_materiality == FactDecisionMateriality.CANDIDATE
+                or _is_durable_policy_state(item)
             ) and item.fact.revision_id not in direct_fact_ids
             if is_collapsible_context and item.fact.fact_type in represented_context_types:
                 omitted.append(item.fact.revision_id)

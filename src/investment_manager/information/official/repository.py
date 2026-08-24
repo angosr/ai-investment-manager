@@ -28,6 +28,7 @@ from investment_manager.information.official.records import (
     MarketCalendarEventRevision,
     OfficialRecordKind,
     build_fomc_calendar_revision,
+    enrich_fed_monetary_release,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
@@ -396,6 +397,33 @@ class SqlFedOfficialInformationIngestor:
             self._records.put(record)
             for record in parse_fed_monetary_rss(xml, observed_at=observed_at)
         )
+
+    def ingest_monetary_document(
+        self,
+        record: FedMonetaryReleaseRecord,
+        html: str,
+        *,
+        document_url: str,
+        observed_at: datetime,
+    ) -> StructuredRecordWrite:
+        enriched = enrich_fed_monetary_release(
+            record,
+            html,
+            document_url=document_url,
+            observed_at=observed_at,
+        )
+        content = html.encode("utf-8")
+        raw = build_raw_source_payload(
+            source_id=FED_SOURCE_ID,
+            source_url=document_url,
+            media_type="text/html",
+            observed_at=observed_at,
+            content=content,
+        )
+        if raw.payload_id != enriched.observation.payload_ref:
+            raise ValueError("Fed 政策原文 payload identity 不一致")
+        self._raw.put(raw, content)
+        return self._records.put(enriched)
 
     def ingest_public_calendar(
         self,

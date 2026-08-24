@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
 from investment_manager.information.official.repository import SqlFedOfficialInformationIngestor
+from investment_manager.information.official.source import FedPolicyDocument
 from investment_manager.information.tables import (
     raw_source_payloads,
     source_observations,
@@ -175,6 +176,39 @@ def test_fed_rss_projects_canonical_release_fact() -> None:
     assert result.new_fact_revisions[0].fact_type == "FED_MONETARY_RELEASE"
 
 
+def test_fed_policy_document_revises_title_only_fact_with_dense_policy_state() -> None:
+    engine = _engine()
+    pipeline = SqlFedFactIngestor(engine, POLICY)
+    xml = """<rss><channel><item>
+      <title>Minutes of the Federal Open Market Committee</title>
+      <link>https://www.federalreserve.gov/monetarypolicy/fomcminutes20260729.htm</link>
+      <guid>fed-minutes-1</guid><description></description>
+      <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+    first = pipeline.ingest_monetary_rss(xml, observed_at=OBSERVED_AT)
+    source_record = first.records[0].record
+    html = """<html><main>
+      <p>The Committee decided to maintain the target range for the federal funds rate.</p>
+      <p>Inflation remained elevated and labor market conditions remained stable.</p>
+      <p>Many participants assessed that policy tightening would likely be necessary.</p>
+      <p>The market was fully pricing in a 25 basis point hike by September.</p>
+    </main></html>"""
+
+    enriched = pipeline.ingest_monetary_document(
+        source_record,
+        html,
+        document_url=source_record.source_url,
+        observed_at=OBSERVED_AT + timedelta(minutes=1),
+    )
+
+    assert len(enriched.new_fact_revisions) == 1
+    revised = enriched.new_fact_revisions[0]
+    assert revised.previous_revision_id == first.new_fact_revisions[0].revision_id
+    assert "action=" in revised.claim
+    assert "expectations=" in revised.claim
+    assert "path=" in revised.claim
+
+
 def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None:
     engine = _engine()
     stop = asyncio.Event()
@@ -196,6 +230,18 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
               <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
             </item></channel></rss>"""
 
+        def fetch_monetary_document(self, url):
+            assert url.endswith("/newsevents/pressreleases/monetary.htm")
+            return FedPolicyDocument(
+                source_url=url,
+                content="""<html><main>
+                  <p>The Committee decided to maintain the target range for the
+                  federal funds rate.</p>
+                  <p>Inflation remained elevated.</p>
+                  <p>The market was fully pricing in a later policy increase.</p>
+                </main></html>""",
+            )
+
     def publish_recent(as_of):
         published_at.append(as_of)
         stop.set()
@@ -214,7 +260,7 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
     assert service.health.calendar_poll_count == 1
     assert service.health.public_calendar_poll_count == 1
     assert service.health.monetary_poll_count == 1
-    assert service.health.new_fact_revision_count == 3
+    assert service.health.new_fact_revision_count == 4
     assert service.health.publication_count == 1
     assert published_at == [OBSERVED_AT]
 

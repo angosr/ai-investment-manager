@@ -19,6 +19,7 @@ from investment_manager.information.official.records import (
     CalendarEventStatus,
     FedMonetaryReleaseRecord,
     FomcMeetingRecord,
+    fed_policy_document_eligible,
 )
 from investment_manager.information.official.regulation import (
     FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
@@ -30,7 +31,10 @@ from investment_manager.information.official.repository import (
     SqlTreasuryBuybackInformationIngestor,
     StructuredRecordWrite,
 )
-from investment_manager.information.official.source import OfficialRegulatoryDocument
+from investment_manager.information.official.source import (
+    FedPolicyDocument,
+    OfficialRegulatoryDocument,
+)
 from investment_manager.information.official.treasury_buybacks import (
     TREASURY_BUYBACK_STREAM_ID,
     TreasuryBuybackOperationRecord,
@@ -58,6 +62,8 @@ class FedOfficialSource(Protocol):
     def fetch_public_calendar(self) -> str | None: ...
 
     def fetch_monetary_rss(self) -> str | None: ...
+
+    def fetch_monetary_document(self, url: str) -> FedPolicyDocument | None: ...
 
 
 class TreasuryBuybackSource(Protocol):
@@ -133,6 +139,25 @@ class SqlFedFactIngestor:
         return OfficialFactIngestionResult(
             records=writes,
             new_fact_revisions=self._project(writes),
+        )
+
+    def ingest_monetary_document(
+        self,
+        record: FedMonetaryReleaseRecord,
+        html: str,
+        *,
+        document_url: str,
+        observed_at: datetime,
+    ) -> OfficialFactIngestionResult:
+        write = self._official.ingest_monetary_document(
+            record,
+            html,
+            document_url=document_url,
+            observed_at=observed_at,
+        )
+        return OfficialFactIngestionResult(
+            records=(write,),
+            new_fact_revisions=self._project((write,)),
         )
 
     def ingest_public_calendar(
@@ -441,6 +466,7 @@ class FedOfficialCollectorService:
         self._calendar_poll_seconds = calendar_poll_seconds
         self._poll_recorder = poll_recorder
         self._clock = clock
+        self._monetary_records: tuple[FedMonetaryReleaseRecord, ...] = ()
         self.health = FedOfficialCollectorHealth()
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -545,12 +571,58 @@ class FedOfficialCollectorService:
             )
         elif kind == "monetary":
             content = self._source.fetch_monetary_rss()
-            if content is None:
-                return OfficialFactIngestionResult(records=(), new_fact_revisions=())
-            result = self._ingestor.ingest_monetary_rss(
-                content,
-                observed_at=require_utc(self._clock()),
+            records: list[StructuredRecordWrite] = []
+            facts: list[CanonicalFactRevision] = []
+            if content is not None:
+                rss_result = self._ingestor.ingest_monetary_rss(
+                    content,
+                    observed_at=require_utc(self._clock()),
+                )
+                records.extend(rss_result.records)
+                facts.extend(rss_result.new_fact_revisions)
+                self._monetary_records = tuple(
+                    item.record
+                    for item in rss_result.records
+                    if isinstance(item.record, FedMonetaryReleaseRecord)
+                )
+            cutoff = require_utc(self._clock()) - timedelta(days=14)
+            refreshed: list[FedMonetaryReleaseRecord] = []
+            for record in self._monetary_records:
+                published_at = record.observation.source_published_at
+                if (
+                    record.policy_state is not None
+                    or published_at is None
+                    or published_at < cutoff
+                    or not fed_policy_document_eligible(record)
+                ):
+                    refreshed.append(record)
+                    continue
+                document = self._source.fetch_monetary_document(record.source_url)
+                if document is None:
+                    refreshed.append(record)
+                    continue
+                document_result = self._ingestor.ingest_monetary_document(
+                    record,
+                    document.content,
+                    document_url=document.source_url,
+                    observed_at=max(
+                        require_utc(self._clock()),
+                        record.observation.observed_at + timedelta(microseconds=1),
+                    ),
+                )
+                records.extend(document_result.records)
+                facts.extend(document_result.new_fact_revisions)
+                enriched = document_result.records[0].record
+                if not isinstance(enriched, FedMonetaryReleaseRecord):
+                    raise TypeError("Fed 政策原文返回错误记录类型")
+                refreshed.append(enriched)
+            self._monetary_records = tuple(refreshed)
+            result = OfficialFactIngestionResult(
+                records=tuple(records),
+                new_fact_revisions=tuple(facts),
             )
+            if content is None and not result.records:
+                return result
         else:
             raise ValueError(f"未知 Fed official collector kind: {kind}")
         if not result.records:

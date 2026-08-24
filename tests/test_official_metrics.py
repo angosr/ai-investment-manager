@@ -21,6 +21,7 @@ from investment_manager.information.official.metrics import (
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
     TGA_STREAM_ID,
+    TREASURY_AUCTION_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
     OfficialMetricName,
     parse_official_metric_document,
@@ -77,6 +78,56 @@ def _documents() -> dict[str, OfficialMetricDocument]:
         <cb:value>118.9028</cb:value></rss:item>
     </rdf:RDF>"""
     payloads = {
+        TREASURY_AUCTION_STREAM_ID: (
+            "https://www.treasurydirect.gov/TA_WS/securities/search?format=json",
+            json.dumps(
+                [
+                    {
+                        "auctionDate": "2026-08-20T00:00:00",
+                        "type": "TIPS",
+                        "offeringAmount": "8000000000",
+                        "totalAccepted": "9028000000",
+                        "totalTendered": "23588000000",
+                        "bidToCoverRatio": "2.82",
+                        "primaryDealerAccepted": "167000000",
+                        "directBidderAccepted": "1068000000",
+                        "indirectBidderAccepted": "6707000000",
+                        "somaAccepted": "1028000000",
+                    },
+                    {
+                        "auctionDate": "2026-08-19T00:00:00",
+                        "type": "Bond",
+                        "offeringAmount": "16000000000",
+                        "totalAccepted": "18056000000",
+                        "totalTendered": "42476000000",
+                        "bidToCoverRatio": "2.53",
+                        "primaryDealerAccepted": "1974000000",
+                        "directBidderAccepted": "3886000000",
+                        "indirectBidderAccepted": "9947000000",
+                        "somaAccepted": "2056000000",
+                    },
+                    {
+                        "auctionDate": "2026-08-20T00:00:00",
+                        "type": "Bill",
+                        "offeringAmount": "110000000000",
+                        "totalAccepted": "117025000000",
+                        "totalTendered": "319329000000",
+                        "bidToCoverRatio": "2.84",
+                        "primaryDealerAccepted": "32060000000",
+                        "directBidderAccepted": "3344000000",
+                        "indirectBidderAccepted": "67110000000",
+                        "somaAccepted": "7025000000",
+                    },
+                    {
+                        "auctionDate": "2026-08-24T00:00:00",
+                        "type": "Bill",
+                        "offeringAmount": "92000000000",
+                        "totalAccepted": "",
+                    },
+                ]
+            ).encode(),
+            "application/json",
+        ),
         TGA_STREAM_ID: (
             "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
             "v1/accounting/dts/operating_cash_balance",
@@ -292,7 +343,7 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 12
+    assert len({item.fact_type for item in snapshots}) == 13
     assert {
         item.observation.source_tier
         for item in snapshots
@@ -305,6 +356,13 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     )
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
+    auctions = next(
+        item for item in snapshots if item.stream_id == TREASURY_AUCTION_STREAM_ID
+    )
+    auction_values = {item.name.value: item.value for item in auctions.metrics}
+    assert auction_values["treasury_coupon_offering_14d_usd_m"] == 24_000
+    assert auction_values["treasury_bill_offering_14d_usd_m"] == 110_000
+    assert auction_values["treasury_coupon_bid_to_cover"] == Decimal("2.6267")
     ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)
     assert {item.name.value: item.value for item in ibit.metrics}["ibit_btc_holdings"] == Decimal(
         "762287.0365"

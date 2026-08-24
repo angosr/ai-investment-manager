@@ -13,17 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v33
+  version: portfolio-state-v34
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v12
+    version: official-fact-v13
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v14
+    version: state-delta-v15
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -84,6 +84,9 @@ decision_state:
       - fact_type: US_HIGH_YIELD_CREDIT_SNAPSHOT
         materiality: HIGH
         reason_code: US_HIGH_YIELD_CREDIT_REVISION
+      - fact_type: US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT
+        materiality: HIGH
+        reason_code: US_TREASURY_AUCTION_ABSORPTION_REVISION
       - fact_type: US_TREASURY_CASH_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_CASH_REVISION
@@ -94,13 +97,14 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v37
+    version: decision-packet-policy-v38
     schema_version: decision-packet-v17
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
-    maximum_fact_characters: 6000
-    maximum_characters_per_fact: 600
+    maximum_fact_characters: 7000
+    # FOMC/财政结构化状态允许一条高密度长事实；仍禁止发送原始政策全文。
+    maximum_characters_per_fact: 1200
     maximum_background_fact_distance_seconds: 172800
     maximum_calendar_context_distance_seconds: 604800
     maximum_intelligence_events: 8
@@ -418,7 +422,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v27
+  version: information-intake-v28
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -451,9 +455,10 @@ information:
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
     - domain: FISCAL_DEBT
-      source_stream_ids: [treasury-buyback-schedule, treasury-tga-balance]
-      required_capabilities: [DEBT_ISSUANCE, DEBT_REPURCHASE, FISCAL_CALENDAR, TREASURY_CASH]
+      source_stream_ids: [treasury-auction-results, treasury-buyback-schedule, treasury-tga-balance]
+      required_capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE, DEBT_REPURCHASE, FISCAL_CALENDAR, TREASURY_CASH]
       source_capabilities:
+        treasury-auction-results: [AUCTION_ABSORPTION, DEBT_ISSUANCE]
         treasury-buyback-schedule: [DEBT_REPURCHASE, FISCAL_CALENDAR]
         treasury-tga-balance: [TREASURY_CASH]
       maximum_poll_age_seconds: 900
@@ -545,7 +550,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v33
+  version: context-assessment-v34
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -20,6 +20,8 @@ from investment_manager.information.official.public_calendar import (
 from investment_manager.information.official.records import (
     CalendarEventStatus,
     build_fomc_calendar_revision,
+    enrich_fed_monetary_release,
+    fed_policy_document_eligible,
     parse_fed_monetary_rss,
     parse_fomc_calendar,
 )
@@ -432,6 +434,53 @@ def test_fed_monetary_rss_preserves_guid_and_detects_content_revision() -> None:
     assert first.observation.source_published_at == datetime(2026, 7, 29, 18, tzinfo=UTC)
     assert first.observation.payload_hash != second.observation.payload_hash
     assert first.observation.observation_id != second.observation.observation_id
+
+
+def test_fed_policy_document_projects_action_path_constraints_and_expectations() -> None:
+    xml = """<rss><channel><item>
+      <title>Minutes of the Federal Open Market Committee</title>
+      <link>https://www.federalreserve.gov/monetarypolicy/fomcminutes20260729.htm</link>
+      <guid>fomc-minutes-20260729</guid><description></description>
+      <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+    record = parse_fed_monetary_rss(xml, observed_at=OBSERVED_AT)[0]
+    html = """<html><body><main>
+      <p>The Committee decided to maintain the target range for the federal funds rate
+      at 3-1/2 to 3-3/4 percent.</p>
+      <p>Inflation remained elevated while labor market conditions remained stable.</p>
+      <p>Many participants assessed that policy tightening would likely be necessary
+      if inflation did not decline.</p>
+      <p>The market was fully pricing in a 25 basis point hike by September.</p>
+      <p>Three members voted against the decision and preferred an increase.</p>
+      <p>With reserve management purchases continuing, reserves appeared ample.</p>
+    </main></body></html>"""
+
+    enriched = enrich_fed_monetary_release(
+        record,
+        html,
+        document_url=record.source_url,
+        observed_at=OBSERVED_AT + timedelta(minutes=1),
+    )
+
+    assert enriched.policy_state is not None
+    assert "action=" in enriched.policy_state
+    assert "expectations=" in enriched.policy_state
+    assert "constraints=" in enriched.policy_state
+    assert "path=" in enriched.policy_state
+    assert enriched.observation.payload_ref.startswith("raw_source_payload_")
+    assert enriched.observation.payload_hash != record.observation.payload_hash
+
+    assert fed_policy_document_eligible(record)
+    assert not fed_policy_document_eligible(
+        record.model_copy(
+            update={
+                "title": (
+                    "Federal Reserve Board and Federal Open Market Committee "
+                    "release economic projections"
+                )
+            }
+        )
+    )
 
 
 def test_fed_monetary_rss_rejects_future_publication_and_off_domain_link() -> None:

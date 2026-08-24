@@ -66,6 +66,7 @@ from investment_manager.state.decision.packet import (
     replace_packet_previous_context,
 )
 from investment_manager.state.facts import (
+    FED_MONETARY_RELEASE_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
     TREASURY_BUYBACK_RESULT_FACT_TYPE,
 )
@@ -686,7 +687,7 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
         "revision-1",
     )
     assert projection["state_features"] == {
-        "algorithm_version": "continuous-fact-state-v1",
+        "algorithm_version": "decision-state-feature-v2",
         "regime_states": (
             {
                 "type": "US_TREASURY_CASH_SNAPSHOT",
@@ -695,8 +696,10 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
                 "ref": "revision-tga",
             },
         ),
-        "flow_states": (),
-    }
+            "flow_states": (),
+            "financing_states": (),
+            "policy_states": (),
+        }
     numeric_metric = packet.facts[1].model_copy(
         update={
             "claim": (
@@ -716,6 +719,68 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
     selector = "fact_state:US_TREASURY_CASH_SNAPSHOT.tga_change_5d_usd_m"
     assert selector in assessment_available_feature_selectors(numeric_packet)
     assert packet_feature_values(numeric_packet)[selector] == Decimal("-31510")
+
+
+def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    generic = packet.facts[0]
+    policy = generic.model_copy(
+        update={
+            "fact_id": "fact-fed-policy",
+            "revision_id": "revision-fed-policy",
+            "fact_type": FED_MONETARY_RELEASE_FACT_TYPE,
+            "claim": (
+                "action=The Committee decided to maintain the target range; "
+                "expectations=Market pricing implied a later adjustment; "
+                "constraints=Inflation remained elevated; "
+                "path=Further tightening would likely be necessary if inflation persisted"
+            ),
+        }
+    )
+    financing = generic.model_copy(
+        update={
+            "fact_id": "fact-auction",
+            "revision_id": "revision-auction",
+            "fact_type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
+            "claim": (
+                "effective_date=2026-08-18; "
+                "treasury_coupon_offering_14d_usd_m=149000 USD_MILLIONS; "
+                "treasury_coupon_bid_to_cover=2.59 INDEX; "
+                "treasury_coupon_indirect_share_pct=68.6 PERCENT."
+            ),
+        }
+    )
+    projection = decision_packet_analysis_projection(
+        packet.model_copy(update={"facts": (generic, policy, financing)})
+    )
+
+    assert tuple(item["revision_id"] for item in projection["facts"]) == (
+        generic.revision_id,
+    )
+    assert projection["state_features"]["policy_states"] == (
+        {
+            "type": FED_MONETARY_RELEASE_FACT_TYPE,
+            "at": policy.event_time.isoformat(),
+            "document": policy.headline,
+            "state": policy.claim,
+            "ref": "revision-fed-policy",
+        },
+    )
+    assert projection["state_features"]["financing_states"] == (
+        {
+            "type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
+            "at": financing.event_time.isoformat(),
+            "state": (
+                "treasury_coupon_offering_14d_usd_m=149000 USD_MILLIONS; "
+                "treasury_coupon_bid_to_cover=2.59 INDEX; "
+                "treasury_coupon_indirect_share_pct=68.6 PERCENT"
+            ),
+            "ref": "revision-auction",
+        },
+    )
 
 
 def test_packet_keeps_treasury_calendar_context_beyond_event_window(
