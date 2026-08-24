@@ -32,6 +32,7 @@ from investment_manager.forecast.results import (
     ForecastBucketProbability,
     ForecastMechanismContribution,
 )
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.features import FeatureEngine, build_derivative_context_snapshot
@@ -113,7 +114,9 @@ class MarketContextTargetStateProvider:
                 visible_at=at,
             )
             if (state is None) != (quote is None):
-                raise ValueError("Context Forecast 衍生品状态与报价必须同时可用")
+                raise PointInTimeInputUnavailable(
+                    "Context Forecast 衍生品状态与报价必须同时可用"
+                )
             if state is not None and quote is not None:
                 aligned_spot = self.market.latest_spot_quote(
                     instrument=self.spot,
@@ -125,7 +128,9 @@ class MarketContextTargetStateProvider:
                     visible_at=at,
                 )
                 if aligned_spot is None:
-                    raise ValueError("Context Forecast 缺少与衍生品对齐的 Spot quote")
+                    raise PointInTimeInputUnavailable(
+                        "Context Forecast 缺少与衍生品对齐的 Spot quote"
+                    )
                 derivative = build_derivative_context_snapshot(
                     cycle_id=cycle_id,
                     asset=self.spot.base_asset,

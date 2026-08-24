@@ -7,7 +7,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
-from temporalio.exceptions import ActivityError, ChildWorkflowError
+from temporalio.exceptions import ActivityError, ApplicationError, ChildWorkflowError
 
 from investment_manager.kernel.identity import stable_id
 from investment_manager.platform.temporal import default_activity_versioning_intent
@@ -152,7 +152,7 @@ class TriggerCoordinatorWorkflow:
             if self._frozen_retry_batch is not None:
                 batch = TriggerBatch.model_validate(self._frozen_retry_batch)
                 if now >= batch.deadline:
-                    self._fail_frozen_batch(batch)
+                    self._fail_batch(batch)
                     continue
                 retry_at = self._input_retry_not_before or now
                 self._next_reconsider_at = retry_at
@@ -188,9 +188,15 @@ class TriggerCoordinatorWorkflow:
                 )
                 selected_ids = tuple(item.trigger_id for item in triggers)
                 self._active_batch_id = batch.batch_id
-            dispatches, deferred_until, retry_frozen_batch = await self._build_dispatches(
-                batch.model_dump(mode="json")
-            )
+            (
+                dispatches,
+                deferred_until,
+                retry_frozen_batch,
+                permanent_failure,
+            ) = await self._build_dispatches(batch.model_dump(mode="json"))
+            if permanent_failure:
+                self._fail_batch(batch)
+                continue
             if dispatches is None:
                 if retry_frozen_batch:
                     self._frozen_retry_batch = batch.model_dump(mode="json")
@@ -235,6 +241,7 @@ class TriggerCoordinatorWorkflow:
         tuple[AnalysisDispatchRequest, ...] | None,
         datetime | None,
         bool,
+        bool,
     ]:
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=int(self._settings["retry_initial_seconds"])),
@@ -258,24 +265,30 @@ class TriggerCoordinatorWorkflow:
                 versioning_intent=default_activity_versioning_intent(),
                 summary="冻结触发批次分析输入",
             )
-        except ActivityError:
-            return None, None, False
+        except ActivityError as exc:
+            cause = exc.cause
+            if (
+                isinstance(cause, ApplicationError)
+                and cause.type in {"InvalidTriggerBatch", "PermanentDomainError"}
+            ):
+                return None, None, False, True
+            return None, None, False, False
         retry_frozen_batch = result.get("retry_frozen_batch") is True
         deferred_until = result.get("deferred_until")
         if isinstance(deferred_until, str):
-            return None, _parse_time(deferred_until), retry_frozen_batch
+            return None, _parse_time(deferred_until), retry_frozen_batch, False
         if retry_frozen_batch:
-            return None, None, True
+            return None, None, True, False
         raw_dispatches = result.get("workflow_dispatches")
         if not isinstance(raw_dispatches, list):
-            return None, None, False
+            return None, None, False, True
         try:
             dispatches = tuple(
                 AnalysisDispatchRequest.model_validate(item) for item in raw_dispatches
             )
         except (TypeError, ValueError):
-            return None, None, False
-        return dispatches, None, False
+            return None, None, False, True
+        return dispatches, None, False, False
 
     @staticmethod
     async def _execute_dispatch(dispatch: AnalysisDispatchRequest) -> bool:
@@ -404,7 +417,7 @@ class TriggerCoordinatorWorkflow:
             or _parse_time(item["expires_at"]) > now
         }
 
-    def _fail_frozen_batch(self, batch: TriggerBatch) -> None:
+    def _fail_batch(self, batch: TriggerBatch) -> None:
         for trigger in batch.triggers:
             self._pending.pop(trigger.trigger_id, None)
         self._last_batch_id = batch.batch_id

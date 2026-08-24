@@ -22,6 +22,7 @@ from investment_manager.forecast.models import (
     ContextMechanismObservation,
 )
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -388,9 +389,14 @@ class TriggerCoordinatorActivities:
             # State/Delta are already durable.  Advancing batch.as_of would make
             # that delta background state and suppress the assessment permanently.
             return {"retry_frozen_batch": True}
+        except PointInTimeInputUnavailable:
+            # Preserve this exact point-in-time batch. A later quote/account
+            # observation may make the frozen decision input complete.
+            return {"retry_frozen_batch": True}
         except ValueError as exc:
             raise ApplicationError(
-                "TriggerBatch 的行情或账户输入暂不可用",
-                type="TriggerInputUnavailable",
+                str(exc),
+                type="PermanentDomainError",
+                non_retryable=True,
             ) from exc
         return {"workflow_dispatches": [item.model_dump(mode="json") for item in dispatches]}

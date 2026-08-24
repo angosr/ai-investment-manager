@@ -369,8 +369,9 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
 class _TriggerCapitalStub:
     portfolio_id = "primary"
 
-    def __init__(self) -> None:
+    def __init__(self, *, completed: bool = False) -> None:
         self.calls: list[tuple[str, datetime]] = []
+        self.completed = completed
 
     def recover_missed_forecasts(self, *, before_slot_at, completed_at):
         self.calls.append(("recover", before_slot_at))
@@ -386,7 +387,7 @@ class _TriggerCapitalStub:
 
     def cause_completed(self, cause_id):
         del cause_id
-        return False
+        return self.completed
 
     def produce(self, *, as_of, **kwargs):
         del kwargs
@@ -453,6 +454,25 @@ def test_late_cadence_is_a_no_estimate_then_current_risk_review() -> None:
     assert capital.calls == [
         ("recover", slot),
         ("missed", slot),
+        ("review", at),
+    ]
+
+
+def test_late_heartbeat_reviews_completed_cadence_without_marking_it_missed() -> None:
+    at = NOW.replace(hour=4, minute=30)
+    slot = at.replace(minute=0)
+    capital = _TriggerCapitalStub(completed=True)
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=at))
+
+    assert capital.calls == [
+        ("recover", slot),
         ("review", at),
     ]
 

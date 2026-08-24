@@ -50,6 +50,7 @@ from investment_manager.forecast.contracts import (
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import Forecast
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import ExecutableQuote, InstrumentProduct
@@ -166,10 +167,22 @@ class CapitalTriggerConsumer:
             ):
                 return self.capital.review(batch)
             assert self.context_completion_deadline_seconds is not None
+            cadence_cause_id = stable_id(
+                "context_forecast_cadence",
+                self.capital.portfolio_id,
+                cadence_seconds,
+                slot_at.isoformat(),
+            )
             self.capital.recover_missed_forecasts(
                 before_slot_at=slot_at,
                 completed_at=batch.created_at,
             )
+            # A Forecast belongs to the cadence slot, while account/risk review
+            # belongs to every heartbeat.  Once the slot is complete, its later
+            # heartbeats must never reclassify it as missed merely because the
+            # completion deadline has elapsed.
+            if self.capital.cause_completed(cadence_cause_id):
+                return self.capital.review(batch)
             if batch.created_at > slot_at + timedelta(
                 seconds=self.context_completion_deadline_seconds
             ):
@@ -178,12 +191,6 @@ class CapitalTriggerConsumer:
                     completed_at=batch.created_at,
                 )
                 return self.capital.review(batch)
-            cadence_cause_id = stable_id(
-                "context_forecast_cadence",
-                self.capital.portfolio_id,
-                cadence_seconds,
-                slot_at.isoformat(),
-            )
             # The first heartbeat in a cadence slot creates its Forecast.  Later
             # heartbeats must still refresh the account and protect holdings;
             # returning the old cadence result would leave account facts stale
@@ -290,7 +297,7 @@ class CapitalCycleService:
             as_of=requested_at,
         )
         if account is None:
-            raise ValueError("Capital risk review 缺少账户快照")
+            raise PointInTimeInputUnavailable("Capital risk review 缺少账户快照")
         if not account.sleeves:
             # A trigger remains durably visible in the event ledger.  Recording a
             # second capital "action" for an all-cash no-op only creates dashboard
@@ -942,7 +949,9 @@ class CapitalCycleService:
                 )
                 observed_at = None if observed is None else observed.exchange_time
             if observed is None or observed_at is None:
-                raise ValueError(f"Capital 缺少 {instrument.key} 可成交报价")
+                raise PointInTimeInputUnavailable(
+                    f"Capital 缺少 {instrument.key} 可成交报价"
+                )
             values.append(
                 ExecutableQuote(
                     source_quote_id=observed.quote_id,
@@ -960,7 +969,7 @@ class CapitalCycleService:
         if observed_times and (
             max(observed_times) - min(observed_times)
         ).total_seconds() > self._config.capital.risk.maximum_quote_skew_seconds:
-            raise ValueError("Capital 多产品可成交报价时间偏差过大")
+            raise PointInTimeInputUnavailable("Capital 多产品可成交报价时间偏差过大")
         return tuple(sorted(values, key=lambda item: item.instrument.key))
 
     @staticmethod

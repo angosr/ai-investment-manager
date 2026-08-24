@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
+import pytest
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
@@ -15,6 +16,7 @@ from investment_manager.decision_cycle.trigger import (
     AnalysisCallDeferred,
     TriggerCoordinatorActivities,
 )
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import stable_id
 from investment_manager.scheduling.models import (
     AnalysisEventRule,
@@ -359,6 +361,25 @@ def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> No
         "retry_frozen_batch": True,
     }
 
+    class MissingInputBuilder:
+        def build(self, _batch):
+            raise PointInTimeInputUnavailable("quote pending")
+
+    missing_input = TriggerCoordinatorActivities(builder=MissingInputBuilder())
+    assert missing_input.build_analysis_dispatches(batch.model_dump(mode="json")) == {
+        "retry_frozen_batch": True,
+    }
+
+    class BrokenInvariantBuilder:
+        def build(self, _batch):
+            raise ValueError("broken invariant")
+
+    broken = TriggerCoordinatorActivities(builder=BrokenInvariantBuilder())
+    with pytest.raises(ApplicationError) as raised:
+        broken.build_analysis_dispatches(batch.model_dump(mode="json"))
+    assert raised.value.type == "PermanentDomainError"
+    assert raised.value.non_retryable is True
+
 
 def test_trigger_activity_serializes_single_portfolio_state_projection() -> None:
     class TrackingBuilder:
@@ -543,6 +564,85 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
                 assert attempts == 2
                 assert len(set(batch_ids)) == 2
                 assert status["completed_batches"] == 1
+                assert status["pending_count"] == 0
+                await handle.signal(TriggerCoordinatorWorkflow.stop)
+                await handle.result()
+
+    asyncio.run(scenario())
+
+
+def test_trigger_coordinator_terminally_records_permanent_builder_failure(
+    app_config,
+) -> None:
+    async def scenario() -> None:
+        attempts = 0
+
+        @activity.defn(name=BUILD_TRIGGER_DISPATCHES_ACTIVITY)
+        async def fail_permanently(_raw_batch):
+            nonlocal attempts
+            attempts += 1
+            raise ApplicationError(
+                "broken invariant",
+                type="PermanentDomainError",
+                non_retryable=True,
+            )
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            trigger_queue = "trigger-permanent-failure-test"
+            temporal = app_config.temporal.model_copy(
+                update={"trigger_task_queue": trigger_queue}
+            )
+            config = app_config.model_copy(update={"temporal": temporal})
+            plan = build_initial_trigger_plan(
+                symbol="BTCUSDT",
+                pipeline_id=config.pipeline.version,
+                manifest_id="manifest-v1",
+                updated_at=NOW,
+                heartbeat_seconds=None,
+                event_rules=(
+                    AnalysisEventRule(
+                        rule_id="news",
+                        trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                    ),
+                ),
+            )
+            event = build_trigger_event(
+                trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
+                symbol=plan.symbol,
+                pipeline_id=plan.pipeline_id,
+                occurred_at=NOW,
+                observed_at=NOW,
+                priority=100,
+                dedup_key="permanent-builder-failure",
+            )
+            async with Worker(
+                env.client,
+                task_queue=trigger_queue,
+                workflows=[TriggerCoordinatorWorkflow],
+                activities=[fail_permanently],
+            ):
+                handle = await env.client.start_workflow(
+                    TriggerCoordinatorWorkflow.run,
+                    build_trigger_coordinator_input(plan, config),
+                    id=coordinator_workflow_id(plan.symbol, plan.pipeline_id),
+                    task_queue=trigger_queue,
+                )
+                await handle.signal(
+                    TRIGGER_SIGNAL,
+                    {
+                        "kind": TriggerOutboxKind.TRIGGER_CREATED.value,
+                        "trigger": event.model_dump(mode="json"),
+                    },
+                )
+                for _ in range(100):
+                    status = await handle.query(TriggerCoordinatorWorkflow.status)
+                    if status["failed_batches"] == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                status = await handle.query(TriggerCoordinatorWorkflow.status)
+                assert attempts == 1
+                assert status["failed_batches"] == 1
+                assert status["completed_batches"] == 0
                 assert status["pending_count"] == 0
                 await handle.signal(TriggerCoordinatorWorkflow.stop)
                 await handle.result()
