@@ -93,6 +93,41 @@ class SqlForecastContractStore:
         )
         return None if payload is None else ForecastProducerBinding.model_validate(payload)
 
+    def resolve_binding(
+        self,
+        binding: ForecastProducerBinding,
+        *,
+        activated_at: datetime,
+    ) -> ForecastProducerBinding:
+        """Reuse the immutable binding for one contract/behavior, or record it once."""
+
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(forecast_producer_bindings.c.payload).where(
+                    forecast_producer_bindings.c.contract_id == binding.contract_id,
+                    forecast_producer_bindings.c.producer_behavior_id
+                    == binding.producer_behavior_id,
+                )
+            ).scalar_one_or_none()
+        if payload is None:
+            self.record_binding(binding, activated_at=activated_at)
+            return binding
+        existing = ForecastProducerBinding.model_validate(payload)
+        comparable_fields = (
+            "contract_id",
+            "producer_kind",
+            "producer_id",
+            "producer_behavior_id",
+            "permission",
+            "required_feature_keys",
+        )
+        if any(
+            getattr(existing, field) != getattr(binding, field)
+            for field in comparable_fields
+        ):
+            raise ValueError("ForecastProducerBinding 行为身份已绑定到不同语义")
+        return existing
+
     def binding_activation_at(self, binding_id: str) -> datetime:
         with self._engine.connect() as connection:
             value = connection.execute(

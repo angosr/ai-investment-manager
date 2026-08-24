@@ -223,6 +223,43 @@ def test_forecast_ledger_validates_contract_slot_distribution_and_base_dependenc
         store.record(altered)
 
 
+def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    contract = _contract()
+    contracts.record_contract(contract)
+    fields = {
+        "contract_id": contract.contract_id,
+        "producer_kind": ForecastProducerKind.CONTEXT,
+        "producer_id": "codex",
+        "producer_behavior_id": "codex-v1",
+        "permission": ForecastPermission.CAPITAL_CANDIDATE,
+    }
+    legacy = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.CONTEXT.value,
+            "codex",
+            "codex-v1",
+            "MOCK",
+            (),
+        ),
+        **fields,
+    )
+    contracts.record_binding(legacy, activated_at=NOW)
+    neutral = ForecastProducerBinding.create(**fields)
+
+    resolved = contracts.resolve_binding(
+        neutral,
+        activated_at=NOW + timedelta(hours=1),
+    )
+
+    assert resolved == legacy
+    assert contracts.binding_activation_at(resolved.binding_id) == NOW
+
+
 def test_slot_outcome_settles_once_for_every_producer(ledger) -> None:
     store, contract, slot = ledger
     base = _base(contract, slot)

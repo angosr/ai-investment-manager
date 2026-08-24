@@ -1078,7 +1078,10 @@ def assemble_capital_cycle(
                 )
             )
             contracts.record_contract(contract)
-            contracts.record_binding(binding, activated_at=producer_activation_at)
+            binding = contracts.resolve_binding(
+                binding,
+                activated_at=producer_activation_at,
+            )
             context_activation_at = contracts.binding_activation_at(binding.binding_id)
             configured_sources.append(
                 CapitalForecastSource(
