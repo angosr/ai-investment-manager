@@ -5,6 +5,8 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.execution.policy import ExecutionPolicy
+from investment_manager.forecast.context.estimate import context_forecast_behavior_hash
+from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.portfolio.policy import FrequencyPolicy
@@ -28,7 +30,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v19"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v20"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -139,6 +141,23 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
     authorization = config.capital.mock_candidate_authorizations[0]
     assert authorization.producer_behavior_id == (
         config.capital.context_forecast.producer_behavior_id
+    )
+    instrument = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.key == config.capital.context_forecast.target_instrument_key
+    )
+    contract = context_spot_forecast_contract(
+        policy=config.capital.context_forecast,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+    assert config.capital.context_forecast.producer_behavior_id == (
+        context_forecast_behavior_hash(
+            config.codex_runtime,
+            config.capital.context_forecast,
+            contract,
+        )
     )
 
 

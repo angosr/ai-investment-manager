@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v18
+  version: spot-capital-v19
   enabled: false
   settlement_asset: USDT
   decision:
@@ -185,12 +185,12 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v3
+    version: btc-context-forecast-v4
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "19a79396b47f7b4b1c18af29b3ea05ca6e87a3843920be573cdd35a486078eeb"
+    producer_behavior_id: "8966754ecb70a8766b8a31ec86b4893e013bc50c603d2db6f41e7afe0abbfd99"
     outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v1
+    contract_version: btc-spot-directional-4h-v2
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     horizon_minutes: 240
     cadence_minutes: 240
