@@ -11,7 +11,7 @@ capital:
   mock_candidate_authorizations:
     - version: btc-context-mock-v3
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "3d5666c4dcd1669fd090d21a57f8ccc19826f862bd0beb4cb7f14e1bdd63a297"
+      producer_behavior_id: "19a79396b47f7b4b1c18af29b3ea05ca6e87a3843920be573cdd35a486078eeb"
       outcome_family_id: btc-spot-directional-4h
       hypothesis_fingerprint: "60fb3594569baa887bb8c3d2cadaa787ec27865745b79a5ef736156e4e784e4e"
       maximum_allocation_fraction: "0.10"
@@ -41,7 +41,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-capital-shadow-v15
+  version: world-forecast-capital-shadow-v17
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

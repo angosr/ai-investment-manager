@@ -28,8 +28,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-capital-shadow-v15"
+    assert config.pipeline.version == "world-forecast-capital-shadow-v17"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
+    assert config.temporal.version == "temporal-analysis-v3"
+    assert config.temporal.activity_start_to_close_seconds == 890
+    assert config.temporal.activity_schedule_to_close_seconds == 900
+    assert config.shadow.analysis_deadline_seconds == 900
+    assert config.codex_runtime.version == "codex-runtime-v8"
+    assert config.codex_runtime.timeout_seconds == 420
+    assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
     assert config.information.version == "information-intake-v29"
     assert config.information.normalizer_version == "trendradar-collector-v9"

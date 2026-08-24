@@ -238,7 +238,7 @@ capital:
     version: btc-context-forecast-v3
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "3d5666c4dcd1669fd090d21a57f8ccc19826f862bd0beb4cb7f14e1bdd63a297"
+    producer_behavior_id: "19a79396b47f7b4b1c18af29b3ea05ca6e87a3843920be573cdd35a486078eeb"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v1
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -361,7 +361,7 @@ trigger:
   dispatcher_advisory_lock_key: 817221901
 
 temporal:
-  version: temporal-analysis-v2
+  version: temporal-analysis-v3
   address: 127.0.0.1:7233
   namespace: default
   task_queue: investment-manager-analysis-v1
@@ -373,8 +373,8 @@ temporal:
   version_evaluation_task_queue: investment-manager-version-evaluation-v1
   release_task_queue: investment-manager-release-v1
   trigger_task_queue: investment-manager-trigger-v1
-  activity_start_to_close_seconds: 660
-  activity_schedule_to_close_seconds: 690
+  activity_start_to_close_seconds: 890
+  activity_schedule_to_close_seconds: 900
   retry_initial_seconds: 2
   retry_maximum_seconds: 30
   retry_backoff_coefficient: 2.0
@@ -418,7 +418,7 @@ market_data:
 shadow:
   version: shadow-simulation-v2
   initial_quote_balance: "10000"
-  analysis_deadline_seconds: 720
+  analysis_deadline_seconds: 900
   lifecycle_poll_seconds: 10
 
 information:
@@ -532,7 +532,7 @@ proposal:
 # 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
 # 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v7
+  version: codex-runtime-v8
   enabled: false
   isolation_verified: false
   binary: /usr/lib/node_modules/@openai/codex/bin/codex.js
@@ -542,11 +542,13 @@ codex_runtime:
   model: gpt-5.6-sol
   reasoning_effort: high
   maximum_prompt_characters: 16000
-  timeout_seconds: 300
+  # 两次真实深度分析分别在 279 秒完成、300 秒输出中被截断；420 秒保留
+  # 有界完成余量，超时仍不换号或并行重跑。
+  timeout_seconds: 420
   capacity_probe_timeout_seconds: 10
   capacity_ttl_seconds: 60
   transient_failure_cooldown_seconds: 300
-  lease_ttl_seconds: 330
+  lease_ttl_seconds: 450
   max_account_switches: 1
 
 assessment:
