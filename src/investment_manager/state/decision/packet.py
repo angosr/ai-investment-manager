@@ -173,11 +173,12 @@ def _compact_continuous_fact_state(item: PacketFact) -> str:
         elif key not in {"cumulative_inflow_usd_m", "value_traded_usd_m"}:
             deferred.append(part)
     selected.extend(deferred)
+    maximum_characters = 400 if item.fact_type == TREASURY_AUCTION_FACT_TYPE else 200
     compacted: list[str] = []
     used = 0
     for part in selected:
         cost = len(part) + (2 if compacted else 0)
-        if used + cost > 200:
+        if used + cost > maximum_characters:
             break
         compacted.append(part)
         used += cost

@@ -512,7 +512,7 @@ def _fed_policy_state(html: str) -> str:
             1,
         ),
     )
-    fields: list[str] = []
+    fields: list[tuple[str, str]] = []
     for name, markers, maximum in selectors:
         matches: list[str] = []
         for marker in markers:
@@ -520,7 +520,9 @@ def _fed_policy_state(html: str) -> str:
                 marker_offset = sentence.casefold().find(marker)
                 if marker_offset < 0:
                     continue
-                start = marker_offset if name == "action" else 0
+                # Strip embedded statement boilerplate and minutes section headings,
+                # but preserve the actor/time qualifiers in expectations and paths.
+                start = marker_offset if name in {"action", "constraints"} else 0
                 compact = sentence[start : start + 320].rstrip()
                 if start:
                     compact = compact[0].upper() + compact[1:]
@@ -530,13 +532,41 @@ def _fed_policy_state(html: str) -> str:
             if len(matches) >= maximum:
                 break
         if matches:
-            fields.append(f"{name}={' '.join(matches)}")
-    if not any(item.startswith("action=") for item in fields):
+            fields.append((name, " ".join(matches)))
+    if not any(name == "action" for name, _ in fields):
         raise ValueError("Fed FOMC 文件缺少可验证政策行动")
-    state = "; ".join(fields)
-    if len(state) > 2_000:
-        state = state[:2_000].rsplit(" ", 1)[0]
-    return state
+    return _bounded_policy_state(fields, maximum_characters=1_200)
+
+
+def _bounded_policy_state(
+    fields: list[tuple[str, str]], *, maximum_characters: int
+) -> str:
+    """Bound all semantic slots fairly instead of chopping off the final slot."""
+
+    label_cost = sum(len(name) + 1 for name, _ in fields) + 2 * (len(fields) - 1)
+    remaining = maximum_characters - label_cost
+    if remaining < len(fields):
+        raise ValueError("Fed policy state 字符预算不足")
+    limits = [0] * len(fields)
+    active = {index for index, (_, value) in enumerate(fields) if value}
+    while remaining and active:
+        share = max(1, remaining // len(active))
+        for index in tuple(sorted(active)):
+            if not remaining:
+                break
+            room = len(fields[index][1]) - limits[index]
+            take = min(room, share, remaining)
+            limits[index] += take
+            remaining -= take
+            if limits[index] == len(fields[index][1]):
+                active.remove(index)
+    values = []
+    for (name, value), limit in zip(fields, limits, strict=True):
+        compact = value[:limit].rstrip()
+        if limit < len(value) and " " in compact:
+            compact = compact.rsplit(" ", 1)[0]
+        values.append(f"{name}={compact}")
+    return "; ".join(values)
 
 
 class _FedPolicyTextParser(HTMLParser):

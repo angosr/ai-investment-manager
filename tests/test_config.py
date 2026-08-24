@@ -28,22 +28,22 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-capital-shadow-v14"
+    assert config.pipeline.version == "world-forecast-capital-shadow-v15"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v28"
+    assert config.information.version == "information-intake-v29"
     assert config.information.normalizer_version == "trendradar-collector-v9"
-    assert config.decision_state.version == "portfolio-state-v34"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v13"
+    assert config.decision_state.version == "portfolio-state-v35"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v14"
     assert config.decision_state.delta_policy.version == "state-delta-v15"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v38"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v39"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v17"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.version == "context-assessment-v34"
+    assert config.assessment.version == "context-assessment-v35"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(

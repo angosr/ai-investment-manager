@@ -747,9 +747,13 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
             "fact_type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
             "claim": (
                 "effective_date=2026-08-18; "
+                "treasury_bill_offering_14d_usd_m=1096000 USD_MILLIONS; "
                 "treasury_coupon_offering_14d_usd_m=149000 USD_MILLIONS; "
                 "treasury_coupon_bid_to_cover=2.59 INDEX; "
-                "treasury_coupon_indirect_share_pct=68.6 PERCENT."
+                "treasury_coupon_direct_share_pct=20.3 PERCENT; "
+                "treasury_coupon_indirect_share_pct=68.6 PERCENT; "
+                "treasury_coupon_primary_dealer_share_pct=10.3 PERCENT; "
+                "treasury_coupon_soma_addon_14d_usd_m=34703 USD_MILLIONS."
             ),
         }
     )
@@ -774,9 +778,13 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
             "type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
             "at": financing.event_time.isoformat(),
             "state": (
+                "treasury_bill_offering_14d_usd_m=1096000 USD_MILLIONS; "
                 "treasury_coupon_offering_14d_usd_m=149000 USD_MILLIONS; "
                 "treasury_coupon_bid_to_cover=2.59 INDEX; "
-                "treasury_coupon_indirect_share_pct=68.6 PERCENT"
+                "treasury_coupon_direct_share_pct=20.3 PERCENT; "
+                "treasury_coupon_indirect_share_pct=68.6 PERCENT; "
+                "treasury_coupon_primary_dealer_share_pct=10.3 PERCENT; "
+                "treasury_coupon_soma_addon_14d_usd_m=34703 USD_MILLIONS"
             ),
             "ref": "revision-auction",
         },

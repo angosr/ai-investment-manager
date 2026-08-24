@@ -470,6 +470,26 @@ def test_fed_policy_document_projects_action_path_constraints_and_expectations()
     assert enriched.observation.payload_ref.startswith("raw_source_payload_")
     assert enriched.observation.payload_hash != record.observation.payload_hash
 
+    verbose = enrich_fed_monetary_release(
+        record,
+        html.replace(".</p>", f"{' with additional source context' * 20}.</p>"),
+        document_url=record.source_url,
+        observed_at=OBSERVED_AT + timedelta(minutes=2),
+    )
+    assert verbose.policy_state is not None
+    assert len(verbose.policy_state) <= 1_200
+    assert all(
+        f"{field}=" in verbose.policy_state
+        for field in (
+            "action",
+            "expectations",
+            "constraints",
+            "path",
+            "division",
+            "balance_sheet",
+        )
+    )
+
     assert fed_policy_document_eligible(record)
     assert not fed_policy_document_eligible(
         record.model_copy(
