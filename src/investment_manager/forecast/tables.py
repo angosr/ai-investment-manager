@@ -157,6 +157,7 @@ forecast_producer_bindings = Table(
     Column("producer_id", String(128), nullable=False),
     Column("producer_behavior_id", String(128), nullable=False),
     Column("permission", String(32), nullable=False),
+    Column("activated_at", DateTime(timezone=True), nullable=False),
     Column("payload", JSON, nullable=False),
     UniqueConstraint(
         "contract_id",

@@ -64,6 +64,7 @@ def run_trigger_service(
                 config,
                 engine,
                 code_version=manifest.code_version,
+                producer_activation_at=manifest.created_at,
             )
             if config.capital.enabled
             else None
@@ -99,7 +100,7 @@ def run_trigger_service(
                             else None
                         ),
                         owner_symbol=config.assessment.review_trigger_symbol,
-                        context_activation_at=manifest.created_at,
+                        context_activation_at=capital_consumer.context_activation_at,
                     )
                     if config.assessment.enabled
                     else capital_consumer,

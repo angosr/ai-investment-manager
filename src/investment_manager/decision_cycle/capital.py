@@ -225,6 +225,7 @@ class CapitalCycleService:
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
         cycle_records: SqlCapitalCycleStore,
+        context_activation_at: datetime | None = None,
     ) -> None:
         families = tuple(item.contract.outcome_family_id for item in forecast_sources)
         if tuple(sorted(set(families))) != tuple(sorted(families)):
@@ -245,6 +246,11 @@ class CapitalCycleService:
         self._decisions = decisions
         self._execution = execution
         self._cycle_records = cycle_records
+        self.context_activation_at = (
+            require_utc(context_activation_at)
+            if context_activation_at is not None
+            else None
+        )
 
     @property
     def portfolio_id(self) -> str:
@@ -298,10 +304,16 @@ class CapitalCycleService:
         )
         if account is None:
             raise PointInTimeInputUnavailable("Capital risk review 缺少账户快照")
-        if not account.sleeves:
+        if (
+            not account.sleeves
+            and isinstance(result, PortfolioPipelineResult)
+            and result.outcome == PortfolioPipelineOutcome.NO_CHANGE
+        ):
             # A trigger remains durably visible in the event ledger.  Recording a
             # second capital "action" for an all-cash no-op only creates dashboard
-            # noise and has no risk or investment content.
+            # noise and has no risk or investment content.  A review that just
+            # executed an exit is materially different even though its final
+            # account is now all cash, and must continue into `_finish`.
             return result
         return self._finish(
             result=result,
@@ -992,18 +1004,22 @@ def assemble_capital_cycle(
     *,
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
     code_version: str | None = None,
+    producer_activation_at: datetime | None = None,
 ) -> CapitalCycleService:
     if not config.capital.enabled or config.deployment.stage != DeploymentStage.SHADOW:
         raise ValueError("Capital cycle 只装配显式启用的 SHADOW")
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     contracts = SqlForecastContractStore(engine)
+    context_activation_at: datetime | None = None
     if forecast_sources is None:
         configured_sources: list[CapitalForecastSource] = []
         context = config.capital.context_forecast
         if context is not None and context.enabled:
             if code_version is None:
                 raise ValueError("装配 Context Forecast 必须冻结 code_version")
+            if producer_activation_at is None:
+                raise ValueError("装配 Context Forecast 必须冻结 producer activation")
             instrument = next(
                 (
                     item.instrument
@@ -1062,6 +1078,9 @@ def assemble_capital_cycle(
                     context.outcome_family_id,
                 )
             )
+            contracts.record_contract(contract)
+            contracts.record_binding(binding, activated_at=producer_activation_at)
+            context_activation_at = contracts.binding_activation_at(binding.binding_id)
             configured_sources.append(
                 CapitalForecastSource(
                     contract=contract,
@@ -1090,6 +1109,7 @@ def assemble_capital_cycle(
                             ),
                         ),
                         analysis_scope=config.assessment.mandate.analysis_scope,
+                        activated_at=context_activation_at,
                         analyst=assemble_codex_context_forecast_analyst(
                             config,
                             policy=context,
@@ -1160,4 +1180,5 @@ def assemble_capital_cycle(
             portfolio_store=portfolio,
         ),
         cycle_records=SqlCapitalCycleStore(engine),
+        context_activation_at=context_activation_at,
     )

@@ -202,7 +202,7 @@ def ledger():
         producer_behavior_id="trend-v1",
         permission=ForecastPermission.RESEARCH,
     )
-    contracts.record_binding(binding)
+    contracts.record_binding(binding, activated_at=NOW)
     contracts.record_slot(slot, binding=binding)
     return forecasts, contract, slot
 

@@ -219,7 +219,9 @@ def test_contract_slot_binding_and_absence_ledger_is_immutable() -> None:
         store.record_slot(slot, binding=binding)
     assert store.record_contract(contract)
     assert not store.record_contract(contract)
-    assert store.record_binding(binding)
+    assert store.record_binding(binding, activated_at=NOW)
+    assert not store.record_binding(binding, activated_at=NOW + timedelta(days=1))
+    assert store.binding_activation_at(binding.binding_id) == NOW
     assert store.record_slot(slot, binding=binding)
     obligation = ForecastSlotObligation.create(slot=slot, binding=binding)
     assert store.obligation(obligation.obligation_id) == obligation

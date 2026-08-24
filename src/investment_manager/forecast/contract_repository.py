@@ -21,6 +21,8 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
     forecasts,
 )
+from investment_manager.kernel.time import require_utc
+from investment_manager.platform.time import database_utc
 
 
 class SqlForecastContractStore:
@@ -55,9 +57,15 @@ class SqlForecastContractStore:
         )
         return None if payload is None else ForecastContract.model_validate(payload)
 
-    def record_binding(self, binding: ForecastProducerBinding) -> bool:
+    def record_binding(
+        self,
+        binding: ForecastProducerBinding,
+        *,
+        activated_at: datetime,
+    ) -> bool:
         if self.contract(binding.contract_id) is None:
             raise ValueError("ForecastProducerBinding 缺少已持久化 ForecastContract")
+        activated_at = require_utc(activated_at)
         return self._insert_or_verify(
             table=forecast_producer_bindings,
             identity_column=forecast_producer_bindings.c.binding_id,
@@ -69,6 +77,7 @@ class SqlForecastContractStore:
                 "producer_id": binding.producer_id,
                 "producer_behavior_id": binding.producer_behavior_id,
                 "permission": binding.permission.value,
+                "activated_at": activated_at,
                 "payload": binding.model_dump(mode="json"),
             },
             expected=binding,
@@ -83,6 +92,17 @@ class SqlForecastContractStore:
             binding_id,
         )
         return None if payload is None else ForecastProducerBinding.model_validate(payload)
+
+    def binding_activation_at(self, binding_id: str) -> datetime:
+        with self._engine.connect() as connection:
+            value = connection.execute(
+                select(forecast_producer_bindings.c.activated_at).where(
+                    forecast_producer_bindings.c.binding_id == binding_id
+                )
+            ).scalar_one_or_none()
+        if value is None:
+            raise KeyError(binding_id)
+        return database_utc(value)
 
     def record_slot(
         self,

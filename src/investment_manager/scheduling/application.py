@@ -90,9 +90,10 @@ def ensure_trigger_plans(
             repository.create_plan(plan)
             current = plan
         if current.manifest_id != manifest_id:
-            raise ValueError(
-                f"{symbol} 当前 TriggerPlan 的 manifest 与 release 不一致；"
-                "必须升级 pipeline version 完成切换"
+            current = repository.rebind_manifest(
+                plan_id=current.plan_id,
+                manifest_id=manifest_id,
+                updated_at=now,
             )
         desired = desired_by_symbol.get(symbol, ())
         existing = {item.wakeup_id: item for item in current.scheduled_wakeups}

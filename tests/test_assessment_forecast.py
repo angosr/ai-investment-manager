@@ -395,6 +395,7 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
         analyst=analyst,
         target_states=_PacketTargetStateProvider(packet),
         analysis_scope="crypto-portfolio",
+        activated_at=NOW,
     )
 
 

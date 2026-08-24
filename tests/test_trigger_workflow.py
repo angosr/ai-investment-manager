@@ -25,6 +25,7 @@ from investment_manager.scheduling.models import (
     build_initial_trigger_plan,
     build_trigger_batch,
     build_trigger_event,
+    rebind_trigger_plan_manifest,
 )
 from investment_manager.scheduling.runtime import build_trigger_coordinator_input
 from investment_manager.scheduling.workflows import (
@@ -569,6 +570,36 @@ def test_trigger_coordinator_keeps_event_when_input_is_temporarily_unavailable(
                 await handle.result()
 
     asyncio.run(scenario())
+
+
+def test_release_rebind_updates_plan_without_resetting_coordinator_timeline() -> None:
+    initial = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    rebound = rebind_trigger_plan_manifest(
+        initial,
+        manifest_id="manifest-v2",
+        updated_at=NOW + timedelta(minutes=5),
+    )
+    coordinator = TriggerCoordinatorWorkflow()
+    coordinator._plan = initial.model_dump(mode="json")
+    coordinator._last_analysis_at = NOW + timedelta(minutes=3)
+    coordinator._completed_batches = 7
+
+    coordinator.deliver(
+        {
+            "kind": TriggerOutboxKind.PLAN_REVISED.value,
+            "plan": rebound.model_dump(mode="json"),
+        }
+    )
+
+    assert coordinator._plan == rebound.model_dump(mode="json")
+    assert coordinator._last_analysis_at == NOW + timedelta(minutes=3)
+    assert coordinator._completed_batches == 7
 
 
 def test_trigger_coordinator_terminally_records_permanent_builder_failure(

@@ -216,8 +216,10 @@ class ContextForecastProducer:
     analyst: ContextProbabilityAnalyst
     target_states: ContextTargetStateProvider
     analysis_scope: str
+    activated_at: datetime
 
     def __post_init__(self) -> None:
+        require_utc(self.activated_at)
         if self.instrument.product != InstrumentProduct.SPOT:
             raise ValueError("首个 Context Forecast 合同只支持可直接持有的 Spot 多头")
         if self.binding.producer_kind != ForecastProducerKind.CONTEXT:
@@ -230,7 +232,7 @@ class ContextForecastProducer:
     def produce(self, *, as_of: datetime) -> ForecastProductionResult:
         slot_as_of = require_utc(as_of)
         self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding)
+        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
         slot_id = ForecastDecisionSlot.identity_for(self.contract.contract_id, slot_as_of)
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,
@@ -445,7 +447,7 @@ class ContextForecastProducer:
         slot_as_of = require_utc(as_of)
         completed = require_utc(completed_at)
         self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding)
+        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
         slot_id = ForecastDecisionSlot.identity_for(self.contract.contract_id, slot_as_of)
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,

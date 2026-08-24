@@ -234,6 +234,7 @@ class TriggerPlanOrigin(StrEnum):
     UNKNOWN = "UNKNOWN"
     INITIAL_DEFAULT = "INITIAL_DEFAULT"
     CARRIED_FORWARD = "CARRIED_FORWARD"
+    RELEASE_REBOUND = "RELEASE_REBOUND"
     DYNAMIC_PATCH = "DYNAMIC_PATCH"
 
 
@@ -318,6 +319,31 @@ def carry_forward_trigger_plan(
         ),
         updated_at=updated_at,
         origin=TriggerPlanOrigin.CARRIED_FORWARD,
+    )
+
+
+def rebind_trigger_plan_manifest(
+    current: AnalysisTriggerPlan,
+    *,
+    manifest_id: str,
+    updated_at: datetime,
+) -> AnalysisTriggerPlan:
+    """Bind a new deployment to unchanged scheduling behavior and state."""
+
+    updated_at = require_utc(updated_at)
+    if current.manifest_id == manifest_id:
+        return current
+    return current.model_copy(
+        update={
+            "revision": current.revision + 1,
+            "manifest_id": manifest_id,
+            "scheduled_wakeups": tuple(
+                item for item in current.scheduled_wakeups if item.expires_at > updated_at
+            ),
+            "updated_at": updated_at,
+            "applied_patch_id": None,
+            "origin": TriggerPlanOrigin.RELEASE_REBOUND,
+        }
     )
 
 

@@ -31,7 +31,7 @@
 
 运行入口会拒绝以下情况：分支工作树、HEAD 不匹配、运行路径有未提交变化、配置哈希不一致、组件版本不一致、缺少 `web-dist`、制品内容变化或数据库不是迁移 head。Dashboard 只能托管 Manifest 指定的前端目录，不能自动寻找开发目录中的构建结果。
 
-新 Release 启动后先保持 warming。只有该 Release 自己的 TriggerPlan、Worker、行情/信息源、账户投影和启用生产者事实形成后，才允许切换只读入口；不能借用旧 pipeline 的行动或单纯进程在线宣称 ready。
+新 Release 启动后先保持 warming。只有当前 Manifest 已接管 TriggerPlan、Worker 正常，且行情、信息与账户事实满足新鲜度，才允许切换只读入口；不能单纯以进程在线宣称 ready。若 Pipeline 与 ProducerBehavior 均未改变，发布应重绑定现有 TriggerPlan 并延续其节拍与 cohort，不得为制造“新版本行动”重算既有事实。
 
 ## 3. 数据库
 
@@ -53,7 +53,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
 - 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
-- 新 Release 激活前已经开始的槽不归属于新行为，也不能追记为漏报；
+- ProducerBinding 首次激活前已经开始的槽不归属于该行为，也不能追记为漏报；行为等价的新 Release 不重置该激活点；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
 Heartbeat 负责恢复到期任务、账户投影、对账和风险复核。全现金且没有新 Forecast/Target/订单时不生成行动条目。

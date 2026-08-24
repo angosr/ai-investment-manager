@@ -21,6 +21,7 @@ from investment_manager.scheduling.models import (
     TriggerPlanGate,
     TriggerPlanPatch,
     decide_analysis_call_admission,
+    rebind_trigger_plan_manifest,
 )
 from investment_manager.scheduling.policy import TriggerPolicy
 from investment_manager.scheduling.tables import (
@@ -317,6 +318,50 @@ class SqlTriggerRepository:
                 insert_trigger_with_outbox(connection, trigger)
             self._insert_plan_outbox(connection, result.plan)
         return result
+
+    def rebind_manifest(
+        self,
+        *,
+        plan_id: str,
+        manifest_id: str,
+        updated_at: datetime,
+    ) -> AnalysisTriggerPlan:
+        """Advance only deployment ownership, preserving one coordinator timeline."""
+
+        updated_at = require_utc(updated_at)
+        with self._engine.begin() as connection:
+            current_payload = connection.execute(
+                select(analysis_trigger_plans.c.payload)
+                .where(
+                    analysis_trigger_plans.c.plan_id == plan_id,
+                    analysis_trigger_plans.c.is_current.is_(True),
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if current_payload is None:
+                raise KeyError(plan_id)
+            current = AnalysisTriggerPlan.model_validate(current_payload)
+            revised = rebind_trigger_plan_manifest(
+                current,
+                manifest_id=manifest_id,
+                updated_at=updated_at,
+            )
+            if revised == current:
+                return current
+            changed = connection.execute(
+                update(analysis_trigger_plans)
+                .where(
+                    analysis_trigger_plans.c.plan_id == current.plan_id,
+                    analysis_trigger_plans.c.revision == current.revision,
+                    analysis_trigger_plans.c.is_current.is_(True),
+                )
+                .values(is_current=False)
+            )
+            if changed.rowcount != 1:
+                raise ValueError("AnalysisTriggerPlan 发布重绑定并发冲突")
+            self._insert_plan(connection, revised)
+            self._insert_plan_outbox(connection, revised)
+        return revised
 
     def pending_outbox(
         self,

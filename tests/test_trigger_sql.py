@@ -6,11 +6,13 @@ from sqlalchemy import create_engine, func, select
 
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
+from investment_manager.scheduling.application import ensure_trigger_plans
 from investment_manager.scheduling.models import (
     AddWakeup,
     AnalysisTriggerType,
     ScheduledWakeup,
     TriggerNow,
+    TriggerPlanOrigin,
     build_initial_trigger_plan,
     build_trigger_batch,
     build_trigger_event,
@@ -115,6 +117,53 @@ def test_plan_patch_plan_wakeups_and_trigger_now_commit_atomically(
         batch_count = connection.scalar(select(func.count()).select_from(analysis_trigger_batches))
     assert current_count == 1
     assert batch_count == 1
+
+
+def test_release_rebind_preserves_pipeline_plan_without_resetting_identity(
+    app_config, replay_input
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    repository = SqlTriggerRepository(engine, app_config.trigger)
+    now = replay_input.market.as_of
+    wakeup = ScheduledWakeup(
+        wakeup_id="future-review",
+        wake_at=now + timedelta(hours=1),
+        expires_at=now + timedelta(hours=2),
+        reason="继续观察同一机制",
+    )
+    initial = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-v1",
+        manifest_id="manifest-v1",
+        updated_at=now - timedelta(hours=1),
+        heartbeat_seconds=900,
+    ).model_copy(update={"scheduled_wakeups": (wakeup,)})
+    repository.create_plan(initial)
+
+    kwargs = {
+        "repository": repository,
+        "symbols": ("BTCUSDT",),
+        "pipeline_id": "pipeline-v1",
+        "manifest_id": "manifest-v2",
+        "heartbeat_seconds": 900,
+        "high_impact_threshold": app_config.trigger.high_impact_threshold,
+        "debounce_seconds": 30,
+        "now": now,
+    }
+    ensure_trigger_plans(**kwargs)
+    ensure_trigger_plans(**kwargs)
+
+    rebound = repository.plan_for_scope(symbol="BTCUSDT", pipeline_id="pipeline-v1")
+    assert rebound.plan_id == initial.plan_id
+    assert rebound.pipeline_id == initial.pipeline_id
+    assert rebound.revision == 2
+    assert rebound.manifest_id == "manifest-v2"
+    assert rebound.heartbeat_seconds == initial.heartbeat_seconds
+    assert rebound.scheduled_wakeups == (wakeup,)
+    assert rebound.origin == TriggerPlanOrigin.RELEASE_REBOUND
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(analysis_trigger_plans)) == 2
 
 
 def test_analysis_call_admission_is_global_idempotent_and_interval_only(

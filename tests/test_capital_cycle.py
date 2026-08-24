@@ -41,6 +41,7 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.models import (
+    CapitalCycleOutcome,
     CapitalCycleRecord,
     MockCandidateAuthorization,
     PortfolioEdgeBasis,
@@ -117,7 +118,7 @@ class _FixedMockForecastProducer:
             for item in target.legs
         )
         self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding)
+        self.contracts.record_binding(self.binding, activated_at=as_of)
         slot = ForecastDecisionSlot.create(
             self.contract,
             slot_as_of=as_of,
@@ -172,7 +173,7 @@ class _NoForecastProducer:
 
     def produce(self, *, as_of: datetime) -> ForecastNoEstimate:
         self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding)
+        self.contracts.record_binding(self.binding, activated_at=as_of)
         slot = ForecastDecisionSlot.create(
             self.contract,
             slot_as_of=as_of,
@@ -839,6 +840,36 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
             == 2
         )
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+    activity = CapitalDashboardReader(engine, config).activity()
+    assert activity[0].outcome == "EXECUTED"
+    assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes
+
+
+def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=71)
+    config, service = _candidate_service(config, engine)
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+
+    review_at = NOW + timedelta(hours=25)
+    _put_market(market, config, at=review_at, sequence=72)
+    config, restarted = _candidate_service(config, engine, emit=False)
+    batch = _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=review_at)
+
+    exited = restarted.review(batch)
+
+    assert isinstance(exited, TradePlanExecutionResult)
+    assert not exited.account.sleeves
+    with engine.connect() as connection:
+        payloads = connection.execute(select(capital_cycle_records.c.payload)).scalars()
+        records = tuple(CapitalCycleRecord.model_validate(item) for item in payloads)
+    exit_record = next(item for item in records if item.cause_id == batch.batch_id)
+    assert exit_record.outcome == CapitalCycleOutcome.RISK_EXIT
+    assert "PROGRAMMATIC_RISK_EXIT" in exit_record.reason_codes
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
     assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes

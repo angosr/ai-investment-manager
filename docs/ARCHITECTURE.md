@@ -72,7 +72,7 @@ Forecast 在结果发生前绑定：收益对象、信息截止、完成时间�
 
 用于预测或资本权限的 Outcome 经济起点不得早于 Forecast 实际可用时点；来源需要同口径比较时，合同可以冻结一个晚于共同完成期限的统一决策锚点。`information_cutoff → Forecast 可用` 期间已经发生的收益不可交易，采用更早起点的历史标签只能作为行为诊断，不能贡献权限证据。Portfolio 与资本 PnL 始终从当时真实可成交锚点或实际成交开始。
 
-ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不可变地绑定“哪个 producer behavior 对该槽负有应答义务”。某行为的覆盖率分母只包含分配给该行为且已经到期的槽，分子包含同一批槽的 Forecast 与明确 `NO_ESTIMATE`；不得把旧行为槽计入新行为分母，也不得从第一条成功结果反推行为起点以隐藏漏报。新 Release 的行为从 Manifest 冻结的激活时点起承担后续槽义务，激活前已经开始的槽不得追记为新行为漏报。
+ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不可变地绑定“哪个 producer behavior 对该槽负有应答义务”。某行为的覆盖率分母只包含分配给该行为且已经到期的槽，分子包含同一批槽的 Forecast 与明确 `NO_ESTIMATE`；不得把旧行为槽计入新行为分母，也不得从第一条成功结果反推行为起点以隐藏漏报。ProducerBinding 首次登记时冻结行为激活点，后续仅部署代码或前端的新 Release 继续使用该激活点；只有 producer behavior 身份改变才建立新行为起点。激活前已经开始的槽不得追记为漏报。
 
 同一经济问题在一个决策时点最多只有一个获得资本权限的 Forecast。若存在多个来源，它们在同一合同和 Outcome 下评价；只有前瞻证据证明组合优于单一来源后，才允许发布组合政策。来源差异不能产生不同标签、不同成本口径或不同资本入口。
 
@@ -112,6 +112,8 @@ Evaluation 分开回答四个问题：
 AI 历史重放可验证数据、Schema 和稳定性，但不能排除模型训练知识泄漏，因此 AI Alpha 和资本权限只由真实前瞻样本证明。任何“已实现”“运行健康”“文字更深”或少量模拟盈利都不等于稳定盈利。
 
 Release 必须冻结所有会改变实际行为或用户所见事实的内容：代码、配置、Schema、Prompt/模型绑定、运行时外部制品和前端构建产物。进程从该提交的冻结 checkout 或内容寻址制品启动，不能从持续开发工作树或未登记的 `web/dist` 提供现役版本。切流 readiness 读取新 Release 自己的 Worker、调度、数据、账户和已启用生产者事实；事实尚未形成时显示 warming，不得用旧 Release 记录或“进程在线”冒充 ready，也不得为了 ready 伪造资本行动。
+
+Release 是部署身份，Pipeline 是写入与协调语义，ProducerBehavior 是预测行为身份，三者不得互相代替。代码或界面发布在 Pipeline 语义未变时只把现有 TriggerPlan 递增 revision 重绑定到新 Manifest，保留同一 Temporal 协调器的 `last_analysis_at`、待处理事件和未来唤醒；只有写入/协调语义实际改变才切换 Pipeline。行为等价的 Release 也不得重置 Forecast cohort。
 
 ## 5. 领域所有权
 

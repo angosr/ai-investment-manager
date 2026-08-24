@@ -195,7 +195,7 @@ def _stores(*, permission_eligible: bool = False):
         producer_behavior_id="settlement-test-v1",
         permission=ForecastPermission.RESEARCH,
     )
-    contract_store.record_binding(binding)
+    contract_store.record_binding(binding, activated_at=NOW)
     contract_store.record_slot(slot, binding=binding)
     return forecast_store, contract, slot
 
