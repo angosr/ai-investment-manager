@@ -266,16 +266,11 @@ class ForecastProducerBinding(FrozenModel):
     producer_behavior_id: str = Field(min_length=1)
     permission: ForecastPermission
     required_feature_keys: tuple[str, ...] = ()
-    maximum_world_model_age_seconds: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def identity_and_requirements_are_canonical(self):
         if tuple(sorted(set(self.required_feature_keys))) != self.required_feature_keys:
             raise ValueError("Forecast Producer 必需特征必须唯一且排序")
-        if (self.producer_kind == ForecastProducerKind.CONTEXT) != (
-            self.maximum_world_model_age_seconds is not None
-        ):
-            raise ValueError("只有 Context Producer 必须冻结 WorldModel 最大年龄")
         expected = stable_id(
             "forecast_producer_binding",
             self.contract_id,
@@ -284,7 +279,6 @@ class ForecastProducerBinding(FrozenModel):
             self.producer_behavior_id,
             self.permission.value,
             self.required_feature_keys,
-            self.maximum_world_model_age_seconds,
         )
         if self.binding_id != expected:
             raise ValueError("ForecastProducerBinding binding_id 与内容不一致")

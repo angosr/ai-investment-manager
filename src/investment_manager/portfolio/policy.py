@@ -54,7 +54,6 @@ class ContextForecastPolicy(StrictConfig):
     validity_minutes: int = Field(gt=0, le=1_440)
     completion_deadline_seconds: int = Field(gt=0)
     minimum_remaining_horizon_minutes: int = Field(gt=0)
-    maximum_world_model_age_seconds: int = Field(gt=0)
     maximum_quote_age_seconds: int = Field(gt=0)
     maximum_reanchor_move_bps: Decimal = Field(gt=0)
     required_feature_keys: tuple[str, ...] = ()

@@ -372,7 +372,6 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
             policy.producer_behavior_id,
             ForecastPermission.CAPITAL_CANDIDATE.value,
             policy.required_feature_keys,
-            policy.maximum_world_model_age_seconds,
         ),
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.CONTEXT,
@@ -380,7 +379,6 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
         producer_behavior_id=policy.producer_behavior_id,
         permission=ForecastPermission.CAPITAL_CANDIDATE,
         required_feature_keys=policy.required_feature_keys,
-        maximum_world_model_age_seconds=policy.maximum_world_model_age_seconds,
     )
     packet = _packet()
     return ContextForecastProducer(

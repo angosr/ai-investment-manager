@@ -187,7 +187,6 @@ def _stores(*, permission_eligible: bool = False):
             "settlement-test-v1",
             ForecastPermission.RESEARCH.value,
             (),
-            None,
         ),
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.PROGRAM,

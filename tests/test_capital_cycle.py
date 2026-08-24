@@ -268,7 +268,6 @@ def _test_contract_and_binding(
             _TEST_PRODUCER_VERSION,
             ForecastPermission.CAPITAL_CANDIDATE.value,
             (),
-            None,
         ),
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.PROGRAM,

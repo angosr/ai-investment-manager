@@ -1060,7 +1060,6 @@ def assemble_capital_cycle(
                     context.producer_behavior_id,
                     ForecastPermission.CAPITAL_CANDIDATE.value,
                     context.required_feature_keys,
-                    context.maximum_world_model_age_seconds,
                 ),
                 contract_id=contract.contract_id,
                 producer_kind=ForecastProducerKind.CONTEXT,
@@ -1068,7 +1067,6 @@ def assemble_capital_cycle(
                 producer_behavior_id=context.producer_behavior_id,
                 permission=ForecastPermission.CAPITAL_CANDIDATE,
                 required_feature_keys=context.required_feature_keys,
-                maximum_world_model_age_seconds=(context.maximum_world_model_age_seconds),
             )
             authorization = next(
                 item

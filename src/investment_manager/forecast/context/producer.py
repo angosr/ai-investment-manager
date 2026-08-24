@@ -294,16 +294,6 @@ class ContextForecastProducer:
         provenance = (assessment.assessment_id, packet.packet_id, packet.content_hash)
         if assessment.decision_packet_hash != packet.content_hash:
             raise ValueError("Context Forecast 的 WorldModel/Packet 身份不一致")
-        if (
-            slot_as_of - assessment.available_at
-        ).total_seconds() > self.policy.maximum_world_model_age_seconds:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.WORLD_MODEL_STALE,
-                completed_at=slot_as_of,
-                input_refs=tuple(sorted(provenance)),
-                detail="WORLD_MODEL_MAXIMUM_AGE_EXCEEDED",
-            )
         if any(item.next_review_at <= slot_as_of for item in assessment.mechanisms):
             return self._no_estimate(
                 slot=slot,
