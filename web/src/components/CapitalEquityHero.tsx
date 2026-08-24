@@ -21,13 +21,13 @@ export function CapitalEquityHero({
     <section className={styles.hero}>
       <div className={styles.top}>
         <div>
-          <div className={styles.label}>模拟盘累计净收益（已扣成本）</div>
+          <div className={styles.label}>累计净收益（已扣成本）</div>
           <div className={`${styles.pnl} mono ${isPositive(net) ? styles.pos : styles.neg}`}>
             {signed(net)}
             <small>USDT</small>
           </div>
           <div className={styles.hint}>
-            实线为资本账户真实权益，虚线为同资金上限买入并持有 BTC 的可执行价格基准；两者均已计交易成本。
+            实线为资本账户权益，虚线为同资金上限买入并持有 BTC 的可执行价格基准；两者均已计交易成本。
           </div>
         </div>
       </div>

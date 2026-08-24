@@ -1224,11 +1224,13 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         PACKAGE_ROOT / "portfolio" / "policy.py",
         PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
         ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
+        ROOT / "web" / "src" / "components" / "CapitalEquityHero.tsx",
     )
     forbidden = (
         "mock_authorization",
         "mock_candidate",
         "MockCandidate",
+        "模拟盘",
         "模拟交易",
         "模拟订单",
         "模拟执行",

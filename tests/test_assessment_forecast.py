@@ -433,6 +433,13 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
     assert first.evidence_refs == ("delta-1",)
     assert first.analysis_input_json is not None
     analysis_input = json.loads(first.analysis_input_json)
+    assert set(analysis_input) == {
+        "purpose",
+        "decision_slot",
+        "forecast_contract",
+        "world_model",
+        "target_state",
+    }
     assert analysis_input["purpose"] == "FORECAST_ESTIMATE"
     assert datetime.fromisoformat(
         analysis_input["decision_slot"]["information_cutoff_at"]
