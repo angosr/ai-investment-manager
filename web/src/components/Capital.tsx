@@ -1,116 +1,44 @@
 import type { CapitalOverview } from "../api/types";
+import { fixed } from "../lib/format";
 import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
-const REASON_LABELS: Record<string, string> = {
-  NO_REGISTERED_FORECAST_SOURCE: "未装配预测源，保持现金",
-  "FORECAST_NO_ESTIMATE:WORLD_MODEL_UNAVAILABLE": "世界认知不可用，保持现金",
-  "FORECAST_NO_ESTIMATE:WORLD_MODEL_STALE": "世界认知待复核，保持现金",
-  "FORECAST_NO_ESTIMATE:REQUIRED_FEATURE_MISSING": "合同特征缺失，保持现金",
-  "FORECAST_NO_ESTIMATE:MARKET_INPUT_INVALID": "市场输入无效，保持现金",
-  "FORECAST_NO_ESTIMATE:PRODUCER_FAILED": "概率预测失败，保持现金",
-  "FORECAST_NO_ESTIMATE:DEADLINE_MISSED": "概率预测超时，保持现金",
-  "FORECAST_NO_ESTIMATE:STALE_BEFORE_AVAILABLE": "分析期间行情已改变，保持现金",
-  "FORECAST_NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON": "剩余交易窗口不足，保持现金",
-  CASH_SELECTED_NO_POSITIVE_NET_EDGE: "费用后优势不足，保持现金",
-  REBALANCE_BELOW_MINIMUM: "变动低于最小再平衡金额",
-  POSITIVE_NET_EDGE_SELECTED: "费用后优势通过",
-  EXPIRED_FORECAST_EXIT: "预测失效，退出仓位",
-  PROGRAMMATIC_RISK_REVIEW: "程序化风险复核完成",
-  HOLDING_RISK_REVIEWED: "持仓风险复核完成",
-};
-
 export function Capital({ data }: { data: CapitalOverview | null }) {
   const account = data?.account;
-  const reasons = data?.decision.reason_codes ?? [];
-  const evidence = data?.forecast_evidence;
+  const activeGroupCount = data?.execution.active_group_count ?? 0;
 
   return (
     <Card
-      title="资本账户"
-      aside={account ? `${account.equity} USDT` : "等待快照"}
+      title="资金状态"
+      aside={account ? `权益 ${fixed(account.equity)} USDT` : "等待账户"}
       bodyPadded
     >
       {account ? (
         <>
-          <div className={styles.metrics}>
-            <Metric label="现金" value={account.cash_balance} />
-            <Metric label="当日 PnL" value={account.daily_pnl} />
-            <Metric label="累计净 PnL" value={data?.performance.cumulative_net_pnl ?? "0"} />
-            <Metric label="回撤" value={account.drawdown_fraction} />
-          </div>
-          <div className={styles.state}>
+          <div className={styles.state} data-alert={!account.reconciled || account.kill_switch_active}>
             <span className={styles.dot} data-ok={account.reconciled && !account.kill_switch_active} />
-            {account.reconciled ? "账户已重放" : "账户未对账"}
-            {account.kill_switch_active ? " · Kill Switch" : ""}
+            {account.kill_switch_active
+              ? "风控已暂停新订单"
+              : account.reconciled
+                ? "资金状态正常，可评估新机会"
+                : "账户状态尚未核实，暂停新订单"}
+          </div>
+          <div className={styles.section}>
+            <div className={styles.row}>
+              <span>可用现金</span>
+              <b>{fixed(account.cash_balance)} USDT</b>
+            </div>
+            <div className={styles.row}>
+              <span>待完成交易</span>
+              <b>{activeGroupCount > 0 ? `${activeGroupCount} 个交易组` : "无"}</b>
+            </div>
           </div>
         </>
       ) : (
-        <p className={styles.empty}>尚无资本账户快照。</p>
+        <p className={styles.empty}>正在读取当前资金状态。</p>
       )}
-
-      <div className={styles.section}>
-        <div className={styles.row}>
-          <span>最新决策</span>
-          <b>
-            {reasons.length > 0
-              ? reasons.map((reason) => REASON_LABELS[reason] ?? reason).join("；")
-              : "—"}
-          </b>
-        </div>
-        <div className={styles.row}>
-          <span>风控 / 订单</span>
-          <b>
-            {data?.decision.risk_outcome ?? "未进入风控"} · {data?.execution.total_order_count ?? 0} 单
-          </b>
-        </div>
-        {(data?.execution.active_group_count ?? 0) > 0 ? (
-          <div className={styles.row}>
-            <span>正在执行</span>
-            <b>{data?.execution.active_group_count} 个非终态交易组</b>
-          </div>
-        ) : null}
-        {evidence ? (
-          <>
-            <div className={styles.row}>
-              <span>预测证据</span>
-              <b>{evidenceLabel(evidence.status)}</b>
-            </div>
-            <div className={styles.row}>
-              <span>独立结算样本</span>
-              <b>
-                {evidence.non_overlapping_sample_count} / {evidence.required_non_overlapping_samples}
-              </b>
-            </div>
-            <div className={styles.row}>
-              <span>相对静态基准</span>
-              <b>{formatSkill(evidence.brier_skill)}</b>
-            </div>
-            <div className={styles.row}>
-              <span>预测终态覆盖</span>
-              <b>
-                {evidence.terminal_result_count} / {evidence.due_slot_count}
-              </b>
-            </div>
-          </>
-        ) : null}
-      </div>
     </Card>
   );
-}
-
-function evidenceLabel(status: NonNullable<CapitalOverview["forecast_evidence"]>["status"]) {
-  if (status === "DIAGNOSTIC_ONLY") return "仅作诊断，不授予资本权限";
-  if (status === "ABOVE_BENCHMARK") return "样本充分且优于基准";
-  if (status === "BELOW_BENCHMARK") return "样本充分但未优于基准";
-  if (status === "NO_SETTLED_SAMPLES") return "尚无结算样本";
-  return "证据不足，不能判断正确性";
-}
-
-function formatSkill(value: string | null) {
-  if (value === null) return "尚不可计算";
-  const score = Number(value);
-  return `${score > 0 ? "+" : ""}${score.toFixed(4)} Brier`;
 }
 
 export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
@@ -130,21 +58,13 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
                 <span data-direction={direction}>{direction}</span>
               </div>
               <div className={styles.positionDetail}>
-                数量 <b>{position.quantity}</b> · 均价 <b>{position.average_price}</b>
+                数量 <b title={position.quantity}>{fixed(position.quantity, 8)}</b> · 均价{" "}
+                <b title={position.average_price}>{fixed(position.average_price)}</b>
               </div>
             </div>
           );
         })
       )}
     </Card>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className={styles.metric}>
-      <span>{label}</span>
-      <b>{value}</b>
-    </div>
   );
 }

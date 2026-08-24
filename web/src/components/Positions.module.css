@@ -4,6 +4,7 @@
   padding: 8px 0;
 }
 .pos {
+  min-width: 0;
   padding: 12px 0;
   border-bottom: 1px solid var(--line-soft);
 }
@@ -15,16 +16,20 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 .name {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .sym {
+  min-width: 0;
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .dir {
   font-size: 10.5px;
@@ -41,6 +46,7 @@
   background: var(--neg-soft);
 }
 .upl {
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 500;
@@ -55,11 +61,15 @@
   margin-top: 7px;
   display: flex;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .line b {
   color: var(--text);
   font-family: var(--font-mono);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 .foot {
   display: flex;

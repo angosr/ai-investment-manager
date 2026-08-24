@@ -1,4 +1,5 @@
 .card {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -10,15 +11,19 @@
   gap: 10px;
   padding: 13px 16px;
   border-bottom: 1px solid var(--line-soft);
+  min-width: 0;
 }
 .head h2 {
+  min-width: 0;
   font-size: 13.5px;
 }
 .aside {
+  min-width: 0;
   font-size: 11.5px;
   color: var(--faint);
   font-family: var(--font-mono);
 }
 .bodyPadded {
+  min-width: 0;
   padding: 6px 16px 14px;
 }
