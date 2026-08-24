@@ -500,8 +500,8 @@ class CapitalCycleService:
         *,
         slot_at: datetime,
         completed_at: datetime,
-    ) -> tuple[ForecastNoEstimate, ...]:
-        """Materialize a missed deterministic slot without hindsight AI."""
+    ) -> tuple[ForecastProductionResult, ...]:
+        """Ensure a late slot has a terminal result without rewriting an existing one."""
 
         slot = require_utc(slot_at)
         completed = require_utc(completed_at)
@@ -512,9 +512,10 @@ class CapitalCycleService:
             )
             for source in self._forecast_sources
         )
-        if any(not isinstance(item, ForecastNoEstimate) for item in results):
-            raise ValueError("错过的 Forecast slot 不得产生可交易预测")
-        return tuple(results)
+        # ``record_deadline_missed`` is idempotent at the producer boundary.  A
+        # Forecast returned here is necessarily the immutable result already
+        # recorded for this behavior/slot, not hindsight production.
+        return results
 
     def recover_missed_forecasts(
         self,

@@ -74,6 +74,8 @@ Forecast 在结果发生前绑定：收益对象、信息截止、完成时间�
 
 ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不可变地绑定“哪个 producer behavior 对该槽负有应答义务”。某行为的覆盖率分母只包含分配给该行为且已经到期的槽，分子包含同一批槽的 Forecast 与明确 `NO_ESTIMATE`；不得把旧行为槽计入新行为分母，也不得从第一条成功结果反推行为起点以隐藏漏报。ProducerBinding 首次登记时冻结行为激活点，后续仅部署代码或前端的新 Release 继续使用该激活点；只有 producer behavior 身份改变才建立新行为起点。激活前已经开始的槽不得追记为漏报。
 
+每个槽与 producer behavior 最多拥有一个终态结果：Forecast 或 `NO_ESTIMATE`。迟到 heartbeat、重启、Pipeline 切换和漏报恢复都只能确保该结果存在；若任一终态已经存在，必须原样接受并继续本轮账户复核，不能把已有 Forecast 改判为漏报，也不能因新 Pipeline 尚无资本回执而拒绝旧结果。
+
 同一经济问题在一个决策时点最多只有一个获得资本权限的 Forecast。若存在多个来源，它们在同一合同和 Outcome 下评价；只有前瞻证据证明组合优于单一来源后，才允许发布组合政策。来源差异不能产生不同标签、不同成本口径或不同资本入口。
 
 任何校准、收缩、来源选择或权限计算只能读取严格早于本次 information cutoff 且已经结算的 Forecast—Outcome；本次及更晚 Outcome 只能影响未来决策。输入样本身份和政策版本必须随 Forecast 保存，不能用事后更新的“最新校准”重写当时资本判断。

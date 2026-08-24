@@ -164,6 +164,19 @@ class _FixedMockForecastProducer:
         self.store.record(forecast)
         return forecast
 
+    def record_deadline_missed(
+        self,
+        *,
+        as_of: datetime,
+        completed_at: datetime,
+    ) -> BaseForecast:
+        del completed_at
+        return self.produce(as_of=as_of)
+
+    def recover_deadline_missed(self, **kwargs) -> tuple[()]:
+        del kwargs
+        return ()
+
 
 class _NoForecastProducer:
     def __init__(self, *, contracts, contract, binding):
@@ -764,6 +777,31 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         historical.candidate_economics[0].decision_threshold_bps
         == frozen.minimum_net_bps
     )
+
+
+def test_late_slot_accepts_an_existing_forecast_after_pipeline_change() -> None:
+    at = datetime(2026, 8, 21, 16, 0, tzinfo=UTC)
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    _put_market(SqlMarketDataStore(engine), config, at=at, sequence=73)
+    _, service = _candidate_service(config, engine)
+
+    produced = service.produce(
+        as_of=at,
+        cause_id="original-pipeline-cadence",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+    assert isinstance(produced, TradePlanExecutionResult)
+
+    terminal = service.record_missed_forecast(
+        slot_at=at,
+        completed_at=at + timedelta(minutes=30),
+    )
+
+    assert len(terminal) == 1
+    assert isinstance(terminal[0], BaseForecast)
 
 
 def test_spot_only_forecast_receives_only_its_executable_quote() -> None:

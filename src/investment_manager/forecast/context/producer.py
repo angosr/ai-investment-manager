@@ -520,9 +520,8 @@ class ContextForecastProducer:
                 as_of=cursor,
                 completed_at=completed,
             )
-            if not isinstance(result, ForecastNoEstimate):
-                raise ValueError("历史 cadence recovery 不得产生 Forecast")
-            recovered.append(result)
+            if isinstance(result, ForecastNoEstimate):
+                recovered.append(result)
             cursor += timedelta(minutes=self.policy.cadence_minutes)
         return tuple(recovered)
 

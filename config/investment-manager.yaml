@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v23
+  version: spot-capital-v24
   enabled: false
   settlement_asset: USDT
   decision:
@@ -295,7 +295,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v20
+  version: analysis-trigger-v21
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
