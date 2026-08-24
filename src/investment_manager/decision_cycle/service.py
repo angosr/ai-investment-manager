@@ -99,6 +99,7 @@ def run_trigger_service(
                             else None
                         ),
                         owner_symbol=config.assessment.review_trigger_symbol,
+                        context_activation_at=manifest.created_at,
                     )
                     if config.assessment.enabled
                     else capital_consumer,

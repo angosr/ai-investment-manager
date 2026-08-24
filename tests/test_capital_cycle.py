@@ -457,6 +457,22 @@ def test_late_cadence_is_a_no_estimate_then_current_risk_review() -> None:
     ]
 
 
+def test_cadence_slot_before_release_activation_is_not_assigned() -> None:
+    at = NOW.replace(hour=4, minute=30)
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        owner_symbol="BTCUSDT",
+        context_activation_at=at.replace(hour=4, minute=10),
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=at))
+
+    assert capital.calls == [("review", at)]
+
+
 def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

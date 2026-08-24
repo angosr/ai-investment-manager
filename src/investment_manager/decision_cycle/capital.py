@@ -133,12 +133,15 @@ class CapitalTriggerConsumer:
     context_cadence_minutes: int | None = None
     context_completion_deadline_seconds: int | None = None
     owner_symbol: str | None = None
+    context_activation_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if (self.context_cadence_minutes is None) != (
             self.context_completion_deadline_seconds is None
         ):
             raise ValueError("Context cadence 与完成截止秒数必须同时配置")
+        if self.context_activation_at is not None:
+            require_utc(self.context_activation_at)
 
     def consume(
         self,
@@ -157,6 +160,11 @@ class CapitalTriggerConsumer:
                 int(batch.created_at.timestamp()) // cadence_seconds * cadence_seconds,
                 tz=UTC,
             )
+            if (
+                self.context_activation_at is not None
+                and slot_at < self.context_activation_at
+            ):
+                return self.capital.review(batch)
             assert self.context_completion_deadline_seconds is not None
             self.capital.recover_missed_forecasts(
                 before_slot_at=slot_at,

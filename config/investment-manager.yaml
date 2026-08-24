@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v19
+  version: spot-capital-v20
   enabled: false
   settlement_asset: USDT
   decision:

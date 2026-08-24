@@ -53,6 +53,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
 - 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
+- 新 Release 激活前已经开始的槽不归属于新行为，也不能追记为漏报；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
 Heartbeat 负责恢复到期任务、账户投影、对账和风险复核。全现金且没有新 Forecast/Target/订单时不生成行动条目。
