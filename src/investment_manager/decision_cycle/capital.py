@@ -158,14 +158,21 @@ class CapitalTriggerConsumer:
                 int(batch.created_at.timestamp()) // cadence_seconds * cadence_seconds,
                 tz=UTC,
             )
+            cadence_cause_id = stable_id(
+                "context_forecast_cadence",
+                self.capital.portfolio_id,
+                cadence_seconds,
+                slot_at.isoformat(),
+            )
+            # The first heartbeat in a cadence slot creates its Forecast.  Later
+            # heartbeats must still refresh the account and protect holdings;
+            # returning the old cadence result would leave account facts stale
+            # for the entire forecast horizon.
+            if self.capital.cause_completed(cadence_cause_id):
+                return self.capital.review(batch)
             return self.capital.produce(
                 as_of=slot_at,
-                cause_id=stable_id(
-                    "context_forecast_cadence",
-                    self.capital.portfolio_id,
-                    cadence_seconds,
-                    slot_at.isoformat(),
-                ),
+                cause_id=cadence_cause_id,
                 symbol=batch.symbol,
                 trigger_types=("FORECAST_CADENCE",),
             )
@@ -215,6 +222,21 @@ class CapitalCycleService:
     @property
     def portfolio_id(self) -> str:
         return self._config.capital.decision.portfolio_id
+
+    def cause_completed(self, cause_id: str) -> bool:
+        """Whether this pipeline already completed one durable capital cause."""
+
+        return (
+            self._cycle_records.get(
+                stable_id(
+                    "capital_cycle_record",
+                    self._config.capital.decision.portfolio_id,
+                    self._config.pipeline.version,
+                    cause_id,
+                )
+            )
+            is not None
+        )
 
     def consume(self, batch: TriggerBatch) -> PortfolioPipelineResult | TradePlanExecutionResult:
         """Run capital once for an immutable trigger cause."""

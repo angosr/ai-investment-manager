@@ -58,6 +58,22 @@ export interface CapitalOverview {
       return_fraction: string;
     } | null;
   };
+  forecast_evidence: {
+    status: "NO_SETTLED_SAMPLES" | "INSUFFICIENT_EVIDENCE" | "ABOVE_BENCHMARK" | "BELOW_BENCHMARK";
+    terminal_result_count: number;
+    due_slot_count: number;
+    result_coverage: string | null;
+    forecast_count: number;
+    no_estimate_count: number;
+    settled_forecast_count: number;
+    non_overlapping_sample_count: number;
+    required_non_overlapping_samples: number;
+    mean_brier_score: string | null;
+    benchmark_mean_brier_score: string | null;
+    brier_skill: string | null;
+    mean_expected_gross_bps: string | null;
+    mean_realized_gross_bps: string | null;
+  } | null;
 }
 
 export interface CapitalAction {

@@ -23,6 +23,7 @@ const REASON_LABELS: Record<string, string> = {
 export function Capital({ data }: { data: CapitalOverview | null }) {
   const account = data?.account;
   const reasons = data?.decision.reason_codes ?? [];
+  const evidence = data?.forecast_evidence;
 
   return (
     <Card
@@ -69,9 +70,46 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
             <b>{data?.execution.active_group_count} 个非终态交易组</b>
           </div>
         ) : null}
+        {evidence ? (
+          <>
+            <div className={styles.row}>
+              <span>预测证据</span>
+              <b>{evidenceLabel(evidence.status)}</b>
+            </div>
+            <div className={styles.row}>
+              <span>独立结算样本</span>
+              <b>
+                {evidence.non_overlapping_sample_count} / {evidence.required_non_overlapping_samples}
+              </b>
+            </div>
+            <div className={styles.row}>
+              <span>相对静态基准</span>
+              <b>{formatSkill(evidence.brier_skill)}</b>
+            </div>
+            <div className={styles.row}>
+              <span>预测终态覆盖</span>
+              <b>
+                {evidence.terminal_result_count} / {evidence.due_slot_count}
+              </b>
+            </div>
+          </>
+        ) : null}
       </div>
     </Card>
   );
+}
+
+function evidenceLabel(status: NonNullable<CapitalOverview["forecast_evidence"]>["status"]) {
+  if (status === "ABOVE_BENCHMARK") return "样本充分且优于基准";
+  if (status === "BELOW_BENCHMARK") return "样本充分但未优于基准";
+  if (status === "NO_SETTLED_SAMPLES") return "尚无结算样本";
+  return "证据不足，不能判断正确性";
+}
+
+function formatSkill(value: string | null) {
+  if (value === null) return "尚不可计算";
+  const score = Number(value);
+  return `${score > 0 ? "+" : ""}${score.toFixed(4)} Brier`;
 }
 
 export function CapitalPositions({ data }: { data: CapitalOverview | null }) {

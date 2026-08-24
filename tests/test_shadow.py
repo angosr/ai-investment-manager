@@ -98,6 +98,9 @@ class RecordingCapital:
         self.produce_calls = []
         self.review_calls = []
 
+    def cause_completed(self, cause_id):
+        return any(item["cause_id"] == cause_id for item in self.produce_calls)
+
     def produce(self, **kwargs):
         self.produce_calls.append(kwargs)
 
@@ -209,10 +212,8 @@ def test_capital_trigger_consumer_uses_one_stable_context_cadence_slot(app_confi
 
     assert [item["as_of"] for item in capital.produce_calls] == [
         datetime(2026, 8, 18, 12, tzinfo=UTC),
-        datetime(2026, 8, 18, 12, tzinfo=UTC),
     ]
-    assert capital.produce_calls[0]["cause_id"] == capital.produce_calls[1]["cause_id"]
-    assert not capital.review_calls
+    assert len(capital.review_calls) == 1
 
 
 def test_capital_trigger_consumer_has_one_portfolio_scope_owner(app_config) -> None:

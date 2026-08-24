@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
@@ -18,10 +18,24 @@ from investment_manager.execution.tables import (
     mock_product_orders,
     trade_plans,
 )
+from investment_manager.forecast.context.evaluation import (
+    ForecastEvidence,
+    ForecastScoringCase,
+    evaluate_forecast_evidence,
+)
+from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
     ForecastResultKind,
+)
+from investment_manager.forecast.tables import (
+    forecast_contracts,
+    forecast_decision_slots,
+    forecast_no_estimates,
+    forecast_outcomes,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.kernel.time import require_utc
@@ -59,6 +73,7 @@ class CapitalOverview:
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
+    forecast_evidence: ForecastEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +215,7 @@ class CapitalDashboardReader:
                     == self._config.capital.decision.portfolio_id
                 ),
             )
+            forecast_evidence = self._forecast_evidence(connection, now=now)
         return CapitalOverview(
             enabled=True,
             account=account,
@@ -211,6 +227,122 @@ class CapitalDashboardReader:
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
+            forecast_evidence=forecast_evidence,
+        )
+
+    def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
+        policy = self._config.capital.context_forecast
+        if policy is None or not policy.enabled:
+            return None
+        contract_row = connection.execute(
+            select(forecast_contracts.c.contract_id, forecast_contracts.c.payload).where(
+                forecast_contracts.c.outcome_family_id == policy.outcome_family_id,
+                forecast_contracts.c.contract_version == policy.contract_version,
+            )
+        ).one_or_none()
+        if contract_row is None:
+            return None
+        contract = ForecastContract.model_validate(contract_row.payload)
+        due_slot_count = int(
+            connection.scalar(
+                select(func.count())
+                .select_from(forecast_decision_slots)
+                .where(
+                    forecast_decision_slots.c.contract_id == contract.contract_id,
+                    forecast_decision_slots.c.completion_deadline_at <= now,
+                )
+            )
+            or 0
+        )
+        forecast_count = int(
+            connection.scalar(
+                select(func.count())
+                .select_from(forecast_records)
+                .join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id == forecast_records.c.decision_slot_id,
+                )
+                .where(
+                    forecast_records.c.contract_id == contract.contract_id,
+                    forecast_records.c.kind == ForecastResultKind.BASE.value,
+                    forecast_records.c.producer_id == policy.producer_id,
+                    forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_decision_slots.c.completion_deadline_at <= now,
+                )
+            )
+            or 0
+        )
+        no_estimate_count = int(
+            connection.scalar(
+                select(func.count())
+                .select_from(forecast_no_estimates)
+                .join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id == forecast_no_estimates.c.slot_id,
+                )
+                .where(
+                    forecast_no_estimates.c.contract_id == contract.contract_id,
+                    forecast_no_estimates.c.producer_id == policy.producer_id,
+                    forecast_no_estimates.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_decision_slots.c.completion_deadline_at <= now,
+                )
+            )
+            or 0
+        )
+        rows = connection.execute(
+            select(forecast_records.c.payload, forecast_outcomes.c.payload)
+            .select_from(
+                forecast_records.join(
+                    forecast_outcomes,
+                    and_(
+                        forecast_outcomes.c.decision_slot_id
+                        == forecast_records.c.decision_slot_id,
+                        forecast_outcomes.c.evaluation_version
+                        == self._config.outcome_evaluation.target_forecast_version,
+                    ),
+                )
+            )
+            .where(
+                forecast_records.c.contract_id == contract.contract_id,
+                forecast_records.c.kind == ForecastResultKind.BASE.value,
+                forecast_records.c.producer_id == policy.producer_id,
+                forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
+                forecast_outcomes.c.status == ForecastOutcomeStatus.SETTLED.value,
+            )
+            .order_by(forecast_records.c.available_at, forecast_records.c.forecast_id)
+        ).all()
+        cases = []
+        benchmark = tuple(
+            (item.bucket_id, item.probability) for item in contract.forecast_benchmark
+        )
+        for row in rows:
+            forecast = BaseForecast.model_validate(row[0])
+            outcome = ForecastOutcome.model_validate(row[1])
+            assert outcome.gross_target_return_bps is not None
+            assert outcome.realized_bucket_id is not None
+            cases.append(
+                ForecastScoringCase(
+                    forecast_id=forecast.forecast_id,
+                    information_cutoff_at=forecast.information_cutoff_at,
+                    evaluation_at=outcome.evaluation_at,
+                    probabilities=tuple(
+                        (item.bucket_id, item.probability)
+                        for item in forecast.outcome_probabilities
+                    ),
+                    benchmark_probabilities=benchmark,
+                    realized_bucket_id=outcome.realized_bucket_id,
+                    expected_gross_bps=forecast.expected_gross_bps,
+                    realized_gross_bps=outcome.gross_target_return_bps,
+                )
+            )
+        return evaluate_forecast_evidence(
+            tuple(cases),
+            due_slot_count=due_slot_count,
+            forecast_count=forecast_count,
+            no_estimate_count=no_estimate_count,
+            required_non_overlapping_samples=(
+                self._config.calibration.minimum_non_overlapping_samples
+            ),
         )
 
     def activity(
@@ -690,6 +822,52 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 "net_pnl": str(performance.net_pnl),
                 "return_fraction": str(performance.return_fraction),
             },
+        },
+        "forecast_evidence": None
+        if overview.forecast_evidence is None
+        else {
+            "status": overview.forecast_evidence.status.value,
+            "terminal_result_count": overview.forecast_evidence.terminal_result_count,
+            "due_slot_count": overview.forecast_evidence.due_slot_count,
+            "result_coverage": (
+                None
+                if overview.forecast_evidence.result_coverage is None
+                else str(overview.forecast_evidence.result_coverage)
+            ),
+            "forecast_count": overview.forecast_evidence.forecast_count,
+            "no_estimate_count": overview.forecast_evidence.no_estimate_count,
+            "settled_forecast_count": overview.forecast_evidence.settled_forecast_count,
+            "non_overlapping_sample_count": (
+                overview.forecast_evidence.non_overlapping_sample_count
+            ),
+            "required_non_overlapping_samples": (
+                overview.forecast_evidence.required_non_overlapping_samples
+            ),
+            "mean_brier_score": (
+                None
+                if overview.forecast_evidence.mean_brier_score is None
+                else str(overview.forecast_evidence.mean_brier_score)
+            ),
+            "benchmark_mean_brier_score": (
+                None
+                if overview.forecast_evidence.benchmark_mean_brier_score is None
+                else str(overview.forecast_evidence.benchmark_mean_brier_score)
+            ),
+            "brier_skill": (
+                None
+                if overview.forecast_evidence.brier_skill is None
+                else str(overview.forecast_evidence.brier_skill)
+            ),
+            "mean_expected_gross_bps": (
+                None
+                if overview.forecast_evidence.mean_expected_gross_bps is None
+                else str(overview.forecast_evidence.mean_expected_gross_bps)
+            ),
+            "mean_realized_gross_bps": (
+                None
+                if overview.forecast_evidence.mean_realized_gross_bps is None
+                else str(overview.forecast_evidence.mean_realized_gross_bps)
+            ),
         },
     }
 

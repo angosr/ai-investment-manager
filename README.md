@@ -245,14 +245,14 @@ INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-ma
   trigger-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
 INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
-  reconciliation-service --config config/investment-manager.shadow.yaml \
-  --release-manifest '<冻结 Shadow ReleaseManifest>'
-INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
   outcome-evaluation-service --config config/investment-manager.shadow.yaml \
   --release-manifest '<冻结 Shadow ReleaseManifest>'
+INVESTMENT_MANAGER_DATABASE_URL='<Shadow 数据库 URL>' .venv/bin/investment-manager \
+  dashboard-service --config config/investment-manager.shadow.yaml \
+  --release-manifest '<冻结 Shadow ReleaseManifest>' --host 127.0.0.1 --port 8093
 ```
 
-六个现役角色共享同一份 ReleaseManifest 但权限可分别收窄。旧 `temporal-worker` 与 `lifecycle-service` 不在当前无交易权限的 Assessment Shadow 中启动；前者没有主线消费者，后者只有在新 TradePlan 执行链获得权限并可能产生持仓后才需要。每个长期进程启动时都核对完整规范化配置哈希、类型化组件版本、实际 Git 提交和运行 checkout 洁净度；任一数值阈值、账号白名单或源码漂移都失败关闭。Codex 运行包同时记录精确 `code_version` 与配置哈希，不接受版本字符串相同但内容已变的配置。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；`reconciliation-service` 在 Mock/Shadow 只访问独立模拟交易所账本；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
+五个投资服务与只读 Dashboard 共享同一份 ReleaseManifest，但权限可分别收窄。Mock 账户投影和持仓复核由 `trigger-service` 的 Portfolio heartbeat 完成，不存在第二个对账进程；固定 Forecast 槽内的其余 heartbeat 仍须刷新账户，但全现金无变化时不生成行动噪音。旧 `temporal-worker` 与 `lifecycle-service` 不在当前无交易权限的 Assessment Shadow 中启动；前者没有主线消费者，后者只有在新 TradePlan 执行链获得权限并可能产生持仓后才需要。每个长期进程启动时都核对完整规范化配置哈希、类型化组件版本、实际 Git 提交和运行 checkout 洁净度；任一数值阈值、账号白名单或源码漂移都失败关闭。Codex 运行包同时记录精确 `code_version` 与配置哈希，不接受版本字符串相同但内容已变的配置。持续开发的仓库不能直接作为自动重启源，部署应从 Manifest 对应提交的冻结 checkout 启动。`market-stream` 只访问 Binance 公开行情；结果评估服务只读运行事实并追加窗口报告。Shadow 进程不加载 Binance Secret。
 
 ### 运行 Binance Spot Testnet
 
