@@ -352,6 +352,8 @@ class CapitalDashboardReader:
                     realized_bucket_id=outcome.realized_bucket_id,
                     expected_gross_bps=forecast.expected_gross_bps,
                     realized_gross_bps=outcome.gross_target_return_bps,
+                    market_state_key=self._forecast_market_state_key(forecast),
+                    outcome_available_at=outcome.settled_at,
                 )
             )
         return evaluate_forecast_evidence(
@@ -364,6 +366,20 @@ class CapitalDashboardReader:
             ),
             permission_evidence_eligible=contract.permission_evidence_eligible,
         )
+
+    @staticmethod
+    def _forecast_market_state_key(forecast: BaseForecast) -> str | None:
+        """Read the point-in-time regime frozen in this Forecast, never current state."""
+
+        if forecast.analysis_input_json is None:
+            return None
+        try:
+            payload = json.loads(forecast.analysis_input_json)
+            assets = payload["target_state"]["asset_states"]
+            regime = assets[0]["regime"]
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+            return None
+        return regime if isinstance(regime, str) and regime else None
 
     def activity(
         self,
@@ -867,6 +883,7 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
         "forecast_evidence": None
         if overview.forecast_evidence is None
         else {
+            "evaluation_version": overview.forecast_evidence.evaluation_version,
             "status": overview.forecast_evidence.status.value,
             "terminal_result_count": overview.forecast_evidence.terminal_result_count,
             "due_slot_count": overview.forecast_evidence.due_slot_count,
@@ -901,6 +918,52 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 None
                 if overview.forecast_evidence.brier_skill is None
                 else str(overview.forecast_evidence.brier_skill)
+            ),
+            "rolling_benchmark_mean_brier_score": (
+                None
+                if overview.forecast_evidence.rolling_benchmark_mean_brier_score is None
+                else str(overview.forecast_evidence.rolling_benchmark_mean_brier_score)
+            ),
+            "rolling_brier_skill": (
+                None
+                if overview.forecast_evidence.rolling_brier_skill is None
+                else str(overview.forecast_evidence.rolling_brier_skill)
+            ),
+            "rolling_brier_skill_lower_bound": (
+                None
+                if overview.forecast_evidence.rolling_brier_skill_lower_bound is None
+                else str(overview.forecast_evidence.rolling_brier_skill_lower_bound)
+            ),
+            "rolling_brier_skill_upper_bound": (
+                None
+                if overview.forecast_evidence.rolling_brier_skill_upper_bound is None
+                else str(overview.forecast_evidence.rolling_brier_skill_upper_bound)
+            ),
+            "rolling_baseline_ready_count": (
+                overview.forecast_evidence.rolling_baseline_ready_count
+            ),
+            "market_benchmark_mean_brier_score": (
+                None
+                if overview.forecast_evidence.market_benchmark_mean_brier_score is None
+                else str(overview.forecast_evidence.market_benchmark_mean_brier_score)
+            ),
+            "market_brier_skill": (
+                None
+                if overview.forecast_evidence.market_brier_skill is None
+                else str(overview.forecast_evidence.market_brier_skill)
+            ),
+            "market_brier_skill_lower_bound": (
+                None
+                if overview.forecast_evidence.market_brier_skill_lower_bound is None
+                else str(overview.forecast_evidence.market_brier_skill_lower_bound)
+            ),
+            "market_brier_skill_upper_bound": (
+                None
+                if overview.forecast_evidence.market_brier_skill_upper_bound is None
+                else str(overview.forecast_evidence.market_brier_skill_upper_bound)
+            ),
+            "market_baseline_ready_count": (
+                overview.forecast_evidence.market_baseline_ready_count
             ),
             "mean_expected_gross_bps": (
                 None

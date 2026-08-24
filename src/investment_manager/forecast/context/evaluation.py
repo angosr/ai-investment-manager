@@ -9,12 +9,18 @@ from enum import StrEnum
 
 from investment_manager.kernel.time import require_utc
 
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v2"
+DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
+DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
+PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
+
 
 class ForecastEvidenceStatus(StrEnum):
     NO_SETTLED_SAMPLES = "NO_SETTLED_SAMPLES"
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
     ABOVE_BENCHMARK = "ABOVE_BENCHMARK"
     BELOW_BENCHMARK = "BELOW_BENCHMARK"
+    INCONCLUSIVE = "INCONCLUSIVE"
     DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
 
 
@@ -28,10 +34,16 @@ class ForecastScoringCase:
     realized_bucket_id: str
     expected_gross_bps: Decimal
     realized_gross_bps: Decimal
+    market_state_key: str | None = None
+    outcome_available_at: datetime | None = None
 
     def __post_init__(self) -> None:
         require_utc(self.information_cutoff_at)
         require_utc(self.evaluation_at)
+        if self.outcome_available_at is not None:
+            require_utc(self.outcome_available_at)
+            if self.outcome_available_at < self.evaluation_at:
+                raise ValueError("Forecast Outcome 可见时间不能早于评价时间")
         if self.information_cutoff_at >= self.evaluation_at:
             raise ValueError("Forecast 评分样本的截止时间必须早于结算时间")
         forecast_ids = tuple(item[0] for item in self.probabilities)
@@ -45,6 +57,7 @@ class ForecastScoringCase:
 
 @dataclass(frozen=True, slots=True)
 class ForecastEvidence:
+    evaluation_version: str
     status: ForecastEvidenceStatus
     terminal_result_count: int
     due_slot_count: int
@@ -57,6 +70,16 @@ class ForecastEvidence:
     mean_brier_score: Decimal | None
     benchmark_mean_brier_score: Decimal | None
     brier_skill: Decimal | None
+    rolling_benchmark_mean_brier_score: Decimal | None
+    rolling_brier_skill: Decimal | None
+    rolling_brier_skill_lower_bound: Decimal | None
+    rolling_brier_skill_upper_bound: Decimal | None
+    rolling_baseline_ready_count: int
+    market_benchmark_mean_brier_score: Decimal | None
+    market_brier_skill: Decimal | None
+    market_brier_skill_lower_bound: Decimal | None
+    market_brier_skill_upper_bound: Decimal | None
+    market_baseline_ready_count: int
     mean_expected_gross_bps: Decimal | None
     mean_realized_gross_bps: Decimal | None
 
@@ -89,6 +112,7 @@ def evaluate_forecast_evidence(
     independent = _non_overlapping(cases)
     if not independent:
         return ForecastEvidence(
+            evaluation_version=FORECAST_EVIDENCE_EVALUATION_VERSION,
             status=ForecastEvidenceStatus.NO_SETTLED_SAMPLES,
             terminal_result_count=terminal,
             due_slot_count=due_slot_count,
@@ -101,6 +125,16 @@ def evaluate_forecast_evidence(
             mean_brier_score=None,
             benchmark_mean_brier_score=None,
             brier_skill=None,
+            rolling_benchmark_mean_brier_score=None,
+            rolling_brier_skill=None,
+            rolling_brier_skill_lower_bound=None,
+            rolling_brier_skill_upper_bound=None,
+            rolling_baseline_ready_count=0,
+            market_benchmark_mean_brier_score=None,
+            market_brier_skill=None,
+            market_brier_skill_lower_bound=None,
+            market_brier_skill_upper_bound=None,
+            market_baseline_ready_count=0,
             mean_expected_gross_bps=None,
             mean_realized_gross_bps=None,
         )
@@ -115,16 +149,50 @@ def evaluate_forecast_evidence(
         )
     )
     assert model_brier is not None and benchmark_brier is not None
+    model_scores = tuple(
+        _brier(item.probabilities, item.realized_bucket_id) for item in independent
+    )
+    rolling_cases = _dynamic_benchmarks(cases, independent, condition_on_market=False)
+    market_cases = _dynamic_benchmarks(cases, independent, condition_on_market=True)
+    rolling_scores = tuple(
+        _brier(probabilities, item.realized_bucket_id)
+        for item, probabilities, _ready in rolling_cases
+    )
+    market_scores = tuple(
+        _brier(probabilities, item.realized_bucket_id)
+        for item, probabilities, _ready in market_cases
+    )
+    rolling_brier = _mean(rolling_scores)
+    market_brier = _mean(market_scores)
+    assert rolling_brier is not None and market_brier is not None
+    rolling_differences = tuple(
+        baseline - model
+        for baseline, model in zip(rolling_scores, model_scores, strict=True)
+    )
+    market_differences = tuple(
+        baseline - model
+        for baseline, model in zip(market_scores, model_scores, strict=True)
+    )
+    rolling_skill = _mean(rolling_differences)
+    market_skill = _mean(market_differences)
+    assert rolling_skill is not None and market_skill is not None
+    rolling_lower, rolling_upper = _mean_confidence_interval(rolling_differences)
+    market_lower, market_upper = _mean_confidence_interval(market_differences)
+    rolling_ready_count = sum(ready for _item, _probabilities, ready in rolling_cases)
+    market_ready_count = sum(ready for _item, _probabilities, ready in market_cases)
     status = (
         ForecastEvidenceStatus.DIAGNOSTIC_ONLY
         if not permission_evidence_eligible
         else ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
         if len(independent) < required_non_overlapping_samples
         else ForecastEvidenceStatus.ABOVE_BENCHMARK
-        if model_brier < benchmark_brier
+        if rolling_lower > 0 and market_lower > 0
         else ForecastEvidenceStatus.BELOW_BENCHMARK
+        if rolling_upper < 0 or market_upper < 0
+        else ForecastEvidenceStatus.INCONCLUSIVE
     )
     return ForecastEvidence(
+        evaluation_version=FORECAST_EVIDENCE_EVALUATION_VERSION,
         status=status,
         terminal_result_count=terminal,
         due_slot_count=due_slot_count,
@@ -137,6 +205,16 @@ def evaluate_forecast_evidence(
         mean_brier_score=model_brier,
         benchmark_mean_brier_score=benchmark_brier,
         brier_skill=benchmark_brier - model_brier,
+        rolling_benchmark_mean_brier_score=rolling_brier,
+        rolling_brier_skill=rolling_skill,
+        rolling_brier_skill_lower_bound=rolling_lower,
+        rolling_brier_skill_upper_bound=rolling_upper,
+        rolling_baseline_ready_count=rolling_ready_count,
+        market_benchmark_mean_brier_score=market_brier,
+        market_brier_skill=market_skill,
+        market_brier_skill_lower_bound=market_lower,
+        market_brier_skill_upper_bound=market_upper,
+        market_baseline_ready_count=market_ready_count,
         mean_expected_gross_bps=_mean(
             tuple(item.expected_gross_bps for item in independent)
         ),
@@ -173,6 +251,84 @@ def _brier(probabilities: tuple[tuple[str, Decimal], ...], realized: str) -> Dec
         ),
         Decimal("0"),
     )
+
+
+def _dynamic_benchmarks(
+    all_cases: tuple[ForecastScoringCase, ...],
+    evaluated_cases: tuple[ForecastScoringCase, ...],
+    *,
+    condition_on_market: bool,
+) -> tuple[
+    tuple[
+        ForecastScoringCase,
+        tuple[tuple[str, Decimal], ...],
+        bool,
+    ],
+    ...,
+]:
+    """Build each baseline only from outcomes knowable at that case's cutoff.
+
+    Five earlier outcomes are required before the empirical baseline replaces the
+    frozen contract prior.  The rolling baseline uses all visible outcomes; the
+    market baseline uses only the same frozen regime.  A three-case prior keeps
+    the early empirical distribution finite without looking ahead.
+    """
+
+    results = []
+    for current in evaluated_cases:
+        visible = tuple(
+            item
+            for item in all_cases
+            if item.forecast_id != current.forecast_id
+            and (item.outcome_available_at or item.evaluation_at)
+            <= current.information_cutoff_at
+        )
+        matched = tuple(
+            item
+            for item in visible
+            if current.market_state_key is not None
+            and item.market_state_key == current.market_state_key
+        )
+        history = matched if condition_on_market else visible
+        if len(history) < DYNAMIC_BASELINE_MINIMUM_HISTORY:
+            results.append((current, current.benchmark_probabilities, False))
+            continue
+        counts = {
+            bucket_id: sum(item.realized_bucket_id == bucket_id for item in history)
+            for bucket_id, _probability in current.benchmark_probabilities
+        }
+        denominator = Decimal(len(history)) + DYNAMIC_BASELINE_PRIOR_STRENGTH
+        probabilities = tuple(
+            (
+                bucket_id,
+                (
+                    Decimal(counts[bucket_id])
+                    + DYNAMIC_BASELINE_PRIOR_STRENGTH * prior_probability
+                )
+                / denominator,
+            )
+            for bucket_id, prior_probability in current.benchmark_probabilities
+        )
+        results.append((current, probabilities, True))
+    return tuple(results)
+
+
+def _mean_confidence_interval(
+    values: tuple[Decimal, ...],
+) -> tuple[Decimal, Decimal]:
+    """Return a conservative paired 95% normal interval for mean skill."""
+
+    mean = _mean(values)
+    assert mean is not None
+    if len(values) < 2:
+        return mean, mean
+    variance = sum(
+        ((item - mean) ** 2 for item in values),
+        Decimal("0"),
+    ) / Decimal(len(values) - 1)
+    standard_error = (variance / Decimal(len(values))).sqrt()
+    margin = PAIRED_SKILL_INTERVAL_Z * standard_error
+    return mean - margin, mean + margin
 
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal | None:

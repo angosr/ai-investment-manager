@@ -59,7 +59,8 @@ export interface CapitalOverview {
     } | null;
   };
   forecast_evidence: {
-    status: "NO_SETTLED_SAMPLES" | "INSUFFICIENT_EVIDENCE" | "ABOVE_BENCHMARK" | "BELOW_BENCHMARK" | "DIAGNOSTIC_ONLY";
+    evaluation_version: string;
+    status: "NO_SETTLED_SAMPLES" | "INSUFFICIENT_EVIDENCE" | "ABOVE_BENCHMARK" | "BELOW_BENCHMARK" | "INCONCLUSIVE" | "DIAGNOSTIC_ONLY";
     terminal_result_count: number;
     due_slot_count: number;
     result_coverage: string | null;
@@ -72,6 +73,16 @@ export interface CapitalOverview {
     mean_brier_score: string | null;
     benchmark_mean_brier_score: string | null;
     brier_skill: string | null;
+    rolling_benchmark_mean_brier_score: string | null;
+    rolling_brier_skill: string | null;
+    rolling_brier_skill_lower_bound: string | null;
+    rolling_brier_skill_upper_bound: string | null;
+    rolling_baseline_ready_count: number;
+    market_benchmark_mean_brier_score: string | null;
+    market_brier_skill: string | null;
+    market_brier_skill_lower_bound: string | null;
+    market_brier_skill_upper_bound: string | null;
+    market_baseline_ready_count: number;
     mean_expected_gross_bps: string | null;
     mean_realized_gross_bps: string | null;
   } | null;
