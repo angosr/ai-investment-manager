@@ -136,9 +136,22 @@ class SqlFedFactIngestor:
         observed_at: datetime,
     ) -> OfficialFactIngestionResult:
         writes = self._official.ingest_monetary_rss(xml, observed_at=observed_at)
+        # FOMC statements and minutes are decision evidence only after the linked
+        # first-party document has been parsed.  Keep the RSS observation in the
+        # append-only source ledger, but never let its title-only representation
+        # replace an already enriched policy fact during collector restarts.
+        projectable = tuple(
+            write
+            for write in writes
+            if not (
+                isinstance(write.record, FedMonetaryReleaseRecord)
+                and fed_policy_document_eligible(write.record)
+                and write.record.policy_state is None
+            )
+        )
         return OfficialFactIngestionResult(
             records=writes,
-            new_fact_revisions=self._project(writes),
+            new_fact_revisions=self._project(projectable),
         )
 
     def ingest_monetary_document(

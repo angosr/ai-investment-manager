@@ -130,7 +130,7 @@ def test_retry_repairs_official_record_to_fact_projection_gap() -> None:
 def test_unchanged_source_replay_does_not_reproject_existing_fact() -> None:
     engine = _engine()
     xml = """<rss><channel><item>
-      <title>Federal Reserve issues FOMC statement</title>
+      <title>Federal Reserve announces a public information collection</title>
       <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary.htm</link>
       <guid>fed-release-policy-replay</guid><description>Policy statement.</description>
       <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
@@ -160,11 +160,11 @@ def test_unchanged_source_replay_does_not_reproject_existing_fact() -> None:
         )
 
 
-def test_fed_rss_projects_canonical_release_fact() -> None:
+def test_non_policy_fed_rss_projects_canonical_release_fact() -> None:
     engine = _engine()
     pipeline = SqlFedFactIngestor(engine, POLICY)
     xml = """<rss><channel><item>
-      <title>Federal Reserve issues FOMC statement</title>
+      <title>Federal Reserve announces a public information collection</title>
       <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary.htm</link>
       <guid>fed-release-1</guid><description>Policy statement.</description>
       <pubDate>Wed, 19 Aug 2026 18:00:00 GMT</pubDate>
@@ -176,7 +176,7 @@ def test_fed_rss_projects_canonical_release_fact() -> None:
     assert result.new_fact_revisions[0].fact_type == "FED_MONETARY_RELEASE"
 
 
-def test_fed_policy_document_revises_title_only_fact_with_dense_policy_state() -> None:
+def test_fed_policy_document_is_first_canonical_policy_fact_and_rss_cannot_regress_it() -> None:
     engine = _engine()
     pipeline = SqlFedFactIngestor(engine, POLICY)
     xml = """<rss><channel><item>
@@ -201,12 +201,28 @@ def test_fed_policy_document_revises_title_only_fact_with_dense_policy_state() -
         observed_at=OBSERVED_AT + timedelta(minutes=1),
     )
 
+    assert first.new_fact_revisions == ()
     assert len(enriched.new_fact_revisions) == 1
-    revised = enriched.new_fact_revisions[0]
-    assert revised.previous_revision_id == first.new_fact_revisions[0].revision_id
-    assert "action=" in revised.claim
-    assert "expectations=" in revised.claim
-    assert "path=" in revised.claim
+    policy_fact = enriched.new_fact_revisions[0]
+    assert policy_fact.previous_revision_id is None
+    assert "action=" in policy_fact.claim
+    assert "expectations=" in policy_fact.claim
+    assert "path=" in policy_fact.claim
+
+    replayed_rss = pipeline.ingest_monetary_rss(
+        xml,
+        observed_at=OBSERVED_AT + timedelta(minutes=2),
+    )
+
+    assert replayed_rss.new_fact_revisions == ()
+    assert SqlFactStateStore(engine).latest_fact(policy_fact.fact_id) == policy_fact
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(canonical_fact_revisions)
+            )
+            == 1
+        )
 
 
 def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None:
@@ -260,7 +276,7 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
     assert service.health.calendar_poll_count == 1
     assert service.health.public_calendar_poll_count == 1
     assert service.health.monetary_poll_count == 1
-    assert service.health.new_fact_revision_count == 4
+    assert service.health.new_fact_revision_count == 3
     assert service.health.publication_count == 1
     assert published_at == [OBSERVED_AT]
 
@@ -322,7 +338,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         observed_at=OBSERVED_AT,
         years=(2026,),
     )
-    fed.ingest_monetary_rss(
+    release = fed.ingest_monetary_rss(
         """<rss><channel><item>
           <title>Federal Reserve issues FOMC statement</title>
           <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary.htm</link>
@@ -331,6 +347,16 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
           <pubDate>Thu, 20 Aug 2026 11:59:00 GMT</pubDate>
         </item></channel></rss>""",
         observed_at=OBSERVED_AT,
+    )
+    fed.ingest_monetary_document(
+        release.records[0].record,
+        """<html><main>
+          <p>The Committee decided to maintain the target range for the federal
+          funds rate.</p>
+          <p>Inflation remained elevated.</p>
+        </main></html>""",
+        document_url=release.records[0].record.source_url,
+        observed_at=OBSERVED_AT + timedelta(microseconds=1),
     )
     publisher = CanonicalFactTriggerPublisher(
         facts=SqlFactStateStore(engine),
@@ -342,8 +368,9 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
     )
 
-    publisher.publish_recent(OBSERVED_AT)
-    publisher.publish_recent(OBSERVED_AT)
+    publish_at = OBSERVED_AT + timedelta(seconds=1)
+    publisher.publish_recent(publish_at)
+    publisher.publish_recent(publish_at)
     with engine.connect() as connection:
         assert (
             connection.scalar(

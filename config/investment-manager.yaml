@@ -13,10 +13,10 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v35
+  version: portfolio-state-v36
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v14
+    version: official-fact-v15
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
@@ -422,7 +422,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v29
+  version: information-intake-v30
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

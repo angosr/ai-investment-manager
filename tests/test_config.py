@@ -28,7 +28,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-capital-shadow-v17"
+    assert config.pipeline.version == "world-forecast-capital-shadow-v18"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -38,10 +38,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v29"
+    assert config.information.version == "information-intake-v30"
     assert config.information.normalizer_version == "trendradar-collector-v9"
-    assert config.decision_state.version == "portfolio-state-v35"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v14"
+    assert config.decision_state.version == "portfolio-state-v36"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v15"
     assert config.decision_state.delta_policy.version == "state-delta-v15"
     assert config.decision_state.packet_policy.version == "decision-packet-policy-v39"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v17"
