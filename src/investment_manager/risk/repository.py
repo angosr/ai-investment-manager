@@ -12,12 +12,16 @@ from investment_manager.portfolio.tables import (
     portfolio_targets,
 )
 from investment_manager.risk.portfolio import (
+    ApprovedPortfolioTarget,
+    ApprovedSleeve,
     PortfolioHoldingRiskReview,
     PortfolioRiskDecision,
+    RiskReductionAuthorization,
 )
 from investment_manager.risk.tables import (
     portfolio_holding_risk_reviews,
     portfolio_risk_decisions,
+    risk_execution_authorizations,
 )
 
 
@@ -30,6 +34,16 @@ class PortfolioRiskStore(Protocol):
         self,
         approved_target_ids: tuple[str, ...],
     ) -> dict[str, PortfolioRiskDecision]: ...
+
+    def execution_authorizations(
+        self,
+        authorization_ids: tuple[str, ...],
+    ) -> dict[str, tuple[ApprovedSleeve, ...]]: ...
+
+    def execution_authorization(
+        self,
+        authorization_id: str,
+    ) -> ApprovedPortfolioTarget | RiskReductionAuthorization | None: ...
 
     def record_holding_review(self, review: PortfolioHoldingRiskReview) -> bool: ...
 
@@ -50,6 +64,15 @@ class SqlPortfolioRiskStore:
                 ).scalar_one_or_none()
                 if target_hash != decision.target_hash:
                     raise ValueError("RiskDecision 缺少匹配的权威 PortfolioTarget")
+                if decision.approved_target is not None:
+                    self._insert_authorization(
+                        connection,
+                        authorization_id=decision.approved_target.approved_target_id,
+                        source_type="PORTFOLIO_TARGET",
+                        source_id=decision.decision_id,
+                        authorized_at=decision.decided_at,
+                        payload=decision.approved_target,
+                    )
                 connection.execute(
                     insert(portfolio_risk_decisions).values(
                         decision_id=decision.decision_id,
@@ -86,6 +109,15 @@ class SqlPortfolioRiskStore:
                     or account.portfolio_id != review.portfolio_id
                 ):
                     raise ValueError("Holding Risk 缺少匹配的权威账户快照")
+                if review.reduction_authorization is not None:
+                    self._insert_authorization(
+                        connection,
+                        authorization_id=review.reduction_authorization.authorization_id,
+                        source_type="HOLDING_REVIEW",
+                        source_id=review.review_id,
+                        authorized_at=review.reviewed_at,
+                        payload=review.reduction_authorization,
+                    )
                 connection.execute(
                     insert(portfolio_holding_risk_reviews).values(
                         review_id=review.review_id,
@@ -159,3 +191,73 @@ class SqlPortfolioRiskStore:
             row.approved_target_id: PortfolioRiskDecision.model_validate(row.payload)
             for row in rows
         }
+
+    def execution_authorizations(
+        self,
+        authorization_ids: tuple[str, ...],
+    ) -> dict[str, tuple[ApprovedSleeve, ...]]:
+        authorization_ids = tuple(sorted(set(authorization_ids)))
+        if not authorization_ids:
+            return {}
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    risk_execution_authorizations.c.authorization_id,
+                    risk_execution_authorizations.c.source_type,
+                    risk_execution_authorizations.c.payload,
+                ).where(
+                    risk_execution_authorizations.c.authorization_id.in_(authorization_ids)
+                )
+            ).all()
+        result: dict[str, tuple[ApprovedSleeve, ...]] = {}
+        for row in rows:
+            if row.source_type == "PORTFOLIO_TARGET":
+                authorization = ApprovedPortfolioTarget.model_validate(row.payload)
+            elif row.source_type == "HOLDING_REVIEW":
+                authorization = RiskReductionAuthorization.model_validate(row.payload)
+            else:
+                raise ValueError("未知 Risk execution authorization 类型")
+            result[row.authorization_id] = authorization.sleeves
+        return result
+
+    def execution_authorization(
+        self,
+        authorization_id: str,
+    ) -> ApprovedPortfolioTarget | RiskReductionAuthorization | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(
+                    risk_execution_authorizations.c.source_type,
+                    risk_execution_authorizations.c.payload,
+                ).where(
+                    risk_execution_authorizations.c.authorization_id == authorization_id
+                )
+            ).one_or_none()
+        if row is None:
+            return None
+        if row.source_type == "PORTFOLIO_TARGET":
+            return ApprovedPortfolioTarget.model_validate(row.payload)
+        if row.source_type == "HOLDING_REVIEW":
+            return RiskReductionAuthorization.model_validate(row.payload)
+        raise ValueError("未知 Risk execution authorization 类型")
+
+    @staticmethod
+    def _insert_authorization(
+        connection,
+        *,
+        authorization_id: str,
+        source_type: str,
+        source_id: str,
+        authorized_at,
+        payload: ApprovedPortfolioTarget | RiskReductionAuthorization,
+    ) -> None:
+        connection.execute(
+            insert(risk_execution_authorizations).values(
+                authorization_id=authorization_id,
+                source_type=source_type,
+                source_id=source_id,
+                authorized_at=authorized_at,
+                authorization_hash=content_hash(payload),
+                payload=payload.model_dump(mode="json"),
+            )
+        )

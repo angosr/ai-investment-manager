@@ -5,12 +5,12 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from investment_manager.forecast.contracts import ForecastOrientation, ForecastPriceAnchor
 from investment_manager.forecast.models import ExposureDirection, ForecastTarget
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
-from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, PositiveDecimal
 
 
@@ -213,7 +213,9 @@ class ForecastLegOutcome(FrozenModel):
     instrument_id: str = Field(min_length=1)
     direction: ExposureDirection
     gross_weight: Decimal = Field(gt=0, le=1)
-    cutoff_reference_price: PositiveDecimal
+    reference_price: PositiveDecimal = Field(
+        validation_alias=AliasChoices("reference_price", "cutoff_reference_price")
+    )
     exit_price: PositiveDecimal
     price_return_bps: Decimal
     funding_return_bps: Decimal = Decimal("0")
@@ -235,6 +237,7 @@ class ForecastOutcome(FrozenModel):
     evaluation_version: str = Field(min_length=1)
     status: ForecastOutcomeStatus
     information_cutoff_at: datetime
+    outcome_start_at: datetime | None = None
     evaluation_at: datetime
     settled_at: datetime
     legs: tuple[ForecastLegOutcome, ...] = ()
@@ -243,12 +246,19 @@ class ForecastOutcome(FrozenModel):
     reason_code: str = Field(min_length=1)
 
     _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
+    _utc_outcome_start_at = field_validator("outcome_start_at")(optional_utc)
     _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
     _utc_settled_at = field_validator("settled_at")(require_utc)
 
     @model_validator(mode="after")
     def identity_timing_and_status_are_canonical(self):
-        if not self.information_cutoff_at < self.evaluation_at <= self.settled_at:
+        economic_start = self.outcome_start_at or self.information_cutoff_at
+        if not (
+            self.information_cutoff_at
+            <= economic_start
+            < self.evaluation_at
+            <= self.settled_at
+        ):
             raise ValueError("ForecastOutcome 时间顺序非法")
         has_result = self.status == ForecastOutcomeStatus.SETTLED
         if has_result != bool(
@@ -263,6 +273,10 @@ class ForecastOutcome(FrozenModel):
         if self.outcome_id != expected:
             raise ValueError("ForecastOutcome outcome_id 与槽/评价版本不一致")
         return self
+
+    @property
+    def permission_evidence_eligible(self) -> bool:
+        return self.outcome_start_at is not None
 
 
 Forecast = BaseForecast | CalibratedForecast

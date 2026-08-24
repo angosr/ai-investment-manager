@@ -230,6 +230,13 @@ class ScheduledWakeup(FrozenModel):
         return self
 
 
+class TriggerPlanOrigin(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    INITIAL_DEFAULT = "INITIAL_DEFAULT"
+    CARRIED_FORWARD = "CARRIED_FORWARD"
+    DYNAMIC_PATCH = "DYNAMIC_PATCH"
+
+
 class AnalysisTriggerPlan(FrozenModel):
     plan_id: str
     revision: int = Field(ge=1)
@@ -242,6 +249,7 @@ class AnalysisTriggerPlan(FrozenModel):
     scheduled_wakeups: tuple[ScheduledWakeup, ...] = ()
     updated_at: datetime
     applied_patch_id: str | None = None
+    origin: TriggerPlanOrigin = TriggerPlanOrigin.UNKNOWN
 
     _utc_updated_at = field_validator("updated_at")(require_utc)
 
@@ -282,6 +290,7 @@ def build_initial_trigger_plan(
         heartbeat_seconds=heartbeat_seconds,
         event_rules=event_rules,
         updated_at=updated_at,
+        origin=TriggerPlanOrigin.INITIAL_DEFAULT,
     )
 
 
@@ -308,6 +317,7 @@ def carry_forward_trigger_plan(
             item for item in previous.scheduled_wakeups if item.expires_at > updated_at
         ),
         updated_at=updated_at,
+        origin=TriggerPlanOrigin.CARRIED_FORWARD,
     )
 
 
@@ -690,5 +700,6 @@ class TriggerPlanGate:
             scheduled_wakeups=retained_wakeups,
             updated_at=now,
             applied_patch_id=patch.patch_id,
+            origin=TriggerPlanOrigin.DYNAMIC_PATCH,
         )
         return TriggerPlanApplyResult(plan=revised, emitted_triggers=tuple(emitted))

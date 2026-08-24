@@ -83,12 +83,21 @@ class ForecastOutcomeSettler:
         slot: ForecastDecisionSlot,
         settled_at: datetime,
     ) -> ForecastOutcome:
-        references = {item.instrument_id: item.price for item in slot.cutoff_prices}
+        economic_start = slot.outcome_start_at or slot.information_cutoff_at
+        cutoff_references = {item.instrument_id: item.price for item in slot.cutoff_prices}
         legs = tuple(
             self._leg_outcome(
                 leg=leg,
-                reference_price=references[leg.instrument.key],
-                information_cutoff_at=slot.information_cutoff_at,
+                reference_price=(
+                    cutoff_references[leg.instrument.key]
+                    if slot.outcome_start_at is None
+                    else self._executable_reference_price(
+                        leg=leg,
+                        outcome_start_at=economic_start,
+                        visible_at=settled_at,
+                    )
+                ),
+                outcome_start_at=economic_start,
                 evaluation_at=slot.evaluation_at,
                 settled_at=settled_at,
             )
@@ -118,7 +127,7 @@ class ForecastOutcomeSettler:
         *,
         leg: ForecastLeg,
         reference_price: Decimal,
-        information_cutoff_at: datetime,
+        outcome_start_at: datetime,
         evaluation_at: datetime,
         settled_at: datetime,
     ) -> ForecastLegOutcome:
@@ -136,12 +145,12 @@ class ForecastOutcomeSettler:
         if leg.instrument.product != InstrumentProduct.SPOT:
             settlements = self.market.funding_settlements(
                 instrument=leg.instrument,
-                start=information_cutoff_at,
+                start=outcome_start_at,
                 end=evaluation_at,
                 visible_at=settled_at,
             )
             self._require_complete_funding(
-                start=information_cutoff_at,
+                start=outcome_start_at,
                 end=evaluation_at,
                 settlement_times=tuple(item.funding_time for item in settlements),
             )
@@ -161,12 +170,45 @@ class ForecastOutcomeSettler:
             instrument_id=leg.instrument.key,
             direction=leg.direction,
             gross_weight=leg.gross_weight,
-            cutoff_reference_price=reference_price,
+            reference_price=reference_price,
             exit_price=exit_price,
             price_return_bps=price_return,
             funding_return_bps=funding_return,
             funding_settlement_ids=funding_ids,
         )
+
+    def _executable_reference_price(
+        self,
+        *,
+        leg: ForecastLeg,
+        outcome_start_at: datetime,
+        visible_at: datetime,
+    ) -> Decimal:
+        if leg.instrument.product == InstrumentProduct.SPOT:
+            quote = self.market.latest_spot_quote(
+                instrument=leg.instrument,
+                evaluation_at=outcome_start_at,
+                visible_at=visible_at,
+            )
+            if quote is None or not self._fresh(
+                observed_at=quote.observed_at,
+                expected_at=outcome_start_at,
+                maximum_age_seconds=self.maximum_spot_age_seconds,
+            ):
+                raise _MarketFactsIncomplete
+            return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+        quote = self.market.latest_perpetual_quote(
+            instrument=leg.instrument,
+            evaluation_at=outcome_start_at,
+            visible_at=visible_at,
+        )
+        if quote is None or not self._fresh(
+            observed_at=quote.exchange_time,
+            expected_at=outcome_start_at,
+            maximum_age_seconds=self.maximum_perpetual_age_seconds,
+        ):
+            raise _MarketFactsIncomplete
+        return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
 
     def _executable_exit_price(
         self,
@@ -253,6 +295,7 @@ class ForecastOutcomeSettler:
             "decision_slot_id": slot.slot_id,
             "evaluation_version": self.evaluation_version,
             "information_cutoff_at": slot.information_cutoff_at,
+            "outcome_start_at": slot.outcome_start_at,
             "evaluation_at": slot.evaluation_at,
             "settled_at": settled_at,
         }

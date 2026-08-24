@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
@@ -46,6 +46,7 @@ class PortfolioRiskPolicy(FrozenModel):
     maximum_spread_bps: Money
     maximum_unhedged_fraction: UnitInterval
     maximum_unhedged_seconds: int = Field(gt=0)
+    reduction_authorization_seconds: int = Field(gt=0)
     kill_switch: bool = False
 
     @model_validator(mode="after")
@@ -105,6 +106,7 @@ class PortfolioHoldingRiskReview(FrozenModel):
     risk_profile_hashes: tuple[str, ...]
     outcome: HoldingRiskOutcome
     rule_results: tuple[RuleResult, ...] = Field(min_length=1)
+    reduction_authorization: RiskReductionAuthorization | None = None
 
     _utc_reviewed_at = field_validator("reviewed_at")(require_utc)
 
@@ -169,6 +171,21 @@ class PortfolioHoldingRiskReview(FrozenModel):
         )
         if self.review_id != expected_id:
             raise ValueError("Holding Risk review identity 不一致")
+        if (self.reduction_authorization is not None) != (
+            self.outcome == HoldingRiskOutcome.EXIT
+        ):
+            raise ValueError("只有 EXIT Holding Risk 才能携带只减险授权")
+        authorization = self.reduction_authorization
+        if authorization is not None and (
+            authorization.review_id != self.review_id
+            or authorization.portfolio_id != self.portfolio_id
+            or authorization.account_snapshot_id != self.account_snapshot_id
+            or authorization.account_snapshot_hash != self.account_snapshot_hash
+            or authorization.quote_hashes != self.quote_hashes
+            or authorization.risk_profile_hashes != self.risk_profile_hashes
+            or authorization.as_of != self.reviewed_at
+        ):
+            raise ValueError("只减险授权与 Holding Risk 冻结输入不一致")
         return self
 
 
@@ -236,6 +253,58 @@ class ApprovedPortfolioTarget(FrozenModel):
         ):
             if tuple(sorted(set(values))) != values:
                 raise ValueError(f"{label} 必须唯一且排序")
+        return self
+
+
+class RiskReductionAuthorization(FrozenModel):
+    """Risk-owned authority to reduce reconciled current exposure only."""
+
+    authorization_id: str = Field(min_length=1)
+    review_id: str = Field(min_length=1)
+    cycle_id: str = Field(min_length=1)
+    portfolio_id: str = Field(min_length=1)
+    policy_version: str = Field(min_length=1)
+    as_of: datetime
+    valid_until: datetime
+    reference_equity: Money
+    account_snapshot_id: str = Field(min_length=1)
+    account_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quote_hashes: tuple[str, ...]
+    risk_profile_hashes: tuple[str, ...]
+    sleeves: tuple[ApprovedSleeve, ...] = Field(min_length=1)
+    reason_codes: tuple[str, ...] = Field(min_length=1)
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+    _utc_valid_until = field_validator("valid_until")(require_utc)
+
+    @model_validator(mode="after")
+    def authorization_is_reduce_only_and_canonical(self):
+        if self.as_of >= self.valid_until:
+            raise ValueError("只减险授权必须具有未来有效期")
+        for values, label in (
+            (self.quote_hashes, "quote_hashes"),
+            (self.risk_profile_hashes, "risk_profile_hashes"),
+            (self.reason_codes, "reason_codes"),
+        ):
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"只减险授权 {label} 必须唯一且排序")
+        sleeve_ids = tuple(item.sleeve_id for item in self.sleeves)
+        if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
+            raise ValueError("只减险授权 Sleeves 必须唯一且排序")
+        if any(
+            item.requested_gross_notional <= 0
+            or item.approved_gross_notional != 0
+            or item.sleeve_scale != 0
+            or item.maximum_unhedged_notional != 0
+            for item in self.sleeves
+        ):
+            raise ValueError("只减险授权只能把已确认敞口收缩到现金")
+        payload = self.model_dump(mode="json", exclude={"authorization_id"})
+        if self.authorization_id != stable_id(
+            "risk_reduction_authorization",
+            content_hash(payload),
+        ):
+            raise ValueError("只减险授权 identity 不一致")
         return self
 
 
@@ -423,6 +492,7 @@ class PortfolioRiskEngine:
     def review_holding(
         self,
         *,
+        cycle_id: str,
         account: PortfolioAccountSnapshot,
         quotes: tuple[ExecutableQuote, ...],
         risk_profiles: tuple[SleeveRiskProfile, ...],
@@ -621,6 +691,58 @@ class PortfolioRiskEngine:
             as_of.isoformat(),
             content_hash(rules),
         )
+        authorization = None
+        if outcome == HoldingRiskOutcome.EXIT:
+            failed_codes = tuple(
+                sorted(item.reason_code for item in rules if item.state == GuardState.FAIL)
+            )
+            approved_sleeves = tuple(
+                ApprovedSleeve(
+                    sleeve_id=sleeve.sleeve_id,
+                    forecast_family=sleeve.forecast_family,
+                    forecast_target=sleeve.target,
+                    requested_gross_notional=sleeve_gross_notional(
+                        sleeve,
+                        quote_by_instrument=quote_by_instrument,
+                    ),
+                    approved_gross_notional=Decimal("0"),
+                    sleeve_scale=Decimal("0"),
+                    risk_profile_version=profile_by_sleeve[sleeve.sleeve_id].version,
+                    maximum_unhedged_notional=Decimal("0"),
+                    maximum_unhedged_seconds=self._policy.maximum_unhedged_seconds,
+                    reason_codes=tuple(
+                        sorted({"PROGRAMMATIC_RISK_EXIT", *failed_codes})
+                    ),
+                )
+                for sleeve in account.sleeves
+            )
+            authorization_payload = {
+                "review_id": review_id,
+                "cycle_id": cycle_id,
+                "portfolio_id": account.portfolio_id,
+                "policy_version": self._policy.version,
+                "as_of": as_of,
+                "valid_until": as_of
+                + timedelta(seconds=self._policy.reduction_authorization_seconds),
+                "reference_equity": account.equity,
+                "account_snapshot_id": account.snapshot_id,
+                "account_snapshot_hash": content_hash(account),
+                "quote_hashes": tuple(sorted(content_hash(item) for item in quotes)),
+                "risk_profile_hashes": tuple(
+                    sorted(content_hash(item) for item in risk_profiles)
+                ),
+                "sleeves": approved_sleeves,
+                "reason_codes": tuple(
+                    sorted({"PROGRAMMATIC_RISK_EXIT", *failed_codes})
+                ),
+            }
+            authorization = RiskReductionAuthorization(
+                authorization_id=stable_id(
+                    "risk_reduction_authorization",
+                    content_hash(authorization_payload),
+                ),
+                **authorization_payload,
+            )
         return PortfolioHoldingRiskReview(
             review_id=review_id,
             portfolio_id=account.portfolio_id,
@@ -632,6 +754,7 @@ class PortfolioRiskEngine:
             risk_profile_hashes=tuple(sorted(content_hash(item) for item in risk_profiles)),
             outcome=outcome,
             rule_results=rules,
+            reduction_authorization=authorization,
         )
 
     def _new_risk_allowed(

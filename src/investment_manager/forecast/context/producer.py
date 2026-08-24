@@ -26,7 +26,6 @@ from investment_manager.forecast.contracts import (
     ForecastProducerKind,
 )
 from investment_manager.forecast.models import ContextAssessment, ForecastTarget
-from investment_manager.forecast.programs import ForecastProductionResult
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -45,6 +44,8 @@ from investment_manager.state.decision.packet import (
     PacketAssetState,
     PacketDerivativeState,
 )
+
+ForecastProductionResult = BaseForecast | ForecastNoEstimate
 
 
 class ContextProbabilityAnalyst(Protocol):
@@ -268,11 +269,13 @@ class ContextForecastProducer:
                 information_cutoff_at=information_cutoff,
                 cutoff_prices=cutoff_prices,
             )
-            self.contracts.record_slot(slot)
+            self.contracts.record_slot(slot, binding=self.binding)
         elif (
             slot.information_cutoff_at != information_cutoff or slot.cutoff_prices != cutoff_prices
         ):
             raise ValueError("Context decision slot 已绑定不同点时输入")
+        else:
+            self.contracts.record_obligation(slot=slot, binding=self.binding)
 
         if assessment is None or packet is None:
             return self._no_estimate(
@@ -425,6 +428,96 @@ class ContextForecastProducer:
                 input_refs=tuple(sorted(provenance)),
                 detail="CONTEXT_FORECAST_CONTRACT_INVALID",
             )
+
+    def record_deadline_missed(
+        self,
+        *,
+        as_of: datetime,
+        completed_at: datetime,
+    ) -> ForecastProductionResult:
+        """Recover one scheduled obligation without running historical AI."""
+
+        slot_as_of = require_utc(as_of)
+        completed = require_utc(completed_at)
+        self.contracts.record_contract(self.contract)
+        self.contracts.record_binding(self.binding)
+        slot_id = ForecastDecisionSlot.identity_for(self.contract.contract_id, slot_as_of)
+        existing = self.forecasts.result_for_behavior(
+            decision_slot_id=slot_id,
+            producer_behavior_id=self.binding.producer_behavior_id,
+        )
+        if existing is not None:
+            return existing
+        absence_id = stable_id(
+            "forecast_no_estimate",
+            slot_id,
+            self.binding.producer_behavior_id,
+        )
+        existing_absence = self.contracts.no_estimate(absence_id)
+        if existing_absence is not None:
+            return existing_absence
+        cutoff_quote = self.market.latest_spot_quote(
+            instrument=self.instrument,
+            evaluation_at=slot_as_of,
+            visible_at=slot_as_of,
+        )
+        cutoff_prices = self._anchors(
+            quote=cutoff_quote,
+            available_at=slot_as_of,
+        )
+        slot = self.contracts.slot(slot_id)
+        if slot is None:
+            slot = ForecastDecisionSlot.create(
+                self.contract,
+                slot_as_of=slot_as_of,
+                cutoff_prices=cutoff_prices,
+            )
+            self.contracts.record_slot(slot, binding=self.binding)
+        elif slot.cutoff_prices != cutoff_prices:
+            raise ValueError("错过的 Context slot 已绑定不同点时价格")
+        else:
+            self.contracts.record_obligation(slot=slot, binding=self.binding)
+        if completed <= slot.completion_deadline_at:
+            raise ValueError("只有超过完成期限的 slot 才能记录 DEADLINE_MISSED")
+        return self._no_estimate(
+            slot=slot,
+            reason=ForecastNoEstimateReason.DEADLINE_MISSED,
+            completed_at=completed,
+            input_refs=tuple(item.quote_ref for item in cutoff_prices),
+            detail="SCHEDULED_SLOT_RECOVERED_AFTER_DEADLINE",
+        )
+
+    def recover_deadline_missed(
+        self,
+        *,
+        before_as_of: datetime,
+        completed_at: datetime,
+    ) -> tuple[ForecastNoEstimate, ...]:
+        """Materialize every expired cadence obligation after the last known slot."""
+
+        before = require_utc(before_as_of)
+        completed = require_utc(completed_at)
+        latest = self.contracts.latest_obligated_slot_at(
+            binding_id=self.binding.binding_id
+        )
+        if latest is None:
+            return ()
+        cursor = latest + timedelta(minutes=self.policy.cadence_minutes)
+        recovered: list[ForecastNoEstimate] = []
+        while cursor < before:
+            if completed <= cursor + timedelta(
+                seconds=self.contract.completion_deadline_seconds
+            ):
+                break
+            result = self.record_deadline_missed(
+                as_of=cursor,
+                completed_at=completed,
+            )
+            if not isinstance(result, ForecastNoEstimate):
+                raise ValueError("历史 cadence recovery 不得产生 Forecast")
+            recovered.append(result)
+            cursor += timedelta(minutes=self.policy.cadence_minutes)
+        return tuple(recovered)
 
     def _finalize(
         self,

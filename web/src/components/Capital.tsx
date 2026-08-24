@@ -100,6 +100,7 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
 }
 
 function evidenceLabel(status: NonNullable<CapitalOverview["forecast_evidence"]>["status"]) {
+  if (status === "DIAGNOSTIC_ONLY") return "仅作诊断，不授予资本权限";
   if (status === "ABOVE_BENCHMARK") return "样本充分且优于基准";
   if (status === "BELOW_BENCHMARK") return "样本充分但未优于基准";
   if (status === "NO_SETTLED_SAMPLES") return "尚无结算样本";

@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from investment_manager.execution.planning.planner import TradePlan
 from investment_manager.execution.tables import trade_plans
-from investment_manager.risk.tables import portfolio_risk_decisions
+from investment_manager.risk.tables import risk_execution_authorizations
 
 
 class TradePlanStore(Protocol):
@@ -30,13 +30,13 @@ class SqlTradePlanStore:
     def record(self, plan: TradePlan) -> bool:
         try:
             with self._engine.begin() as connection:
-                approved_target_id = connection.execute(
-                    select(portfolio_risk_decisions.c.approved_target_id).where(
-                        portfolio_risk_decisions.c.approved_target_id
+                authorization_id = connection.execute(
+                    select(risk_execution_authorizations.c.authorization_id).where(
+                        risk_execution_authorizations.c.authorization_id
                         == plan.approved_target_id
                     )
                 ).scalar_one_or_none()
-                if approved_target_id != plan.approved_target_id:
+                if authorization_id != plan.approved_target_id:
                     raise ValueError("TradePlan 缺少匹配的权威 Risk 授权")
                 connection.execute(
                     insert(trade_plans).values(

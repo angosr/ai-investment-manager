@@ -4,6 +4,22 @@ from sqlalchemy import JSON, Column, DateTime, ForeignKey, Index, String, Table,
 
 from investment_manager.platform.database import metadata
 
+risk_execution_authorizations = Table(
+    "risk_execution_authorizations",
+    metadata,
+    Column("authorization_id", String(128), primary_key=True),
+    Column("source_type", String(32), nullable=False),
+    Column("source_id", String(128), nullable=False, unique=True),
+    Column("authorized_at", DateTime(timezone=True), nullable=False),
+    Column("authorization_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_risk_execution_authorizations_time",
+    risk_execution_authorizations.c.authorized_at,
+    risk_execution_authorizations.c.authorization_id,
+)
+
 portfolio_risk_decisions = Table(
     "portfolio_risk_decisions",
     metadata,

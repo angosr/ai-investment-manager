@@ -26,7 +26,10 @@ from investment_manager.portfolio.models import (
 from investment_manager.risk.portfolio import (
     ApprovedPortfolioTarget,
     ApprovedSleeve,
+    RiskReductionAuthorization,
 )
+
+ExecutionAuthorization = ApprovedPortfolioTarget | RiskReductionAuthorization
 
 
 class TradePlannerPolicy(FrozenModel):
@@ -187,7 +190,7 @@ class TradePlanner:
     def plan(
         self,
         *,
-        approved: ApprovedPortfolioTarget,
+        approved: ExecutionAuthorization,
         account: PortfolioAccountSnapshot,
         quotes: tuple[ExecutableQuote, ...],
         specs: tuple[InstrumentExecutionSpec, ...],
@@ -195,11 +198,12 @@ class TradePlanner:
     ) -> TradePlan:
         as_of = require_utc(as_of)
         if approved.valid_until <= as_of:
-            raise ValueError("ApprovedPortfolioTarget 已过期")
+            raise ValueError("Risk execution authorization 已过期")
         if approved.as_of != as_of:
             raise ValueError("TradePlanner 必须使用 Risk 批准时点")
         if content_hash(account) != approved.account_snapshot_hash:
-            raise ValueError("TradePlanner account 与 Risk 批准快照不一致")
+            raise ValueError("TradePlanner account 与 Risk 授权快照不一致")
+        authorization_id = self._authorization_id(approved)
         quote_by_instrument = self._unique_quotes(quotes)
         spec_by_instrument = self._unique_specs(specs)
         approved_quote_hashes = set(approved.quote_hashes)
@@ -257,7 +261,7 @@ class TradePlanner:
                 groups.append(group)
 
         values = {
-            "approved_target_id": approved.approved_target_id,
+            "approved_target_id": authorization_id,
             "cycle_id": approved.cycle_id,
             "planner_policy_version": self._policy.version,
             "created_at": as_of,
@@ -267,7 +271,7 @@ class TradePlanner:
         }
         plan_id = stable_id(
             "trade_plan",
-            approved.approved_target_id,
+            authorization_id,
             self._policy.version,
             content_hash(values),
         )
@@ -277,7 +281,7 @@ class TradePlanner:
     def _group(
         self,
         *,
-        approved: ApprovedPortfolioTarget,
+        approved: ExecutionAuthorization,
         sleeve: ApprovedSleeve,
         current: SleevePosition | None,
         quote_by_instrument: dict[str, ExecutableQuote],
@@ -297,9 +301,10 @@ class TradePlanner:
             ):
                 raise ValueError("交易报价与 Risk 批准快照不一致")
 
+        authorization_id = self._authorization_id(approved)
         group_id = stable_id(
             "trade_group",
-            approved.approved_target_id,
+            authorization_id,
             sleeve.sleeve_id,
             self._policy.version,
         )
@@ -348,7 +353,7 @@ class TradePlanner:
                 PlannedLegTrade(
                     leg_id=leg_id,
                     group_id=group_id,
-                    approved_target_id=approved.approved_target_id,
+                    approved_target_id=authorization_id,
                     cycle_id=approved.cycle_id,
                     sleeve_id=sleeve.sleeve_id,
                     instrument=leg.instrument,
@@ -369,7 +374,7 @@ class TradePlanner:
         return (
             PlannedTradeGroup(
                 group_id=group_id,
-                approved_target_id=approved.approved_target_id,
+                approved_target_id=authorization_id,
                 cycle_id=approved.cycle_id,
                 sleeve_id=sleeve.sleeve_id,
                 planner_policy_version=self._policy.version,
@@ -460,3 +465,11 @@ class TradePlanner:
         if tuple(sorted(set(keys))) != keys:
             raise ValueError("InstrumentExecutionSpec 必须按 Instrument 唯一且排序")
         return {item.instrument.key: item for item in specs}
+
+    @staticmethod
+    def _authorization_id(approved: ExecutionAuthorization) -> str:
+        return (
+            approved.approved_target_id
+            if isinstance(approved, ApprovedPortfolioTarget)
+            else approved.authorization_id
+        )

@@ -15,6 +15,7 @@ class ForecastEvidenceStatus(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
     ABOVE_BENCHMARK = "ABOVE_BENCHMARK"
     BELOW_BENCHMARK = "BELOW_BENCHMARK"
+    DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class ForecastEvidence:
     settled_forecast_count: int
     non_overlapping_sample_count: int
     required_non_overlapping_samples: int
+    permission_evidence_eligible: bool
     mean_brier_score: Decimal | None
     benchmark_mean_brier_score: Decimal | None
     brier_skill: Decimal | None
@@ -72,6 +74,7 @@ def evaluate_forecast_evidence(
     forecast_count: int,
     no_estimate_count: int,
     required_non_overlapping_samples: int,
+    permission_evidence_eligible: bool = True,
 ) -> ForecastEvidence:
     """Score only a non-overlapping prospective subset against the frozen benchmark."""
 
@@ -94,6 +97,7 @@ def evaluate_forecast_evidence(
             settled_forecast_count=len(cases),
             non_overlapping_sample_count=0,
             required_non_overlapping_samples=required_non_overlapping_samples,
+            permission_evidence_eligible=permission_evidence_eligible,
             mean_brier_score=None,
             benchmark_mean_brier_score=None,
             brier_skill=None,
@@ -112,7 +116,9 @@ def evaluate_forecast_evidence(
     )
     assert model_brier is not None and benchmark_brier is not None
     status = (
-        ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
+        ForecastEvidenceStatus.DIAGNOSTIC_ONLY
+        if not permission_evidence_eligible
+        else ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
         if len(independent) < required_non_overlapping_samples
         else ForecastEvidenceStatus.ABOVE_BENCHMARK
         if model_brier < benchmark_brier
@@ -127,6 +133,7 @@ def evaluate_forecast_evidence(
         settled_forecast_count=len(cases),
         non_overlapping_sample_count=len(independent),
         required_non_overlapping_samples=required_non_overlapping_samples,
+        permission_evidence_eligible=permission_evidence_eligible,
         mean_brier_score=model_brier,
         benchmark_mean_brier_score=benchmark_brier,
         brier_skill=benchmark_brier - model_brier,

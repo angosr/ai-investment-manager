@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -15,6 +16,7 @@ from investment_manager.governance.models import (
     FailedExperiment,
     GovernanceGate,
     PromotionGate,
+    ReleaseArtifact,
     ReleaseManifest,
     StageOutcome,
     StageResult,
@@ -25,6 +27,7 @@ from investment_manager.governance.models import (
     load_regression_suite,
     load_release_manifest,
     validate_manifest_against_config,
+    validate_manifest_artifacts,
     validate_manifest_code_version,
     validate_manifest_component_versions,
 )
@@ -51,6 +54,35 @@ def _manifest(now: datetime) -> ReleaseManifest:
         component_versions=(("risk", "risk-v1"), ("pipeline", "off-v1")),
         constitution_version="constitution-v1",
     )
+
+
+def test_release_artifact_binds_the_actual_frontend_directory(tmp_path) -> None:
+    dist = tmp_path / "web" / "dist"
+    dist.mkdir(parents=True)
+    manifest = _manifest(datetime(2026, 8, 24, tzinfo=UTC)).model_copy(
+        update={
+            "artifacts": (
+                ReleaseArtifact(
+                    artifact_id="web-dist",
+                    relative_path="web/dist",
+                    sha256=hashlib.sha256(b"").hexdigest(),
+                ),
+            )
+        }
+    )
+
+    validate_manifest_artifacts(
+        manifest,
+        repository_root=tmp_path,
+        required_ids=("web-dist",),
+    )
+    (dist / "index.html").write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="内容不一致"):
+        validate_manifest_artifacts(
+            manifest,
+            repository_root=tmp_path,
+            required_ids=("web-dist",),
+        )
 
 
 def _plan(now: datetime) -> EvaluationPlan:
@@ -140,7 +172,7 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
 
 def test_historical_runtime_release_rejects_changed_configuration() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
-    manifest = load_release_manifest("config/release-manifest.testnet.yaml")
+    manifest = load_release_manifest("config/release-manifest.yaml")
 
     with pytest.raises(ValueError, match=r"配置版本不一致|完整配置内容不一致"):
         validate_manifest_against_config(
@@ -152,7 +184,7 @@ def test_historical_runtime_release_rejects_changed_configuration() -> None:
 
 def test_runtime_release_binds_complete_configuration_content() -> None:
     config = load_config("config/investment-manager.testnet.yaml")
-    historical = load_release_manifest("config/release-manifest.testnet-v3.yaml")
+    historical = load_release_manifest("config/release-manifest.yaml")
     current_names = tuple(
         name
         for name, _version in load_release_manifest(

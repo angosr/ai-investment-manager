@@ -8,7 +8,11 @@ from sqlalchemy import and_, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
+from investment_manager.forecast.contracts import (
+    ForecastContract,
+    ForecastDecisionSlot,
+    ForecastSlotObligation,
+)
 from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
@@ -23,6 +27,7 @@ from investment_manager.forecast.tables import (
     forecast_decision_slots,
     forecast_no_estimates,
     forecast_outcomes,
+    forecast_slot_obligations,
     forecasts,
 )
 from investment_manager.kernel.time import require_utc
@@ -321,6 +326,21 @@ class SqlForecastStore:
         ).scalar_one_or_none()
         if absence is not None:
             raise ValueError("同一 decision slot/producer 已记录 NO_ESTIMATE")
+        obligation_payload = connection.execute(
+            select(forecast_slot_obligations.c.payload).where(
+                forecast_slot_obligations.c.slot_id == forecast.decision_slot_id,
+                forecast_slot_obligations.c.producer_behavior_id
+                == forecast.producer_behavior_id,
+            )
+        ).scalar_one_or_none()
+        if obligation_payload is None:
+            raise ValueError("Forecast 缺少事前槽义务")
+        obligation = ForecastSlotObligation.model_validate(obligation_payload)
+        if (
+            obligation.contract_id != forecast.contract_id
+            or obligation.producer_id != forecast.producer_id
+        ):
+            raise ValueError("Forecast 与槽义务身份不一致")
         if isinstance(forecast, CalibratedForecast):
             base = connection.execute(
                 select(forecasts.c.kind, forecasts.c.payload).where(
@@ -409,6 +429,7 @@ class SqlForecastStore:
     ) -> None:
         if (
             outcome.information_cutoff_at != slot.information_cutoff_at
+            or outcome.outcome_start_at != slot.outcome_start_at
             or outcome.evaluation_at != slot.evaluation_at
         ):
             raise ValueError("ForecastOutcome 与权威 DecisionSlot 时间不一致")

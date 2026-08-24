@@ -182,9 +182,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 90
+    assert len(contract) == 92
     assert content_hash(contract) == (
-        "cf9a3eb0287fb37572f6c29c0e28c6b78b187e4c36a4e5b99da98bd3e9b388cd"
+        "c707408b55e53f4dbd041f1fb74bd66898c76adc8b2711eb58f75281239a70e2"
     )
 
 
@@ -303,7 +303,6 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
                 "contract_repository.py",
                 "contracts.py",
                 "models.py",
-                "programs.py",
                 "policy.py",
                 "repository.py",
                 "results.py",

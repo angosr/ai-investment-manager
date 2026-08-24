@@ -227,6 +227,7 @@ def _policy() -> PortfolioRiskPolicy:
         maximum_spread_bps=Decimal("20"),
         maximum_unhedged_fraction=Decimal("0.05"),
         maximum_unhedged_seconds=10,
+        reduction_authorization_seconds=300,
     )
 
 
@@ -294,6 +295,7 @@ def test_cross_market_quote_skew_defers_holding_review() -> None:
     )
 
     review = PortfolioRiskEngine(_policy()).review_holding(
+        cycle_id="holding-skew-cycle",
         account=_account(gross="1000"),
         quotes=(spot, misaligned),
         risk_profiles=(_profile(),),
@@ -341,18 +343,21 @@ def test_kill_switch_forces_whole_sleeve_to_cash() -> None:
 def test_holding_risk_review_distinguishes_hold_exit_and_defer() -> None:
     engine = PortfolioRiskEngine(_policy())
     holding = engine.review_holding(
+        cycle_id="holding-cycle",
         account=_account(gross="1000"),
         quotes=_quotes(),
         risk_profiles=(_profile(),),
         as_of=NOW,
     )
     exiting = engine.review_holding(
+        cycle_id="exit-cycle",
         account=_account(gross="1000", kill_switch=True),
         quotes=_quotes(),
         risk_profiles=(_profile(),),
         as_of=NOW,
     )
     deferred = engine.review_holding(
+        cycle_id="defer-cycle",
         account=_account(
             gross="1000",
             kill_switch=True,
@@ -366,6 +371,13 @@ def test_holding_risk_review_distinguishes_hold_exit_and_defer() -> None:
     assert holding.outcome == HoldingRiskOutcome.HOLD
     assert exiting.outcome == HoldingRiskOutcome.EXIT
     assert deferred.outcome == HoldingRiskOutcome.DEFER
+    assert holding.reduction_authorization is None
+    assert deferred.reduction_authorization is None
+    assert exiting.reduction_authorization is not None
+    assert all(
+        item.approved_gross_notional == 0
+        for item in exiting.reduction_authorization.sleeves
+    )
     assert any(item.reason_code == "KILL_SWITCH_ACTIVE" for item in exiting.rule_results)
 
 

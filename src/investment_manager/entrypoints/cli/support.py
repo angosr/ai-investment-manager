@@ -9,7 +9,9 @@ from investment_manager.governance.models import (
     evaluation_plan_invalidation_id,
     load_release_manifest,
     validate_manifest_against_config,
+    validate_manifest_artifacts,
     validate_manifest_code_version,
+    validate_runtime_release_checkout,
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -37,21 +39,14 @@ def load_runtime_release(config: Path, release_manifest: Path):
         loaded,
         require_configuration_hash=True,
     )
-    validate_manifest_code_version(manifest)
-    return loaded, manifest
-
-
-def default_web_dist() -> Path | None:
-    """Locate repository web assets independently from the process working directory."""
-
-    candidates = (
-        Path.cwd() / "web" / "dist",
-        Path(__file__).resolve().parents[4] / "web" / "dist",
+    root = validate_manifest_code_version(manifest)
+    validate_runtime_release_checkout(root)
+    validate_manifest_artifacts(
+        manifest,
+        repository_root=root,
+        required_ids=("web-dist",),
     )
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate.resolve()
-    return None
+    return loaded, manifest
 
 
 def reject_invalidated_evaluation_plan(

@@ -59,10 +59,11 @@ export interface CapitalOverview {
     } | null;
   };
   forecast_evidence: {
-    status: "NO_SETTLED_SAMPLES" | "INSUFFICIENT_EVIDENCE" | "ABOVE_BENCHMARK" | "BELOW_BENCHMARK";
+    status: "NO_SETTLED_SAMPLES" | "INSUFFICIENT_EVIDENCE" | "ABOVE_BENCHMARK" | "BELOW_BENCHMARK" | "DIAGNOSTIC_ONLY";
     terminal_result_count: number;
     due_slot_count: number;
     result_coverage: string | null;
+    permission_evidence_eligible: boolean;
     forecast_count: number;
     no_estimate_count: number;
     settled_forecast_count: number;

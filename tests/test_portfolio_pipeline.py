@@ -254,6 +254,7 @@ def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
                 maximum_spread_bps=Decimal("20"),
                 maximum_unhedged_fraction=Decimal("0.05"),
                 maximum_unhedged_seconds=10,
+                reduction_authorization_seconds=300,
             )
         ),
         TradePlanner(

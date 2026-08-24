@@ -33,7 +33,7 @@ from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     SleevePosition,
 )
-from investment_manager.risk.portfolio import ApprovedSleeve, PortfolioRiskDecision
+from investment_manager.risk.portfolio import ApprovedSleeve
 
 
 class PortfolioAccountHistory(Protocol):
@@ -45,11 +45,11 @@ class PortfolioAccountHistory(Protocol):
     ) -> PortfolioAccountSnapshot | None: ...
 
 
-class ApprovedTargetReader(Protocol):
-    def for_approved_targets(
+class ExecutionAuthorizationReader(Protocol):
+    def execution_authorizations(
         self,
-        approved_target_ids: tuple[str, ...],
-    ) -> dict[str, PortfolioRiskDecision]: ...
+        authorization_ids: tuple[str, ...],
+    ) -> dict[str, tuple[ApprovedSleeve, ...]]: ...
 
 
 class FundingSettlementReader(Protocol):
@@ -612,7 +612,7 @@ class ProductAccountProjectionService:
         groups: ExecutionGroupStore,
         observations: ProductOrderObservationStore,
         funding: FundingSettlementReader,
-        risks: ApprovedTargetReader,
+        risks: ExecutionAuthorizationReader,
         accounts: PortfolioAccountHistory,
     ) -> None:
         self._projector = projector
@@ -640,17 +640,16 @@ class ProductAccountProjectionService:
             tuple(group.group_id for group in groups),
             as_of=as_of,
         )
-        decisions = self._risks.for_approved_targets(
+        authorizations = self._risks.execution_authorizations(
             tuple(sorted({group.approved_target_id for group in groups}))
         )
         sleeves: dict[str, ApprovedSleeve] = {}
         for group in groups:
-            decision = decisions.get(group.approved_target_id)
-            approved = decision.approved_target if decision is not None else None
-            if approved is None or approved.approved_target_id != group.approved_target_id:
-                raise ValueError("ExecutionGroup 缺少冻结的 ApprovedPortfolioTarget")
+            authorized_sleeves = authorizations.get(group.approved_target_id)
+            if authorized_sleeves is None:
+                raise ValueError("ExecutionGroup 缺少冻结的 Risk execution authorization")
             sleeve = next(
-                (item for item in approved.sleeves if item.sleeve_id == group.sleeve_id),
+                (item for item in authorized_sleeves if item.sleeve_id == group.sleeve_id),
                 None,
             )
             if sleeve is None:

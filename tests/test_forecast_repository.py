@@ -12,7 +12,10 @@ from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
     ForecastOutcomeBucket,
+    ForecastPermission,
     ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
 )
 from investment_manager.forecast.models import ForecastTarget
 from investment_manager.forecast.repository import SqlForecastStore
@@ -182,7 +185,25 @@ def ledger():
         ),
     )
     contracts.record_contract(contract)
-    contracts.record_slot(slot)
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.PROGRAM.value,
+            "trend",
+            "trend-v1",
+            ForecastPermission.RESEARCH.value,
+            (),
+            None,
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="trend",
+        producer_behavior_id="trend-v1",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(binding)
+    contracts.record_slot(slot, binding=binding)
     return forecasts, contract, slot
 
 
@@ -224,7 +245,7 @@ def test_slot_outcome_settles_once_for_every_producer(ledger) -> None:
                 instrument_id=contract.target.legs[0].instrument.key,
                 direction=contract.target.legs[0].direction,
                 gross_weight=Decimal("1"),
-                cutoff_reference_price=Decimal("100"),
+                reference_price=Decimal("100"),
                 exit_price=Decimal("101"),
                 price_return_bps=Decimal("100"),
             ),

@@ -67,6 +67,7 @@ from investment_manager.market.tables import (
 )
 from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
+from investment_manager.scheduling.models import AnalysisTriggerPlan
 from investment_manager.scheduling.tables import (
     analysis_call_admissions,
     analysis_trigger_events,
@@ -165,6 +166,8 @@ class AnalysisScopeRuntimeStatus:
     symbol: str
     latest_success_at: datetime | None
     heartbeat_seconds: int | None
+    trigger_plan_revision: int | None = None
+    trigger_plan_origin: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -923,17 +926,22 @@ class DashboardReader:
                         except ValueError:
                             completed = None
                 plan_payload = plan_by_symbol.get(symbol)
-                heartbeat = (
-                    plan_payload.get("heartbeat_seconds")
+                plan = (
+                    AnalysisTriggerPlan.model_validate(plan_payload)
                     if isinstance(plan_payload, dict)
                     else None
                 )
+                heartbeat = plan.heartbeat_seconds if plan is not None else None
                 scope_statuses.append(
                     AnalysisScopeRuntimeStatus(
                         symbol=symbol,
                         latest_success_at=completed,
                         heartbeat_seconds=(
                             heartbeat if isinstance(heartbeat, int) and heartbeat > 0 else None
+                        ),
+                        trigger_plan_revision=plan.revision if plan is not None else None,
+                        trigger_plan_origin=(
+                            plan.origin.value if plan is not None else None
                         ),
                     )
                 )

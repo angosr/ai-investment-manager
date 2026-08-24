@@ -50,7 +50,7 @@ trade_plans = Table(
     Column("plan_id", String(128), primary_key=True),
     Column(
         "approved_target_id",
-        ForeignKey("portfolio_risk_decisions.approved_target_id"),
+        ForeignKey("risk_execution_authorizations.authorization_id"),
         nullable=False,
         unique=True,
     ),

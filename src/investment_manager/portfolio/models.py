@@ -467,6 +467,7 @@ class CapitalCycleRecord(FrozenModel):
     account_snapshot_id: str = Field(min_length=1)
     forecast_ids: tuple[str, ...] = ()
     target_id: str | None = None
+    execution_authorization_id: str | None = None
     outcome: CapitalCycleOutcome
     reason_codes: tuple[str, ...] = Field(min_length=1)
 
@@ -488,6 +489,7 @@ class CapitalCycleRecord(FrozenModel):
         account_snapshot_id: str,
         forecast_ids: tuple[str, ...],
         target_id: str | None,
+        execution_authorization_id: str | None = None,
         outcome: CapitalCycleOutcome,
         reason_codes: tuple[str, ...],
     ) -> CapitalCycleRecord:
@@ -512,6 +514,7 @@ class CapitalCycleRecord(FrozenModel):
             account_snapshot_id=account_snapshot_id,
             forecast_ids=tuple(sorted(set(forecast_ids))),
             target_id=target_id,
+            execution_authorization_id=execution_authorization_id,
             outcome=outcome,
             reason_codes=tuple(sorted(set(reason_codes))),
         )
@@ -539,9 +542,32 @@ class CapitalCycleRecord(FrozenModel):
             CapitalCycleOutcome.TARGET_DECIDED,
             CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
             CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED,
-            CapitalCycleOutcome.RISK_EXIT,
         }
-        if requires_target != (self.target_id is not None):
+        legacy_risk_exit = (
+            self.outcome == CapitalCycleOutcome.RISK_EXIT
+            and self.target_id is not None
+            and self.execution_authorization_id is None
+        )
+        protective_risk_exit = (
+            self.outcome == CapitalCycleOutcome.RISK_EXIT
+            and self.target_id is None
+            and self.execution_authorization_id is not None
+        )
+        if not (
+            (
+                requires_target
+                and self.target_id is not None
+                and self.execution_authorization_id is None
+            )
+            or (
+                not requires_target
+                and self.outcome != CapitalCycleOutcome.RISK_EXIT
+                and self.target_id is None
+                and self.execution_authorization_id is None
+            )
+            or legacy_risk_exit
+            or protective_risk_exit
+        ):
             raise ValueError("CapitalCycleRecord outcome 与 target_id 不一致")
         return self
 

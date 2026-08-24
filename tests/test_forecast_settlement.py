@@ -11,7 +11,10 @@ from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
     ForecastOutcomeBucket,
+    ForecastPermission,
     ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -54,7 +57,9 @@ def _instruments() -> tuple[InstrumentId, InstrumentId]:
     return spot, perpetual
 
 
-def _contract_and_slot() -> tuple[ForecastContract, ForecastDecisionSlot]:
+def _contract_and_slot(
+    *, permission_eligible: bool = False
+) -> tuple[ForecastContract, ForecastDecisionSlot]:
     spot, perpetual = _instruments()
     buckets = (
         ForecastOutcomeBucket(
@@ -103,6 +108,7 @@ def _contract_and_slot() -> tuple[ForecastContract, ForecastDecisionSlot]:
         validity_minutes=30,
         validity_conditions=("TARGET_MATERIAL_DELTA",),
         settlement_rule="cutoff-executable-v1",
+        outcome_start_delay_seconds=0 if permission_eligible else None,
         forecast_benchmark=tuple(
             ForecastBenchmarkProbability(bucket_id=item.bucket_id, probability=probability)
             for item, probability in zip(
@@ -165,14 +171,32 @@ def _perpetual_quote(*, at: datetime, update_id: int, bid: str, ask: str) -> Per
     )
 
 
-def _stores():
+def _stores(*, permission_eligible: bool = False):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     contract_store = SqlForecastContractStore(engine)
     forecast_store = SqlForecastStore(engine)
-    contract, slot = _contract_and_slot()
+    contract, slot = _contract_and_slot(permission_eligible=permission_eligible)
     contract_store.record_contract(contract)
-    contract_store.record_slot(slot)
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.PROGRAM.value,
+            "settlement-test",
+            "settlement-test-v1",
+            ForecastPermission.RESEARCH.value,
+            (),
+            None,
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="settlement-test",
+        producer_behavior_id="settlement-test-v1",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contract_store.record_binding(binding)
+    contract_store.record_slot(slot, binding=binding)
     return forecast_store, contract, slot
 
 
@@ -251,3 +275,61 @@ def test_slot_waits_for_market_facts_then_records_outcome_unavailable() -> None:
     assert pending.pending == 1
     assert unavailable.outcome_unavailable == 1
     assert outcome.status == ForecastOutcomeStatus.OUTCOME_UNAVAILABLE
+
+
+def test_permission_outcome_starts_after_common_completion_deadline() -> None:
+    store, contract, slot = _stores(permission_eligible=True)
+    assert slot.outcome_start_at == slot.completion_deadline_at
+    assert slot.outcome_start_at is not None
+    market = InMemoryMarketDataStore()
+    market.put_quote(
+        _spot_quote(
+            quote_id="spot-common-entry",
+            at=slot.outcome_start_at,
+            bid="100.9",
+            ask="101",
+        )
+    )
+    market.put_perpetual_quote(
+        _perpetual_quote(
+            at=slot.outcome_start_at,
+            update_id=3,
+            bid="102",
+            ask="102.1",
+        )
+    )
+    market.put_quote(
+        _spot_quote(
+            quote_id="spot-common-exit",
+            at=slot.evaluation_at,
+            bid="102",
+            ask="102.1",
+        )
+    )
+    market.put_perpetual_quote(
+        _perpetual_quote(
+            at=slot.evaluation_at,
+            update_id=4,
+            bid="101",
+            ask="101.1",
+        )
+    )
+    result = ForecastOutcomeSettler(
+        market=market,
+        store=store,
+        evaluation_version="permission-outcome-v1",
+        maximum_spot_age_seconds=60,
+        maximum_perpetual_age_seconds=900,
+        maximum_funding_gap_hours=12,
+        settlement_grace_minutes=5,
+    ).settle(as_of=slot.evaluation_at + timedelta(seconds=2))
+    outcome = store.outcomes(
+        contract_id=contract.contract_id,
+        evaluation_version="permission-outcome-v1",
+    )[0]
+
+    assert result.settled == 1
+    assert outcome.permission_evidence_eligible
+    assert outcome.outcome_start_at == slot.completion_deadline_at
+    assert outcome.legs[0].reference_price == Decimal("101")
+    assert outcome.legs[1].reference_price == Decimal("102")

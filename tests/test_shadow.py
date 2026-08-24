@@ -97,6 +97,8 @@ class RecordingCapital:
     def __init__(self) -> None:
         self.produce_calls = []
         self.review_calls = []
+        self.recovered_slots = []
+        self.missed_slots = []
 
     def cause_completed(self, cause_id):
         return any(item["cause_id"] == cause_id for item in self.produce_calls)
@@ -106,6 +108,12 @@ class RecordingCapital:
 
     def review(self, batch):
         self.review_calls.append(batch)
+
+    def recover_missed_forecasts(self, **kwargs):
+        self.recovered_slots.append(kwargs)
+
+    def record_missed_forecast(self, **kwargs):
+        self.missed_slots.append(kwargs)
 
 
 def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) -> None:
@@ -299,7 +307,7 @@ def test_capital_trigger_consumer_has_one_portfolio_scope_owner(app_config) -> N
     assert not capital.review_calls
 
 
-def test_world_model_update_runs_forecast_without_dispatching_another_assessment(
+def test_world_model_update_reviews_capital_without_creating_a_forecast_slot(
     app_config,
 ) -> None:
     config = _shadow_config(app_config).model_copy(
@@ -341,7 +349,8 @@ def test_world_model_update_runs_forecast_without_dispatching_another_assessment
     ).build(batch)
 
     assert dispatches == ()
-    assert capital.produce_calls[0]["trigger_batch_id"] == batch.batch_id
+    assert not capital.produce_calls
+    assert capital.review_calls == [batch]
 
 
 def test_trigger_builder_passes_only_intelligence_trigger_evidence_to_packet(app_config) -> None:

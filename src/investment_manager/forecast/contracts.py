@@ -8,7 +8,7 @@ from pydantic import Field, TypeAdapter, field_validator, model_validator
 
 from investment_manager.forecast.models import ForecastTarget
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, PositiveDecimal
 
 
@@ -25,7 +25,6 @@ class ForecastProducerKind(StrEnum):
 class ForecastPermission(StrEnum):
     RESEARCH = "RESEARCH"
     MOCK = "MOCK"
-    CAPITAL = "CAPITAL"
 
 
 class ForecastNoEstimateReason(StrEnum):
@@ -102,6 +101,7 @@ class ForecastContract(FrozenModel):
     validity_minutes: int = Field(gt=0)
     validity_conditions: tuple[str, ...] = Field(min_length=1)
     settlement_rule: str = Field(min_length=1)
+    outcome_start_delay_seconds: int | None = Field(default=None, ge=0)
     forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
     decision_benchmark: str = Field(min_length=1)
 
@@ -120,6 +120,11 @@ class ForecastContract(FrozenModel):
             >= (self.horizon_minutes - self.minimum_remaining_horizon_minutes) * 60
         ):
             raise ValueError("Forecast 完成期限没有留下最小可交易时长")
+        if self.outcome_start_delay_seconds is not None and (
+            self.completion_deadline_seconds + self.outcome_start_delay_seconds
+            >= self.horizon_minutes * 60
+        ):
+            raise ValueError("Forecast Outcome 起点必须早于评价时点")
         bucket_ids = tuple(item.bucket_id for item in self.outcome_buckets)
         if len(set(bucket_ids)) != len(bucket_ids):
             raise ValueError("Forecast bucket_id 必须唯一")
@@ -146,7 +151,16 @@ class ForecastContract(FrozenModel):
 
     @staticmethod
     def identity_for(payload: dict[str, object]) -> str:
-        return stable_id("forecast_contract", content_hash(payload))
+        normalized = dict(payload)
+        # Preserve the immutable identity of pre-anchor contracts.  Missing/None
+        # means the historical cutoff-based diagnostic semantics.
+        if normalized.get("outcome_start_delay_seconds") is None:
+            normalized.pop("outcome_start_delay_seconds", None)
+        return stable_id("forecast_contract", content_hash(normalized))
+
+    @property
+    def permission_evidence_eligible(self) -> bool:
+        return self.outcome_start_delay_seconds is not None
 
     @classmethod
     def create(cls, **values) -> ForecastContract:
@@ -170,11 +184,13 @@ class ForecastDecisionSlot(FrozenModel):
     information_cutoff_at: datetime
     cutoff_prices: tuple[ForecastPriceAnchor, ...] = ()
     completion_deadline_at: datetime
+    outcome_start_at: datetime | None = None
     evaluation_at: datetime
 
     _utc_slot_as_of = field_validator("slot_as_of")(require_utc)
     _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
     _utc_completion_deadline_at = field_validator("completion_deadline_at")(require_utc)
+    _utc_outcome_start_at = field_validator("outcome_start_at")(optional_utc)
     _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
 
     @model_validator(mode="after")
@@ -186,6 +202,10 @@ class ForecastDecisionSlot(FrozenModel):
             < self.evaluation_at
         ):
             raise ValueError("ForecastDecisionSlot 时间顺序非法")
+        if self.outcome_start_at is not None and not (
+            self.completion_deadline_at <= self.outcome_start_at < self.evaluation_at
+        ):
+            raise ValueError("ForecastDecisionSlot Outcome 起点必须位于完成期限和评价之间")
         if any(item.available_at > self.information_cutoff_at for item in self.cutoff_prices):
             raise ValueError("ForecastDecisionSlot cutoff price 不得晚于信息截止")
         anchor_ids = tuple(item.instrument_id for item in self.cutoff_prices)
@@ -215,14 +235,22 @@ class ForecastDecisionSlot(FrozenModel):
     ) -> ForecastDecisionSlot:
         slot_at = require_utc(slot_as_of)
         cutoff = require_utc(information_cutoff_at or slot_at)
+        completion_deadline = slot_at + timedelta(
+            seconds=contract.completion_deadline_seconds
+        )
         return cls(
             slot_id=cls.identity_for(contract.contract_id, slot_at),
             contract_id=contract.contract_id,
             slot_as_of=slot_at,
             information_cutoff_at=cutoff,
             cutoff_prices=cutoff_prices,
-            completion_deadline_at=slot_at
-            + timedelta(seconds=contract.completion_deadline_seconds),
+            completion_deadline_at=completion_deadline,
+            outcome_start_at=(
+                None
+                if contract.outcome_start_delay_seconds is None
+                else completion_deadline
+                + timedelta(seconds=contract.outcome_start_delay_seconds)
+            ),
             evaluation_at=cutoff + timedelta(minutes=contract.horizon_minutes),
         )
 
@@ -258,6 +286,54 @@ class ForecastProducerBinding(FrozenModel):
         if self.binding_id != expected:
             raise ValueError("ForecastProducerBinding binding_id 与内容不一致")
         return self
+
+
+class ForecastSlotObligation(FrozenModel):
+    """A producer behavior's immutable duty to answer one decision slot."""
+
+    obligation_id: str = Field(min_length=1)
+    slot_id: str = Field(min_length=1)
+    contract_id: str = Field(min_length=1)
+    binding_id: str = Field(min_length=1)
+    producer_kind: ForecastProducerKind
+    producer_id: str = Field(min_length=1)
+    producer_behavior_id: str = Field(min_length=1)
+    assigned_at: datetime
+
+    _utc_assigned_at = field_validator("assigned_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_is_canonical(self):
+        expected = stable_id(
+            "forecast_slot_obligation",
+            self.slot_id,
+            self.binding_id,
+        )
+        if self.obligation_id != expected:
+            raise ValueError("ForecastSlotObligation 身份与槽/Binding 不一致")
+        return self
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        slot: ForecastDecisionSlot,
+        binding: ForecastProducerBinding,
+    ) -> ForecastSlotObligation:
+        return cls(
+            obligation_id=stable_id(
+                "forecast_slot_obligation",
+                slot.slot_id,
+                binding.binding_id,
+            ),
+            slot_id=slot.slot_id,
+            contract_id=slot.contract_id,
+            binding_id=binding.binding_id,
+            producer_kind=binding.producer_kind,
+            producer_id=binding.producer_id,
+            producer_behavior_id=binding.producer_behavior_id,
+            assigned_at=slot.slot_as_of,
+        )
 
 
 class ForecastNoEstimate(FrozenModel):

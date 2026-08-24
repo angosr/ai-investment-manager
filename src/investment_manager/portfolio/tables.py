@@ -141,6 +141,11 @@ capital_cycle_records = Table(
         ForeignKey("portfolio_targets.target_id"),
         nullable=True,
     ),
+    Column(
+        "execution_authorization_id",
+        ForeignKey("risk_execution_authorizations.authorization_id"),
+        nullable=True,
+    ),
     Column("outcome", String(48), nullable=False),
     Column("payload", JSON, nullable=False),
     UniqueConstraint(

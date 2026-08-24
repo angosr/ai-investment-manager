@@ -28,9 +28,10 @@ from investment_manager.portfolio.models import (
     PortfolioTarget,
 )
 from investment_manager.portfolio.repository import PortfolioStore
-from investment_manager.risk.models import GuardState, RiskOutcome
+from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     HoldingRiskOutcome,
+    PortfolioHoldingRiskReview,
     PortfolioRiskDecision,
     PortfolioRiskEngine,
     SleeveRiskProfile,
@@ -49,22 +50,34 @@ class PortfolioPipelineResult(FrozenModel):
     outcome: PortfolioPipelineOutcome
     target: PortfolioTarget | None = None
     risk_decision: PortfolioRiskDecision | None = None
+    holding_risk_review: PortfolioHoldingRiskReview | None = None
     trade_plan: TradePlan | None = None
 
     @model_validator(mode="after")
     def outcome_must_match_stage_outputs(self):
-        expected = {
-            PortfolioPipelineOutcome.NO_CHANGE: (False, False, False),
-            PortfolioPipelineOutcome.RISK_REJECTED: (True, True, False),
-            PortfolioPipelineOutcome.PLANNED: (True, True, True),
-        }[self.outcome]
-        actual = (
-            self.target is not None,
-            self.risk_decision is not None,
-            self.trade_plan is not None,
-        )
-        if actual != expected:
-            raise ValueError("PortfolioPipeline outcome 与阶段输出不一致")
+        investment = self.target is not None or self.risk_decision is not None
+        protection = self.holding_risk_review is not None
+        if investment and protection:
+            raise ValueError("投资决策与独立保护复核不得混入同一结果")
+        if self.outcome == PortfolioPipelineOutcome.NO_CHANGE:
+            if investment or self.trade_plan is not None:
+                raise ValueError("NO_CHANGE 不得携带投资目标或 TradePlan")
+        elif self.outcome == PortfolioPipelineOutcome.RISK_REJECTED:
+            if self.target is None or self.risk_decision is None or self.trade_plan is not None:
+                raise ValueError("RISK_REJECTED 必须绑定 Target 与 RiskDecision")
+        elif self.outcome == PortfolioPipelineOutcome.PLANNED:
+            investment_planned = (
+                self.target is not None
+                and self.risk_decision is not None
+                and self.trade_plan is not None
+            )
+            protection_planned = (
+                self.holding_risk_review is not None
+                and self.holding_risk_review.reduction_authorization is not None
+                and self.trade_plan is not None
+            )
+            if investment_planned == protection_planned:
+                raise ValueError("PLANNED 必须且只能来自投资授权或只减险授权")
         return self
 
 
@@ -166,15 +179,15 @@ class PortfolioDecisionPipeline:
         *,
         cycle_id: str,
         as_of: datetime,
-        sleeves: tuple[PortfolioSleeveInput, ...],
         account: PortfolioAccountSnapshot,
         quotes: tuple[ExecutableQuote, ...],
         risk_profiles: tuple[SleeveRiskProfile, ...],
         execution_specs: tuple[InstrumentExecutionSpec, ...],
     ) -> PortfolioPipelineResult:
-        """Persist one holding review and route EXIT through the normal target chain."""
+        """Persist one review and let Risk authorize a direct reduce-only plan."""
 
         review = self._risk.review_holding(
+            cycle_id=cycle_id,
             account=account,
             quotes=quotes,
             risk_profiles=risk_profiles,
@@ -185,45 +198,14 @@ class PortfolioDecisionPipeline:
             return PortfolioPipelineResult(
                 cycle_id=cycle_id,
                 outcome=PortfolioPipelineOutcome.NO_CHANGE,
+                holding_risk_review=review,
             )
-        target = self._decision.force_cash(
-            cycle_id=cycle_id,
-            as_of=as_of,
-            account=account,
-            sleeves=sleeves,
-            quotes=quotes,
-            execution_specs=execution_specs,
-            reason_codes=tuple(
-                item.reason_code for item in review.rule_results if item.state == GuardState.FAIL
-            ),
-        )
-        self._portfolio_store.record_target(target)
-        target_quotes = target.quotes
-        risk_decision = self._risk.evaluate(
-            target=target,
-            account=account,
-            quotes=target_quotes,
-            risk_profiles=self._profiles_for_target(
-                target=target,
-                risk_profiles=risk_profiles,
-            ),
-            as_of=as_of,
-        )
-        self._risk_store.record(risk_decision)
-        if risk_decision.approved_target is None:
-            return PortfolioPipelineResult(
-                cycle_id=cycle_id,
-                outcome=PortfolioPipelineOutcome.RISK_REJECTED,
-                target=target,
-                risk_decision=risk_decision,
-            )
+        authorization = review.reduction_authorization
+        assert authorization is not None
         plan = self._planner.plan(
-            approved=risk_decision.approved_target,
+            approved=authorization,
             account=account,
-            quotes=self._quotes_for_target(
-                target=risk_decision.approved_target,
-                quotes=target_quotes,
-            ),
+            quotes=quotes,
             specs=execution_specs,
             as_of=as_of,
         )
@@ -231,8 +213,7 @@ class PortfolioDecisionPipeline:
         return PortfolioPipelineResult(
             cycle_id=cycle_id,
             outcome=PortfolioPipelineOutcome.PLANNED,
-            target=target,
-            risk_decision=risk_decision,
+            holding_risk_review=review,
             trade_plan=plan,
         )
 

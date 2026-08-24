@@ -34,6 +34,7 @@ from investment_manager.forecast.context.estimate import (
 )
 from investment_manager.forecast.context.producer import (
     ContextForecastProducer,
+    ForecastProductionResult,
     MarketContextTargetStateProvider,
     context_spot_forecast_contract,
 )
@@ -42,15 +43,9 @@ from investment_manager.forecast.contract_repository import SqlForecastContractS
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastNoEstimate,
-    ForecastOrientation,
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
-)
-from investment_manager.forecast.programs import (
-    CashCarryForecastProducer,
-    ForecastProductionResult,
-    cash_carry_target,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import Forecast
@@ -79,6 +74,7 @@ from investment_manager.portfolio.repository import (
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
     PortfolioRiskEngine,
+    RiskReductionAuthorization,
     SleeveRiskProfile,
 )
 from investment_manager.risk.repository import SqlPortfolioRiskStore
@@ -91,6 +87,20 @@ logger = logging.getLogger(__name__)
 class CapitalForecastProducer(Protocol):
     def produce(self, *, as_of: datetime) -> ForecastProductionResult: ...
 
+    def record_deadline_missed(
+        self,
+        *,
+        as_of: datetime,
+        completed_at: datetime,
+    ) -> ForecastProductionResult: ...
+
+    def recover_deadline_missed(
+        self,
+        *,
+        before_as_of: datetime,
+        completed_at: datetime,
+    ) -> tuple[ForecastNoEstimate, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
@@ -100,21 +110,19 @@ class CapitalForecastSource:
     binding: ForecastProducerBinding
     producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
-    mock_authorization: MockCandidateAuthorization | None = None
+    mock_authorization: MockCandidateAuthorization
 
     def __post_init__(self) -> None:
         if self.binding.contract_id != self.contract.contract_id:
             raise ValueError("Capital Forecast source 的 Contract/Binding 不一致")
         permission = self.mock_authorization
-        if permission is not None and (
+        if (
             permission.producer_id != self.binding.producer_id
             or permission.producer_behavior_id != self.binding.producer_behavior_id
             or permission.outcome_family_id != self.contract.outcome_family_id
             or self.binding.permission != ForecastPermission.MOCK
         ):
             raise ValueError("Capital Forecast source 与 Mock authorization 不一致")
-        if permission is None and self.binding.permission != ForecastPermission.CAPITAL:
-            raise ValueError("无 Mock authorization 的 Capital source 必须具有 CAPITAL 权限")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,22 +149,6 @@ class CapitalTriggerConsumer:
         # facts; the assessment path remains free to observe every asset.
         if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
             return None
-        if any(
-            item.trigger_type == AnalysisTriggerType.WORLD_MODEL_UPDATED
-            for item in batch.triggers
-        ):
-            slot_at = max(
-                item.occurred_at
-                for item in batch.triggers
-                if item.trigger_type == AnalysisTriggerType.WORLD_MODEL_UPDATED
-            )
-            return self.capital.produce(
-                as_of=slot_at,
-                cause_id=batch.batch_id,
-                trigger_batch_id=batch.batch_id,
-                symbol=batch.symbol,
-                trigger_types=tuple(item.trigger_type.value for item in batch.triggers),
-            )
         if self.context_cadence_minutes is not None and any(
             item.trigger_type == AnalysisTriggerType.HEARTBEAT for item in batch.triggers
         ):
@@ -166,11 +158,17 @@ class CapitalTriggerConsumer:
                 tz=UTC,
             )
             assert self.context_completion_deadline_seconds is not None
+            self.capital.recover_missed_forecasts(
+                before_slot_at=slot_at,
+                completed_at=batch.created_at,
+            )
             if batch.created_at > slot_at + timedelta(
                 seconds=self.context_completion_deadline_seconds
             ):
-                # A late-starting coordinator must not replay an old slot as if
-                # its Forecast and capital decision were still actionable.
+                self.capital.record_missed_forecast(
+                    slot_at=slot_at,
+                    completed_at=batch.created_at,
+                )
                 return self.capital.review(batch)
             cadence_cause_id = stable_id(
                 "context_forecast_cadence",
@@ -470,6 +468,43 @@ class CapitalCycleService:
             no_estimates=no_estimates,
         )
 
+    def record_missed_forecast(
+        self,
+        *,
+        slot_at: datetime,
+        completed_at: datetime,
+    ) -> tuple[ForecastNoEstimate, ...]:
+        """Materialize a missed deterministic slot without hindsight AI."""
+
+        slot = require_utc(slot_at)
+        completed = require_utc(completed_at)
+        results = tuple(
+            source.producer.record_deadline_missed(
+                as_of=slot,
+                completed_at=completed,
+            )
+            for source in self._forecast_sources
+        )
+        if any(not isinstance(item, ForecastNoEstimate) for item in results):
+            raise ValueError("错过的 Forecast slot 不得产生可交易预测")
+        return tuple(results)
+
+    def recover_missed_forecasts(
+        self,
+        *,
+        before_slot_at: datetime,
+        completed_at: datetime,
+    ) -> tuple[ForecastNoEstimate, ...]:
+        recovered = tuple(
+            result
+            for source in self._forecast_sources
+            for result in source.producer.recover_deadline_missed(
+                before_as_of=before_slot_at,
+                completed_at=completed_at,
+            )
+        )
+        return recovered
+
     def _finish(
         self,
         *,
@@ -486,11 +521,24 @@ class CapitalCycleService:
         observation_reason_codes: tuple[str, ...] = (),
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         target = result.target if isinstance(result, PortfolioPipelineResult) else None
+        reduction_authorization = (
+            result.holding_risk_review.reduction_authorization
+            if isinstance(result, PortfolioPipelineResult)
+            and result.holding_risk_review is not None
+            else None
+        )
         if isinstance(result, TradePlanExecutionResult):
             plan = self._plans.plan(result.plan_id)
             if plan is None:
                 raise ValueError("Capital execution result 缺少权威 TradePlan")
             target = self._portfolio.target_for_cycle(plan.cycle_id)
+            if target is None:
+                loaded_authorization = self._risks.execution_authorization(
+                    plan.approved_target_id
+                )
+                if not isinstance(loaded_authorization, RiskReductionAuthorization):
+                    raise ValueError("无 PortfolioTarget 的执行结果缺少只减险授权")
+                reduction_authorization = loaded_authorization
         expected_forecast_cycle = (
             self._forecast_cycle_id(generated_forecasts) if generated_forecasts else None
         )
@@ -503,7 +551,14 @@ class CapitalCycleService:
         if account is None:
             raise ValueError("Capital cycle 缺少最终账户快照")
         generated_ids = tuple(item.forecast_id for item in generated_forecasts)
-        if target is not None:
+        if reduction_authorization is not None:
+            outcome = CapitalCycleOutcome.RISK_EXIT
+            reason_codes = reduction_authorization.reason_codes
+            decision_cycle_id = reduction_authorization.cycle_id
+            forecast_ids = tuple(sorted(set(generated_ids)))
+            target_id = None
+            execution_authorization_id = reduction_authorization.authorization_id
+        elif target is not None:
             outcome = (
                 CapitalCycleOutcome.RISK_EXIT
                 if expected_forecast_cycle is None
@@ -516,6 +571,7 @@ class CapitalCycleService:
             decision_cycle_id = target.cycle_id
             forecast_ids = tuple(sorted({*generated_ids, *target.considered_forecast_ids}))
             target_id = target.target_id
+            execution_authorization_id = None
         else:
             outcome = (
                 CapitalCycleOutcome.HOLD if account.sleeves else CapitalCycleOutcome.CASH
@@ -535,6 +591,7 @@ class CapitalCycleService:
             decision_cycle_id = account.cycle_id
             forecast_ids = tuple(sorted(set(generated_ids)))
             target_id = None
+            execution_authorization_id = None
         self._cycle_records.record(
             CapitalCycleRecord.create(
                 portfolio_id=self._config.capital.decision.portfolio_id,
@@ -549,6 +606,7 @@ class CapitalCycleService:
                 account_snapshot_id=account.snapshot_id,
                 forecast_ids=forecast_ids,
                 target_id=target_id,
+                execution_authorization_id=execution_authorization_id,
                 outcome=outcome,
                 reason_codes=reason_codes,
             )
@@ -775,14 +833,17 @@ class CapitalCycleService:
         protected = self._decisions.protect(
             cycle_id=cycle_id,
             as_of=as_of,
-            sleeves=tuple(sleeves),
             account=account,
             quotes=decision_quotes,
             risk_profiles=tuple(profiles),
             execution_specs=self._config.capital.execution_specs,
         )
         plan = protected.trade_plan
-        if plan is None:
+        if (
+            plan is None
+            and protected.holding_risk_review is not None
+            and protected.holding_risk_review.outcome.value == "HOLD"
+        ):
             protected = self._decisions.run(
                 cycle_id=cycle_id,
                 as_of=as_of,
@@ -818,14 +879,7 @@ class CapitalCycleService:
         target_id: str,
         as_of: datetime,
     ) -> Forecast | None:
-        if source.mock_authorization is not None:
-            return self._forecasts.latest_base_for_target(
-                target_id=target_id,
-                outcome_family_id=source.contract.outcome_family_id,
-                as_of=as_of,
-                include_expired=True,
-            )
-        return self._forecasts.latest_calibrated_for_target(
+        return self._forecasts.latest_base_for_target(
             target_id=target_id,
             outcome_family_id=source.contract.outcome_family_id,
             as_of=as_of,
@@ -863,50 +917,42 @@ class CapitalCycleService:
 
     def _quotes(self, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
         instruments = tuple(item.instrument for item in self._config.capital.execution_specs)
-        spot = next(item for item in instruments if item.product == InstrumentProduct.SPOT)
-        perpetual = next(item for item in instruments if item.product != InstrumentProduct.SPOT)
-        perpetual_quote = self._market.latest_perpetual_quote(
-            instrument=perpetual,
-            evaluation_at=as_of,
-            visible_at=as_of,
-        )
-        if perpetual_quote is None:
-            raise ValueError("Capital 缺少 Perpetual 可成交报价")
-        spot_quote = self._market.latest_spot_quote(
-            instrument=spot,
-            evaluation_at=perpetual_quote.observed_at,
-            visible_at=as_of,
-        )
-        if spot_quote is None:
-            raise ValueError("Capital 缺少与 Perpetual 点时对齐的 Spot 可成交报价")
-        if (
-            perpetual_quote.observed_at - spot_quote.observed_at
+        values = []
+        for instrument in instruments:
+            if instrument.product == InstrumentProduct.SPOT:
+                observed = self._market.latest_spot_quote(
+                    instrument=instrument,
+                    evaluation_at=as_of,
+                    visible_at=as_of,
+                )
+                observed_at = None if observed is None else observed.observed_at
+            else:
+                observed = self._market.latest_perpetual_quote(
+                    instrument=instrument,
+                    evaluation_at=as_of,
+                    visible_at=as_of,
+                )
+                observed_at = None if observed is None else observed.exchange_time
+            if observed is None or observed_at is None:
+                raise ValueError(f"Capital 缺少 {instrument.key} 可成交报价")
+            values.append(
+                ExecutableQuote(
+                    source_quote_id=observed.quote_id,
+                    instrument=instrument,
+                    as_of=as_of,
+                    observed_at=observed_at,
+                    bid=observed.bid,
+                    bid_quantity=observed.bid_quantity,
+                    ask=observed.ask,
+                    ask_quantity=observed.ask_quantity,
+                    source=observed.source,
+                )
+            )
+        observed_times = tuple(item.observed_at for item in values)
+        if observed_times and (
+            max(observed_times) - min(observed_times)
         ).total_seconds() > self._config.capital.risk.maximum_quote_skew_seconds:
-            raise ValueError("Capital Spot/Perpetual 可成交报价时间偏差过大")
-        values = [
-            ExecutableQuote(
-                source_quote_id=spot_quote.quote_id,
-                instrument=spot,
-                as_of=as_of,
-                observed_at=spot_quote.observed_at,
-                bid=spot_quote.bid,
-                bid_quantity=spot_quote.bid_quantity,
-                ask=spot_quote.ask,
-                ask_quantity=spot_quote.ask_quantity,
-                source=spot_quote.source,
-            ),
-            ExecutableQuote(
-                source_quote_id=perpetual_quote.quote_id,
-                instrument=perpetual,
-                as_of=as_of,
-                observed_at=perpetual_quote.observed_at,
-                bid=perpetual_quote.bid,
-                bid_quantity=perpetual_quote.bid_quantity,
-                ask=perpetual_quote.ask,
-                ask_quantity=perpetual_quote.ask_quantity,
-                source=perpetual_quote.source,
-            ),
-        ]
+            raise ValueError("Capital 多产品可成交报价时间偏差过大")
         return tuple(sorted(values, key=lambda item: item.instrument.key))
 
     @staticmethod
@@ -937,87 +983,6 @@ def assemble_capital_cycle(
     contracts = SqlForecastContractStore(engine)
     if forecast_sources is None:
         configured_sources: list[CapitalForecastSource] = []
-        program = config.capital.cash_carry_program
-        if program is not None and program.enabled:
-            authorization = next(
-                item
-                for item in config.capital.mock_candidate_authorizations
-                if (
-                    item.producer_id,
-                    item.producer_behavior_id,
-                    item.outcome_family_id,
-                )
-                == (
-                    program.producer_id,
-                    program.producer_behavior_id,
-                    program.outcome_family_id,
-                )
-            )
-            spot = next(
-                item.instrument
-                for item in config.capital.execution_specs
-                if item.instrument.product == InstrumentProduct.SPOT
-            )
-            perpetual = next(
-                item.instrument
-                for item in config.capital.execution_specs
-                if item.instrument.product != InstrumentProduct.SPOT
-            )
-            contract = ForecastContract.create(
-                contract_version=program.contract_version,
-                outcome_family_id=program.outcome_family_id,
-                target=cash_carry_target(spot=spot, perpetual=perpetual),
-                allowed_orientations=(ForecastOrientation.CANONICAL,),
-                outcome_buckets=program.outcome_buckets,
-                horizon_minutes=program.horizon_minutes,
-                decision_slot_rule="each-admitted-capital-trigger-v1",
-                evaluation_trigger="scheduled-or-material-market-trigger-v1",
-                information_cutoff_rule="slot-as-of-point-in-time-v1",
-                completion_deadline_seconds=program.completion_deadline_seconds,
-                minimum_remaining_horizon_minutes=(program.minimum_remaining_horizon_minutes),
-                entry_anchor_rule="first-executable-quote-after-completion-v1",
-                cost_semantics_version=config.capital.decision.cost_model_version,
-                validity_minutes=program.validity_minutes,
-                validity_conditions=("EXECUTABLE_QUOTES_REMAIN_VALID",),
-                settlement_rule="cutoff-to-horizon-executable-with-funding-v1",
-                forecast_benchmark=program.forecast_benchmark,
-                decision_benchmark="cash-v1",
-            )
-            binding = ForecastProducerBinding(
-                binding_id=stable_id(
-                    "forecast_producer_binding",
-                    contract.contract_id,
-                    ForecastProducerKind.PROGRAM.value,
-                    program.producer_id,
-                    program.producer_behavior_id,
-                    ForecastPermission.MOCK.value,
-                    (),
-                    None,
-                ),
-                contract_id=contract.contract_id,
-                producer_kind=ForecastProducerKind.PROGRAM,
-                producer_id=program.producer_id,
-                producer_behavior_id=program.producer_behavior_id,
-                permission=ForecastPermission.MOCK,
-            )
-            configured_sources.append(
-                CapitalForecastSource(
-                    contract=contract,
-                    binding=binding,
-                    producer=CashCarryForecastProducer(
-                        policy=program,
-                        contract=contract,
-                        binding=binding,
-                        market=market,
-                        contracts=contracts,
-                        forecasts=forecasts,
-                        spot=spot,
-                        perpetual=perpetual,
-                    ),
-                    risk_template=config.capital.sleeve_risk,
-                    mock_authorization=authorization,
-                )
-            )
         context = config.capital.context_forecast
         if context is not None and context.enabled:
             if code_version is None:

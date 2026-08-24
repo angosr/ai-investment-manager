@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: product-capital-v17
+  version: spot-capital-v18
   enabled: false
   settlement_asset: USDT
   decision:
@@ -146,8 +146,8 @@ capital:
     minimum_rebalance_notional: "25"
     target_validity_minutes: 30
   risk:
-    version: carry-portfolio-risk-v3
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+    version: spot-portfolio-risk-v4
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
@@ -161,10 +161,11 @@ capital:
     maximum_spread_bps: "20"
     maximum_unhedged_fraction: "0.05"
     maximum_unhedged_seconds: 10
+    reduction_authorization_seconds: 300
     kill_switch: false
   planner:
-    version: carry-trade-planner-v1
-    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+    version: spot-trade-planner-v2
+    managed_instruments: [BINANCE:SPOT:BTCUSDT]
   execution_specs:
     - instrument:
         venue: BINANCE
@@ -177,63 +178,12 @@ capital:
       quantity_step: "0.00001"
       minimum_order_notional: "5"
       fee_bps: "12.5"
-    - instrument:
-        venue: BINANCE
-        product: USD_M_PERPETUAL
-        symbol: BTCUSDT
-        base_asset: BTC
-        quote_asset: USDT
-        settlement_asset: USDT
-        contract_multiplier: "1"
-      quantity_step: "0.001"
-      minimum_order_notional: "100"
-      fee_bps: "7.5"
   sleeve_risk:
-    version: carry-sleeve-risk-v1
+    version: spot-position-risk-v2
     basis_stress_bps: "100"
     funding_stress_bps: "30"
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
-  cash_carry_program:
-    version: cash-carry-program-v1
-    enabled: false
-    producer_id: btc-cash-carry
-    producer_behavior_id: btc-cash-carry-behavior-v1
-    outcome_family_id: btc-delta-neutral-carry
-    contract_version: btc-cash-carry-7d-v1
-    horizon_minutes: 10080
-    validity_minutes: 30
-    completion_deadline_seconds: 30
-    minimum_remaining_horizon_minutes: 10020
-    outcome_buckets:
-      - bucket_id: LARGE_LOSS
-        upper_bps: "-100"
-        representative_bps: "-200"
-      - bucket_id: LOSS
-        lower_bps: "-100"
-        upper_bps: "0"
-        representative_bps: "-50"
-      - bucket_id: SMALL_GAIN
-        lower_bps: "0"
-        upper_bps: "100"
-        representative_bps: "50"
-      - bucket_id: LARGE_GAIN
-        lower_bps: "100"
-        representative_bps: "200"
-    forecast_benchmark:
-      - bucket_id: LARGE_LOSS
-        probability: "0.10"
-      - bucket_id: LOSS
-        probability: "0.40"
-      - bucket_id: SMALL_GAIN
-        probability: "0.40"
-      - bucket_id: LARGE_GAIN
-        probability: "0.10"
-    funding_lookback_hours: 168
-    minimum_funding_samples: 12
-    minimum_positive_funding_fraction: "0.60"
-    funding_projection_haircut: "0.50"
-    forecast_dispersion_bps: "100"
   context_forecast:
     version: btc-context-forecast-v3
     enabled: false
@@ -346,6 +296,7 @@ governance:
 
 trigger:
   version: analysis-trigger-v17
+  # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
   high_impact_threshold: "0.80"

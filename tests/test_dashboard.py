@@ -9,12 +9,10 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
 
-from investment_manager.entrypoints.cli.support import default_web_dist
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import CapitalOverview
@@ -411,6 +409,14 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
     config = SimpleNamespace(
         capital=SimpleNamespace(
             enabled=True,
+            execution_specs=(
+                SimpleNamespace(
+                    instrument=SimpleNamespace(
+                        symbol="BTCUSDT",
+                        product=SimpleNamespace(value="SPOT"),
+                    )
+                ),
+            ),
             risk=SimpleNamespace(
                 kill_switch=False,
                 maximum_drawdown_fraction=Decimal("0.2"),
@@ -694,30 +700,3 @@ def test_sample_host_resources_shape():
     assert set(sample["memory"]) == {"used_bytes", "total_bytes", "percent"}
     assert set(sample["disk"]) == {"used_bytes", "total_bytes", "percent"}
     assert set(sample["load_average"]) == {"1m", "5m", "15m"}
-
-
-def test_default_web_dist_does_not_depend_on_process_working_directory(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    repository = tmp_path / "repository"
-    dist = repository / "web" / "dist"
-    dist.mkdir(parents=True)
-    runtime_directory = tmp_path / "systemd-runtime"
-    runtime_directory.mkdir()
-    monkeypatch.chdir(runtime_directory)
-    cli_module = import_module("investment_manager.entrypoints.cli.support")
-    monkeypatch.setattr(
-        cli_module,
-        "__file__",
-        str(
-            repository
-            / "src"
-            / "investment_manager"
-            / "entrypoints"
-            / "cli"
-            / "app.py"
-        ),
-    )
-
-    assert default_web_dist() == dist.resolve()

@@ -1,242 +1,116 @@
-# 运维与安全门禁
+# Investment Manager 运行手册
 
-## 当前运行边界
+本文只保存现役闭环的部署、观测和恢复规则。架构裁决见 `ARCHITECTURE.md`，世界认知方法见 `WORLD_COGNITION_DESIGN.md`；历史实现和阶段日志不属于运行手册。
 
-仓库默认只运行冻结回放和 Mock/Shadow。Binance Spot Testnet 适配器与独立配置已经存在，但必须同时通过 `TESTNET` 类型化配置、本机 `INVESTMENT_MANAGER_BINANCE_ORDER_SUBMISSION_ENABLED=true`、Testnet 凭证验收和人工批准；LIVE 仍无条件拒绝。`codex_runtime.enabled` 默认为 `false`，账号目录白名单仍是禁用占位符。
+## 1. 运行前提
 
-本阶段的安全结论只覆盖程序契约和 Mock 故障注入，不代表已启用账号的生产隔离已经完成。特别是 Codex `read-only` 沙箱主要约束写入；生产 Runner 还必须显式禁用全部本地、网络与扩展工具，并拒绝任何 stderr、工具/错误事件或多消息输出，不能把提示词服从当成隔离证明。
+现役环境由 PostgreSQL、Temporal 和同一 Release 的以下进程组成：
 
-## 日常验证
+- `market-stream`：公开市场事实；
+- `information-collector`：新闻、官方文件、日历和连续指标；
+- `outcome-evaluation-service`：到期 Forecast 与资本结果结算；
+- `trigger-service`：Outbox 投递、TriggerCoordinator 和资本消费者；
+- `assessment-worker`：WorldModel 与 Context Forecast 的 Codex Activity；
+- `dashboard-service`：只读 API 和冻结前端制品。
+
+所有进程共享一个 PostgreSQL 事实库、Temporal namespace、配置和 ReleaseManifest。禁止让不同 Release 的写进程同时消费同一 pipeline。
+
+## 2. Release 冻结
+
+先提交全部运行代码、配置、迁移、Prompt 和前端源码，再从该提交建立 detached checkout。不要从主开发工作树启动服务。
+
+在冻结 checkout 中：
+
+1. 安装锁定依赖；
+2. 执行 Python 全量测试；
+3. 执行 `npm ci && npm run typecheck && npm run build`；
+4. 对 `web/dist` 计算目录内容哈希；
+5. 生成包含完整配置哈希、组件版本、代码提交和 `web-dist` ReleaseArtifact 的 Manifest；
+6. 执行 `alembic upgrade head`；
+7. 从该 checkout 启动全部进程。
+
+运行入口会拒绝以下情况：分支工作树、HEAD 不匹配、运行路径有未提交变化、配置哈希不一致、组件版本不一致、缺少 `web-dist`、制品内容变化或数据库不是迁移 head。Dashboard 只能托管 Manifest 指定的前端目录，不能自动寻找开发目录中的构建结果。
+
+新 Release 启动后先保持 warming。只有该 Release 自己的 TriggerPlan、Worker、行情/信息源、账户投影和启用生产者事实形成后，才允许切换只读入口；不能借用旧 pipeline 的行动或单纯进程在线宣称 ready。
+
+## 3. 数据库
 
 ```bash
-cd market-intel
-.venv/bin/ruff check src tests migrations
-.venv/bin/pytest
-INVESTMENT_MANAGER_TEST_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
-  .venv/bin/pytest tests/integration/test_postgres.py
-.venv/bin/investment-manager phase-a-audit \
-  --config config/investment-manager.yaml \
-  --project-root .
-```
-
-`phase-a-audit` 只要存在 `FAIL` 或 `BLOCKED` 就以非零状态退出。公开默认配置预期存在两项 `BLOCKED`：生产隔离未验证、没有白名单账号被显式启用。部署至少需要一个目录同名账号完整通过登录、额度与隔离验收；其余账号可以继续禁用。这不是测试故障，不应改成跳过或伪造通过。
-
-数据库只通过 Alembic 版本迁移初始化或升级；`create_schema` 仅保留给单元测试：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入的数据库 URL>' \
+INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
   .venv/bin/alembic upgrade head
 ```
 
-升级前必须创建可恢复备份，并先在同版本副本执行迁移、完整回放和对账。所有读取运行事实的长期服务和运维命令在启动时都会只读核对单一 Alembic head；错库、漏迁移、缺失或多 head 均立即拒绝启动，服务不会自行迁移。禁止在生产数据库运行测试中的 `drop_all`；PostgreSQL 集成测试只接受数据库名包含 `investment_manager_test` 的隔离 URL。
+生产运行使用 PostgreSQL。SQLite 只用于快速单元测试。迁移前备份数据库并停止旧写进程；不可逆事实迁移的 downgrade 会明确拒绝，恢复必须使用备份和审计迁移。
 
-## Temporal 编排
+账户、Forecast、Outcome、风险授权、订单观察和世界认知是不可变事实。不得用 SQL 手工修正文案或删除失败记录；错误生产者通过新行为/Release 替换，旧事实保留用于评价。
 
-当前主线由 `TriggerCoordinatorWorkflow` 持有触发计划、pending、合并和 single-flight 状态，由 `ContextAssessmentWorkflow` 对一个冻结 `DecisionPacket` 执行无交易权限的 AI 判断。PostgreSQL 只保存 Trigger、Packet、Assessment 和评价事实，不复制 Workflow 运行状态。`AnalysisCycleWorkflow → ExecutionWorkflow` 属于冻结历史链，已经退出 Trigger 调度，其 Worker、诊断提交、单腿生命周期与单腿对账入口均已从现役 CLI 删除。
+## 4. 触发与固定预测节拍
 
-新交易链完成后，`execution_requests` 仍只能是业务交接事实，Temporal 历史继续作为重试、父子关系和流程终态的唯一来源。任何待执行请求必须保持 `PENDING` 和 `ACTIVE` 风险占用，禁止运维人员直接改表“修复”；应先查询确定性 `client_order_id` 的交易所结果，再恢复同一 Execution Workflow。
+每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-ExecutionWorkflow 的主重试耗尽或交易截止已过后会自动进入终态恢复循环：已有订单则完成入账，无订单且信号过期才释放预留，查询不确定时继续持有预算。禁止另加基于 `expires_at` 的 SQL 清扫器。账户日亏/回撤触发的持久 Kill Switch 只能人工解除：
+事件触发只更新 WorldModel或复核当前持仓，不直接改变固定 Forecast cohort。Context Forecast 按 ForecastContract 的固定 cadence 形成槽义务：
 
-```bash
-.venv/bin/investment-manager reset-portfolio-protection \
-  --config config/investment-manager.yaml \
-  --reason '人工复核、仓位与对账均已确认' \
-  --acknowledge-risk
-```
+- 到期前成功则保存 Forecast；
+- 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
+- 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
+- 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
-该命令以最后观测权益建立新高水位，不会覆盖配置中的静态 `risk.kill_switch`；执行前必须先确认全部持仓盯市价格、最新对账和未决订单。
+Heartbeat 负责恢复到期任务、账户投影、对账和风险复核。全现金且没有新 Forecast/Target/订单时不生成行动条目。
 
-本地验证 Assessment Workflow：
+## 5. Codex 账号
 
-```bash
-docker compose --profile quant up -d postgres temporal
-INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
-  .venv/bin/alembic upgrade head
-INVESTMENT_MANAGER_DATABASE_URL='postgresql+psycopg://investment_manager:local-mock-only@127.0.0.1:55432/investment_manager_test' \
-  .venv/bin/investment-manager assessment-worker --config '<已启用且冻结的 Assessment 配置>' \
-  --release-manifest '<匹配的冻结 ReleaseManifest>'
-```
+账号必须在配置中显式登记，`account_id` 等于 `codex_home` 目录名。Router 读取官方额度状态，选择当前有效余量最大的健康账号，并用数据库租约保证单账号并发边界。账号切换只改变认证目录，不改变模型、Prompt、Schema 或 producer behavior。
 
-必须由进程监督器运行 Worker；CLI 内没有自制无限循环、cron 或第二套租约恢复逻辑。Compose 的 `auto-setup` 与开发动态配置只用于本地，不是生产 Temporal 部署模板。生产环境应使用受维护的 Temporal 集群、独立凭据/TLS、备份和服务端升级流程。
+运行时不得扫描未登记目录、读取或记录 `auth.json` 内容、继承账号插件/Skill/MCP/会话，也不得设置会让紧急分析静默跳过的 AI 小时预算。容量、失败、超时、切换和延迟必须进入 Codex 审计事实。
 
-所有远程 Activity 通过 `activity-routing-default-v1` Patch 使用任务队列当前默认 Worker，避免 Activity 已调度后因进程升级改变 build ID 而无人接手。不要删除或改名该 Patch；破坏冻结输入兼容性时应同时升级 Activity 名称和契约，而不是重新把 Activity 固定到旧 Worker。部署后应确认新 Workflow 历史中的 `ActivityTaskScheduled.use_workflow_build_id=false`，并验证对账报告继续按绝对 UTC 分钟桶产生。
+若所有账号不可用，保留本次 Forecast 的明确失败；程序化风险保护、账户对账和行情采集继续运行。
 
-同一 `cycle_id` 固定映射到同一分析 Workflow ID，同一批准决策固定映射到同一 `execution_id` 和子 Workflow ID。重复的完全相同请求读取已有结果；同一 cycle 的输入哈希不同会失败关闭。网络结果未知时必须先按 `client_order_id` 查询，不能盲目提交第二个订单。不能把 Temporal 的“至少一次”误当成“只执行一次”。
+## 6. 信息与世界认知
 
-`PositionLifecycleWorkflow` 由独立生命周期服务发现并保证存在。价格路径进度保存在 Temporal 历史，退出订单、账户快照、结果事实和风险释放在 PostgreSQL 同一事务中形成一次；事务失败时持仓和风险均保持原状态。进程重启后发现器会重新扫描所有非 `CLOSED` 持仓；同一 `position_id` 的不同冻结输入会失败关闭。
+Collector 保存原始响应、首次可见时间、来源身份、修订和轮询状态。官方日历提前建立未来 Wakeup；日历外冲击由广域事件流发现。Provider 失败降低对应因果域 Coverage，不删除最后有效事实，也不伪造新鲜度。
 
-## 实时 Shadow
+AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全量新闻、账户或持仓。WorldModel 的浅薄、错误或失败必须原样可见：Schema/引用错误显示为调用失败；结构有效但分析差的结果仍保存并进入评价，不能用中文词表、长度或“通过门禁”隐藏。
 
-当前实现以事务 Outbox、PostgreSQL NOTIFY、单一 Dispatcher 和 `TriggerCoordinatorWorkflow` 触发分析。NOTIFY 只缩短延迟，断线或通知丢失后仍回扫未投递 Outbox；原 `shadow-scheduler` 命令、领导锁和 5 秒扫描实现均已删除。Collector 每 60 秒读取 TrendRadar 广覆盖聚合，并直读本机 NewsNow 的 `mktnews-flash`、`fastbull-express` 两个原生 2 分钟源；快速路径与聚合路径使用相同平台身份和标题事实，由既有唯一约束精确去重。固定一手端点还包括 Fed FOMC/Chair 日历、政策 RSS 及其链接的 FOMC 原文，Treasury TGA/收益率曲线、TreasuryDirect 拍卖结果，Fed 广义美元、NY Fed RRP/SOMA/EFFR/SOFR，以及 Federal Register 的 SEC/CFTC 数字资产 Notice/Proposed Rule/Rule；固定的 ByKaranteli 公开 JSON 端点以 `AGGREGATOR` 等级提供 BTC/ETH 已结算交易日合计 ETF 净流量。FOMC 原文只提取行动、预期、公开约束、路径、分歧和资产负债表原句，拍卖只计算供给与实际吸收结构，两者都不在采集层判断方向或隐藏动机。监管流、宏观快速流和合计流量每 5 分钟、低频流每 15 分钟轮询；原始响应、语义修订和轮询结果均持久化，任一配置源不健康都会降低整个因果域覆盖。它们仍是轮询源，其发现延迟必须与入库后的事件驱动延迟分别监控，不能把后者的低延迟冒充端到端实时性。
+事件永久保留。只有它对未来的当前影响可以由后续 WorldModel 标记 STALE；满 24 小时后不再进入最新认知引用，历史快照不回写。
 
-资讯标准化器保留直接资产事件，并用版本化有限词表路由跨资产宏观事件。关键跨资产事件可越过高优先级阈值，但同一波事件先按品种合并；一般跨资产事件只进入下一次面板。资讯触发具有固定有效期，过期触发丢弃但原始标准事件事实不删除。
+## 7. 资本、风控与执行恢复
 
-同类事件规则按 `minimum_priority` 分层，事件命中多个层级时采用最高已满足门槛的合并和冷却参数；重复启用的同门槛层级会被配置契约拒绝。当前 Shadow 的高影响资讯首次合并等待为 15 秒、普通冷却仍为 120 秒，并保留 15 秒跨品种防重复间隔；不设 AI 小时调用配额。
+当前资本模式是 Binance BTC Spot simulated。Portfolio 只在现货多头、当前持有和现金之间比较完成后可成交收益与尚未发生的成本。
 
-`analysis_call_admissions` 是跨品种最小调用间隔与同批次幂等的权威事实，在构建分析周期后、提交周期前原子准入。若距最近一次准入不足 15 秒，Coordinator 保留 pending 到 `retry_at`；除此之外不存在小时额度阻塞。事件去重、合并、冷却、single-flight、有界 pending 和异常熔断负责控制重复与风暴。观测台从该表显示近一小时真实启动活动；`codex_runs` 继续用于成功率、失败类型、token 与延迟审计。
+Risk 有两种合法输出：
 
-新 pipeline 首次创建 TriggerPlan 时，从同品种 `updated_at` 最新的前代当前计划继承主 Agent 动态状态，并用新 pipeline/Manifest 重建 revision 1；仅丢弃已经过期的计划唤醒点，旧 `applied_patch_id` 不跨代复用。若该品种没有任何前代计划，才使用发布配置中的静态默认。切换后应核对新计划的暂停态、Heartbeat、事件规则与未来唤醒，再确认旧 Coordinator 已终止。
+- 对 PortfolioTarget 批准、缩减或拒绝；
+- 对已对账当前敞口签发只减险授权。
 
-切换前必须查询旧 Coordinator，确认 `pending_count=0` 且 `active_batch_id=null`；否则等待其完成或由主 Agent 明确处理，不能把已绑定旧 pipeline 的触发/周期静默复制到新代际。本前提避免同一事件双跑和版本归因污染；当前没有运行证据支持引入跨代 pending 转移协议。
+第二种授权不能创建 PortfolioTarget、增加数量或反向开仓。账户未对账、报价过期/错位或存在未确认 ExecutionGroup 时先 DEFER；不得根据旧本地数量猜测减仓。
 
-使用 `config/investment-manager.shadow.yaml` 的小型继承配置，禁止复制整份基线后长期漂移。每套 Shadow 事实库必须使用独立 Temporal namespace，并在启动前从精确冻结 checkout 运行：
+Execution 对稳定 `client_order_id` 先查询后提交。未知结果、部分成交和重启都从订单观察恢复；未确认终态前账户保留 pending group。模拟 Venue 与未来 official Venue 必须在该边界以上复用完全相同的 TradePlan、状态机和账户投影。Official 尚未实现等价性，必须保持失败关闭。
 
-```bash
-PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager shadow-audit \
-  --config '<运行覆盖配置>' \
-  --release-manifest '<运行 ReleaseManifest>' \
-  --project-root '<冻结 checkout>'
-```
+## 8. 启停与切换
 
-公开 Shadow 审计也必须严格核对完整配置哈希、代码 SHA 和 checkout 洁净度，不能借用仓库默认 Manifest。公开 Shadow 通过不代表真实 Codex 就绪；账号目录和 OS/Profile 隔离仍可保持 `BLOCKED`。
+启动顺序：
 
-真实 Codex、Mock 交易的私有 Challenger 不能沿用公开 Shadow 的验收语义。冻结发布后必须从该提交的 checkout 执行专用验收，并显式传入同一运行配置、Manifest 和源码根：
+1. PostgreSQL、Temporal；
+2. 数据库迁移；
+3. market 和 information；
+4. outcome、trigger、assessment；
+5. dashboard；
+6. 检查当前 Release health 和 warming 缺项。
 
-```bash
-PYTHONPATH='<冻结 checkout>/src' .venv/bin/investment-manager challenger-audit \
-  --config '<运行覆盖配置>' \
-  --release-manifest '<运行 ReleaseManifest>' \
-  --project-root '<冻结 checkout>'
-```
+切换前确认旧 Coordinator 没有 active batch 和未处理 pending；停止旧写进程后再启动新 pipeline。不要复制旧 pending 到新行为，也不要让两个资本消费者同时写同一账户。
 
-该命令要求真实 Codex 分析路径启用、交易权限关闭、账号白名单和隔离门禁通过，并严格核对 Manifest 的完整配置哈希、组件版本、代码 SHA 与 checkout 洁净度。任一项不一致均非零退出；它不调用 Codex。
+停止顺序相反。先停止新触发，再允许运行中的 Activity 和 ExecutionGroup 收敛，最后停止数据源。强制退出后，下次启动必须先恢复 Outbox、Workflow、订单查询和账户投影，再接受新增风险。
 
-Shadow 使用受监督的长期服务角色和有限 Temporal Worker/协调角色协作，不使用仓库脚本承载状态：
+## 9. 故障判断
 
-- `information-collector`：采集本机 TrendRadar/NewsNow 事件流、配置中固定的一手官方端点及显式分级的结构化聚合指标；新闻事件与类型化记录保持不同身份，再统一投影到 State。
-- `market-stream`：先以 Binance 公开 REST 恢复已收盘 K 线、最新报价与成交，再接一条组合 WebSocket；断线后重新补洞。
-- `trigger-service`：持有 PostgreSQL advisory lock，运行唯一 Outbox Dispatcher 和 TriggerCoordinator Worker；启用 `capital` 时，每个冻结 TriggerBatch 作为显式 cause 进入 Capital，先恢复历史非终态 ExecutionGroup，再让显式装配的合格 Producer 与当前持仓进入统一 Portfolio → Risk → TradePlan → 持久化 Mock 执行，并追加一条不可变行动记录。没有候选时只形成现金观察事实；历史评价结果不会自行激活任何生产候选。Dispatcher 不实现业务防抖或批处理。
-- Heartbeat 在 Coordinator 内保持耐久 pending；它不按普通事件有效期过期，但没有新 `MaterialDelta` 时只刷新 State，不调用 AI。资讯和计划 Wakeup 仍必须在各自 `expires_at` 后丢弃。主 Agent 的立即/计划 Wakeup 必须携带评审理由，即使没有新 Delta 也会形成可审计的 `PacketReviewRequest` 并触发一次 Assessment。
-- 官方连续指标每次成功观测都永久刷新 Fact/State，但只有满足 `official_fact_policy` 最小历史样本且绝对变化分位数达到候选阈值时，才发布事实触发并形成 MaterialDelta。日常波动留作背景，不应因数值有变化就消耗一次 Codex 调用；需要人工复核时仍可通过 `trigger-now` 显式查看完整最新状态。
-- FRED 的 S&P 500、高收益信用利差和 WTI 是显式 `AGGREGATOR` 日频证据，只承担跨资产传导核验；采集失败必须进入覆盖账本，且不得把它们解释成一手、实时或可直接交易信号。黄金能力未接入时该域应继续显示 `PARTIAL`。
-- Federal Register 每 5 分钟查询最近七天 SEC/CFTC 正式发布，只保存含数字资产主题的规则文件；同文号同语义不重复产生事实。文档类型和日期是事实，经济方向不是事实；监管域在 `LEGISLATION_STATUS` 与 `OFFICIAL_EVENT_CALENDAR` 能力补齐前保持 `PARTIAL`。
-- Treasury 暂定回购日历每 6 小时检查一次，TreasuryDirect 已完成拍卖结果随低频指标轮询；原文、操作修订、取消记录和拍卖吸收永久保留。首次同步不按未来操作数量批量调用 AI，而是在各操作开始时由耐久 Wakeup 复核；拍卖状态只汇总已完成的 14 日票据/附息债供给、投标覆盖和投资者吸收，不把尚未公布结果的公告当成已完成融资。回购计划上限、实际回购、财政发债、SOMA 附加认购和 Fed 资产购买必须分开，不得统称 QE。
-- IBIT、ARKB、BITB 官方持仓首日只建立基线，第二个不同持仓日起生成变化，满最小历史样本前不触发 AI；BTC/ETH 合计流量以显式 `AGGREGATOR` 来源独立入库。网页历史、PDF 或第三方汇总不得倒填为过去已知事实；覆盖状态可在全部声明能力健康时显示 `CURRENT`，但不得把聚合流量升级为一手事实，也不得用持仓冒充净申赎。
-- release 切换时，`trigger-service` 会按每个已知 pipeline 的最后 TriggerPlan 终止同一交易范围内仍在运行的旧 durable coordinator；即使旧计划已没有 `is_current` revision，也不能漏过孤儿 Workflow。旧 Outbox 保留审计事实但不会复活历史工作流。同一 pipeline 若对应不同 Manifest 则拒绝启动，必须以新 pipeline version 完成隔离切换。
-- `assessment-worker`：只执行冻结 `DecisionPacket` 的 ContextAssessment；使用动态 Structured Output 和最终语义校验，没有仓位或交易权限。
-- `outcome-evaluation-service`：唯一的 Forecast 与历史结果结算循环。在固定 UTC 窗口结束并经过结算宽限期后聚合权威 `DecisionOutcome`，结算程序 Forecast，并继续收尾旧 Proposal 与旧 `ContextAssessment` Directional View；世界模型不产生短周期 View，不为它新增逐次方向结算服务。未决持仓使 Workflow 保持运行并追加 `INCOMPLETE` 报告，不重算或覆盖逐笔收益。
+- 行情/账户过期：冻结新增风险，检查生效 TriggerPlan，而不是静态 heartbeat。
+- Forecast 覆盖下降：检查槽义务、`NO_ESTIMATE` 和 Codex 审计；不得只统计成功结果。
+- Outcome 逾期：修复结算数据或 Worker，不能删除未结算 Forecast。
+- 世界认知停更：检查新 Evidence、Coverage、Packet、Codex run 和引用错误。
+- 有预测但无订单：查看当前持有、现金候选、完整成本和风险缩减；不能为增加订单数降低门槛。
+- Execution 未终态：先按稳定订单 ID 查询场所，再推进恢复；不得重复提交。
+- Release 不一致：停止该进程，从正确冻结 checkout 重启；禁止原地修补。
 
-### 前瞻证据稳定窗口
+## 10. 回滚
 
-- ForecastContract、producer behavior、槽规则、输入投影、模型、Prompt 或成本语义任一改变，都必须使新行为身份生效，不继承旧样本的成绩。
-- 每个预登记槽都必须形成 `BaseForecast` 或明确 `NO_ESTIMATE`；两者和未成交预测都永久保留，Outcome 不因 Portfolio 选择现金而缺失。
-- 前瞻证据只来自 Outcome 发生前已持久化的 Forecast。样本不足只能是证据不足，不能记为策略失败；只有费用后、非重叠、同风险基线对比达到事前标准，才能扩大权限。
-- 评价期间可以继续修复不改变行为哈希的运维故障；任何改变预测行为的优化都自动开始新 cohort，旧 Forecast/Outcome 仍保留但不混合评分。
-
-部署私有配置必须满足：
-
-```yaml
-deployment:
-  stage: SHADOW
-  shadow_market_data_enabled: true
-  testnet_order_submission_enabled: false
-  live_order_submission_enabled: false
-  credential_profile: null
-```
-
-行情适配器只允许成对使用 Binance 官方主网端点或 Spot Testnet 端点；Shadow 固定主网公开行情，Testnet 固定 Testnet 行情，禁止跨环境混用。未收盘 K 线不进入策略；报价、成交和 K 线均按本地 `observed_at` 做时间可见性过滤。任何 Spot/Perpetual 基差必须先选定 Perpetual 报价，再读取不晚于它的 Spot 报价；观测偏差超过 `maximum_cross_market_quote_skew_seconds` 时失败关闭。该上限不得短于 Spot 冻结间隔，并须与 Capital Risk 完全一致。流上的每条消息仍进入确定性市场冲击检测：检测窗口直接使用配置 K 线周期，同品种同窗口最多触发一次，收盘 K 线仅作流上漏检的恢复兜底。PostgreSQL 默认只按品种每秒持久化一条报价和一条成交，避免当前低频分析无收益地写入数百万行/天。真实端点曾暴露 aggregate trade ID 超过 32 位的问题，数据库现使用 `BIGINT` 且固定测试覆盖该边界。
-
-持续服务发生异常时只在错误类别变化时记录堆栈，恢复后允许同类错误再次报告；正常高频消息不逐条打印。进程存活不是健康证明，至少同时核对最新行情时间、Outbox backlog、TriggerCoordinator 查询、最近对账状态和分析周期结果。
-
-`trigger-service` 的领导权是 PostgreSQL session-level advisory lock：专用连接必须长期存在，但必须使用 autocommit，不能长期处于 `idle in transaction`。发布验收至少执行一次 `pg_stat_activity` 检查；任何持续超过一个心跳周期的空闲事务都必须先归因再发布，不能把它当作领导锁的正常代价。
-
-观测台健康端点同时报告根文件系统占用：达到 `90%` 为 `warn`，达到 `95%` 为 `bad`。该项是容量可观测性，不替代交易侧数据新鲜度、对账、风险预算或 Kill Switch，也不自行清理磁盘或改变下单权限。共享主机上的 Docker 镜像、卷与构建缓存可能属于其他工作负载；未确认所有权前只报告精确占用，不执行全局回收。
-
-实时 Shadow 的“可运行”不等于可以使用真实资金。Testnet 无真实资金，进入它只要求 Shadow 安全验收与明确人工批准，以尽早暴露签名、精度、幂等、保护单和对账缺陷；连续运行时间、样本量、重复订单为零和费用后净收益证据属于未来 LIVE 门禁。当前 LIVE 权限仍不存在。
-
-## Binance Spot Testnet
-
-密钥只放在被 Git 忽略且权限为 `0600` 的 `.env`，不得进入 YAML、日志、数据库或 Codex 运行包。Testnet Key 必须在 `testnet.binance.vision` 单独创建；主网 Key 会被官方端点以 `-2015` 拒绝。
-
-```bash
-set -a; . ./.env; set +a
-.venv/bin/investment-manager binance-testnet-audit --config config/investment-manager.testnet.yaml
-.venv/bin/investment-manager binance-testnet-order-test \
-  --symbol BTCUSDT --config config/investment-manager.testnet.yaml
-```
-
-第一条命令只读且脱敏；第二条调用 `/api/v3/order/test`，不会进入撮合。两者通过前保持订单环境门禁为 `false`，不得启动 Testnet Worker。正式 Testnet 仍使用原有 Temporal 决策/执行交接：提交前先查询稳定 `clientOrderId`；传输结果未知时再次查询，不盲重下；保护单部分成交时停止自动卖出并等待人工处理；主动对账非 `MATCHED` 时冻结新风险。Testnet 账户可能预置大量资产，对账只投影本系统已有策略仓位，并用真实余额验证其是否足额，避免把测试赠送资产误认为策略持仓。
-
-## 显式账号白名单部署
-
-账号注册表属于主机部署配置，不应提交真实路径。部署者必须：
-
-1. 每个配置项只能人工映射有权用于本系统的 Codex 账号目录，且 `account_id` 必须等于目录名；主机上未登记的已登录目录不得自动纳入。
-2. 至少启用一个已分别完成官方登录、`account/rateLimits/read` 和隔离验收的账号；故障账号保持禁用。
-3. 将验收版本的原生 Codex 可执行文件复制到 Release 专用、非符号链接的只读路径，在 `codex_runtime.binary` 与 `expected_binary_sha256` 中冻结绝对路径和 SHA-256；确认所有已启用账号使用这一制品及同一模型、reasoning、工具禁用集、输出 Schema 和运行包。不得指向 `/usr/bin/codex` 等可被全局包管理器替换的入口。
-4. 配置每账号单并发，并使用 PostgreSQL `SqlAccountLeaseStore` 和 `SqlCodexAuditStore`。
-5. 完成下述隔离验收后，才可同时设置 `isolation_verified: true` 与 `enabled: true`。
-
-白名单中至少一个目录在部署配置中显式启用后，使用同一个正式入口对全部已启用账号执行额度和恶意读取验收：
-
-```bash
-.venv/bin/investment-manager codex-isolation-audit \
-  --config '<冻结运行配置>' \
-  --release-manifest '<冻结 ReleaseManifest>' \
-  --project-root '<对应代码 checkout>'
-```
-
-该命令直接复用生产 Runner 的模型、reasoning、完整工具禁用集、严格 App Server 事件解析器和额度探测器；输出只包含匿名账号 ID、有效余量、通过状态和原因码，不输出账号路径、哨兵、Token 或模型原文。容量探测和每次推理前都会重新核对制品摘要与版本，不缓存 Worker 启动时的结果。每次实际验收保存内容寻址制品，绑定 Manifest、代码/配置/行为哈希、CLI 版本与 SHA、模型、账号集合、完成时间和逐项结果；同一 ID 内容不符时拒绝覆盖。没有启用槽位，或任一已启用槽位出现摘要/版本漂移、额度契约失败、stderr、工具/错误事件、Schema 异常或哨兵可读，都会以非零状态退出。通过后仍需由部署审批显式修改配置，命令自身不启用 Codex、不改发布清单。
-
-Router 不扫描主目录，也不由 Python 读取或复制 `auth.json`。额度探测和分析调用都创建一次性权限目录，只把获准账号的 `auth.json` 软链接进去，不继承原目录的配置、MCP、插件、Skill 或会话。Codex App Server 不挂载本地执行环境，启动环境按允许列表重建，明确不继承 `OPENAI_API_KEY`、`CODEX_API_KEY` 和 `CODEX_ACCESS_TOKEN`。
-
-## 分析 Profile 隔离验收
-
-生产 Analyst 必须在最小容器或等价 OS Profile 内运行。验收必须用恶意用例实际尝试并证明以下访问被操作系统拒绝：
-
-- 读取任一账号目录中的 `auth.json`、配置、日志或会话。
-- 枚举父目录以发现未注册的第四个账号。
-- 读取父进程环境、`/proc/*/environ` 或其他进程命令行。
-- 运行通用 shell、Python、Node、包管理器或非白名单可执行文件。
-- 通过模型能力连接任意外部地址；Analyst 除 Codex 主进程自身服务通信外没有网络工具。
-- 写运行包、数据库、交易接口或宿主工作区。
-
-通过条件是访问在权限层被拒绝，而不是模型“没有尝试”。测试日志必须脱敏，只记录用例 ID、拒绝层、退出分类和时间，不记录 Token、账号路径或完整响应。
-
-## Codex 故障处理
-
-允许换号的错误只有：明确额度耗尽、认证失效、账号相关的上游瞬时错误。换号从头执行同一不可变运行包，不恢复或拼接跨账号上下文。
-
-以下错误不触发账号故障切换：超时、进程崩溃、Schema 非法、运行包哈希错误、任何工具/错误事件、stderr 和确定性业务校验失败。超时、进程崩溃和明确账号上游瞬时错误会让该账号在后续批次前进入 `transient_failure_cooldown_seconds`；冷却到期必须先成功复探官方容量才能恢复健康。Schema、运行包、工具权限和确定性校验属于输入或系统问题，不归罪于账号。ContextAssessment 可在同一不可变 Packet/Schema 上进行最多 `1 + max_account_switches` 次有界 Schema 重试，但每次都是全新无上下文调用并独立审计；耗尽后本轮正式终态为 `NO_ASSESSMENT`，不得放宽 Schema 或绕过最终语义校验。独立 ProgramBase 将来仍可按自己的证据继续，但任何 AI 失败都不能伪造 Forecast 或交易倾向。`OFF` 管线不调用 Codex。
-
-AI `confidence` 只作为原始分数保留，不能直接冒充 bps 收益。所有 Producer 只能提交零毛优势和绑定自身版本的 `uncalibrated` 引用；只有发布清单冻结的 `EdgeCalibrationBook` 能按 Producer、版本、品种、方向、周期和有效期写入保守毛优势。未命中制品的候选仍进入 CandidateOutcome 事实，但在合成前以 `EDGE_CALIBRATION_MISSING` 关闭，不能到达风险或订单。测试夹具中的非零毛优势只用于覆盖执行状态机，不是部署默认值。
-
-`outcome-window-v8` 以分析完成后首个点时可见成交作为反事实入场，并在到期前优先结算首次止损成交；只有未触发止损时才使用到期成交。入场、退出的事件时间与观测时间全部固化在 CandidateOutcome 中，防止用分析前参考价或忽略途中止损的到期收益夸大可交易边际。该轨道仍不创建订单、持仓或账户 PnL，只为后续校准提供隔离标签。
-
-`analysis-trigger-v7` 使用配置化滚动窗口累计行情冲击，窗口按秒聚合且内存有界；触发后以同一窗口冷却并从当前价格重新定基。它用于异常行情复核，不承担入场择时，且仍受 TriggerPlan、合并与最小调用间隔约束，不受小时配额阻塞。
-
-候选内冻结的 `estimated_cost_bps` 只表示该候选可归因的完整往返交易成本：手续费、点差、预期滑点、持有期资金成本，以及延迟、逆向选择和估计不确定性缓冲。模型订阅、机器、存储和人员等固定或周期运营成本不得按拍脑袋常量硬摊到每笔候选；它们在 Pipeline/组合评价窗口按真实账单来源单独扣除。真实来源尚未接入时必须明确报告运营成本缺失，不能把交易成本后的收益命名为“全部成本后收益”。
-
-旧 `PROPOSE` 回放还要求 `temporal.worker_threads <= 已启用 Codex 账号数`；现役 Assessment Worker 保持单 Activity 并发。数据库租约负责跨进程互斥，Worker 并发负责进程内排队；不能依赖租约冲突把已获全局调用准入的周期降级成“账号不可用”。连续超时时先查看 `codex_runs.payload.diagnostics` 中的事件数量、最后事件、完成项类型、线程终态、`turn_started`、`turn_completed` 和完成来源；该字段不含模型正文、会话 ID 或账号内容。若完整消息已经结束且线程空闲但缺失 `turn/completed`，Runner 只允许通过同一 App Server 的 `thread/read` 读回目标 turn；thread/turn ID、`completed` 状态、完整 items、允许项类型和消息正文必须全部一致，否则仍失败关闭。没有阶段证据时不得把超时主观归因于面板长度、模型或协议，也不得直接延长硬截止。
-
-额度探测优先使用所有适用窗口和额度桶中最小剩余量。探测失败时只允许使用仍新鲜的缓存；全部过期后仅在此前已确认健康且未处于冷却的账号间保守单并发轮转。冷却账号即使计时已到也必须复探成功；首次启动无法确认健康时失败关闭，不猜测账号状态。
-
-## 不可变运行包和审计
-
-每次现役 ASSESS 分析只接受一份带哈希的运行包：`decision_packet.json`、实际模型输入 `analyst_prompt.md`、Packet 动态 `output.schema.json` 和 `manifest.json`。旧 PROPOSE 回放对应 `panel.json`，不得与新链混读。系统不生成与实际输入重复的 Markdown 面板或策略摘要；账号切换或 Schema 重试都不能重建或修改运行包。
-
-持久化审计只保留匿名 `account_id`、额度窗口、有效余量、Attempt 状态、错误分类、usage 和运行包哈希。不得保存账号路径、邮箱、Token、完整账号响应或认证文件内容。
-
-## 治理与发布
-
-主 Agent 每次使用新的会话，只读取冻结 `GovernanceSnapshot`。它输出结构化 `GovernorOutput`：`decision` 只能是 `NoChange` 或单层 `ChangeProposal`，并可选携带一个基于当前 revision 的 `TriggerPlanPatch`。没有生产变更时可以使用 `NoChange + TriggerPlanPatch` 调整多个未来 AI 触发点、事件规则或立即复核；该短链不能修改风险、执行或发布权限。生产变更的评估计划必须先于提案登记；失败实验进入负面知识；无新证据不得重复同一假设。
-
-`GovernanceCycleWorkflow` 先以确定性 Activity 构建并保存有界快照，再启动一次全新 Codex Governor。Governor 与交易分析复用同一个账号白名单额度探测、最大余量选择、数据库单并发租约和有限故障切换实现，但使用独立不可变运行包与输出 Schema。无工具 Governor 的标准输入直接内嵌 canonical `GovernanceSnapshot`；`governance_snapshot.json` 只作为哈希审计制品，不依赖模型读取，也不再生成重复 Markdown 镜像。Analyst 与 Governor 都受 `codex_runtime.maximum_prompt_characters` 约束，超限失败关闭。快照同时不含预登记评估计划和 AnalysisTriggerPlan 时直接登记 `NoChange`，不浪费 Codex 配额；存在 TriggerPlan 时即使不允许新的生产提案，仍可运行一次调度判断。模型生成的决策 ID 和时间会被确定性重建；快照外证据、未知计划、过期 revision、重复失败假设、超复杂度或非人工 RiskPolicy 提案均拒绝。
-
-默认配置的真实 Codex 和账号白名单均未启用，因此 `governance-service` 会失败关闭；不能为了让服务“绿灯”而绕过隔离门禁。真实启用后由受监督进程运行：
-
-额度探测和分析执行都使用一次性隔离 CODEX_HOME，只链接对应槽位的认证文件，不加载账号目录中的配置、插件、MCP、Skill 或历史会话。“已登录”不等于可轮换：槽位必须同时通过官方额度协议与 `codex-isolation-audit`；低余量、超时或协议不可用的槽位保持禁用。
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<治理数据库 URL>' .venv/bin/investment-manager \
-  governance-service --config '<私有配置>' --project-root .
-```
-
-RiskPolicy 只能作为 `MANUAL_ONLY` 提案，系统宪法、执行权限、Kill Switch 恢复条件、回归集、盲测和验收阈值不接受 Agent 修改。所有评估通过后也只获得“可提交人工审批”状态，首阶段不存在自动发布。
-
-`VersionEvaluationWorkflow` 只接受一次性冻结的 `EvaluationTarget`，其中包含已登记计划、通过治理门禁的提案、从当前 Champion 分叉的 Challenger Manifest 和候选制品哈希。Workflow 按计划顺序逐项调用部署侧注入的 `EvaluationStageRunner`；Runner 的每项结果必须返回相同制品哈希、数据/回归集版本与原始证据哈希，固定回归阶段的版本还必须等于预登记计划。仓库提供编排端口和 Mock/故障测试，不提供一个把固定布尔值当作“生产评估”的假 Runner。生产接入前，应把静态检查、固定回归、无未来数据前推、盲测和 Shadow 分别实现为权限隔离的可信适配器。
-
-`ReleaseWorkflow` 使用独立任务队列复核不可变评估结果。阶段缺失、失败、顺序不符、样本不足、安全违规、制品不一致、复杂度超限或 Champion 已变化都会得到持久化 `BLOCKED`。全部满足时也只写入 `AWAITING_HUMAN_APPROVAL`；该 Worker 不加载发布凭据、不改 `release-manifest.yaml`、不更新数据库中的 Champion，也不重启服务。人工审批记录和真正的发布器属于后续独立权限域，当前仓库刻意没有用 CLI 绕过这一边界。
-
-回滚以完整 `ReleaseManifest` 为单位，目标只能是当前 Champion 或已登记的上一稳定版本。禁止在生产版本上原地修补。
+回滚单位是完整 ReleaseManifest，不是单文件。回滚代码前确认旧 Schema 能否读取新增事实；不可逆迁移需要向前兼容的恢复 Release，不能直接 downgrade。历史 Forecast、授权、成交和 Outcome 始终保留。

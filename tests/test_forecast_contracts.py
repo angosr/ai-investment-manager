@@ -19,6 +19,7 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotObligation,
 )
 from investment_manager.forecast.models import ForecastTarget
 from investment_manager.kernel.identity import stable_id
@@ -215,11 +216,13 @@ def test_contract_slot_binding_and_absence_ledger_is_immutable() -> None:
     )
 
     with pytest.raises(ValueError, match="ForecastContract"):
-        store.record_slot(slot)
+        store.record_slot(slot, binding=binding)
     assert store.record_contract(contract)
     assert not store.record_contract(contract)
     assert store.record_binding(binding)
-    assert store.record_slot(slot)
+    assert store.record_slot(slot, binding=binding)
+    obligation = ForecastSlotObligation.create(slot=slot, binding=binding)
+    assert store.obligation(obligation.obligation_id) == obligation
     assert store.record_no_estimate(absence)
     assert not store.record_no_estimate(absence)
     assert store.contract(contract.contract_id) == contract

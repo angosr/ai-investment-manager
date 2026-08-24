@@ -337,6 +337,7 @@ class SqlCapitalCycleStore:
                         decision_cycle_id=record.decision_cycle_id,
                         account_snapshot_id=record.account_snapshot_id,
                         target_id=record.target_id,
+                        execution_authorization_id=record.execution_authorization_id,
                         outcome=record.outcome.value,
                         payload=record.model_dump(mode="json"),
                     )

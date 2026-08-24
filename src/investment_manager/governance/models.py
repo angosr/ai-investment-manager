@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from datetime import datetime
 from enum import StrEnum
@@ -85,7 +86,15 @@ class RegressionSuite(FrozenModel):
 
 class ReleaseArtifact(FrozenModel):
     artifact_id: str
+    relative_path: str = Field(min_length=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def path_must_be_repository_relative(self):
+        path = Path(self.relative_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("ReleaseArtifact 必须使用仓库内相对路径")
+        return self
 
 
 class ReleaseManifest(FrozenModel):
@@ -114,6 +123,9 @@ class ReleaseManifest(FrozenModel):
         ids = tuple(item.artifact_id for item in self.artifacts)
         if ids != tuple(sorted(set(ids))):
             raise ValueError("ReleaseManifest 制品必须按唯一 ID 排序")
+        paths = tuple(item.relative_path for item in self.artifacts)
+        if len(paths) != len(set(paths)):
+            raise ValueError("ReleaseManifest 制品路径不得重复")
         return self
 
 
@@ -694,6 +706,95 @@ def validate_manifest_code_version(
         expected_version=manifest.code_version,
     )
     return root
+
+
+def validate_runtime_release_checkout(repository_root: Path) -> None:
+    """Runtime must import from a detached release checkout, never the dev tree."""
+
+    completed = subprocess.run(
+        ("git", "-C", str(repository_root), "symbolic-ref", "-q", "HEAD"),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if completed.returncode == 0:
+        raise ValueError("运行服务必须从 detached 的冻结 Release checkout 启动")
+    if completed.returncode not in {1}:
+        raise ValueError("无法确认 Release checkout 是否冻结")
+
+
+def validate_manifest_artifacts(
+    manifest: ReleaseManifest,
+    *,
+    repository_root: Path,
+    required_ids: tuple[str, ...] = (),
+) -> None:
+    by_id = {item.artifact_id: item for item in manifest.artifacts}
+    missing = set(required_ids) - set(by_id)
+    if missing:
+        raise ValueError(f"ReleaseManifest 缺少必需制品：{', '.join(sorted(missing))}")
+    for artifact in manifest.artifacts:
+        path = (repository_root / artifact.relative_path).resolve()
+        try:
+            path.relative_to(repository_root)
+        except ValueError as exc:
+            raise ValueError("ReleaseArtifact 解析到仓库目录之外") from exc
+        observed = _artifact_sha256(path)
+        if observed != artifact.sha256:
+            raise ValueError(
+                f"ReleaseArtifact 内容不一致：{artifact.artifact_id}"
+            )
+
+
+def resolve_manifest_artifact(
+    manifest: ReleaseManifest,
+    artifact_id: str,
+    *,
+    repository_root: Path | None = None,
+) -> Path:
+    root = (repository_root or _source_repository_root()).resolve()
+    artifact = next(
+        (item for item in manifest.artifacts if item.artifact_id == artifact_id),
+        None,
+    )
+    if artifact is None:
+        raise ValueError(f"ReleaseManifest 缺少制品：{artifact_id}")
+    path = (root / artifact.relative_path).resolve()
+    validate_manifest_artifacts(
+        manifest.model_copy(update={"artifacts": (artifact,)}),
+        repository_root=root,
+        required_ids=(artifact_id,),
+    )
+    return path
+
+
+def _artifact_sha256(path: Path) -> str:
+    if path.is_symlink() or not path.exists():
+        raise ValueError(f"ReleaseArtifact 不存在或为符号链接：{path}")
+    digest = hashlib.sha256()
+    if path.is_file():
+        digest.update(path.read_bytes())
+        return digest.hexdigest()
+    if not path.is_dir():
+        raise ValueError(f"ReleaseArtifact 类型不受支持：{path}")
+    files = tuple(
+        sorted(
+            item
+            for item in path.rglob("*")
+            if item.is_file() and not item.is_symlink()
+        )
+    )
+    if any(item.is_symlink() for item in path.rglob("*")):
+        raise ValueError(f"ReleaseArtifact 目录不得包含符号链接：{path}")
+    for item in files:
+        relative = item.relative_to(path).as_posix().encode("utf-8")
+        payload = item.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
 
 
 def current_clean_code_version(

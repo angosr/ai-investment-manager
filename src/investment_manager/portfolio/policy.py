@@ -39,28 +39,6 @@ class SleeveRiskTemplate(StrictConfig):
     derivative_initial_margin_fraction: Decimal = Field(gt=0, le=1)
 
 
-class CashCarryProgramPolicy(StrictConfig):
-    """Point-in-time hypothesis policy for the isolated cash-and-carry challenger."""
-
-    version: str
-    enabled: bool = False
-    producer_id: str = Field(min_length=1)
-    producer_behavior_id: str = Field(min_length=1)
-    outcome_family_id: str = Field(min_length=1)
-    contract_version: str = Field(min_length=1)
-    horizon_minutes: int = Field(gt=0, le=43_200)
-    validity_minutes: int = Field(gt=0, le=43_200)
-    completion_deadline_seconds: int = Field(gt=0)
-    minimum_remaining_horizon_minutes: int = Field(gt=0)
-    outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
-    forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
-    funding_lookback_hours: int = Field(gt=0, le=720)
-    minimum_funding_samples: int = Field(ge=1, le=90)
-    minimum_positive_funding_fraction: Decimal = Field(ge=0, le=1)
-    funding_projection_haircut: Decimal = Field(ge=0, le=1)
-    forecast_dispersion_bps: Decimal = Field(gt=0)
-
-
 class ContextForecastPolicy(StrictConfig):
     """One pre-registered Context forecast question; no portfolio discretion."""
 
@@ -103,7 +81,6 @@ class CapitalPolicy(StrictConfig):
     planner: TradePlannerPolicy
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
-    cash_carry_program: CashCarryProgramPolicy | None = None
     context_forecast: ContextForecastPolicy | None = None
     mock_candidate_authorizations: tuple[MockCandidateAuthorization, ...] = ()
 
@@ -130,24 +107,6 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital 同时只允许一个 Mock challenger")
         if len(set(identities)) != len(identities):
             raise ValueError("Capital Mock candidate authorization 不得重复")
-        program = self.cash_carry_program
-        if program is not None and program.enabled:
-            matching = tuple(
-                item
-                for item in self.mock_candidate_authorizations
-                if (
-                    item.producer_id,
-                    item.producer_behavior_id,
-                    item.outcome_family_id,
-                )
-                == (
-                    program.producer_id,
-                    program.producer_behavior_id,
-                    program.outcome_family_id,
-                )
-            )
-            if len(matching) != 1:
-                raise ValueError("启用 CashCarry Program 必须绑定唯一 Mock authorization")
         context = self.context_forecast
         if context is not None and context.enabled:
             matching = tuple(

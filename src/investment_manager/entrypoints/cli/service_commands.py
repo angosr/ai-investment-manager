@@ -12,7 +12,6 @@ from temporalio.client import Client
 from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import (
-    default_web_dist,
     load_runtime_release,
     require_runtime_database,
     runtime_engine,
@@ -27,6 +26,7 @@ from investment_manager.forecast.context.service import (
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.governance.change.service import assemble_governance
 from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
+from investment_manager.governance.models import resolve_manifest_artifact
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.information.aggregated_flows import HttpAggregatedEtfFlowSource
 from investment_manager.information.collector import (
@@ -551,16 +551,18 @@ def dashboard_service(
 
     from investment_manager.entrypoints.dashboard import create_app
 
-    resolved_dist = web_dist if web_dist is not None else default_web_dist()
-    if resolved_dist is None:
-        typer.echo("未找到前端构建产物（web/dist）；仅提供 API。")
-        typer.echo("先运行：cd web && npm install && npm run build")
-    loaded, _ = load_runtime_release(config, release_manifest)
+    loaded, manifest = load_runtime_release(config, release_manifest)
+    frozen_dist = resolve_manifest_artifact(manifest, "web-dist")
+    if web_dist is not None and web_dist.resolve() != frozen_dist:
+        raise typer.BadParameter(
+            "web-dist 必须与 ReleaseManifest 冻结制品路径一致",
+            param_hint="web-dist",
+        )
     require_runtime_database(database_url)
     application = create_app(
         loaded,
         database_url,
-        web_dist=resolved_dist,
+        web_dist=frozen_dist,
     )
     typer.echo(f"运行观测台就绪：http://{host}:{port}")
     # EventSource 是无限响应；有界等待后取消连接，避免服务重启被浏览器永久阻塞。

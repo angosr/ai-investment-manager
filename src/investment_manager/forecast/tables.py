@@ -191,6 +191,42 @@ Index(
     forecast_decision_slots.c.slot_id,
 )
 
+forecast_slot_obligations = Table(
+    "forecast_slot_obligations",
+    metadata,
+    Column("obligation_id", String(128), primary_key=True),
+    Column(
+        "slot_id",
+        ForeignKey("forecast_decision_slots.slot_id"),
+        nullable=False,
+    ),
+    Column(
+        "contract_id",
+        ForeignKey("forecast_contracts.contract_id"),
+        nullable=False,
+    ),
+    Column(
+        "binding_id",
+        ForeignKey("forecast_producer_bindings.binding_id"),
+        nullable=False,
+    ),
+    Column("producer_kind", String(32), nullable=False),
+    Column("producer_id", String(128), nullable=False),
+    Column("producer_behavior_id", String(128), nullable=False),
+    Column("assigned_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "slot_id",
+        "producer_behavior_id",
+        name="uq_forecast_slot_obligation_behavior",
+    ),
+)
+Index(
+    "ix_forecast_slot_obligations_behavior_time",
+    forecast_slot_obligations.c.producer_behavior_id,
+    forecast_slot_obligations.c.assigned_at,
+)
+
 forecast_no_estimates = Table(
     "forecast_no_estimates",
     metadata,

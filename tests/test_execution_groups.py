@@ -100,14 +100,9 @@ class _ApprovedReader:
         self._approved_target_id = approved_target_id
         self._sleeve = sleeve
 
-    def for_approved_targets(self, approved_target_ids: tuple[str, ...]):
+    def execution_authorizations(self, approved_target_ids: tuple[str, ...]):
         return {
-            approved_target_id: SimpleNamespace(
-                approved_target=SimpleNamespace(
-                    approved_target_id=approved_target_id,
-                    sleeves=(self._sleeve,),
-                )
-            )
+            approved_target_id: (self._sleeve,)
             for approved_target_id in approved_target_ids
             if approved_target_id == self._approved_target_id
         }

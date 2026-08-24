@@ -36,7 +36,7 @@ def assemble_health(
     if getattr(getattr(config, "capital", None), "enabled", False):
         checks = [
             _capital_account_check(capital_overview, config),
-            _capital_freshness_check(reader, capital_overview, config, now),
+            _capital_freshness_check(reader, capital_overview, analysis, config, now),
             _capital_decision_check(capital_overview, now),
             _capital_execution_check(capital_overview, now),
             _capital_performance_check(capital_overview),
@@ -124,40 +124,66 @@ def _capital_account_check(
 def _capital_freshness_check(
     reader: DashboardReader,
     overview: CapitalOverview | None,
+    analysis: AnalysisRuntimeStatus,
     config,
     now: datetime,
 ) -> dict:
     spot_at = reader.latest_market_observed_at()
-    perpetual_at = reader.latest_perpetual_observed_at()
     account = overview.account if overview is not None else None
-    if spot_at is None or perpetual_at is None or account is None:
-        return _check("capital_freshness", "资本事实新鲜度", "unknown", "事实尚未齐备")
-    ages = (
-        (now - spot_at).total_seconds(),
-        (now - perpetual_at).total_seconds(),
-        (now - account.as_of).total_seconds(),
+    products = {
+        item.instrument.product.value for item in config.capital.execution_specs
+    }
+    perpetual_at = (
+        reader.latest_perpetual_observed_at()
+        if any(product != "SPOT" for product in products)
+        else None
     )
+    owner_symbol = config.capital.execution_specs[0].instrument.symbol
+    owner_scope = next(
+        (item for item in analysis.scopes if item.symbol == owner_symbol),
+        None,
+    )
+    if (
+        spot_at is None
+        or account is None
+        or owner_scope is None
+        or owner_scope.heartbeat_seconds is None
+        or (perpetual_at is None and any(product != "SPOT" for product in products))
+    ):
+        return _check("capital_freshness", "资本事实新鲜度", "unknown", "事实尚未齐备")
+    ages = [
+        (
+            "Spot",
+            (now - spot_at).total_seconds(),
+            config.capital.risk.maximum_quote_age_seconds,
+        )
+    ]
+    if perpetual_at is not None:
+        ages.append(
+            (
+                "Perpetual",
+                (now - perpetual_at).total_seconds(),
+                config.capital.risk.maximum_quote_age_seconds,
+            )
+        )
     account_limit = (
-        config.trigger.heartbeat_minutes * 60
+        owner_scope.heartbeat_seconds
         + config.shadow.analysis_deadline_seconds
     )
-    limits = (
-        config.capital.risk.maximum_quote_age_seconds,
-        config.capital.risk.maximum_quote_age_seconds,
-        account_limit,
+    ages.append(
+        ("账户", (now - account.as_of).total_seconds(), account_limit)
     )
-    if any(age < 0 for age in ages):
+    if any(age < 0 for _, age, _ in ages):
         return _check("capital_freshness", "资本事实新鲜度", "bad", "事实时间晚于当前时间")
-    stale = any(age > limit for age, limit in zip(ages, limits, strict=True))
+    stale = any(age > limit for _, age, limit in ages)
+    origin = owner_scope.trigger_plan_origin or "UNKNOWN"
+    revision = owner_scope.trigger_plan_revision
     return _check(
         "capital_freshness",
         "资本事实新鲜度",
         "bad" if stale else "ok",
-        (
-            f"Spot {int(ages[0])}/{limits[0]} 秒 · "
-            f"Perpetual {int(ages[1])}/{limits[1]} 秒 · "
-            f"账户 {int(ages[2])}/{limits[2]} 秒"
-        ),
+        " · ".join(f"{label} {int(age)}/{limit} 秒" for label, age, limit in ages)
+        + f" · TriggerPlan r{revision or '?'} {origin}",
     )
 
 
@@ -360,23 +386,45 @@ def _analysis_check(
     config,
     now: datetime,
 ) -> dict:
-    scope_states: list[tuple[int, str, float | None, int | None, str]] = []
+    scope_states: list[
+        tuple[int, str, float | None, int | None, str, int | None, str | None]
+    ] = []
     for scope in status.scopes:
         if scope.latest_success_at is None or scope.heartbeat_seconds is None:
-            scope_states.append((1, "unknown", None, None, scope.symbol))
+            scope_states.append(
+                (
+                    1,
+                    "unknown",
+                    None,
+                    None,
+                    scope.symbol,
+                    scope.trigger_plan_revision,
+                    scope.trigger_plan_origin,
+                )
+            )
             continue
         age = (now - scope.latest_success_at).total_seconds()
         expected = scope.heartbeat_seconds + config.shadow.analysis_deadline_seconds
         if age < 0 or age > expected * 2:
-            scope_states.append((3, "bad", age, expected, scope.symbol))
+            severity = (3, "bad")
         elif age > expected:
-            scope_states.append((2, "warn", age, expected, scope.symbol))
+            severity = (2, "warn")
         else:
-            scope_states.append((0, "ok", age, expected, scope.symbol))
+            severity = (0, "ok")
+        scope_states.append(
+            (
+                *severity,
+                age,
+                expected,
+                scope.symbol,
+                scope.trigger_plan_revision,
+                scope.trigger_plan_origin,
+            )
+        )
     if not scope_states:
         return _check("ai_analysis", "AI 分析", "unknown", "当前版本缺少分析作用域")
     worst = max(scope_states, key=lambda item: item[0])
-    _, state, age, expected, symbol = worst
+    _, state, age, expected, symbol, revision, origin = worst
     if (
         _SEVERITY[state] < _SEVERITY["warn"]
         and status.recent_attempts >= 3
@@ -389,6 +437,7 @@ def _analysis_check(
         detail = f"{symbol} 完成时间晚于当前时间"
     else:
         detail = f"最久 {symbol} {int(age)}/{expected} 秒"
+    detail += f" · TriggerPlan r{revision or '?'} {origin or 'UNKNOWN'}"
     return _check(
         "ai_analysis",
         "AI 分析",

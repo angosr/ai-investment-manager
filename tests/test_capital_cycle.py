@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, func, insert, select, update
 
 from investment_manager.decision_cycle.capital import (
     CapitalForecastSource,
+    CapitalTriggerConsumer,
     assemble_capital_cycle,
 )
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
@@ -32,19 +33,12 @@ from investment_manager.forecast.contracts import (
 from investment_manager.forecast.models import (
     ExposureDirection,
     ForecastLeg,
-    ForecastQuantityMode,
     ForecastTarget,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
-from investment_manager.market.perpetual.models import (
-    FundingRateType,
-    FundingSettlement,
-    PerpetualMarketState,
-    PerpetualQuote,
-)
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.models import (
     CapitalCycleRecord,
@@ -62,6 +56,12 @@ from investment_manager.risk.portfolio import HoldingRiskOutcome, PortfolioHoldi
 from investment_manager.risk.tables import (
     portfolio_holding_risk_reviews,
     portfolio_risk_decisions,
+    risk_execution_authorizations,
+)
+from investment_manager.scheduling.models import (
+    AnalysisTriggerType,
+    TriggerBatch,
+    build_trigger_event,
 )
 from investment_manager.scheduling.tables import analysis_trigger_batches
 from investment_manager.schema import create_schema
@@ -74,35 +74,19 @@ _TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
 _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
 
 
-def _test_delta_neutral_target() -> ForecastTarget:
-    instruments = (
-        InstrumentId.binance_spot(
-            symbol="BTCUSDT",
-            base_asset="BTC",
-            quote_asset="USDT",
-        ),
-        InstrumentId(
-            product=InstrumentProduct.USD_M_PERPETUAL,
-            symbol="BTCUSDT",
-            base_asset="BTC",
-            quote_asset="USDT",
-            settlement_asset="USDT",
-        ),
-    )
+def _test_spot_target() -> ForecastTarget:
     return ForecastTarget.create(
-        tuple(
+        (
             ForecastLeg(
-                instrument=instrument,
-                direction=(
-                    ExposureDirection.LONG
-                    if instrument.product == InstrumentProduct.SPOT
-                    else ExposureDirection.SHORT
-                ),
-                gross_weight=Decimal("0.5"),
-            )
-            for instrument in instruments
+                instrument=InstrumentId.binance_spot(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
         ),
-        quantity_mode=ForecastQuantityMode.SAME_BASE_QUANTITY,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+            ),
+        ),
     )
 
 
@@ -139,7 +123,7 @@ class _FixedMockForecastProducer:
             slot_as_of=as_of,
             cutoff_prices=anchors,
         )
-        self.contracts.record_slot(slot)
+        self.contracts.record_slot(slot, binding=self.binding)
         forecast_id = stable_id("base_forecast", slot.slot_id, self.binding.producer_behavior_id)
         existing = self.store.forecast(forecast_id)
         if existing is not None:
@@ -194,7 +178,7 @@ class _NoForecastProducer:
             slot_as_of=as_of,
             cutoff_prices=(),
         )
-        self.contracts.record_slot(slot)
+        self.contracts.record_slot(slot, binding=self.binding)
         result = ForecastNoEstimate(
             result_id=stable_id(
                 "forecast_no_estimate", slot.slot_id, self.binding.producer_behavior_id
@@ -237,7 +221,7 @@ def _test_contract_and_binding(
     contract = ForecastContract.create(
         contract_version="test-carry-contract-v1",
         outcome_family_id=_TEST_FORECAST_FAMILY,
-        target=target or _test_delta_neutral_target(),
+        target=target or _test_spot_target(),
         outcome_buckets=buckets,
         horizon_minutes=7 * 24 * 60,
         decision_slot_rule="test-slot-v1",
@@ -345,8 +329,6 @@ def _put_market(
     sequence: int,
     spot_bid: str = "99990",
     spot_ask: str = "100000",
-    perpetual_bid: str = "100300",
-    perpetual_ask: str = "100310",
 ) -> None:
     market.put_quote(
         MarketQuote(
@@ -361,43 +343,6 @@ def _put_market(
         )
     )
 
-    perpetual = next(
-        item.instrument
-        for item in config.capital.execution_specs
-        if item.instrument.product == InstrumentProduct.USD_M_PERPETUAL
-    )
-    market.put_perpetual_quote(
-        PerpetualQuote(
-            quote_id=stable_id("perpetual_quote", perpetual.key, sequence),
-            instrument=perpetual,
-            exchange_time=at,
-            observed_at=at,
-            bid=Decimal(perpetual_bid),
-            bid_quantity=Decimal("2"),
-            ask=Decimal(perpetual_ask),
-            ask_quantity=Decimal("2"),
-            update_id=sequence,
-            source="test",
-        )
-    )
-    market.put_perpetual_state(
-        PerpetualMarketState(
-            state_id=stable_id(
-                "perpetual_market_state",
-                perpetual.key,
-                at.isoformat(),
-            ),
-            instrument=perpetual,
-            exchange_time=at,
-            observed_at=at,
-            mark_price=Decimal(perpetual_bid),
-            index_price=Decimal(spot_ask),
-            last_funding_rate=Decimal("0.0001"),
-            interest_rate=Decimal("0.0001"),
-            next_funding_time=at + timedelta(hours=4),
-            source="test",
-        )
-    )
 
 
 def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
@@ -421,37 +366,95 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
         )
 
 
-def _put_funding_history(
-    market: SqlMarketDataStore,
-    config,
-    *,
-    at: datetime,
-    rates: tuple[str, str, str] = ("0.0003", "0.0002", "0.0001"),
-) -> None:
-    perpetual = next(
-        item.instrument
-        for item in config.capital.execution_specs
-        if item.instrument.product == InstrumentProduct.USD_M_PERPETUAL
+class _TriggerCapitalStub:
+    portfolio_id = "primary"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, datetime]] = []
+
+    def recover_missed_forecasts(self, *, before_slot_at, completed_at):
+        self.calls.append(("recover", before_slot_at))
+        return ()
+
+    def record_missed_forecast(self, *, slot_at, completed_at):
+        self.calls.append(("missed", slot_at))
+        return ()
+
+    def review(self, batch):
+        self.calls.append(("review", batch.created_at))
+        return None
+
+    def cause_completed(self, cause_id):
+        del cause_id
+        return False
+
+    def produce(self, *, as_of, **kwargs):
+        del kwargs
+        self.calls.append(("produce", as_of))
+        return None
+
+
+def _runtime_batch(trigger_type: AnalysisTriggerType, *, at: datetime) -> TriggerBatch:
+    event = build_trigger_event(
+        trigger_type=trigger_type,
+        symbol="BTCUSDT",
+        pipeline_id="test-pipeline",
+        occurred_at=at,
+        observed_at=at,
+        priority=50,
+        dedup_key=f"{trigger_type.value}:{at.isoformat()}",
     )
-    for hours, rate in zip((24, 16, 8), rates, strict=True):
-        funding_at = at - timedelta(hours=hours)
-        market.put_funding_settlement(
-            FundingSettlement(
-                settlement_id=stable_id(
-                    "funding_settlement",
-                    perpetual.key,
-                    funding_at.isoformat(),
-                    FundingRateType.REGULAR.value,
-                ),
-                instrument=perpetual,
-                funding_time=funding_at,
-                observed_at=funding_at + timedelta(seconds=1),
-                funding_rate=rate,
-                mark_price="100000",
-                rate_type=FundingRateType.REGULAR,
-                source="test",
-            )
-        )
+    deadline = at + timedelta(minutes=5)
+    return TriggerBatch(
+        batch_id=stable_id(
+            "trigger_batch",
+            "BTCUSDT",
+            "test-pipeline",
+            1,
+            event.trigger_id,
+            deadline.isoformat(),
+        ),
+        symbol="BTCUSDT",
+        pipeline_id="test-pipeline",
+        plan_revision=1,
+        created_at=at,
+        deadline=deadline,
+        triggers=(event,),
+    )
+
+
+def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> None:
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.WORLD_MODEL_UPDATED, at=NOW))
+
+    assert capital.calls == [("review", NOW)]
+
+
+def test_late_cadence_is_a_no_estimate_then_current_risk_review() -> None:
+    at = NOW.replace(hour=4, minute=30)
+    slot = at.replace(minute=0)
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=at))
+
+    assert capital.calls == [
+        ("recover", slot),
+        ("missed", slot),
+        ("review", at),
+    ]
 
 
 def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
@@ -557,7 +560,6 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=7)
-    _put_funding_history(market, config, at=NOW)
     config, service = _candidate_service(config, engine)
 
     first = service.produce(
@@ -590,14 +592,14 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert first.groups[0].terminal
     assert first.groups[0].valid_until == NOW + timedelta(minutes=30)
     assert first.account.equity < Decimal("10000")
-    assert first.account.equity == Decimal("9996.91685")
+    assert first.account.equity == Decimal("9997.9750")
     assert first.account.revision == 1
     assert content_hash(first.account) == content_hash(
         first.account.model_copy(update={"revision": 0})
     )
-    assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.014")}
+    assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.015")}
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
         assert (
             connection.scalar(select(func.count()).select_from(portfolio_performance_intervals))
             == 1
@@ -613,17 +615,17 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
         == first.account
     )
     dto = serialize_capital_overview(overview)
-    assert dto["account"]["equity"] == "9996.91685"
+    assert dto["account"]["equity"] == "9997.9750"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
         "active_group_count": 0,
         "active_groups": [],
-        "total_order_count": 2,
+        "total_order_count": 1,
     }
     assert dto["performance"]["interval_count"] == 1
-    assert dto["performance"]["cumulative_net_pnl"] == "-3.08315"
+    assert dto["performance"]["cumulative_net_pnl"] == "-2.0250"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
-    assert dto["performance"]["latest"]["net_pnl"] == "-3.08315"
+    assert dto["performance"]["latest"]["net_pnl"] == "-2.0250"
     activity = CapitalDashboardReader(engine, config).activity()
     assert len(activity) == 2
     activity_by_symbol = {item.symbol: item for item in activity}
@@ -641,62 +643,6 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert first_page[0].activity_id != second_page[0].activity_id
 
 
-def test_configured_cash_carry_program_uses_the_authoritative_capital_path() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    base = load_config("config/investment-manager.shadow.yaml")
-    authorization = MockCandidateAuthorization(
-        version="cash-carry-forward-authorization-v1",
-        producer_id="btc-cash-carry",
-        producer_behavior_id="btc-cash-carry-behavior-v1",
-        outcome_family_id="btc-delta-neutral-carry",
-        hypothesis_fingerprint="b" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
-    )
-    assert base.capital.cash_carry_program is not None
-    program = base.capital.cash_carry_program.model_copy(
-        update={
-            "enabled": True,
-            "funding_lookback_hours": 72,
-            "minimum_funding_samples": 3,
-            "minimum_positive_funding_fraction": Decimal("0.66"),
-        }
-    )
-    config = base.model_copy(
-        update={
-            "capital": base.capital.model_copy(
-                update={
-                    "cash_carry_program": program,
-                    "context_forecast": base.capital.context_forecast.model_copy(
-                        update={"enabled": False}
-                    ),
-                    "mock_candidate_authorizations": (authorization,),
-                }
-            )
-        }
-    )
-    market = SqlMarketDataStore(engine)
-    _put_market(market, config, at=NOW, sequence=700)
-    _put_funding_history(market, config, at=NOW)
-
-    result = assemble_capital_cycle(config, engine).produce(
-        as_of=NOW,
-        cause_id="configured-carry-program",
-        trigger_batch_id="configured-carry-program",
-        symbol="BTCUSDT",
-        trigger_types=("HEARTBEAT",),
-    )
-
-    assert isinstance(result, TradePlanExecutionResult)
-    assert result.groups and result.groups[0].terminal
-    target = SqlPortfolioStore(engine).target_for_cycle(result.groups[0].cycle_id)
-    assert target is not None
-    assert target.sleeves[0].forecast_family == program.outcome_family_id
-    assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
-
-
 def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -704,7 +650,6 @@ def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain()
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=at, sequence=70)
-    _put_funding_history(market, config, at=at)
 
     config, service = _candidate_service(config, engine)
     result = service.produce(
@@ -723,7 +668,7 @@ def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain()
     assert target.sleeves[0].decision_net_bps > Decimal("5")
     assert target.sleeves[0].desired_gross_notional == Decimal("3000")
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
 
 
 def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
@@ -733,12 +678,6 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=at, sequence=71)
-    _put_funding_history(
-        market,
-        config,
-        at=at,
-        rates=("0.00001", "0.00001", "0.00001"),
-    )
 
     config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
     result = service.produce(
@@ -799,7 +738,6 @@ def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=8)
-    _put_funding_history(market, config, at=NOW)
     available_at = NOW + timedelta(seconds=5)
     config, service = _candidate_service(
         config,
@@ -830,7 +768,6 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=1)
-    _put_funding_history(market, config, at=NOW)
     config, service = _candidate_service(config, engine)
 
     opened = service.produce(as_of=NOW)
@@ -842,10 +779,6 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
         config,
         at=missed,
         sequence=3,
-        spot_bid="103000",
-        spot_ask="103010",
-        perpetual_bid="103280",
-        perpetual_ask="103290",
     )
     config, restarted = _candidate_service(config, engine, emit=False)
     after_restart = restarted.produce(
@@ -862,13 +795,17 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     overview = CapitalDashboardReader(engine, config).overview(now=missed)
     dto = serialize_capital_overview(overview)
     assert dto["decision"]["as_of"] == missed.isoformat()
-    assert "EXPIRED_FORECAST_EXIT" in dto["decision"]["reason_codes"]
+    assert "PROGRAMMATIC_RISK_EXIT" in dto["decision"]["reason_codes"]
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 2
-        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 4
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+        assert (
+            connection.scalar(select(func.count()).select_from(risk_execution_authorizations))
+            == 2
+        )
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
-    assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
+    assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes
 
 
 def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
@@ -884,7 +821,6 @@ def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
     )
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=10)
-    _put_funding_history(market, config, at=NOW)
     config, service = _candidate_service(config, engine)
 
     forced_cash = service.produce(as_of=NOW)
@@ -907,7 +843,6 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
     loaded = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, loaded, at=NOW, sequence=20)
-    _put_funding_history(market, loaded, at=NOW)
     loaded, service = _candidate_service(loaded, engine)
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
@@ -928,7 +863,7 @@ def test_holding_kill_switch_exits_through_the_normal_grouped_chain() -> None:
     assert isinstance(exited, TradePlanExecutionResult)
     assert not exited.account.positions
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 4
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
         payload = connection.execute(select(portfolio_holding_risk_reviews.c.payload)).scalar_one()
     review = PortfolioHoldingRiskReview.model_validate(payload)
     assert review.outcome == HoldingRiskOutcome.EXIT

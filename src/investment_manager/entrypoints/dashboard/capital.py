@@ -36,6 +36,7 @@ from investment_manager.forecast.tables import (
     forecast_decision_slots,
     forecast_no_estimates,
     forecast_outcomes,
+    forecast_slot_obligations,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.kernel.time import require_utc
@@ -246,9 +247,18 @@ class CapitalDashboardReader:
         due_slot_count = int(
             connection.scalar(
                 select(func.count())
-                .select_from(forecast_decision_slots)
+                .select_from(
+                    forecast_slot_obligations.join(
+                        forecast_decision_slots,
+                        forecast_decision_slots.c.slot_id
+                        == forecast_slot_obligations.c.slot_id,
+                    )
+                )
                 .where(
                     forecast_decision_slots.c.contract_id == contract.contract_id,
+                    forecast_slot_obligations.c.producer_id == policy.producer_id,
+                    forecast_slot_obligations.c.producer_behavior_id
+                    == policy.producer_behavior_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                 )
             )
@@ -343,6 +353,7 @@ class CapitalDashboardReader:
             required_non_overlapping_samples=(
                 self._config.calibration.minimum_non_overlapping_samples
             ),
+            permission_evidence_eligible=contract.permission_evidence_eligible,
         )
 
     def activity(
@@ -434,9 +445,20 @@ class CapitalDashboardReader:
                 else {}
             )
             approved_ids = tuple(
-                item.approved_target.approved_target_id
-                for item in risks.values()
-                if item.approved_target is not None
+                sorted(
+                    {
+                        *(
+                            item.approved_target.approved_target_id
+                            for item in risks.values()
+                            if item.approved_target is not None
+                        ),
+                        *(
+                            item.execution_authorization_id
+                            for item in records
+                            if item.execution_authorization_id is not None
+                        ),
+                    }
+                )
             )
             plans = (
                 {
@@ -521,6 +543,44 @@ class CapitalDashboardReader:
                 outcome=record.outcome.value,
                 summary=self._routine_summary(record),
                 reason_codes=record.reason_codes,
+            )
+        if (
+            record.outcome == CapitalCycleOutcome.RISK_EXIT
+            and record.execution_authorization_id is not None
+        ):
+            plan = plans.get(record.execution_authorization_id)
+            if plan is None:
+                return CapitalActivity(
+                    activity_id=record.record_id,
+                    at=record.evaluated_at,
+                    symbol=record.symbol,
+                    trigger_types=record.trigger_types,
+                    outcome="PENDING",
+                    summary="程序化风控已要求减险，等待交易计划",
+                    reason_codes=record.reason_codes,
+                    risk_outcome="REDUCE_ONLY",
+                )
+            groups = tuple(groups_by_plan.get(plan.plan_id, ()))
+            order_count = order_counts.get(plan.plan_id, 0)
+            if not groups:
+                outcome = "NO_ORDER"
+                summary = "程序化减险已授权，当前数量无需下单"
+            elif all(item.terminal for item in groups):
+                outcome = "EXECUTED"
+                summary = f"程序化减险完成：{len(groups)} 个交易组，{order_count} 笔订单"
+            else:
+                outcome = "EXECUTING"
+                summary = f"程序化减险执行中：{len(groups)} 个交易组，{order_count} 笔订单"
+            return CapitalActivity(
+                activity_id=record.record_id,
+                at=record.evaluated_at,
+                symbol=record.symbol,
+                trigger_types=record.trigger_types,
+                outcome=outcome,
+                summary=summary,
+                reason_codes=record.reason_codes,
+                risk_outcome="REDUCE_ONLY",
+                order_count=order_count,
             )
         if target is None:
             raise ValueError("Capital activity record 缺少绑定 Target")
@@ -833,6 +893,9 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 None
                 if overview.forecast_evidence.result_coverage is None
                 else str(overview.forecast_evidence.result_coverage)
+            ),
+            "permission_evidence_eligible": (
+                overview.forecast_evidence.permission_evidence_eligible
             ),
             "forecast_count": overview.forecast_evidence.forecast_count,
             "no_estimate_count": overview.forecast_evidence.no_estimate_count,
