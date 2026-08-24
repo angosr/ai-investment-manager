@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 panel:
-  version: panel-policy-v5
+  version: panel-policy-v6
   schema_version: panel-v1
   max_characters: 12000
   max_evidence: 20

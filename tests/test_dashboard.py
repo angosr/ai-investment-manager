@@ -447,6 +447,20 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
     assert checks["capital_performance"]["state"] == "ok"
     assert "reconciliation" not in checks
 
+    cash_without_action = assemble_health(
+        reader,
+        config,
+        now=now,
+        capital_overview=CapitalOverview(enabled=True, account=overview.account),
+    )
+    cash_checks = {item["key"]: item for item in cash_without_action["checks"]}
+    assert cash_checks["capital_decision"] == {
+        "key": "capital_decision",
+        "name": "资本决策",
+        "state": "ok",
+        "detail": "当前全现金 · 无待执行资本动作",
+    }
+
     overview.account.revision = 1
     broken = assemble_health(
         reader,

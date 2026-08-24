@@ -198,6 +198,13 @@ def _capital_decision_check(
         return _check("capital_decision", "资本决策", "unknown", "等待首次评估")
     if target is None:
         if record is None:
+            if not getattr(account, "sleeves", ()):
+                return _check(
+                    "capital_decision",
+                    "资本决策",
+                    "ok",
+                    "当前全现金 · 无待执行资本动作",
+                )
             return _check("capital_decision", "资本决策", "unknown", "等待首次决策记录")
         return _check(
             "capital_decision",
