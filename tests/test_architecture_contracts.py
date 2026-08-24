@@ -1248,6 +1248,16 @@ def test_capital_decision_language_is_venue_neutral() -> None:
     assert violations == {}
 
 
+def test_capital_application_does_not_select_deployment_adapter() -> None:
+    source = (PACKAGE_ROOT / "decision_cycle" / "capital.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DeploymentStage" not in source
+    assert "SqlMockProductVenue" not in source
+    assert "config.shadow" not in source
+
+
 def test_package_root_contains_only_composition_entries() -> None:
     assert {
         path.name

@@ -18,6 +18,7 @@ from investment_manager.entrypoints.dashboard.capital import (
 )
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
+from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -74,6 +75,17 @@ NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
 _TEST_PRODUCER_ID = "test-capital-candidate"
 _TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
 _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
+
+
+def _assemble_capital_cycle(config, engine, **kwargs):
+    execution = assemble_product_execution_runtime(config, engine)
+    return assemble_capital_cycle(
+        config,
+        engine,
+        venue=execution.venue,
+        initial_cash=execution.initial_cash,
+        **kwargs,
+    )
 
 
 def _test_spot_target() -> ForecastTarget:
@@ -328,7 +340,7 @@ def _candidate_service(
         risk_template=configured.capital.sleeve_risk,
         capital_authorization=authorization,
     )
-    return configured, assemble_capital_cycle(
+    return configured, _assemble_capital_cycle(
         configured,
         engine,
         forecast_sources=(source,),
@@ -527,7 +539,7 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=6)
 
-    result = assemble_capital_cycle(config, engine).produce(
+    result = _assemble_capital_cycle(config, engine).produce(
         as_of=NOW,
         cause_id="cash-observation-batch",
         trigger_batch_id="cash-observation-batch",
@@ -554,7 +566,7 @@ def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=61)
-    assemble_capital_cycle(config, engine, forecast_sources=()).produce(
+    _assemble_capital_cycle(config, engine, forecast_sources=()).produce(
         as_of=NOW,
         cause_id="retired-no-opportunity",
         trigger_batch_id="retired-no-opportunity",
@@ -579,7 +591,7 @@ def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
     old_slot = NOW - timedelta(hours=1)
     _put_market(market, config, at=old_slot, sequence=62)
     _put_market(market, config, at=NOW, sequence=63)
-    service = assemble_capital_cycle(config, engine, forecast_sources=())
+    service = _assemble_capital_cycle(config, engine, forecast_sources=())
     service.produce(
         as_of=NOW,
         cause_id="current-cash-observation",

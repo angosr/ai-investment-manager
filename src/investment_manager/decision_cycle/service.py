@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from temporalio.client import Client
 
 from investment_manager.decision_cycle.capital import (
+    CapitalCycleService,
     CapitalTriggerConsumer,
     assemble_capital_cycle,
 )
@@ -14,6 +15,7 @@ from investment_manager.decision_cycle.trigger import (
     TriggerCoordinatorActivities,
     TriggerDispatchBuilder,
 )
+from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
@@ -60,9 +62,9 @@ def run_trigger_service(
         if terminated and on_superseded is not None:
             on_superseded(terminated)
         capital_consumer = (
-            assemble_capital_cycle(
-                config,
-                engine,
+            _assemble_capital_consumer(
+                config=config,
+                engine=engine,
                 code_version=manifest.code_version,
                 producer_activation_at=manifest.created_at,
             )
@@ -146,3 +148,21 @@ def run_trigger_service(
         )
         with PostgresOutboxListener(engine) as wakeup:
             asyncio.run(run(wakeup))
+
+
+def _assemble_capital_consumer(
+    *,
+    config: AppConfig,
+    engine,
+    code_version: str,
+    producer_activation_at: datetime,
+) -> CapitalCycleService:
+    execution = assemble_product_execution_runtime(config, engine)
+    return assemble_capital_cycle(
+        config,
+        engine,
+        venue=execution.venue,
+        initial_cash=execution.initial_cash,
+        code_version=code_version,
+        producer_activation_at=producer_activation_at,
+    )

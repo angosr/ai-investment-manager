@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Protocol
 
 from investment_manager.decision_cycle.portfolio import (
@@ -24,7 +25,7 @@ from investment_manager.execution.group.repository import SqlExecutionGroupStore
 from investment_manager.execution.planning.planner import TradePlan, TradePlanner
 from investment_manager.execution.planning.repository import SqlTradePlanStore
 from investment_manager.execution.venue.observation import SqlProductOrderObservationStore
-from investment_manager.execution.venue.product_mock import SqlMockProductVenue
+from investment_manager.execution.venue.product import ProductOrderVenue
 from investment_manager.forecast.codex.repository import (
     SqlAccountLeaseStore,
     SqlCodexAuditStore,
@@ -49,7 +50,6 @@ from investment_manager.forecast.contracts import (
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import Forecast
-from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -1008,12 +1008,16 @@ def assemble_capital_cycle(
     config: AppConfig,
     engine,
     *,
+    venue: ProductOrderVenue,
+    initial_cash: Decimal,
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
     code_version: str | None = None,
     producer_activation_at: datetime | None = None,
 ) -> CapitalCycleService:
-    if not config.capital.enabled or config.deployment.stage != DeploymentStage.SHADOW:
-        raise ValueError("Capital cycle 只装配显式启用的 SHADOW")
+    if not config.capital.enabled:
+        raise ValueError("Capital cycle 未启用")
+    if initial_cash <= 0:
+        raise ValueError("Capital 初始现金必须为正数")
     market = SqlMarketDataStore(engine)
     forecasts = SqlForecastStore(engine)
     contracts = SqlForecastContractStore(engine)
@@ -1134,17 +1138,11 @@ def assemble_capital_cycle(
     plans = SqlTradePlanStore(engine)
     groups = SqlExecutionGroupStore(engine)
     observations = SqlProductOrderObservationStore(engine)
-    venue = SqlMockProductVenue(
-        engine,
-        fee_bps_by_instrument={
-            item.instrument.key: item.fee_bps for item in config.capital.execution_specs
-        },
-    )
     account_projection = ProductAccountProjectionService(
         projector=ProductAccountProjector(
             portfolio_id=config.capital.decision.portfolio_id,
             settlement_asset=config.capital.settlement_asset,
-            initial_cash=config.shadow.initial_quote_balance,
+            initial_cash=initial_cash,
         ),
         groups=groups,
         observations=observations,
