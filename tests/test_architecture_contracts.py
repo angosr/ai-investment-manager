@@ -1225,6 +1225,7 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
         ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
         ROOT / "web" / "src" / "components" / "CapitalEquityHero.tsx",
+        ROOT / "web" / "src" / "components" / "EquityHero.tsx",
     )
     forbidden = (
         "mock_authorization",
@@ -1234,6 +1235,7 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         "模拟交易",
         "模拟订单",
         "模拟执行",
+        "模拟账户",
     )
 
     violations = {
