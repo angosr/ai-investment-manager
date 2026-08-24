@@ -24,10 +24,10 @@ class ForecastProducerKind(StrEnum):
 
 class ForecastPermission(StrEnum):
     RESEARCH = "RESEARCH"
-    CAPITAL_CANDIDATE = "CAPITAL_CANDIDATE"
-    # Historical bindings remain readable; new bindings must not encode the
-    # deployment venue in Forecast or capital-domain vocabulary.
-    MOCK = "MOCK"
+    # The stored value is retained so immutable pre-neutral-vocabulary bindings
+    # keep the same identity. Domain code only sees capital eligibility; venue
+    # selection remains a system-assembly concern.
+    CAPITAL_CANDIDATE = "MOCK"
 
 
 class ForecastNoEstimateReason(StrEnum):
