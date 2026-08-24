@@ -45,6 +45,7 @@ class TriggerCoordinatorWorkflow:
         self._last_analysis_at: datetime | None = None
         self._completed_batches = 0
         self._failed_batches = 0
+        self._unresolved_failure = False
         self._stopping = False
         self._last_batch_id: str | None = None
         self._active_batch_id: str | None = None
@@ -59,6 +60,7 @@ class TriggerCoordinatorWorkflow:
             "pending_count": len(self._pending),
             "completed_batches": self._completed_batches,
             "failed_batches": self._failed_batches,
+            "unresolved_failure": self._unresolved_failure,
             "last_batch_id": self._last_batch_id,
             "active_batch_id": self._active_batch_id,
             "next_reconsider_at": (
@@ -133,6 +135,7 @@ class TriggerCoordinatorWorkflow:
         self._seen = set(self._seen_order)
         self._completed_batches = int(state.get("completed_batches", 0))
         self._failed_batches = int(state.get("failed_batches", 0))
+        self._unresolved_failure = bool(state.get("unresolved_failure", False))
         initial_plan = request["plan"]
         current_revision = self._plan.get("revision") if self._plan else 0
         if int(initial_plan.get("revision", 0)) > int(current_revision):
@@ -152,7 +155,7 @@ class TriggerCoordinatorWorkflow:
             if self._frozen_retry_batch is not None:
                 batch = TriggerBatch.model_validate(self._frozen_retry_batch)
                 if now >= batch.deadline:
-                    self._fail_batch(batch)
+                    self._fail_batch(batch, failed_at=now)
                     continue
                 retry_at = self._input_retry_not_before or now
                 self._next_reconsider_at = retry_at
@@ -195,7 +198,7 @@ class TriggerCoordinatorWorkflow:
                 permanent_failure,
             ) = await self._build_dispatches(batch.model_dump(mode="json"))
             if permanent_failure:
-                self._fail_batch(batch)
+                self._fail_batch(batch, failed_at=workflow.now())
                 continue
             if dispatches is None:
                 if retry_frozen_batch:
@@ -220,6 +223,9 @@ class TriggerCoordinatorWorkflow:
                 )
                 if not all(results):
                     self._failed_batches += 1
+                    self._unresolved_failure = True
+                else:
+                    self._unresolved_failure = False
             finally:
                 self._active_batch_id = None
             completed_at = workflow.now()
@@ -424,11 +430,16 @@ class TriggerCoordinatorWorkflow:
             or _parse_time(item["expires_at"]) > now
         }
 
-    def _fail_batch(self, batch: TriggerBatch) -> None:
+    def _fail_batch(self, batch: TriggerBatch, *, failed_at: datetime) -> None:
         for trigger in batch.triggers:
             self._pending.pop(trigger.trigger_id, None)
         self._last_batch_id = batch.batch_id
         self._failed_batches += 1
+        self._unresolved_failure = True
+        # A terminal heartbeat failure is consumed, not immediately regenerated
+        # from the previous successful anchor.  The next heartbeat is a fresh
+        # recovery opportunity after the normal interval.
+        self._last_analysis_at = failed_at
         self._active_batch_id = None
         self._frozen_retry_batch = None
         self._input_retry_not_before = None
@@ -492,6 +503,7 @@ class TriggerCoordinatorWorkflow:
                 "seen_trigger_ids": self._seen_order,
                 "completed_batches": self._completed_batches,
                 "failed_batches": self._failed_batches,
+                "unresolved_failure": self._unresolved_failure,
             },
         }
 

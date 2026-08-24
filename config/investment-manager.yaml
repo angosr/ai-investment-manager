@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 panel:
-  version: panel-policy-v7
+  version: panel-policy-v8
   schema_version: panel-v1
   max_characters: 12000
   max_evidence: 20
@@ -295,7 +295,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v21
+  version: analysis-trigger-v22
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120

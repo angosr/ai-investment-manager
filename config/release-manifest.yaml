@@ -7,7 +7,7 @@ parent_manifest_id: release-framework-forecast-baseline-v1
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
-  - [panel, panel-policy-v7]
+  - [panel, panel-policy-v8]
   - [decision_state, portfolio-state-v36]
   - [strategy, price-trend-v4]
   - [calibration, edge-calibration-v1]
@@ -18,7 +18,7 @@ component_versions:
   - [execution, mock-execution-v1]
   - [reconciliation, reconciliation-v1]
   - [outcome_evaluation, outcome-window-v9]
-  - [trigger, analysis-trigger-v21]
+  - [trigger, analysis-trigger-v22]
   - [temporal, temporal-analysis-v3]
   - [market_data, binance-public-shadow-v9]
   - [shadow, shadow-simulation-v2]

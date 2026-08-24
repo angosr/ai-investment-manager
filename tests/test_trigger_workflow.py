@@ -148,6 +148,7 @@ def test_trigger_coordinator_deduplicates_and_runs_one_event_batch(app_config) -
                 assert status["completed_batches"] == 1, status
                 assert status["pending_count"] == 0
                 assert status["active_batch_id"] is None
+                assert status["unresolved_failure"] is False
                 await handle.signal(TriggerCoordinatorWorkflow.stop)
                 result = await handle.result()
                 assert result["completed_batches"] == 1
@@ -673,6 +674,7 @@ def test_trigger_coordinator_terminally_records_permanent_builder_failure(
                 status = await handle.query(TriggerCoordinatorWorkflow.status)
                 assert attempts == 1
                 assert status["failed_batches"] == 1
+                assert status["unresolved_failure"] is True
                 assert status["completed_batches"] == 0
                 assert status["pending_count"] == 0
                 await handle.signal(TriggerCoordinatorWorkflow.stop)

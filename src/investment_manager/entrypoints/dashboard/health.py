@@ -518,6 +518,16 @@ def _trigger_coordinator_check(statuses: tuple[dict, ...], now: datetime) -> dic
         )
     pending = sum(int(item.get("pending_count", 0)) for item in statuses)
     active = sum(item.get("active_batch_id") is not None for item in statuses)
+    unresolved_failures = sum(
+        item.get("unresolved_failure") is True for item in statuses
+    )
+    if unresolved_failures:
+        return _check(
+            "trigger_coordinator",
+            "触发协调器",
+            "bad",
+            f"{unresolved_failures} 个协调器最近一批处理失败，等待成功复核",
+        )
     overdue_or_unknown = 0
     for item in statuses:
         count = int(item.get("pending_count", 0))

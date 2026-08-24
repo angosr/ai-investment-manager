@@ -679,6 +679,45 @@ def test_health_treats_policy_deferred_triggers_as_healthy() -> None:
     assert result["overall"] == "ok"
 
 
+def test_health_keeps_terminal_trigger_failure_visible_until_recovery() -> None:
+    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+    reader = SimpleNamespace(
+        latest_reconciliation=lambda *, now: report,
+        latest_market_observed_at=lambda: now,
+        portfolio_protection_active=lambda: False,
+        analysis_runtime_status=lambda *, now: _analysis_status(now),
+    )
+    config = SimpleNamespace(
+        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
+        risk=SimpleNamespace(
+            maximum_market_age_seconds=60,
+            maximum_account_age_seconds=60,
+            kill_switch=False,
+        ),
+        **_health_policy_extras(),
+    )
+
+    result = assemble_health(
+        reader,
+        config,
+        now=now,
+        coordinator_statuses=(
+            {
+                "symbol": "BTCUSDT",
+                "pending_count": 0,
+                "active_batch_id": None,
+                "unresolved_failure": True,
+            },
+        ),
+    )
+
+    check = next(item for item in result["checks"] if item["key"] == "trigger_coordinator")
+    assert check["state"] == "bad"
+    assert "最近一批处理失败" in check["detail"]
+    assert result["overall"] == "bad"
+
+
 @pytest.mark.parametrize(
     ("percent", "expected"),
     ((89.9, "ok"), (90.0, "warn"), (95.0, "bad")),
