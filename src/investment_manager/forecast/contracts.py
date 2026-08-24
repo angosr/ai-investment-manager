@@ -35,15 +35,6 @@ class ForecastPermission(StrEnum):
             return cls.CAPITAL_CANDIDATE
         return None
 
-    @property
-    def identity_value(self) -> str:
-        # Binding identity predates the neutral vocabulary. Keep its hash stable
-        # without keeping the obsolete word in the domain value.
-        if self is ForecastPermission.CAPITAL_CANDIDATE:
-            return "MOCK"
-        return self.value
-
-
 class ForecastNoEstimateReason(StrEnum):
     MARKET_INPUT_INVALID = "MARKET_INPUT_INVALID"
     REQUIRED_FEATURE_MISSING = "REQUIRED_FEATURE_MISSING"
@@ -281,6 +272,38 @@ class ForecastProducerBinding(FrozenModel):
     permission: ForecastPermission
     required_feature_keys: tuple[str, ...] = ()
 
+    @classmethod
+    def create(
+        cls,
+        *,
+        contract_id: str,
+        producer_kind: ForecastProducerKind,
+        producer_id: str,
+        producer_behavior_id: str,
+        permission: ForecastPermission,
+        required_feature_keys: tuple[str, ...] = (),
+    ) -> ForecastProducerBinding:
+        """Create a binding from investment eligibility, independent of its Venue."""
+
+        feature_keys = tuple(sorted(set(required_feature_keys)))
+        return cls(
+            binding_id=stable_id(
+                "forecast_producer_binding",
+                contract_id,
+                producer_kind.value,
+                producer_id,
+                producer_behavior_id,
+                permission.value,
+                feature_keys,
+            ),
+            contract_id=contract_id,
+            producer_kind=producer_kind,
+            producer_id=producer_id,
+            producer_behavior_id=producer_behavior_id,
+            permission=permission,
+            required_feature_keys=feature_keys,
+        )
+
     @model_validator(mode="after")
     def identity_and_requirements_are_canonical(self):
         if tuple(sorted(set(self.required_feature_keys))) != self.required_feature_keys:
@@ -291,10 +314,26 @@ class ForecastProducerBinding(FrozenModel):
             self.producer_kind.value,
             self.producer_id,
             self.producer_behavior_id,
-            self.permission.identity_value,
+            self.permission.value,
             self.required_feature_keys,
         )
-        if self.binding_id != expected:
+        # Historical immutable capital bindings used a deployment-flavoured
+        # identity token.  They remain readable for audit, but create() never
+        # emits that identity and current investment logic never consumes it.
+        legacy_expected = (
+            stable_id(
+                "forecast_producer_binding",
+                self.contract_id,
+                self.producer_kind.value,
+                self.producer_id,
+                self.producer_behavior_id,
+                "MOCK",
+                self.required_feature_keys,
+            )
+            if self.permission is ForecastPermission.CAPITAL_CANDIDATE
+            else None
+        )
+        if self.binding_id not in {expected, legacy_expected}:
             raise ValueError("ForecastProducerBinding binding_id 与内容不一致")
         return self
 

@@ -271,16 +271,7 @@ def _test_contract_and_binding(
         ),
         decision_benchmark="cash-v1",
     )
-    binding = ForecastProducerBinding(
-        binding_id=stable_id(
-            "forecast_producer_binding",
-            contract.contract_id,
-            ForecastProducerKind.PROGRAM.value,
-            _TEST_PRODUCER_ID,
-            _TEST_PRODUCER_VERSION,
-            ForecastPermission.CAPITAL_CANDIDATE.identity_value,
-            (),
-        ),
+    binding = ForecastProducerBinding.create(
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.PROGRAM,
         producer_id=_TEST_PRODUCER_ID,

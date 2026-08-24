@@ -1055,16 +1055,7 @@ def assemble_capital_cycle(
                 instrument=instrument,
                 cost_semantics_version=config.capital.decision.cost_model_version,
             )
-            binding = ForecastProducerBinding(
-                binding_id=stable_id(
-                    "forecast_producer_binding",
-                    contract.contract_id,
-                    ForecastProducerKind.CONTEXT.value,
-                    context.producer_id,
-                    context.producer_behavior_id,
-                    ForecastPermission.CAPITAL_CANDIDATE.identity_value,
-                    context.required_feature_keys,
-                ),
+            binding = ForecastProducerBinding.create(
                 contract_id=contract.contract_id,
                 producer_kind=ForecastProducerKind.CONTEXT,
                 producer_id=context.producer_id,
