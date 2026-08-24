@@ -139,7 +139,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
               <Fragment key={item.forecast_id}>
                 <dt>候选经济性</dt>
                 <dd>
-                  毛收益 {formatBps(item.gross_bps)} bp − 完整开平仓成本 {formatBps(item.estimated_round_trip_cost_bps)} bp
+                  剩余毛收益 {formatBps(item.gross_bps)} bp − 当时估计成本 {formatBps(item.estimated_cost_bps)} bp
                   = 费用后 {formatBps(item.net_bps)} bp；本次门槛 {formatBps(item.decision_threshold_bps)} bp
                 </dd>
                 <dt>资金比较</dt>

@@ -133,11 +133,11 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v24
+  version: spot-capital-v25
   enabled: false
   settlement_asset: USDT
   decision:
-    version: portfolio-net-edge-v4
+    version: portfolio-net-edge-v5
     portfolio_id: primary
     enabled: true
     minimum_conservative_net_bps: "5"
@@ -145,6 +145,7 @@ capital:
     maximum_single_sleeve_fraction: "0.30"
     minimum_rebalance_notional: "25"
     target_validity_minutes: 30
+    cost_model_version: executable-state-transition-v1
   risk:
     version: spot-portfolio-risk-v4
     instrument_allowlist: [BINANCE:SPOT:BTCUSDT]
@@ -185,12 +186,12 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v5
+    version: btc-context-forecast-v6
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "0c75420aaa8afd052db3a26d047f66524f5101ecbb56dffa02b40ac6a9cdf1a5"
+    producer_behavior_id: "456743687b2ab8be1bdb79eb49c23eb5422fddd54af600819c18b2def2426f70"
     outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v3
+    contract_version: btc-spot-directional-4h-v4
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     horizon_minutes: 240
     cadence_minutes: 240

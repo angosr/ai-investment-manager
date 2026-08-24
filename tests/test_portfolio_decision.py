@@ -24,7 +24,7 @@ from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
     PortfolioSleeveInput,
-    remaining_forecast_gross_bps,
+    remaining_target_gross_bps,
 )
 from investment_manager.portfolio.models import (
     InstrumentPosition,
@@ -286,6 +286,25 @@ def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> 
     assert candidate.reason_codes == ("POSITIVE_NET_EDGE_SELECTED",)
 
 
+def test_existing_holding_does_not_pay_its_entry_fee_again() -> None:
+    target = _engine().decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(_input(_forecast(expected_bps="14")),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == Decimal("1000")
+    assert target.sleeves[0].cost.fee_bps == Decimal("10.00")
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert candidate.decision_net_bps == Decimal("4.00")
+    assert candidate.eligible
+
+
 def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
     target = _engine().decide(
         cycle_id="cycle-1",
@@ -308,15 +327,19 @@ def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
 
 def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None:
     forecast = _forecast()
-    favorable = remaining_forecast_gross_bps(
+    favorable = remaining_target_gross_bps(
         forecast,
+        current_gross_notional=Decimal("0"),
+        evaluation_gross_notional=Decimal("1000"),
         quote_by_instrument={item.instrument.key: item for item in _quotes(
             spot_bid="99", spot_ask="99", perpetual_bid="101", perpetual_ask="101"
         )},
         as_of=NOW,
     )
-    adverse = remaining_forecast_gross_bps(
+    adverse = remaining_target_gross_bps(
         forecast,
+        current_gross_notional=Decimal("0"),
+        evaluation_gross_notional=Decimal("1000"),
         quote_by_instrument={item.instrument.key: item for item in _quotes(
             spot_bid="101", spot_ask="101", perpetual_bid="99", perpetual_ask="99"
         )},
@@ -324,6 +347,35 @@ def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None
     )
     assert favorable > forecast.expected_gross_bps
     assert adverse < forecast.expected_gross_bps
+
+
+def test_repricing_uses_exit_side_for_the_retained_fraction() -> None:
+    forecast = _forecast()
+    quotes = {
+        item.instrument.key: item
+        for item in _quotes(
+            spot_bid="99.9",
+            spot_ask="100.1",
+            perpetual_bid="100",
+            perpetual_ask="100",
+        )
+    }
+    new_entry = remaining_target_gross_bps(
+        forecast,
+        current_gross_notional=Decimal("0"),
+        evaluation_gross_notional=Decimal("1000"),
+        quote_by_instrument=quotes,
+        as_of=NOW,
+    )
+    retained = remaining_target_gross_bps(
+        forecast,
+        current_gross_notional=Decimal("1000"),
+        evaluation_gross_notional=Decimal("1000"),
+        quote_by_instrument=quotes,
+        as_of=NOW,
+    )
+
+    assert retained == new_entry + Decimal("10")
 
 
 def test_base_forecast_requires_exact_behavior_authorization() -> None:
@@ -354,6 +406,8 @@ def test_expired_forecast_forces_an_existing_sleeve_to_cash() -> None:
     )
     assert target is not None
     assert target.sleeves[0].desired_gross_notional == 0
+    assert target.sleeves[0].decision_gross_bps == 0
+    assert target.sleeves[0].cost.fee_bps == Decimal("10.00")
     assert "EXPIRED_FORECAST_EXIT" in target.reason_codes
 
 

@@ -87,7 +87,7 @@ class CapitalCandidateEconomics:
     evidence_refs: tuple[str, ...]
     analysis_input: dict | None
     gross_bps: Decimal
-    estimated_round_trip_cost_bps: Decimal
+    estimated_cost_bps: Decimal
     net_bps: Decimal
     decision_threshold_bps: Decimal
     current_gross_notional: Decimal
@@ -717,7 +717,7 @@ class CapitalDashboardReader:
                         else None
                     ),
                     gross_bps=evaluation.decision_gross_bps,
-                    estimated_round_trip_cost_bps=evaluation.cost.total_bps,
+                    estimated_cost_bps=evaluation.cost.total_bps,
                     net_bps=evaluation.decision_net_bps,
                     decision_threshold_bps=evaluation.minimum_net_bps,
                     current_gross_notional=evaluation.current_gross_notional,
@@ -944,9 +944,7 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                         "evidence_refs": list(candidate.evidence_refs),
                         "analysis_input": candidate.analysis_input,
                         "gross_bps": str(candidate.gross_bps),
-                        "estimated_round_trip_cost_bps": str(
-                            candidate.estimated_round_trip_cost_bps
-                        ),
+                        "estimated_cost_bps": str(candidate.estimated_cost_bps),
                         "net_bps": str(candidate.net_bps),
                         "decision_threshold_bps": str(candidate.decision_threshold_bps),
                         "current_gross_notional": str(candidate.current_gross_notional),

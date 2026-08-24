@@ -326,7 +326,7 @@ class MockCandidateAuthorization(FrozenModel):
 
 
 class PortfolioCostEstimate(FrozenModel):
-    """Point-in-time, size-aware round-trip cost used by Portfolio."""
+    """Point-in-time future cost from the reconciled state to one target."""
 
     model_version: str = Field(min_length=1)
     gross_notional: Money

@@ -105,7 +105,7 @@ export interface CapitalAction {
     evidence_refs: string[];
     analysis_input: Record<string, unknown> | null;
     gross_bps: string;
-    estimated_round_trip_cost_bps: string;
+    estimated_cost_bps: string;
     net_bps: string;
     decision_threshold_bps: string;
     current_gross_notional: string;

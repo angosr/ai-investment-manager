@@ -33,7 +33,7 @@ class PortfolioDecisionPolicy(FrozenModel):
     maximum_single_sleeve_fraction: UnitInterval = Decimal("0.30")
     minimum_rebalance_notional: Money = Decimal("25")
     target_validity_minutes: int = Field(default=30, ge=1, le=1_440)
-    cost_model_version: str = Field(default="executable-round-trip-v1", min_length=1)
+    cost_model_version: str = Field(default="executable-state-transition-v1", min_length=1)
     exit_spread_multiplier: Decimal = Field(default=Decimal("1"), ge=1)
     depth_slippage_multiplier: Decimal = Field(default=Decimal("1"), ge=0)
 
@@ -64,15 +64,19 @@ class PortfolioSleeveInput(FrozenModel):
         return self
 
 
-def remaining_forecast_gross_bps(
+def remaining_target_gross_bps(
     forecast: Forecast,
     *,
+    current_gross_notional: Decimal,
+    evaluation_gross_notional: Decimal,
     quote_by_instrument: dict[str, ExecutableQuote],
     as_of: datetime,
 ) -> Decimal:
-    """Reprice a cutoff-based payoff to the current executable entry, with both signs."""
+    """Reprice retained exposure and new exposure from their executable sides."""
 
     require_utc(as_of)
+    if current_gross_notional < 0 or evaluation_gross_notional <= 0:
+        raise ValueError("Forecast 重估金额必须为正且当前金额不能为负")
     forecast_gross_bps = (
         forecast.expected_gross_bps
         if isinstance(forecast, BaseForecast)
@@ -80,61 +84,124 @@ def remaining_forecast_gross_bps(
     )
     cutoff = {item.instrument_id: item.price for item in forecast.cutoff_prices}
     realized_to_entry_bps = Decimal("0")
+    retained_fraction = min(current_gross_notional, evaluation_gross_notional) / (
+        evaluation_gross_notional
+    )
+    added_fraction = Decimal("1") - retained_fraction
     for leg in forecast.target.legs:
         quote = quote_by_instrument[leg.instrument.key]
-        entry_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+        new_entry_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+        retained_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+        decision_basis_price = (
+            retained_fraction * retained_price + added_fraction * new_entry_price
+        )
         sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
         realized_to_entry_bps += (
             sign
             * leg.gross_weight
-            * (entry_price / cutoff[leg.instrument.key] - Decimal("1"))
+            * (decision_basis_price / cutoff[leg.instrument.key] - Decimal("1"))
             * Decimal("10000")
         )
     return forecast_gross_bps - realized_to_entry_bps
 
 
-def estimate_round_trip_cost(
+def estimate_state_transition_cost(
     *,
     policy: PortfolioDecisionPolicy,
     forecast: Forecast,
-    gross_notional: Decimal,
+    current_gross_notional: Decimal,
+    target_gross_notional: Decimal,
+    evaluation_gross_notional: Decimal,
     quote_by_instrument: dict[str, ExecutableQuote],
     spec_by_instrument: dict[str, InstrumentExecutionSpec],
 ) -> PortfolioCostEstimate:
-    """Apply the single authoritative fee/spread/depth model at decision time."""
+    """Estimate only future costs from the reconciled state to one target."""
+
+    if min(current_gross_notional, target_gross_notional) < 0:
+        raise ValueError("Portfolio 当前与目标金额不能为负")
+    if evaluation_gross_notional <= 0:
+        raise ValueError("Portfolio 成本评估金额必须为正")
 
     fee_bps = Decimal("0")
     exit_spread_bps = Decimal("0")
     depth_slippage_bps = Decimal("0")
     refs = []
+    added_notional = max(target_gross_notional - current_gross_notional, Decimal("0"))
+    reduced_notional = max(current_gross_notional - target_gross_notional, Decimal("0"))
     for leg in forecast.target.legs:
         quote = quote_by_instrument[leg.instrument.key]
         spec = spec_by_instrument[leg.instrument.key]
         refs.append(quote.source_quote_id)
-        fee_bps += leg.gross_weight * Decimal("2") * spec.fee_bps
+        fee_bps += (
+            leg.gross_weight
+            * (added_notional + reduced_notional + target_gross_notional)
+            / evaluation_gross_notional
+            * spec.fee_bps
+        )
         half_spread = (quote.ask - quote.bid) / (quote.ask + quote.bid) * Decimal("10000")
-        exit_spread_bps += leg.gross_weight * half_spread * policy.exit_spread_multiplier
-        side_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
-        side_quantity = (
+        exit_spread_bps += (
+            leg.gross_weight
+            * target_gross_notional
+            / evaluation_gross_notional
+            * half_spread
+            * policy.exit_spread_multiplier
+        )
+        entry_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+        entry_quantity = (
             quote.ask_quantity if leg.direction == ExposureDirection.LONG else quote.bid_quantity
         )
-        depth_notional = side_price * side_quantity * leg.instrument.contract_multiplier
-        desired_leg_notional = gross_notional * leg.gross_weight
-        if desired_leg_notional > depth_notional:
-            depth_slippage_bps += (
-                leg.gross_weight
-                * half_spread
-                * policy.depth_slippage_multiplier
-                * (desired_leg_notional / depth_notional - Decimal("1"))
+        exit_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+        exit_quantity = (
+            quote.bid_quantity if leg.direction == ExposureDirection.LONG else quote.ask_quantity
+        )
+        entry_depth = entry_price * entry_quantity * leg.instrument.contract_multiplier
+        exit_depth = exit_price * exit_quantity * leg.instrument.contract_multiplier
+        depth_slippage_bps += _depth_cost_bps(
+            sleeve_notional=added_notional,
+            evaluation_gross_notional=evaluation_gross_notional,
+            leg_weight=leg.gross_weight,
+            depth_notional=entry_depth,
+            half_spread_bps=half_spread,
+            multiplier=policy.depth_slippage_multiplier,
+        )
+        for sleeve_notional in (reduced_notional, target_gross_notional):
+            depth_slippage_bps += _depth_cost_bps(
+                sleeve_notional=sleeve_notional,
+                evaluation_gross_notional=evaluation_gross_notional,
+                leg_weight=leg.gross_weight,
+                depth_notional=exit_depth,
+                half_spread_bps=half_spread,
+                multiplier=policy.depth_slippage_multiplier,
             )
     return PortfolioCostEstimate(
         model_version=policy.cost_model_version,
-        gross_notional=gross_notional,
+        gross_notional=evaluation_gross_notional,
         fee_bps=fee_bps,
         exit_spread_bps=exit_spread_bps,
         depth_slippage_bps=depth_slippage_bps,
         total_bps=fee_bps + exit_spread_bps + depth_slippage_bps,
         quote_refs=tuple(sorted(refs)),
+    )
+
+
+def _depth_cost_bps(
+    *,
+    sleeve_notional: Decimal,
+    evaluation_gross_notional: Decimal,
+    leg_weight: Decimal,
+    depth_notional: Decimal,
+    half_spread_bps: Decimal,
+    multiplier: Decimal,
+) -> Decimal:
+    leg_notional = sleeve_notional * leg_weight
+    if leg_notional <= depth_notional:
+        return Decimal("0")
+    return (
+        leg_notional
+        / evaluation_gross_notional
+        * half_spread_bps
+        * multiplier
+        * (leg_notional / depth_notional - Decimal("1"))
     )
 
 
@@ -245,6 +312,7 @@ class PortfolioDecisionEngine:
         targets = tuple(
             self._target(
                 item,
+                current_notional=current_by_sleeve[item.sleeve_id],
                 desired_notional=desired_by_sleeve.get(item.sleeve_id, Decimal("0")),
                 evaluation_notional=(
                     desired_by_sleeve.get(item.sleeve_id)
@@ -287,6 +355,7 @@ class PortfolioDecisionEngine:
             targets = tuple(
                 self._target(
                     item,
+                    current_notional=current_by_sleeve[item.sleeve_id],
                     desired_notional=current_by_sleeve[item.sleeve_id],
                     evaluation_notional=current_by_sleeve[item.sleeve_id],
                     quote_by_instrument=quote_by_instrument,
@@ -363,14 +432,18 @@ class PortfolioDecisionEngine:
         evaluation_notional: Decimal,
     ) -> PortfolioCandidateEvaluation:
         forecast_current = self._forecast_is_current(item.forecast, as_of=as_of)
-        gross = remaining_forecast_gross_bps(
+        gross = remaining_target_gross_bps(
             item.forecast,
+            current_gross_notional=current_notional,
+            evaluation_gross_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
             as_of=as_of,
         )
         cost = self._cost(
             item,
-            gross_notional=evaluation_notional,
+            current_notional=current_notional,
+            target_notional=evaluation_notional,
+            evaluation_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
             spec_by_instrument=spec_by_instrument,
         )
@@ -444,6 +517,7 @@ class PortfolioDecisionEngine:
         self,
         item: PortfolioSleeveInput,
         *,
+        current_notional: Decimal,
         desired_notional: Decimal,
         evaluation_notional: Decimal,
         quote_by_instrument: dict[str, ExecutableQuote],
@@ -451,14 +525,22 @@ class PortfolioDecisionEngine:
         as_of: datetime,
         allocation_reason: str,
     ) -> SleeveTarget:
-        gross = remaining_forecast_gross_bps(
-            item.forecast,
-            quote_by_instrument=quote_by_instrument,
-            as_of=as_of,
+        gross = (
+            remaining_target_gross_bps(
+                item.forecast,
+                current_gross_notional=current_notional,
+                evaluation_gross_notional=evaluation_notional,
+                quote_by_instrument=quote_by_instrument,
+                as_of=as_of,
+            )
+            if desired_notional > 0
+            else Decimal("0")
         )
         cost = self._cost(
             item,
-            gross_notional=evaluation_notional,
+            current_notional=current_notional,
+            target_notional=desired_notional,
+            evaluation_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
             spec_by_instrument=spec_by_instrument,
         )
@@ -490,14 +572,18 @@ class PortfolioDecisionEngine:
         self,
         item: PortfolioSleeveInput,
         *,
-        gross_notional: Decimal,
+        current_notional: Decimal,
+        target_notional: Decimal,
+        evaluation_notional: Decimal,
         quote_by_instrument: dict[str, ExecutableQuote],
         spec_by_instrument: dict[str, InstrumentExecutionSpec],
     ) -> PortfolioCostEstimate:
-        return estimate_round_trip_cost(
+        return estimate_state_transition_cost(
             policy=self._policy,
             forecast=item.forecast,
-            gross_notional=gross_notional,
+            current_gross_notional=current_notional,
+            target_gross_notional=target_notional,
+            evaluation_gross_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
             spec_by_instrument=spec_by_instrument,
         )
