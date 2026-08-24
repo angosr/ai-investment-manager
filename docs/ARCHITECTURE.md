@@ -2,711 +2,209 @@
 
 ## 1. 文档地位
 
-本文定义主线代码的目标架构、依赖边界和迁移顺序。`AGENTS.md` 定义不随实现变化的投资与工程原则；本文将这些原则落实为可执行结构。外部审查是待核验输入，不能覆盖前两者，也不作为长期设计文档保留。
+本文只定义长期稳定的领域边界、决策链和系统不变量。具体资产、时域、特征、模型、Prompt、阈值和资金规模属于可替换的实验或 Release，不得反向塑造架构。当前实现与本文不一致的部分是迁移债务，不是第二套合法设计。
 
-架构不是盈利来源，而是让投资假设能够被真实评价、授权、撤回和维护的约束。任何结构调整若不能保持时间真实性、风险边界、恢复能力和评估隔离，就不得以“重构”为理由合入。
+`AGENTS.md` 定义投资和工程原则；[`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md) 定义世界认知方法；[`DASHBOARD_DESIGN.md`](DASHBOARD_DESIGN.md) 定义只读投影。三者不得重复拥有同一业务裁决。
 
-## 2. 名称与系统边界
+架构本身不产生盈利。它的作用是让每个投资判断都能被点时重建、现实执行、独立评价、限制权限并在失效后删除。
 
-产品和 Python 顶层包统一命名为 `investment_manager`，命令行入口为 `investment-manager`。
+当前系统只做低频投资管理：事件驱动认知与风险复核、日度状态更新、周度或双周资本再平衡。研究可以在更密的预登记时点形成 Forecast 以积累证据，但不能未经证明把调用频率直接变成交易频率。
 
-主线产品名与源码命名不再使用 `quant_core`：
+## 2. 设计删减原则
 
-- `quant` 将系统误解为传统量化策略库，不能表达信息、AI 判断、组合管理、风险、执行和治理；
-- `core` 没有业务含义，容易成为任何代码都能进入的杂物边界；
-- 系统的稳定业务身份是 Investment Manager，AI、规则、优化器和具体策略只是可替换机制。
+一个长期概念只有同时满足以下条件才能存在：
 
-当前主线源码、配置、Secret 键、默认 Temporal 队列、新研究版本和本地测试身份统一使用
-`investment_manager` / `investment-manager` / `INVESTMENT_MANAGER_*`。旧 `quant_core` 身份只允许存在于
-不可变的冻结 Release、它绑定的外部数据库或历史制品中；主线不双读、不提供 alias，也不继续生成
-旧身份。当前源码根目录只有 `settings.py`、`schema.py` 和包入口，旧平铺模块不再存在。
+1. 拥有不能由相邻概念表达的独立不变量；
+2. 有明确生产者和消费者；
+3. 能被持久化、重放、评价或恢复；
+4. 删除它会破坏真实性、资本安全或可证伪性。
 
-仓库是一个模块化单体，不拆微服务。当前只有一个投资组合、一套 Temporal 集群和一个权威 PostgreSQL 运行事实库。WorldModel、Forecast、Portfolio、Risk 和 Execution 按领域表所有权隔离写入，用 Forecast binding、Release 和 Mock/CAPITAL 权限限制资本影响；不再用物理分库制造跨库触发、快照复制和一致性窗口。
+仅为了命名一个步骤、保存中间文本、兼容旧代码、给未来留扩展点或让目录对称而出现的概念，必须合并或删除。实现细节不能晋升为领域阶段；一个阶段内部可以有算法和政策，但不能因此建立第二条业务链。
 
-当前交易边界是 Binance，运行频率是事件驱动风险复核、日内到日度预测更新以及低中频组合调整，不追逐毫秒级优势。现金和不交易是正式资产决策。
-
-## 3. 唯一决策链
-
-主线只允许一条可交易链：
+## 3. 唯一投资闭环
 
 ```text
-Observation
-  → CanonicalFactRevision
-  → StateSnapshot / MaterialDelta
-  ├→ DecisionPacket v16 → WorldModel v2 → MechanismObservation
-  ├→ Program Forecast Source ───────────────┐
-  └→ WorldModel + ForecastContract           │
-       → Context Forecast Source ────────────┤
-                                             ↓
-                         BaseForecast → Frozen ForecastPolicy
-                                             ↓
-                    每个 outcome family 一个权威 CalibratedForecast
-                                             ↓
-                         Deterministic Orientation Projection
-                                             ↓
-  → PortfolioTarget
-  → RiskDecision
-  → TradePlan
-  → ExecutionRequest / ExecutionResult
-  → Position / Outcome
-  → Forecast/Account Outcome → Evaluation
-  → 仅供未来决策的 ForecastPolicy / Permission Update
+外部世界与交易场所
+        ↓
+Evidence → State → WorldModel → Forecast → PortfolioTarget
+                                         ↓
+                         RiskDecision → Execution → Account/Outcome
+                                                           ↓
+                                                       Evaluation
+                                                           ↓
+                                           只影响未来 Release 与权限
 ```
 
-各阶段职责不可重叠：
+账户、订单和持仓事实从交易场所进入 Execution，再供 Portfolio、Risk 和 Evaluation 读取；它们不进入 WorldModel 或 Forecast 来改变对未来收益的判断。Scheduling 只唤醒闭环，Governance 只冻结和发布政策，Decision Cycle 只编排交接，三者都不创造投资判断。
 
-| 阶段 | 唯一职责 | 明确禁止 |
+闭环中的最少概念如下：
+
+| 概念 | 唯一职责 | 明确不负责 |
 |---|---|---|
-| Observation | 保存来源原文、来源时间和本地可见时间 | 直接形成交易倾向 |
-| Fact/State | 规范化事实、解决修订、形成点时状态 | 预测收益或决定仓位 |
-| Forecast | 对冻结的单腿或多腿投资对象预测收益分布和不确定性 | 决定资本规模或下单数量 |
-| Portfolio | 比较现金与全部资产，形成组合目标 | 绕过成本与风险权限 |
-| Risk | 对冻结目标和账户授予、缩减或拒绝风险 | 创造收益预测 |
-| Execution | 将已授权目标转换为可恢复订单状态机 | 修改投资判断或风险上限 |
-| Evaluation | 结算结果并更新机制权限证据 | 读取盲区后改写原计划 |
+| `Evidence` | 保存原始市场、事件、官方、账户和成交观察及其可见时间 | 解释因果或预测收益 |
+| `State` | 对 Evidence 做点时规范化和确定性压缩 | 自由叙事、仓位和订单 |
+| `WorldModel` | 维护当前最佳、可证伪的跨域因果解释 | 输出买卖、仓位或精确收益 |
+| `Forecast` | 对冻结可交易收益对象给出可结算分布 | 过滤负观点、计算账户规模或下单 |
+| `PortfolioTarget` | 从当前账户状态、现金和候选收益中选择唯一目标组合 | 改写预测、放宽风险或制造订单 |
+| `RiskDecision` | 对目标组合批准、缩减或拒绝风险 | 创造 Alpha；独立于新 PortfolioTarget 的保护动作只能减险 |
+| `Execution` | 把已授权目标安全收敛为交易场所真实状态 | 修改世界解释、收益预期或风险上限 |
+| `Outcome/Evaluation` | 结算预测、决策、执行和资本结果 | 用结果回写历史或在揭盲后修改计划 |
 
-Program 与 Context 都通过同一 `BaseForecast` 概率契约预测冻结的投资对象。Program 读取确定性 StateFeature；Context
-读取已持久化的 WorldModel、目标相关 StateFeature 和预登记 ForecastContract。两者无论预期正负都留下可结算
-Forecast，不能在 Producer 内提前应用 Portfolio 的净 Edge 门槛。当前 Frozen ForecastPolicy 只能读取严格早于本次
-信息截止时间且已经结算的历史槽；本次 Outcome 只能训练未来版本。同一 outcome family/时域在一个资本时点最多
-向 Portfolio 提供一个权威 CalibratedForecast。产品允许的反向 orientation 由程序从同一分布派生并重算成本，
-不重新调用 AI、增加样本或建立第二个 Alpha Sleeve。
+`ForecastContract`、成本口径、评价方案和权限是 Governance 冻结的政策，不是新的运行阶段。程序模型和 Codex 是 Forecast 的可替换生产者；校准和来源选择是 Forecast 内部政策；多头、空头、现金和继续持有是 Portfolio 的候选状态；订单组是 Execution 的恢复单元。它们均不得扩展为平行投资链。
 
-反向 orientation 不是跨产品方向猜测。它只能翻转同一线性产品、相同乘数和结算口径的规范 payoff；Spot 与
-USDⓈ-M Perpetual 因 basis、funding、保证金和结算不同不能互相镜像。首个双向切片因此把现役方向合同硬迁移为
-一个 BTC USDⓈ-M Perpetual 24h 规范多头合同，再由程序派生同产品空头和现金。每天一个自然槽，目标相关材料变化
-可以追加事件槽；重叠窗口按簇评价。24h 是首个前瞻实验的冻结时域，不继承旧 4h 参数，也不在运行中漂移。旧 BTC Spot 合同只完成已有槽的历史
-结算，切流后不再创建新槽或进入 Portfolio，也不保留双路径兼容层。
+## 4. 稳定业务语义
 
-该合同的共同 Forecast Outcome 是 cutoff 到 horizon 的 Binance mark-price 简单收益；funding、bid/ask、手续费与
-滑点不进入 proper-score 标签。Portfolio 用每个冻结 bucket 对应的终点 mark 情景和完成后真实 entry bid/ask 执行
-线性合约 payoff 代数，再加入未来 signed funding、扣除状态转换成本。缺失 mark 或超出合同时间容差时保存标签
-不可得，不用后到数据插值。Mark 用于估值/风险，bid/ask 用于执行，两条证据引用都必须保留。
+### 4.1 点时真实性
 
-ForecastContract 只拥有来源无关的 Target、decision slot、收益区间、标签、成本与结算语义；Program/Context 的
-输入、公式、模型、Prompt、权限和最大 WorldModel 年龄属于独立 producer behavior 绑定。更换 Producer 不得复制
-合同、改写共同 Outcome 或逃避历史失败；只有经济问题或评价语义变化才发布新合同。收益区间同时冻结边界、
-保守代表收益和尾部处理，Portfolio 不再追加主观区间修正。
-
-AI 的两个 purpose 互斥：`WORLD_UPDATE` 只更新组合级因果状态，`FORECAST_ESTIMATE` 只读该状态并形成结构化
-Context BaseForecast。AI 只为 ForecastContract 已冻结的收益区间分配概率；期望 bps 和点时完整成本由程序计算。
-Program 与 Context 的预测评分使用合同冻结的共同 cutoff 参考与终点；资本层再按冻结的 payoff 代数和各自完成后
-首个可成交报价重定价剩余分布。这样预测能力可同口径比较，而交易结果不能把 Codex 运行期间的行情计作收益。
-未校准来源只能凭精确 Research/Mock 权限进入隔离模拟组合。只有 Portfolio 决定经济目标，
-只有 Risk 授予风险，只有 Execution 产生订单。`OpportunityAssessment/context veto` 已停止新写并删除运行、配置、
-页面和评价路径；旧记录仅迁入历史审计表，不参与当前决策。
-
-现有 `SignalCandidate → TradeIntent` 是旧链，不作为新架构的长期兼容路径，也不再是
-`TriggerCoordinator` 的分析消费者。旧模型和表暂时只服务于历史回放、评价读取及尚未替换的执行
-恢复；新链完成生产接线、恢复和回放验收后，旧模型、表写入、配置、CLI 和测试一次性删除；
-不得双写、双读或用适配器长期共存。
-
-### 3.1 外部事件证据边界
-
-一手记录与聚合事件不得共享事实身份。官方原文经过可修订投影成为
-`CanonicalFactRevision`；新闻聚合、快讯和社区内容保持为 `IntelligenceEvent`，无论标题
-多么确定都不能冒充权威事实或独立来源确认。
-
-结构化官方数据、日历和规则继续进入 Canonical Fact；官方新闻稿、讲话与会议公告通过固定 `.gov` RSS
-作为高来源等级 `IntelligenceEvent` 进入同一事件链，因为非结构化文本不应伪装成结构化事实。来源等级不等于
-方向正确：只有标题或摘要命中统一的可交易资产、宏观发布或市场结构语义时才产生高优先级触发，普通执法和机构
-行政新闻只保存或忽略。版本字符串只标识行为，不参与运行分支，避免发布改名后语义静默退化。
-
-外部事件进入新分析链必须同时满足：
-
-1. 采集路由、来源、事件时间、本地首次可见时间和内容身份已经冻结；
-2. 当前 `TriggerPlan` 已按来源无关的优先级、冷却和合并规则接受该事件；
-3. `TriggerBatch` 精确引用的 `evidence_id` 能在同一时点重建，禁止分析时扫描“最近全部新闻”；
-4. State 将事件保存为内容寻址的 Evidence ref，`MaterialDelta` 明确使用
-   `INTELLIGENCE_EVENT` 类别，不能改写为 `FIRST_PARTY_FACT`；
-5. `DecisionPacket` 对事件单独执行数量、字符、时间和相关性上限，所有外部文本先清洗，
-   并永久标记为 `UNTRUSTED_EXTERNAL_TEXT`；只有实际命中注入检测时才记录 suspect 原因，但无论是否命中都不能
-   控制工具、系统指令或输出 Schema。容量不足时以显式 omitted refs 留痕，
-   不用截断后的半条事实顶替原输入。
-
-事件可以触发 `WORLD_UPDATE`，随后按已登记 ForecastContract 触发 Context Forecast 与风险复核，但事件本身不能
-绕过 StateFeature、WorldModel 和 Forecast 契约直接生成仓位或订单。
-同一事件跨品种产生的触发仍只形成一个 portfolio scope 的新状态变化；稳定 Evidence ref、
-State 内容身份、WorldModel 身份和 decision slot 共同抑制重复 Codex 调用。
-
-#### 3.1.1 世界认知不是新增账本，而是现有证据链的可评价投影
-
-世界认知、事件生命周期、StateFeature、Context Forecast、输入密度和资本评价的唯一目标规范见
-[`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md)。本架构文档只保留边界：WorldModel 是现有 Evidence/State
-之上的可证伪投影，不拥有第二事实库；`WORLD_UPDATE` 不输出资本判断；`FORECAST_ESTIMATE` 只读 WorldModel 并使用
-统一 BaseForecast 契约；任何 Context Forecast 在校准和授权前只进入隔离研究组合。
-
-历史 `market_mechanism / drivers / capital_relevance / capital_objective / views / OpportunityAssessment` 只保存在
-历史审计表。当前 WorldModel 只使用 v2 synthesis、mechanisms 和 event references；旧结构没有运行读取器、写入器或
-双读双写兼容层。
-
-### 3.2 市场冲击证据边界
-
-连续行情始终由程序化特征、策略、组合和风控消费；特征随行情更新本身不构成 AI 调用理由。
-只有 `TriggerBatch` 明确包含 `MARKET_SHOCK` 时，State 才把该批次 symbol 对应的当前
-`FeatureSnapshot` 内容引用写入 `MARKET` 类别的 `MaterialDelta`，再进入同一
-`DecisionPacket → WORLD_UPDATE → WorldModel` 链。普通 heartbeat 即使产生了新行情和新特征，也只更新
-点时 State，不产生市场 Delta。
-
-这条边界保证触发器只负责判断“异常是否值得复核”，State 冻结“当时看到了什么”，WorldModel 解释因果状态，
-Context Forecast 只输出合同概率；任何一层都不能借市场冲击直接决定仓位或下单。重复交付使用稳定批次、
-State 和 Delta 身份幂等处理，不另建第二条市场分析链。
-
-### 3.3 显式评审与 Heartbeat 边界
-
-`HEARTBEAT` 只保证协调器和点时 State 定期前进，不等价于强制调用 AI；没有新
-`MaterialDelta` 时必须停在 `NO_MATERIAL_DELTA`。这避免“每小时无条件调用 Codex”成为低信息
-密度的隐性轮询。
-
-主 Agent 的 `TRIGGER_NOW` 和尚未过期的 `ScheduledWakeup` 是另一种语义：它们必须携带理由，
-并形成内容寻址的 `PacketReviewRequest`。该请求可以在没有新 Delta 时单独驱动一个
-`DecisionPacket`，其请求时间、理由和证据引用进入不可变 Packet 与行为哈希；它不伪装成市场或
-事实变化，也不能绕过 Portfolio、Risk、Execution 和发布权限。相同语义的跨品种触发产生相同
-review identity，由 portfolio Packet 身份和全局准入共同抑制重复调用。
-
-### 3.4 投资对象与多腿边界
-
-`symbol` 不是长期的投资对象身份。它不能区分 Spot、USDⓈ-M Futures 和 TradFi Perpetual，
-也不能表达现货—永续 carry 等多腿收益来源。主线统一把可分配资本的对象建模为 **Sleeve**：
-单资产方向策略是一条腿的 Sleeve，相对价值或 carry 是多条腿的 Sleeve，不再维护两套决策链。
-
-各层只增加完成这条语义所需的最小合同：
-
-- Market 拥有 `InstrumentId`，显式包含 venue、产品、底层资产、结算资产和合约身份；行情、账户、
-  订单和持仓最终都引用它，禁止以同名 symbol 合并不同产品。
-- Forecast 拥有不可变 `ForecastTarget`：由一个或多个归一化 Leg 及 hedge ratio 定义收益对象。
-  Leg 的方向和比例只定义“一单位机会是什么”，不携带账户资本或订单数量；`BaseForecast` 和
-  `CalibratedForecast` 对该 target 的费用前收益及不确定性负责。
-- Portfolio 是唯一 allocation 所有者。它把现金、单腿和多腿机会放在同一约束下比较，并输出
-  Sleeve 级资本目标；各 Leg 的目标暴露只能由冻结定义和 allocation 确定。
-- Risk 对整个 Sleeve 原子授权或整体缩减，同时用 Leg 展开后的 gross/net、delta、集中度、保证金、
-  funding 压力和最坏单腿失配检查组合。不得只批准其中一条新增风险 Leg。
-- Execution 将一个已授权 Sleeve 转换为带稳定 group identity 的多 Leg `TradePlan`。group 不是对
-  交易所原子性的虚假承诺；每条 Leg 独立提交、成交和对账，状态机必须限制未对冲名义金额与持续
-  时间，并在拒单、未知结果或部分成交后继续补齐、补偿或减险。
-- Evaluation 以 Sleeve 为结算单位，统一计入每条 Leg 的成交价、手续费、滑点、funding、basis、
-  保证金占用和失配损失；只看某一 Leg 的收益不得形成权限证据。
-
-统一计量口径如下，不允许各层各自解释“仓位”：
-
-- `sleeve_id` 由 portfolio、outcome family 与合同经济身份确定，不包含本次 orientation；同一投资对象的新预测或
-  多空切换更新同一 Sleeve，不按分析次数或 Leg 方向创建无法统一退出的仓位身份。规范 `ForecastTarget` 属于
-  Forecast，确定性派生后的执行 Target 与 orientation 属于 Sleeve 本次目标。合同经济语义改变时必须先把旧
-  Sleeve 收敛到零，再由新合同建立新身份，不能把不兼容 payoff 原地续命。
-- `desired_gross_notional` 是 Portfolio 唯一决定的规模，表示所有 Leg 绝对报价名义金额之和；第
-  `i` 条 Leg 的有符号目标名义金额为该值乘 `gross_weight`，再由 `LONG/SHORT` 决定正负。因
-  `gross_weight` 之和为 1，单腿和多腿 Forecast 的 bps 都以同一 gross notional 为分母。
-- 当前资本路径不使用隐含杠杆：全部 Sleeve 的 desired gross notional 之和不得超过参考权益，未分配
-  部分就是现金。保证金、净 delta 或压力损失更紧时只能由 Risk 整组缩小，不能反向增加 Portfolio
-  目标；未来若允许杠杆，必须作为新的预登记 Policy 和评价版本显式发布。
-- 费用估计覆盖预期建仓、持有和退出成本，并与 Forecast 的费用前 bps 使用同一分母。Portfolio 只
-  比较保守费用后收益，不把 funding 收益重复记为负成本；最终权限只读取 Execution/Evaluation 的
-  实际费用后结果。
-
-Portfolio 不是为每个方向创建独立 Forecast 或 Sleeve，而是从一个权威 Forecast 内嵌派生允许的方向候选并与现金
-比较。候选计算保存于现有资本决策 payload：规范 Forecast、orientation、执行 Target、当前状态、重锚价格 Edge、
-未来 signed funding、尚未发生的费用、保守净 Edge、可执行性和拒绝原因。它没有独立表、Repository、服务或权限；
-只有被选择的目标状态进入 `PortfolioTarget`。
-
-费用计算以当前账户到目标状态的 transition 为输入：新开仓计开仓与未来退出，继续持有忽略已付沉没费用，退出只
-计本次平仓，反转计平旧、开新和未来退出。Funding 保持有符号未来现金流，不塞入通用费用字段；候选期内已知结算点
-读取当时交易所事实，尚未公布的结算使用冻结的保守估计，实际账户只按逐次结算入账。cutoff 到 entry
-anchor 的剩余分布使用线性合约完整价格比代数，不用 bps 相减近似；共同 Forecast Outcome 仍只结算规范方向一次。
-
-账户经济事实归 Portfolio，而不是 Venue 适配器。`PortfolioAccountSnapshot` 保存现金、权益、高水位、
-产品级持仓、Sleeve 归属、待完成 execution group 和对账状态；Execution 仍拥有订单、成交与交易所
-对账原文，并用这些事实投影账户。所有 Sleeve 的有符号 Leg 数量加未托管持仓必须与交易所产品级净
-持仓一致，否则快照标记为未对账并禁止新增风险。Risk 和 Execution 共同消费该快照，二者不再互相
-拥有对方的模型。
-
-方向 Perpetual 接入后，同一账户快照还必须保存或可审计派生 wallet balance、free collateral、initial margin、
-maintenance margin、mark-price unrealized PnL、margin/position mode、leverage/bracket 和 liquidation price；这些量
-必须与权益、产品净仓、订单占用和累计 funding 核对。Portfolio 使用 free collateral 判断目标可承载性，Risk 使用
-保证金与强平缓冲限制风险，Execution 只从 Venue 原始事实投影，三者不得各算一份账户余额。
-
-WorldModel 的当前 `StateSnapshot` 与 `DecisionPacket` 不读取、不冻结账户快照，也不把账户对账故障送给 AI；
-Context Forecast 同样只读取 WorldModel 和目标市场状态。账户、持仓、资金和风险从 `PortfolioAccountSnapshot`
-开始，只能在 Portfolio → Risk → Execution 链路消费。旧 Packet 中的账户字段仅为不可变历史记录提供只读解析，
-不得进入当前投影、Prompt、Forecast 或新写路径。
-
-Risk 授权以一个 `sleeve_scale` 原子作用于 Sleeve 全部 Leg。它同时检查 quote 新鲜度与点差、gross、
-net delta、单产品集中度、可用现金/保证金、funding 与 basis 压力以及账户损失门禁；任何新增风险 Leg
-失败都会拒绝或整组缩小，不能留下“只批准便宜的一腿”。纯减险目标即使行情退化也可进入受限恢复，
-但在成交和对账完成前不得释放既有风险。授权同时冻结最大未对冲名义金额和最长未对冲时间，Execution
-无权放宽。
-
-方向 Perpetual 的账户合同还必须冻结并对账 position mode、margin mode、实际 leverage/bracket、maintenance
-margin、mark、liquidation buffer 与 ADL/强平状态。首个切片只允许单向净持仓、逐仓和 1x leverage，风险按 100%
-初始保证金计量；账户若处于 Hedge Mode 或模式、杠杆与 Release 不一致，则拒绝新增风险且启动过程不得擅自改账户。
-Portfolio 的经济 gross 继续受已分配权益约束，交易所 leverage 不能扩大经济敞口。Mark/index 用于估值、funding 和
-风险，真实 bid/ask 用于交易与退出；二者不得互换。
-
-一个 `TradePlan` 对每个 Sleeve 只产生一个稳定 group identity，Leg 数量按产品过滤器独立取整；任一
-新增风险 Leg 低于最小交易额时整组不执行。group 只有两个成功终态：全部目标 Leg 已成交并对账的
-`HEDGED`，或补偿后确认无残余暴露的 `FLAT`。提交结果未知、拒单、部分成交或进程崩溃都保持在
-`RECOVERING/COMPENSATING`，禁止把本地异常写成失败终态；超过 Risk 冻结的失配阈值后优先回到
-`FLAT`，不无限追价补齐。相同 sleeve 存在非终态 group 时，不得启动第二组新增风险。
-
-`PortfolioTarget → RiskDecision → TradePlan → ExecutionGroup` 每个交接都以内容身份幂等持久化；
-进程重启从数据库事实和 Venue 对账恢复，不从内存或 Codex 上下文猜测。模拟盘和真实适配器实现同一
-状态机，差别只在 Venue 端口；故障注入必须覆盖每条 Leg 提交前崩溃、提交后响应丢失、部分成交、
-拒单和补偿失败。
-
-ExecutionGroup 以一个带 revision 的聚合持久化全部短小 Leg 状态，不为同一事实再建逐 Leg 影子账本；
-Venue 订单则作为独立外部事实按稳定 `client_order_id` 持久化。同一 Sleeve 的非终态 group 由数据库
-唯一约束串行化。进入补偿后先持久化状态，再取消未终态目标单，并按残余数量创建不可覆写的补偿
-attempt；补偿拒绝只能追加新 attempt，不能篡改旧 Venue 事实或把未知结果伪装成 `FLAT`。
-Venue 最新状态可以更新，但系统首次看见每个不同订单事实的 `available_at` 必须进入不可变观察账本；
-账户回放只读取该时点已经可见的最新累计事实，禁止用事后全成或补偿状态覆盖历史部分成交。
-
-同一 Sleeve 的多空反转不允许用一个跨零净订单隐藏两个经济动作。Execution 必须先以减险语义将旧方向推进至
-`FLAT` 并完成账户对账，再开启新方向；平仓请求必须保证不会因超量、重试或部分成交穿越零点。平旧、开新可以属于
-同一可恢复决策意图，但必须是有顺序的两个阶段，任一阶段未知时禁止启动后续阶段。重启从持久化 group、订单观察
-与 Venue 持仓恢复，不从目标净数量猜测前一阶段已经完成。
-
-Binance 的 Spot 新单与 USDⓈ-M Futures 新单是两个独立接口，系统必须假定两腿会独立成功、失败或
-部分成交，不能把客户端并发请求当作原子成交（[Spot New Order](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints)、
-[USDⓈ-M New Order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order)）。
-Funding 的时间、费率和对应 mark price 是独立结算事实，必须进入点时数据与收益核算
-（[Binance Funding Rate History](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History)）。
-Hummingbot 的 funding-rate 示例同样把两侧建成独立 executor 并以共同身份跟踪，但其源码明确仍需
-处理先成交一腿的问题，因此只借鉴 group ownership，不复用其策略或恢复实现
-（[Hummingbot funding-rate example](https://github.com/hummingbot/hummingbot/blob/2bfaccc48dd49e71a5b6d9b3011808e127dd00cd/scripts/v2_funding_rate_arb.py)）。
-NautilusTrader 也明确警告 OrderList/contingency 是否生效取决于 venue 和 adapter，且每条 Leg 的
-拒单必须独立处理；本项目据此把协调责任留在 Execution 状态机，不依赖抽象层的原子假设
-（[NautilusTrader advanced orders](https://github.com/nautechsystems/nautilus_trader/blob/2114cf6f761429e0adb5ca9596fcd7b895b16011/docs/concepts/orders/advanced.md)）。
-
-主线 Forecast 已使用产品级 `InstrumentId`、规范化 `ForecastTarget` 和逐 Leg 参考价；相同 Binance
-symbol 的 Spot 与 USD-M Perpetual 因产品身份不同而不会合并。纯决策合同已经硬迁移为
-`PortfolioAccountSnapshot + SleeveTarget → ApprovedSleeve → grouped TradePlan`：Portfolio 用统一 gross
-notional 比较单腿/多腿机会，Risk 整组缩放，Planner 对任一不可交易的新增风险 Leg 整组省略，不再
-保留 `AssetTarget/ApprovedAssetTarget` Spot MVP 或兼容 alias。账户快照、Target、RiskDecision 与
-TradePlan 已分别由 Portfolio/Risk/Execution 以内容身份和外键顺序持久化，唯一 Pipeline 不允许跳过
-交接账本。产品级账户现从累计订单观察、实际手续费、逐次 funding、产品/Sleeve 持仓和可成交报价
-重放现金与权益；grouped Execution 在每次资本决策前先推进历史非终态组，未知提交、部分成交、超时
-和补偿仍由同一状态机恢复。该能力只获得持久化 Mock Shadow 权限，尚不代表交易所账户已对账。
-
-主线 Market 已接通 USD-M Perpetual 的 mark/index/premium、可成交 bid/ask、下一 funding 时间和
-已结算 funding 点时事实，并纳入统一运行时资源生命周期和 Dashboard 新鲜度；Spot 连续行情仍保留
-现有单流。mark/index 只描述估值与结算状态，不得冒充 carry 建仓或平仓的可成交价格。
-跨产品价格也不得把各自“最新”报价直接拼接：基差生产者先冻结 Perpetual 报价，再只读取其本地
-`observed_at` 之前最后可见的 Spot 报价，并对两者观测偏差设置同一配置化上限。超过上限时 Forecast
-槽写入明确 `NO_ESTIMATE:MARKET_INPUT_INVALID`，WorldModel 只把它视为市场结构不可观测，Risk 对新增风险整组拒绝；不得用插值、
-后到报价或降低门槛制造套利。两条 quote identity 必须共同进入不可变输入引用，保证回放使用同一价格对。
-统一 Forecast 账本和多 Leg Outcome 已按可成交 bid/ask、逐次 funding 与点时可见性接线。已退役的 calendar carry
-不再产生 Forecast、授权、定时唤醒或网页候选；其研究结果不能恢复生产身份。`CapitalCycleService` 以当前各合格
-Producer 返回的 Forecast ID 集合形成幂等机会周期；PortfolioTarget 自身已唯一绑定 cycle、账户、
-Forecast 与报价，因此不再建立重复的 `PortfolioRebalancePeriod` 账本。后续不同 cadence 的 Producer
-可以在同一组合链协作，且不能绕过统一 Portfolio、Risk 和 grouped Execution。没有新机会时仅重放账户、
-恢复非终态组并检查持仓风险；最小调仓门槛只可在原 Forecast 仍有效时冻结当前 gross target，不能替过期判断续命。
-自然信号、官方事件、数据发布和主 Agent 复核可以形成持久化 `ScheduledWakeup`；其时间来自证据或候选本身，
-不能由组合层虚构统一日历。授权、Producer 身份或自然 cadence 变化都必须产生新的 Release/行为身份。
-各品种协调器都可更新市场与 WorldModel，但只有 Mandate 指定的 owner coordinator 能写组合账户、风险和执行，
-避免同一账户被跨品种批次乱序投影。owner 对形成 Forecast/Target 的机会评估和实际持仓风险处置，以冻结
-TriggerBatch 的 batch ID 作为 cause 追加 `CapitalCycleRecord`，直接保存品种、触发类型、账户快照、
-Forecast/Target 引用与终态；因此有资本判断时必须明确记录“NO_ESTIMATE、费用后现金、组合拒绝或风险拒绝”，
-不能统称无机会。全现金且没有 Forecast 的保护性检查只进入可观测健康状态，不伪装成人类需要阅读的资本行动。
-账户账本以 revision 为唯一因果头且只允许时间单调前进；版本切换后恢复的旧 Forecast cadence，其无估计原因
-保留在 Forecast 审计中，但不会追加资本行动；系统只能复用账户头，不能倒序插入账户、重算历史或制造绩效区间。
-Dashboard 只投影真实 `CapitalCycleRecord`，不从“缺少 Target”反推行动。
-
-当前已运行的 BTC Spot 4h Context 切片只证明 Forecast、Portfolio 和结算链能工作，尚不能表达负向判断。下一纵向
-切片不是在其旁边增加“空头策略”，而是以新合同和行为身份将这一现役方向能力替换为 BTC USD-M Perpetual 24h
-双向合同：Forecast 仍只有一份规范分布，Portfolio 内嵌比较多/空/现金，Risk 与 Execution 只消费被选目标。切流时
-同时迁移稳定 Sleeve 身份和状态转换成本；旧 Spot 专属生产器、授权、配置、校验与测试随新切片验收后删除。
-没有候选的 `CASH` 与迁移前把 heartbeat 写成 `NO_OPPORTUNITY` 的只读收据仍保留在审计库中，但不再进入
-用户行动流或分页计数；预测不可用由 AI/Forecast 健康状态承担，不能伪装成资本行动。
-历史 carry 制品仅是研究和 counterfactual，不能进入主动资本链。`CapitalCycleService`
-允许零个合格 Producer：没有候选时仍重放 10,000 USDT 现金账户、恢复非终态组并记录绩效，但不会伪造交易。
-未来候选必须以显式 `CapitalForecastSource` 接入同一 Portfolio、Risk、TradePlan、持久化 Mock Product Venue
-与账户投影，并绑定事前登记的 Mock authorization。持仓主动风险退出在每次
-账户观察后形成显式 `PortfolioHoldingRiskReview`：正常持有为 `HOLD`，未对账、旧输入或未完成 group
-为 `DEFER`，账户/敞口/保证金/压力越界为 `EXIT`。EXIT 只能由 Portfolio 生成零暴露 Target，再走原有
-Risk、Planner 与可恢复 grouped Execution；它不能借恢复路径重新开放 allocation，也不存在紧急下单旁路。
-
-账户账本把每个相邻权威快照追加为 `PortfolioPerformanceInterval`：同一时点较高 revision 记录成交后
-费用变化，跨时点记录 funding、已实现和可成交价盯市共同形成的净权益变化；累计净 PnL 直接由首尾
-权威权益核对，Dashboard 不再从订单数量推断盈利。它是组合级费用后证据带，不伪造暂时无法可靠
-拆分的 basis/funding/滑点归因。账户投影以 portfolio 级 PostgreSQL advisory transaction lock 串行化
-“读取前序→投影→持久化”，并由 `(portfolio_id, revision)` 唯一约束兜底；跨 UTC 日的首个快照把与
-上一权威快照之间的权益差计入新日，而不是重置为零后永久漏记。
-
-下一步是在权威事实库持续验证恢复、绩效区间和合同化 Forecast/Outcome 结算，并补 Sleeve 级可核对归因；随后只为
-首个方向切片实现 Binance USD-M Product Venue 与权威账户对账。Spot Venue 不随首切片预建；只有独立前瞻实验证明
-产品路由具有增量后才进入新设计。迁移完成后删除旧 Spot 合同生产路径，不保留适配器或双路径。
-
-评价阶段必须按事实命名：预先冻结未来窗口、待窗口结束后一次性获取标签并评价是 `FORWARD`；
-`SHADOW` 必须在数据实时可见时生成并保存当时的 Forecast、Portfolio、Risk 和模拟 Execution 结果。
-FORWARD 可以证明未见窗口表现，不能证明运行延迟、触发完整性或多 Leg 恢复，二者不得互相顶替。
-
-### 3.5 模拟候选与真实订单的授权边界
-
-系统只有模拟盘和正式盘，不建立“探索盘”、运营演练盘或第三条资本链。两者在 Venue 边界以上复用完全相同的
-`Forecast → Portfolio → Risk → TradePlan → ExecutionGroup → Account → Evaluation` 代码、成本、精度、
-恢复和评价语义；晋升只切换是否允许向真实 Venue 提交订单及其凭证/对账要求。相同冻结输入在两种 Venue 配置
-下必须得到相同 Forecast、Target、RiskDecision 和 TradePlan。
-
-权限分两次授予，但不是两种 Forecast 或两套组合算法：
-
-1. **Mock 候选授权**只要求事前冻结经济假设、点时数据合同、自然信号、行为身份、现实成本、风险上限和
-   失败/删除条件；授权随 Release 立即生效，直到候选被新 Release 替换或移除，不设置日历等待期。
-2. **真实订单授权**必须读取同一候选在独立样本上的费用后增量、保守下界、回撤、容量、恢复和数据完整性，
-   未通过时不能因为模拟盈利、AI 自信或主 Agent 判断而放宽。
-
-模拟盘不设置专属交易频率、订单数 KPI、等待期或额外收益门槛，也不强制下单。候选按事前定义的自然信号在
-机会出现时交易，无信号时选择现金；数据新鲜度、最大敞口、回撤/kill switch、费用、funding、滑点、数量精度、
-幂等、部分成交和对账仍属于投资语义，不是“模拟特殊限制”。未校准 `BaseForecast` 可以在获得 Mock 候选授权后
-进入同一个 Portfolio，但 Target 必须明确记录其依据为候选假设而非保守校准收益；禁止伪造
-`CalibratedForecast` 数值穿过现有净 edge 门禁。正式授权只接受已校准且满足费用后保守门槛的 Forecast。
-
-一个可见模拟账户在任一 outcome family 只执行前瞻窗口开始前冻结的一个 Mock champion；其余行为使用同一引擎
-维护逻辑影子账本。不得看到本槽收益后切换 champion、补记权威成交或把胜出影子路径冒充实际模拟业绩；替换仅在
-预登记更新点以新 Policy/Release 生效。全部候选共享组合级实验风险上限，不能各自领取一份完整账户预算。
-
-同一候选从 Mock 晋升时不得同时改策略、Prompt、特征、组合、风险、执行或评价；任何实质变化产生新 behavior
-并重新积累证据。候选失败或被更简单机制支配后，删除其运行代码和装配，只保留不可变输入、交易结果与否定
-结论。退役候选的不可变历史 Evidence 不会获得生产权限。主动链同时最多装配一个机制明确、事前登记的
-challenger；没有授权或没有自然信号时保持现金。新候选必须在结构或信息来源上区别于已被否定的同标签假设，
-先完成低成本拒绝型回放，再进入同一模拟资本链；具体参数、结果和日期只属于不可变实验制品，不写入权威架构。
-
-## 4. 目标目录
+每项输入至少保存 `event_time`、`observed_at`、内容身份和来源身份，并满足：
 
 ```text
-src/investment_manager/
-  __init__.py
-  settings.py                 # 只组合领域配置
-  schema.py                   # 唯一数据库 Schema 组合入口
-
-  kernel/                     # 极少量稳定原语
-    configuration.py
-    identity.py
-    time.py
-    types.py
-
-  decision_cycle/             # 冻结输入后跨域推进一次决策；不拥有领域事实
-    trigger.py                # 一个 TriggerBatch 生成全部已启用消费者的不可变请求
-    portfolio.py              # Portfolio → Risk → TradePlan 的纯编排
-    capital.py                # 多 Producer → 组合/风控/执行的一次资本用例
-    service.py                # Trigger Worker 的运行装配
-
-  market/                     # 行情、Instrument、交易状态、Feature
-    tables.py                 # Market 表的唯一声明位置
-    perpetual/                # 永续 mark/index/funding 外部协议与轮询状态机
-  information/                # 原始来源、新闻与规范化事件
-    coverage.py               # 来源轮询事实与点时因果域覆盖投影
-    official/                 # 一手官方记录、解析、抓取和存储
-  state/                      # Fact、State、Delta 与 Evidence
-    decision/                 # DecisionPacket 的构建、存储和运行装配
-  scheduling/                 # TriggerPlan、触发合并、动态唤醒与分析调度
-  forecast/                   # 预测契约与共享表
-    context/                  # WorldModel 与 Context Forecast 生命周期
-    codex/                    # Codex 外部执行、账号路由与审计存储
-      bundle.py               # 内容寻址的不可变分析输入包
-      capacity.py             # 官方 App Server 额度读取协议
-      protocol.py             # 无工具推理会话与严格输出协议
-      router.py               # 账号租约、余量优先选择和失败切换
-      isolation.py            # 文件、网络和工具隔离验收
-      output.py               # Structured Outputs 收紧、校验与脱敏失败诊断
-      repository.py           # 租约、额度与调用审计持久化
-  portfolio/                  # 组合目标、现金比较、再平衡和成本权衡
-  risk/                       # 风险预算、组合保护、压力约束和授权
-  execution/                  # 交易计划、订单与成交契约
-    planning/                 # grouped TradePlan 纯规划与不可变交接账本
-    venue/                    # Binance/Mock 交易场所适配
-    lifecycle/                # 持仓生命周期状态机
-    reconciliation/           # 账户事实对账与恢复
-  governance/                 # 治理事实、Policy 与存储
-    change/                   # 治理 Agent 和变更周期
-    evaluation/               # 预登记计划、统计门禁与版本评价
-      assessment.py           # 历史 Directional View 前向计划与收尾评价
-      forecast_policy.py      # Program、Context 与预登记组合的同 cohort 预测/资本评价
-    release/                  # 发布验证、审批和可恢复切换
-    audit/                    # 架构及 Codex 隔离审计
-
-  legacy/                     # 迁移期隔离的 SignalCandidate/TradeIntent 旧链；只出不进
-
-  research/                   # 隔离的离线研究与不可变评价制品
-  entrypoints/
-    cli/                      # 按用例注册薄命令；各领域用例互不反向调用
-    dashboard/                # 纯读投影和 Web 静态资源
-  platform/                   # 数据库、Temporal、时钟等无投资语义设施
+event_time <= observed_at <= decision_as_of
 ```
 
-这里的一级领域目录不是“平铺文件”：每个目录都是拥有独立业务不变量的稳定边界。不得为了减少
-一级目录数量再增加无业务含义的 `domains/`、`services/` 或 `components/` 容器；这只会延长 import
-路径并隐藏所有权。真正需要治理的平铺，是同一领域根目录中混入多个独立状态机或不同变化原因的
-文件；它们达到本节条件时才进入能力子包。
+原始观察、规范事实、状态、认知、预测、资本目标、授权、订单观察和结果都追加保存。修订产生新版本，不能用今天获得的资料覆盖过去，也不能用后到成交覆盖当时未知的订单状态。
 
-主线已经完成 `quant_core → investment_manager` 的硬迁移，包根只保留配置与 Schema 组合入口，未来
-发布使用的环境变量、任务队列、制品目录和研究版本也已同步收敛；受保护的历史冻结 Release 仍可能
-显示旧身份，这是不可变运行制品，不是当前源码结构。当前迁移重点不是再次改顶层名称，而是逐步
-切断 `legacy` 消费者并最终删除整条旧交易链。
+### 4.2 世界认知与预测
 
-领域是第一级稳定边界，能力是可选的第二级边界。只有同时满足以下条件才建立能力子包：它拥有独立状态机或外部协议；至少有两个不同技术职责因同一业务原因一起变化；能够用一句业务语言命名。子包只允许再包含文件，不继续按技术层级无限嵌套。
+WorldModel 解释“哪些力量正在起作用、如何传导、什么会推翻解释”，Forecast 回答“某个冻结收益对象在冻结时域内的结果分布是什么”。两者必须分开：复杂叙事只有转化为可结算 Forecast 后，才可能影响资本。
 
-`decision_cycle` 是唯一例外：它不是业务事实域，而是最薄的跨域应用层。它只负责冻结同一批输入并按唯一决策链调用各领域，不能定义投资模型、Policy、数据库表、Repository 或第二套裁决。跨域用例的不可变运行收据归入最接近的业务所有者；例如 `CapitalCycleRecord` 随其账户和 Target 归 Portfolio，且只能引用而不能重新裁决 Risk、Execution 或 PnL。领域不得反向导入 `decision_cycle`。只有一个用例确实跨越两个以上领域、放入任一领域都会造成反向依赖时，代码才能进入这里。
+Forecast 在结果发生前绑定：收益对象、信息截止、完成时间、时域、结果定义、输入身份、生产者行为和结算方法。正、负、中性、不确定及最终未交易的 Forecast 都进入同一 Outcome 账本。生产者不能以费用后 Edge 或当前无持仓为由省略预测。
 
-这不是要求每个领域复制相同文件模板。一个领域只有在确有独立职责时才创建模型、Policy、表、Repository、应用用例或 Workflow。单个文件足够时保持单文件；小领域继续平铺。禁止以减少目录观感为目标拆文件，也禁止以统一模板为目标制造空包、转发入口和重复装配。
+同一经济问题在一个决策时点最多只有一个获得资本权限的 Forecast。若存在多个来源，它们在同一合同和 Outcome 下评价；只有前瞻证据证明组合优于单一来源后，才允许发布组合政策。来源差异不能产生不同标签、不同成本口径或不同资本入口。
 
-文件按它在能力中的实际角色命名：`packet.py`、`executor.py`、`settlement.py`、`engine.py`、`workflow.py`、`service.py`。只在确实承载整个领域共享契约时使用 `models.py`、`policy.py`、`tables.py`、`repository.py`。任何跨子包复用都从真正所有者直接导入，不通过 `__init__.py` 重导出。
+### 4.3 组合目标
 
-目标状态下顶层不得再存在 `domain.py`、`config.py`、`persistence.py`、巨型 `cli.py` 或散落的 `*_sql.py`、`*_runtime.py`、`*_workflows.py`。同一领域内出现两个以上独立运行状态机时，必须按能力归位，不能继续堆在领域根目录。这些名字描述技术形态而非业务所有权。
+Portfolio 每次解决同一个问题：从已对账的当前组合出发，在继续持有、现金和合法候选目标之间，选择现实成本与约束后的唯一目标组合。
+
+成本以“当前状态 → 目标状态”的变化计算：开仓、持有、退出和反转分别只计尚未发生的费用、点差、滑点、funding 和其他现金流；已发生费用是沉没成本，不能重复扣除。Portfolio 使用当前可成交事实重估 Forecast，Codex 运行期间已经发生的价格变化不能计作可赚收益。
+
+对于同一线性产品，若规范 payoff 可以精确翻转，Portfolio 可从同一 Forecast 派生多头、空头和现金候选；不得再次调用 AI 或把两个方向计为两个 Alpha 样本。Spot、Perpetual 和不同交易场所不是同一 payoff，不可机械镜像。
+
+PortfolioTarget 是产品目标暴露的组合映射，不是订单集合。策略名、分析次数或预测来源不形成永久的“仓位对象”；只有确有独立执行原子性或评价语义的多腿实验，才可在该实验中引入组合腿定义，不能预建通用 Sleeve 体系。
+
+### 4.4 风险与执行
+
+Risk 对同一冻结账户、行情和目标执行硬约束，输出批准、缩减或拒绝。它可以在账户不一致、保证金恶化或硬限额突破时发起只减险目标，但不能借风险名义增加敞口、反向开仓或生成收益判断。
+
+Execution 只接受获授权目标或只减险指令。它拥有交易场所账户、订单、成交、资金费用、持仓和对账事实，必须处理稳定订单身份、重复提交、未知结果、部分成交、重启恢复和主动对账。未确认减仓前不得视为风险已经释放；方向反转必须先平旧方向、对账为零，再开新方向。
+
+TradePlan 的短期有效期只约束“这次订单计划是否仍可执行”；Forecast 的时域约束“这项收益判断还能支撑多久”。二者不需要额外的入场/持仓状态机。新资本决策按账户 revision 串行化；迟到分析永久保存和结算，但不能覆盖已由更新信息形成的目标。
+
+### 4.5 评价与权限
+
+Evaluation 分开回答四个问题：
+
+1. WorldModel 是否给 Forecast 带来增量；
+2. Forecast 是否优于无技巧和简单程序基线；
+3. Portfolio 是否把预测转化为费用后改善；
+4. Risk 与 Execution 是否在可接受回撤下保留了该改善。
+
+每项实验在结果发生前冻结输入、行为身份、成本、基线、评价方法、样本边界和停止条件。评价读取所有预登记样本，包括无预测、未交易和失败样本。结果只能改变未来 Release 或权限，不能选择性改写历史。
+
+AI 历史重放可验证数据、Schema 和稳定性，但不能排除模型训练知识泄漏，因此 AI Alpha 和资本权限只由真实前瞻样本证明。任何“已实现”“运行健康”“文字更深”或少量模拟盈利都不等于稳定盈利。
 
 ## 5. 领域所有权
 
-### Market
+| 领域 | 权威所有权 | 允许依赖的上游 |
+|---|---|---|
+| `market` | Instrument、报价、成交、K 线、funding、市场结构和交易规则观察 | 外部 Venue |
+| `information` | 官方日历、原始文件、新闻和事件观察 | 外部来源 |
+| `state` | Canonical Fact、确定性 State 及其 Evidence 引用 | market、information |
+| `cognition` | WorldModel、认知行为和实际输入快照 | state |
+| `forecast` | ForecastContract 的运行绑定、Forecast、结算标签和来源表现 | state、cognition、market |
+| `portfolio` | 当前状态到目标组合的经济比较、PortfolioTarget | forecast、已对账账户、market |
+| `risk` | 风险限额、压力、保证金约束和 RiskDecision | portfolio、已对账账户、market |
+| `execution` | TradePlan、Venue 账户、订单、成交、持仓和 Reconciliation | risk、market |
+| `governance` | Evaluation、实验登记、Release 和权限 | 所有领域的不可变结果 |
+| `scheduling` | 事件合并、定时唤醒和主 Agent 触发计划 | 各领域的到期/变化通知 |
+| `decision_cycle` | 一次闭环的幂等编排和阶段交接 | scheduling 与各业务用例 |
+| `dashboard` | 权威事实的只读中文投影 | 各领域只读接口 |
+| `research` | 点时回放、基线和隔离实验 | 生产纯逻辑与冻结制品 |
 
-拥有 Instrument、Quote、Trade、Bar、MarketSnapshot、Feature、Binance 行情适配和市场流。Spot
-连续报价仍由一个 WebSocket 流承载；低中频永续研究所需的 mark、index、premium、下一结算时间和
-已发生 funding 由 `market/perpetual` 通过可恢复 REST 轮询保存为点时事实，不复制第二套高频流。每次完整
-刷新还必须追加成功、未变化或失败的覆盖记录；只有该记录持久化后刷新才算成功，防止数据库有行情但认知层
-仍把该域误报为未知。
-所有 Market 表只在 `market/tables.py` 声明。交易所过滤器和数量步长以 Binance 官方规则为准。
-Market 不知道预测、组合和订单意图。
+关键所有权裁决：
 
-### Information
+- State 只拥有可确定性重建的事实投影；Cognition 独占 WorldModel，因为因果解释可以被反驳但不能伪装成事实。Forecast 只引用二者的不可变身份。
+- Execution 拥有交易场所账户事实；Portfolio 和 Risk 只读同一份已对账快照，不各算一份余额或持仓。
+- Governance 拥有评价与权限，但不能直接写 WorldModel、Forecast、Target、RiskDecision 或订单。
+- Decision Cycle 没有业务模型、策略、表和评价规则；若协调器开始裁决“该不该交易”，逻辑必须归还对应领域。
 
-拥有 RawSourcePayload、SourceObservation、官方经济日历、新闻采集和 NormalizedEvent。固定官方日历中的重要活动以可改期、可取消的逻辑事件保存，不能把一次页面快照直接变成永久 Wakeup。所有外部文本先保留原始制品，再形成可修订观察；Information 不裁决方向。
+## 6. 触发、AI 与主 Agent
 
-### State
+Scheduling 只表达“何时重新运行哪项用例”，触发来源只有四类：
 
-拥有 CanonicalFactRevision、StateSnapshot、MaterialDelta、StateEvidence 和 DecisionPacket。它解决点时可见性、冲突与引用完整性，为所有预测者提供同一冻结输入。
+1. 官方日历、事实修订和意外事件推动 State/WorldModel 更新；
+2. ForecastContract 的自然时点推动 Forecast；
+3. 行情、账户和持仓异常推动程序化 Risk 复核；
+4. 主 Agent 可立即触发或增删未来触发点，并永久记录理由和版本。
 
-### Scheduling
+普通 heartbeat 只恢复到期任务、结算和对账，不因“时间到了”自动重复调用 Codex。程序化市场保护和风险退出不等待 AI。相同材料与相同任务身份只能产生一次有效运行，重试和账号切换不能制造新预测样本。
 
-拥有 TriggerEvent、TriggerPlan、合并/冷却/优先级和动态 wakeup。主 Agent 可以立即触发、增加或删除未来触发点，但所有修改都是持久、版本化和可重放的 TriggerPlanPatch。显式 Agent 唤醒的理由被原样交给 State 的 `PacketReviewRequest`；Heartbeat 无变化时不强制 AI。Scheduling 只决定“何时重新分析”，不决定“买什么”。
+临时 Codex 每次读取冻结的信息面板并输出结构化结果，不依赖长对话记忆。账号路由根据已配置目录的真实可用容量选择账号，目录名就是账号身份；切换不改变行为身份或投资语义。容量限制不得成为紧急分析的静默预算门，但超时、失败、账号和延迟都必须进入运行与评价事实。
 
-官方日历是这个边界的结构化输入：事实修订产生即时 `CANONICAL_FACT_REVISED`，未来正式发布时间以稳定事实身份同步为 `ScheduledWakeup`。同步器只管理自己拥有的官方 wakeup，不覆盖主 Agent 的计划；到点后的有效窗口仍由 TriggerCoordinator 负责交付。
+主 Agent 只做三件长期工作：识别闭环当前最大的实证断点、提出一个可证伪变更、根据新结果保留或删除它。它可以调整数据覆盖、触发、模型、Prompt、预测合同、组合或风险政策，但每次 Release 必须说明改变了哪个假设，不能同时修改多层后再事后归因。主 Agent 没有独立的隐性投资账本，也不需要预建自治搜索、辩论或长期文本记忆框架。
 
-ForecastContract 与已生效资本 Forecast 的到期时间同样形成耐久 wakeup。到期动作先由 Portfolio 撤销过期预测的
-资本效力并收敛目标，不依赖 AI 成功；下一预测只按已登记 decision slot 生成。Heartbeat/重启恢复负责补交遗漏的
-到期动作，不能因没有新闻或 Codex 失败让旧判断自动续期。
+## 7. 模块结构与依赖
 
-### Forecast
-
-拥有 BaseForecast、WorldModel、Context Forecast、机制观测、CalibratedForecast、校准制品和预测结果。Program 与
-Context Source 都通过明确 ForecastContract 和 producer behavior 注册，在全部预登记评价时点输出 Forecast 或显式
-NO_ESTIMATE；预期为负不能省略 Forecast。WorldModel 不绑定资本问题，Context Source 只读其身份并对冻结 Target
-形成合同化概率预测。Forecast 身份同时冻结 decision slot、信息截止、完成期限和完成后可成交起算规则；迟到输出、
-重试和重叠标签不能制造伪样本。包括 NO_ESTIMATE 在内的每个槽都必须附加后续 Outcome 或明确标签不可得原因，
-来源选择同时读取按时覆盖率与延迟，不能只评价成功输出。ForecastPolicy 只读先前已结算槽并先做单源校准/选择，
-不预建默认组合器。行为、
-输入投影、工具、提示词、标签或成本语义实质变化即产生新身份。未获权限的 Forecast 只能进入隔离模拟与结算；
-同一 outcome family/时域在一个资本时点只允许一个经校准或精确 Mock 授权的权威 Forecast 进入 Portfolio。
-方向合同的规范 Forecast 只结算一次；同产品 inverse orientation 是 Portfolio 使用合同 payoff 代数形成的确定性
-候选，不属于 Forecast 来源，也不获得独立 behavior、permission 或样本身份。
-
-### Portfolio
-
-拥有现金与资产的统一比较、PortfolioTarget 和再平衡政策。它是预期收益、点时完整成本、相关性、现有敞口和换手
-权衡的唯一经济所有者，不接受带有预设下单数量的 Forecast。实际账户费率、可成交点差、规模滑点、持有成本和退出
-缓冲在每次决策时计算；ForecastContract 只冻结成本算法版本，Producer 不复制净 Edge 门槛。Forecast 到达合同
-horizon/validity 后不能继续支撑风险敞口；没有新的合法资本 Forecast 时，Portfolio 将该 family 收敛到现金或合同
-预先冻结的确定性退出路径。新 Forecast 延续旧仓位时仍从当前可成交价比较剩余 Edge、换手成本与风险。合同失效
-条件命中的 MaterialDelta 会立即撤销旧 Forecast 的新增风险权限，存量敞口只走合同预登记的保持上限/减险/退出
-语义，不新增事件 veto 或 AI 持仓意见。
-
-Portfolio 以“当前账户状态 → 候选目标状态”为成本单位，分别处理开仓、持有、退出与反转，不重复扣除沉没费用。
-它对一个方向 family 只维护一个稳定 Sleeve，orientation 改变是同一 Sleeve 的目标变更；现金、多头、空头的比较明细
-内嵌在资本决策事实中，未选候选不持久化为伪 PortfolioTarget。
-
-### Risk
-
-拥有风险预算、组合保护、gross/net exposure、集中度、压力损失、保证金缓冲和最终 RiskDecision。风险状态必须持久化并可在重启后恢复；减仓未成交前不得视为风险已释放。
-
-### Execution
-
-拥有 TradePlan、ExecutionRequest、订单、成交、保护单、账户投影、持仓生命周期和 Reconciliation。稳定客户端订单 ID、未知提交恢复、部分成交和主动对账属于同一状态机。
-单向 Perpetual 的方向反转必须先平后开；账户模式、杠杆、保证金与持仓对账不一致时不得新增风险。模拟 Venue 必须
-复现相同的方向、funding、保证金、强平边界和恢复语义，否则模拟收益不能作为真实订单授权证据。
-
-### Governance
-
-拥有 EvaluationPlan、盲测 claim、FailedExperiment、ReleaseManifest、权限授予与撤回。治理 Agent 可以提出策略、数据、调度和系统变更，但不能直接修改生产状态；变更通过冻结制品和发布流程生效。
-
-### Decision Cycle
-
-不拥有新的业务语义。它将 Scheduling 已接受的批次冻结为各个已启用分析消费者的请求，并将已冻结 Forecast、账户与行情依次交给 Portfolio、Risk 和 Execution Planner。每个经济或安全判断仍由对应领域作出；该层只校验输入时点一致、保存阶段结果并推进可恢复流程。
-
-## 6. 跨域组合与事务
-
-一个物理数据库只使用 `platform.database.metadata` 这一份 `MetaData`。领域在自己的 `tables.py` 声明表，根 `schema.py` 显式加载所有表所有者并向 Alembic 暴露完整注册表。平台层不导入业务领域；Schema 组合入口可以导入领域，因为它是最外层装配点。
-同一个 decision slot 需要的 Evidence、WorldModel、Forecast、账户与执行结果必须在同一权威库内可按点时读取和原子交接。研究 Forecast 与资本 Forecast 共用账本语义，但只有获当前 Release 精确 Mock/CAPITAL 授权的 behavior 才能进入 Portfolio；未授权来源没有写资本对象的路径。晋升只发布新权限和风险包络，不改写历史 Forecast 或仓位。
-
-表所有权不等于事务隔离。分析准备、风险预留与执行交接需要同一数据库事务时，由明确的应用用例协调，而不是把所有表和 Repository 放回中央 `persistence.py`。目标形式是一个显式 Unit of Work，在同一 Connection 上调用领域 Repository；每个 Repository 仍只修改自己拥有的表。
-
-Temporal Workflow 只保存确定性编排状态，Activity 调用领域 application。业务库保存不可变事实和可恢复交接，不复制 Temporal 状态机。重试使用稳定业务身份，任何已完成阶段都要校验既有内容而不是静默覆盖。
-
-## 7. 依赖规则
-
-允许的依赖方向：
+目标保持模块化单体和一个权威 PostgreSQL 事实库：
 
 ```text
-kernel
-  ↑
-business domain models/policies
-  ↑
-domain application/repository/workflow
-  ↑
-decision_cycle
-  ↑
-entrypoints
-
-platform 由外层注入，不能反向依赖业务领域
-research 可以依赖生产纯逻辑，生产不得依赖 research
-dashboard 只读，不能导入任何写用例或控制入口
+investment_manager/
+  kernel/          # 内容身份、时间与最小通用值对象
+  market/
+  information/
+  state/
+  cognition/
+  forecast/
+  portfolio/
+  risk/
+  execution/
+  governance/
+  scheduling/
+  decision_cycle/  # 仅编排
+  entrypoints/     # CLI / worker / dashboard
+  research/        # 不被生产导入
+  platform/        # DB、Temporal、HTTP 等外部适配
 ```
 
-强制规则：
+允许的依赖方向是“领域纯逻辑 → 领域应用 → 外层编排与入口”。业务领域不导入 `decision_cycle`、`entrypoints` 或 `research`；Dashboard 不导入写用例；Platform 通过外层注入，不能成为业务杂物层。跨域事务由显式应用用例在同一连接上组合各领域 Repository，各 Repository 只修改自己拥有的表。
 
-1. `kernel` 不依赖任何业务包、SQLAlchemy、Temporal、Typer 或 Web 框架；只允许 Pydantic 及其序列化核心作为全系统不可变模型与内容身份的统一基础。
-2. 领域模型和 Policy 不依赖 tables、Repository、runtime、CLI。
-3. Repository 只写本领域表；跨域事务由应用组合层协调。
-4. Workflow 不包含投资规则，Activity 不通过 CLI 调用业务。
-5. CLI 不直接拼 SQL、不构造评估规则、不启动隐含第二套 runtime。
-6. 生产不得导入 `research`；Research 必须复用生产的时间、成本、取整和风控语义。
-7. 禁止循环依赖、旧路径 re-export、兼容别名和两个机制同时拥有同一裁决。
-8. 业务领域不得导入 `decision_cycle`；`decision_cycle` 不得声明领域模型、Policy、表或 Repository。
-9. `research` 不得导入 `entrypoints`；研究命令只允许由
-   `entrypoints/cli/research_commands.py` 调用研究用例，避免领域代码反向注册 CLI。
+不按 `domain.py`、`utils.py`、`runtime.py` 或文件行数拆包。只有存在独立不变量和至少两个内聚能力时才建立子包。当前无消费者的抽象、禁用分支、兼容 alias、双写双读和投机性 Provider 必须删除。
 
-迁移期 `legacy` 可以依赖目标领域以复用已经归位的事实、风控和执行语义；目标领域不得
-反向导入 `legacy`。它不是长期兼容层，只在第 9 节阶段 D 的生产接线、恢复和回放证据
-完成前保留。
+## 8. 架构与实验的边界
 
-这些规则由 AST/import 边界测试执行，不依赖人工记忆。
+架构只冻结本文的不变量。每个实验或 Release 另外冻结：
 
-## 8. 配置、权限与运行入口
+- mandate、交易场所、产品和允许目标；
+- Forecast 的时域、结果分布、触发和结算；
+- 输入投影、生产者行为和完成期限；
+- 成本、资金费用、组合政策和风险包络；
+- Mock/CAPITAL 权限、基线、评价和停止条件。
 
-每个领域拥有自己的严格 Policy；根 `settings.py` 只组合启用的 Policy，并拒绝未知字段。发布清单绑定完整配置内容、代码版本、数据库版本、预测者身份和行为身份。
+首个方向实验是这套架构的一个实例，不是架构本身，其冻结参数和问题见 [`WORLD_COGNITION_DESIGN.md` 第 8 节](WORLD_COGNITION_DESIGN.md#8-当前第一个实验实例)。具体时域、bucket、额度和触发可以在新实验中被证据推翻，但同一实验运行期间不得漂移。
 
-长期进程仍可分别运行 market stream、information collector、Temporal worker、trigger dispatcher、lifecycle、outcome evaluation、reconciliation、governance 和 dashboard，但装配函数归属相应领域，命令行只解析参数、调用装配并映射错误。
+在该闭环证明连续预测、现实成本、方向转换、账户恢复和费用后增量前，不扩展 ETH、股票永续、动态 sizing、多资产优化器、默认 ensemble 或通用多腿框架。限制扩展不是为了延迟交易，而是确保第一个结果能指出到底是哪一层有效或失效。
 
-Codex 账号选择、调用审计和行为隔离属于 Forecast/Governance 共享的受控外部执行能力；账号目录是配置事实，不进入领域模型。调用不设人为 AI 预算门，但必须记录延迟、失败、账号容量和输出身份，失败不得绕过交易权限。
+## 9. 硬迁移原则
 
-## 9. 硬迁移顺序
+迁移只按闭环做纵向切片：先冻结目标 Release 和不可变历史，再让新路径完成 Forecast → Target → Risk → Mock Execution → Outcome 的回放、重启和故障验收，随后原子切流并删除旧生产者、配置、入口、表写入和专属测试。
 
-在线服务保持在独立冻结 checkout 中运行；其具体 Release 身份属于运行清单，不写死在架构文档。主线结构迁移不修改冻结代码、Schema 或进程，每一步都必须可独立构建和回放。
+历史 Evidence、Forecast、订单和 Outcome 保留；退役的运行机制不保留。旧 Spot 方向实验可继续结算已有历史槽，但切流后不得创建新槽或进入当前 Portfolio。`legacy` 只允许在明确的迁移窗口读取历史，不得被新领域反向依赖；完成迁移后整个路径删除，不建立兼容层。
 
-### 阶段 A：建立可验证基线
+文档不保存逐阶段完成日志、在线 PID、当前 Release 哈希或临时迁移清单；这些属于版本库、ReleaseManifest 和任务记录。权威设计只描述目标状态，避免历史实施细节永久污染架构。
 
-- 冻结当前 Alembic 表、列、索引、外键清单；
-- 冻结 CLI 命令、参数和退出行为；
-- 增加导入边界和循环依赖测试；
-- 记录当前生产入口与冻结 Release 的对应关系。
+## 10. 验收与否决
 
-### 阶段 B：一次性更名
+架构闭环可用至少满足：
 
-- 将 `src/quant_core` 硬迁移为 `src/investment_manager`；
-- 同步修改所有 import、Alembic env、测试、构建配置和命令入口；
-- 删除 `quant_core` 包和 `quant-core` 命令，不提供 alias；
-- 不在这一步改变领域行为、表结构或 CLI 子命令语义。
+- 任一资本结果都能沿唯一链追溯到点时 Evidence、Forecast、账户、授权和成交；
+- 连续产生 Forecast 或明确失败，并对未交易 Forecast 同样结算；
+- 现金、持有、多头、空头、退出和反转由一个 Portfolio 比较产生；
+- Risk 不能创造 Alpha，Execution 不能修改目标，AI 不能直接下单；
+- 过期判断不能续命持仓，迟到结果不能覆盖更新的资本 revision；
+- Mock 与真实 Venue 复用相同成本、取整、funding、订单恢复和对账语义；
+- 评价能区分认知、预测、组合、风险和执行各层贡献；
+- 被替代路径、无消费者代码和重复裁决已经删除。
 
-阶段 B 首先保持已持久化外部身份不变，以隔离源码迁移风险；随后主线通过独立切换把未来发布的
-Secret 键、默认 Temporal task queue、制品目录、新研究版本和本地测试身份统一为 Investment
-Manager。冻结发布继续从各自 checkout 和 Release 配置读取旧身份，主线不为它们增加兼容逻辑，
-也不修改其数据库或运行进程。
+明确否决：微服务化当前单库闭环；按“AI/传统量化”建立两条链；新闻直达订单；多空各建一个 Agent；Spot 与 Perpetual 互相伪装；为了产生交易降低成本或风险真实性；用月度、首日、固定次数或固定日期代替经济时点；提前建设知识图谱、向量记忆、多 Agent 辩论、自动策略工厂或默认模型组合；用调用成功、事件数量、交易次数或页面丰富度冒充盈利能力。
 
-受保护的历史 checkout 和它正在使用的共享虚拟环境中仍可观察到旧 `quant_core` 包元数据；这是
-不可变的在运行发布，不是主线目录。后续发布只从自己的冻结 checkout 加载
-`investment_manager`，不得重新安装或复用旧包入口；旧发布完整退役并验证不可恢复需求后，才删除
-共享环境中的旧 editable 安装。不得为了目录观感修改在线冻结代码或破坏其恢复入口。
-
-先更名再分包，避免每个模块经历两次路径迁移，也避免两个顶层包长期共存。
-
-### 阶段 C：按依赖逐域硬迁移
-
-迁移顺序：
-
-```text
-kernel/platform
-  → market/information
-  → state/scheduling
-  → forecast
-  → portfolio/risk
-  → execution
-  → governance
-  → decision_cycle
-  → entrypoints
-```
-
-每次只迁一个可运行纵向切片，同时完成模型、Policy、表、Repository、应用用例、Workflow、运行装配、CLI 调用者和测试；随后立即删除旧文件。若必须保留旧路径才能通过测试，说明切片尚未完成，不得提交兼容包装。
-
-域内能力收敛也采用硬迁移，不保留旧 import：
-
-1. `information/official` 与 `state/decision`，先稳定事实和冻结输入；
-2. `forecast/context` 与 `forecast/codex`，隔离投资判断和外部 AI 执行；
-3. `execution/planning`、`execution/lifecycle`、`execution/reconciliation` 与 `execution/venue`，分开计划交接、订单恢复和场所协议；
-4. `governance/change`、`evaluation`、`release` 与 `audit`，避免治理成为第二个杂物核心；
-5. Codex 运行能力已按不可变输入包、额度协议、推理协议、账号路由、隔离验收和审计存储完成硬迁移，
-   旧 `codex/runtime.py` 已删除且没有转发入口；Research 大文件和 CLI 大文件仍只在真实能力边界成熟时
-   拆分，禁止只按行数拆分。
-
-### 阶段 D：替换旧交易链
-
-按以下纵向切片迁移；每个切片必须同时接好生产、回放、恢复和评价，随后删除被替代代码，禁止只搬文件：
-
-1. **触发解耦（已完成）**：`decision_cycle` 对一个 `TriggerBatch` 只生成新 Forecast 链已启用消费者
-   的不可变请求；旧 AnalysisCycle 已退出 Trigger 调度，程序化预测接入时必须直接实现 Forecast
-   契约，不能恢复旧分支。
-2. **投资对象与预测接线（Spot 验证切片已完成，双向替换待实施）**：`InstrumentId + ForecastTarget` 已成为 Base 与
-   Calibrated Forecast 的单腿/多腿投资对象合同；双产品点时 Market 事实、统一 Forecast 持久化、逐 Leg
-   可成交价/funding 结算和 carry Program Source 已接线；Context Source 也已在 WorldModel 持久化后冻结 decision slot、
-   信息截止、完成期限、完时点最新可成交锚点和收益区间，只让 Codex 输出概率并由程序形成 BaseForecast。Context Forecast 同时持久化本次真实 AI 输入的规范 JSON 与内容哈希，页面直接从 Forecast 账本查看，不再维护第二份快照。两类 Producer
-   都不提前应用净 Edge。首个 BTC Spot 4h Context 行为获得精确 Mock 授权并证明负 Forecast 可以落账，但 Spot 无法
-   表达其负向判断。下一切片以新合同/behavior 将它硬替换为 BTC USD-M Perpetual 24h 规范多头分布，并确定性派生同产品
-   空头；不并行增加空头 Producer。Program 与 Context 单源尚未证明前不实现默认组合器；WorldModel 增量只用诊断
-   cohort 的配对消融验证。OpportunityAssessment 运行路径已删除，历史身份只读保留。未获权限的任一来源仍不能影响正式资本。
-3. **组合与风险接线（通用 Mock Shadow 已完成，方向状态迁移待实施）**：产品级账户、Sleeve allocation、整组 Risk 缩放和
-   grouped TradePlan 已完成硬迁移；现金、拒绝、整组缩减和低于最小交易额均有明确结果。账户、
-   `PortfolioTarget → RiskDecision → TradePlan` 已按领域持久化，并由 `CapitalCycleService` 接入独立
-   Shadow 装配。双向切片必须把 Sleeve identity 从 Leg 方向中解耦、增加多/空/现金内嵌比较，并按账户到目标状态计算
-   funding 与剩余成本；尚未把这项状态称为真实 Venue 能力。
-4. **执行接线（通用 Mock Shadow 已完成，方向反转与真实 Venue 未完成）**：Execution 已直接消费已授权 `TradePlan`，并完成 group/Leg 幂等 Mock 订单、
-   未知结果恢复、部分成交超时减险、补偿失败重试、点时订单观察和同 Sleeve 串行化；产品账户投影已
-   统一计算现金、费用、funding、产品/Sleeve 持仓、权益和待完成组；资本入口先恢复旧非终态 group，
-   再允许新决策。下一步先完成同 Sleeve 的 `REDUCE_TO_FLAT → reconcile → OPEN_NEW_ORIENTATION`、方向 Perpetual
-   funding/保证金/强平模拟，再接 Binance 产品 Venue、保证金/资金流水和主动对账；新链不再接收
-   `TradeIntent`，也不假定交易所提供跨产品原子成交。
-5. **切流删除**：旧 AnalysisCycle/Execution Temporal Worker、协调器和专属 CLI 已在主线删除；点时回放、结果结算和正式 Venue parity 完成后，再删除仍被历史评价读取的 SignalCandidate、TradeIntent、旧表写入及其余 `legacy/`。
-
-迁移期间不为 `legacy/` 建新子包、不增加兼容层，也不为改善目录观感重排待删代码。每一步优先减少 `decision_cycle/trigger.py` 之外对 `legacy` 的生产导入；冻结 Release 继续从自身 checkout 读取旧实现，不阻塞主线删除。
-
-## 10. 每阶段验收
-
-每个结构阶段同时满足：
-
-- 全量测试和 Ruff 通过；
-- Alembic `check` 无结构差异，表/列/索引/外键清单与基线一致；
-- 有效 CLI 子命令、参数、退出码保持一致，只有阶段 B 明确更换顶层可执行名；
-- Workflow 重放、SQL 幂等和风险原子事务测试通过；
-- Web 构建与只读健康查询通过；
-- 边界测试拒绝反向依赖、循环依赖、旧包导入和生产依赖 Research；
-- 旧文件、旧入口、兼容层和无消费者代码已删除；
-- 冻结线上 Release 未被主线结构迁移污染。
-
-最终结构完成的可观察证据：
-
-- 可执行源码与当前配置中不存在 `quant_core` / `quant-core` / `QUANT_CORE_*` 身份；架构文档和
-  契约测试只可把旧名作为明确的禁止项或冻结历史说明；
-- `investment_manager` 根目录只保留组合入口，不平铺业务模块；
-- `domain.py`、`config.py`、`persistence.py` 和巨型根 CLI 不存在；
-- 每张表、每项 Policy、每个业务状态机都能指出唯一领域所有者；
-- 可交易路径只有本文第 3 节定义的一条。
-
-## 11. 设计否决项
-
-以下方案即使短期省事也不采用：
-
-- 为目录对称制造空包、单行转发文件或统一 `common/utils/runtime` 杂物层；
-- 微服务化当前单库事务链；
-- 新旧包并存、双写双读或长期 import alias；
-- 按“AI 代码”和“传统量化代码”分层；
-- 在架构迁移中顺便修改策略、风险阈值或数据库结构；
-- 为尚未通过评估的策略预建完整生产运行路径；
-- 为同一方向合同建立独立多头/空头 Producer、Forecast、Sleeve 或服务；
-- 把 Spot 与 Perpetual 当作可无损互换的方向实现，或在首个双向切片中预建产品路由器；
-- 用单一净订单跨零反转持仓，或让交易所 leverage 绕过 Portfolio gross 上限；
-- 以文件数量、测试数量或调用频率代替费用后盈利证据。
-
-这个架构的价值不是看起来整齐，而是让一次投资能力变化只修改其真正拥有的领域，同时仍能以最短、唯一、可恢复的路径转化为组合结果。
+最终原则：**现实先成为点时事实，认知只解释，预测必须结算，组合独占资本取舍，风险只保护生存，执行忠实收敛真实账户，结果决定任何能力是否继续存在。**

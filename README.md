@@ -35,7 +35,7 @@
 - TriggerBatch 分段时间事实、信号半衰期、价格已消耗优势和可归因交易成本后的剩余净优势门禁。
 - 受监督的信息采集角色，按类型化白名单读取 TrendRadar MCP、本机 NewsNow 与固定 Fed 一手端点，并持续标准化到 PostgreSQL；失败不会污染已有事实。
 - 固定一手状态适配器：Treasury 回购日程与实际结果、TGA、Treasury 收益率、Fed 广义美元、RRP、SOMA、EFFR/SOFR 与 iShares IBIT 日持仓统一保存原始响应、语义修订与高密度事实；历史异常度在程序侧计算，背景波动不占用 AI 主导因素注意力。回购计划上限与实际接受金额严格分离，IBIT 只作为单基金部分观测，不冒充 ETF 合计净流入。
-- `DecisionPacket → ContextAssessmentWorkflow` 研究链：Codex 维护可引用、可证伪的组合级世界模型；只有存在独立合格的程序候选和预登记资本问题时，才评价世界模型是否应否决该候选。它不强制生成短周期方向观点，失败关闭且没有交易权限。旧 `AnalysisCycleWorkflow` 已退出 Trigger 调度，只保留迁移期回放代码。
+- Codex 世界认知与 Context Forecast 基础：认知引用点时 Evidence，预测绑定可结算合同；旧候选复核/veto 语义不再是目标资本链，迁移期间不得扩展。
 - Temporal `PositionLifecycleWorkflow` 与未关闭持仓发现器；跨轮保存价格路径并以幂等退出完成止损/最长持有时间归因。
 - 独立持久化 Mock 交易所边界与 `ReconciliationWorkflow`：主动比较订单、成交、余额和仓位，追加不可变差异报告；报告缺失、过期、未知或不一致时冻结新增风险。
 - `OutcomeEvaluationWorkflow`：固定窗口和结算宽限期后聚合实际运行周期与权威逐笔结果；未决持仓保持 `INCOMPLETE`，完整报告给出费用后净收益、Profit Factor、最大回撤和永不交易基线增量。
@@ -50,9 +50,9 @@
 - Alembic 初始迁移，并在隔离 PostgreSQL 上验证迁移、事实事务和恢复读取。
 - Mock → Shadow → Testnet 的相邻阶段晋级门禁；LIVE 适配器在配置层无条件禁用。
 
-主线已经完成 `BaseForecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → ProductAccountSnapshot` 的通用资本切片。月初专属 BTC calendar carry 与已失败的 dynamic carry 均已退出生产路径，只保留不可变研究结果；当前没有通过独立证据门槛的主动候选，因此权威资本状态是现金，而不是等待某个日历日期。每个触发批次都追加一条不可变 `CapitalCycleRecord`，包括无机会、保持、风控退出和执行结果；Trigger 先恢复非终态 group、按真实 funding、费用和可成交价更新账户并复核持仓风险，再评价显式装配的候选。低于最小调仓金额时 Target 冻结当前暴露，Planner 不会生成无效订单。
+主线已经具备 `Forecast → PortfolioTarget → RiskDecision → TradePlan → grouped Mock Execution → AccountSnapshot` 的通用资本基础。已证伪的 carry 运行路径已经退出，只保留不可变研究结果；当前现金状态不代表已经证明“没有机会”。目标方向实验和迁移边界以权威架构为准。
 
-尚未完成且不能由仓库自行假定完成：合格且经济意义充分的程序候选、长期费用后样本与 Sleeve 归因，Binance Spot + USD-M Product Venue、权威余额/持仓/保证金/资金流水对账，真正 PUSH/STREAM 的低延迟新闻源，以及“程序基线 vs 确定性 Context 否决规则”的前向配对增量证据。Capital 已把相邻权威账户快照记录为不可变费用后绩效区间，并在观测台展示累计净 PnL；这证明结果可核对，不等于已经盈利。ContextAssessment 当前只维护研究级世界模型，无资本权限。TriggerPlan Heartbeat 每 15 分钟推进程序资本与 State，资讯、市场冲击和主 Agent 立即/定时评审仍可触发分析；不设置 AI 小时预算。Spot Testnet 与 LIVE 权限均未启用。
+尚未完成且不能由仓库自行假定完成：WorldModel 对 Forecast 的前瞻增量、可获得资本权限的方向 Forecast、USD-M 账户/保证金/资金流水权威对账，以及足以判断费用后长期增量的样本。当前结果可核对不等于已经盈利；Spot Testnet 与 LIVE 权限均未启用。
 
 `config/investment-manager.yaml` 中账号均是禁用的显式占位白名单。部署者只能逐项登记并人工启用已完成登录、额度契约和隔离检查的目录；`account_id` 必须等于 `codex_home` 的目录名，避免别名与认证目录错配。至少一个健康槽位即可运行，其他不健康槽位必须保持禁用。仓库不会扫描主目录或因为出现新目录而自动纳入；默认全部 `enabled: false` 仍是刻意的失败关闭状态。
 
@@ -124,7 +124,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 每个来源月档必须通过同目录官方 SHA-256，标准化观察值固定在结算 60 秒后才可见；下载时间、全部来源摘要与规范化内容共同冻结，旧制品不原地更新。首个“28 日动量 + SMA200 + 资金费率拥挤否决”候选已按 BTC/ETH 分别预登记：ETH 未通过 walk-forward 保守下界，BTC 虽通过 walk-forward，但在一次性盲区中同时未达到交易数、盈利因子和保守下界门槛，因此已经从活动注册表退役，没有接入 Shadow，也没有为迁就结果搜索阈值。不可变评价制品保留失败身份；资金费率数据合同和 `--funding-dataset-id` 组合能力保留给结构不同的新假设。
 
-现役 Shadow 只运行一个受限的 BTC 现货/永续 cash-carry 实验 Producer。它按点时可执行买卖价、历史资金费率折扣和完整模型化成本生成 `BaseForecast`；净 Edge 未达到冻结门槛时不制造候选或订单。它尚未通过 blind 和前向绝对收益门禁，因此只拥有精确 Mock authorization，不能被描述为已获利策略。历史文件的分片格式不参与世界模型复核节奏或资本日历。
+已退役的 BTC 现货/永续 cash-carry 只保留不可变研究结果，不再作为现役 Producer、资本候选或架构依据。
 
 `screen-signals` 是正式回测前的廉价拒绝层：复用生产特征、候选接口和统一往返成本，以收盘信号、下一根开盘和固定持有周期计算原始机会，只用非重叠样本，并与采用相同成本的周期性现货多头比较。读取器流式校验完整历史制品哈希，但只物化显式开发窗口与特征预热；任何结果标签都不得跨越 `--signal-end`，因此该终点必须位于预留盲区之前。它不回放止损、程序退出、仓位、频率、风控或回撤，只能淘汰/排序弱假设；`promising_for_exact_backtest=true` 也不能登记为通过、不能校准边际或获得交易资格。
 
@@ -132,41 +132,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
 
 `replay-event-triggers` 与线上 Temporal 协调器复用同一套规则匹配、合并、冷却、到期及全局防重复间隔函数，在一个离散时钟中同时推进全部品种，并从事实库冻结窗口前最近一次全局准入和各品种完成状态。分析耗时必须显式冻结；同刻争用顺序可用 `--admission-order` 做敏感性测试。它目前不回放 heartbeat、Agent wakeup，历史初始完成状态也只是数据库持久化时刻的代理；这些限制及计划晚于回放起点都会进入结构化结果。存在这些限制或准入顺序敏感时，触发带不能直接冒充盈利证据。`information-intake-v21` 保留既有新闻规范化语义，并采集固定 Fed 日历/政策流及 Treasury 回购日历和实际结果、TGA、收益率、Fed 广义美元、RRP、SOMA、EFFR/SOFR 和 IBIT 日持仓；回购日程形成耐久唤醒，操作结束后固定结果 XML 形成独立事件事实，计划上限、实际接受金额和 Fed QE 不得混同。冷启动时按真实首次观察时间入账，不倒填成历史已知事实。程序将原始官方响应压缩为带有效日期、变化量和历史异常度的可修订事实，同域任一配置源缺失、过期、失败或决策能力不全都会降低覆盖状态。旧版事件仍以原 normalizer version 回放，不重写历史事实。Pipeline 只隔离触发和调用状态；在同一事实库已观测到且当时已路由给该品种的事件，发布新 Pipeline 后仍可作为有时点的面板背景，但不会复活旧触发。
 
-完整评价不能靠一笔笔模拟交易串行等待：一份结果发生前冻结的 Codex 决策带在模型不重跑的前提下，离线配对回放程序基线与预登记的确定性 `Q+AI` 门控版本。当前配对语义明确限定为“独立产生的 CONTEXT 预测 + 每根 K 线收盘评价的程序信号”，不是候选出现后调用 Codex 的 REVIEW，也没有声称复现生产 TriggerPlan；这些时钟身份和限制都进入规格与结果。两边复用相同成本、频率、风控、撮合和退出语义。历史行情能高速淘汰程序因子；旧面板重跑只能验证模型行为；只有前瞻决策带回放能验证 AI 的增量收益。三者在报告和晋级门禁中严格分开，权限边界见 [权威架构](./docs/ARCHITECTURE.md#3-唯一决策链)。当前代码已实现程序 walk-forward、多周期前瞻预测带和上述基线/AI 门控配对回放；限制是决策带只能覆盖其真实冻结后的未来区间，不能用今天的 Codex 补写旧历史来伪造样本量。
-
-当前 Context 行为不再评价短周期方向。`register-context-capital-forward-plan` 必须同时绑定冻结的 Context Release 与 Capital Release，并登记 `context-capital-forward-spec-v2`：精确冻结候选复核行为哈希、Producer 身份、成本、自然机会窗口和最少机会数。每个机会只使用其出现时已经可见的 WorldModel 和账户快照；Codex 失败、缺失或晚于 `valid_until` 一律保持 Program Base，不会选择性删除失败样本。只有及时完成的 `OPPOSE` 形成不入场的零收益反事实，其余效果保持基线。评价按同一 `forecast_id` 读取 Context 的 `OpportunityAssessment` 与 Capital 的自然 `ForecastOutcome`，同时要求 Program Base 自身平均费用后收益为正、样本充分、全部结果已结算且 AI 增量保守下界为正。任何单项失败都不能获得资本权限。
-
-旧 Directional View、结果和计划只作为不可变历史读取；旧方向写入路径不得重新接入现役世界模型或资本链。
-
-旧方向标签仍可按冻结 Pipeline、品种和周期生成诊断：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager diagnose-legacy-analysis-forecasts \
-  --config '<运行配置>' --pipeline-version '<冻结 Pipeline>' \
-  --window-start '<含时区起点>' --window-end '<含时区终点>' \
-  --published-at '<含时区发布时间>'
-```
-
-诊断单个运行代次时使用 `--pipeline-version`；跨纯运维发布累计同一 Analyst 行为的前瞻证据时改用运行包记录的 `--analysis-behavior-hash`。二者互斥。行为哈希忽略 Pipeline 运行代号和只消费候选的下游校准配置；其余 Analyst 输入与契约配置、版本化原生 CLI 摘要、Analyst 输入投影版本、实际固定提示契约、输出 Schema 和工具禁用集任一变化都会产生新作用域。校准制品仍以候选来源哈希、评价/执行/频率版本和有效期独立隔离，旧版未记录行为哈希的结果不会被事后补入。
-
-输出包含方向命中率、平均方向收益及其保守下界，并在完全相同的非重叠可评分时点对照 `always-UP` 现货多头零假设，显式给出命中率和方向收益增量及增量下界。这些指标始终标记为不可交易方向评价，不计作账户 PnL；同时保留拒答数量，不把只在 AI 选中时点的基线对照冒充全时段策略收益。结算服务跨发布版本处理所有未到期 Proposal，发布新 Pipeline 不会遗留旧预测。
-
-先登记门控计划；未来窗口结束并冻结覆盖完整区间的历史行情后，再用同一份前瞻决策带配对回放程序基线与 `Q+AI`。命令只读取 Proposal 与唯一成功 Codex Attempt 的完成事实，不读取方向结果表，也不会重新调用模型：
-
-```bash
-INVESTMENT_MANAGER_DATABASE_URL='<由部署 Secret 注入>' \
-  .venv/bin/investment-manager paired-decision-tape \
-  --config '<冻结配置>' \
-  --pipeline-version '<冻结 Pipeline>' --symbol BTCUSDT \
-  --candidate configured --plan-id '<预登记计划>' \
-  --source-blind-evaluation-id '<已通过的一次性盲测结果>' \
-  --signal-end '<未来固定评价终点>' \
-  --horizon-minutes 60 --maximum-age-minutes 60 \
-  --minimum-non-overlapping-forecasts 30 --register-only
-```
-
-首次用未来终点执行 `--register-only`，登记阶段不要求一份与未来窗口无关的占位行情，但必须绑定一份已通过的一次性盲测结果；禁用策略、未通过盲测、不同品种/周期或代码、成本、风控语义已变更的 Q 均失败关闭。窗口结束且冻结行情覆盖完整区间后，增加 `--dataset-id '<覆盖评价窗口的数据集>'`，再以其余完全相同参数移除 `--register-only` 运行。基线与门控版本都由同一个 Nautilus 适配器执行，并使用相同数据、下一可成交事件、费用、价差、频率、风控和退出规则。计划快照绑定盲测基线、程序策略、成本/风控制品、完整 AI 行为配置哈希、预测 Pipeline、决策带与配对评价器版本、品种、周期、权威数据源、固定起止时间、初始权益、点差、Codex 完成延迟上限、门控参数和非重叠样本下限；调用方不能在看到结果后更换 Q、模型输入行为、评价算法、终点或阈值。输出明确给出增量净收益、回撤变化、交易数变化、非重叠预测数、证据是否充分及路径分叉限制。当前没有通过盲测的 Q，因此不应伪造 Q+AI 盈利结论。
+完整评价分开比较 WorldModel 增量、Forecast 增量和费用后资本增量。历史行情可以淘汰程序因子，旧面板重跑只能验证模型行为，AI Alpha 只接受结果发生前冻结的真实前瞻样本。统一语义见[世界认知设计](./docs/WORLD_COGNITION_DESIGN.md#7-评价世界认知是否真的有用)，资本权限边界见[权威架构](./docs/ARCHITECTURE.md#3-唯一投资闭环)。退役的上下文否决和方向评价只作为历史事实读取，不再保留操作指引或目标设计。
 
 检查当前 Phase A 门禁：
 
@@ -271,7 +237,7 @@ set -a; . ./.env; set +a
 
 ### 运行观测台（只读 Web）
 
-只读运行观测台把既有业务事实投影成 Web 可视化。Assessment 模式展示权益、AI 判断、持仓、账号与资源；Capital 模式以不可变行动记录为主列，资本账户与费用后 PnL 为侧栏，并从独立只读事实库合并展示现役 `ContextAssessment` 与旧版判断。两套事实库只分层展示，不混合资本核算。**只读，无任何控制操作**。设计见 [docs/DASHBOARD_DESIGN.md](./docs/DASHBOARD_DESIGN.md)。
+只读运行观测台把同一权威事实库中的健康、权益、WorldModel、资金决策、持仓、AI 账号和主机资源投影成 Web 可视化；它不重算投资裁决，也不混入旧判断。**只读，无任何控制操作**。设计见 [docs/DASHBOARD_DESIGN.md](./docs/DASHBOARD_DESIGN.md)。
 
 先安装可选依赖并构建前端（一次即可）：
 

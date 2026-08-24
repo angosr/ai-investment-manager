@@ -1,7 +1,6 @@
 # Investment Manager 运行观测台设计
 
-状态：**现行只读观测台基础已经实施；本文冻结与双向 Perpetual 资本切片一致的最终读模型，相关增量尚待按
-`ARCHITECTURE.md` 的唯一迁移顺序实施。**
+状态：**本文定义与权威投资闭环一致的最终只读投影；实现差异按纵向切片硬迁移，不保留第二套页面语义。**
 
 观测台不是另一套投资系统。它只把权威事实翻译为人能快速理解的中文，不推断状态、不重算投资结果，也不通过隐藏失败让系统看起来更好。
 
@@ -23,12 +22,12 @@
 | 页面内容 | 唯一来源 | 页面不得做的事 |
 |---|---|---|
 | 健康 | 各领域 health、Release、数据新鲜度与对账事实 | 从最近一次成功行动猜测健康 |
-| 权益与收益 | `PortfolioAccountSnapshot`、`PortfolioPerformanceInterval` 与冻结评价报告 | 从订单数量、K 线或旧 Outcome 拼 PnL |
-| 最新世界认知 | 最新合法 `ContextAssessment` 的直接投影 | 用附近新闻、当前行情或摘要另拼一份认知 |
-| 资金决策 | `CapitalCycleRecord` 引用的 Forecast、Target、Risk 与 Execution 事实 | 从“没有订单”反推“没有机会” |
+| 权益与收益 | 已对账 `AccountSnapshot` 与冻结评价结果 | 从订单数量、K 线或旧 Outcome 拼 PnL |
+| 最新世界认知 | 最新成功持久化 `WorldModel` 的直接投影 | 用附近新闻、当前行情或摘要另拼一份认知 |
+| 资金决策 | 同一次闭环中相互引用的 Forecast、Target、Risk 与 Execution 事实 | 从“没有订单”反推“没有机会” |
 | AI | `WORLD_UPDATE` 与 `FORECAST_ESTIMATE` 的持久化调用、输入和结果 | 用中文词表或主观质量分隐藏结果 |
 | 世界事件 | Evidence/Canonical Fact/Normalized Event 的权威时间线 | 按标题相似度临时合并不同事实 |
-| 当前持仓 | 最新已对账 `PortfolioAccountSnapshot` | 读取旧 `PositionLifecycle` 或在前端估算仓位 |
+| 当前持仓 | 最新已对账 `AccountSnapshot` | 读取旧 `PositionLifecycle` 或在前端估算仓位 |
 | AI 账号 | 账号注册、容量快照、租约和 Codex run | 把快照过期等同于账号未启用 |
 | 主机 | 观测台宿主机资源采样 | 宣称为各服务独立资源占用 |
 
@@ -66,7 +65,7 @@
 
 ### 4.3 最新世界认知
 
-卡片直接展示最新合法 `ContextAssessment`：
+卡片直接展示最新成功持久化的 `WorldModel`：
 
 - 截至时间、分析行为身份和上一认知引用；
 - 当前最佳联合解释及多层传导链；
@@ -80,7 +79,7 @@
 
 ### 4.4 资金决策
 
-时间线只收录真实 `CapitalCycleRecord`。收起行使用人话描述最终目标状态，例如：
+时间线只收录已经形成 Forecast、PortfolioTarget、RiskDecision 或 Execution 结果的真实资本决策。收起行使用人话描述最终目标状态，例如：
 
 - “BTC 永续做空 · 目标 1,000 USDT · 扣成本后保守优势 18 bps”；
 - “继续持有 BTC 永续多头 · 新预测仍覆盖未来成本”；
@@ -110,7 +109,7 @@ AI 时间线按真实调用目的区分两种记录，不再重复显示泛化�
 
 ### 4.6 世界事件
 
-事件按首次可见时间和稳定身份分页，默认行显示发生时间、首次可见时间、来源等级、事实摘要、修订状态及是否被当前认知引用。展开后展示原始来源、修订链、相关 StateFeature、触发记录与引用它的历史认知。
+事件按首次可见时间和稳定身份分页，默认行显示发生时间、首次可见时间、来源等级、事实摘要、修订状态及是否被当前认知引用。展开后展示原始来源、修订链、相关确定性 State、触发记录与引用它的历史认知。
 
 “当前影响已过时”只表示它不再支撑未来判断，不表示事件消失。页面不声称展示的是“影响最大事件”，除非后端认知事实明确记录其机制贡献；排序默认按时间，不由前端计算重要性。
 
@@ -118,9 +117,9 @@ AI 时间线按真实调用目的区分两种记录，不再重复显示泛化�
 
 资本账户卡显示起始权益、当前权益、现金/可用保证金、gross/net exposure、累计价格 PnL、funding、费用、回撤和对账时间。
 
-产品持仓卡只读最新已对账 `PortfolioAccountSnapshot`。方向 Perpetual 显示产品、方向、数量、gross、entry、mark、可成交退出估值、margin mode、position mode、leverage、initial/maintenance margin、liquidation buffer、累计 funding、保护状态和非终态 Execution group。Mark PnL 与可成交退出 PnL 分栏展示；账户未对账时保留最后事实但显著标注并禁止显示其为当前确定状态。
+产品持仓卡只读最新已对账 `AccountSnapshot`。方向 Perpetual 显示产品、方向、数量、gross、entry、mark、可成交退出估值、margin mode、position mode、leverage、initial/maintenance margin、liquidation buffer、累计 funding、保护状态和非终态 Execution group。Mark PnL 与可成交退出 PnL 分栏展示；账户未对账时保留最后事实但显著标注并禁止显示其为当前确定状态。
 
-一个 outcome family 只显示一个 Sleeve 当前状态。反转恢复期间显示阶段状态，不渲染成同时存在的多头与空头。
+一个产品只显示一份已对账净持仓；分析来源、策略名或方向变化不制造多个影子仓位。反转恢复期间显示阶段状态，不渲染成同时存在的多头与空头。
 
 ### 4.8 AI 账号与主机
 
@@ -138,7 +137,7 @@ AI 时间线按真实调用目的区分两种记录，不再重复显示泛化�
 
 ## 6. 硬迁移与删除
 
-双向资本切片实施时，观测台与后端事实在同一纵向切片中原子迁移：
+资本闭环迁移时，观测台与后端事实在同一纵向切片中原子迁移：
 
 1. 先让新的资本决策 payload、账户快照与反转状态完整可读；
 2. 再切换资金决策、盈利曲线和持仓读模型；
