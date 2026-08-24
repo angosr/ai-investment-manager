@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Table,
     Text,
@@ -152,6 +153,33 @@ Index(
     outcome_window_reports.c.pipeline_version,
     outcome_window_reports.c.window_start,
     outcome_window_reports.c.window_end,
+)
+
+capital_benchmark_points = Table(
+    "capital_benchmark_points",
+    metadata,
+    Column("point_id", String(128), primary_key=True),
+    Column("policy_id", String(128), nullable=False),
+    Column(
+        "account_snapshot_id",
+        ForeignKey("portfolio_account_snapshots.snapshot_id"),
+        nullable=False,
+    ),
+    Column("revision", Integer, nullable=False),
+    Column("as_of", DateTime(timezone=True), nullable=False),
+    Column("source_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "uq_capital_benchmark_policy_account",
+    capital_benchmark_points.c.policy_id,
+    capital_benchmark_points.c.account_snapshot_id,
+    unique=True,
+)
+Index(
+    "ix_capital_benchmark_policy_revision",
+    capital_benchmark_points.c.policy_id,
+    capital_benchmark_points.c.revision,
 )
 
 change_proposals = Table(

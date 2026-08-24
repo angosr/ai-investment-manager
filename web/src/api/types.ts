@@ -88,6 +88,18 @@ export interface CapitalOverview {
   } | null;
 }
 
+export interface CapitalEquityPoint extends EquityPoint {
+  snapshot_id: string;
+  revision: number;
+  net_pnl: string | null;
+  drawdown_fraction: string;
+  cash_benchmark_equity: string | null;
+  passive_benchmark_equity: string | null;
+  increment_vs_cash: string | null;
+  increment_vs_passive: string | null;
+  passive_drawdown_fraction: string | null;
+}
+
 export interface CapitalAction {
   activity_id: string;
   at: string;

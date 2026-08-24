@@ -5,6 +5,7 @@ import type {
   AssessmentFeed,
   AssessmentRecordDetail,
   CapitalAction,
+  CapitalEquityPoint,
   CapitalOverview,
   CycleDetail,
   CycleRow,
@@ -33,6 +34,13 @@ function pagePath(path: string, cursor?: string, limit = 30): string {
 export const api = {
   health: () => getJson<Health>("/api/health"),
   capital: () => getJson<CapitalOverview>("/api/capital"),
+  capitalEquity: async (cursor?: string, limit = 100): Promise<Page<CapitalEquityPoint>> => {
+    const result = await getJson<{
+      points: CapitalEquityPoint[];
+      next_cursor: string | null;
+    }>(pagePath("/api/capital/equity", cursor, limit));
+    return { items: result.points, nextCursor: result.next_cursor };
+  },
   capitalActivity: async (cursor?: string, limit = 30): Promise<Page<CapitalAction>> => {
     const result = await getJson<{ actions: CapitalAction[]; next_cursor: string | null }>(
       pagePath("/api/capital/activity", cursor, limit),

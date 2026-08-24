@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, false, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
@@ -39,6 +39,11 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
+from investment_manager.governance.evaluation.capital_benchmark import (
+    CapitalBenchmarkPoint,
+    build_capital_benchmark_policy,
+)
+from investment_manager.governance.tables import capital_benchmark_points
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
@@ -112,12 +117,28 @@ class CapitalActivity:
     candidate_economics: tuple[CapitalCandidateEconomics, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class CapitalEquityPoint:
+    snapshot_id: str
+    at: datetime
+    revision: int
+    equity: Decimal
+    net_pnl: Decimal | None
+    drawdown_fraction: Decimal
+    cash_benchmark_equity: Decimal | None
+    passive_benchmark_equity: Decimal | None
+    increment_vs_cash: Decimal | None
+    increment_vs_passive: Decimal | None
+    passive_drawdown_fraction: Decimal | None
+
+
 class CapitalDashboardReader:
     """Load a compact current-state view without inventing a second ledger."""
 
     def __init__(self, engine: Engine, config: AppConfig) -> None:
         self._engine = engine
         self._config = config
+        self._capital_benchmark_policy = build_capital_benchmark_policy(config)
 
     def overview(self, *, now: datetime) -> CapitalOverview:
         now = require_utc(now)
@@ -365,6 +386,105 @@ class CapitalDashboardReader:
                 self._config.calibration.minimum_non_overlapping_samples
             ),
             permission_evidence_eligible=contract.permission_evidence_eligible,
+        )
+
+    def equity_history(
+        self,
+        *,
+        cursor: PageCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[CapitalEquityPoint, ...]:
+        """Project immutable account snapshots without reconstructing equity."""
+
+        if limit < 1 or limit > 101:
+            raise ValueError("Capital equity internal limit 必须在 1..101")
+        benchmark_join = (
+            false()
+            if self._capital_benchmark_policy is None
+            else and_(
+                capital_benchmark_points.c.account_snapshot_id
+                == portfolio_account_snapshots.c.snapshot_id,
+                capital_benchmark_points.c.policy_id
+                == self._capital_benchmark_policy.policy_id,
+            )
+        )
+        statement = (
+            select(
+                portfolio_account_snapshots.c.payload,
+                capital_benchmark_points.c.payload.label("benchmark_payload"),
+            )
+            .select_from(
+                portfolio_account_snapshots.outerjoin(
+                    capital_benchmark_points,
+                    benchmark_join,
+                )
+            )
+            .where(
+                portfolio_account_snapshots.c.portfolio_id
+                == self._config.capital.decision.portfolio_id
+            )
+        )
+        if cursor is not None:
+            statement = statement.where(
+                older_than(
+                    portfolio_account_snapshots.c.as_of,
+                    portfolio_account_snapshots.c.snapshot_id,
+                    cursor,
+                )
+            )
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                statement.order_by(
+                    portfolio_account_snapshots.c.as_of.desc(),
+                    portfolio_account_snapshots.c.snapshot_id.desc(),
+                ).limit(limit)
+            )
+            snapshots = tuple(
+                (
+                    PortfolioAccountSnapshot.model_validate(row.payload),
+                    (
+                        None
+                        if row.benchmark_payload is None
+                        else CapitalBenchmarkPoint.model_validate(row.benchmark_payload)
+                    ),
+                )
+                for row in rows
+            )
+        return tuple(
+            CapitalEquityPoint(
+                snapshot_id=account.snapshot_id,
+                at=account.as_of,
+                revision=account.revision,
+                equity=account.equity,
+                net_pnl=(
+                    account.accounting.net_pnl
+                    if account.accounting is not None
+                    else None
+                ),
+                drawdown_fraction=account.drawdown_fraction,
+                cash_benchmark_equity=(
+                    benchmark.cash_equity if benchmark is not None else None
+                ),
+                passive_benchmark_equity=(
+                    benchmark.passive_equity if benchmark is not None else None
+                ),
+                increment_vs_cash=(
+                    benchmark.actual_increment_vs_cash
+                    if benchmark is not None
+                    else None
+                ),
+                increment_vs_passive=(
+                    benchmark.actual_increment_vs_passive
+                    if benchmark is not None
+                    else None
+                ),
+                passive_drawdown_fraction=(
+                    benchmark.passive_drawdown_fraction
+                    if benchmark is not None
+                    else None
+                ),
+            )
+            for account, benchmark in snapshots
         )
 
     @staticmethod
@@ -1030,6 +1150,45 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                     }
                     for candidate in item.candidate_economics
                 ],
+            }
+            for item in items
+        ]
+    }
+
+
+def serialize_capital_equity(items: tuple[CapitalEquityPoint, ...]) -> dict:
+    return {
+        "points": [
+            {
+                "snapshot_id": item.snapshot_id,
+                "at": _iso(item.at),
+                "revision": item.revision,
+                "equity": str(item.equity),
+                "net_pnl": None if item.net_pnl is None else str(item.net_pnl),
+                "drawdown_fraction": str(item.drawdown_fraction),
+                "cash_benchmark_equity": (
+                    None
+                    if item.cash_benchmark_equity is None
+                    else str(item.cash_benchmark_equity)
+                ),
+                "passive_benchmark_equity": (
+                    None
+                    if item.passive_benchmark_equity is None
+                    else str(item.passive_benchmark_equity)
+                ),
+                "increment_vs_cash": (
+                    None if item.increment_vs_cash is None else str(item.increment_vs_cash)
+                ),
+                "increment_vs_passive": (
+                    None
+                    if item.increment_vs_passive is None
+                    else str(item.increment_vs_passive)
+                ),
+                "passive_drawdown_fraction": (
+                    None
+                    if item.passive_drawdown_fraction is None
+                    else str(item.passive_drawdown_fraction)
+                ),
             }
             for item in items
         ]

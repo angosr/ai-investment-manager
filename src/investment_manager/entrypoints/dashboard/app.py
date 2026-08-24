@@ -22,6 +22,7 @@ from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
     serialize_capital_activity,
+    serialize_capital_equity,
     serialize_capital_overview,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -151,6 +152,25 @@ def create_app(
         return _json(
             {
                 **serialize_capital_activity(page.items),
+                "next_cursor": page.next_cursor,
+            }
+        )
+
+    async def capital_equity(request: Request) -> JSONResponse:
+        limit = _parse_limit(request)
+        items = await run_in_threadpool(
+            capital_reader.equity_history,
+            cursor=_parse_cursor(request),
+            limit=limit + 1,
+        )
+        page = page_slice(
+            items,
+            limit=limit,
+            cursor_for=lambda item: PageCursor(item.at, item.snapshot_id),
+        )
+        return _json(
+            {
+                **serialize_capital_equity(page.items),
                 "next_cursor": page.next_cursor,
             }
         )
@@ -347,6 +367,7 @@ def create_app(
         Route("/api/resources", resources),
         Route("/api/reconciliation", reconciliation),
         Route("/api/capital", capital),
+        Route("/api/capital/equity", capital_equity),
         Route("/api/capital/activity", capital_activity),
         Route("/api/assessment/cycles", assessment_cycles),
         Route(

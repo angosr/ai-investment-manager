@@ -13,6 +13,7 @@ from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
     serialize_capital_activity,
+    serialize_capital_equity,
     serialize_capital_overview,
 )
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
@@ -676,6 +677,33 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert dto["performance"]["cumulative_net_pnl"] == "-2.0250"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
     assert dto["performance"]["latest"]["net_pnl"] == "-2.0250"
+    equity_points = CapitalDashboardReader(engine, config).equity_history()
+    by_revision = sorted(equity_points, key=lambda item: item.revision)
+    assert [item.revision for item in by_revision] == [0, 1]
+    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9997.9750")]
+    assert serialize_capital_equity(tuple(by_revision))["points"][-1] == {
+        "snapshot_id": first.account.snapshot_id,
+        "at": NOW.isoformat(),
+        "revision": 1,
+        "equity": "9997.9750",
+        "net_pnl": "-2.0250",
+        "drawdown_fraction": "0.0002025",
+        "cash_benchmark_equity": None,
+        "passive_benchmark_equity": None,
+        "increment_vs_cash": None,
+        "increment_vs_passive": None,
+        "passive_drawdown_fraction": None,
+    }
+    newest_equity_page = CapitalDashboardReader(engine, config).equity_history(limit=1)
+    older_equity_page = CapitalDashboardReader(engine, config).equity_history(
+        cursor=PageCursor(
+            newest_equity_page[0].at,
+            newest_equity_page[0].snapshot_id,
+        ),
+        limit=1,
+    )
+    assert len(newest_equity_page) == len(older_equity_page) == 1
+    assert newest_equity_page[0].snapshot_id != older_equity_page[0].snapshot_id
     activity = CapitalDashboardReader(engine, config).activity()
     assert len(activity) == 2
     activity_by_symbol = {item.symbol: item for item in activity}

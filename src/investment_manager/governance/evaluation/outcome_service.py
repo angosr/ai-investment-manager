@@ -17,6 +17,10 @@ from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
+from investment_manager.governance.evaluation.capital_benchmark import (
+    SqlCapitalBenchmarkEvaluator,
+    build_capital_benchmark_policy,
+)
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
 from investment_manager.governance.evaluation.outcome_workflow import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
@@ -231,11 +235,13 @@ class OutcomeEvaluationSupervisorHealth:
     target_forecast_settled: int = 0
     target_forecast_outcome_unavailable: int = 0
     target_forecast_pending: int = 0
+    capital_benchmark_points: int = 0
     last_workflow_id: str | None = None
     last_error_class: str | None = None
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
     last_target_forecast_error_class: str | None = None
+    last_capital_benchmark_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -245,6 +251,7 @@ class OutcomeEvaluationSupervisor:
     candidate_settler: CandidateOutcomeSettler
     forecast_settler: AnalysisForecastOutcomeSettler
     target_forecast_settler: ForecastOutcomeSettler
+    capital_benchmark_evaluator: SqlCapitalBenchmarkEvaluator | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -295,6 +302,20 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_target_forecast_error_class != type(exc).__name__:
                     logger.exception("target forecast settlement failed")
                 self.health.last_target_forecast_error_class = type(exc).__name__
+            if self.capital_benchmark_evaluator is not None:
+                try:
+                    written = await asyncio.to_thread(
+                        self.capital_benchmark_evaluator.reconcile,
+                        as_of=now,
+                    )
+                    self.health.capital_benchmark_points += written
+                    self.health.last_capital_benchmark_error_class = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self.health.last_capital_benchmark_error_class != type(exc).__name__:
+                        logger.exception("capital benchmark evaluation failed")
+                    self.health.last_capital_benchmark_error_class = type(exc).__name__
             eligible = now - timedelta(minutes=policy.settlement_grace_minutes)
             window_seconds = int(window.total_seconds())
             window_end = datetime.fromtimestamp(
@@ -343,6 +364,7 @@ def assemble_outcome_evaluation(
     engine = build_engine(database_url)
     repository = SqlOutcomeWindowRepository(engine)
     coordinator = OutcomeEvaluationTemporalCoordinator(client, config.temporal)
+    capital_benchmark_policy = build_capital_benchmark_policy(config)
     return (
         OutcomeEvaluationTemporalWorker(
             client,
@@ -373,6 +395,11 @@ def assemble_outcome_evaluation(
                 maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
                 maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
                 settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
+            ),
+            capital_benchmark_evaluator=(
+                None
+                if capital_benchmark_policy is None
+                else SqlCapitalBenchmarkEvaluator(engine, capital_benchmark_policy)
             ),
         ),
     )
