@@ -10,6 +10,7 @@ from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
     ForecastNoEstimate,
+    ForecastPermission,
     ForecastProducerBinding,
     ForecastSlotObligation,
 )
@@ -21,6 +22,7 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
     forecasts,
 )
+from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.time import database_utc
 
@@ -91,7 +93,7 @@ class SqlForecastContractStore:
             forecast_producer_bindings.c.binding_id,
             binding_id,
         )
-        return None if payload is None else ForecastProducerBinding.model_validate(payload)
+        return None if payload is None else load_forecast_producer_binding(payload)
 
     def resolve_binding(
         self,
@@ -112,7 +114,7 @@ class SqlForecastContractStore:
         if payload is None:
             self.record_binding(binding, activated_at=activated_at)
             return binding
-        existing = ForecastProducerBinding.model_validate(payload)
+        existing = load_forecast_producer_binding(payload)
         comparable_fields = (
             "contract_id",
             "producer_kind",
@@ -362,3 +364,64 @@ class SqlForecastContractStore:
             if payload is None or model.model_validate(payload) != expected:
                 raise ValueError(conflict) from None
             return False
+
+
+def load_forecast_producer_binding(payload: dict) -> ForecastProducerBinding:
+    """Decode immutable pre-migration bindings at the persistence boundary."""
+
+    normalized = dict(payload)
+    feature_keys = tuple(sorted(set(normalized.get("required_feature_keys", ()))))
+    producer_kind = normalized["producer_kind"]
+    producer_kind_value = getattr(producer_kind, "value", producer_kind)
+    identity_fields = (
+        normalized["contract_id"],
+        producer_kind_value,
+        normalized["producer_id"],
+        normalized["producer_behavior_id"],
+    )
+    stored_permission = normalized["permission"]
+    permission = (
+        ForecastPermission.CAPITAL_CANDIDATE.value
+        if stored_permission == "MOCK"
+        else stored_permission
+    )
+    current_id = stable_id(
+        "forecast_producer_binding",
+        *identity_fields,
+        permission,
+        feature_keys,
+    )
+    binding_id = normalized["binding_id"]
+    stored_identity_permissions = {stored_permission}
+    if stored_permission == ForecastPermission.CAPITAL_CANDIDATE.value:
+        stored_identity_permissions.add("MOCK")
+    accepted_stored_ids = {
+        stable_id(
+            "forecast_producer_binding",
+            *identity_fields,
+            identity_permission,
+            feature_keys,
+        )
+        for identity_permission in stored_identity_permissions
+    }
+    if "maximum_world_model_age_seconds" in normalized:
+        accepted_stored_ids.update(
+            stable_id(
+                "forecast_producer_binding",
+                *identity_fields,
+                identity_permission,
+                feature_keys,
+                normalized["maximum_world_model_age_seconds"],
+            )
+            for identity_permission in stored_identity_permissions
+        )
+    if binding_id not in accepted_stored_ids:
+        return ForecastProducerBinding.model_validate(normalized)
+    normalized.pop("maximum_world_model_age_seconds", None)
+    normalized.update(
+        binding_id=current_id,
+        permission=permission,
+        required_feature_keys=feature_keys,
+    )
+    current = ForecastProducerBinding.model_validate(normalized)
+    return current.model_copy(update={"binding_id": binding_id})

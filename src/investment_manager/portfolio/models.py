@@ -302,13 +302,10 @@ class PortfolioPerformanceInterval(FrozenModel):
 class PortfolioEdgeBasis(StrEnum):
     CALIBRATED_CONSERVATIVE = "CALIBRATED_CONSERVATIVE"
     EXPERIMENTAL_HYPOTHESIS = "EXPERIMENTAL_HYPOTHESIS"
-    # Immutable targets written before deployment mode was removed from
-    # Portfolio vocabulary still need to remain readable for audit.
-    MOCK_HYPOTHESIS = "MOCK_HYPOTHESIS"
 
     @property
     def uncalibrated_candidate(self) -> bool:
-        return self in {self.EXPERIMENTAL_HYPOTHESIS, self.MOCK_HYPOTHESIS}
+        return self is self.EXPERIMENTAL_HYPOTHESIS
 
 
 class CandidateCapitalAuthorization(FrozenModel):

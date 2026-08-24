@@ -26,15 +26,6 @@ class ForecastPermission(StrEnum):
     RESEARCH = "RESEARCH"
     CAPITAL_CANDIDATE = "CAPITAL_CANDIDATE"
 
-    @classmethod
-    def _missing_(cls, value: object):
-        # Historical immutable bindings used the deployment-flavoured value
-        # "MOCK". Normalize it at the storage boundary; domain code only sees
-        # capital eligibility and never the venue mode.
-        if value == "MOCK":
-            return cls.CAPITAL_CANDIDATE
-        return None
-
 class ForecastNoEstimateReason(StrEnum):
     MARKET_INPUT_INVALID = "MARKET_INPUT_INVALID"
     REQUIRED_FEATURE_MISSING = "REQUIRED_FEATURE_MISSING"
@@ -317,23 +308,7 @@ class ForecastProducerBinding(FrozenModel):
             self.permission.value,
             self.required_feature_keys,
         )
-        # Historical immutable capital bindings used a deployment-flavoured
-        # identity token.  They remain readable for audit, but create() never
-        # emits that identity and current investment logic never consumes it.
-        legacy_expected = (
-            stable_id(
-                "forecast_producer_binding",
-                self.contract_id,
-                self.producer_kind.value,
-                self.producer_id,
-                self.producer_behavior_id,
-                "MOCK",
-                self.required_feature_keys,
-            )
-            if self.permission is ForecastPermission.CAPITAL_CANDIDATE
-            else None
-        )
-        if self.binding_id not in {expected, legacy_expected}:
+        if self.binding_id != expected:
             raise ValueError("ForecastProducerBinding binding_id 与内容不一致")
         return self
 

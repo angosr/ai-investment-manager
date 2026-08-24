@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime
 from itertools import pairwise
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
@@ -58,6 +58,28 @@ class PortfolioStore(Protocol):
         portfolio_id: str,
         as_of: datetime,
     ) -> PortfolioAccountSnapshot | None: ...
+
+
+def load_portfolio_target(payload: Mapping[str, Any]) -> PortfolioTarget:
+    """Decode immutable pre-migration targets at the persistence boundary."""
+
+    normalized = dict(payload)
+    for field in ("candidate_evaluations", "sleeves"):
+        items = normalized.get(field)
+        if items is None:
+            continue
+        normalized[field] = [
+            {
+                **item,
+                "edge_basis": (
+                    "EXPERIMENTAL_HYPOTHESIS"
+                    if item.get("edge_basis") == "MOCK_HYPOTHESIS"
+                    else item.get("edge_basis")
+                ),
+            }
+            for item in items
+        ]
+    return PortfolioTarget.model_validate(normalized)
 
 
 class SqlPortfolioStore:
@@ -215,14 +237,14 @@ class SqlPortfolioStore:
                     portfolio_targets.c.target_id == target_id
                 )
             ).scalar_one_or_none()
-        return None if payload is None else PortfolioTarget.model_validate(payload)
+        return None if payload is None else load_portfolio_target(payload)
 
     def target_for_cycle(self, cycle_id: str) -> PortfolioTarget | None:
         with self._engine.connect() as connection:
             payload = connection.execute(
                 select(portfolio_targets.c.payload).where(portfolio_targets.c.cycle_id == cycle_id)
             ).scalar_one_or_none()
-        return None if payload is None else PortfolioTarget.model_validate(payload)
+        return None if payload is None else load_portfolio_target(payload)
 
     @staticmethod
     def _validate_target_dependencies(
@@ -308,9 +330,7 @@ class SqlCapitalCycleStore:
                             portfolio_targets.c.target_id == record.target_id
                         )
                     ).scalar_one_or_none()
-                    loaded_target = (
-                        None if target is None else PortfolioTarget.model_validate(target)
-                    )
+                    loaded_target = None if target is None else load_portfolio_target(target)
                     if loaded_target is None or (
                         loaded_target.portfolio_id != record.portfolio_id
                         or loaded_target.cycle_id != record.decision_cycle_id

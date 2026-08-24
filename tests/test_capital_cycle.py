@@ -48,7 +48,7 @@ from investment_manager.portfolio.models import (
     CapitalCycleRecord,
     PortfolioEdgeBasis,
 )
-from investment_manager.portfolio.repository import SqlPortfolioStore
+from investment_manager.portfolio.repository import SqlPortfolioStore, load_portfolio_target
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
     portfolio_account_snapshots,
@@ -747,6 +747,12 @@ def test_explicit_candidate_can_trade_via_the_authoritative_capital_chain() -> N
     assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
     assert target.sleeves[0].decision_net_bps > Decimal("5")
     assert target.sleeves[0].desired_gross_notional == Decimal("3000")
+    legacy_payload = target.model_dump(mode="json")
+    legacy_payload["sleeves"][0]["edge_basis"] = "MOCK_HYPOTHESIS"
+    assert (
+        load_portfolio_target(legacy_payload).sleeves[0].edge_basis
+        == PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
+    )
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
 

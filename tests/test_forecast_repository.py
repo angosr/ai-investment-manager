@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, insert
 
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
@@ -27,6 +27,7 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
+from investment_manager.forecast.tables import forecast_producer_bindings
 from investment_manager.kernel.identity import stable_id
 from investment_manager.market.models import InstrumentId
 from investment_manager.schema import create_schema
@@ -236,27 +237,44 @@ def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior(
         "producer_behavior_id": "codex-v1",
         "permission": ForecastPermission.CAPITAL_CANDIDATE,
     }
-    legacy = ForecastProducerBinding(
-        binding_id=stable_id(
-            "forecast_producer_binding",
-            contract.contract_id,
-            ForecastProducerKind.CONTEXT.value,
-            "codex",
-            "codex-v1",
-            "MOCK",
-            (),
-        ),
-        **fields,
-    )
-    contracts.record_binding(legacy, activated_at=NOW)
     neutral = ForecastProducerBinding.create(**fields)
+    legacy_id = stable_id(
+        "forecast_producer_binding",
+        contract.contract_id,
+        ForecastProducerKind.CONTEXT.value,
+        "codex",
+        "codex-v1",
+        "MOCK",
+        (),
+        21600,
+    )
+    legacy_payload = neutral.model_dump(mode="json")
+    legacy_payload.update(
+        binding_id=legacy_id,
+        permission="MOCK",
+        maximum_world_model_age_seconds=21600,
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            insert(forecast_producer_bindings).values(
+                binding_id=legacy_id,
+                contract_id=contract.contract_id,
+                producer_kind=ForecastProducerKind.CONTEXT.value,
+                producer_id="codex",
+                producer_behavior_id="codex-v1",
+                permission="MOCK",
+                activated_at=NOW,
+                payload=legacy_payload,
+            )
+        )
 
     resolved = contracts.resolve_binding(
         neutral,
         activated_at=NOW + timedelta(hours=1),
     )
 
-    assert resolved == legacy
+    assert resolved.binding_id == legacy_id
+    assert resolved.permission == ForecastPermission.CAPITAL_CANDIDATE
     assert contracts.binding_activation_at(resolved.binding_id) == NOW
 
 

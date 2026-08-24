@@ -52,6 +52,7 @@ from investment_manager.portfolio.models import (
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
+from investment_manager.portfolio.repository import load_portfolio_target
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
     portfolio_account_snapshots,
@@ -167,6 +168,7 @@ class CapitalDashboardReader:
                 portfolio_targets.c.as_of,
                 portfolio_targets.c.target_id,
                 PortfolioTarget,
+                loader=load_portfolio_target,
             )
             if account is not None and target is not None and account.as_of > target.as_of:
                 target = None
@@ -565,7 +567,7 @@ class CapitalDashboardReader:
             target_ids = tuple(item.target_id for item in records if item.target_id is not None)
             targets = (
                 {
-                    item.target_id: PortfolioTarget.model_validate(item.payload)
+                    item.target_id: load_portfolio_target(item.payload)
                     for item in connection.execute(
                         select(
                             portfolio_targets.c.target_id,
@@ -906,6 +908,7 @@ class CapitalDashboardReader:
         *,
         secondary_order=None,
         where_clause=None,
+        loader=None,
     ):
         ordering = [time_column.desc()]
         if secondary_order is not None:
@@ -915,7 +918,9 @@ class CapitalDashboardReader:
         if where_clause is not None:
             statement = statement.where(where_clause)
         payload = connection.execute(statement.order_by(*ordering).limit(1)).scalar_one_or_none()
-        return None if payload is None else model.model_validate(payload)
+        if payload is None:
+            return None
+        return loader(payload) if loader is not None else model.model_validate(payload)
 
     @staticmethod
     def _payload_for(connection, statement, model):

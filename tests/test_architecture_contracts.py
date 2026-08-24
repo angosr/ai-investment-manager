@@ -1220,7 +1220,9 @@ def test_current_runtime_identity_uses_product_name() -> None:
 
 def test_capital_decision_language_is_venue_neutral() -> None:
     paths = (
+        PACKAGE_ROOT / "forecast" / "contracts.py",
         PACKAGE_ROOT / "portfolio" / "decision.py",
+        PACKAGE_ROOT / "portfolio" / "models.py",
         PACKAGE_ROOT / "portfolio" / "policy.py",
         PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
         ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
@@ -1231,6 +1233,8 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         "mock_authorization",
         "mock_candidate",
         "MockCandidate",
+        "MOCK",
+        "MOCK_HYPOTHESIS",
         "模拟盘",
         "模拟交易",
         "模拟订单",
