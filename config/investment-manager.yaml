@@ -284,9 +284,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v3
+    version: world-model-ablation-forward-v4
     enabled: false
-    plan_id: world-model-ablation-forward-v3
+    plan_id: world-model-ablation-forward-v4
     activated_at: 2026-08-25T00:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2

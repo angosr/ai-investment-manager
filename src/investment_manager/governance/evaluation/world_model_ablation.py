@@ -69,6 +69,7 @@ from investment_manager.settings import AppConfig
 CONTROL_INPUT_VERSION = "context-forecast-no-world-model-v1"
 CONTROL_OUTPUT_VERSION = "context-forecast-output-v1"
 CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
+_MAXIMUM_MULTICLASS_BRIER_SCORE = Decimal("2")
 CONTROL_INSTRUCTIONS = (
     "你是概率预测员。输入只包含一份预登记预测合同和目标相关的点时市场状态。",
     "只根据输入估计合同终点收益落入各 bucket 的概率，不得使用外部信息，不得输出订单、仓位、"
@@ -198,9 +199,11 @@ class WorldModelAblationReport(FrozenModel):
     successful_controls: int = Field(ge=0)
     failed_controls: int = Field(ge=0)
     settled_pairs: int = Field(ge=0)
+    conservative_sample_count: int = Field(ge=0)
     formal_mean_brier: Decimal | None = None
     control_mean_brier: Decimal | None = None
     mean_brier_improvement: Decimal | None = None
+    conservative_mean_brier_improvement: Decimal | None = None
     conservative_improvement_lower_bound: Decimal | None = None
     minimum_sample_size: int = Field(ge=2)
     evidence_sufficient: bool
@@ -259,6 +262,10 @@ def ensure_world_model_ablation_plan(
         "control_behavior_hash": behavior_hash,
         "assignment_rule": "ALL_SUCCESSFUL_FORMAL_FORECASTS_AT_OR_AFTER_ACTIVATION",
         "formal_missing_rule": "COUNT_AUTHORITATIVE_FORECAST_NO_ESTIMATE_TERMINALS",
+        "missing_score_rule": (
+            "LOWER_BOUND_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
+        ),
+        "permission_rule": "ALL_SETTLED_TERMINALS_ENTER_CONSERVATIVE_SKILL_BOUND",
         "call_order": CONTROL_CALL_ORDER,
         "input_difference": "REMOVE_WORLD_MODEL_SEMANTIC_CONTENT_ONLY",
         "outcome_join": config.outcome_evaluation.target_forecast_version,
@@ -636,12 +643,23 @@ class SqlWorldModelAblationRepository:
                     >= require_utc(activated_at),
                 )
             ).scalar_one()
-            formal_no_estimate_count = connection.execute(
-                select(func.count())
+            no_estimate_rows = connection.execute(
+                select(
+                    forecast_no_estimates.c.result_id,
+                    forecast_decision_slots.c.evaluation_at,
+                    forecast_outcomes.c.payload,
+                )
                 .select_from(
                     forecast_no_estimates.join(
                         forecast_decision_slots,
                         forecast_decision_slots.c.slot_id == forecast_no_estimates.c.slot_id,
+                    ).outerjoin(
+                        forecast_outcomes,
+                        and_(
+                            forecast_outcomes.c.decision_slot_id
+                            == forecast_no_estimates.c.slot_id,
+                            forecast_outcomes.c.evaluation_version == evaluation_version,
+                        ),
                     )
                 )
                 .where(
@@ -650,7 +668,8 @@ class SqlWorldModelAblationRepository:
                     forecast_decision_slots.c.information_cutoff_at
                     >= require_utc(activated_at),
                 )
-            ).scalar_one()
+            ).all()
+            formal_no_estimate_count = len(no_estimate_rows)
         current = require_utc(as_of)
         pending = 0
         failed = 0
@@ -658,53 +677,101 @@ class SqlWorldModelAblationRepository:
         formal_scores: list[Decimal] = []
         control_scores: list[Decimal] = []
         improvements: list[Decimal] = []
+        conservative_improvements: list[tuple[datetime, str, Decimal]] = []
         for assignment_raw, result_raw, formal_raw, outcome_raw in rows:
             assignment = WorldModelAblationAssignment.model_validate(assignment_raw)
+            outcome = (
+                None if outcome_raw is None else ForecastOutcome.model_validate(outcome_raw)
+            )
+            settled_outcome = (
+                outcome
+                if outcome is not None and outcome.status == ForecastOutcomeStatus.SETTLED
+                else None
+            )
+            formal = BaseForecast.model_validate(formal_raw)
+            formal_score = None
+            if settled_outcome is not None:
+                assert settled_outcome.realized_bucket_id is not None
+                formal_score = multiclass_brier_score(
+                    tuple(
+                        (item.bucket_id, item.probability)
+                        for item in formal.outcome_probabilities
+                    ),
+                    settled_outcome.realized_bucket_id,
+                )
             if result_raw is None:
                 if current <= assignment.completion_deadline_at:
                     pending += 1
                 else:
                     failed += 1
+                    if formal_score is not None:
+                        conservative_improvements.append(
+                            (
+                                assignment.evaluation_at,
+                                assignment.assignment_id,
+                                -formal_score,
+                            )
+                        )
                 continue
             result = WorldModelAblationResult.model_validate(result_raw)
             if result.status != WorldModelAblationStatus.SUCCEEDED:
                 failed += 1
+                if formal_score is not None:
+                    conservative_improvements.append(
+                        (
+                            assignment.evaluation_at,
+                            assignment.assignment_id,
+                            -formal_score,
+                        )
+                    )
                 continue
             succeeded += 1
-            if outcome_raw is None:
+            if settled_outcome is None:
                 continue
-            outcome = ForecastOutcome.model_validate(outcome_raw)
-            if outcome.status != ForecastOutcomeStatus.SETTLED:
-                continue
-            formal = BaseForecast.model_validate(formal_raw)
             control = ContextForecastStructuredOutput.model_validate_json(result.output_json)
-            assert outcome.realized_bucket_id is not None
-            formal_score = multiclass_brier_score(
-                tuple(
-                    (item.bucket_id, item.probability)
-                    for item in formal.outcome_probabilities
-                ),
-                outcome.realized_bucket_id,
-            )
+            assert formal_score is not None
+            assert settled_outcome.realized_bucket_id is not None
             control_score = multiclass_brier_score(
                 tuple(
                     (item.bucket_id, Decimal(item.probability))
                     for item in control.forecast.outcome_probabilities
                 ),
-                outcome.realized_bucket_id,
+                settled_outcome.realized_bucket_id,
             )
             formal_scores.append(formal_score)
             control_scores.append(control_score)
-            improvements.append(control_score - formal_score)
+            improvement = control_score - formal_score
+            improvements.append(improvement)
+            conservative_improvements.append(
+                (assignment.evaluation_at, assignment.assignment_id, improvement)
+            )
+        for result_id, evaluation_at, outcome_raw in no_estimate_rows:
+            if outcome_raw is None:
+                continue
+            outcome = ForecastOutcome.model_validate(outcome_raw)
+            if outcome.status != ForecastOutcomeStatus.SETTLED:
+                continue
+            # The formal side supplied no distribution.  For a lower bound on
+            # WorldModel skill, assume the absent formal forecast was maximally
+            # wrong and the unobserved control was perfect.  This is the exact
+            # multiclass Brier range, not an operational failure-rate threshold.
+            conservative_improvements.append(
+                (evaluation_at, result_id, -_MAXIMUM_MULTICLASS_BRIER_SCORE)
+            )
         pair_count = len(improvements)
         formal_mean = _mean(formal_scores)
         control_mean = _mean(control_scores)
         improvement_mean = _mean(improvements)
+        conservative_values = tuple(
+            value
+            for _evaluation_at, _identity, value in sorted(conservative_improvements)
+        )
+        conservative_mean = _mean(list(conservative_values))
         lower_bound = (
             None
-            if pair_count < 2
+            if len(conservative_values) < 2
             else conservative_newey_west_lower_bound(
-                tuple(improvements),
+                conservative_values,
                 z=Decimal("1.96"),
                 lag=1,
             )
@@ -719,13 +786,15 @@ class SqlWorldModelAblationRepository:
             successful_controls=succeeded,
             failed_controls=failed,
             settled_pairs=pair_count,
+            conservative_sample_count=len(conservative_values),
             formal_mean_brier=formal_mean,
             control_mean_brier=control_mean,
             mean_brier_improvement=improvement_mean,
+            conservative_mean_brier_improvement=conservative_mean,
             conservative_improvement_lower_bound=lower_bound,
             minimum_sample_size=minimum_sample_size,
             evidence_sufficient=(
-                pair_count >= minimum_sample_size
+                len(conservative_values) >= minimum_sample_size
                 and lower_bound is not None
                 and lower_bound > 0
             ),

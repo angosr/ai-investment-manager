@@ -12,6 +12,8 @@ from investment_manager.forecast.context.producer import context_spot_forecast_c
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
     ForecastPermission,
     ForecastPriceAnchor,
     ForecastProducerBinding,
@@ -241,73 +243,11 @@ def _seed(engine):
         release=_release("release-ablation-v1"),
         registered_at=ACTIVATION - timedelta(hours=1),
     )
-    return config, contract, slot, formal, plan
+    return config, contract, binding, slot, formal, plan
 
 
-def test_control_assignment_removes_world_model_and_freezes_shared_contract() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    _config, _contract, slot, formal, plan = _seed(engine)
-
-    assignment = build_world_model_ablation_assignment(
-        plan=plan,
-        formal=formal,
-        slot=slot,
-        assigned_at=formal.available_at + timedelta(minutes=1),
-    )
-    control_input = json.loads(assignment.control_input_json)
-    formal_input = json.loads(formal.analysis_input_json)
-
-    assert "world_model" not in control_input
-    assert control_input["forecast_contract"] == formal_input["forecast_contract"]
-    assert control_input["target_state"] == formal_input["target_state"]
-    assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
-    assert assignment.call_order == "FORMAL_FIRST_CAPITAL_PRIORITY"
-
-
-def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    config, contract, _slot, _formal, first = _seed(engine)
-
-    repeated = ensure_world_model_ablation_plan(
-        governance=SqlGovernanceRepository(engine),
-        config=config,
-        contract=contract,
-        release=_release("release-ablation-v2"),
-        registered_at=ACTIVATION - timedelta(minutes=30),
-    )
-
-    assert repeated == first
-    assert repeated.base_manifest_id == "release-ablation-v1"
-
-
-def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    config, contract, slot, formal, plan = _seed(engine)
-    analyst = _FixedControlAnalyst(formal.available_at + timedelta(minutes=2))
-    repository = SqlWorldModelAblationRepository(engine)
-    policy = config.outcome_evaluation.world_model_ablation
-    assert policy is not None
-    runner = WorldModelAblationRunner(
-        policy=policy,
-        plan=plan,
-        formal_producer_behavior_id=formal.producer_behavior_id,
-        evaluation_version=config.outcome_evaluation.target_forecast_version,
-        repository=repository,
-        analyst=analyst,
-    )
-
-    first = runner.reconcile(as_of=formal.available_at + timedelta(minutes=1))
-    replay = runner.reconcile(as_of=formal.available_at + timedelta(minutes=2))
-
-    assert first.assignments == replay.assignments == 1
-    assert analyst.calls == 1
-    with engine.connect() as connection:
-        assert connection.execute(select(func.count()).select_from(forecasts)).scalar_one() == 1
-
-    outcome = ForecastOutcome(
+def _gain_outcome(config, contract, slot) -> ForecastOutcome:
+    return ForecastOutcome(
         outcome_id=stable_id(
             "forecast_outcome",
             slot.slot_id,
@@ -335,6 +275,72 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
         realized_bucket_id="GAIN",
         reason_code="SETTLED",
     )
+
+
+def test_control_assignment_removes_world_model_and_freezes_shared_contract() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    _config, _contract, _binding, slot, formal, plan = _seed(engine)
+
+    assignment = build_world_model_ablation_assignment(
+        plan=plan,
+        formal=formal,
+        slot=slot,
+        assigned_at=formal.available_at + timedelta(minutes=1),
+    )
+    control_input = json.loads(assignment.control_input_json)
+    formal_input = json.loads(formal.analysis_input_json)
+
+    assert "world_model" not in control_input
+    assert control_input["forecast_contract"] == formal_input["forecast_contract"]
+    assert control_input["target_state"] == formal_input["target_state"]
+    assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
+    assert assignment.call_order == "FORMAL_FIRST_CAPITAL_PRIORITY"
+
+
+def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, _binding, _slot, _formal, first = _seed(engine)
+
+    repeated = ensure_world_model_ablation_plan(
+        governance=SqlGovernanceRepository(engine),
+        config=config,
+        contract=contract,
+        release=_release("release-ablation-v2"),
+        registered_at=ACTIVATION - timedelta(minutes=30),
+    )
+
+    assert repeated == first
+    assert repeated.base_manifest_id == "release-ablation-v1"
+
+
+def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, _binding, slot, formal, plan = _seed(engine)
+    analyst = _FixedControlAnalyst(formal.available_at + timedelta(minutes=2))
+    repository = SqlWorldModelAblationRepository(engine)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    runner = WorldModelAblationRunner(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        repository=repository,
+        analyst=analyst,
+    )
+
+    first = runner.reconcile(as_of=formal.available_at + timedelta(minutes=1))
+    replay = runner.reconcile(as_of=formal.available_at + timedelta(minutes=2))
+
+    assert first.assignments == replay.assignments == 1
+    assert analyst.calls == 1
+    with engine.connect() as connection:
+        assert connection.execute(select(func.count()).select_from(forecasts)).scalar_one() == 1
+
+    outcome = _gain_outcome(config, contract, slot)
     SqlForecastStore(engine).record_outcome(outcome)
     report = repository.report(
         plan_id=plan.plan_id,
@@ -349,15 +355,20 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
     assert report.formal_forecast_count == 1
     assert report.formal_no_estimate_count == 0
     assert report.successful_controls == 1
+    assert report.conservative_sample_count == 1
     assert report.mean_brier_improvement is not None
     assert report.mean_brier_improvement > 0
+    assert (
+        report.conservative_mean_brier_improvement
+        == report.mean_brier_improvement
+    )
     assert not report.evidence_sufficient
 
 
 def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    config, _contract, slot, formal, plan = _seed(engine)
+    config, contract, _binding, slot, formal, plan = _seed(engine)
     analyst = _FixedControlAnalyst(slot.completion_deadline_at + timedelta(minutes=1))
     repository = SqlWorldModelAblationRepository(engine)
     policy = config.outcome_evaluation.world_model_ablation
@@ -377,3 +388,78 @@ def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None
     assert first.failed_controls == replay.failed_controls == 1
     assert first.successful_controls == replay.successful_controls == 0
     assert analyst.calls == 0
+
+    outcome = _gain_outcome(config, contract, slot)
+    SqlForecastStore(engine).record_outcome(outcome)
+    report = repository.report(
+        plan_id=plan.plan_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        minimum_sample_size=policy.minimum_sample_size,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        activated_at=policy.activated_at,
+        as_of=outcome.settled_at,
+    )
+
+    assert report.settled_pairs == 0
+    assert report.conservative_sample_count == 1
+    assert report.conservative_mean_brier_improvement is not None
+    assert report.conservative_mean_brier_improvement < 0
+    assert not report.evidence_sufficient
+
+
+def test_formal_no_estimate_enters_conservative_skill_bound() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, binding, _slot, formal, plan = _seed(engine)
+    missing_at = ACTIVATION + timedelta(hours=4)
+    cutoff = ForecastPriceAnchor(
+        instrument_id=contract.target.legs[0].instrument.key,
+        price=Decimal("100"),
+        observed_at=missing_at,
+        available_at=missing_at,
+        quote_ref="missing-cutoff-quote",
+    )
+    missing_slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=missing_at,
+        cutoff_prices=(cutoff,),
+    )
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_slot(missing_slot, binding=binding)
+    contracts.record_no_estimate(
+        ForecastNoEstimate(
+            result_id=stable_id(
+                "forecast_no_estimate",
+                missing_slot.slot_id,
+                formal.producer_behavior_id,
+            ),
+            slot_id=missing_slot.slot_id,
+            contract_id=contract.contract_id,
+            producer_kind=ForecastProducerKind.CONTEXT,
+            producer_id=formal.producer_id,
+            producer_behavior_id=formal.producer_behavior_id,
+            reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
+            information_cutoff_at=missing_slot.information_cutoff_at,
+            attempted_at=missing_at,
+            completed_at=missing_at,
+        )
+    )
+    outcome = _gain_outcome(config, contract, missing_slot)
+    SqlForecastStore(engine).record_outcome(outcome)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+
+    report = SqlWorldModelAblationRepository(engine).report(
+        plan_id=plan.plan_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        minimum_sample_size=policy.minimum_sample_size,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        activated_at=policy.activated_at,
+        as_of=outcome.settled_at,
+    )
+
+    assert report.formal_no_estimate_count == 1
+    assert report.settled_pairs == 0
+    assert report.conservative_sample_count == 1
+    assert report.conservative_mean_brier_improvement == Decimal("-2")
+    assert not report.evidence_sufficient
