@@ -12,7 +12,7 @@ from investment_manager.forecast.contracts import (
 )
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.portfolio.decision import PortfolioDecisionPolicy
-from investment_manager.portfolio.models import MockCandidateAuthorization
+from investment_manager.portfolio.models import CandidateCapitalAuthorization
 from investment_manager.risk.portfolio import PortfolioRiskPolicy
 
 
@@ -82,7 +82,7 @@ class CapitalPolicy(StrictConfig):
     execution_specs: tuple[InstrumentExecutionSpec, ...] = Field(min_length=1)
     sleeve_risk: SleeveRiskTemplate
     context_forecast: ContextForecastPolicy | None = None
-    mock_candidate_authorizations: tuple[MockCandidateAuthorization, ...] = ()
+    candidate_capital_authorizations: tuple[CandidateCapitalAuthorization, ...] = ()
 
     @model_validator(mode="after")
     def capital_path_has_one_exact_instrument_scope(self):
@@ -101,17 +101,17 @@ class CapitalPolicy(StrictConfig):
                 item.producer_behavior_id,
                 item.outcome_family_id,
             )
-            for item in self.mock_candidate_authorizations
+            for item in self.candidate_capital_authorizations
         )
         if len(identities) > 1:
-            raise ValueError("Capital 同时只允许一个 Mock challenger")
+            raise ValueError("Capital 同时只允许一个实验候选")
         if len(set(identities)) != len(identities):
-            raise ValueError("Capital Mock candidate authorization 不得重复")
+            raise ValueError("Capital candidate authorization 不得重复")
         context = self.context_forecast
         if context is not None and context.enabled:
             matching = tuple(
                 item
-                for item in self.mock_candidate_authorizations
+                for item in self.candidate_capital_authorizations
                 if (
                     item.producer_id,
                     item.producer_behavior_id,
@@ -124,5 +124,5 @@ class CapitalPolicy(StrictConfig):
                 )
             )
             if len(matching) != 1:
-                raise ValueError("启用 Context Forecast 必须绑定唯一 Mock authorization")
+                raise ValueError("启用 Context Forecast 必须绑定唯一资本授权")
         return self

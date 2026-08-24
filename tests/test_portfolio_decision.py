@@ -27,8 +27,8 @@ from investment_manager.portfolio.decision import (
     remaining_target_gross_bps,
 )
 from investment_manager.portfolio.models import (
+    CandidateCapitalAuthorization,
     InstrumentPosition,
-    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
     SleevePosition,
     SleeveTarget,
@@ -108,9 +108,9 @@ def _forecast(
     )
 
 
-def _authorization(forecast: BaseForecast) -> MockCandidateAuthorization:
-    return MockCandidateAuthorization(
-        version="mock-v1",
+def _authorization(forecast: BaseForecast) -> CandidateCapitalAuthorization:
+    return CandidateCapitalAuthorization(
+        version="candidate-v1",
         producer_id=forecast.producer_id,
         producer_behavior_id=forecast.producer_behavior_id,
         outcome_family_id=forecast.outcome_family_id,
@@ -130,7 +130,7 @@ def _input(forecast: BaseForecast | None = None) -> PortfolioSleeveInput:
             forecast_target_id=forecast.target.target_id,
         ),
         forecast=forecast,
-        mock_authorization=_authorization(forecast),
+        capital_authorization=_authorization(forecast),
     )
 
 
@@ -387,7 +387,7 @@ def test_base_forecast_requires_exact_behavior_authorization() -> None:
         PortfolioSleeveInput(
             sleeve_id=_input(forecast).sleeve_id,
             forecast=forecast,
-            mock_authorization=permission,
+            capital_authorization=permission,
         )
 
 

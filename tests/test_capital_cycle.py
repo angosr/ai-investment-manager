@@ -41,9 +41,9 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.models import (
+    CandidateCapitalAuthorization,
     CapitalCycleOutcome,
     CapitalCycleRecord,
-    MockCandidateAuthorization,
     PortfolioEdgeBasis,
 )
 from investment_manager.portfolio.repository import SqlPortfolioStore
@@ -265,7 +265,7 @@ def _test_contract_and_binding(
             ForecastProducerKind.PROGRAM.value,
             _TEST_PRODUCER_ID,
             _TEST_PRODUCER_VERSION,
-            ForecastPermission.MOCK.value,
+            ForecastPermission.CAPITAL_CANDIDATE.value,
             (),
             None,
         ),
@@ -273,7 +273,7 @@ def _test_contract_and_binding(
         producer_kind=ForecastProducerKind.PROGRAM,
         producer_id=_TEST_PRODUCER_ID,
         producer_behavior_id=_TEST_PRODUCER_VERSION,
-        permission=ForecastPermission.MOCK,
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
     )
     return contract, binding
 
@@ -289,8 +289,8 @@ def _candidate_service(
 ):
     contract, binding = _test_contract_and_binding(target=target)
     contract_store = SqlForecastContractStore(engine)
-    authorization = MockCandidateAuthorization(
-        version="test-mock-candidate-authorization-v1",
+    authorization = CandidateCapitalAuthorization(
+        version="test-candidate-capital-authorization-v1",
         producer_id=_TEST_PRODUCER_ID,
         producer_behavior_id=_TEST_PRODUCER_VERSION,
         outcome_family_id=_TEST_FORECAST_FAMILY,
@@ -302,7 +302,7 @@ def _candidate_service(
     configured = config.model_copy(
         update={
             "capital": config.capital.model_copy(
-                update={"mock_candidate_authorizations": (authorization,)}
+                update={"candidate_capital_authorizations": (authorization,)}
             )
         }
     )
@@ -326,7 +326,7 @@ def _candidate_service(
             )
         ),
         risk_template=configured.capital.sleeve_risk,
-        mock_authorization=authorization,
+        capital_authorization=authorization,
     )
     return configured, assemble_capital_cycle(
         configured,
@@ -519,7 +519,7 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
                     "context_forecast": config.capital.context_forecast.model_copy(
                         update={"enabled": False}
                     ),
-                    "mock_candidate_authorizations": (),
+                    "candidate_capital_authorizations": (),
                 }
             )
         }
@@ -604,7 +604,7 @@ def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
         assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
 
-def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() -> None:
+def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -693,7 +693,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_mock_trade() 
     assert first_page[0].activity_id != second_page[0].activity_id
 
 
-def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
+def test_explicit_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -714,7 +714,7 @@ def test_explicit_mock_candidate_can_trade_via_the_authoritative_capital_chain()
     assert result.groups and result.groups[0].terminal
     target = SqlPortfolioStore(engine).target_for_cycle(result.groups[0].cycle_id)
     assert target is not None
-    assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS
+    assert target.sleeves[0].edge_basis == PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
     assert target.sleeves[0].decision_net_bps > Decimal("5")
     assert target.sleeves[0].desired_gross_notional == Decimal("3000")
     with engine.connect() as connection:
@@ -754,7 +754,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     target = SqlPortfolioStore(engine).target_for_cycle(result.trade_plan.cycle_id)
     assert target is not None and target.candidate_evaluations is not None
     frozen = target.candidate_evaluations[0]
-    changed_authorization = config.capital.mock_candidate_authorizations[0].model_copy(
+    changed_authorization = config.capital.candidate_capital_authorizations[0].model_copy(
         update={"minimum_entry_net_bps": Decimal("999")}
     )
     changed_specs = tuple(
@@ -765,7 +765,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         update={
             "capital": config.capital.model_copy(
                 update={
-                    "mock_candidate_authorizations": (changed_authorization,),
+                    "candidate_capital_authorizations": (changed_authorization,),
                     "execution_specs": changed_specs,
                 }
             )

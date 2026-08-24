@@ -60,9 +60,9 @@ from investment_manager.portfolio.decision import (
     PortfolioSleeveInput,
 )
 from investment_manager.portfolio.models import (
+    CandidateCapitalAuthorization,
     CapitalCycleOutcome,
     CapitalCycleRecord,
-    MockCandidateAuthorization,
     PortfolioAccountSnapshot,
     SleeveTarget,
 )
@@ -111,19 +111,19 @@ class CapitalForecastSource:
     binding: ForecastProducerBinding
     producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
-    mock_authorization: MockCandidateAuthorization
+    capital_authorization: CandidateCapitalAuthorization
 
     def __post_init__(self) -> None:
         if self.binding.contract_id != self.contract.contract_id:
             raise ValueError("Capital Forecast source 的 Contract/Binding 不一致")
-        permission = self.mock_authorization
+        permission = self.capital_authorization
         if (
             permission.producer_id != self.binding.producer_id
             or permission.producer_behavior_id != self.binding.producer_behavior_id
             or permission.outcome_family_id != self.contract.outcome_family_id
-            or self.binding.permission != ForecastPermission.MOCK
+            or self.binding.permission != ForecastPermission.CAPITAL_CANDIDATE
         ):
-            raise ValueError("Capital Forecast source 与 Mock authorization 不一致")
+            raise ValueError("Capital Forecast source 与资本授权不一致")
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +207,7 @@ class CapitalTriggerConsumer:
 
 
 class CapitalCycleService:
-    """Run one idempotent point-in-time decision and immediate persistent Mock execution."""
+    """Run one idempotent point-in-time capital decision and persistent execution."""
 
     def __init__(
         self,
@@ -474,7 +474,7 @@ class CapitalCycleService:
         )
         self._performance.record(result.account)
         logger.info(
-            "capital cycle executed mock trade plan",
+            "capital cycle executed trade plan",
             extra={
                 "cycle_id": cycle_id,
                 "plan_id": plan.plan_id,
@@ -736,7 +736,7 @@ class CapitalCycleService:
             candidate = PortfolioSleeveInput(
                 sleeve_id=sleeve_id,
                 forecast=forecast,
-                mock_authorization=source.mock_authorization,
+                capital_authorization=source.capital_authorization,
             )
             existing = by_sleeve.get(sleeve_id)
             if existing is not None and existing != candidate:
@@ -758,7 +758,7 @@ class CapitalCycleService:
             by_sleeve[position.sleeve_id] = PortfolioSleeveInput(
                 sleeve_id=position.sleeve_id,
                 forecast=forecast,
-                mock_authorization=source.mock_authorization,
+                capital_authorization=source.capital_authorization,
             )
         return tuple(by_sleeve[item] for item in sorted(by_sleeve))
 
@@ -850,7 +850,7 @@ class CapitalCycleService:
                 PortfolioSleeveInput(
                     sleeve_id=position.sleeve_id,
                     forecast=forecast,
-                    mock_authorization=source.mock_authorization,
+                    capital_authorization=source.capital_authorization,
                 )
             )
             profiles.append(self._risk_profile(position.sleeve_id, source))
@@ -1053,7 +1053,7 @@ def assemble_capital_cycle(
                     ForecastProducerKind.CONTEXT.value,
                     context.producer_id,
                     context.producer_behavior_id,
-                    ForecastPermission.MOCK.value,
+                    ForecastPermission.CAPITAL_CANDIDATE.value,
                     context.required_feature_keys,
                     context.maximum_world_model_age_seconds,
                 ),
@@ -1061,13 +1061,13 @@ def assemble_capital_cycle(
                 producer_kind=ForecastProducerKind.CONTEXT,
                 producer_id=context.producer_id,
                 producer_behavior_id=context.producer_behavior_id,
-                permission=ForecastPermission.MOCK,
+                permission=ForecastPermission.CAPITAL_CANDIDATE,
                 required_feature_keys=context.required_feature_keys,
                 maximum_world_model_age_seconds=(context.maximum_world_model_age_seconds),
             )
             authorization = next(
                 item
-                for item in config.capital.mock_candidate_authorizations
+                for item in config.capital.candidate_capital_authorizations
                 if (
                     item.producer_id,
                     item.producer_behavior_id,
@@ -1121,7 +1121,7 @@ def assemble_capital_cycle(
                         ),
                     ),
                     risk_template=config.capital.sleeve_risk,
-                    mock_authorization=authorization,
+                    capital_authorization=authorization,
                 )
             )
         forecast_sources = tuple(configured_sources)

@@ -301,11 +301,18 @@ class PortfolioPerformanceInterval(FrozenModel):
 
 class PortfolioEdgeBasis(StrEnum):
     CALIBRATED_CONSERVATIVE = "CALIBRATED_CONSERVATIVE"
+    EXPERIMENTAL_HYPOTHESIS = "EXPERIMENTAL_HYPOTHESIS"
+    # Immutable targets written before deployment mode was removed from
+    # Portfolio vocabulary still need to remain readable for audit.
     MOCK_HYPOTHESIS = "MOCK_HYPOTHESIS"
 
+    @property
+    def uncalibrated_candidate(self) -> bool:
+        return self in {self.EXPERIMENTAL_HYPOTHESIS, self.MOCK_HYPOTHESIS}
 
-class MockCandidateAuthorization(FrozenModel):
-    """Evidence-bound permission to trade one candidate in Mock, never real orders."""
+
+class CandidateCapitalAuthorization(FrozenModel):
+    """Evidence-bound sizing and edge policy for one uncalibrated candidate."""
 
     version: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
@@ -319,9 +326,9 @@ class MockCandidateAuthorization(FrozenModel):
     @model_validator(mode="after")
     def allocation_and_hysteresis_must_be_consistent(self):
         if self.maximum_allocation_fraction <= 0:
-            raise ValueError("Mock candidate allocation 必须为正数")
+            raise ValueError("候选资本授权的 allocation 必须为正数")
         if self.minimum_hold_net_bps > self.minimum_entry_net_bps:
-            raise ValueError("Mock candidate 持有门槛不能高于入场门槛")
+            raise ValueError("候选资本授权的持有门槛不能高于入场门槛")
         return self
 
 

@@ -1216,6 +1216,32 @@ def test_current_runtime_identity_uses_product_name() -> None:
     assert violations == {}
 
 
+def test_capital_decision_language_is_venue_neutral() -> None:
+    paths = (
+        PACKAGE_ROOT / "portfolio" / "decision.py",
+        PACKAGE_ROOT / "portfolio" / "policy.py",
+        PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
+        ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
+    )
+    forbidden = (
+        "mock_authorization",
+        "mock_candidate",
+        "MockCandidate",
+        "模拟交易",
+        "模拟订单",
+        "模拟执行",
+    )
+
+    violations = {
+        str(path.relative_to(ROOT)): token
+        for path in paths
+        for token in forbidden
+        if token in path.read_text(encoding="utf-8")
+    }
+
+    assert violations == {}
+
+
 def test_package_root_contains_only_composition_entries() -> None:
     assert {
         path.name

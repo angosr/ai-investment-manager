@@ -8,8 +8,8 @@ capital:
   enabled: true
   context_forecast:
     enabled: true
-  mock_candidate_authorizations:
-    - version: btc-context-mock-v6
+  candidate_capital_authorizations:
+    - version: btc-context-candidate-v1
       producer_id: codex-world-model-forecast
       producer_behavior_id: "456743687b2ab8be1bdb79eb49c23eb5422fddd54af600819c18b2def2426f70"
       outcome_family_id: btc-spot-directional-4h

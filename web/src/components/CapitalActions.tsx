@@ -16,8 +16,8 @@ const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
   PENDING: { badge: "处理中", title: "资金决策仍在处理" },
   RISK_REJECTED: { badge: "风控阻止", title: "交易被风控阻止" },
   NO_ORDER: { badge: "无需下单", title: "目标仓位无需调整" },
-  EXECUTING: { badge: "执行中", title: "正在执行模拟交易" },
-  EXECUTED: { badge: "已执行", title: "模拟交易已经执行" },
+  EXECUTING: { badge: "执行中", title: "正在执行仓位调整" },
+  EXECUTED: { badge: "已执行", title: "仓位调整已经执行" },
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -198,7 +198,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
               {zeroImpact
                 ? "0 USDT；没有新增订单，仓位未变化"
                 : action.order_count > 0
-                  ? `产生 ${action.order_count} 笔模拟订单`
+                  ? `产生 ${action.order_count} 笔订单`
                   : "决策仍在处理，尚未产生订单"}
             </dd>
             <dt>风控状态</dt>

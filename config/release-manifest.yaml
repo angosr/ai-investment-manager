@@ -7,11 +7,11 @@ parent_manifest_id: release-framework-forecast-baseline-v1
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
-  - [panel, panel-policy-v9]
+  - [panel, panel-policy-v10]
   - [decision_state, portfolio-state-v36]
   - [strategy, price-trend-v4]
   - [calibration, edge-calibration-v1]
-  - [capital, spot-capital-v25]
+  - [capital, spot-capital-v26]
   - [composition, calibrated-net-edge-v1]
   - [frequency, frequency-v4]
   - [risk, risk-v1]

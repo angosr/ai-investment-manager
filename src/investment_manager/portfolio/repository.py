@@ -22,7 +22,6 @@ from investment_manager.platform.locking import advisory_xact_lock
 from investment_manager.portfolio.models import (
     CapitalCycleRecord,
     PortfolioAccountSnapshot,
-    PortfolioEdgeBasis,
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
@@ -274,7 +273,7 @@ class SqlPortfolioStore:
             if any(
                 (
                     isinstance(loaded[forecast_id], BaseForecast)
-                    != (sleeve.edge_basis == PortfolioEdgeBasis.MOCK_HYPOTHESIS)
+                    != sleeve.edge_basis.uncalibrated_candidate
                 )
                 or loaded[forecast_id].target != sleeve.forecast_target
                 or loaded[forecast_id].outcome_family_id != sleeve.forecast_family

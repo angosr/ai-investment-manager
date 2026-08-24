@@ -15,7 +15,7 @@ from investment_manager.execution.group.models import ExecutionGroup
 from investment_manager.execution.planning.planner import TradePlan
 from investment_manager.execution.tables import (
     execution_groups,
-    mock_product_orders,
+    product_order_observations,
     trade_plans,
 )
 from investment_manager.forecast.context.evaluation import (
@@ -170,7 +170,14 @@ class CapitalDashboardReader:
                 ).scalars()
             )
             order_count = int(
-                connection.scalar(select(func.count()).select_from(mock_product_orders)) or 0
+                connection.scalar(
+                    select(
+                        func.count(
+                            func.distinct(product_order_observations.c.client_order_id)
+                        )
+                    ).select_from(product_order_observations)
+                )
+                or 0
             )
             performance_count = int(
                 connection.scalar(
@@ -492,12 +499,15 @@ class CapitalDashboardReader:
                     for item in connection.execute(
                         select(
                             execution_groups.c.plan_id,
-                            func.count(mock_product_orders.c.client_order_id).label("order_count"),
+                            func.count(
+                                func.distinct(product_order_observations.c.client_order_id)
+                            ).label("order_count"),
                         )
                         .select_from(
                             execution_groups.outerjoin(
-                                mock_product_orders,
-                                mock_product_orders.c.group_id == execution_groups.c.group_id,
+                                product_order_observations,
+                                product_order_observations.c.group_id
+                                == execution_groups.c.group_id,
                             )
                         )
                         .where(execution_groups.c.plan_id.in_(plan_ids))
@@ -651,7 +661,7 @@ class CapitalDashboardReader:
             summary = "组合决策完成，无需产生订单"
         elif all(item.terminal for item in groups):
             outcome = "EXECUTED"
-            summary = f"模拟执行完成：{len(groups)} 个交易组，{order_count} 笔订单"
+            summary = f"仓位调整完成：{len(groups)} 个交易组，{order_count} 笔订单"
         else:
             outcome = "EXECUTING"
             summary = f"正在执行：{len(groups)} 个交易组，{order_count} 笔订单"

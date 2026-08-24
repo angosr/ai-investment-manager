@@ -24,6 +24,9 @@ class ForecastProducerKind(StrEnum):
 
 class ForecastPermission(StrEnum):
     RESEARCH = "RESEARCH"
+    CAPITAL_CANDIDATE = "CAPITAL_CANDIDATE"
+    # Historical bindings remain readable; new bindings must not encode the
+    # deployment venue in Forecast or capital-domain vocabulary.
     MOCK = "MOCK"
 
 

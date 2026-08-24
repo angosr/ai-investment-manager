@@ -167,7 +167,7 @@ class AppConfig(StrictConfig):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
-                raise ValueError("当前 Capital 候选权限只允许 SHADOW Mock")
+                raise ValueError("当前实验候选资本权限只允许 SHADOW")
             if self.capital.settlement_asset != self.binance_testnet.quote_asset:
                 raise ValueError("Capital 与行情结算资产必须一致")
             if (
@@ -180,9 +180,9 @@ class AppConfig(StrictConfig):
                 != self.market_data.maximum_cross_market_quote_skew_seconds
             ):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
-        permissions = self.capital.mock_candidate_authorizations
+        permissions = self.capital.candidate_capital_authorizations
         if permissions and not self.capital.enabled:
-            raise ValueError("禁用 Capital 时不得保留 Mock candidate authorization")
+            raise ValueError("禁用 Capital 时不得保留 candidate capital authorization")
         if any(
             not symbol.endswith(self.binance_testnet.quote_asset)
             for symbol in self.market_data.symbols

@@ -137,8 +137,8 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
     assert config.assessment.enabled
     assert config.capital.context_forecast is not None
     assert config.capital.context_forecast.enabled
-    assert len(config.capital.mock_candidate_authorizations) == 1
-    authorization = config.capital.mock_candidate_authorizations[0]
+    assert len(config.capital.candidate_capital_authorizations) == 1
+    authorization = config.capital.candidate_capital_authorizations[0]
     assert authorization.producer_behavior_id == (
         config.capital.context_forecast.producer_behavior_id
     )

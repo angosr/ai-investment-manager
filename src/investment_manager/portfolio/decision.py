@@ -13,7 +13,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel, Money, UnitInterval
 from investment_manager.market.models import ExecutableQuote
 from investment_manager.portfolio.models import (
-    MockCandidateAuthorization,
+    CandidateCapitalAuthorization,
     PortfolioAccountSnapshot,
     PortfolioCandidateEvaluation,
     PortfolioCostEstimate,
@@ -47,20 +47,20 @@ class PortfolioDecisionPolicy(FrozenModel):
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast: Forecast
-    mock_authorization: MockCandidateAuthorization | None = None
+    capital_authorization: CandidateCapitalAuthorization | None = None
 
     @model_validator(mode="after")
     def forecast_permission_must_be_explicit(self):
         if isinstance(self.forecast, BaseForecast):
-            permission = self.mock_authorization
+            permission = self.capital_authorization
             if permission is None or (
                 permission.producer_id != self.forecast.producer_id
                 or permission.producer_behavior_id != self.forecast.producer_behavior_id
                 or permission.outcome_family_id != self.forecast.outcome_family_id
             ):
-                raise ValueError("BaseForecast 必须精确绑定 Mock candidate authorization")
-        elif self.mock_authorization is not None:
-            raise ValueError("CalibratedForecast 不得使用 Mock candidate authorization")
+                raise ValueError("BaseForecast 必须精确绑定 candidate capital authorization")
+        elif self.capital_authorization is not None:
+            raise ValueError("CalibratedForecast 不得使用 candidate capital authorization")
         return self
 
 
@@ -451,14 +451,14 @@ class PortfolioDecisionEngine:
             threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
         else:
-            permission = item.mock_authorization
+            permission = item.capital_authorization
             assert permission is not None
             threshold = (
                 permission.minimum_hold_net_bps
                 if current_notional > 0
                 else permission.minimum_entry_net_bps
             )
-            edge_basis = PortfolioEdgeBasis.MOCK_HYPOTHESIS
+            edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
         eligible = forecast_current and net >= threshold
         return PortfolioCandidateEvaluation(
@@ -551,7 +551,7 @@ class PortfolioDecisionEngine:
             desired_gross_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
             edge_basis=(
-                PortfolioEdgeBasis.MOCK_HYPOTHESIS
+                PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
                 if isinstance(item.forecast, BaseForecast)
                 else PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
             ),
@@ -590,9 +590,9 @@ class PortfolioDecisionEngine:
 
     @staticmethod
     def _allocation_limit(item: PortfolioSleeveInput, *, equity: Decimal) -> Decimal:
-        if item.mock_authorization is None:
+        if item.capital_authorization is None:
             return equity
-        return equity * item.mock_authorization.maximum_allocation_fraction
+        return equity * item.capital_authorization.maximum_allocation_fraction
 
     @staticmethod
     def _quotes(

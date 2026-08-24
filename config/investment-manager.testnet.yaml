@@ -9,7 +9,7 @@ capital:
   enabled: false
   context_forecast:
     enabled: false
-  mock_candidate_authorizations: []
+  candidate_capital_authorizations: []
 
 codex_runtime:
   enabled: false

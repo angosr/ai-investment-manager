@@ -370,7 +370,7 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
             ForecastProducerKind.CONTEXT.value,
             policy.producer_id,
             policy.producer_behavior_id,
-            ForecastPermission.MOCK.value,
+            ForecastPermission.CAPITAL_CANDIDATE.value,
             policy.required_feature_keys,
             policy.maximum_world_model_age_seconds,
         ),
@@ -378,7 +378,7 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
         producer_kind=ForecastProducerKind.CONTEXT,
         producer_id=policy.producer_id,
         producer_behavior_id=policy.producer_behavior_id,
-        permission=ForecastPermission.MOCK,
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
         required_feature_keys=policy.required_feature_keys,
         maximum_world_model_age_seconds=policy.maximum_world_model_age_seconds,
     )
