@@ -69,7 +69,6 @@ from investment_manager.platform.time import database_utc
 from investment_manager.risk.protection import portfolio_protection_states
 from investment_manager.scheduling.models import AnalysisTriggerPlan
 from investment_manager.scheduling.tables import (
-    analysis_call_admissions,
     analysis_trigger_events,
     analysis_trigger_plans,
     trigger_outbox,
@@ -752,13 +751,13 @@ class DashboardReader:
         return statuses
 
     def ai_calls_last_hour(self, *, now: datetime) -> int:
-        # 观测跨品种原子准入事实；失败关闭或仍在执行的批次也属于真实启动活动。
+        # 账号活动只统计真实 Codex 尝试；调度准入仅用于协调，不能替代运行事实。
         query = (
             select(func.count())
-            .select_from(analysis_call_admissions)
+            .select_from(codex_runs)
             .where(
-                analysis_call_admissions.c.admitted_at > now - timedelta(hours=1),
-                analysis_call_admissions.c.admitted_at <= now,
+                codex_runs.c.observed_at > now - timedelta(hours=1),
+                codex_runs.c.observed_at <= now,
             )
         )
         with self._engine.connect() as connection:

@@ -25,9 +25,11 @@ codex_runs = Table(
     Column("attempt", Integer, nullable=False),
     Column("status", String(32), nullable=False),
     Column("error_class", String(64), nullable=True),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
     Column("payload", JSON, nullable=False),
 )
 Index("ix_codex_runs_cycle_status", codex_runs.c.cycle_id, codex_runs.c.status)
+Index("ix_codex_runs_observed_at", codex_runs.c.observed_at)
 
 codex_account_capacity = Table(
     "codex_account_capacity",

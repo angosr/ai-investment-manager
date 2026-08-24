@@ -184,7 +184,7 @@ def test_schema_shape_is_frozen_during_structure_migration() -> None:
 
     assert len(contract) == 95
     assert content_hash(contract) == (
-        "08d33522a4b51af8b6d7418ea06b5747619d46c59f442e15a4859607c0ddf211"
+        "8fb7cdaad47706ab2efe3abcd659070b375a6cf83bd80a6799b9c7bc95baa7f5"
     )
 
 

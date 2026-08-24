@@ -106,6 +106,7 @@ def _seed(app_config, replay_input, view: DirectionalView):
                 attempt=1,
                 status="SUCCEEDED",
                 error_class=None,
+                observed_at=replay_input.market.as_of,
                 payload={
                     "observed_at": replay_input.market.as_of.isoformat(),
                     "completed_at": completed_at.isoformat(),
@@ -334,6 +335,7 @@ def test_ambiguous_successful_codex_runs_fail_closed(
                 attempt=2,
                 status="SUCCEEDED",
                 error_class=None,
+                observed_at=replay_input.market.as_of,
                 payload={
                     "observed_at": replay_input.market.as_of.isoformat(),
                     "completed_at": (completed_at + timedelta(seconds=1)).isoformat(),

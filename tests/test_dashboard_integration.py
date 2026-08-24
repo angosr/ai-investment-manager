@@ -51,7 +51,6 @@ from investment_manager.legacy.repository import (
 from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.scheduling.tables import analysis_call_admissions
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     DecisionPacket,
@@ -332,6 +331,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
                 attempt=1,
                 status="FAILED",
                 error_class="SCHEMA_INVALID",
+                observed_at=bad_assessment.available_at - timedelta(seconds=1),
                 payload={
                     "analysis_behavior_hash": configured_assess_behavior_hash(
                         app_config
@@ -725,7 +725,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                 as_of=now - timedelta(minutes=10),
                 policy_version=config.decision_state.packet_policy.version,
                 content_hash="a" * 64,
-                payload={},
+                    payload={},
             )
         )
         connection.execute(
@@ -738,6 +738,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                     "attempt": 0,
                     "status": "SUCCEEDED",
                     "error_class": None,
+                    "observed_at": completed_at - timedelta(seconds=30),
                     "payload": {
                         "analysis_behavior_hash": behavior_hash,
                         "completed_at": completed_at.isoformat(),
@@ -750,6 +751,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                     "attempt": 0,
                     "status": "FAILED",
                     "error_class": "RETIRED_BEHAVIOR",
+                    "observed_at": completed_at - timedelta(minutes=30),
                     "payload": {"analysis_behavior_hash": "b" * 64},
                 },
             ),
@@ -761,7 +763,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                 analysis_scope=config.assessment.mandate.analysis_scope,
                 available_at=completed_at,
                 analysis_behavior_hash=behavior_hash,
-                    payload={},
+                payload={},
             )
         )
 
@@ -828,21 +830,24 @@ def test_equity_is_account_wide_and_uses_actual_close_time(app_config, replay_in
     assert result["summary"]["total_fees"] == "0.4"
 
 
-def test_dashboard_call_activity_reads_global_admissions(app_config, replay_input) -> None:
+def test_dashboard_call_activity_reads_actual_codex_attempts(app_config, replay_input) -> None:
     engine, _ = _seed_cycle(app_config, replay_input)
     now = replay_input.market.as_of
     with engine.begin() as connection:
-        for index, admitted_at in enumerate(
+        for index, observed_at in enumerate(
             (now - timedelta(minutes=59), now, now + timedelta(seconds=1)),
             start=1,
         ):
             connection.execute(
-                insert(analysis_call_admissions).values(
-                    batch_id=f"batch-{index}",
-                    pipeline_id="pipeline-v1",
-                    symbol="BTCUSDT",
-                    admitted_at=admitted_at,
-                    payload={"batch_id": f"batch-{index}"},
+                insert(codex_runs).values(
+                    run_id=f"run-activity-{index}",
+                    cycle_id=f"cycle-activity-{index}",
+                    account_id=".codex-test",
+                    attempt=1,
+                    status="SUCCEEDED",
+                    error_class=None,
+                    observed_at=observed_at,
+                    payload={"observed_at": observed_at.isoformat()},
                 )
             )
 

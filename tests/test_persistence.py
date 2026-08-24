@@ -173,6 +173,7 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
     serialized = str(capacity["payload"]) + str(run["payload"])
     assert capacity["account_id"] == "codex_a"
     assert run["error_class"] == "RATE_LIMIT"
+    assert run["observed_at"] == now.replace(tzinfo=None)
     assert run["payload"]["duration_ms"] == 125
     assert run["payload"]["runtime_policy_version"] == "codex-runtime-test"
     assert run["payload"]["diagnostics"] == {

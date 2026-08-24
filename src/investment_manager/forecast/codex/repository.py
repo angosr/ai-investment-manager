@@ -12,6 +12,7 @@ from investment_manager.forecast.tables import (
     codex_runs,
 )
 from investment_manager.kernel.identity import stable_id
+from investment_manager.platform.time import database_utc
 
 
 class SqlAccountLeaseStore:
@@ -140,6 +141,7 @@ class SqlCodexAuditStore:
             "attempt": attempt.attempt,
             "status": attempt.status,
             "error_class": attempt.failure.value if attempt.failure else None,
+            "observed_at": attempt.observed_at,
             "payload": payload,
         }
         try:
@@ -147,10 +149,20 @@ class SqlCodexAuditStore:
                 connection.execute(insert(codex_runs).values(**values))
         except IntegrityError as exc:
             with self._engine.connect() as connection:
-                existing = connection.execute(
-                    select(codex_runs).where(codex_runs.c.run_id == attempt.run_id)
-                ).mappings().one_or_none()
-            if existing is None or any(existing[key] != value for key, value in values.items()):
+                existing = (
+                    connection.execute(
+                        select(codex_runs).where(codex_runs.c.run_id == attempt.run_id)
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+            mismatch = existing is None or any(
+                database_utc(existing[key]) != database_utc(value)
+                if key == "observed_at"
+                else existing[key] != value
+                for key, value in values.items()
+            )
+            if mismatch:
                 raise ValueError("相同 Codex run_id 的审计事实不一致") from exc
 
     @staticmethod

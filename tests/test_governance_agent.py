@@ -324,6 +324,7 @@ def test_governance_snapshot_uses_attempt_latency_and_hides_future_codex_runs(
                     attempt=1,
                     status=status,
                     error_class=failure,
+                    observed_at=now + timedelta(seconds=observed_offset),
                     payload={
                         "observed_at": (now + timedelta(seconds=observed_offset)).isoformat(),
                         "completed_at": (now + timedelta(seconds=completed_offset)).isoformat(),
