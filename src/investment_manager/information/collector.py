@@ -21,7 +21,13 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import Field, field_validator
 
-from investment_manager.information.models import IntelligenceEvent
+from investment_manager.information.coverage import build_source_poll_record
+from investment_manager.information.models import (
+    CausalDomain,
+    IntelligenceEvent,
+    SourcePollRecord,
+    SourcePollStatus,
+)
 from investment_manager.information.policy import OfficialEventFeed
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -636,6 +642,10 @@ class EventStore(Protocol):
     def visible(self, *, symbol: str, as_of: datetime) -> tuple[IntelligenceEvent, ...]: ...
 
 
+class SourcePollRecorder(Protocol):
+    def put(self, poll: SourcePollRecord) -> bool: ...
+
+
 @dataclass(slots=True)
 class InMemoryEventStore:
     _events: dict[str, IntelligenceEvent] = field(default_factory=dict)
@@ -696,20 +706,46 @@ class InformationCollector:
         sources: tuple[IntelligenceSource, ...],
         normalizer: EventNormalizer,
         store: EventStore,
+        *,
+        poll_recorder: SourcePollRecorder | None = None,
+        coverage_bindings: dict[str, tuple[str, CausalDomain]] | None = None,
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         source_ids = [item.source_id for item in sources]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("IntelligenceSource source_id 必须唯一")
+        bindings = coverage_bindings or {}
+        unknown = tuple(sorted(set(bindings) - set(source_ids)))
+        if unknown:
+            raise ValueError(
+                "coverage binding 引用了未知 IntelligenceSource: " + ", ".join(unknown)
+            )
+        stream_ids = tuple(item[0] for item in bindings.values())
+        if len(stream_ids) != len(set(stream_ids)):
+            raise ValueError("coverage binding source_stream_id 必须唯一")
+        if bool(bindings) != (poll_recorder is not None):
+            raise ValueError("coverage binding 与 poll recorder 必须同时配置")
         self._sources = sources
         self._normalizer = normalizer
         self._store = store
+        self._poll_recorder = poll_recorder
+        self._coverage_bindings = bindings
+        self._clock = clock
 
     def collect(self, *, observed_at: datetime) -> CollectionResult:
         read_count = normalized_count = inserted_count = 0
         failed_source_ids: list[str] = []
         for source in self._sources:
+            started_at = max(require_utc(self._clock()), require_utc(observed_at))
+            source_read = source_inserted = 0
+            latest_publication_at: datetime | None = None
             try:
                 items = source.read(observed_at=observed_at)
+                source_read = len(items)
+                latest_publication_at = max(
+                    (item.event_time for item in items),
+                    default=None,
+                )
                 for raw in items:
                     read_count += 1
                     event = self._normalizer.normalize(raw)
@@ -718,15 +754,68 @@ class InformationCollector:
                     normalized_count += 1
                     if self._store.put(event):
                         inserted_count += 1
-            except Exception:
+                        source_inserted += 1
+                self._record_source_poll(
+                    source_id=source.source_id,
+                    status=(
+                        SourcePollStatus.CHANGED
+                        if source_inserted
+                        else SourcePollStatus.UNCHANGED
+                    ),
+                    started_at=started_at,
+                    latest_publication_at=latest_publication_at,
+                    observation_count=source_read,
+                    new_fact_count=source_inserted,
+                )
+            except Exception as exc:
                 logger.exception("information source failed: %s", source.source_id)
                 failed_source_ids.append(source.source_id)
+                self._record_source_poll(
+                    source_id=source.source_id,
+                    status=SourcePollStatus.FAILED,
+                    started_at=started_at,
+                    error_class=type(exc).__name__,
+                )
         return CollectionResult(
             read_count,
             normalized_count,
             inserted_count,
             tuple(failed_source_ids),
         )
+
+    def _record_source_poll(
+        self,
+        *,
+        source_id: str,
+        status: SourcePollStatus,
+        started_at: datetime,
+        latest_publication_at: datetime | None = None,
+        observation_count: int = 0,
+        new_fact_count: int = 0,
+        error_class: str | None = None,
+    ) -> None:
+        binding = self._coverage_bindings.get(source_id)
+        if binding is None:
+            return
+        assert self._poll_recorder is not None
+        stream_id, domain = binding
+        completed_at = max(started_at, require_utc(self._clock()))
+        try:
+            self._poll_recorder.put(
+                build_source_poll_record(
+                    source_stream_id=stream_id,
+                    domain=domain,
+                    status=status,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    latest_publication_at=latest_publication_at,
+                    observation_count=observation_count,
+                    new_fact_count=new_fact_count,
+                    error_class=error_class,
+                )
+            )
+        except Exception:
+            logger.exception("information source coverage write failed: %s", source_id)
 
 
 @dataclass(slots=True)

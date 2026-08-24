@@ -44,6 +44,7 @@ from investment_manager.information.coverage import (
     build_source_poll_record,
 )
 from investment_manager.information.models import CausalDomain, SourcePollStatus
+from investment_manager.information.official.publications import OfficialPublicationSource
 from investment_manager.information.official.source import (
     HttpFederalRegisterSource,
     HttpFedOfficialSource,
@@ -410,6 +411,17 @@ def information_collector(
         )
         for feed in policy.official_event_feeds
     )
+    publication_sources = tuple(
+        OfficialPublicationSource(
+            feed,
+            maximum_age_seconds=(
+                loaded.decision_state.packet_policy.maximum_background_fact_distance_seconds
+            ),
+            timeout_seconds=policy.request_timeout_seconds,
+        )
+        for feed in policy.official_publication_feeds
+    )
+    sources.extend(publication_sources)
     if policy.newsnow_sources:
         sources.append(
             NewsNowSource(
@@ -422,6 +434,7 @@ def information_collector(
             )
         )
     engine = runtime_engine(database_url)
+    coverage_store = SqlInformationCoverageStore(engine)
     collector = InformationCollector(
         tuple(sources),
         EventNormalizer(
@@ -435,6 +448,11 @@ def information_collector(
             trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
             max_visible_events=policy.read_limit,
         ),
+        poll_recorder=coverage_store if publication_sources else None,
+        coverage_bindings={
+            source.source_id: (source.source_stream_id, source.causal_domain)
+            for source in publication_sources
+        },
     )
     service = InformationCollectorService(
         collector,
@@ -461,7 +479,7 @@ def information_collector(
         publish_recent=fact_trigger_publisher.publish_recent,
         monetary_poll_seconds=policy.fed_monetary_poll_seconds,
         calendar_poll_seconds=policy.fed_calendar_poll_seconds,
-        poll_recorder=SqlInformationCoverageStore(engine),
+        poll_recorder=coverage_store,
     )
     metric_service = OfficialMetricCollectorService(
         source=HttpOfficialMetricSource(
@@ -474,7 +492,7 @@ def information_collector(
         publish_recent=fact_trigger_publisher.publish_recent,
         fast_poll_seconds=policy.official_metric_poll_seconds,
         slow_poll_seconds=policy.official_metric_slow_poll_seconds,
-        poll_recorder=SqlInformationCoverageStore(engine),
+        poll_recorder=coverage_store,
     )
     aggregate_flow_service = AggregatedEtfFlowCollectorService(
         source=HttpAggregatedEtfFlowSource(
@@ -486,7 +504,7 @@ def information_collector(
         ),
         publish_recent=fact_trigger_publisher.publish_recent,
         poll_seconds=policy.etf_aggregate_flow_poll_seconds,
-        poll_recorder=SqlInformationCoverageStore(engine),
+        poll_recorder=coverage_store,
     )
     regulatory_service = RegulatoryOfficialCollectorService(
         source=HttpFederalRegisterSource(
@@ -498,7 +516,7 @@ def information_collector(
         ),
         publish_recent=fact_trigger_publisher.publish_recent,
         poll_seconds=policy.regulatory_poll_seconds,
-        poll_recorder=SqlInformationCoverageStore(engine),
+        poll_recorder=coverage_store,
     )
     treasury_buyback_service = TreasuryBuybackCollectorService(
         source=HttpTreasuryBuybackSource(
@@ -511,7 +529,7 @@ def information_collector(
         publish_recent=fact_trigger_publisher.publish_recent,
         poll_seconds=policy.treasury_buyback_poll_seconds,
         result_lookback_seconds=policy.treasury_buyback_result_lookback_seconds,
-        poll_recorder=SqlInformationCoverageStore(engine),
+        poll_recorder=coverage_store,
     )
 
     async def run() -> None:

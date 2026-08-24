@@ -40,7 +40,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.information.version == "information-intake-v30"
+    assert config.information.version == "information-intake-v31"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.decision_state.version == "portfolio-state-v36"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
@@ -60,9 +60,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "REGULATION_LEGISLATION"
     )
-    assert regulation.source_stream_ids == ("federal-register-digital-assets",)
+    assert regulation.source_stream_ids == (
+        "federal-register-digital-assets",
+        "ofac-recent-actions",
+        "treasury-press-releases",
+    )
     assert regulation.source_capabilities == {
-        "federal-register-digital-assets": ("AGENCY_RULEMAKING",)
+        "federal-register-digital-assets": ("AGENCY_RULEMAKING",),
+        "ofac-recent-actions": ("SANCTIONS_ACTIONS",),
+        "treasury-press-releases": ("EXECUTIVE_POLICY_ACTIONS",),
     }
     fiscal = next(
         item
@@ -154,9 +160,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
     )
     assert contract.outcome_start_delay_seconds == 0
     assert contract.permission_evidence_eligible
-    assert contract.settlement_rule == (
-        "completion-deadline-to-horizon-executable-spot-return-v2"
-    )
+    assert contract.settlement_rule == ("completion-deadline-to-horizon-executable-spot-return-v2")
     assert config.capital.context_forecast.producer_behavior_id == (
         context_forecast_behavior_hash(
             config.codex_runtime,
@@ -198,6 +202,7 @@ def test_official_macro_fact_rules_cannot_be_partially_enabled() -> None:
 
     with pytest.raises(ValidationError, match="必须完整启用或完整关闭"):
         type(config).model_validate(payload)
+
 
 def test_testnet_config_uses_the_same_official_environment_for_market_and_orders() -> None:
     root = Path(__file__).resolve().parents[1]

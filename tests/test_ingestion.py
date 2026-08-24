@@ -20,7 +20,16 @@ from investment_manager.information.collector import (
     RawIntelligenceItem,
     TrendRadarMcpSource,
 )
-from investment_manager.information.policy import OfficialEventFeed
+from investment_manager.information.models import (
+    CausalDomain,
+    SourcePollRecord,
+    SourcePollStatus,
+)
+from investment_manager.information.official.publications import OfficialPublicationSource
+from investment_manager.information.policy import (
+    OfficialEventFeed,
+    OfficialPublicationFeed,
+)
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
 from investment_manager.scheduling.tables import analysis_trigger_events
@@ -52,6 +61,15 @@ class FailingSource:
 
     def read(self, *, observed_at):
         raise OSError(f"unavailable at {observed_at.isoformat()}")
+
+
+@dataclass
+class FakePollRecorder:
+    polls: list[SourcePollRecord] = field(default_factory=list)
+
+    def put(self, poll: SourcePollRecord) -> bool:
+        self.polls.append(poll)
+        return True
 
 
 def _response() -> str:
@@ -299,6 +317,108 @@ def test_official_macro_release_has_ai_trigger_priority() -> None:
     assert event.trigger_priority == 85
 
 
+def test_official_publication_source_follows_only_bounded_same_host_entries() -> None:
+    observed_at = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    index_url = "https://home.treasury.gov/news/press-releases"
+    entry_url = "https://home.treasury.gov/news/press-releases/sb0613"
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if str(request.url) == index_url:
+            if request.headers.get("if-none-match") == '"release-index"':
+                return httpx.Response(304, request=request)
+            return httpx.Response(
+                200,
+                headers={"etag": '"release-index"'},
+                text=(
+                    '<a href="/news/press-releases/sb0613/">release</a>'
+                    '<a href="https://home.treasury.gov/news/press-releases/sb0613">duplicate</a>'
+                    '<a href="https://attacker.example/news/press-releases/sb9999">foreign</a>'
+                    '<a href="/news/press-releases/sb0614?preview=1">query</a>'
+                ),
+                request=request,
+            )
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<html><head><meta property="og:title" '
+                'content="Treasury expands digital asset sanctions" /></head>'
+                '<body><time datetime="2026-08-24T17:30:00Z"></time>'
+                "<main><h1>Treasury expands sanctions</h1>"
+                "<p>Official action expands sectoral sanctions to digital assets."
+                "<br>Nearly 60 designations were issued.</p></main></body></html>"
+            ),
+            request=request,
+        )
+
+    source = OfficialPublicationSource(
+        OfficialPublicationFeed(
+            stream_id="treasury-press-releases",
+            index_url=index_url,
+            entry_path_pattern=r"^/news/press-releases/[a-z]{2}[0-9]+$",
+            domain=CausalDomain.REGULATION_LEGISLATION,
+        ),
+        maximum_age_seconds=172_800,
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = source.read(observed_at=observed_at)
+    second = source.read(observed_at=observed_at + timedelta(minutes=1))
+    event = EventNormalizer(version="official-publication-test-v1").normalize(first[0])
+
+    assert len(first) == 1
+    assert second == first
+    assert requests == [index_url, entry_url, index_url]
+    assert first[0].event_time == datetime(2026, 8, 24, 17, 30, tzinfo=UTC)
+    assert first[0].source == "official:treasury-press-releases"
+    assert first[0].source_reliability == Decimal("1")
+    assert "Nearly 60 designations" in first[0].body
+    assert event is not None
+    assert event.trigger_priority == 85
+
+
+def test_official_publication_source_uses_dated_action_url_as_time_fallback() -> None:
+    observed_at = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    index_url = "https://ofac.treasury.gov/recent-actions"
+    entry_url = "https://ofac.treasury.gov/recent-actions/20260824"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == index_url:
+            return httpx.Response(
+                200,
+                text='<a href="/recent-actions/20260824">action</a>',
+                request=request,
+            )
+        assert str(request.url) == entry_url
+        return httpx.Response(
+            200,
+            text=(
+                '<meta property="og:title" content="Digital asset sanctions action">'
+                "<main><h1>Digital asset sanctions action</h1>"
+                "<p>OFAC issued an official determination.</p></main>"
+            ),
+            request=request,
+        )
+
+    source = OfficialPublicationSource(
+        OfficialPublicationFeed(
+            stream_id="ofac-recent-actions",
+            index_url=index_url,
+            entry_path_pattern=r"^/recent-actions/20[0-9]{6}$",
+            domain=CausalDomain.REGULATION_LEGISLATION,
+        ),
+        maximum_age_seconds=172_800,
+        transport=httpx.MockTransport(handler),
+    )
+
+    item = source.read(observed_at=observed_at)[0]
+
+    assert item.event_time == datetime(2026, 8, 24, 12, tzinfo=UTC)
+    assert item.url == entry_url
+
+
 def test_sql_event_store_deduplicates_and_respects_observed_at_visibility() -> None:
     observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     source = TrendRadarMcpSource(FakeMcpTransport(_response()))
@@ -457,6 +577,38 @@ def test_collector_isolates_source_failure_without_blocking_first_party_feed() -
     assert result.failed_source_ids == ("failed-source",)
     assert result.inserted_count == 1
     assert len(store.visible(symbol="BTCUSDT", as_of=observed_at)) == 1
+
+
+def test_collector_records_per_source_coverage_without_coupling_failures() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    healthy = TrendRadarMcpSource(FakeMcpTransport(_response()))
+    recorder = FakePollRecorder()
+
+    result = InformationCollector(
+        (FailingSource(), healthy),
+        EventNormalizer(),
+        InMemoryEventStore(),
+        poll_recorder=recorder,
+        coverage_bindings={
+            "failed-source": (
+                "failed-official-source",
+                CausalDomain.REGULATION_LEGISLATION,
+            ),
+            healthy.source_id: (
+                "healthy-official-source",
+                CausalDomain.REGULATION_LEGISLATION,
+            ),
+        },
+        clock=lambda: observed_at,
+    ).collect(observed_at=observed_at)
+
+    by_stream = {item.source_stream_id: item for item in recorder.polls}
+    assert result.failed_source_ids == ("failed-source",)
+    assert by_stream["failed-official-source"].status == SourcePollStatus.FAILED
+    assert by_stream["failed-official-source"].error_class == "OSError"
+    assert by_stream["healthy-official-source"].status == SourcePollStatus.CHANGED
+    assert by_stream["healthy-official-source"].observation_count == 2
+    assert by_stream["healthy-official-source"].new_fact_count == 1
 
 
 def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance() -> None:

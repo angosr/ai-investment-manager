@@ -37,6 +37,50 @@ class OfficialEventFeed(StrictConfig):
         return value
 
 
+class OfficialPublicationFeed(StrictConfig):
+    """Pinned first-party HTML publication index with a bounded entry route."""
+
+    stream_id: str
+    index_url: str
+    entry_path_pattern: str
+    domain: CausalDomain
+    maximum_entries: int = Field(default=10, ge=1, le=25)
+
+    @field_validator("stream_id")
+    @classmethod
+    def stream_id_must_be_safe(cls, value: str) -> str:
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", value) is None:
+            raise ValueError("official publication stream id 非法")
+        return value
+
+    @field_validator("index_url")
+    @classmethod
+    def index_url_must_be_pinned_government_https(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or not parsed.hostname.endswith(".gov")
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("official publication index 必须是无凭据、无查询的固定 .gov HTTPS URL")
+        return value.rstrip("/")
+
+    @field_validator("entry_path_pattern")
+    @classmethod
+    def entry_path_pattern_must_be_bounded(cls, value: str) -> str:
+        if len(value) > 200 or not value.startswith("^") or not value.endswith("$"):
+            raise ValueError("official publication entry pattern 必须完整锚定且不超过 200 字符")
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError("official publication entry pattern 非法") from exc
+        return value
+
+
 class CoverageRequirement(StrictConfig):
     domain: CausalDomain
     source_stream_ids: tuple[str, ...] = ()
@@ -117,6 +161,7 @@ class InformationPolicy(StrictConfig):
     request_timeout_seconds: int = Field(default=15, ge=1, le=60)
     collection_interval_seconds: int = Field(default=60, ge=10, le=600)
     official_event_feeds: tuple[OfficialEventFeed, ...] = ()
+    official_publication_feeds: tuple[OfficialPublicationFeed, ...] = ()
     fed_monetary_poll_seconds: int = Field(default=15, ge=10, le=300)
     fed_calendar_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
     treasury_buyback_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
@@ -143,6 +188,16 @@ class InformationPolicy(StrictConfig):
         identities = tuple(item.stream_id for item in feeds)
         if identities != tuple(sorted(set(identities))):
             raise ValueError("official event feeds 必须按 stream_id 唯一且排序")
+        return feeds
+
+    @field_validator("official_publication_feeds")
+    @classmethod
+    def official_publication_feeds_must_be_unique_and_sorted(
+        cls, feeds: tuple[OfficialPublicationFeed, ...]
+    ) -> tuple[OfficialPublicationFeed, ...]:
+        identities = tuple(item.stream_id for item in feeds)
+        if identities != tuple(sorted(set(identities))):
+            raise ValueError("official publication feeds 必须按 stream_id 唯一且排序")
         return feeds
 
     @model_validator(mode="after")
@@ -176,14 +231,9 @@ class InformationPolicy(StrictConfig):
 
     @field_validator("newsnow_sources")
     @classmethod
-    def newsnow_sources_must_be_unique_and_safe(
-        cls, sources: tuple[str, ...]
-    ) -> tuple[str, ...]:
+    def newsnow_sources_must_be_unique_and_safe(cls, sources: tuple[str, ...]) -> tuple[str, ...]:
         if len(sources) != len(set(sources)):
             raise ValueError("NewsNow source id 不得重复")
-        if any(
-            re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item) is None
-            for item in sources
-        ):
+        if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item) is None for item in sources):
             raise ValueError("NewsNow source id 非法")
         return sources

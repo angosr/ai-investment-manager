@@ -380,7 +380,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v30
+  version: information-intake-v31
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -402,6 +402,17 @@ information:
       url: https://www.sec.gov/news/pressreleases.rss
     - stream_id: sec-speeches-statements
       url: https://www.sec.gov/news/speeches-statements.rss
+  official_publication_feeds:
+    - stream_id: ofac-recent-actions
+      index_url: https://ofac.treasury.gov/recent-actions
+      entry_path_pattern: "^/recent-actions/20[0-9]{6}$"
+      domain: REGULATION_LEGISLATION
+      maximum_entries: 10
+    - stream_id: treasury-press-releases
+      index_url: https://home.treasury.gov/news/press-releases
+      entry_path_pattern: "^/news/press-releases/[a-z]{2}[0-9]+$"
+      domain: REGULATION_LEGISLATION
+      maximum_entries: 10
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
   treasury_buyback_poll_seconds: 21600
@@ -432,10 +443,12 @@ information:
       maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
     - domain: REGULATION_LEGISLATION
-      source_stream_ids: [federal-register-digital-assets]
-      required_capabilities: [AGENCY_RULEMAKING, LEGISLATION_STATUS, OFFICIAL_EVENT_CALENDAR]
+      source_stream_ids: [federal-register-digital-assets, ofac-recent-actions, treasury-press-releases]
+      required_capabilities: [AGENCY_RULEMAKING, EXECUTIVE_POLICY_ACTIONS, LEGISLATION_STATUS, OFFICIAL_EVENT_CALENDAR, SANCTIONS_ACTIONS]
       source_capabilities:
         federal-register-digital-assets: [AGENCY_RULEMAKING]
+        ofac-recent-actions: [SANCTIONS_ACTIONS]
+        treasury-press-releases: [EXECUTIVE_POLICY_ACTIONS]
       maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 604800
     - domain: INSTITUTIONAL_FLOWS

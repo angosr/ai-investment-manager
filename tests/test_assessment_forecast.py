@@ -453,6 +453,11 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
     assert "verification_tests" not in analysis_input["world_model"]["mechanisms"][0]
     assert "next_review_at" not in analysis_input["world_model"]["mechanisms"][0]
     assert "continuity_ref" not in analysis_input["world_model"]["mechanisms"][0]
+    serialized_input = json.dumps(analysis_input, ensure_ascii=False).lower()
+    assert all(
+        token not in serialized_input
+        for token in ("shadow", "testnet", "mock", "模拟", "仿真")
+    )
     assert first.analysis_input_hash == content_hash(analysis_input)
     assert analyst.calls == 1
 
