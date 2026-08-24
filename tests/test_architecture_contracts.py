@@ -182,9 +182,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 93
+    assert len(contract) == 95
     assert content_hash(contract) == (
-        "7a01decfd0162d2455de65cce7a31eff6d92156d780b64e656e31a6dafa50e76"
+        "08d33522a4b51af8b6d7418ea06b5747619d46c59f442e15a4859607c0ddf211"
     )
 
 
@@ -1127,6 +1127,8 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
         "release_manifests",
         "replay_evaluation_reports",
         "system_constitutions",
+        "world_model_ablation_assignments",
+        "world_model_ablation_results",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

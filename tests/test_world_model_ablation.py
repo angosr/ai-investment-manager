@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import create_engine, func, select
+
+from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.estimate import ContextForecastStructuredOutput
+from investment_manager.forecast.context.producer import context_spot_forecast_contract
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import (
+    ForecastDecisionSlot,
+    ForecastPermission,
+    ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
+)
+from investment_manager.forecast.models import ExposureDirection
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import (
+    BaseForecast,
+    ForecastBucketProbability,
+    ForecastLegOutcome,
+    ForecastMechanismContribution,
+    ForecastMechanismEffect,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
+)
+from investment_manager.forecast.tables import forecasts
+from investment_manager.governance.evaluation.world_model_ablation import (
+    SqlWorldModelAblationRepository,
+    WorldModelAblationRunner,
+    build_world_model_ablation_assignment,
+    ensure_world_model_ablation_plan,
+)
+from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.schema import create_schema
+from investment_manager.settings import load_config
+
+ACTIVATION = datetime(2026, 8, 25, tzinfo=UTC)
+
+
+class _FixedControlAnalyst:
+    def __init__(self, completed_at: datetime) -> None:
+        self.completed_at = completed_at
+        self.calls = 0
+
+    def estimate(self, assignment) -> AnalystResult:
+        self.calls += 1
+        return AnalystResult(
+            success=True,
+            output=ContextForecastStructuredOutput.model_validate(
+                {
+                    "forecast": {
+                        "decision_slot_id": assignment.decision_slot_id,
+                        "outcome_probabilities": [
+                            {"bucket_id": "LARGE_LOSS", "probability": "0.10"},
+                            {"bucket_id": "LOSS", "probability": "0.20"},
+                            {"bucket_id": "FLAT", "probability": "0.40"},
+                            {"bucket_id": "GAIN", "probability": "0.20"},
+                            {"bucket_id": "LARGE_GAIN", "probability": "0.10"},
+                        ],
+                        "mechanism_contributions": [
+                            {
+                                "mechanism_id": "mechanism-1",
+                                "effect": "NO_MATERIAL_EFFECT",
+                                "rationale": "控制预测只使用点时状态。",
+                            }
+                        ],
+                        "evidence_refs": ["evidence-1"],
+                        "invalidation_conditions": ["目标市场状态发生显著变化"],
+                    }
+                }
+            ),
+            reason_code="CODEX_ANALYSIS_SUCCEEDED",
+            account_id=".codex2",
+            attempts=1,
+            usage={"input_tokens": 100, "output_tokens": 50},
+            completed_at=self.completed_at,
+            run_id="control-run-1",
+        )
+
+
+def _release(manifest_id: str) -> ReleaseManifest:
+    return ReleaseManifest(
+        manifest_id=manifest_id,
+        created_at=ACTIVATION - timedelta(hours=2),
+        status="CHALLENGER",
+        code_version="a" * 40,
+        configuration_hash="b" * 64,
+        component_versions=(),
+        artifacts=(),
+        constitution_version="constitution-v1",
+    )
+
+
+def _seed(engine):
+    config = load_config("config/investment-manager.shadow.yaml")
+    context = config.capital.context_forecast
+    assert context is not None
+    instrument = next(
+        item.instrument
+        for item in config.capital.execution_specs
+        if item.instrument.key == context.target_instrument_key
+    )
+    contract = context_spot_forecast_contract(
+        policy=context,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+    binding = ForecastProducerBinding(
+        binding_id=stable_id(
+            "forecast_producer_binding",
+            contract.contract_id,
+            ForecastProducerKind.CONTEXT.value,
+            context.producer_id,
+            context.producer_behavior_id,
+            ForecastPermission.CAPITAL_CANDIDATE.value,
+            context.required_feature_keys,
+            context.maximum_world_model_age_seconds,
+        ),
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=context.producer_id,
+        producer_behavior_id=context.producer_behavior_id,
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
+        required_feature_keys=context.required_feature_keys,
+        maximum_world_model_age_seconds=context.maximum_world_model_age_seconds,
+    )
+    cutoff = ForecastPriceAnchor(
+        instrument_id=instrument.key,
+        price=Decimal("100"),
+        observed_at=ACTIVATION,
+        available_at=ACTIVATION,
+        quote_ref="cutoff-quote",
+    )
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=ACTIVATION,
+        cutoff_prices=(cutoff,),
+    )
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_contract(contract)
+    contracts.record_binding(binding, activated_at=ACTIVATION)
+    contracts.record_slot(slot, binding=binding)
+    formal_available = ACTIVATION + timedelta(minutes=5)
+    formal_input = {
+        "purpose": "FORECAST_ESTIMATE",
+        "decision_slot": {
+            "decision_slot_id": slot.slot_id,
+            "information_cutoff_at": slot.information_cutoff_at,
+            "completion_deadline_at": slot.completion_deadline_at,
+            "evaluation_at": slot.evaluation_at,
+        },
+        "forecast_contract": contract,
+        "world_model": {
+            "assessment_id": "world-model-1",
+            "event_references": [
+                {
+                    "evidence_id": "evidence-1",
+                    "title": "一手事实",
+                }
+            ],
+            "mechanisms": [
+                {
+                    "mechanism_id": "mechanism-1",
+                    "claim": "事实经由流动性传导至风险资产。",
+                    "causal_chain": [{"evidence_ids": ["evidence-1"]}],
+                    "conflicting_evidence_ids": [],
+                }
+            ],
+        },
+        "target_state": {
+            "as_of": ACTIVATION,
+            "asset_states": [{"asset": "BTC", "return_fraction": "0.01"}],
+            "derivative_states": [],
+            "coverage_gap_codes": [],
+        },
+    }
+    probabilities = tuple(
+        ForecastBucketProbability(bucket_id=bucket_id, probability=probability)
+        for bucket_id, probability in (
+            ("LARGE_LOSS", Decimal("0.05")),
+            ("LOSS", Decimal("0.10")),
+            ("FLAT", Decimal("0.20")),
+            ("GAIN", Decimal("0.35")),
+            ("LARGE_GAIN", Decimal("0.30")),
+        )
+    )
+    formal = BaseForecast(
+        forecast_id=stable_id(
+            "base_forecast",
+            slot.slot_id,
+            context.producer_behavior_id,
+        ),
+        contract_id=contract.contract_id,
+        decision_slot_id=slot.slot_id,
+        producer_id=context.producer_id,
+        producer_behavior_id=context.producer_behavior_id,
+        outcome_family_id=context.outcome_family_id,
+        target=contract.target,
+        horizon_minutes=contract.horizon_minutes,
+        cutoff_prices=(cutoff,),
+        entry_prices=(
+            ForecastPriceAnchor(
+                instrument_id=instrument.key,
+                price=Decimal("100.1"),
+                observed_at=formal_available,
+                available_at=formal_available,
+                quote_ref="entry-quote",
+            ),
+        ),
+        information_cutoff_at=ACTIVATION,
+        input_observed_at=ACTIVATION,
+        available_at=formal_available,
+        valid_until=formal_available + timedelta(minutes=60),
+        outcome_probabilities=probabilities,
+        expected_gross_bps=Decimal("87.5"),
+        input_refs=("evidence-1", "mechanism-1", "world-model-1"),
+        world_model_id="world-model-1",
+        mechanism_contributions=(
+            ForecastMechanismContribution(
+                mechanism_id="mechanism-1",
+                effect=ForecastMechanismEffect.UPSIDE,
+                rationale="流动性机制提高右尾概率。",
+            ),
+        ),
+        evidence_refs=("evidence-1",),
+        invalidation_conditions=("流动性事实被撤销",),
+        analysis_input_json=canonical_json(formal_input),
+        analysis_input_hash=content_hash(formal_input),
+    )
+    SqlForecastStore(engine).record(formal)
+    governance = SqlGovernanceRepository(engine)
+    plan = ensure_world_model_ablation_plan(
+        governance=governance,
+        config=config,
+        contract=contract,
+        release=_release("release-ablation-v1"),
+        registered_at=ACTIVATION - timedelta(hours=1),
+    )
+    return config, contract, slot, formal, plan
+
+
+def test_control_assignment_removes_world_model_and_freezes_shared_contract() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    _config, _contract, slot, formal, plan = _seed(engine)
+
+    assignment = build_world_model_ablation_assignment(
+        plan=plan,
+        formal=formal,
+        slot=slot,
+        assigned_at=formal.available_at + timedelta(minutes=1),
+    )
+    control_input = json.loads(assignment.control_input_json)
+    formal_input = json.loads(formal.analysis_input_json)
+
+    assert "world_model" not in control_input
+    assert control_input["forecast_contract"] == formal_input["forecast_contract"]
+    assert control_input["target_state"] == formal_input["target_state"]
+    assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
+    assert assignment.call_order == "FORMAL_FIRST_CAPITAL_PRIORITY"
+
+
+def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, _slot, _formal, first = _seed(engine)
+
+    repeated = ensure_world_model_ablation_plan(
+        governance=SqlGovernanceRepository(engine),
+        config=config,
+        contract=contract,
+        release=_release("release-ablation-v2"),
+        registered_at=ACTIVATION - timedelta(minutes=30),
+    )
+
+    assert repeated == first
+    assert repeated.base_manifest_id == "release-ablation-v1"
+
+
+def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, slot, formal, plan = _seed(engine)
+    analyst = _FixedControlAnalyst(formal.available_at + timedelta(minutes=2))
+    repository = SqlWorldModelAblationRepository(engine)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    runner = WorldModelAblationRunner(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        repository=repository,
+        analyst=analyst,
+    )
+
+    first = runner.reconcile(as_of=formal.available_at + timedelta(minutes=1))
+    replay = runner.reconcile(as_of=formal.available_at + timedelta(minutes=2))
+
+    assert first.assignments == replay.assignments == 1
+    assert analyst.calls == 1
+    with engine.connect() as connection:
+        assert connection.execute(select(func.count()).select_from(forecasts)).scalar_one() == 1
+
+    outcome = ForecastOutcome(
+        outcome_id=stable_id(
+            "forecast_outcome",
+            slot.slot_id,
+            config.outcome_evaluation.target_forecast_version,
+        ),
+        contract_id=contract.contract_id,
+        decision_slot_id=slot.slot_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        status=ForecastOutcomeStatus.SETTLED,
+        information_cutoff_at=slot.information_cutoff_at,
+        evaluation_at=slot.evaluation_at,
+        settled_at=slot.evaluation_at + timedelta(seconds=1),
+        legs=(
+            ForecastLegOutcome(
+                instrument_id=contract.target.legs[0].instrument.key,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+                reference_price=Decimal("100"),
+                exit_price=Decimal("101"),
+                price_return_bps=Decimal("100"),
+            ),
+        ),
+        gross_target_return_bps=Decimal("100"),
+        realized_bucket_id="GAIN",
+        reason_code="SETTLED",
+    )
+    SqlForecastStore(engine).record_outcome(outcome)
+    report = repository.report(
+        plan_id=plan.plan_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        minimum_sample_size=policy.minimum_sample_size,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        activated_at=policy.activated_at,
+        as_of=outcome.settled_at,
+    )
+
+    assert report.settled_pairs == 1
+    assert report.formal_forecast_count == 1
+    assert report.formal_no_estimate_count == 0
+    assert report.successful_controls == 1
+    assert report.mean_brier_improvement is not None
+    assert report.mean_brier_improvement > 0
+    assert not report.evidence_sufficient
+
+
+def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, _contract, slot, formal, plan = _seed(engine)
+    analyst = _FixedControlAnalyst(slot.completion_deadline_at + timedelta(minutes=1))
+    repository = SqlWorldModelAblationRepository(engine)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    runner = WorldModelAblationRunner(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        repository=repository,
+        analyst=analyst,
+    )
+
+    first = runner.reconcile(as_of=slot.completion_deadline_at + timedelta(seconds=1))
+    replay = runner.reconcile(as_of=slot.completion_deadline_at + timedelta(minutes=1))
+
+    assert first.failed_controls == replay.failed_controls == 1
+    assert first.successful_controls == replay.successful_controls == 0
+    assert analyst.calls == 0

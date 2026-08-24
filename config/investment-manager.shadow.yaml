@@ -18,6 +18,10 @@ capital:
       minimum_entry_net_bps: "10"
       minimum_hold_net_bps: "0"
 
+outcome_evaluation:
+  world_model_ablation:
+    enabled: true
+
 codex_runtime:
   enabled: true
   isolation_verified: true

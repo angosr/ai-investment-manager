@@ -18,6 +18,10 @@ codex_runtime:
 assessment:
   enabled: false
 
+outcome_evaluation:
+  world_model_ablation:
+    enabled: false
+
 market_data:
   version: binance-public-testnet-v3
   rest_base_url: https://testnet.binance.vision

@@ -1,8 +1,23 @@
+from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.kernel.time import require_utc
+
+
+class WorldModelAblationPolicy(StrictConfig):
+    """Prospective paired control; it can never produce capital instructions."""
+
+    version: str
+    enabled: bool = False
+    plan_id: str = Field(min_length=1)
+    activated_at: datetime
+    minimum_sample_size: int = Field(default=30, ge=2)
+    maximum_batch_size: int = Field(default=2, ge=1, le=8)
+
+    _utc_activated_at = field_validator("activated_at")(require_utc)
 
 
 class OutcomeEvaluationPolicy(StrictConfig):
@@ -13,6 +28,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
+    world_model_ablation: WorldModelAblationPolicy | None = None
 
 
 class GovernancePolicy(StrictConfig):

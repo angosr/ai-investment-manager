@@ -15,6 +15,7 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
+from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
 from investment_manager.governance.evaluation.capital_benchmark import (
@@ -30,7 +31,15 @@ from investment_manager.governance.evaluation.performance import (
     OutcomeWindowEvaluator,
     OutcomeWindowReport,
 )
+from investment_manager.governance.evaluation.world_model_ablation import (
+    SqlWorldModelAblationRepository,
+    WorldModelAblationRunner,
+    assemble_world_model_ablation_analyst,
+    ensure_world_model_ablation_plan,
+)
+from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.policy import OutcomeEvaluationPolicy
+from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -42,6 +51,7 @@ from investment_manager.legacy.forecast_evaluation import (
     AnalysisForecastOutcomeSettler,
     SqlAnalysisForecastOutcomeStore,
 )
+from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
@@ -236,12 +246,16 @@ class OutcomeEvaluationSupervisorHealth:
     target_forecast_outcome_unavailable: int = 0
     target_forecast_pending: int = 0
     capital_benchmark_points: int = 0
+    world_model_ablation_assignments: int = 0
+    world_model_ablation_settled_pairs: int = 0
+    world_model_ablation_failed_controls: int = 0
     last_workflow_id: str | None = None
     last_error_class: str | None = None
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
     last_target_forecast_error_class: str | None = None
     last_capital_benchmark_error_class: str | None = None
+    last_world_model_ablation_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -252,6 +266,7 @@ class OutcomeEvaluationSupervisor:
     forecast_settler: AnalysisForecastOutcomeSettler
     target_forecast_settler: ForecastOutcomeSettler
     capital_benchmark_evaluator: SqlCapitalBenchmarkEvaluator | None = None
+    world_model_ablation_runner: WorldModelAblationRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -316,6 +331,22 @@ class OutcomeEvaluationSupervisor:
                     if self.health.last_capital_benchmark_error_class != type(exc).__name__:
                         logger.exception("capital benchmark evaluation failed")
                     self.health.last_capital_benchmark_error_class = type(exc).__name__
+            if self.world_model_ablation_runner is not None:
+                try:
+                    report = await asyncio.to_thread(
+                        self.world_model_ablation_runner.reconcile,
+                        as_of=now,
+                    )
+                    self.health.world_model_ablation_assignments = report.assignments
+                    self.health.world_model_ablation_settled_pairs = report.settled_pairs
+                    self.health.world_model_ablation_failed_controls = report.failed_controls
+                    self.health.last_world_model_ablation_error_class = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self.health.last_world_model_ablation_error_class != type(exc).__name__:
+                        logger.exception("world model ablation evaluation failed")
+                    self.health.last_world_model_ablation_error_class = type(exc).__name__
             eligible = now - timedelta(minutes=policy.settlement_grace_minutes)
             window_seconds = int(window.total_seconds())
             window_end = datetime.fromtimestamp(
@@ -360,11 +391,18 @@ def assemble_outcome_evaluation(
     config: AppConfig,
     database_url: str,
     client: Client,
+    *,
+    release: ReleaseManifest | None = None,
 ) -> tuple[OutcomeEvaluationTemporalWorker, OutcomeEvaluationSupervisor]:
     engine = build_engine(database_url)
     repository = SqlOutcomeWindowRepository(engine)
     coordinator = OutcomeEvaluationTemporalCoordinator(client, config.temporal)
     capital_benchmark_policy = build_capital_benchmark_policy(config)
+    ablation_runner = _assemble_world_model_ablation(
+        config=config,
+        engine=engine,
+        release=release,
+    )
     return (
         OutcomeEvaluationTemporalWorker(
             client,
@@ -401,5 +439,53 @@ def assemble_outcome_evaluation(
                 if capital_benchmark_policy is None
                 else SqlCapitalBenchmarkEvaluator(engine, capital_benchmark_policy)
             ),
+            world_model_ablation_runner=ablation_runner,
         ),
+    )
+
+
+def _assemble_world_model_ablation(
+    *,
+    config: AppConfig,
+    engine,
+    release: ReleaseManifest | None,
+) -> WorldModelAblationRunner | None:
+    policy = config.outcome_evaluation.world_model_ablation
+    if policy is None or not policy.enabled:
+        return None
+    if release is None:
+        raise ValueError("启用 WorldModel control 必须绑定 ReleaseManifest")
+    context = config.capital.context_forecast
+    if context is None or not context.enabled:
+        raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
+    instrument = next(
+        (
+            item.instrument
+            for item in config.capital.execution_specs
+            if item.instrument.key == context.target_instrument_key
+            and item.instrument.product == InstrumentProduct.SPOT
+        ),
+        None,
+    )
+    if instrument is None:
+        raise ValueError("WorldModel control 合同品种不在 Capital Spot 范围")
+    contract = context_spot_forecast_contract(
+        policy=context,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+    plan = ensure_world_model_ablation_plan(
+        governance=SqlGovernanceRepository(engine),
+        config=config,
+        contract=contract,
+        release=release,
+        registered_at=datetime.now(UTC),
+    )
+    return WorldModelAblationRunner(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=context.producer_behavior_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        repository=SqlWorldModelAblationRepository(engine),
+        analyst=assemble_world_model_ablation_analyst(config, engine=engine),
     )

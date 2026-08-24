@@ -170,6 +170,47 @@ capital_benchmark_points = Table(
     Column("source_hash", String(64), nullable=False, unique=True),
     Column("payload", JSON, nullable=False),
 )
+
+world_model_ablation_assignments = Table(
+    "world_model_ablation_assignments",
+    metadata,
+    Column("assignment_id", String(128), primary_key=True),
+    Column("plan_id", ForeignKey("evaluation_plans.plan_id"), nullable=False),
+    Column("formal_forecast_id", ForeignKey("forecasts.forecast_id"), nullable=False),
+    Column("decision_slot_id", String(128), nullable=False),
+    Column("assigned_at", DateTime(timezone=True), nullable=False),
+    Column("completion_deadline_at", DateTime(timezone=True), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("control_behavior_hash", String(64), nullable=False),
+    Column("source_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "uq_world_model_ablation_plan_forecast",
+    world_model_ablation_assignments.c.plan_id,
+    world_model_ablation_assignments.c.formal_forecast_id,
+    unique=True,
+)
+Index(
+    "ix_world_model_ablation_plan_slot",
+    world_model_ablation_assignments.c.plan_id,
+    world_model_ablation_assignments.c.evaluation_at,
+)
+
+world_model_ablation_results = Table(
+    "world_model_ablation_results",
+    metadata,
+    Column("result_id", String(128), primary_key=True),
+    Column(
+        "assignment_id",
+        ForeignKey("world_model_ablation_assignments.assignment_id"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("status", String(32), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
 Index(
     "uq_capital_benchmark_policy_account",
     capital_benchmark_points.c.policy_id,

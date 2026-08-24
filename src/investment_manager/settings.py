@@ -163,6 +163,14 @@ class AppConfig(StrictConfig):
                 )
         if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
             raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
+        ablation = self.outcome_evaluation.world_model_ablation
+        context_forecast = self.capital.context_forecast
+        if ablation is not None and ablation.enabled and (
+            context_forecast is None
+            or not context_forecast.enabled
+            or not self.codex_runtime.enabled
+        ):
+            raise ValueError("WorldModel 成对评估必须绑定已启用的 Context Forecast 与 Codex")
         if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
             raise ValueError("行情 symbols 必须是风控允许品种的子集")
         if self.capital.enabled:

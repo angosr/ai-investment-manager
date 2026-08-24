@@ -1,0 +1,985 @@
+"""Prospective paired test of whether WorldModel semantics improve forecasts."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
+
+from pydantic import Field, TypeAdapter, field_validator, model_validator
+from sqlalchemy import and_, func, insert, select
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
+
+from investment_manager.forecast.codex.bundle import (
+    load_existing_bundle,
+    write_run_bundle,
+)
+from investment_manager.forecast.codex.output import strict_output_schema
+from investment_manager.forecast.codex.protocol import codex_execution_contract
+from investment_manager.forecast.codex.repository import (
+    SqlAccountLeaseStore,
+    SqlCodexAuditStore,
+)
+from investment_manager.forecast.codex.router import (
+    AnalystResult,
+    CodexAccountRouter,
+    assemble_codex_router,
+)
+from investment_manager.forecast.context.estimate import (
+    ContextForecastStructuredOutput,
+    context_forecast_output_schema_for_ids,
+)
+from investment_manager.forecast.context.evaluation import multiclass_brier_score
+from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
+from investment_manager.forecast.results import (
+    BaseForecast,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
+)
+from investment_manager.forecast.tables import (
+    forecast_decision_slots,
+    forecast_no_estimates,
+    forecast_outcomes,
+    forecasts,
+)
+from investment_manager.governance.evaluation.statistics import (
+    conservative_newey_west_lower_bound,
+)
+from investment_manager.governance.models import (
+    EvaluationPlan,
+    EvaluationStage,
+    ReleaseManifest,
+)
+from investment_manager.governance.policy import WorldModelAblationPolicy
+from investment_manager.governance.repository import SqlGovernanceRepository
+from investment_manager.governance.tables import (
+    world_model_ablation_assignments,
+    world_model_ablation_results,
+)
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.types import FrozenModel
+from investment_manager.settings import AppConfig
+
+CONTROL_INPUT_VERSION = "context-forecast-no-world-model-v1"
+CONTROL_OUTPUT_VERSION = "context-forecast-output-v1"
+CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
+CONTROL_INSTRUCTIONS = (
+    "你是概率预测员。输入只包含一份预登记预测合同和目标相关的点时市场状态。",
+    "只根据输入估计合同终点收益落入各 bucket 的概率，不得使用外部信息，不得输出订单、仓位、"
+    "杠杆、收益点数、止损、风险预算或交易建议。",
+    "outcome_probabilities 必须按合同 bucket_id 和顺序完整输出，概率为 0 到 1 的十进制字符串且"
+    "总和精确等于 1；不确定时扩大中间和尾部概率，不得拒绝预测。",
+    "mechanism_contributions、evidence_refs 和 invalidation_conditions 只是共享输出协议的辅助字段；"
+    "只能使用 schema 允许的标识符，不得据此推断缺失信息。它们不参与本次评分。",
+)
+
+
+class WorldModelAblationStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class WorldModelAblationAssignment(FrozenModel):
+    assignment_id: str
+    plan_id: str
+    formal_forecast_id: str
+    decision_slot_id: str
+    contract_id: str
+    formal_producer_behavior_id: str
+    control_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    information_cutoff_at: datetime
+    formal_available_at: datetime
+    assigned_at: datetime
+    completion_deadline_at: datetime
+    evaluation_at: datetime
+    call_order: str
+    formal_analysis_input_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    control_input_json: str
+    control_input_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    output_schema_json: str
+    output_schema_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
+    _utc_formal_available_at = field_validator("formal_available_at")(require_utc)
+    _utc_assigned_at = field_validator("assigned_at")(require_utc)
+    _utc_completion_deadline_at = field_validator("completion_deadline_at")(require_utc)
+    _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identities_inputs_and_timing_are_frozen(self):
+        if self.call_order != CONTROL_CALL_ORDER:
+            raise ValueError("WorldModel control 必须服从正式预测优先顺序")
+        if not (
+            self.information_cutoff_at
+            <= self.formal_available_at
+            <= self.assigned_at
+        ):
+            raise ValueError("WorldModel control 时间顺序非法")
+        if not self.information_cutoff_at < self.completion_deadline_at < self.evaluation_at:
+            raise ValueError("WorldModel control 截止时间非法")
+        control_input = _canonical_payload(self.control_input_json, "control input")
+        if "world_model" in control_input:
+            raise ValueError("WorldModel control 输入不得包含 world_model")
+        if set(control_input) != {
+            "purpose",
+            "decision_slot",
+            "forecast_contract",
+            "target_state",
+        }:
+            raise ValueError("WorldModel control 输入边界不完整")
+        output_schema = _canonical_payload(self.output_schema_json, "output schema")
+        if content_hash(control_input) != self.control_input_hash:
+            raise ValueError("WorldModel control 输入哈希不一致")
+        if content_hash(output_schema) != self.output_schema_hash:
+            raise ValueError("WorldModel control schema 哈希不一致")
+        expected_id = stable_id(
+            "world_model_ablation_assignment",
+            self.plan_id,
+            self.formal_forecast_id,
+        )
+        if self.assignment_id != expected_id:
+            raise ValueError("WorldModel control assignment_id 不一致")
+        identity = self.model_dump(
+            mode="json",
+            exclude={"source_hash"},
+        )
+        if content_hash(identity) != self.source_hash:
+            raise ValueError("WorldModel control assignment source_hash 不一致")
+        return self
+
+
+class WorldModelAblationResult(FrozenModel):
+    result_id: str
+    assignment_id: str
+    status: WorldModelAblationStatus
+    completed_at: datetime
+    reason_code: str
+    account_id: str | None = None
+    attempts: int = Field(default=0, ge=0)
+    usage: tuple[tuple[str, int], ...] = ()
+    codex_run_id: str | None = None
+    output_json: str | None = None
+    output_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    _utc_completed_at = field_validator("completed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def completion_is_atomic_and_canonical(self):
+        succeeded = self.status == WorldModelAblationStatus.SUCCEEDED
+        if succeeded != (self.output_json is not None and self.output_hash is not None):
+            raise ValueError("WorldModel control 成功状态与输出不一致")
+        if tuple(sorted(set(self.usage))) != self.usage:
+            raise ValueError("WorldModel control usage 必须唯一且排序")
+        if self.output_json is not None:
+            output = _canonical_payload(self.output_json, "control output")
+            if content_hash(output) != self.output_hash:
+                raise ValueError("WorldModel control 输出哈希不一致")
+            ContextForecastStructuredOutput.model_validate(output)
+        expected_id = stable_id("world_model_ablation_result", self.assignment_id)
+        if self.result_id != expected_id:
+            raise ValueError("WorldModel control result_id 不一致")
+        return self
+
+
+class WorldModelAblationReport(FrozenModel):
+    plan_id: str
+    as_of: datetime
+    formal_forecast_count: int = Field(ge=0)
+    formal_no_estimate_count: int = Field(ge=0)
+    assignments: int = Field(ge=0)
+    pending_controls: int = Field(ge=0)
+    successful_controls: int = Field(ge=0)
+    failed_controls: int = Field(ge=0)
+    settled_pairs: int = Field(ge=0)
+    formal_mean_brier: Decimal | None = None
+    control_mean_brier: Decimal | None = None
+    mean_brier_improvement: Decimal | None = None
+    conservative_improvement_lower_bound: Decimal | None = None
+    minimum_sample_size: int = Field(ge=2)
+    evidence_sufficient: bool
+
+    _utc_as_of = field_validator("as_of")(require_utc)
+
+
+def world_model_ablation_behavior_hash(
+    *,
+    config: AppConfig,
+    contract: ForecastContract,
+) -> str:
+    context = config.capital.context_forecast
+    if context is None:
+        raise ValueError("WorldModel control 缺少正式 Context Forecast")
+    return content_hash(
+        {
+            "input_version": CONTROL_INPUT_VERSION,
+            "output_version": CONTROL_OUTPUT_VERSION,
+            "instructions": CONTROL_INSTRUCTIONS,
+            "output_schema": strict_output_schema(
+                ContextForecastStructuredOutput.model_json_schema()
+            ),
+            "formal_contract": contract,
+            "formal_producer_behavior_id": context.producer_behavior_id,
+            "execution_contract": codex_execution_contract(),
+            "runtime_policy_version": config.codex_runtime.version,
+            "expected_cli_version": config.codex_runtime.expected_cli_version,
+            "expected_binary_sha256": config.codex_runtime.expected_binary_sha256,
+            "model": config.codex_runtime.model,
+            "reasoning_effort": config.codex_runtime.reasoning_effort,
+            "maximum_schema_attempts": 1 + config.codex_runtime.max_account_switches,
+            "call_order": CONTROL_CALL_ORDER,
+        }
+    )
+
+
+def ensure_world_model_ablation_plan(
+    *,
+    governance: SqlGovernanceRepository,
+    config: AppConfig,
+    contract: ForecastContract,
+    release: ReleaseManifest,
+    registered_at: datetime,
+) -> EvaluationPlan:
+    policy = _enabled_policy(config)
+    now = require_utc(registered_at)
+    behavior_hash = world_model_ablation_behavior_hash(config=config, contract=contract)
+    context = config.capital.context_forecast
+    assert context is not None
+    spec: dict[str, object] = {
+        "version": policy.version,
+        "activated_at": policy.activated_at.isoformat().replace("+00:00", "Z"),
+        "formal_contract_id": contract.contract_id,
+        "formal_producer_behavior_id": context.producer_behavior_id,
+        "control_behavior_hash": behavior_hash,
+        "assignment_rule": "ALL_SUCCESSFUL_FORMAL_FORECASTS_AT_OR_AFTER_ACTIVATION",
+        "formal_missing_rule": "COUNT_AUTHORITATIVE_FORECAST_NO_ESTIMATE_TERMINALS",
+        "call_order": CONTROL_CALL_ORDER,
+        "input_difference": "REMOVE_WORLD_MODEL_SEMANTIC_CONTENT_ONLY",
+        "outcome_join": config.outcome_evaluation.target_forecast_version,
+        "minimum_sample_size": policy.minimum_sample_size,
+    }
+    candidate_hash = content_hash(spec)
+    expected = EvaluationPlan(
+        plan_id=policy.plan_id,
+        registered_at=now,
+        base_manifest_id=release.manifest_id,
+        primary_metric="PAIRED_BRIER_CONTROL_MINUS_FORMAL",
+        minimum_sample_size=policy.minimum_sample_size,
+        hard_guardrails=(
+            "CONTROL_NEVER_ENTERS_CAPITAL",
+            "FORMAL_FIRST_CAPITAL_PRIORITY",
+            "NO_HISTORICAL_BACKFILL",
+            "SAME_SLOT_STATE_CONTRACT_MODEL_AND_SCHEMA",
+        ),
+        required_stages=(EvaluationStage.FORWARD,),
+        fixed_regression_suite_version=policy.version,
+        candidate_spec_hash=candidate_hash,
+        candidate_spec_snapshot=spec,
+    )
+    existing = governance.get_plan(policy.plan_id)
+    if existing is not None:
+        _validate_existing_plan(
+            existing,
+            expected=expected,
+            candidate_hash=candidate_hash,
+            activated_at=policy.activated_at,
+        )
+        return existing
+    if now >= policy.activated_at:
+        raise ValueError("WorldModel control 必须在首个前向时点前登记")
+    try:
+        governance.register_plan(expected)
+        return expected
+    except ValueError:
+        concurrent = governance.get_plan(policy.plan_id)
+        if concurrent is None:
+            raise
+        _validate_existing_plan(
+            concurrent,
+            expected=expected,
+            candidate_hash=candidate_hash,
+            activated_at=policy.activated_at,
+        )
+        return concurrent
+
+
+def build_world_model_ablation_assignment(
+    *,
+    plan: EvaluationPlan,
+    formal: BaseForecast,
+    slot: ForecastDecisionSlot,
+    assigned_at: datetime,
+) -> WorldModelAblationAssignment:
+    spec = plan.candidate_spec_snapshot
+    if not isinstance(spec, dict):
+        raise ValueError("WorldModel control plan 缺少冻结规格")
+    if (
+        formal.contract_id != spec.get("formal_contract_id")
+        or formal.producer_behavior_id != spec.get("formal_producer_behavior_id")
+        or slot.contract_id != formal.contract_id
+    ):
+        raise ValueError("WorldModel control 正式预测不属于预登记 cohort")
+    if formal.analysis_input_json is None or formal.analysis_input_hash is None:
+        raise ValueError("WorldModel control 正式预测缺少冻结输入")
+    raw = _canonical_payload(formal.analysis_input_json, "formal input")
+    world_model = raw.get("world_model")
+    if not isinstance(world_model, dict):
+        raise ValueError("WorldModel control 正式输入缺少 world_model")
+    mechanism_ids, evidence_ids = _opaque_world_model_ids(world_model)
+    forecast_contract = raw.get("forecast_contract")
+    decision_slot = raw.get("decision_slot")
+    target_state = raw.get("target_state")
+    if not all(isinstance(item, dict) for item in (forecast_contract, decision_slot, target_state)):
+        raise ValueError("WorldModel control 正式输入结构不完整")
+    if decision_slot.get("decision_slot_id") != slot.slot_id:
+        raise ValueError("WorldModel control 正式输入绑定了错误 slot")
+    bucket_ids = tuple(item.bucket_id for item in formal.outcome_probabilities)
+    schema = context_forecast_output_schema_for_ids(
+        decision_slot_id=slot.slot_id,
+        bucket_ids=bucket_ids,
+        mechanism_ids=mechanism_ids,
+        evidence_ids=evidence_ids,
+    )
+    control_input = {
+        "purpose": "FORECAST_ESTIMATE",
+        "decision_slot": decision_slot,
+        "forecast_contract": forecast_contract,
+        "target_state": target_state,
+    }
+    control_input_json = canonical_json(control_input)
+    output_schema_json = canonical_json(schema)
+    behavior_hash = str(spec["control_behavior_hash"])
+    values = {
+        "assignment_id": stable_id(
+            "world_model_ablation_assignment",
+            plan.plan_id,
+            formal.forecast_id,
+        ),
+        "plan_id": plan.plan_id,
+        "formal_forecast_id": formal.forecast_id,
+        "decision_slot_id": slot.slot_id,
+        "contract_id": formal.contract_id,
+        "formal_producer_behavior_id": formal.producer_behavior_id,
+        "control_behavior_hash": behavior_hash,
+        "information_cutoff_at": formal.information_cutoff_at,
+        "formal_available_at": formal.available_at,
+        "assigned_at": require_utc(assigned_at),
+        "completion_deadline_at": slot.completion_deadline_at,
+        "evaluation_at": slot.evaluation_at,
+        "call_order": CONTROL_CALL_ORDER,
+        "formal_analysis_input_hash": formal.analysis_input_hash,
+        "control_input_json": control_input_json,
+        "control_input_hash": content_hash(control_input),
+        "output_schema_json": output_schema_json,
+        "output_schema_hash": content_hash(schema),
+    }
+    values["source_hash"] = content_hash(values)
+    return WorldModelAblationAssignment.model_validate(values)
+
+
+class WorldModelControlAnalyst(Protocol):
+    def estimate(self, assignment: WorldModelAblationAssignment) -> AnalystResult: ...
+
+
+@dataclass(slots=True)
+class CodexWorldModelControlAnalyst:
+    bundle_root: Path
+    maximum_prompt_characters: int
+    router: CodexAccountRouter
+
+    def estimate(self, assignment: WorldModelAblationAssignment) -> AnalystResult:
+        target = self.bundle_root / stable_id(
+            "world_model_ablation_bundle",
+            assignment.assignment_id,
+            assignment.control_behavior_hash,
+        )
+        prompt = "\n".join(
+            (
+                *CONTROL_INSTRUCTIONS,
+                "context_forecast_input_json=",
+                assignment.control_input_json,
+            )
+        )
+        if len(prompt) > self.maximum_prompt_characters:
+            return AnalystResult(False, None, "FORECAST_INPUT_TOO_LARGE")
+        try:
+            bundle = load_existing_bundle(
+                cycle_id=assignment.assignment_id,
+                target=target,
+                expected_manifest={
+                    "analysis_mode": "WORLD_MODEL_ABLATION_CONTROL",
+                    "assignment_id": assignment.assignment_id,
+                    "analysis_behavior_hash": assignment.control_behavior_hash,
+                },
+            )
+            if bundle is None:
+                bundle = write_run_bundle(
+                    cycle_id=assignment.assignment_id,
+                    target=target,
+                    prompt=prompt,
+                    files={
+                        "context_forecast_input.json": assignment.control_input_json + "\n",
+                        "analyst_prompt.md": prompt + "\n",
+                        "output.schema.json": assignment.output_schema_json + "\n",
+                    },
+                    manifest={
+                        "analysis_mode": "WORLD_MODEL_ABLATION_CONTROL",
+                        "input_version": CONTROL_INPUT_VERSION,
+                        "output_version": CONTROL_OUTPUT_VERSION,
+                        "assignment_id": assignment.assignment_id,
+                        "decision_slot_id": assignment.decision_slot_id,
+                        "plan_id": assignment.plan_id,
+                        "call_order": assignment.call_order,
+                        "analysis_behavior_hash": assignment.control_behavior_hash,
+                        "output_schema_hash": assignment.output_schema_hash,
+                    },
+                )
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            return AnalystResult(False, None, "CODEX_BUNDLE_INVALID")
+        return self.router.run(bundle)
+
+
+class SqlWorldModelAblationRepository:
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def unassigned_formal_forecasts(
+        self,
+        *,
+        plan_id: str,
+        formal_producer_behavior_id: str,
+        activated_at: datetime,
+        limit: int,
+    ) -> tuple[tuple[BaseForecast, ForecastDecisionSlot], ...]:
+        joined = forecasts.join(
+            forecast_decision_slots,
+            forecast_decision_slots.c.slot_id == forecasts.c.decision_slot_id,
+        ).outerjoin(
+            world_model_ablation_assignments,
+            and_(
+                world_model_ablation_assignments.c.plan_id == plan_id,
+                world_model_ablation_assignments.c.formal_forecast_id
+                == forecasts.c.forecast_id,
+            ),
+        )
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(forecasts.c.payload, forecast_decision_slots.c.payload)
+                .select_from(joined)
+                .where(
+                    forecasts.c.kind == "BASE",
+                    forecasts.c.producer_behavior_id == formal_producer_behavior_id,
+                    forecast_decision_slots.c.information_cutoff_at
+                    >= require_utc(activated_at),
+                    world_model_ablation_assignments.c.assignment_id.is_(None),
+                )
+                .order_by(
+                    forecast_decision_slots.c.information_cutoff_at,
+                    forecasts.c.forecast_id,
+                )
+                .limit(limit)
+            ).all()
+        return tuple(
+            (
+                BaseForecast.model_validate(row[0]),
+                ForecastDecisionSlot.model_validate(row[1]),
+            )
+            for row in rows
+        )
+
+    def record_assignment(self, assignment: WorldModelAblationAssignment) -> bool:
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(world_model_ablation_assignments).values(
+                        assignment_id=assignment.assignment_id,
+                        plan_id=assignment.plan_id,
+                        formal_forecast_id=assignment.formal_forecast_id,
+                        decision_slot_id=assignment.decision_slot_id,
+                        assigned_at=assignment.assigned_at,
+                        completion_deadline_at=assignment.completion_deadline_at,
+                        evaluation_at=assignment.evaluation_at,
+                        control_behavior_hash=assignment.control_behavior_hash,
+                        source_hash=assignment.source_hash,
+                        payload=assignment.model_dump(mode="json"),
+                    )
+                )
+            return True
+        except IntegrityError:
+            existing = self.assignment(assignment.assignment_id)
+            if existing != assignment:
+                raise ValueError("WorldModel control assignment 已存在且内容不同") from None
+            return False
+
+    def assignment(self, assignment_id: str) -> WorldModelAblationAssignment | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(world_model_ablation_assignments.c.payload).where(
+                    world_model_ablation_assignments.c.assignment_id == assignment_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else WorldModelAblationAssignment.model_validate(payload)
+
+    def pending_assignments(
+        self,
+        *,
+        plan_id: str,
+        limit: int,
+    ) -> tuple[WorldModelAblationAssignment, ...]:
+        joined = world_model_ablation_assignments.outerjoin(
+            world_model_ablation_results,
+            world_model_ablation_results.c.assignment_id
+            == world_model_ablation_assignments.c.assignment_id,
+        )
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(world_model_ablation_assignments.c.payload)
+                .select_from(joined)
+                .where(
+                    world_model_ablation_assignments.c.plan_id == plan_id,
+                    world_model_ablation_results.c.result_id.is_(None),
+                )
+                .order_by(
+                    world_model_ablation_assignments.c.assigned_at,
+                    world_model_ablation_assignments.c.assignment_id,
+                )
+                .limit(limit)
+            ).scalars()
+            return tuple(WorldModelAblationAssignment.model_validate(item) for item in payloads)
+
+    def record_result(self, result: WorldModelAblationResult) -> bool:
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(world_model_ablation_results).values(
+                        result_id=result.result_id,
+                        assignment_id=result.assignment_id,
+                        status=result.status.value,
+                        completed_at=result.completed_at,
+                        payload=result.model_dump(mode="json"),
+                    )
+                )
+            return True
+        except IntegrityError:
+            existing = self.result(result.assignment_id)
+            if existing != result:
+                raise ValueError("WorldModel control result 已存在且内容不同") from None
+            return False
+
+    def result(self, assignment_id: str) -> WorldModelAblationResult | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(world_model_ablation_results.c.payload).where(
+                    world_model_ablation_results.c.assignment_id == assignment_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else WorldModelAblationResult.model_validate(payload)
+
+    def report(
+        self,
+        *,
+        plan_id: str,
+        evaluation_version: str,
+        minimum_sample_size: int,
+        formal_producer_behavior_id: str,
+        activated_at: datetime,
+        as_of: datetime,
+    ) -> WorldModelAblationReport:
+        outcome_join = and_(
+            forecast_outcomes.c.decision_slot_id
+            == world_model_ablation_assignments.c.decision_slot_id,
+            forecast_outcomes.c.evaluation_version == evaluation_version,
+        )
+        joined = (
+            world_model_ablation_assignments.join(
+                forecasts,
+                forecasts.c.forecast_id
+                == world_model_ablation_assignments.c.formal_forecast_id,
+            )
+            .outerjoin(
+                world_model_ablation_results,
+                world_model_ablation_results.c.assignment_id
+                == world_model_ablation_assignments.c.assignment_id,
+            )
+            .outerjoin(forecast_outcomes, outcome_join)
+        )
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    world_model_ablation_assignments.c.payload,
+                    world_model_ablation_results.c.payload,
+                    forecasts.c.payload,
+                    forecast_outcomes.c.payload,
+                )
+                .select_from(joined)
+                .where(world_model_ablation_assignments.c.plan_id == plan_id)
+                .order_by(world_model_ablation_assignments.c.evaluation_at)
+            ).all()
+            formal_forecast_count = connection.execute(
+                select(func.count())
+                .select_from(
+                    forecasts.join(
+                        forecast_decision_slots,
+                        forecast_decision_slots.c.slot_id == forecasts.c.decision_slot_id,
+                    )
+                )
+                .where(
+                    forecasts.c.kind == "BASE",
+                    forecasts.c.producer_behavior_id == formal_producer_behavior_id,
+                    forecast_decision_slots.c.information_cutoff_at
+                    >= require_utc(activated_at),
+                )
+            ).scalar_one()
+            formal_no_estimate_count = connection.execute(
+                select(func.count())
+                .select_from(
+                    forecast_no_estimates.join(
+                        forecast_decision_slots,
+                        forecast_decision_slots.c.slot_id == forecast_no_estimates.c.slot_id,
+                    )
+                )
+                .where(
+                    forecast_no_estimates.c.producer_behavior_id
+                    == formal_producer_behavior_id,
+                    forecast_decision_slots.c.information_cutoff_at
+                    >= require_utc(activated_at),
+                )
+            ).scalar_one()
+        current = require_utc(as_of)
+        pending = 0
+        failed = 0
+        succeeded = 0
+        formal_scores: list[Decimal] = []
+        control_scores: list[Decimal] = []
+        improvements: list[Decimal] = []
+        for assignment_raw, result_raw, formal_raw, outcome_raw in rows:
+            assignment = WorldModelAblationAssignment.model_validate(assignment_raw)
+            if result_raw is None:
+                if current <= assignment.completion_deadline_at:
+                    pending += 1
+                else:
+                    failed += 1
+                continue
+            result = WorldModelAblationResult.model_validate(result_raw)
+            if result.status != WorldModelAblationStatus.SUCCEEDED:
+                failed += 1
+                continue
+            succeeded += 1
+            if outcome_raw is None:
+                continue
+            outcome = ForecastOutcome.model_validate(outcome_raw)
+            if outcome.status != ForecastOutcomeStatus.SETTLED:
+                continue
+            formal = BaseForecast.model_validate(formal_raw)
+            control = ContextForecastStructuredOutput.model_validate_json(result.output_json)
+            assert outcome.realized_bucket_id is not None
+            formal_score = multiclass_brier_score(
+                tuple(
+                    (item.bucket_id, item.probability)
+                    for item in formal.outcome_probabilities
+                ),
+                outcome.realized_bucket_id,
+            )
+            control_score = multiclass_brier_score(
+                tuple(
+                    (item.bucket_id, Decimal(item.probability))
+                    for item in control.forecast.outcome_probabilities
+                ),
+                outcome.realized_bucket_id,
+            )
+            formal_scores.append(formal_score)
+            control_scores.append(control_score)
+            improvements.append(control_score - formal_score)
+        pair_count = len(improvements)
+        formal_mean = _mean(formal_scores)
+        control_mean = _mean(control_scores)
+        improvement_mean = _mean(improvements)
+        lower_bound = (
+            None
+            if pair_count < 2
+            else conservative_newey_west_lower_bound(
+                tuple(improvements),
+                z=Decimal("1.96"),
+                lag=1,
+            )
+        )
+        return WorldModelAblationReport(
+            plan_id=plan_id,
+            as_of=current,
+            formal_forecast_count=formal_forecast_count,
+            formal_no_estimate_count=formal_no_estimate_count,
+            assignments=len(rows),
+            pending_controls=pending,
+            successful_controls=succeeded,
+            failed_controls=failed,
+            settled_pairs=pair_count,
+            formal_mean_brier=formal_mean,
+            control_mean_brier=control_mean,
+            mean_brier_improvement=improvement_mean,
+            conservative_improvement_lower_bound=lower_bound,
+            minimum_sample_size=minimum_sample_size,
+            evidence_sufficient=(
+                pair_count >= minimum_sample_size
+                and lower_bound is not None
+                and lower_bound > 0
+            ),
+        )
+
+
+@dataclass(slots=True)
+class WorldModelAblationRunner:
+    policy: WorldModelAblationPolicy
+    plan: EvaluationPlan
+    formal_producer_behavior_id: str
+    evaluation_version: str
+    repository: SqlWorldModelAblationRepository
+    analyst: WorldModelControlAnalyst
+
+    def reconcile(self, *, as_of: datetime) -> WorldModelAblationReport:
+        now = require_utc(as_of)
+        for formal, slot in self.repository.unassigned_formal_forecasts(
+            plan_id=self.plan.plan_id,
+            formal_producer_behavior_id=self.formal_producer_behavior_id,
+            activated_at=self.policy.activated_at,
+            limit=self.policy.maximum_batch_size,
+        ):
+            assignment = build_world_model_ablation_assignment(
+                plan=self.plan,
+                formal=formal,
+                slot=slot,
+                assigned_at=now,
+            )
+            self.repository.record_assignment(assignment)
+        for assignment in self.repository.pending_assignments(
+            plan_id=self.plan.plan_id,
+            limit=self.policy.maximum_batch_size,
+        ):
+            if now > assignment.completion_deadline_at:
+                result = _failed_result(
+                    assignment,
+                    completed_at=now,
+                    reason_code="CONTROL_DEADLINE_MISSED",
+                )
+            else:
+                result = _result_from_analyst(
+                    assignment,
+                    self.analyst.estimate(assignment),
+                    fallback_completed_at=now,
+                )
+            self.repository.record_result(result)
+        return self.repository.report(
+            plan_id=self.plan.plan_id,
+            evaluation_version=self.evaluation_version,
+            minimum_sample_size=self.policy.minimum_sample_size,
+            formal_producer_behavior_id=self.formal_producer_behavior_id,
+            activated_at=self.policy.activated_at,
+            as_of=now,
+        )
+
+
+def assemble_world_model_ablation_analyst(
+    config: AppConfig,
+    *,
+    engine: Engine,
+) -> CodexWorldModelControlAnalyst:
+    router = assemble_codex_router(
+        config,
+        leases=SqlAccountLeaseStore(engine),
+        audit=SqlCodexAuditStore(engine),
+        output_adapter=TypeAdapter(ContextForecastStructuredOutput),
+    )
+    return CodexWorldModelControlAnalyst(
+        bundle_root=config.codex_runtime.bundle_root,
+        maximum_prompt_characters=config.codex_runtime.maximum_prompt_characters,
+        router=router,
+    )
+
+
+def _enabled_policy(config: AppConfig) -> WorldModelAblationPolicy:
+    policy = config.outcome_evaluation.world_model_ablation
+    if policy is None or not policy.enabled:
+        raise ValueError("WorldModel control 未启用")
+    return policy
+
+
+def _validate_existing_plan(
+    existing: EvaluationPlan,
+    *,
+    expected: EvaluationPlan,
+    candidate_hash: str,
+    activated_at: datetime,
+) -> None:
+    if (
+        existing.candidate_spec_hash != candidate_hash
+        or existing.primary_metric != expected.primary_metric
+        or existing.minimum_sample_size != expected.minimum_sample_size
+        or existing.hard_guardrails != expected.hard_guardrails
+        or existing.required_stages != expected.required_stages
+    ):
+        raise ValueError("已登记 WorldModel control plan 与当前行为不一致")
+    if existing.registered_at >= activated_at:
+        raise ValueError("WorldModel control plan 未在激活前登记")
+
+
+def _opaque_world_model_ids(
+    world_model: dict[str, object],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    raw_mechanisms = world_model.get("mechanisms")
+    raw_events = world_model.get("event_references")
+    if not isinstance(raw_mechanisms, list) or not isinstance(raw_events, list):
+        raise ValueError("WorldModel control 无法冻结输出标识符")
+    mechanism_ids: list[str] = []
+    evidence_ids: set[str] = set()
+    for raw in raw_events:
+        if isinstance(raw, dict) and isinstance(raw.get("evidence_id"), str):
+            evidence_ids.add(raw["evidence_id"])
+    for raw in raw_mechanisms:
+        if not isinstance(raw, dict) or not isinstance(raw.get("mechanism_id"), str):
+            raise ValueError("WorldModel mechanism_id 非法")
+        mechanism_ids.append(raw["mechanism_id"])
+        for evidence_id in raw.get("conflicting_evidence_ids", []):
+            if isinstance(evidence_id, str):
+                evidence_ids.add(evidence_id)
+        for node in raw.get("causal_chain", []):
+            if isinstance(node, dict):
+                evidence_ids.update(
+                    item for item in node.get("evidence_ids", []) if isinstance(item, str)
+                )
+    canonical_mechanisms = tuple(mechanism_ids)
+    canonical_evidence = tuple(sorted(evidence_ids))
+    if (
+        not canonical_mechanisms
+        or len(set(canonical_mechanisms)) != len(canonical_mechanisms)
+        or not canonical_evidence
+    ):
+        raise ValueError("WorldModel control 输出标识符为空或重复")
+    return canonical_mechanisms, canonical_evidence
+
+
+def _result_from_analyst(
+    assignment: WorldModelAblationAssignment,
+    analyst: AnalystResult,
+    *,
+    fallback_completed_at: datetime,
+) -> WorldModelAblationResult:
+    completed = require_utc(analyst.completed_at or fallback_completed_at)
+    common = {
+        "result_id": stable_id("world_model_ablation_result", assignment.assignment_id),
+        "assignment_id": assignment.assignment_id,
+        "completed_at": completed,
+        "account_id": analyst.account_id,
+        "attempts": analyst.attempts,
+        "usage": tuple(sorted((key, int(value)) for key, value in analyst.usage.items())),
+        "codex_run_id": analyst.run_id,
+    }
+    if completed > assignment.completion_deadline_at:
+        return WorldModelAblationResult(
+            **common,
+            status=WorldModelAblationStatus.FAILED,
+            reason_code="CONTROL_DEADLINE_MISSED",
+        )
+    if not analyst.success or not isinstance(analyst.output, ContextForecastStructuredOutput):
+        return WorldModelAblationResult(
+            **common,
+            status=WorldModelAblationStatus.FAILED,
+            reason_code=analyst.reason_code,
+        )
+    draft = analyst.output.forecast
+    expected_buckets = tuple(
+        item["bucket_id"]
+        for item in _canonical_payload(
+            assignment.control_input_json,
+            "control input",
+        )["forecast_contract"]["outcome_buckets"]
+    )
+    actual_buckets = tuple(item.bucket_id for item in draft.outcome_probabilities)
+    probabilities = tuple(Decimal(item.probability) for item in draft.outcome_probabilities)
+    schema = _canonical_payload(assignment.output_schema_json, "output schema")
+    definitions = schema["$defs"]
+    allowed_mechanisms = set(
+        definitions["ContextForecastContributionDraft"]["properties"]["mechanism_id"][
+            "enum"
+        ]
+    )
+    allowed_evidence = set(
+        definitions["ContextForecastDraft"]["properties"]["evidence_refs"]["items"][
+            "enum"
+        ]
+    )
+    contribution_ids = tuple(
+        item.mechanism_id for item in draft.mechanism_contributions
+    )
+    evidence_ids = draft.evidence_refs
+    output_invalid = (
+        draft.decision_slot_id != assignment.decision_slot_id
+        or actual_buckets != expected_buckets
+        or sum(probabilities, Decimal("0")) != 1
+        or len(set(contribution_ids)) != len(contribution_ids)
+        or not set(contribution_ids).issubset(allowed_mechanisms)
+        or len(set(evidence_ids)) != len(evidence_ids)
+        or not set(evidence_ids).issubset(allowed_evidence)
+    )
+    if output_invalid:
+        return WorldModelAblationResult(
+            **common,
+            status=WorldModelAblationStatus.FAILED,
+            reason_code="CONTROL_OUTPUT_CONTRACT_INVALID",
+        )
+    output = analyst.output.model_dump(mode="json")
+    return WorldModelAblationResult(
+        **common,
+        status=WorldModelAblationStatus.SUCCEEDED,
+        reason_code="CONTROL_FORECAST_SUCCEEDED",
+        output_json=canonical_json(output),
+        output_hash=content_hash(output),
+    )
+
+
+def _failed_result(
+    assignment: WorldModelAblationAssignment,
+    *,
+    completed_at: datetime,
+    reason_code: str,
+) -> WorldModelAblationResult:
+    return WorldModelAblationResult(
+        result_id=stable_id("world_model_ablation_result", assignment.assignment_id),
+        assignment_id=assignment.assignment_id,
+        status=WorldModelAblationStatus.FAILED,
+        completed_at=require_utc(completed_at),
+        reason_code=reason_code,
+    )
+
+
+def _canonical_payload(raw: str, name: str) -> dict[str, object]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{name} 不是有效 JSON") from exc
+    if not isinstance(payload, dict) or canonical_json(payload) != raw:
+        raise ValueError(f"{name} 必须是规范 JSON 对象")
+    return payload
+
+
+def _mean(values: list[Decimal]) -> Decimal | None:
+    return None if not values else sum(values, Decimal("0")) / Decimal(len(values))
+
+
+__all__ = [
+    "CodexWorldModelControlAnalyst",
+    "SqlWorldModelAblationRepository",
+    "WorldModelAblationAssignment",
+    "WorldModelAblationReport",
+    "WorldModelAblationResult",
+    "WorldModelAblationRunner",
+    "WorldModelAblationStatus",
+    "assemble_world_model_ablation_analyst",
+    "build_world_model_ablation_assignment",
+    "ensure_world_model_ablation_plan",
+    "world_model_ablation_behavior_hash",
+]

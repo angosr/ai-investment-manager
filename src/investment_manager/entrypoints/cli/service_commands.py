@@ -319,7 +319,7 @@ def outcome_evaluation_service(
 ) -> None:
     """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
 
-    loaded, _ = load_runtime_release(config, release_manifest)
+    loaded, manifest = load_runtime_release(config, release_manifest)
     require_runtime_database(database_url)
 
     async def run() -> None:
@@ -331,6 +331,7 @@ def outcome_evaluation_service(
             loaded,
             database_url,
             client,
+            release=manifest,
         )
         async with worker:
             await supervisor.run(asyncio.Event())

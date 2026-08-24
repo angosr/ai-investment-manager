@@ -232,35 +232,53 @@ def context_forecast_output_schema(
     contract: ForecastContract,
     assessment: ContextAssessment,
 ) -> dict[str, object]:
+    return context_forecast_output_schema_for_ids(
+        decision_slot_id=slot.slot_id,
+        bucket_ids=tuple(item.bucket_id for item in contract.outcome_buckets),
+        mechanism_ids=tuple(item.mechanism_id for item in assessment.mechanisms),
+        evidence_ids=tuple(
+            sorted(
+                {
+                    *(item.evidence_id for item in assessment.event_references),
+                    *(
+                        evidence_id
+                        for mechanism in assessment.mechanisms
+                        for node in mechanism.causal_chain
+                        for evidence_id in node.evidence_ids
+                    ),
+                    *(
+                        evidence_id
+                        for mechanism in assessment.mechanisms
+                        for evidence_id in mechanism.conflicting_evidence_ids
+                    ),
+                }
+            )
+        ),
+    )
+
+
+def context_forecast_output_schema_for_ids(
+    *,
+    decision_slot_id: str,
+    bucket_ids: tuple[str, ...],
+    mechanism_ids: tuple[str, ...],
+    evidence_ids: tuple[str, ...],
+) -> dict[str, object]:
+    """Build the shared schema without exposing WorldModel semantic content."""
+
+    if not bucket_ids or not mechanism_ids or not evidence_ids:
+        raise ValueError("Context Forecast 输出枚举不能为空")
+    if any(len(set(values)) != len(values) for values in (bucket_ids, mechanism_ids, evidence_ids)):
+        raise ValueError("Context Forecast 输出枚举不能重复")
     schema = strict_output_schema(ContextForecastStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
     draft = definitions["ContextForecastDraft"]
-    draft["properties"]["decision_slot_id"]["const"] = slot.slot_id
+    draft["properties"]["decision_slot_id"]["const"] = decision_slot_id
     probability = definitions["ContextForecastProbabilityDraft"]
-    probability["properties"]["bucket_id"]["enum"] = [
-        item.bucket_id for item in contract.outcome_buckets
-    ]
+    probability["properties"]["bucket_id"]["enum"] = list(bucket_ids)
     contribution = definitions["ContextForecastContributionDraft"]
-    contribution["properties"]["mechanism_id"]["enum"] = [
-        item.mechanism_id for item in assessment.mechanisms
-    ]
-    evidence = sorted(
-        {
-            *(item.evidence_id for item in assessment.event_references),
-            *(
-                evidence_id
-                for mechanism in assessment.mechanisms
-                for node in mechanism.causal_chain
-                for evidence_id in node.evidence_ids
-            ),
-            *(
-                evidence_id
-                for mechanism in assessment.mechanisms
-                for evidence_id in mechanism.conflicting_evidence_ids
-            ),
-        }
-    )
-    draft["properties"]["evidence_refs"]["items"]["enum"] = evidence
+    contribution["properties"]["mechanism_id"]["enum"] = list(mechanism_ids)
+    draft["properties"]["evidence_refs"]["items"]["enum"] = list(evidence_ids)
     return schema
 
 

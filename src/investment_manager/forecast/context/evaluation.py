@@ -140,26 +140,33 @@ def evaluate_forecast_evidence(
         )
 
     model_brier = _mean(
-        tuple(_brier(item.probabilities, item.realized_bucket_id) for item in independent)
+        tuple(
+            multiclass_brier_score(item.probabilities, item.realized_bucket_id)
+            for item in independent
+        )
     )
     benchmark_brier = _mean(
         tuple(
-            _brier(item.benchmark_probabilities, item.realized_bucket_id)
+            multiclass_brier_score(
+                item.benchmark_probabilities,
+                item.realized_bucket_id,
+            )
             for item in independent
         )
     )
     assert model_brier is not None and benchmark_brier is not None
     model_scores = tuple(
-        _brier(item.probabilities, item.realized_bucket_id) for item in independent
+        multiclass_brier_score(item.probabilities, item.realized_bucket_id)
+        for item in independent
     )
     rolling_cases = _dynamic_benchmarks(cases, independent, condition_on_market=False)
     market_cases = _dynamic_benchmarks(cases, independent, condition_on_market=True)
     rolling_scores = tuple(
-        _brier(probabilities, item.realized_bucket_id)
+        multiclass_brier_score(probabilities, item.realized_bucket_id)
         for item, probabilities, _ready in rolling_cases
     )
     market_scores = tuple(
-        _brier(probabilities, item.realized_bucket_id)
+        multiclass_brier_score(probabilities, item.realized_bucket_id)
         for item, probabilities, _ready in market_cases
     )
     rolling_brier = _mean(rolling_scores)
@@ -242,7 +249,12 @@ def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastSc
     return tuple(selected)
 
 
-def _brier(probabilities: tuple[tuple[str, Decimal], ...], realized: str) -> Decimal:
+def multiclass_brier_score(
+    probabilities: tuple[tuple[str, Decimal], ...],
+    realized: str,
+) -> Decimal:
+    if realized not in {bucket_id for bucket_id, _probability in probabilities}:
+        raise ValueError("Brier 真实 bucket 不属于预测分布")
     return sum(
         (
             (probability - (Decimal("1") if bucket_id == realized else Decimal("0")))

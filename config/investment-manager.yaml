@@ -277,13 +277,20 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v9
+  version: outcome-window-v10
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
+  world_model_ablation:
+    version: world-model-ablation-forward-v1
+    enabled: false
+    plan_id: world-model-ablation-forward-v1
+    activated_at: 2026-08-25T00:00:00Z
+    minimum_sample_size: 30
+    maximum_batch_size: 2
 
 governance:
   version: governance-cycle-v2
