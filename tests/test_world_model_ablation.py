@@ -318,6 +318,7 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
         evaluation_version=config.outcome_evaluation.target_forecast_version,
         status=ForecastOutcomeStatus.SETTLED,
         information_cutoff_at=slot.information_cutoff_at,
+        outcome_start_at=slot.outcome_start_at,
         evaluation_at=slot.evaluation_at,
         settled_at=slot.evaluation_at + timedelta(seconds=1),
         legs=(

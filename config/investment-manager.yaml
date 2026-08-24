@@ -186,12 +186,12 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v7
+    version: btc-context-forecast-v8
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "3a2770b476179ee1387a1d5286a17ee0b8107d314e97d6e790bf2411be297ec1"
+    producer_behavior_id: "f09f5e972ff37a21a316d6aa1a9084e9d86c79617b9d6ad225599cf33c5aecf8"
     outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v4
+    contract_version: btc-spot-directional-4h-v5
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     horizon_minutes: 240
     cadence_minutes: 240
@@ -276,7 +276,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v11
+  version: outcome-window-v12
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -284,9 +284,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v2
+    version: world-model-ablation-forward-v3
     enabled: false
-    plan_id: world-model-ablation-forward-v2
+    plan_id: world-model-ablation-forward-v3
     activated_at: 2026-08-25T00:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2

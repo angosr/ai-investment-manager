@@ -197,7 +197,8 @@ def context_spot_forecast_contract(
             "WORLD_MODEL_CURRENT",
             "EXECUTABLE_QUOTES_REMAIN_VALID",
         ),
-        settlement_rule="cutoff-to-horizon-executable-spot-return-v1",
+        settlement_rule="completion-deadline-to-horizon-executable-spot-return-v2",
+        outcome_start_delay_seconds=0,
         forecast_benchmark=policy.forecast_benchmark,
         decision_benchmark="cash-and-passive-spot-v1",
     )
