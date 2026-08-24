@@ -372,7 +372,14 @@ class TriggerCoordinatorWorkflow:
             self._remember(trigger.trigger_id)
             self._pending[trigger.trigger_id] = trigger.model_dump(mode="json")
         heartbeat = self._plan.get("heartbeat_seconds")
-        anchor = self._last_analysis_at or started_at
+        anchor = self._last_analysis_at
+        if anchor is None:
+            anchor = (
+                started_at - timedelta(seconds=int(heartbeat))
+                if heartbeat is not None
+                and workflow.patched("immediate-initial-heartbeat-v1")
+                else started_at
+            )
         if heartbeat is not None and now >= anchor + timedelta(seconds=int(heartbeat)):
             dedup_key = f"{int(anchor.timestamp())}:{int(heartbeat)}"
             durable_heartbeat = workflow.patched("durable-heartbeat-v1")
