@@ -6,7 +6,6 @@ from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
-from temporalio.client import WorkflowExecutionStatus
 
 from investment_manager.scheduling.application import (
     ensure_trigger_plans,
@@ -43,7 +42,7 @@ from investment_manager.scheduling.repository import (
 )
 from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
-    terminate_superseded_trigger_coordinators,
+    terminate_inactive_trigger_coordinators,
 )
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.state.models import CanonicalFactRevision, FactRevisionStatus
@@ -790,49 +789,47 @@ def test_trigger_plan_can_update_delete_and_pause_without_hidden_defaults(
     assert result.plan.event_rules == (temporary_rule,)
 
 
-def test_release_cutover_terminates_only_superseded_pipeline(app_config, replay_input) -> None:
-    active = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id=app_config.pipeline.version,
-        manifest_id="manifest-active",
-        updated_at=replay_input.market.as_of,
-        heartbeat_seconds=None,
-    )
-    superseded = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id="pipeline-old",
-        manifest_id="manifest-old",
-        updated_at=replay_input.market.as_of,
-        heartbeat_seconds=None,
-    )
-
+def test_release_cutover_terminates_every_inactive_coordinator(app_config) -> None:
     class FakeHandle:
         def __init__(self) -> None:
             self.reason = None
 
-        async def describe(self):
-            return SimpleNamespace(status=WorkflowExecutionStatus.RUNNING)
-
         async def terminate(self, reason):
             self.reason = reason
 
-    old_handle = FakeHandle()
+    active_id = coordinator_workflow_id("BTCUSDT", app_config.pipeline.version)
+    old_id = coordinator_workflow_id("BTCUSDT", "pipeline-old")
+    orphan_id = "trigger_coordinator_orphaned_from_database"
+    handles = {old_id: FakeHandle(), orphan_id: FakeHandle()}
 
     class FakeClient:
+        async def _executions(self):
+            for workflow_id in (active_id, orphan_id, old_id):
+                yield SimpleNamespace(id=workflow_id)
+
+        def list_workflows(self, query):
+            assert query == (
+                'WorkflowType="TriggerCoordinatorWorkflow" '
+                'AND ExecutionStatus="Running"'
+            )
+            return self._executions()
+
         def get_workflow_handle(self, workflow_id):
-            assert workflow_id == coordinator_workflow_id(superseded.symbol, superseded.pipeline_id)
-            return old_handle
+            return handles[workflow_id]
 
     terminated = asyncio.run(
-        terminate_superseded_trigger_coordinators(
+        terminate_inactive_trigger_coordinators(
             client=FakeClient(),
-            plans=(active, superseded),
-            active_pipeline_id=active.pipeline_id,
+            active_symbols=("BTCUSDT",),
+            active_pipeline_id=app_config.pipeline.version,
         )
     )
 
-    assert terminated == (coordinator_workflow_id("BTCUSDT", "pipeline-old"),)
-    assert old_handle.reason == f"superseded by pipeline {active.pipeline_id}"
+    assert terminated == tuple(sorted((old_id, orphan_id)))
+    assert all(
+        handle.reason == f"superseded by pipeline {app_config.pipeline.version}"
+        for handle in handles.values()
+    )
 
 
 def test_dispatcher_acknowledges_superseded_outbox_without_reviving_it(

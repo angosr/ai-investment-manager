@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
@@ -81,24 +81,31 @@ class TemporalTriggerDispatcher:
         await handle.signal(TRIGGER_SIGNAL, message.payload)
 
 
-async def terminate_superseded_trigger_coordinators(
+async def terminate_inactive_trigger_coordinators(
     *,
     client: Client,
-    plans: tuple[AnalysisTriggerPlan, ...],
+    active_symbols: tuple[str, ...],
     active_pipeline_id: str,
 ) -> tuple[str, ...]:
-    """在 release 切换时终止同一交易范围内的旧 pipeline coordinator。"""
+    """Keep only this release's coordinators in its dedicated namespace.
 
+    Discovering workflows from Temporal, rather than reconstructing their ids from
+    the current fact database, also removes coordinators orphaned by a database
+    migration or an interrupted release cutover.
+    """
+
+    active_ids = {
+        coordinator_workflow_id(symbol, active_pipeline_id) for symbol in active_symbols
+    }
     terminated: list[str] = []
-    for plan in plans:
-        if plan.pipeline_id == active_pipeline_id:
+    executions = client.list_workflows(
+        'WorkflowType="TriggerCoordinatorWorkflow" AND ExecutionStatus="Running"'
+    )
+    async for execution in executions:
+        if execution.id in active_ids:
             continue
-        workflow_id = coordinator_workflow_id(plan.symbol, plan.pipeline_id)
-        handle = client.get_workflow_handle(workflow_id)
+        handle = client.get_workflow_handle(execution.id)
         try:
-            description = await handle.describe()
-            if description.status != WorkflowExecutionStatus.RUNNING:
-                continue
             await handle.terminate(f"superseded by pipeline {active_pipeline_id}")
         except RPCError as exc:
             if exc.status not in {
@@ -107,8 +114,8 @@ async def terminate_superseded_trigger_coordinators(
             }:
                 raise
             continue
-        terminated.append(workflow_id)
-    return tuple(terminated)
+        terminated.append(execution.id)
+    return tuple(sorted(terminated))
 
 
 class TriggerTemporalWorker:

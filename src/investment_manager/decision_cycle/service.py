@@ -28,7 +28,7 @@ from investment_manager.scheduling.runtime import (
     TemporalTriggerDispatcher,
     TriggerOutboxDispatcherService,
     TriggerTemporalWorker,
-    terminate_superseded_trigger_coordinators,
+    terminate_inactive_trigger_coordinators,
 )
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
@@ -52,9 +52,9 @@ def run_trigger_service(
             config.temporal.address,
             namespace=config.temporal.namespace,
         )
-        terminated = await terminate_superseded_trigger_coordinators(
+        terminated = await terminate_inactive_trigger_coordinators(
             client=client,
-            plans=repository.latest_plans_for_all_pipelines(config.market_data.symbols),
+            active_symbols=config.market_data.symbols,
             active_pipeline_id=config.pipeline.version,
         )
         if terminated and on_superseded is not None:

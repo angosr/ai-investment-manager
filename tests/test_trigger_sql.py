@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import create_engine, func, select, update
+from sqlalchemy import create_engine, func, select
 
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.information.tables import normalized_events
@@ -202,28 +202,3 @@ def test_current_plans_for_symbols_returns_each_pipeline_current_revision(
 
     assert repository.current_plans_for_symbols(("BTCUSDT",)) == expected[:2]
     assert repository.current_plans_for_symbols(()) == ()
-
-
-def test_latest_plans_include_orphaned_pipeline_without_a_current_revision(
-    app_config, replay_input
-) -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    repository = SqlTriggerRepository(engine, app_config.trigger)
-    plan = build_initial_trigger_plan(
-        symbol="BTCUSDT",
-        pipeline_id="orphaned-pipeline",
-        manifest_id="manifest-old",
-        updated_at=replay_input.market.as_of,
-        heartbeat_seconds=900,
-    )
-    repository.create_plan(plan)
-    with engine.begin() as connection:
-        connection.execute(
-            update(analysis_trigger_plans)
-            .where(analysis_trigger_plans.c.pipeline_id == plan.pipeline_id)
-            .values(is_current=False)
-        )
-
-    assert repository.current_plans_for_symbols(("BTCUSDT",)) == ()
-    assert repository.latest_plans_for_all_pipelines(("BTCUSDT",)) == (plan,)
