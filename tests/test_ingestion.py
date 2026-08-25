@@ -318,6 +318,27 @@ def test_official_macro_release_has_ai_trigger_priority() -> None:
     assert event.trigger_priority == 85
 
 
+def test_high_impact_aggregator_lead_keeps_attention_priority() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    event = EventNormalizer(version="aggregator-attention-test-v1").normalize(
+        RawIntelligenceItem(
+            source_item_id="hormuz-corridor",
+            source="aggregator:market-wire",
+            acquisition_route="aggregator-feed-v1",
+            event_time=observed_at,
+            observed_at=observed_at,
+            title="霍尔木兹海峡将开放临时航道",
+            source_reliability=Decimal("0.60"),
+            rank=1,
+        )
+    )
+
+    assert event is not None
+    assert event.impact == Decimal("0.8415")
+    assert event.trigger_priority == 84
+    assert event.source_reliability == Decimal("0.60")
+
+
 def test_official_publication_source_follows_only_bounded_same_host_entries() -> None:
     observed_at = datetime(2026, 8, 24, 20, tzinfo=UTC)
     index_url = "https://home.treasury.gov/news/press-releases"
@@ -769,9 +790,8 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
                 ).order_by(analysis_trigger_events.c.symbol)
             )
         )
-    # Aggregated headlines remain permanent evidence, but source reliability
-    # discounts their wake-up priority until a stronger source verifies them.
-    assert tuple(row.priority for row in trigger_rows) == (50, 50)
+    # Attention follows mandate impact; source quality is a later evidence gate.
+    assert tuple(row.priority for row in trigger_rows) == (84, 84)
     assert all(
         row.expires_at.replace(tzinfo=UTC) == observed_at + timedelta(minutes=15)
         for row in trigger_rows

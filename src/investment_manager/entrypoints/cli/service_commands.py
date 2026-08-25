@@ -245,6 +245,10 @@ def trigger_now(
         str,
         typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
     ],
+    evidence_id: Annotated[
+        list[str] | None,
+        typer.Option("--evidence-id", help="绑定本次复核所依据的不可变 Evidence ID，可重复"),
+    ] = None,
     release_manifest: Annotated[
         Path,
         typer.Option("--release-manifest", exists=True, dir_okay=False),
@@ -265,6 +269,7 @@ def trigger_now(
         request_id=request_id,
         reason=reason,
         now=datetime.now(UTC),
+        evidence_ids=tuple(evidence_id or ()),
     )
     typer.echo(
         json.dumps(

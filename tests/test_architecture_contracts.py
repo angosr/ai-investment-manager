@@ -86,7 +86,7 @@ CLI_CONTRACT = {
     ),
     "shadow-audit": "config,release_manifest,project_root",
     "submit-context-assessment": "input_path,config,deadline_minutes",
-    "trigger-now": "symbol,request_id,reason,config,database_url,release_manifest",
+    "trigger-now": "symbol,request_id,reason,config,database_url,evidence_id,release_manifest",
     "trigger-service": "config,database_url,release_manifest",
     "validate-config": "config",
     "walk-forward": (

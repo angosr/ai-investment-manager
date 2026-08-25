@@ -878,6 +878,89 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
     assert prepared.packet.omitted_intelligence_event_refs == (content_hash(event),)
 
 
+def test_direct_high_impact_aggregator_lead_is_visible_but_not_directional(
+    app_config,
+    replay_input,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    events = InMemoryEventStore()
+    event_at = OBSERVED_AT + timedelta(minutes=1)
+    event = IntelligenceEvent(
+        evidence_id="direct-weak-lead",
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="test-aggregator-v1",
+        event_time=event_at,
+        observed_at=event_at,
+        source="test:aggregator",
+        title="霍尔木兹海峡临时航道安排",
+        body="聚合快讯称航运约束可能变化，尚待官方原文和同步市场响应核验。",
+        symbols=("BTCUSDT",),
+        relevance="0.85",
+        impact="0.8415",
+        source_reliability="0.60",
+        novelty="1",
+    )
+    events.put(event)
+    preparation = DecisionPacketPreparation(
+        market_store=_PointInTimeMarketStore(replay_input.market),
+        event_reader=events,
+        facts=SqlFactStateStore(engine),
+        projector=SqlStateProjector(
+            engine,
+            projection_version="portfolio-state-direct-weak-lead-v1",
+            delta_policy=DELTA_POLICY,
+        ),
+        assembler=SqlDecisionPacketAssembler(
+            engine,
+            DecisionPacketPolicy(
+                version="packet-policy-direct-weak-lead-v1",
+                schema_version="decision-packet-direct-weak-lead-v1",
+            ),
+        ),
+        features=FeatureEngine(app_config.feature),
+        market_interval=app_config.market_data.interval,
+        market_bar_window=app_config.market_data.bar_window,
+        market_source=app_config.market_data.version,
+        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        clock=lambda: event_at,
+    )
+    mandate = AnalysisMandate(
+        version="crypto-direct-weak-lead-v1",
+        analysis_scope="crypto-portfolio",
+        question="核验重大外部线索及其传导。",
+        assets=(
+            MandateAsset(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                horizons_minutes=(60, 240),
+            ),
+        ),
+        required_risk_factors=("EXTERNAL_INFORMATION",),
+    )
+
+    baseline = preparation.prepare(
+        analysis_id="direct-weak-lead-baseline",
+        as_of=OBSERVED_AT,
+        mandate=mandate,
+    )
+
+    prepared = preparation.prepare(
+        analysis_id="direct-weak-lead-analysis",
+        as_of=event_at,
+        mandate=mandate,
+        intelligence_evidence_ids=(event.evidence_id,),
+    )
+
+    assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
+    assert prepared.status == PacketPreparationStatus.READY
+    assert prepared.packet is not None
+    assert len(prepared.packet.intelligence_events) == 1
+    packet_event = prepared.packet.intelligence_events[0]
+    assert packet_event.directly_triggered is True
+    assert packet_event.directional_support_eligible is False
+
+
 def test_packet_preparation_promotes_only_explicit_market_shock(
     app_config,
     replay_input,

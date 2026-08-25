@@ -121,6 +121,7 @@ def trigger_now(
     request_id: str,
     reason: str,
     now: datetime,
+    evidence_ids: tuple[str, ...] = (),
 ) -> TriggerPlanApplyResult:
     """Apply an auditable immediate wake-up through the current durable plan."""
 
@@ -129,7 +130,13 @@ def trigger_now(
         build_trigger_plan_patch(
             plan=plan,
             submitted_at=now,
-            operations=(TriggerNow(request_id=request_id, reason=reason),),
+            operations=(
+                TriggerNow(
+                    request_id=request_id,
+                    reason=reason,
+                    evidence_ids=tuple(sorted(set(evidence_ids))),
+                ),
+            ),
         ),
         now=now,
         current_manifest_id=manifest_id,

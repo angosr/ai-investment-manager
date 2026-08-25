@@ -193,6 +193,6 @@ class IntelligenceEvent(FrozenModel):
 
     @property
     def trigger_priority(self) -> int:
-        """Quality-adjusted materiality; weak leads remain stored but do not wake AI."""
+        """Attention priority only; epistemic quality is gated in the packet."""
 
-        return int(self.impact * self.source_reliability * 100)
+        return int(self.impact * 100)

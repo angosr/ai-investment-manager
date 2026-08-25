@@ -362,12 +362,14 @@ def test_immediate_trigger_use_case_applies_the_authoritative_plan_gate(
         request_id="manual-1",
         reason="risk review",
         now=now,
+        evidence_ids=("evidence-z", "evidence-a", "evidence-z"),
     )
 
     assert result.plan.revision == 2
     assert len(result.emitted_triggers) == 1
     assert result.emitted_triggers[0].trigger_type == AnalysisTriggerType.AGENT_WAKEUP
     assert result.emitted_triggers[0].review_reason == "risk review"
+    assert result.emitted_triggers[0].evidence_ids == ("evidence-a", "evidence-z")
 
 
 def test_set_trigger_heartbeat_updates_plan_without_emitting_call(
