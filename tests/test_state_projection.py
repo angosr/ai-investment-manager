@@ -955,6 +955,9 @@ def test_direct_high_impact_aggregator_lead_is_visible_but_not_directional(
     assert baseline.status == PacketPreparationStatus.BASELINE_RECORDED
     assert prepared.status == PacketPreparationStatus.READY
     assert prepared.packet is not None
+    assert prepared.packet.deltas == ()
+    assert len(prepared.packet.review_requests) == 1
+    assert prepared.packet.review_requests[0].evidence_ids == (event.evidence_id,)
     assert len(prepared.packet.intelligence_events) == 1
     packet_event = prepared.packet.intelligence_events[0]
     assert packet_event.directly_triggered is True

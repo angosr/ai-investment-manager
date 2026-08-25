@@ -53,6 +53,12 @@ class SqlDecisionPacketAssembler:
         self._evidence = SqlStateEvidenceStore(engine)
         self._builder = DecisionPacketBuilder(policy)
 
+    def intelligence_directional_support_eligible(
+        self,
+        event: IntelligenceEvent,
+    ) -> bool:
+        return self._builder.intelligence_directional_support_eligible(event)
+
     def assemble(
         self,
         *,

@@ -1162,10 +1162,20 @@ class DecisionPacketBuilder:
             derivatives=derivatives,
             previous_context=previous_context,
         )
-        direct_fact_ids = tuple(
-            sorted({fact_id for delta in ordered_deltas for fact_id in delta.fact_revision_ids})
-        )
         visible_by_id = {item.fact.revision_id: item for item in facts}
+        reviewed_evidence_ids = {
+            evidence_id
+            for review in ordered_reviews
+            for evidence_id in review.evidence_ids
+        }
+        direct_fact_ids = tuple(
+            sorted(
+                {
+                    *(fact_id for delta in ordered_deltas for fact_id in delta.fact_revision_ids),
+                    *(item for item in reviewed_evidence_ids if item in visible_by_id),
+                }
+            )
+        )
         missing_fact_ids = tuple(
             fact_id for fact_id in direct_fact_ids if fact_id not in visible_by_id
         )
@@ -1176,7 +1186,18 @@ class DecisionPacketBuilder:
             as_of=state.as_of,
         )
         direct_event_refs = frozenset(
-            event_ref for delta in ordered_deltas for event_ref in delta.intelligence_event_refs
+            {
+                *(
+                    event_ref
+                    for delta in ordered_deltas
+                    for event_ref in delta.intelligence_event_refs
+                ),
+                *(
+                    content_hash(event)
+                    for event in intelligence_events
+                    if event.evidence_id in reviewed_evidence_ids
+                ),
+            }
         )
         selected_events, omitted_events = self._select_intelligence_events(
             events=intelligence_events,
@@ -1469,13 +1490,18 @@ class DecisionPacketBuilder:
                     novelty=event.novelty,
                     prompt_injection_suspected=True,
                     directly_triggered=evidence_ref in direct_event_refs,
-                    directional_support_eligible=self._is_context_reference_eligible(event),
+                    directional_support_eligible=self.intelligence_directional_support_eligible(
+                        event
+                    ),
                 )
             )
             used_characters += character_cost
         return tuple(selected), tuple(sorted(omitted))
 
-    def _is_context_reference_eligible(self, event: IntelligenceEvent) -> bool:
+    def intelligence_directional_support_eligible(
+        self,
+        event: IntelligenceEvent,
+    ) -> bool:
         """Keep weak leads visible to a triggered review without promoting them.
 
         Direct triggering is a latency decision, not an epistemic promotion.  A

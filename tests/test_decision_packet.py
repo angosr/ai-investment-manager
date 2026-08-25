@@ -414,6 +414,7 @@ def test_packet_can_be_driven_by_an_explicit_review_without_fake_delta(
     assert packet.deltas == ()
     assert packet.review_requests == (review,)
     assert packet.trigger_ids == (review.review_id,)
+    assert packet.facts[0].directly_triggered is True
     assert review.reason in canonical_json(packet)
 
 

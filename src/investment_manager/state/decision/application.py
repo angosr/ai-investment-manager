@@ -173,6 +173,29 @@ class DecisionPacketPreparation:
             evidence_ids=intelligence_evidence_ids,
             as_of=as_of,
         )
+        material_triggered_events = tuple(
+            event
+            for event in triggered_events
+            if self._assembler.intelligence_directional_support_eligible(event)
+        )
+        material_event_ids = {event.evidence_id for event in material_triggered_events}
+        weak_triggered_events = tuple(
+            event
+            for event in triggered_events
+            if event.evidence_id not in material_event_ids
+        )
+        effective_reviews = review_requests
+        if weak_triggered_events:
+            attention_review = PacketReviewRequest.create(
+                requested_at=as_of,
+                reason="复核高影响但尚未达到方向证据等级的外部线索",
+                evidence_ids=tuple(event.evidence_id for event in weak_triggered_events),
+            )
+            reviews_by_id = {item.review_id: item for item in review_requests}
+            reviews_by_id[attention_review.review_id] = attention_review
+            effective_reviews = tuple(
+                reviews_by_id[item] for item in sorted(reviews_by_id)
+            )
         # A trigger explains why analysis runs; it is not the whole world state.
         # Rebuild a bounded recent context from the reader for every mandate asset,
         # then let DecisionPacketPolicy rank and cap what reaches the model.  The
@@ -268,7 +291,7 @@ class DecisionPacketPreparation:
             derivatives=derivatives,
             intelligence_events=intelligence_events,
             material_intelligence_event_refs=tuple(
-                sorted(content_hash(item) for item in triggered_events)
+                sorted(content_hash(item) for item in material_triggered_events)
             ),
             intelligence_affected_assets=intelligence_affected_assets,
             market_shock_symbols=market_shock_symbols,
@@ -278,7 +301,7 @@ class DecisionPacketPreparation:
             information_coverage=information_coverage,
         )
 
-        if projection.delta is None and not review_requests:
+        if projection.delta is None and not effective_reviews:
             baseline = not self._has_predecessor(
                 mandate=mandate,
                 as_of=as_of,
@@ -309,7 +332,7 @@ class DecisionPacketPreparation:
                 mandate=mandate,
                 state_id=projection.state.state_id,
                 delta_ids=((delta.delta_id,) if delta is not None else ()),
-                review_requests=review_requests,
+                review_requests=effective_reviews,
                 previous_context=previous_context,
             )
         except ValueError as exc:
@@ -327,7 +350,7 @@ class DecisionPacketPreparation:
             ),
             state_id=projection.state.state_id,
             delta_id=delta.delta_id if delta is not None else None,
-            review_ids=tuple(item.review_id for item in review_requests),
+            review_ids=tuple(item.review_id for item in effective_reviews),
             packet=packet,
         )
 
