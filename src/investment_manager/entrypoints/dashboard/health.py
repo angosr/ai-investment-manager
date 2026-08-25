@@ -85,14 +85,14 @@ def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
             detail += f"：{assessment_reason_plain(status.latest_attempt_reason)}"
     elif latest == "NO_ATTEMPT":
         state = "unknown"
-        detail = "当前行为版本尚无输出尝试"
+        detail = "当前世界认知行为版本尚无分析尝试"
     elif rejected:
         state = "warn"
         detail = f"最近一次有效 · 当前行为过去 24 小时拒绝 {rejected} 次"
     else:
         state = "ok"
         detail = "最近一次输出有效 · 当前行为过去 24 小时无质量拒绝"
-    return _check("ai_output_quality", "AI 输出质量", state, detail)
+    return _check("ai_output_quality", "世界认知 AI", state, detail)
 
 
 def _capital_account_check(

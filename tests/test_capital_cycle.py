@@ -410,6 +410,7 @@ def _candidate_service(
     engine,
     *,
     raw_score: Decimal = Decimal("40"),
+    maximum_allocation_fraction: Decimal = Decimal("0.30"),
     available_delay_seconds: int = 0,
     emit: bool = True,
     target: ForecastTarget | None = None,
@@ -422,7 +423,7 @@ def _candidate_service(
         producer_behavior_id=_TEST_PRODUCER_VERSION,
         outcome_family_id=_TEST_FORECAST_FAMILY,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.30"),
+        maximum_allocation_fraction=maximum_allocation_fraction,
         minimum_entry_net_bps=Decimal("5"),
         minimum_hold_net_bps=Decimal("-5"),
     )
@@ -1104,6 +1105,46 @@ def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
     assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes
+
+
+def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=73)
+    config, service = _candidate_service(
+        config,
+        engine,
+        maximum_allocation_fraction=Decimal("0.10"),
+    )
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+
+    review_at = NOW + timedelta(minutes=5)
+    _put_market(market, config, at=review_at, sequence=74)
+    config, restarted = _candidate_service(
+        config,
+        engine,
+        maximum_allocation_fraction=Decimal("0.10"),
+        emit=False,
+    )
+    batch = _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=review_at)
+
+    reviewed = restarted.review(batch)
+
+    assert not isinstance(reviewed, TradePlanExecutionResult)
+    with engine.connect() as connection:
+        payloads = connection.execute(select(capital_cycle_records.c.payload)).scalars()
+        records = tuple(CapitalCycleRecord.model_validate(item) for item in payloads)
+    record = next(item for item in records if item.cause_id == batch.batch_id)
+    assert record.outcome == CapitalCycleOutcome.TARGET_DECIDED
+    assert record.target_id is not None
+    assert record.execution_authorization_id is None
+    assert "REBALANCE_BELOW_MINIMUM" in record.reason_codes
+    activity = CapitalDashboardReader(engine, config).activity()
+    assert activity[0].outcome == "NO_ORDER"
+    assert activity[0].order_count == 0
 
 
 def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:

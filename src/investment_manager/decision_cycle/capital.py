@@ -728,11 +728,13 @@ class CapitalCycleService:
             target_id = None
             execution_authorization_id = reduction_authorization.authorization_id
         elif target is not None:
+            if (
+                expected_forecast_cycle is not None
+                and target.cycle_id != expected_forecast_cycle
+            ):
+                raise ValueError("Capital Target 与本轮 Forecast cycle 不一致")
             outcome = (
-                CapitalCycleOutcome.RISK_EXIT
-                if expected_forecast_cycle is None
-                or target.cycle_id != expected_forecast_cycle
-                else CapitalCycleOutcome.FORECAST_ALREADY_DECIDED
+                CapitalCycleOutcome.FORECAST_ALREADY_DECIDED
                 if forecast_already_decided
                 else CapitalCycleOutcome.TARGET_DECIDED
             )

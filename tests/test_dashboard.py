@@ -259,6 +259,7 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
     )
 
     assert check["state"] == "warn"
+    assert check["name"] == "世界认知 AI"
     assert check["detail"] == (
         "最近一次模型调用未产生可持久化结果：AI 输出格式不符合契约"
     )
