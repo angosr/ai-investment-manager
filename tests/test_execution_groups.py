@@ -46,6 +46,8 @@ from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
     InstrumentProduct,
+    ValuationQuote,
+    ValuationQuoteQuality,
 )
 from investment_manager.market.perpetual.models import (
     FundingRateType,
@@ -528,6 +530,30 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         approved_sleeves=(_approved_sleeve(plan),),
         quotes=_quotes(plan, as_of=NOW + timedelta(seconds=1)),
     )
+    valuation_quotes = tuple(
+        ValuationQuote(
+            **quote.model_dump(
+                mode="python",
+                exclude={"bid_quantity", "ask_quantity"},
+            ),
+            quality=ValuationQuoteQuality.STALE_MARKET,
+        )
+        for quote in _quotes(plan, as_of=NOW + timedelta(seconds=1))
+    )
+    valuation_only_account = projector.project(
+        cycle_id="projection-valuation-only",
+        as_of=NOW + timedelta(seconds=1),
+        groups=(completed,),
+        observation_history_by_group={
+            group.group_id: observations.history_for_groups(
+                (group.group_id,),
+                as_of=NOW + timedelta(seconds=1),
+            )[group.group_id]
+        },
+        funding_settlements=(),
+        approved_sleeves=(_approved_sleeve(plan),),
+        quotes=valuation_quotes,
+    )
     service_account = ProductAccountProjectionService(
         projector=projector,
         groups=store,
@@ -556,6 +582,7 @@ def test_partial_fill_blocks_same_sleeve_then_time_limit_forces_flat() -> None:
         previous=partial_account,
     )
     assert partial_account.pending_execution_group_ids == (group.group_id,)
+    assert valuation_only_account.equity == partial_account.equity
     assert service_account == partial_account
     assert len(partial_account.positions) == 2
     assert flat_account.pending_execution_group_ids == ()

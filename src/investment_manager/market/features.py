@@ -6,12 +6,23 @@ from decimal import Decimal
 from itertools import pairwise
 
 from investment_manager.kernel.identity import content_hash
-from investment_manager.market.models import FeatureSnapshot, MarketQuote, MarketSnapshot
+from investment_manager.kernel.time import require_utc
+from investment_manager.market.models import (
+    ExecutableQuote,
+    FeatureSnapshot,
+    InstrumentId,
+    InstrumentProduct,
+    MarketQuote,
+    MarketSnapshot,
+    ValuationQuote,
+    ValuationQuoteQuality,
+)
 from investment_manager.market.perpetual.models import (
     DerivativeContextSnapshot,
     FundingSettlement,
     PerpetualMarketState,
     PerpetualQuote,
+    TradingScheduleSnapshot,
 )
 from investment_manager.market.policy import FeaturePolicy
 
@@ -223,3 +234,93 @@ def _spot_flow_summary(
         "spot_taker_buy_volume": buy_volume,
         "spot_taker_sell_volume": sell_volume,
     }
+
+
+def freeze_quote_views(
+    *,
+    instrument: InstrumentId,
+    quote: MarketQuote | PerpetualQuote,
+    as_of: datetime,
+    maximum_live_age_seconds: int,
+    trading_schedule: TradingScheduleSnapshot | None = None,
+) -> tuple[ValuationQuote, ExecutableQuote | None]:
+    """Project one raw quote into valuation and, only when legal, execution views."""
+
+    at = require_utc(as_of)
+    if maximum_live_age_seconds < 1:
+        raise ValueError("报价最大实时年龄必须为正数")
+    if isinstance(quote, MarketQuote):
+        if instrument.product != InstrumentProduct.SPOT or quote.symbol != instrument.symbol:
+            raise ValueError("Spot 原始报价与 Instrument 不一致")
+        market_at = quote.observed_at
+    else:
+        if quote.instrument != instrument:
+            raise ValueError("Perpetual 原始报价与 Instrument 不一致")
+        market_at = quote.exchange_time
+    if quote.observed_at > at or market_at > at:
+        raise ValueError("报价在资本截止时点尚不可见")
+
+    schedule_ref: str | None = None
+    quality = ValuationQuoteQuality.LIVE_MARKET
+    if instrument.product == InstrumentProduct.TRADFI_PERPETUAL:
+        quality, schedule_ref = _tradfi_quote_quality(
+            instrument=instrument,
+            at=at,
+            market_at=market_at,
+            maximum_live_age_seconds=maximum_live_age_seconds,
+            schedule=trading_schedule,
+        )
+    elif trading_schedule is not None:
+        raise ValueError("非 TradFi 报价不得读取交易日历")
+    elif (at - market_at).total_seconds() > maximum_live_age_seconds:
+        quality = ValuationQuoteQuality.STALE_MARKET
+
+    common = {
+        "source_quote_id": quote.quote_id,
+        "instrument": instrument,
+        "as_of": at,
+        "observed_at": market_at,
+        "bid": quote.bid,
+        "ask": quote.ask,
+        "source": quote.source,
+        "quality": quality,
+        "trading_schedule_ref": schedule_ref,
+    }
+    valuation = ValuationQuote(**common)
+    executable = (
+        ExecutableQuote(
+            **common,
+            bid_quantity=quote.bid_quantity,
+            ask_quantity=quote.ask_quantity,
+        )
+        if quality == ValuationQuoteQuality.LIVE_MARKET
+        and quote.bid_quantity > 0
+        and quote.ask_quantity > 0
+        else None
+    )
+    return valuation, executable
+
+
+def _tradfi_quote_quality(
+    *,
+    instrument: InstrumentId,
+    at: datetime,
+    market_at: datetime,
+    maximum_live_age_seconds: int,
+    schedule: TradingScheduleSnapshot | None,
+) -> tuple[ValuationQuoteQuality, str | None]:
+    if schedule is None:
+        return ValuationQuoteQuality.STALE_MARKET, None
+    if schedule.observed_at > at:
+        raise ValueError("交易日历在资本截止时点尚不可见")
+    relevant = tuple(
+        item for item in schedule.sessions if item.market == instrument.tradfi_market
+    )
+    if not relevant or not relevant[0].starts_at <= at < relevant[-1].ends_at:
+        return ValuationQuoteQuality.STALE_MARKET, None
+    session = schedule.session_at(instrument=instrument, at=at)
+    if session is None or not session.session_type.tradable:
+        return ValuationQuoteQuality.CLOSED_MARKET, schedule.schedule_id
+    if (at - market_at).total_seconds() > maximum_live_age_seconds:
+        return ValuationQuoteQuality.STALE_MARKET, schedule.schedule_id
+    return ValuationQuoteQuality.LIVE_MARKET, schedule.schedule_id

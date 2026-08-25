@@ -211,28 +211,62 @@ class MarketQuote(FrozenModel):
         return self
 
 
-class ExecutableQuote(FrozenModel):
-    """Product-qualified bid/ask frozen for one portfolio decision point."""
+class ValuationQuoteQuality(StrEnum):
+    LIVE_MARKET = "LIVE_MARKET"
+    CLOSED_MARKET = "CLOSED_MARKET"
+    STALE_MARKET = "STALE_MARKET"
+
+
+class ValuationQuote(FrozenModel):
+    """Exit-side valuation fact; it grants no order authority."""
 
     source_quote_id: str = Field(min_length=1)
     instrument: InstrumentId
     as_of: datetime
     observed_at: datetime
     bid: PositiveDecimal
-    bid_quantity: Money
     ask: PositiveDecimal
-    ask_quantity: Money
     source: str = Field(min_length=1)
+    quality: ValuationQuoteQuality = Field(
+        default=ValuationQuoteQuality.LIVE_MARKET,
+        exclude_if=lambda value: value == ValuationQuoteQuality.LIVE_MARKET,
+    )
+    trading_schedule_ref: str | None = Field(
+        default=None,
+        min_length=1,
+        exclude_if=lambda value: value is None,
+    )
 
     _utc_as_of = field_validator("as_of")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @model_validator(mode="after")
-    def quote_must_be_visible_and_executable(self):
+    def quote_must_be_visible_and_product_qualified(self):
         if self.observed_at > self.as_of:
-            raise ValueError("ExecutableQuote observed_at 不能晚于 as_of")
+            raise ValueError("ValuationQuote observed_at 不能晚于 as_of")
         if self.ask < self.bid:
-            raise ValueError("ExecutableQuote ask 不能低于 bid")
+            raise ValueError("ValuationQuote ask 不能低于 bid")
+        tradfi = self.instrument.product == InstrumentProduct.TRADFI_PERPETUAL
+        if tradfi and self.quality != ValuationQuoteQuality.STALE_MARKET:
+            if self.trading_schedule_ref is None:
+                raise ValueError("TradFi ValuationQuote 必须引用点时交易日历")
+        elif not tradfi and self.trading_schedule_ref is not None:
+            raise ValueError("非 TradFi ValuationQuote 不得伪造交易日历引用")
+        return self
+
+
+class ExecutableQuote(ValuationQuote):
+    """Live, product-qualified bid/ask frozen for one capital decision."""
+
+    bid_quantity: Money
+    ask_quantity: Money
+
+    @model_validator(mode="after")
+    def quote_must_be_executable(self):
+        if self.quality != ValuationQuoteQuality.LIVE_MARKET:
+            raise ValueError("ExecutableQuote 必须来自开放且新鲜的市场")
+        if self.bid_quantity <= 0 or self.ask_quantity <= 0:
+            raise ValueError("ExecutableQuote 双边可成交数量必须为正数")
         return self
 
 

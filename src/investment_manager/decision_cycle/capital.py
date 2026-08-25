@@ -57,7 +57,12 @@ from investment_manager.forecast.results import Forecast
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.models import ExecutableQuote, InstrumentProduct
+from investment_manager.market.features import freeze_quote_views
+from investment_manager.market.models import (
+    ExecutableQuote,
+    InstrumentProduct,
+    ValuationQuote,
+)
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
@@ -579,18 +584,21 @@ class CapitalCycleService:
             )
 
         self._recover(as_of=decision_at, cycle_id=cycle_id)
-        quotes = self._quotes(as_of=decision_at)
+        valuation_quotes, executable_quotes = self._quote_views(as_of=decision_at)
         account = self._account(
             cycle_id=cycle_id,
             as_of=decision_at,
-            quotes=quotes,
+            quotes=valuation_quotes,
         )
         sleeves = self._decision_sleeves(
             forecasts=generated_forecasts,
             account=account,
             as_of=decision_at,
         )
-        decision_quotes = self._quotes_for_sleeves(sleeves=sleeves, quotes=quotes)
+        decision_quotes = self._quotes_for_sleeves(
+            sleeves=sleeves,
+            quotes=executable_quotes,
+        )
         risk_profiles = tuple(
             self._risk_profile(
                 item.sleeve_id,
@@ -998,8 +1006,12 @@ class CapitalCycleService:
             as_of.isoformat(),
         )
         self._recover(as_of=as_of, cycle_id=cycle_id)
-        quotes = self._quotes(as_of=as_of)
-        account = self._account(cycle_id=cycle_id, as_of=as_of, quotes=quotes)
+        valuation_quotes, executable_quotes = self._quote_views(as_of=as_of)
+        account = self._account(
+            cycle_id=cycle_id,
+            as_of=as_of,
+            quotes=valuation_quotes,
+        )
         if not account.sleeves:
             return PortfolioPipelineResult(
                 cycle_id=cycle_id,
@@ -1028,7 +1040,7 @@ class CapitalCycleService:
             profiles.append(self._risk_profile(position.sleeve_id, source))
         decision_quotes = self._quotes_for_sleeves(
             sleeves=tuple(sleeves),
-            quotes=quotes,
+            quotes=executable_quotes,
         )
         protected = self._decisions.protect(
             cycle_id=cycle_id,
@@ -1091,7 +1103,7 @@ class CapitalCycleService:
         *,
         cycle_id: str,
         as_of: datetime,
-        quotes: tuple[ExecutableQuote, ...],
+        quotes: tuple[ValuationQuote, ...],
     ) -> PortfolioAccountSnapshot:
         portfolio_id = self._policy.decision.portfolio_id
         with self._portfolio.account_projection_lock(portfolio_id=portfolio_id):
@@ -1115,9 +1127,22 @@ class CapitalCycleService:
         self._performance.record(account)
         return account
 
-    def _quotes(self, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
+    def _quote_views(
+        self,
+        *,
+        as_of: datetime,
+    ) -> tuple[tuple[ValuationQuote, ...], tuple[ExecutableQuote, ...]]:
         instruments = tuple(item.instrument for item in self._policy.execution_specs)
-        values = []
+        schedule = (
+            self._market.latest_trading_schedule(as_of=as_of)
+            if any(
+                item.product == InstrumentProduct.TRADFI_PERPETUAL
+                for item in instruments
+            )
+            else None
+        )
+        valuations: list[ValuationQuote] = []
+        executables: list[ExecutableQuote] = []
         for instrument in instruments:
             if instrument.product == InstrumentProduct.SPOT:
                 observed = self._market.latest_spot_quote(
@@ -1125,37 +1150,41 @@ class CapitalCycleService:
                     evaluation_at=as_of,
                     visible_at=as_of,
                 )
-                observed_at = None if observed is None else observed.observed_at
             else:
                 observed = self._market.latest_perpetual_quote(
                     instrument=instrument,
                     evaluation_at=as_of,
                     visible_at=as_of,
                 )
-                observed_at = None if observed is None else observed.exchange_time
-            if observed is None or observed_at is None:
+            if observed is None:
                 raise PointInTimeInputUnavailable(
-                    f"Capital 缺少 {instrument.key} 可成交报价"
+                    f"Capital 缺少 {instrument.key} 估值报价"
                 )
-            values.append(
-                ExecutableQuote(
-                    source_quote_id=observed.quote_id,
-                    instrument=instrument,
-                    as_of=as_of,
-                    observed_at=observed_at,
-                    bid=observed.bid,
-                    bid_quantity=observed.bid_quantity,
-                    ask=observed.ask,
-                    ask_quantity=observed.ask_quantity,
-                    source=observed.source,
-                )
+            valuation, executable = freeze_quote_views(
+                instrument=instrument,
+                quote=observed,
+                as_of=as_of,
+                maximum_live_age_seconds=(
+                    self._policy.risk.maximum_quote_age_seconds
+                ),
+                trading_schedule=(
+                    schedule
+                    if instrument.product == InstrumentProduct.TRADFI_PERPETUAL
+                    else None
+                ),
             )
-        observed_times = tuple(item.observed_at for item in values)
+            valuations.append(valuation)
+            if executable is not None:
+                executables.append(executable)
+        observed_times = tuple(item.observed_at for item in executables)
         if observed_times and (
             max(observed_times) - min(observed_times)
         ).total_seconds() > self._policy.risk.maximum_quote_skew_seconds:
             raise PointInTimeInputUnavailable("Capital 多产品可成交报价时间偏差过大")
-        return tuple(sorted(values, key=lambda item: item.instrument.key))
+        return (
+            tuple(sorted(valuations, key=lambda item: item.instrument.key)),
+            tuple(sorted(executables, key=lambda item: item.instrument.key)),
+        )
 
     @staticmethod
     def _quotes_for_sleeves(
@@ -1168,7 +1197,15 @@ class CapitalCycleService:
             for sleeve in sleeves
             for leg in sleeve.forecast.target.legs
         }
-        return tuple(item for item in quotes if item.instrument.key in required)
+        selected = tuple(
+            item for item in quotes if item.instrument.key in required
+        )
+        missing = required - {item.instrument.key for item in selected}
+        if missing:
+            raise PointInTimeInputUnavailable(
+                "Capital 候选当前不可执行: " + ", ".join(sorted(missing))
+            )
+        return selected
 
 
 def assemble_capital_cycle(

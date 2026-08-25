@@ -22,9 +22,9 @@ from investment_manager.execution.venue.product import ProductOrder
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
-    ExecutableQuote,
     InstrumentId,
     InstrumentProduct,
+    ValuationQuote,
 )
 from investment_manager.market.perpetual.models import FundingSettlement
 from investment_manager.portfolio.models import (
@@ -103,7 +103,7 @@ class ProductAccountProjector:
         ],
         funding_settlements: tuple[FundingSettlement, ...],
         approved_sleeves: tuple[ApprovedSleeve, ...],
-        quotes: tuple[ExecutableQuote, ...],
+        quotes: tuple[ValuationQuote, ...],
         previous: PortfolioAccountSnapshot | None = None,
         reconciled: bool = True,
     ) -> PortfolioAccountSnapshot:
@@ -305,10 +305,10 @@ class ProductAccountProjector:
 
     @staticmethod
     def _quotes(
-        quotes: tuple[ExecutableQuote, ...],
+        quotes: tuple[ValuationQuote, ...],
         *,
         as_of: datetime,
-    ) -> dict[str, ExecutableQuote]:
+    ) -> dict[str, ValuationQuote]:
         keys = tuple(item.instrument.key for item in quotes)
         if tuple(sorted(set(keys))) != keys or any(item.as_of != as_of for item in quotes):
             raise ValueError("账户投影 quotes 必须按 Instrument 唯一排序并冻结在 as_of")
@@ -571,7 +571,7 @@ class ProductAccountProjector:
         cash: Decimal,
         *,
         product_states: Mapping[str, _PositionState],
-        quote_by_instrument: Mapping[str, ExecutableQuote],
+        quote_by_instrument: Mapping[str, ValuationQuote],
     ) -> Decimal:
         equity = cash
         for key, position in product_states.items():
@@ -631,7 +631,7 @@ class ProductAccountProjectionService:
         *,
         cycle_id: str,
         as_of: datetime,
-        quotes: tuple[ExecutableQuote, ...],
+        quotes: tuple[ValuationQuote, ...],
         reconciled: bool = True,
     ) -> PortfolioAccountSnapshot:
         as_of = require_utc(as_of)

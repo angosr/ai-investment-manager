@@ -11,7 +11,10 @@ from sqlalchemy import create_engine
 
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.market.features import build_derivative_context_snapshot
+from investment_manager.market.features import (
+    build_derivative_context_snapshot,
+    freeze_quote_views,
+)
 from investment_manager.market.models import (
     ClosedMarketBar,
     InstrumentId,
@@ -19,6 +22,7 @@ from investment_manager.market.models import (
     MarketQuote,
     MarketTrade,
     TradFiMarket,
+    ValuationQuoteQuality,
 )
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
 from investment_manager.market.perpetual.models import (
@@ -235,6 +239,78 @@ def _funding_settlement(
         rate_type=FundingRateType.REGULAR,
         source="test",
     )
+
+
+def test_quote_views_separate_valuation_from_execution_authority() -> None:
+    spot = InstrumentId.binance_spot(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+    )
+    spot_valuation, spot_executable = freeze_quote_views(
+        instrument=spot,
+        quote=_quote(),
+        as_of=NOW,
+        maximum_live_age_seconds=5,
+    )
+    assert spot_valuation.quality == ValuationQuoteQuality.LIVE_MARKET
+    assert spot_executable is not None
+    assert spot_executable.source_quote_id == spot_valuation.source_quote_id
+
+    tradfi = _tradfi_instrument()
+    schedule = _trading_schedule()
+    closed_schedule = schedule.model_copy(
+        update={
+            "sessions": (
+                schedule.sessions[0].model_copy(
+                    update={"session_type": TradingSessionType.NO_TRADING}
+                ),
+            )
+        }
+    )
+    closed_valuation, closed_executable = freeze_quote_views(
+        instrument=tradfi,
+        quote=_perpetual_quote(instrument=tradfi),
+        as_of=NOW,
+        maximum_live_age_seconds=5,
+        trading_schedule=closed_schedule,
+    )
+    assert closed_valuation.quality == ValuationQuoteQuality.CLOSED_MARKET
+    assert closed_valuation.trading_schedule_ref == schedule.schedule_id
+    assert closed_executable is None
+
+    live_valuation, live_executable = freeze_quote_views(
+        instrument=tradfi,
+        quote=_perpetual_quote(instrument=tradfi),
+        as_of=NOW,
+        maximum_live_age_seconds=5,
+        trading_schedule=schedule,
+    )
+    assert live_valuation.quality == ValuationQuoteQuality.LIVE_MARKET
+    assert live_executable is not None
+    assert live_executable.trading_schedule_ref == schedule.schedule_id
+
+    stale_valuation, stale_executable = freeze_quote_views(
+        instrument=tradfi,
+        quote=_perpetual_quote(instrument=tradfi),
+        as_of=NOW + timedelta(seconds=6),
+        maximum_live_age_seconds=5,
+        trading_schedule=schedule,
+    )
+    assert stale_valuation.quality == ValuationQuoteQuality.STALE_MARKET
+    assert stale_valuation.trading_schedule_ref == schedule.schedule_id
+    assert stale_executable is None
+
+    with pytest.raises(ValueError, match=r"交易日历.*尚不可见"):
+        freeze_quote_views(
+            instrument=tradfi,
+            quote=_perpetual_quote(instrument=tradfi),
+            as_of=NOW,
+            maximum_live_age_seconds=5,
+            trading_schedule=schedule.model_copy(
+                update={"observed_at": NOW + timedelta(seconds=1)}
+            ),
+        )
 
 
 @pytest.mark.parametrize(
