@@ -273,6 +273,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         instrument=instrument,
         cost_semantics_version=config.capital.decision.cost_model_version,
     )
+    assert contract.validity_conditions == ("EXECUTABLE_QUOTES_REMAIN_VALID",)
     assert contract.outcome_start_delay_seconds == 0
     assert contract.permission_evidence_eligible
     assert contract.settlement_rule == ("completion-deadline-to-horizon-executable-spot-return-v2")
