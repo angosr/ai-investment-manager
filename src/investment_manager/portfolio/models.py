@@ -616,8 +616,6 @@ class CapitalCycleRecord(FrozenModel):
             raise ValueError("CapitalCycleRecord identity 不一致")
         if tuple(sorted(set(self.trigger_types))) != self.trigger_types:
             raise ValueError("CapitalCycleRecord trigger_types 必须唯一且排序")
-        if self.trigger_batch_id is not None and self.cause_id != self.trigger_batch_id:
-            raise ValueError("触发批次产生的 CapitalCycleRecord 必须以 batch_id 为 cause")
         if self.evaluated_at < self.triggered_at:
             raise ValueError("CapitalCycleRecord evaluated_at 不能早于触发时间")
         if tuple(sorted(set(self.forecast_ids))) != self.forecast_ids:

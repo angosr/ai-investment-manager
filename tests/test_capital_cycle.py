@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine, func, insert, select, update
+import pytest
+from sqlalchemy import create_engine, delete, func, insert, select, update
 
 from investment_manager.decision_cycle.capital import (
     CapitalForecastSource,
@@ -41,9 +42,12 @@ from investment_manager.forecast.models import (
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
+from investment_manager.forecast.tables import forecast_decision_slots, forecasts
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
 from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.market.tables import market_quotes
 from investment_manager.portfolio.models import (
     CandidateCapitalAuthorization,
     CapitalCycleOutcome,
@@ -106,6 +110,22 @@ def _test_spot_target() -> ForecastTarget:
     )
 
 
+def _test_paxg_target() -> ForecastTarget:
+    return ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=InstrumentId.binance_spot(
+                    symbol="PAXGUSDT",
+                    base_asset="PAXG",
+                    quote_asset="USDT",
+                ),
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+            ),
+        )
+    )
+
+
 @dataclass(frozen=True)
 class _FixedMockForecastProducer:
     store: SqlForecastStore
@@ -115,7 +135,12 @@ class _FixedMockForecastProducer:
     raw_score: Decimal
     available_delay_seconds: int = 0
 
-    def produce(self, *, as_of: datetime) -> BaseForecast:
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> BaseForecast:
         available_at = as_of + timedelta(seconds=self.available_delay_seconds)
         target = self.contract.target
         anchors = tuple(
@@ -138,6 +163,7 @@ class _FixedMockForecastProducer:
             self.contract,
             slot_as_of=as_of,
             cutoff_prices=anchors,
+            cause=cause,
         )
         self.contracts.record_slot(slot, binding=self.binding)
         forecast_id = stable_id("base_forecast", slot.slot_id, self.binding.producer_behavior_id)
@@ -184,9 +210,10 @@ class _FixedMockForecastProducer:
         *,
         as_of: datetime,
         completed_at: datetime,
+        cause: ForecastSlotCause | None = None,
     ) -> BaseForecast:
         del completed_at
-        return self.produce(as_of=as_of)
+        return self.produce(as_of=as_of, cause=cause)
 
     def recover_deadline_missed(self, **kwargs) -> tuple[()]:
         del kwargs
@@ -349,6 +376,7 @@ def _put_market(
     sequence: int,
     spot_bid: str = "99990",
     spot_ask: str = "100000",
+    include_paxg: bool = True,
 ) -> None:
     market.put_quote(
         MarketQuote(
@@ -362,18 +390,19 @@ def _put_market(
             source="test",
         )
     )
-    market.put_quote(
-        MarketQuote(
-            quote_id=f"paxg-capital-quote-{sequence}",
-            symbol="PAXGUSDT",
-            observed_at=at,
-            bid=Decimal("4623.48"),
-            bid_quantity=Decimal("2"),
-            ask=Decimal("4623.49"),
-            ask_quantity=Decimal("2"),
-            source="test",
+    if include_paxg:
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"paxg-capital-quote-{sequence}",
+                symbol="PAXGUSDT",
+                observed_at=at,
+                bid=Decimal("4623.48"),
+                bid_quantity=Decimal("2"),
+                ask=Decimal("4623.49"),
+                ask_quantity=Decimal("2"),
+                source="test",
+            )
         )
-    )
 
 
 
@@ -562,6 +591,102 @@ def test_mixed_forecast_batch_runs_one_combined_producer_call() -> None:
     ]
 
 
+def test_material_cycle_uses_economic_cause_and_recovers_only_missing_receipt() -> None:
+    at = NOW.replace(minute=30)
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=at, sequence=80)
+    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    consumer = CapitalTriggerConsumer(
+        capital=service,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
+        owner_symbol="BTCUSDT",
+    )
+    batch = _runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=at)
+
+    consumer.consume(batch)
+
+    with engine.begin() as connection:
+        record = CapitalCycleRecord.model_validate(
+            connection.execute(select(capital_cycle_records.c.payload)).scalar_one()
+        )
+        slot = ForecastDecisionSlot.model_validate(
+            connection.execute(select(forecast_decision_slots.c.payload)).scalar_one()
+        )
+        assert record.cause_id != batch.batch_id
+        assert record.trigger_batch_id == batch.batch_id
+        assert slot.origins == (ForecastSlotOrigin.MATERIAL_STATE,)
+        durable_counts = (
+            connection.scalar(select(func.count()).select_from(forecasts)),
+            connection.scalar(select(func.count()).select_from(portfolio_targets)),
+            connection.scalar(
+                select(func.count()).select_from(portfolio_account_snapshots)
+            ),
+        )
+        connection.execute(delete(capital_cycle_records))
+
+    consumer.consume(batch)
+
+    with engine.connect() as connection:
+        assert connection.scalar(
+            select(func.count()).select_from(capital_cycle_records)
+        ) == 1
+        assert (
+            connection.scalar(select(func.count()).select_from(forecasts)),
+            connection.scalar(select(func.count()).select_from(portfolio_targets)),
+            connection.scalar(
+                select(func.count()).select_from(portfolio_account_snapshots)
+            ),
+        ) == durable_counts
+    consumer.consume(batch)
+    with engine.connect() as connection:
+        assert connection.scalar(
+            select(func.count()).select_from(capital_cycle_records)
+        ) == 1
+
+
+def test_combined_cycle_preserves_economic_cause_and_batch_provenance() -> None:
+    at = NOW.replace(minute=5)
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=at, sequence=81)
+    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    consumer = CapitalTriggerConsumer(
+        capital=service,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
+        owner_symbol="BTCUSDT",
+    )
+    batch = _runtime_mixed_forecast_batch(at=at)
+
+    consumer.consume(batch)
+
+    with engine.connect() as connection:
+        record = CapitalCycleRecord.model_validate(
+            connection.execute(select(capital_cycle_records.c.payload)).scalar_one()
+        )
+        slot = ForecastDecisionSlot.model_validate(
+            connection.execute(select(forecast_decision_slots.c.payload)).scalar_one()
+        )
+    assert record.cause_id != batch.batch_id
+    assert record.trigger_batch_id == batch.batch_id
+    assert slot.origins == (
+        ForecastSlotOrigin.CADENCE,
+        ForecastSlotOrigin.MATERIAL_STATE,
+    )
+
+
 def test_material_slot_before_cadence_suppresses_second_forecast_call() -> None:
     event_at = NOW.replace(hour=3, minute=50)
     cadence_at = NOW.replace(hour=4, minute=0)
@@ -704,7 +829,7 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
         }
     )
     market = SqlMarketDataStore(engine)
-    _put_market(market, config, at=NOW, sequence=6)
+    _put_market(market, config, at=NOW, sequence=6, include_paxg=False)
 
     result = _assemble_capital_cycle(config, engine).produce(
         as_of=NOW,
@@ -725,6 +850,85 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
     assert CapitalDashboardReader(engine, config).activity() == ()
+
+
+def test_candidate_requires_only_its_own_executable_quote() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=7, include_paxg=False)
+    _config, service = _candidate_service(
+        config,
+        engine,
+        target=_test_paxg_target(),
+    )
+
+    with pytest.raises(
+        PointInTimeInputUnavailable,
+        match="PAXGUSDT 可执行报价",
+    ):
+        service.produce(as_of=NOW)
+
+
+def test_held_product_still_requires_valuation_and_execution_quotes() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=8)
+    _config, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("80"),
+        target=_test_paxg_target(),
+    )
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+    assert opened.account.positions[0].instrument.symbol == "PAXGUSDT"
+    with engine.begin() as connection:
+        connection.execute(delete(market_quotes).where(market_quotes.c.symbol == "PAXGUSDT"))
+    later = NOW + timedelta(minutes=1)
+    _put_market(
+        market,
+        config,
+        at=later,
+        sequence=9,
+        include_paxg=False,
+    )
+
+    with pytest.raises(
+        PointInTimeInputUnavailable,
+        match="PAXGUSDT 估值与可执行报价",
+    ):
+        service.produce(as_of=later)
+
+
+def test_pending_group_requires_quotes_without_a_prior_account_position() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=10)
+    _config, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("80"),
+        target=_test_paxg_target(),
+    )
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+    pending = opened.groups[0].model_copy(update={"terminal": False})
+    with engine.begin() as connection:
+        connection.execute(delete(portfolio_account_snapshots))
+
+    valuation, execution = service._current_quote_requirements(
+        as_of=NOW,
+        recovered_groups=(pending,),
+    )
+
+    assert tuple(item.symbol for item in valuation) == ("PAXGUSDT",)
+    assert tuple(item.symbol for item in execution) == ("PAXGUSDT",)
 
 
 def test_context_forecast_resolves_read_only_evidence_outside_execution_scope(

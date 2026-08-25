@@ -60,6 +60,7 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.market.features import freeze_quote_views
 from investment_manager.market.models import (
     ExecutableQuote,
+    InstrumentId,
     InstrumentProduct,
     ValuationQuote,
 )
@@ -516,7 +517,6 @@ class CapitalCycleService:
         if prior_record is not None:
             if (
                 prior_record.triggered_at != requested_at
-                or prior_record.trigger_batch_id != trigger_batch_id
                 or prior_record.symbol != symbol
                 or prior_record.trigger_types != tuple(sorted(set(trigger_types)))
             ):
@@ -583,8 +583,24 @@ class CapitalCycleService:
                 no_estimates=no_estimates,
             )
 
-        self._recover(as_of=decision_at, cycle_id=cycle_id)
-        valuation_quotes, executable_quotes = self._quote_views(as_of=decision_at)
+        recovered_groups = self._recover(as_of=decision_at, cycle_id=cycle_id)
+        valuation_instruments, execution_instruments = self._current_quote_requirements(
+            as_of=decision_at,
+            recovered_groups=recovered_groups,
+        )
+        execution_instruments = self._merge_instruments(
+            execution_instruments,
+            tuple(
+                leg.instrument
+                for forecast in generated_forecasts
+                for leg in forecast.target.legs
+            ),
+        )
+        valuation_quotes, executable_quotes = self._quote_views(
+            as_of=decision_at,
+            valuation_instruments=valuation_instruments,
+            execution_instruments=execution_instruments,
+        )
         account = self._account(
             cycle_id=cycle_id,
             as_of=decision_at,
@@ -982,7 +998,7 @@ class CapitalCycleService:
             account=account,
         )
 
-    def _recover(self, *, as_of: datetime, cycle_id: str) -> None:
+    def _recover(self, *, as_of: datetime, cycle_id: str) -> tuple[ExecutionGroup, ...]:
         recovered = self._execution.recover_pending(as_of=as_of)
         if recovered:
             logger.info(
@@ -993,6 +1009,7 @@ class CapitalCycleService:
                     "nonterminal_count": sum(not item.terminal for item in recovered),
                 },
             )
+        return recovered
 
     def _observe(
         self,
@@ -1005,8 +1022,16 @@ class CapitalCycleService:
             self._policy.decision.portfolio_id,
             as_of.isoformat(),
         )
-        self._recover(as_of=as_of, cycle_id=cycle_id)
-        valuation_quotes, executable_quotes = self._quote_views(as_of=as_of)
+        recovered_groups = self._recover(as_of=as_of, cycle_id=cycle_id)
+        valuation_instruments, execution_instruments = self._current_quote_requirements(
+            as_of=as_of,
+            recovered_groups=recovered_groups,
+        )
+        valuation_quotes, executable_quotes = self._quote_views(
+            as_of=as_of,
+            valuation_instruments=valuation_instruments,
+            execution_instruments=execution_instruments,
+        )
         account = self._account(
             cycle_id=cycle_id,
             as_of=as_of,
@@ -1131,8 +1156,15 @@ class CapitalCycleService:
         self,
         *,
         as_of: datetime,
+        valuation_instruments: tuple[InstrumentId, ...],
+        execution_instruments: tuple[InstrumentId, ...],
     ) -> tuple[tuple[ValuationQuote, ...], tuple[ExecutableQuote, ...]]:
-        instruments = tuple(item.instrument for item in self._policy.execution_specs)
+        valuation_keys = {item.key for item in valuation_instruments}
+        execution_keys = {item.key for item in execution_instruments}
+        instruments = self._merge_instruments(
+            valuation_instruments,
+            execution_instruments,
+        )
         schedule = (
             self._market.latest_trading_schedule(as_of=as_of)
             if any(
@@ -1157,8 +1189,16 @@ class CapitalCycleService:
                     visible_at=as_of,
                 )
             if observed is None:
+                requirement = (
+                    "估值与可执行"
+                    if instrument.key in valuation_keys
+                    and instrument.key in execution_keys
+                    else "估值"
+                    if instrument.key in valuation_keys
+                    else "可执行"
+                )
                 raise PointInTimeInputUnavailable(
-                    f"Capital 缺少 {instrument.key} 估值报价"
+                    f"Capital 缺少 {instrument.key} {requirement}报价"
                 )
             valuation, executable = freeze_quote_views(
                 instrument=instrument,
@@ -1173,8 +1213,9 @@ class CapitalCycleService:
                     else None
                 ),
             )
-            valuations.append(valuation)
-            if executable is not None:
+            if instrument.key in valuation_keys:
+                valuations.append(valuation)
+            if instrument.key in execution_keys and executable is not None:
                 executables.append(executable)
         observed_times = tuple(item.observed_at for item in executables)
         if observed_times and (
@@ -1185,6 +1226,47 @@ class CapitalCycleService:
             tuple(sorted(valuations, key=lambda item: item.instrument.key)),
             tuple(sorted(executables, key=lambda item: item.instrument.key)),
         )
+
+    def _current_quote_requirements(
+        self,
+        *,
+        as_of: datetime,
+        recovered_groups: tuple[ExecutionGroup, ...],
+    ) -> tuple[tuple[InstrumentId, ...], tuple[InstrumentId, ...]]:
+        account = self._portfolio.latest_account(
+            portfolio_id=self._policy.decision.portfolio_id,
+            as_of=as_of,
+        )
+        valuation = tuple(
+            item.instrument for item in (() if account is None else account.positions)
+        )
+        execution = tuple(
+            leg.instrument
+            for sleeve in (() if account is None else account.sleeves)
+            for leg in sleeve.target.legs
+        )
+        recovered_instruments = tuple(
+            leg.instrument
+            for group in recovered_groups
+            for leg in (*group.target_legs, *group.compensation_legs)
+        )
+        return (
+            self._merge_instruments(valuation, recovered_instruments),
+            self._merge_instruments(execution, recovered_instruments),
+        )
+
+    @staticmethod
+    def _merge_instruments(
+        *groups: tuple[InstrumentId, ...],
+    ) -> tuple[InstrumentId, ...]:
+        by_key: dict[str, InstrumentId] = {}
+        for group in groups:
+            for item in group:
+                existing = by_key.get(item.key)
+                if existing is not None and existing != item:
+                    raise ValueError("相同 Instrument key 出现冲突的产品定义")
+                by_key[item.key] = item
+        return tuple(by_key[key] for key in sorted(by_key))
 
     @staticmethod
     def _quotes_for_sleeves(
