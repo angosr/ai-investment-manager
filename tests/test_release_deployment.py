@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from pydantic import ValidationError
 from investment_manager.entrypoints.cli import release_commands
 from investment_manager.entrypoints.cli.release_commands import (
     _initialize_assembly_database,
+    _recover_ready_failure,
     _required_release_artifacts,
     _start_candidate_or_rollback,
+    _wait_for_service_exit,
 )
 from investment_manager.governance.release.deployment import (
     SERVICE_ORDER,
@@ -262,3 +265,99 @@ def test_candidate_failure_without_a_previous_release_fails_closed(
             rollback_unit=None,
             rollback_fallback=None,
         )
+
+
+class _ReadyGroupStub:
+    def __init__(self, unit: ReleaseRuntimeUnit) -> None:
+        self.unit = unit
+        self.stopped = False
+
+    def state(self, *, status, rollback_unit=None, ready_at=None, failure_reason=None):
+        return ReleaseRuntimeState(
+            unit=self.unit,
+            rollback_unit=rollback_unit,
+            supervisor_pid=os.getpid(),
+            status=status,
+            started_at=datetime.now(UTC),
+            ready_at=ready_at,
+            failure_reason=failure_reason,
+        )
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.mark.parametrize("service", SERVICE_ORDER)
+def test_ready_service_exit_stops_group_and_recovers_previous_unit_once(
+    tmp_path: Path,
+    monkeypatch,
+    service: RuntimeService,
+) -> None:
+    current = _unit(tmp_path / "current", "release-current")
+    rollback = _unit(tmp_path / "rollback", "release-rollback")
+    fallback = _unit(tmp_path / "fallback", "release-fallback")
+    group = _ReadyGroupStub(current)
+    recovered = object()
+    calls = []
+
+    def start(**kwargs):
+        calls.append(kwargs)
+        return recovered
+
+    monkeypatch.setattr(release_commands, "_start_until_ready", start)
+    monkeypatch.setattr(release_commands, "load_config", lambda _path: object())
+    monkeypatch.setattr(release_commands, "load_release_manifest", lambda _path: object())
+    state_path = tmp_path / "active-release.json"
+
+    result, next_rollback = _recover_ready_failure(
+        group=group,
+        exited={service: 23},
+        rollback_unit=rollback,
+        rollback_fallback=fallback,
+        database_url="postgresql://unused",
+        runtime_directory=tmp_path,
+        state_path=state_path,
+        timeout_seconds=30,
+    )
+
+    assert result is recovered
+    assert next_rollback == fallback
+    assert group.stopped
+    failed_state = load_runtime_state(state_path)
+    assert failed_state is not None
+    assert failed_state.status == RuntimeStateStatus.FAILED
+    assert failed_state.failure_reason == f"SERVICE_EXITED:{service.value}=23"
+    assert calls[0]["unit"] == rollback
+    assert calls[0]["rollback_unit"] == fallback
+
+
+def test_ready_service_exit_without_rollback_fails_closed_after_stopping_group(
+    tmp_path: Path,
+) -> None:
+    current = _unit(tmp_path / "current", "release-current")
+    group = _ReadyGroupStub(current)
+
+    with pytest.raises(RuntimeError, match="没有可恢复版本"):
+        _recover_ready_failure(
+            group=group,
+            exited={RuntimeService.TRIGGER: 9},
+            rollback_unit=None,
+            rollback_fallback=None,
+            database_url="postgresql://unused",
+            runtime_directory=tmp_path,
+            state_path=tmp_path / "active-release.json",
+            timeout_seconds=30,
+        )
+
+    assert group.stopped
+
+
+def test_planned_stop_never_polls_children_or_triggers_recovery() -> None:
+    stop_requested = threading.Event()
+    stop_requested.set()
+
+    class Group:
+        def exited(self):
+            raise AssertionError("计划停止不得检查子进程异常")
+
+    assert _wait_for_service_exit(Group(), stop_requested=stop_requested) is None

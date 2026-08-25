@@ -174,10 +174,13 @@ def operate_release(
         f"http://{group.unit.dashboard_host}:{group.unit.dashboard_port}"
     )
     failed = False
+    recovery_attempted = False
     try:
-        while not stop_requested.wait(1.0):
-            exited = group.exited()
-            if exited:
+        while True:
+            exited = _wait_for_service_exit(group, stop_requested=stop_requested)
+            if exited is None:
+                break
+            if recovery_attempted:
                 reason = ", ".join(
                     f"{service.value}={code}" for service, code in exited.items()
                 )
@@ -190,7 +193,22 @@ def operate_release(
                     ),
                 )
                 failed = True
-                raise RuntimeError(f"Release 服务异常退出：{reason}")
+                raise RuntimeError(f"恢复后的 Release 服务再次异常退出：{reason}")
+            try:
+                group, active_rollback_unit = _recover_ready_failure(
+                    group=group,
+                    exited=exited,
+                    rollback_unit=active_rollback_unit,
+                    rollback_fallback=rollback_fallback,
+                    database_url=database_url,
+                    runtime_directory=runtime_root,
+                    state_path=state_path,
+                    timeout_seconds=readiness_timeout_seconds,
+                )
+            except Exception:
+                failed = True
+                raise
+            recovery_attempted = True
     finally:
         if not failed:
             save_runtime_state(
@@ -202,6 +220,67 @@ def operate_release(
             )
         group.stop()
         writer_lease.release()
+
+
+def _wait_for_service_exit(
+    group: ManagedProcessGroup,
+    *,
+    stop_requested: threading.Event,
+) -> dict[RuntimeService, int] | None:
+    while not stop_requested.wait(1.0):
+        exited = group.exited()
+        if exited:
+            return exited
+    return None
+
+
+def _recover_ready_failure(
+    *,
+    group: ManagedProcessGroup,
+    exited: dict[RuntimeService, int],
+    rollback_unit: ReleaseRuntimeUnit | None,
+    rollback_fallback: ReleaseRuntimeUnit | None,
+    database_url: str,
+    runtime_directory: Path,
+    state_path: Path,
+    timeout_seconds: int,
+) -> tuple[ManagedProcessGroup, ReleaseRuntimeUnit | None]:
+    reason = ", ".join(
+        f"{service.value}={code}" for service, code in exited.items()
+    )
+    save_runtime_state(
+        state_path,
+        group.state(
+            status=RuntimeStateStatus.FAILED,
+            rollback_unit=rollback_unit,
+            failure_reason=f"SERVICE_EXITED:{reason}",
+        ),
+    )
+    group.stop()
+    if rollback_unit is None:
+        raise RuntimeError(f"Release 服务异常退出且没有可恢复版本：{reason}")
+    next_rollback = (
+        rollback_fallback
+        if rollback_fallback is not None
+        and rollback_fallback.manifest_id != rollback_unit.manifest_id
+        else None
+    )
+    typer.echo(
+        f"Release 服务异常退出：{reason}；恢复 {rollback_unit.manifest_id}"
+    )
+    rollback_config = load_config(rollback_unit.config_path)
+    rollback_manifest = load_release_manifest(rollback_unit.manifest_path)
+    recovered = _start_until_ready(
+        unit=rollback_unit,
+        config=rollback_config,
+        manifest=rollback_manifest,
+        database_url=database_url,
+        runtime_directory=runtime_directory,
+        state_path=state_path,
+        timeout_seconds=timeout_seconds,
+        rollback_unit=next_rollback,
+    )
+    return recovered, next_rollback
 
 
 def _start_candidate_or_rollback(

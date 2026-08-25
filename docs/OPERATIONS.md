@@ -44,7 +44,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
   --release-manifest '<release-catalog>/release-manifest.yaml'
 ```
 
-入口自身必须从候选 checkout 导入代码，否则拒绝运行。它在旧 Release 仍 ready 时用临时事实库完成六个真实服务图装配，在生产库只读取 Schema、账户与切换安全事实；随后停止旧 supervisor，持有单写者锁，先启动五个核心服务。只有候选 PID 已成为 Temporal poller、TriggerPlan 已绑定候选 Manifest、启动后出现新 Market/Information 观测、账户可恢复且没有 pending execution，才最后启动 Dashboard。任一条件超时或进程退出都会停止整个候选并恢复状态文件中上一完整 Release。`.runtime/managed-release/active-release.json` 只保存脱敏运行参数、PID 和状态；日志按 Manifest 分目录保存，不保存数据库 URL 或凭证。
+入口自身必须从候选 checkout 导入代码，否则拒绝运行。它在旧 Release 仍 ready 时用临时事实库完成六个真实服务图装配，在生产库只读取 Schema、账户与切换安全事实；随后停止旧 supervisor，持有单写者锁，先启动五个核心服务。只有候选 PID 已成为 Temporal poller、TriggerPlan 已绑定候选 Manifest、启动后出现新 Market/Information 观测、账户可恢复且没有 pending execution，才最后启动 Dashboard。启动或 warming 失败会停止整个候选并恢复上一完整 Release；进入 READY 后任一子进程异常退出，也必须先停止当前完整进程组，再对上一兼容 Release 做至多一次有界恢复并重新通过同一 readiness。恢复版本再次退出或恢复失败时保持 `FAILED` 并停止全部进程，不无限重启；SIGTERM/SIGINT 的计划停止只写 `STOPPING`，不得误触发回滚。`.runtime/managed-release/active-release.json` 只保存脱敏运行参数、PID 和状态；日志按 Manifest 分目录保存，不保存数据库 URL 或凭证。
 
 第一次从历史手工进程迁入该入口时，先运行同样的冻结审计，再完整停止未受管的旧进程组，然后启动入口；此后禁止重新使用手工后台进程。数据库迁移不由发布入口猜测执行：候选要求数据库已经位于唯一 Alembic head；需要不兼容迁移时必须先准备向前兼容的恢复 Release 和备份，不能依赖自动 downgrade。
 
