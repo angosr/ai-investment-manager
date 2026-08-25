@@ -35,7 +35,10 @@ from investment_manager.scheduling.workflows import (
     TriggerCoordinatorWorkflow,
     coordinator_workflow_id,
 )
-from investment_manager.state.decision.application import DecisionPacketPreparationError
+from investment_manager.state.decision.application import (
+    DecisionPacketPreparationError,
+    PermanentDecisionPacketPreparationError,
+)
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=UTC)
 
@@ -427,6 +430,16 @@ def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> No
     assert activity_handler.build_analysis_dispatches(batch.model_dump(mode="json")) == {
         "retry_frozen_batch": True
     }
+
+    class PermanentlyFailingBuilder:
+        def build(self, _batch):
+            raise PermanentDecisionPacketPreparationError("packet exceeds capacity")
+
+    permanent = TriggerCoordinatorActivities(builder=PermanentlyFailingBuilder())
+    with pytest.raises(ApplicationError) as permanent_error:
+        permanent.build_analysis_dispatches(batch.model_dump(mode="json"))
+    assert permanent_error.value.type == "PermanentDomainError"
+    assert permanent_error.value.non_retryable is True
 
     class DeferredBuilder:
         def build(self, _batch):

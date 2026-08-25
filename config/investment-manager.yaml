@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v38
+  version: portfolio-state-v39
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v15
@@ -100,7 +100,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v42
+    version: decision-packet-policy-v43
     schema_version: decision-packet-v18
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -117,7 +117,7 @@ decision_state:
     minimum_background_intelligence_impact: "0.80"
     minimum_background_source_reliability: "0.70"
     # AI 投影的上限；精简后的通用分析契约约 2K，完整提示仍须低于 runtime 的 16K 硬上限。
-    maximum_packet_characters: 12500
+    maximum_packet_characters: 12750
 
 strategy:
   strategy_id: price-trend
@@ -136,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v44
+  version: total-portfolio-capital-v45
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -248,10 +248,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v18
+    version: btc-context-forecast-v19
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "72c603c23fc4dcbac3a918cf2e000b2da9e0cbf134c5752a77252be9e475ac8d"
+    producer_behavior_id: "59947f09201bd22b50371e2b566ed6d0db6fbc5a6bb7ce5b6dfd4c93916bfdd5"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -341,7 +341,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v20
+  version: outcome-window-v21
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -349,11 +349,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v14
+    version: world-model-ablation-forward-v15
     enabled: false
-    plan_id: world-model-ablation-forward-v14
-    # 当前非完整观察边界进入模型输入；只接收本版激活后的新槽。
-    activated_at: 2026-08-25T22:15:00Z
+    plan_id: world-model-ablation-forward-v15
+    # 冻结输入容量合同已修复；只接收本版激活后的新槽。
+    activated_at: 2026-08-25T22:50:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -594,7 +594,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v43
+  version: context-assessment-v44
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

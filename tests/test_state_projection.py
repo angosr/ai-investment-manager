@@ -24,9 +24,11 @@ from investment_manager.state.decision.application import (
     DecisionPacketPreparation,
     DecisionPacketPreparationError,
     PacketPreparationStatus,
+    PermanentDecisionPacketPreparationError,
 )
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
+    DecisionPacketCapacityError,
     MandateAsset,
     PacketReviewRequest,
 )
@@ -579,6 +581,20 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
 
     with pytest.raises(DecisionPacketPreparationError):
         failing.prepare(
+            analysis_id="recovery-revised",
+            as_of=revised_at,
+            mandate=mandate,
+        )
+
+    class CapacityFailingAssembler:
+        def assemble(self, **_kwargs):
+            raise DecisionPacketCapacityError("frozen packet too large")
+
+    with pytest.raises(PermanentDecisionPacketPreparationError):
+        DecisionPacketPreparation(
+            assembler=CapacityFailingAssembler(),
+            **common,
+        ).prepare(
             analysis_id="recovery-revised",
             as_of=revised_at,
             mandate=mandate,

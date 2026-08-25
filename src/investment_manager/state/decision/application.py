@@ -23,6 +23,7 @@ from investment_manager.market.repository import MarketDataStore
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacket,
+    DecisionPacketCapacityError,
     PacketPreviousContext,
     PacketReviewRequest,
 )
@@ -40,6 +41,10 @@ class PacketPreparationStatus(StrEnum):
 
 class DecisionPacketPreparationError(ValueError):
     """State transition exists, but its immutable Packet could not be assembled."""
+
+
+class PermanentDecisionPacketPreparationError(DecisionPacketPreparationError):
+    """The frozen input cannot become valid through a point-in-time retry."""
 
 
 class DecisionPacketPreparationResult(FrozenModel):
@@ -335,6 +340,10 @@ class DecisionPacketPreparation:
                 review_requests=effective_reviews,
                 previous_context=previous_context,
             )
+        except DecisionPacketCapacityError as exc:
+            raise PermanentDecisionPacketPreparationError(
+                "冻结分析输入超过 DecisionPacket 容量合同"
+            ) from exc
         except ValueError as exc:
             # Projection persists State/Delta before Packet assembly. Callers must
             # retry this exact point-in-time input instead of advancing as_of.

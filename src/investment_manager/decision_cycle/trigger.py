@@ -38,6 +38,7 @@ from investment_manager.state.decision.application import (
     DecisionPacketPreparation,
     DecisionPacketPreparationError,
     PacketPreparationStatus,
+    PermanentDecisionPacketPreparationError,
 )
 from investment_manager.state.decision.packet import (
     PREVIOUS_CONTEXT_INVALIDATION_CHARACTERS,
@@ -406,6 +407,12 @@ class TriggerCoordinatorActivities:
                 "deferred_until": exc.retry_at.isoformat(),
                 "retry_frozen_batch": True,
             }
+        except PermanentDecisionPacketPreparationError as exc:
+            raise ApplicationError(
+                str(exc),
+                type="PermanentDomainError",
+                non_retryable=True,
+            ) from exc
         except DecisionPacketPreparationError:
             # State/Delta are already durable.  Advancing batch.as_of would make
             # that delta background state and suppress the assessment permanently.
