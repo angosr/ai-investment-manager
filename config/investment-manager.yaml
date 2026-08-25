@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v32
+  version: total-portfolio-capital-v33
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -153,12 +153,15 @@ capital:
       - INFLATION_SENSITIVE
       - NOMINAL_RATES
   investable_universe:
-    version: binance-shadow-investable-v1
+    version: binance-shadow-investable-v2
     mandate_version: provisional-total-portfolio-real-growth-v1
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
         economic_exposure: CRYPTO_NETWORK
         reference_eligible: false
+      - instrument_key: BINANCE:SPOT:PAXGUSDT
+        economic_exposure: INFLATION_SENSITIVE
+        reference_eligible: true
   # 当前 Venue 尚无通过 Mandate 风险匹配验证的低成本基准，故拒绝用 BTC 补位。
   reference_policy: null
   decision:
@@ -172,8 +175,8 @@ capital:
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
-    version: spot-portfolio-risk-v4
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT]
+    version: multi-spot-portfolio-risk-v5
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
@@ -190,8 +193,8 @@ capital:
     reduction_authorization_seconds: 300
     kill_switch: false
   planner:
-    version: spot-trade-planner-v2
-    managed_instruments: [BINANCE:SPOT:BTCUSDT]
+    version: multi-spot-trade-planner-v3
+    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT]
   execution_specs:
     - instrument:
         venue: BINANCE
@@ -202,6 +205,17 @@ capital:
         settlement_asset: USDT
         contract_multiplier: "1"
       quantity_step: "0.00001"
+      minimum_order_notional: "5"
+      fee_bps: "12.5"
+    - instrument:
+        venue: BINANCE
+        product: SPOT
+        symbol: PAXGUSDT
+        base_asset: PAXG
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.0001"
       minimum_order_notional: "5"
       fee_bps: "12.5"
   sleeve_risk:
@@ -369,8 +383,8 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v10
-  symbols: [BTCUSDT, ETHUSDT]
+  version: binance-public-shadow-v11
+  symbols: [BTCUSDT, ETHUSDT, PAXGUSDT]
   interval: 5m
   bar_window: 64
   rest_base_url: https://api.binance.com
@@ -384,6 +398,14 @@ market_data:
   trade_persist_interval_ms: 1000
   maximum_cross_market_quote_skew_seconds: 15
   perpetual_instruments:
+    - venue: BINANCE
+      product: TRADFI_PERPETUAL
+      symbol: SPYUSDT
+      base_asset: SPY
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+      tradfi_market: EQUITY
     - venue: BINANCE
       product: USD_M_PERPETUAL
       symbol: BTCUSDT

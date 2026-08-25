@@ -93,10 +93,10 @@ class ExternalTriggerReplaySpec(FrozenModel):
     ) -> ExternalTriggerReplaySpec:
         by_symbol = {item.symbol: item for item in plans}
         order = admission_order or tuple(
-            symbol for symbol in config.market_data.symbols if symbol in by_symbol
+            symbol for symbol in config.analysis_symbols if symbol in by_symbol
         )
         if set(order) != set(by_symbol):
-            raise ValueError("冻结计划必须属于 MarketDataPolicy 的品种范围")
+            raise ValueError("冻结计划必须属于当前分析 Mandate 的品种范围")
         return cls(
             plans=tuple(by_symbol[symbol] for symbol in order),
             trigger_policy_version=config.trigger.version,

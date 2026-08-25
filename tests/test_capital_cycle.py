@@ -362,6 +362,18 @@ def _put_market(
             source="test",
         )
     )
+    market.put_quote(
+        MarketQuote(
+            quote_id=f"paxg-capital-quote-{sequence}",
+            symbol="PAXGUSDT",
+            observed_at=at,
+            bid=Decimal("4623.48"),
+            bid_quantity=Decimal("2"),
+            ask=Decimal("4623.49"),
+            ask_quantity=Decimal("2"),
+            source="test",
+        )
+    )
 
 
 
@@ -875,8 +887,12 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v1",
-        "covered_exposures": ["CASH", "CRYPTO_NETWORK"],
+            "universe_version": "binance-shadow-investable-v2",
+            "covered_exposures": [
+                "CASH",
+                "CRYPTO_NETWORK",
+                "INFLATION_SENSITIVE",
+            ],
         "reference_policy_version": None,
     }
     assert dto["account"]["equity"] == "9997.9750"

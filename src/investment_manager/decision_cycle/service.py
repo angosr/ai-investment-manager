@@ -59,7 +59,7 @@ def run_trigger_service(
         )
         terminated = await terminate_inactive_trigger_coordinators(
             client=client,
-            active_symbols=config.market_data.symbols,
+            active_symbols=config.analysis_symbols,
             active_pipeline_id=config.pipeline.version,
         )
         if terminated and on_superseded is not None:
@@ -161,7 +161,7 @@ def run_trigger_service(
         now = datetime.now(UTC)
         ensure_trigger_plans(
             repository=repository,
-            symbols=config.market_data.symbols,
+            symbols=config.analysis_symbols,
             pipeline_id=config.pipeline.version,
             manifest_id=manifest.manifest_id,
             heartbeat_seconds=config.trigger.heartbeat_minutes * 60,

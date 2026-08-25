@@ -220,7 +220,7 @@ class GovernanceSnapshotAssembler:
                     )
                     .where(
                         analysis_trigger_batches.c.pipeline_id == self._config.pipeline.version,
-                        analysis_trigger_batches.c.symbol.in_(self._config.market_data.symbols),
+                        analysis_trigger_batches.c.symbol.in_(self._config.analysis_symbols),
                         analysis_trigger_batches.c.analysis_submitted_at >= cutoff,
                         analysis_trigger_batches.c.analysis_submitted_at <= as_of,
                     )

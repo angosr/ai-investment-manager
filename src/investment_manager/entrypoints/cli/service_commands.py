@@ -161,6 +161,7 @@ def market_stream(
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
         sink=triggers,
         analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
+        trigger_symbols=loaded.analysis_symbols,
     )
     coverage = SqlInformationCoverageStore(engine)
 
@@ -241,8 +242,8 @@ def trigger_now(
     loaded, manifest = load_runtime_release(config, release_manifest)
     if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
         raise ValueError("trigger-now 只允许 SHADOW 或 TESTNET")
-    if symbol not in loaded.market_data.symbols:
-        raise ValueError("symbol 不在当前行情白名单")
+    if symbol not in loaded.analysis_symbols:
+        raise ValueError("symbol 不在当前分析 Mandate")
     result = apply_trigger_now(
         repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,
@@ -284,8 +285,8 @@ def set_trigger_heartbeat(
     loaded, manifest = load_runtime_release(config, release_manifest)
     if loaded.deployment.stage not in {DeploymentStage.SHADOW, DeploymentStage.TESTNET}:
         raise ValueError("set-trigger-heartbeat 只允许 SHADOW 或 TESTNET")
-    if symbol not in loaded.market_data.symbols:
-        raise ValueError("symbol 不在当前行情白名单")
+    if symbol not in loaded.analysis_symbols:
+        raise ValueError("symbol 不在当前分析 Mandate")
     result = apply_trigger_heartbeat(
         repository=SqlTriggerRepository(runtime_engine(database_url), loaded.trigger),
         symbol=symbol,
@@ -440,7 +441,7 @@ def information_collector(
         tuple(sources),
         EventNormalizer(
             version=policy.normalizer_version,
-            universe=loaded.market_data.symbols,
+            universe=loaded.analysis_symbols,
             quote_asset=loaded.binance_testnet.quote_asset,
         ),
         SqlEventStore(

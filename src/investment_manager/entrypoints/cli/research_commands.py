@@ -897,10 +897,10 @@ def replay_event_triggers_command(
     )
     if parsed_admission_order is not None and (
         len(parsed_admission_order) != len(set(parsed_admission_order))
-        or set(parsed_admission_order) != set(loaded.market_data.symbols)
+        or set(parsed_admission_order) != set(loaded.analysis_symbols)
     ):
         raise typer.BadParameter(
-            "admission-order 必须无重复且完整覆盖 MarketDataPolicy 品种",
+            "admission-order 必须无重复且完整覆盖当前分析 Mandate",
             param_hint="admission-order",
         )
     try:
@@ -909,7 +909,7 @@ def replay_event_triggers_command(
                 symbol=symbol,
                 pipeline_id=loaded.pipeline.version,
             )
-            for symbol in loaded.market_data.symbols
+            for symbol in loaded.analysis_symbols
         )
     except KeyError as error:
         raise typer.BadParameter(
@@ -923,7 +923,7 @@ def replay_event_triggers_command(
             .limit(1)
         ).scalar_one_or_none()
         initial_scope_items = []
-        for symbol in loaded.market_data.symbols:
+        for symbol in loaded.analysis_symbols:
             completed = connection.execute(
                 select(analysis_cycles.c.created_at)
                 .join(

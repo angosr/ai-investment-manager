@@ -770,7 +770,7 @@ class DashboardReader:
 
         pipeline = self._config.pipeline.version
         recent_start = now - timedelta(hours=1)
-        scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.market_data.symbols)
+        scopes = tuple(f"{symbol}:{pipeline}" for symbol in self._config.analysis_symbols)
         assessment_mode = self._config.assessment.enabled
         maximum_horizon_minutes = (
             max(
@@ -897,7 +897,7 @@ class DashboardReader:
 
             plan_by_symbol = {symbol: payload for symbol, _, payload in plan_rows}
             scope_statuses: list[AnalysisScopeRuntimeStatus] = []
-            for symbol in self._config.market_data.symbols:
+            for symbol in self._config.analysis_symbols:
                 if assessment_mode:
                     completed = latest_assessment_completed
                 else:
@@ -949,7 +949,7 @@ class DashboardReader:
                     )
                 )
 
-        expected_symbols = set(self._config.market_data.symbols)
+        expected_symbols = set(self._config.analysis_symbols)
         actual_symbols = {symbol for symbol, _, _ in plan_rows}
         if not plan_rows or manifest_payload is None:
             release_aligned = None

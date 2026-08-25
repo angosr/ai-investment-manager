@@ -71,6 +71,7 @@ class MarketShockDetector:
         trigger_expiry_seconds: int,
         sink: TriggerSink,
         analysis_owner_symbol: str | None = None,
+        trigger_symbols: tuple[str, ...] | None = None,
     ) -> None:
         if relative_move_threshold <= 0:
             raise ValueError("市场冲击阈值必须为正数")
@@ -82,9 +83,14 @@ class MarketShockDetector:
         self._trigger_expiry_seconds = trigger_expiry_seconds
         self._sink = sink
         self._analysis_owner_symbol = analysis_owner_symbol
+        if trigger_symbols is not None and len(set(trigger_symbols)) != len(trigger_symbols):
+            raise ValueError("市场冲击触发品种必须唯一")
+        self._trigger_symbols = None if trigger_symbols is None else frozenset(trigger_symbols)
         self._windows: dict[str, _MarketShockWindow] = {}
 
     def observe(self, event: MarketEvent) -> bool:
+        if self._trigger_symbols is not None and event.symbol not in self._trigger_symbols:
+            return False
         if isinstance(event, MarketQuote):
             return False
         if isinstance(event, ClosedMarketBar):

@@ -77,6 +77,12 @@ class AppConfig(StrictConfig):
     binance_testnet: BinanceTestnetPolicy
     deployment: DeploymentPolicy
 
+    @property
+    def analysis_symbols(self) -> tuple[str, ...]:
+        """Symbols owned by the active decision cohort, derived from its mandate."""
+
+        return tuple(item.market_symbol for item in self.assessment.mandate.assets)
+
     @model_validator(mode="after")
     def cross_domain_invariants_hold(self):
         if self.decision_state.analysis_scope != self.assessment.mandate.analysis_scope:
@@ -84,8 +90,8 @@ class AppConfig(StrictConfig):
         mandate_symbols = tuple(
             item.market_symbol for item in self.assessment.mandate.assets
         )
-        if tuple(sorted(mandate_symbols)) != tuple(sorted(self.market_data.symbols)):
-            raise ValueError("Assessment mandate 必须完整覆盖且排序匹配行情 universe")
+        if not set(mandate_symbols).issubset(self.market_data.symbols):
+            raise ValueError("Assessment mandate 必须属于 MarketData 观测域")
         perpetual_symbols = tuple(
             item.symbol for item in self.market_data.perpetual_instruments
         )
@@ -173,8 +179,8 @@ class AppConfig(StrictConfig):
             or not self.codex_runtime.enabled
         ):
             raise ValueError("WorldModel 成对评估必须绑定已启用的 Context Forecast 与 Codex")
-        if not set(self.market_data.symbols).issubset(self.risk.symbol_allowlist):
-            raise ValueError("行情 symbols 必须是风控允许品种的子集")
+        if not set(self.analysis_symbols).issubset(self.risk.symbol_allowlist):
+            raise ValueError("分析 symbols 必须是风控允许品种的子集")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前实验候选资本权限只允许 SHADOW")

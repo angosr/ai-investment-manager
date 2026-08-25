@@ -872,6 +872,37 @@ def test_market_shock_routes_to_portfolio_owner_without_losing_subject(app_confi
     assert sink.triggers[0].affected_symbols == ("ETHUSDT",)
 
 
+def test_market_shock_does_not_route_observation_only_symbols(app_config) -> None:
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.triggers = []
+
+        def record_trigger(self, trigger):
+            self.triggers.append(trigger)
+            return True
+
+    sink = RecordingSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.02"),
+        window_seconds=300,
+        trigger_expiry_seconds=900,
+        sink=sink,
+        analysis_owner_symbol="BTCUSDT",
+        trigger_symbols=("BTCUSDT", "ETHUSDT"),
+    )
+    first = _trade(NOW + timedelta(seconds=1), trade_id=1).model_copy(
+        update={"symbol": "PAXGUSDT", "price": Decimal("100")}
+    )
+    shock = _trade(NOW + timedelta(seconds=2), trade_id=2).model_copy(
+        update={"symbol": "PAXGUSDT", "price": Decimal("103")}
+    )
+
+    assert not detector.observe(first)
+    assert not detector.observe(shock)
+    assert sink.triggers == []
+
+
 def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
     class RecordingSink:
         def __init__(self):

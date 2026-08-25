@@ -320,7 +320,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     triggers = SqlTriggerRepository(engine, app_config.trigger)
     ensure_trigger_plans(
         repository=triggers,
-        symbols=app_config.market_data.symbols,
+        symbols=app_config.analysis_symbols,
         pipeline_id=app_config.pipeline.version,
         manifest_id="manifest-official-fact-test",
         heartbeat_seconds=app_config.trigger.heartbeat_minutes * 60,
@@ -388,7 +388,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
             )
             == 6
         )
-    for symbol in app_config.market_data.symbols:
+    for symbol in app_config.analysis_symbols:
         plan = triggers.plan_for_scope(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
@@ -419,7 +419,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         observed_at=revised_at,
     )
     publisher.publish_recent(revised_at)
-    for symbol in app_config.market_data.symbols:
+    for symbol in app_config.analysis_symbols:
         plan = triggers.plan_for_scope(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
@@ -444,7 +444,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     )
     assert cancelled.new_fact_revisions[0].status.value == "CANCELLED"
     publisher.publish_recent(cancelled_at)
-    for symbol in app_config.market_data.symbols:
+    for symbol in app_config.analysis_symbols:
         plan = triggers.plan_for_scope(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,

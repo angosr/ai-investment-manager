@@ -45,14 +45,17 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v32"
+    assert config.capital.version == "total-portfolio-capital-v33"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v1"
+        "binance-shadow-investable-v2"
     )
     assert config.capital.reference_policy is None
+    assert tuple(
+        item.instrument_key for item in config.capital.investable_universe.instruments
+    ) == ("BINANCE:SPOT:BTCUSDT", "BINANCE:SPOT:PAXGUSDT")
     assert config.capital.decision.version == "portfolio-net-edge-v8"
     assert config.information.version == "information-intake-v33"
     assert config.information.normalizer_version == "trendradar-collector-v9"
@@ -66,7 +69,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v10"
+    assert config.market_data.version == "binance-public-shadow-v11"
+    assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
+    assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
     assert (
         config.market_data.perpetual_quote_poll_seconds
@@ -178,7 +183,7 @@ def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
 
     assert tuple(
         item.symbol for item in restored.market_data.perpetual_instruments
-    ) == ("BTCUSDT", "ETHUSDT", "XRPUSDT")
+    ) == ("SPYUSDT", "BTCUSDT", "ETHUSDT", "XRPUSDT")
 
 
 def test_historical_state_policy_does_not_require_future_source_rules() -> None:
@@ -368,6 +373,11 @@ def test_testnet_config_uses_the_same_official_environment_for_market_and_orders
     assert config.deployment.stage == DeploymentStage.TESTNET
     assert config.market_data.rest_base_url == "https://testnet.binance.vision"
     assert config.market_data.websocket_base_url == "wss://stream.testnet.binance.vision"
+    assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT")
+    assert all(
+        item.product == InstrumentProduct.USD_M_PERPETUAL
+        for item in config.market_data.perpetual_instruments
+    )
     assert not config.capital.enabled
 
 
