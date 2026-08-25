@@ -515,6 +515,20 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
         )
         for index in range(1, 11)
     )
+    continuous = facts[-1].model_copy(
+        update={
+            "fact": facts[-1].fact.model_copy(
+                update={
+                    "fact_type": "US_TREASURY_CASH_SNAPSHOT",
+                    "claim": (
+                        "tga_change_5d_usd_m=-25000 USD_MILLIONS; "
+                        "tga_balance_usd_m=925000 USD_MILLIONS"
+                    ),
+                }
+            )
+        }
+    )
+    facts = (*facts[:-1], continuous)
     state = _state(
         market.as_of,
         account=replay_input.account,
@@ -556,10 +570,147 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
     assert len(canonical_json(packet)) > projected_length
     assert packet.facts[0].revision_id == "revision-1"
     assert packet.facts[0].directly_triggered is True
+    assert "revision-10" in {item.revision_id for item in packet.facts}
     assert packet.omitted_fact_revision_ids
     assert set(packet.omitted_fact_revision_ids).isdisjoint(
         item.revision_id for item in packet.facts
     )
+
+
+def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+    direct = _fact(market.as_of)
+
+    def continuous(
+        revision_id: str,
+        fact_id: str,
+        fact_type: str,
+        claim: str,
+        risk_factors: tuple[str, ...],
+    ) -> VisibleFact:
+        base = _fact(
+            market.as_of,
+            revision_id=revision_id,
+            fact_id=fact_id,
+            observation_id=f"obs-{revision_id}",
+        )
+        return base.model_copy(
+            update={
+                "fact": base.fact.model_copy(
+                    update={
+                        "fact_type": fact_type,
+                        "claim": claim,
+                        "risk_factors": risk_factors,
+                    }
+                )
+            }
+        )
+
+    facts = (
+        direct,
+        continuous(
+            "revision-dollar",
+            "fact-dollar",
+            "FED_BROAD_DOLLAR_SNAPSHOT",
+            "broad_dollar_index=121.4 INDEX; broad_dollar_change_5d_pct=0.8 PERCENT",
+            ("US_DOLLAR",),
+        ),
+        continuous(
+            "revision-arkb",
+            "fact-arkb",
+            "ARKB_HOLDINGS_SNAPSHOT",
+            "arkb_btc_holdings=42000 BTC; arkb_btc_holdings_change_1d=100 BTC",
+            ("BTC_INSTITUTIONAL_HOLDINGS",),
+        ),
+        continuous(
+            "revision-ibit",
+            "fact-ibit",
+            "IBIT_HOLDINGS_SNAPSHOT",
+            "ibit_btc_holdings=740000 BTC; ibit_btc_holdings_change_1d=250 BTC",
+            ("BTC_INSTITUTIONAL_HOLDINGS",),
+        ),
+    )
+    event = IntelligenceEvent(
+        evidence_id="direct-event",
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="test-first-party",
+        event_time=market.as_of - timedelta(minutes=1),
+        observed_at=market.as_of,
+        source="official-source",
+        title="官方突发事件",
+        body="新的官方信息需要立即结合宏观基线重新评估。" * 12,
+        symbols=("BTCUSDT",),
+        relevance=Decimal("1"),
+        impact=Decimal("1"),
+        source_reliability=Decimal("1"),
+        novelty=Decimal("1"),
+    )
+    event_ref = content_hash(event)
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+        intelligence_events=(event,),
+    ).model_copy(
+        update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)}
+    )
+    delta = _delta(market.as_of).model_copy(
+        update={"intelligence_event_refs": (event_ref,)}
+    )
+
+    def build(maximum_packet_characters: int) -> DecisionPacket:
+        return DecisionPacketBuilder(
+            DecisionPacketPolicy(
+                version="packet-policy-v1",
+                schema_version="decision-packet-v1",
+                maximum_fact_characters=10_000,
+                maximum_characters_per_fact=1_200,
+                maximum_packet_characters=maximum_packet_characters,
+            )
+        ).build(
+            mandate=AnalysisMandate(
+                version="mandate-v1",
+                analysis_scope="crypto-risk",
+                question="Assess the event against the causal baseline.",
+                assets=(
+                    MandateAsset(
+                        asset="BTC",
+                        market_symbol="BTCUSDT",
+                        horizons_minutes=(60,),
+                    ),
+                ),
+                required_risk_factors=("REGULATION",),
+            ),
+            state=state,
+            deltas=(delta,),
+            facts=facts,
+            intelligence_events=(event,),
+            account=replay_input.account,
+            markets=(market,),
+            features=features,
+        )
+
+    full = build(16_000)
+    full_size = len(canonical_json(decision_packet_analysis_projection(full)))
+    assert full_size > 2_000
+    constrained = build(full_size - 1)
+
+    assert constrained.intelligence_events[0].evidence_ref == event_ref
+    assert constrained.intelligence_events[0].directly_triggered
+    assert constrained.facts[0].revision_id == direct.fact.revision_id
+    assert constrained.facts[0].directly_triggered
+    continuous_facts = constrained.facts[1:]
+    assert {risk for item in continuous_facts for risk in item.risk_factors} == {
+        "US_DOLLAR",
+        "BTC_INSTITUTIONAL_HOLDINGS",
+    }
+    assert len(continuous_facts) == 2
+    assert len(constrained.omitted_fact_revision_ids) == 1
 
 
 def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
@@ -778,14 +929,14 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
         {
             "type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
             "at": financing.event_time.isoformat(),
-            "state": (
-                "treasury_bill_offering_14d_usd_m=1096000 USD_MILLIONS; "
-                "treasury_coupon_offering_14d_usd_m=149000 USD_MILLIONS; "
-                "treasury_coupon_bid_to_cover=2.59 INDEX; "
-                "treasury_coupon_direct_share_pct=20.3 PERCENT; "
-                "treasury_coupon_indirect_share_pct=68.6 PERCENT; "
-                "treasury_coupon_primary_dealer_share_pct=10.3 PERCENT; "
-                "treasury_coupon_soma_addon_14d_usd_m=34703 USD_MILLIONS"
+                "state": (
+                    "treasury_bill_offering_14d_usd_m=1096000; "
+                    "treasury_coupon_offering_14d_usd_m=149000; "
+                    "treasury_coupon_bid_to_cover=2.59; "
+                    "treasury_coupon_direct_share_pct=20.3; "
+                    "treasury_coupon_indirect_share_pct=68.6; "
+                    "treasury_coupon_primary_dealer_share_pct=10.3; "
+                    "treasury_coupon_soma_addon_14d_usd_m=34703"
             ),
             "ref": "revision-auction",
         },
@@ -1302,11 +1453,13 @@ def test_analysis_projection_compacts_prior_world_verification_without_losing_st
     )
     _, packet = _packet(app_config, replay_input, previous_context=previous)
 
-    mechanism = decision_packet_analysis_projection(packet)["previous_context"]["mechanisms"][0]
+    previous_projection = decision_packet_analysis_projection(packet)["previous_context"]
+    mechanism = previous_projection["mechanisms"][0]
     test = mechanism["tests"][0]
 
     assert "invalidation_conditions" not in mechanism
-    assert test == (
+    assert test == 0
+    assert previous_projection["test_catalog"][test] == (
         "derivative_state:BTC.taker_buy_sell_ratio",
         60,
         ("GT", "1", 2),

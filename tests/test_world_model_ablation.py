@@ -7,7 +7,6 @@ from decimal import Decimal
 from sqlalchemy import create_engine, func, select
 
 from investment_manager.forecast.codex.router import AnalystResult
-from investment_manager.forecast.context.estimate import ContextForecastStructuredOutput
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
@@ -34,6 +33,7 @@ from investment_manager.forecast.tables import forecasts
 from investment_manager.governance.evaluation.world_model_ablation import (
     SqlWorldModelAblationRepository,
     WorldModelAblationRunner,
+    WorldModelControlStructuredOutput,
     build_world_model_ablation_assignment,
     ensure_world_model_ablation_plan,
 )
@@ -43,7 +43,7 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
-ACTIVATION = datetime(2026, 8, 25, tzinfo=UTC)
+ACTIVATION = datetime(2026, 8, 25, 4, tzinfo=UTC)
 
 
 class _FixedControlAnalyst:
@@ -55,7 +55,7 @@ class _FixedControlAnalyst:
         self.calls += 1
         return AnalystResult(
             success=True,
-            output=ContextForecastStructuredOutput.model_validate(
+            output=WorldModelControlStructuredOutput.model_validate(
                 {
                     "forecast": {
                         "decision_slot_id": assignment.decision_slot_id,
@@ -66,15 +66,6 @@ class _FixedControlAnalyst:
                             {"bucket_id": "GAIN", "probability": "0.20"},
                             {"bucket_id": "LARGE_GAIN", "probability": "0.10"},
                         ],
-                        "mechanism_contributions": [
-                            {
-                                "mechanism_id": "mechanism-1",
-                                "effect": "NO_MATERIAL_EFFECT",
-                                "rationale": "控制预测只使用点时状态。",
-                            }
-                        ],
-                        "evidence_refs": ["evidence-1"],
-                        "invalidation_conditions": ["目标市场状态发生显著变化"],
                     }
                 }
             ),
@@ -287,6 +278,11 @@ def test_control_assignment_removes_world_model_and_freezes_shared_contract() ->
     assert control_input["target_state"] == formal_input["target_state"]
     assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
     assert assignment.call_order == "FORMAL_FIRST_CAPITAL_PRIORITY"
+    output_schema = json.loads(assignment.output_schema_json)
+    control_fields = output_schema["$defs"]["WorldModelControlForecastDraft"][
+        "properties"
+    ]
+    assert set(control_fields) == {"decision_slot_id", "outcome_probabilities"}
 
 
 def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:

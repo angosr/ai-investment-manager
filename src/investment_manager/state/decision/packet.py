@@ -86,6 +86,14 @@ def _analysis_decimal(value: Decimal) -> str:
     return "0" if text == "-0" else text
 
 
+def _analysis_time(value: datetime) -> str:
+    """Represent daily observations as dates; retain time for intraday evidence."""
+
+    if value.hour == value.minute == value.second == value.microsecond == 0:
+        return value.date().isoformat()
+    return value.isoformat()
+
+
 def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, object]:
     payload = item.model_dump(mode="json")
     projected: dict[str, object] = {}
@@ -117,6 +125,30 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
         projected["independent_source_count"] = item.independent_source_count
     if item.prompt_injection_suspected:
         projected["prompt_injection_suspected"] = True
+    return projected
+
+
+def _analysis_intelligence_event(item: PacketIntelligenceEvent) -> dict[str, object]:
+    """Keep decision evidence; omit transport and normalization audit metadata."""
+
+    projected: dict[str, object] = {
+        "evidence_ref": item.evidence_ref,
+        "source": item.source,
+        "event_time": item.event_time.isoformat(),
+        "observed_at": item.observed_at.isoformat(),
+        "title": item.title,
+        "body": item.body,
+        "symbols": item.symbols,
+        "impact": _analysis_decimal(item.impact),
+        "source_reliability": _analysis_decimal(item.source_reliability),
+        "novelty": _analysis_decimal(item.novelty),
+        "directly_triggered": item.directly_triggered,
+        "directional_support_eligible": item.directional_support_eligible,
+    }
+    if item.url is not None:
+        projected["url"] = item.url
+    if item.relevance != item.impact:
+        projected["relevance"] = _analysis_decimal(item.relevance)
     return projected
 
 
@@ -173,6 +205,21 @@ def _compact_continuous_fact_state(item: PacketFact) -> str:
         elif key not in {"cumulative_inflow_usd_m", "value_traded_usd_m"}:
             deferred.append(part)
     selected.extend(deferred)
+    # Metric names are a typed schema (``*_pct``, ``*_bps``, ``*_usd_m`` and
+    # holdings-specific names). Repeating the unit after every numeric value
+    # spends attention without adding information; the immutable claim retains
+    # the original units for audit and replay.
+    unit_compacted: list[str] = []
+    for part in selected:
+        key, separator, raw = part.partition("=")
+        candidate = raw.split(maxsplit=1)[0] if separator else ""
+        try:
+            Decimal(candidate)
+        except ArithmeticError:
+            unit_compacted.append(part)
+        else:
+            unit_compacted.append(f"{key}={candidate}")
+    selected = unit_compacted
     maximum_characters = 400 if item.fact_type == TREASURY_AUCTION_FACT_TYPE else 200
     compacted: list[str] = []
     used = 0
@@ -191,7 +238,7 @@ def _compact_continuous_fact_state(item: PacketFact) -> str:
 def _analysis_state_feature(item: PacketFact) -> dict[str, object]:
     projected: dict[str, object] = {
         "type": item.fact_type,
-        "at": (item.event_time or item.observed_at).isoformat(),
+        "at": _analysis_time(item.event_time or item.observed_at),
         "state": _compact_continuous_fact_state(item),
         "ref": item.revision_id,
     }
@@ -205,7 +252,7 @@ def _analysis_state_feature(item: PacketFact) -> dict[str, object]:
 def _analysis_policy_state(item: PacketFact) -> dict[str, object]:
     return {
         "type": item.fact_type,
-        "at": (item.event_time or item.observed_at).isoformat(),
+        "at": _analysis_time(item.event_time or item.observed_at),
         "document": item.headline,
         "state": item.claim,
         "ref": item.revision_id,
@@ -218,6 +265,24 @@ def _is_durable_policy_state(item: VisibleFact | PacketFact) -> bool:
     fact_type = item.fact.fact_type if isinstance(item, VisibleFact) else item.fact_type
     claim = item.fact.claim if isinstance(item, VisibleFact) else item.claim
     return fact_type == FED_MONETARY_RELEASE_FACT_TYPE and claim.startswith("action=")
+
+
+def _continuous_fact_is_redundant(
+    index: int,
+    facts: list[PacketFact],
+) -> bool:
+    """Allow capacity fallback only when every causal channel remains represented."""
+
+    item = facts[index]
+    if item.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES:
+        return False
+    other_risk_factors = {
+        risk_factor
+        for other_index, other in enumerate(facts)
+        if other_index != index and other.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
+        for risk_factor in other.risk_factors
+    }
+    return bool(item.risk_factors) and set(item.risk_factors).issubset(other_risk_factors)
 
 
 def continuous_fact_numeric_values(item: PacketFact) -> dict[str, Decimal]:
@@ -358,6 +423,9 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         )
         for item in packet.derivative_states
     )
+    payload["intelligence_events"] = tuple(
+        _analysis_intelligence_event(item) for item in packet.intelligence_events
+    )
     continuous_facts = tuple(
         item for item in packet.facts if item.fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
     )
@@ -393,16 +461,21 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     if previous is not None and not previous_context_is_decision_relevant(packet.previous_context):
         payload.pop("previous_context")
     elif previous is not None:
+        test_catalog: list[tuple[object, ...]] = []
+        test_index: dict[str, int] = {}
+        for mechanism in previous["mechanisms"]:
+            for test in mechanism["verification_tests"]:
+                test_key = canonical_json(test)
+                if test_key in test_index:
+                    continue
+                test_index[test_key] = len(test_catalog)
+                test_catalog.append(_analysis_verification_test(test))
         payload["previous_context"] = {
             "assessment_id": previous["assessment_id"],
             "as_of": previous["as_of"],
             "synthesis": previous["synthesis"],
             "synthesis_horizon_hours": previous["synthesis_horizon_hours"],
-            "test_tuple_schema": (
-                "feature,window_min,support(op,value[,upper],persistence),"
-                "contradict(op,value[,upper],persistence),"
-                "observed(value,match,support_streak,contradiction_streak,resolution)"
-            ),
+            "test_catalog": tuple(test_catalog),
             "mechanisms": tuple(
                 {
                     "id": mechanism["mechanism_id"],
@@ -412,7 +485,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                     "horizon_h": mechanism["horizon_hours"],
                     "stage": mechanism["transmission_stage"],
                     "tests": tuple(
-                        _analysis_verification_test(test)
+                        test_index[canonical_json(test)]
                         for test in mechanism["verification_tests"]
                     ),
                     "review_at": mechanism["next_review_at"],
@@ -420,7 +493,15 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 for mechanism in previous["mechanisms"]
             ),
             "event_references": tuple(
-                item for item in previous["event_references"] if item["impact_state"] == "ACTIVE"
+                {
+                    "evidence_id": item["evidence_id"],
+                    "source": item["source"],
+                    "title": item["title"],
+                    "event_time": item["event_time"],
+                    "rationale": item["rationale"],
+                }
+                for item in previous["event_references"]
+                if item["impact_state"] == "ACTIVE"
             ),
         }
     if not packet.review_requests:
@@ -1170,41 +1251,53 @@ class DecisionPacketBuilder:
                 <= self._policy.maximum_packet_characters
             ):
                 return packet
-            removable_fact = (
-                next(
-                    (
-                        index
-                        for index in range(len(selected_facts) - 1, -1, -1)
-                        if not selected_facts[index].directly_triggered
-                    ),
-                    None,
-                )
-                if len(selected_facts) > 1
-                else None
+            # Continuous state and the current policy stance are the causal
+            # baseline that lets the model interpret an event. Dropping that
+            # baseline while keeping optional prose creates a valid-looking but
+            # structurally blind WorldModel.
+            removable_fact = next(
+                (
+                    index
+                    for index in range(len(selected_facts) - 1, -1, -1)
+                    if not selected_facts[index].directly_triggered
+                    and selected_facts[index].fact_type
+                    not in CONTINUOUS_CONTEXT_FACT_TYPES
+                    and not _is_durable_policy_state(selected_facts[index])
+                ),
+                None,
             )
             if removable_fact is not None:
                 removed = selected_facts.pop(removable_fact)
                 omitted_facts.add(removed.revision_id)
                 continue
-            removable_event = (
-                next(
-                    (
-                        index
-                        for index in range(len(selected_intelligence) - 1, -1, -1)
-                        if not selected_intelligence[index].directly_triggered
-                    ),
-                    None,
-                )
-                if len(selected_intelligence) > 1
-                else None
+            removable_event = next(
+                (
+                    index
+                    for index in range(len(selected_intelligence) - 1, -1, -1)
+                    if not selected_intelligence[index].directly_triggered
+                ),
+                None,
             )
             if removable_event is not None:
                 removed = selected_intelligence.pop(removable_event)
                 omitted_intelligence.add(removed.evidence_ref)
                 continue
+            removable_redundant_state = next(
+                (
+                    index
+                    for index in range(len(selected_facts) - 1, -1, -1)
+                    if not selected_facts[index].directly_triggered
+                    and _continuous_fact_is_redundant(index, selected_facts)
+                ),
+                None,
+            )
+            if removable_redundant_state is not None:
+                removed = selected_facts.pop(removable_redundant_state)
+                omitted_facts.add(removed.revision_id)
+                continue
             raise DecisionPacketCapacityError(
-                "DecisionPacket directly triggered mandatory content exceeds "
-                "maximum_packet_characters"
+                "DecisionPacket causal baseline and directly triggered content "
+                "exceed maximum_packet_characters"
             )
 
     def _validate_inputs(

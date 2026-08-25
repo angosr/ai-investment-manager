@@ -31,8 +31,7 @@ from investment_manager.forecast.codex.router import (
     assemble_codex_router,
 )
 from investment_manager.forecast.context.estimate import (
-    ContextForecastStructuredOutput,
-    context_forecast_output_schema_for_ids,
+    ContextForecastProbabilityDraft,
 )
 from investment_manager.forecast.context.evaluation import multiclass_brier_score
 from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
@@ -67,7 +66,7 @@ from investment_manager.kernel.types import FrozenModel
 from investment_manager.settings import AppConfig
 
 CONTROL_INPUT_VERSION = "context-forecast-no-world-model-v1"
-CONTROL_OUTPUT_VERSION = "context-forecast-output-v1"
+CONTROL_OUTPUT_VERSION = "context-forecast-no-world-model-output-v2"
 CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
 _MAXIMUM_MULTICLASS_BRIER_SCORE = Decimal("2")
 CONTROL_INSTRUCTIONS = (
@@ -76,9 +75,37 @@ CONTROL_INSTRUCTIONS = (
     "杠杆、收益点数、止损、风险预算或交易建议。",
     "outcome_probabilities 必须按合同 bucket_id 和顺序完整输出，概率为 0 到 1 的十进制字符串且"
     "总和精确等于 1；不确定时扩大中间和尾部概率，不得拒绝预测。",
-    "mechanism_contributions、evidence_refs 和 invalidation_conditions 只是共享输出协议的辅助字段；"
-    "只能使用 schema 允许的标识符，不得据此推断缺失信息。它们不参与本次评分。",
+    "输出只包含 decision_slot_id 和 outcome_probabilities；不得编造世界模型引用、解释或失效条件。",
 )
+
+
+class WorldModelControlForecastDraft(FrozenModel):
+    """Probability-only control with no semantic WorldModel references."""
+
+    decision_slot_id: str = Field(min_length=1)
+    outcome_probabilities: tuple[ContextForecastProbabilityDraft, ...] = Field(
+        min_length=3
+    )
+
+
+class WorldModelControlStructuredOutput(FrozenModel):
+    forecast: WorldModelControlForecastDraft
+
+
+def world_model_control_output_schema_for_ids(
+    *,
+    decision_slot_id: str,
+    bucket_ids: tuple[str, ...],
+) -> dict[str, object]:
+    if not bucket_ids or len(set(bucket_ids)) != len(bucket_ids):
+        raise ValueError("WorldModel control bucket_id 不能为空或重复")
+    schema = strict_output_schema(WorldModelControlStructuredOutput.model_json_schema())
+    definitions = schema["$defs"]
+    draft = definitions["WorldModelControlForecastDraft"]
+    draft["properties"]["decision_slot_id"]["const"] = decision_slot_id
+    probability = definitions["ContextForecastProbabilityDraft"]
+    probability["properties"]["bucket_id"]["enum"] = list(bucket_ids)
+    return schema
 
 
 class WorldModelAblationStatus(StrEnum):
@@ -182,7 +209,7 @@ class WorldModelAblationResult(FrozenModel):
             output = _canonical_payload(self.output_json, "control output")
             if content_hash(output) != self.output_hash:
                 raise ValueError("WorldModel control 输出哈希不一致")
-            ContextForecastStructuredOutput.model_validate(output)
+            WorldModelControlStructuredOutput.model_validate(output)
         expected_id = stable_id("world_model_ablation_result", self.assignment_id)
         if self.result_id != expected_id:
             raise ValueError("WorldModel control result_id 不一致")
@@ -225,7 +252,7 @@ def world_model_ablation_behavior_hash(
             "output_version": CONTROL_OUTPUT_VERSION,
             "instructions": CONTROL_INSTRUCTIONS,
             "output_schema": strict_output_schema(
-                ContextForecastStructuredOutput.model_json_schema()
+                WorldModelControlStructuredOutput.model_json_schema()
             ),
             "formal_contract": contract,
             "formal_producer_behavior_id": context.producer_behavior_id,
@@ -282,7 +309,8 @@ def ensure_world_model_ablation_plan(
             "CONTROL_NEVER_ENTERS_CAPITAL",
             "FORMAL_FIRST_CAPITAL_PRIORITY",
             "NO_HISTORICAL_BACKFILL",
-            "SAME_SLOT_STATE_CONTRACT_MODEL_AND_SCHEMA",
+            "SAME_SLOT_STATE_CONTRACT_AND_MODEL",
+            "CONTROL_OUTPUT_PROBABILITY_ONLY",
         ),
         required_stages=(EvaluationStage.FORWARD,),
         fixed_regression_suite_version=policy.version,
@@ -338,7 +366,7 @@ def build_world_model_ablation_assignment(
     world_model = raw.get("world_model")
     if not isinstance(world_model, dict):
         raise ValueError("WorldModel control 正式输入缺少 world_model")
-    mechanism_ids, evidence_ids = _opaque_world_model_ids(world_model)
+    _validate_world_model_reference_ids(world_model)
     forecast_contract = raw.get("forecast_contract")
     decision_slot = raw.get("decision_slot")
     target_state = raw.get("target_state")
@@ -347,11 +375,9 @@ def build_world_model_ablation_assignment(
     if decision_slot.get("decision_slot_id") != slot.slot_id:
         raise ValueError("WorldModel control 正式输入绑定了错误 slot")
     bucket_ids = tuple(item.bucket_id for item in formal.outcome_probabilities)
-    schema = context_forecast_output_schema_for_ids(
+    schema = world_model_control_output_schema_for_ids(
         decision_slot_id=slot.slot_id,
         bucket_ids=bucket_ids,
-        mechanism_ids=mechanism_ids,
-        evidence_ids=evidence_ids,
     )
     control_input = {
         "purpose": "FORECAST_ESTIMATE",
@@ -728,7 +754,9 @@ class SqlWorldModelAblationRepository:
             succeeded += 1
             if settled_outcome is None:
                 continue
-            control = ContextForecastStructuredOutput.model_validate_json(result.output_json)
+            control = WorldModelControlStructuredOutput.model_validate_json(
+                result.output_json
+            )
             assert formal_score is not None
             assert settled_outcome.realized_bucket_id is not None
             control_score = multiclass_brier_score(
@@ -861,7 +889,7 @@ def assemble_world_model_ablation_analyst(
         config,
         leases=SqlAccountLeaseStore(engine),
         audit=SqlCodexAuditStore(engine),
-        output_adapter=TypeAdapter(ContextForecastStructuredOutput),
+        output_adapter=TypeAdapter(WorldModelControlStructuredOutput),
     )
     return CodexWorldModelControlAnalyst(
         bundle_root=config.codex_runtime.bundle_root,
@@ -896,9 +924,9 @@ def _validate_existing_plan(
         raise ValueError("WorldModel control plan 未在激活前登记")
 
 
-def _opaque_world_model_ids(
+def _validate_world_model_reference_ids(
     world_model: dict[str, object],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> None:
     raw_mechanisms = world_model.get("mechanisms")
     raw_events = world_model.get("event_references")
     if not isinstance(raw_mechanisms, list) or not isinstance(raw_events, list):
@@ -928,7 +956,6 @@ def _opaque_world_model_ids(
         or not canonical_evidence
     ):
         raise ValueError("WorldModel control 输出标识符为空或重复")
-    return canonical_mechanisms, canonical_evidence
 
 
 def _result_from_analyst(
@@ -953,7 +980,10 @@ def _result_from_analyst(
             status=WorldModelAblationStatus.FAILED,
             reason_code="CONTROL_DEADLINE_MISSED",
         )
-    if not analyst.success or not isinstance(analyst.output, ContextForecastStructuredOutput):
+    if not analyst.success or not isinstance(
+        analyst.output,
+        WorldModelControlStructuredOutput,
+    ):
         return WorldModelAblationResult(
             **common,
             status=WorldModelAblationStatus.FAILED,
@@ -969,30 +999,10 @@ def _result_from_analyst(
     )
     actual_buckets = tuple(item.bucket_id for item in draft.outcome_probabilities)
     probabilities = tuple(Decimal(item.probability) for item in draft.outcome_probabilities)
-    schema = _canonical_payload(assignment.output_schema_json, "output schema")
-    definitions = schema["$defs"]
-    allowed_mechanisms = set(
-        definitions["ContextForecastContributionDraft"]["properties"]["mechanism_id"][
-            "enum"
-        ]
-    )
-    allowed_evidence = set(
-        definitions["ContextForecastDraft"]["properties"]["evidence_refs"]["items"][
-            "enum"
-        ]
-    )
-    contribution_ids = tuple(
-        item.mechanism_id for item in draft.mechanism_contributions
-    )
-    evidence_ids = draft.evidence_refs
     output_invalid = (
         draft.decision_slot_id != assignment.decision_slot_id
         or actual_buckets != expected_buckets
         or sum(probabilities, Decimal("0")) != 1
-        or len(set(contribution_ids)) != len(contribution_ids)
-        or not set(contribution_ids).issubset(allowed_mechanisms)
-        or len(set(evidence_ids)) != len(evidence_ids)
-        or not set(evidence_ids).issubset(allowed_evidence)
     )
     if output_invalid:
         return WorldModelAblationResult(

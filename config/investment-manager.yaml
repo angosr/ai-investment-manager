@@ -97,8 +97,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v39
-    schema_version: decision-packet-v17
+    version: decision-packet-policy-v40
+    schema_version: decision-packet-v18
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
@@ -276,7 +276,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v12
+  version: outcome-window-v13
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -284,10 +284,10 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v4
+    version: world-model-ablation-forward-v5
     enabled: false
-    plan_id: world-model-ablation-forward-v4
-    activated_at: 2026-08-25T00:00:00Z
+    plan_id: world-model-ablation-forward-v5
+    activated_at: 2026-08-25T04:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -523,7 +523,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v37
+  version: context-assessment-v38
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

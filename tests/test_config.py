@@ -45,14 +45,20 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v36"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
     assert config.decision_state.delta_policy.version == "state-delta-v15"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v39"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v17"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v40"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v18"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.assessment.version == "context-assessment-v37"
+    assert config.assessment.version == "context-assessment-v38"
+    assert config.outcome_evaluation.version == "outcome-window-v13"
+    assert config.outcome_evaluation.world_model_ablation is not None
+    assert (
+        config.outcome_evaluation.world_model_ablation.version
+        == "world-model-ablation-forward-v5"
+    )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v24"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
