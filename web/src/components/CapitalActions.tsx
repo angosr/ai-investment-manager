@@ -47,7 +47,6 @@ const TRIGGER_LABELS: Record<string, string> = {
   CANONICAL_FACT_REVISED: "关键事实变化",
   INTELLIGENCE_INSERTED: "新信息到达",
   MARKET_SHOCK: "行情异常波动",
-  POSITION_RECHECK: "持仓风险复查",
   AGENT_WAKEUP: "主 Agent 要求立即检查",
   HEARTBEAT: "例行定时检查",
   WORLD_MODEL_UPDATED: "世界认知完成更新",

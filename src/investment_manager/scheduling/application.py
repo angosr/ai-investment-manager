@@ -80,11 +80,6 @@ def ensure_trigger_plans(
                             trigger_type=AnalysisTriggerType.MARKET_SHOCK,
                             minimum_priority=0,
                         ),
-                        AnalysisEventRule(
-                            rule_id="position-recheck-default",
-                            trigger_type=AnalysisTriggerType.POSITION_RECHECK,
-                            minimum_priority=0,
-                        ),
                     ),
                 )
             repository.create_plan(plan)

@@ -551,7 +551,6 @@ class DashboardReader:
             rows = connection.execute(query).mappings().all()
         labels = {
             "MARKET_SHOCK": "价格波动触发市场复核",
-            "POSITION_RECHECK": "持仓状态触发风险复检",
             "CANONICAL_FACT_REVISED": "关键事实修订触发重新分析",
             "HEARTBEAT": "例行状态检查",
             "FORECAST_SLOT_DUE": "合同预测时点到期",
@@ -559,7 +558,6 @@ class DashboardReader:
         }
         sources = {
             "MARKET_SHOCK": "Binance 行情",
-            "POSITION_RECHECK": "生命周期",
             "AGENT_WAKEUP": "主 Agent",
             "CANONICAL_FACT_REVISED": "事实协调器",
             "HEARTBEAT": "系统调度",

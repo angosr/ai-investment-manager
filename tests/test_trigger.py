@@ -234,7 +234,6 @@ def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
         "canonical-fact-default",
         "intelligence-default",
         "market-shock-default",
-        "position-recheck-default",
     )
     assert created[0].event_rules[0].minimum_priority == 0
     assert created[0].event_rules[1].minimum_priority == 80

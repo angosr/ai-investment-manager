@@ -89,7 +89,6 @@ function foldConsecutiveAgentRequests(events: WorldEvent[]): EventGroup[] {
 const EVENT_LABEL: Record<string, string> = {
   NEWS: "新闻",
   MARKET_SHOCK: "市场冲击",
-  POSITION_RECHECK: "持仓复检",
   INTELLIGENCE_INSERTED: "情报入库",
   AGENT_WAKEUP: "AI 分析请求",
   CANONICAL_FACT_REVISED: "事实修订",
