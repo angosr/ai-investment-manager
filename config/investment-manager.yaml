@@ -348,7 +348,7 @@ outcome_evaluation:
     version: world-model-ablation-forward-v8
     enabled: false
     plan_id: world-model-ablation-forward-v8
-    activated_at: 2026-08-25T14:16:00Z
+    activated_at: 2026-08-25T15:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
