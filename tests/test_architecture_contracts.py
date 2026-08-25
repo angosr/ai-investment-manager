@@ -39,9 +39,13 @@ CLI_CONTRACT = {
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
     ),
+    "fetch-economic-series": "config,series,catalog",
     "fetch-binance-funding-history": "config,symbol,start,end,catalog",
     "fetch-binance-history": "config,symbol,start,end,interval,catalog",
     "fetch-binance-usdm-history": "config,symbol,start,end,interval,catalog",
+    "freeze-executable-quotes": (
+        "config,database_url,instrument_key,start,end,sampling_interval_seconds,catalog"
+    ),
     "freeze-event-history": "database_url,start,end,catalog",
     "governance-service": "config,database_url,release_manifest,project_root",
     "information-collector": "config,database_url,release_manifest",
@@ -234,6 +238,8 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "operate-release",
         },
         "entrypoints/cli/research_commands.py": {
+            "freeze-executable-quotes",
+            "fetch-economic-series",
             "fetch-binance-history",
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",

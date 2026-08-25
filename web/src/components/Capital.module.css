@@ -90,3 +90,15 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+.quoteMeta {
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.quoteMeta[data-quality="LIVE_MARKET"] {
+  color: var(--pos);
+}
+.quoteMeta[data-quality="STALE_MARKET"] {
+  color: var(--neg);
+}

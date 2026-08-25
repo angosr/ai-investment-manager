@@ -46,6 +46,7 @@ class EconomicExposure(StrEnum):
     NOMINAL_RATES = "NOMINAL_RATES"
     INFLATION_SENSITIVE = "INFLATION_SENSITIVE"
     GLOBAL_EQUITY = "GLOBAL_EQUITY"
+    US_EQUITY = "US_EQUITY"
     CREDIT = "CREDIT"
     COMMODITY = "COMMODITY"
     FX = "FX"
@@ -110,12 +111,12 @@ class InvestableUniversePolicy(StrictConfig):
 
 class ReferenceAllocationPolicy(StrictConfig):
     implementation_key: str = Field(min_length=1)
-    target_weight: UnitInterval
+    target_exposure_fraction: UnitInterval
 
     @model_validator(mode="after")
     def allocation_is_material(self):
-        if self.target_weight <= 0:
-            raise ValueError("Reference allocation 权重必须为正")
+        if self.target_exposure_fraction <= 0:
+            raise ValueError("Reference allocation 目标经济暴露必须为正")
         return self
 
 
@@ -134,8 +135,11 @@ class ReferencePortfolioPolicy(StrictConfig):
         keys = tuple(item.implementation_key for item in self.allocations)
         if tuple(sorted(set(keys))) != keys:
             raise ValueError("Reference allocations 必须唯一且排序")
-        if sum((item.target_weight for item in self.allocations), Decimal("0")) != 1:
-            raise ValueError("Reference allocations 权重之和必须为 1")
+        if sum(
+            (item.target_exposure_fraction for item in self.allocations),
+            Decimal("0"),
+        ) != 1:
+            raise ValueError("Reference allocations 目标经济暴露之和必须为 1")
         if self.rebalance_band_fraction <= 0:
             raise ValueError("Reference Policy 再平衡带必须为正")
         return self

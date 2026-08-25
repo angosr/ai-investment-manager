@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v35
+  version: total-portfolio-capital-v36
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -153,8 +153,9 @@ capital:
       - GLOBAL_EQUITY
       - INFLATION_SENSITIVE
       - NOMINAL_RATES
+      - US_EQUITY
   investable_universe:
-    version: binance-shadow-investable-v4
+    version: binance-shadow-investable-v5
     mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
@@ -164,7 +165,7 @@ capital:
         economic_exposure: INFLATION_SENSITIVE
         reference_candidate: true
       - instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
-        economic_exposure: GLOBAL_EQUITY
+        economic_exposure: US_EQUITY
         reference_candidate: true
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null

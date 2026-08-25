@@ -1,5 +1,5 @@
 import type { CapitalOverview } from "../api/types";
-import { fixed } from "../lib/format";
+import { fixed, hhmm } from "../lib/format";
 import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
@@ -42,24 +42,82 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
 }
 
 export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
-  const positions = data?.account?.positions ?? [];
+  const instruments = data?.instruments ?? [];
+  const holdingCount = instruments.filter(
+    (item) => item.quantity !== null && Number(item.quantity) !== 0,
+  ).length;
   return (
-    <Card title="当前持仓" aside={`${positions.length} 条腿`} bodyPadded>
-      {positions.length === 0 ? (
-        <p className={styles.empty}>当前全部为现金，没有持仓。</p>
+    <Card
+      title="当前持仓"
+      aside={
+        instruments.length > 0
+          ? `${holdingCount} 个持仓 · ${instruments.length} 个品种`
+          : "读取中"
+      }
+      bodyPadded
+    >
+      {instruments.length === 0 ? (
+        <p className={styles.empty}>正在读取可操作品种和账户持仓。</p>
       ) : (
-        positions.map((position) => {
-          const quantity = Number(position.quantity);
-          const direction = quantity > 0 ? "多" : quantity < 0 ? "空" : "零";
+        instruments.map((item) => {
+          const quantity = item.quantity === null ? null : Number(item.quantity);
+          const direction =
+            quantity === null
+              ? "未核实"
+              : quantity > 0
+                ? "多"
+                : quantity < 0
+                  ? "空"
+                  : "空仓";
+          const quoteState =
+            item.quote_quality === "LIVE_MARKET"
+              ? "实时"
+              : item.quote_quality === "CLOSED_MARKET"
+                ? "休市"
+                : item.quote_quality === "STALE_MARKET"
+                  ? "报价过期"
+                  : "暂无报价";
+          const product =
+            item.product === "SPOT"
+              ? "现货"
+              : item.product === "TRADFI_PERPETUAL"
+                ? "传统资产永续"
+                : "永续";
           return (
-            <div className={styles.position} key={position.instrument}>
+            <div className={styles.position} key={item.instrument}>
               <div className={styles.positionHead}>
-                <b>{position.instrument}</b>
+                <b title={item.instrument}>{item.symbol}</b>
                 <span data-direction={direction}>{direction}</span>
               </div>
               <div className={styles.positionDetail}>
-                数量 <b title={position.quantity}>{fixed(position.quantity, 8)}</b> · 均价{" "}
-                <b title={position.average_price}>{fixed(position.average_price)}</b>
+                持仓量{" "}
+                <b title={item.quantity ?? undefined}>
+                  {quantity === 0 ? "0" : fixed(item.quantity, 8)}
+                </b>
+                {quantity !== null && quantity !== 0 ? (
+                  <>
+                    {" "}· 持仓均价{" "}
+                    <b title={item.average_price ?? undefined}>
+                      {fixed(item.average_price)}
+                    </b>
+                  </>
+                ) : null}
+              </div>
+              <div className={styles.positionDetail}>
+                {item.quote_quality === "LIVE_MARKET" ? "实时价" : "最近价"}{" "}
+                <b title={item.price ?? undefined}>{fixed(item.price)}</b> USDT
+                {item.bid !== null && item.ask !== null ? (
+                  <>
+                    {" "}· 买一/卖一{" "}
+                    <b>
+                      {fixed(item.bid)} / {fixed(item.ask)}
+                    </b>
+                  </>
+                ) : null}
+              </div>
+              <div className={styles.quoteMeta} data-quality={item.quote_quality ?? "NONE"}>
+                {product} · {quoteState}
+                {item.quote_observed_at ? ` · ${hhmm(item.quote_observed_at)} UTC` : ""}
               </div>
             </div>
           );

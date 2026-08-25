@@ -29,6 +29,129 @@ from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
 
 
+@app.command("freeze-executable-quotes")
+def freeze_executable_quotes_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[str, typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL")],
+    instrument_key: Annotated[str, typer.Option()],
+    start: Annotated[str, typer.Option(help="带时区的 ISO-8601 起点（含）")],
+    end: Annotated[str, typer.Option(help="带时区的 ISO-8601 终点（不含）")],
+    sampling_interval_seconds: Annotated[
+        int,
+        typer.Option(min=1, help="每个 UTC 时间桶只冻结首个可执行报价"),
+    ] = 300,
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/quote-datasets"
+    ),
+) -> None:
+    """从追加行情事实冻结压缩后的双边可执行报价；不新增采集路径。"""
+
+    from investment_manager.research.quote_dataset import (
+        HistoricalExecutableQuoteCatalog,
+        freeze_executable_quotes,
+    )
+
+    loaded = load_config(config)
+    specs = tuple(
+        item.instrument
+        for item in loaded.capital.execution_specs
+        if item.instrument.key == instrument_key
+    )
+    if len(specs) != 1:
+        raise typer.BadParameter(
+            "instrument-key 必须唯一属于当前 Capital execution specs"
+        )
+    engine = _runtime_engine(database_url)
+    try:
+        dataset = freeze_executable_quotes(
+            engine,
+            instrument=specs[0],
+            start=_parse_utc_option(start, name="start"),
+            end=_parse_utc_option(end, name="end"),
+            sampling_interval_seconds=sampling_interval_seconds,
+        )
+        target = HistoricalExecutableQuoteCatalog(catalog).store(dataset)
+    finally:
+        engine.dispose()
+    manifest = dataset.manifest
+    typer.echo(
+        json.dumps(
+            {
+                "dataset_id": manifest.dataset_id,
+                "instrument_key": manifest.instrument.key,
+                "source_row_count": manifest.source_row_count,
+                "quote_count": manifest.quote_count,
+                "first_observed_at": manifest.first_observed_at.isoformat(),
+                "last_observed_at": manifest.last_observed_at.isoformat(),
+                "sampling_interval_seconds": manifest.sampling_interval_seconds,
+                "quotes_hash": manifest.quotes_hash,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("fetch-economic-series")
+def fetch_economic_series_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    series: Annotated[
+        str,
+        typer.Option(
+            help="US_EQUITY_TOTAL_RETURN、GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
+        ),
+    ],
+    catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/economic-series"
+    ),
+) -> None:
+    """冻结一手长期经济代理；不把代理历史冒充可交易产品历史。"""
+
+    from investment_manager.research.economic_series import (
+        HistoricalEconomicSeriesCatalog,
+        fetch_fama_french_us_market_returns,
+        fetch_fred_us_cpi,
+        fetch_world_bank_gold_prices,
+    )
+
+    loaded = load_config(config)
+    fetchers = {
+        "US_EQUITY_TOTAL_RETURN": fetch_fama_french_us_market_returns,
+        "GOLD_USD_PRICE": fetch_world_bank_gold_prices,
+        "US_CPI_DEFLATOR": fetch_fred_us_cpi,
+    }
+    normalized = series.strip().upper()
+    fetcher = fetchers.get(normalized)
+    if fetcher is None:
+        raise typer.BadParameter(
+            "series 只允许 US_EQUITY_TOTAL_RETURN、GOLD_USD_PRICE 或 US_CPI_DEFLATOR"
+        )
+    dataset = asyncio.run(
+        fetcher(timeout_seconds=loaded.market_data.rest_timeout_seconds)
+    )
+    target = HistoricalEconomicSeriesCatalog(catalog).store(dataset)
+    manifest = dataset.manifest
+    typer.echo(
+        json.dumps(
+            {
+                "dataset_id": manifest.dataset_id,
+                "series_id": manifest.series_id,
+                "economic_exposure": manifest.economic_exposure,
+                "vintage_policy": manifest.vintage_policy,
+                "observation_count": manifest.observation_count,
+                "first_effective_date": manifest.first_effective_date.isoformat(),
+                "last_effective_date": manifest.last_effective_date.isoformat(),
+                "source_sha256": manifest.source_sha256,
+                "observations_hash": manifest.observations_hash,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("fetch-binance-history")
 def fetch_binance_history_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],

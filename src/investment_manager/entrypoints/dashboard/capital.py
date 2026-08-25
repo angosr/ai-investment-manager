@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, func, select
@@ -48,6 +48,13 @@ from investment_manager.governance.evaluation.world_model_ablation import (
     WorldModelAblationReport,
 )
 from investment_manager.kernel.time import require_utc
+from investment_manager.market.features import freeze_quote_views
+from investment_manager.market.models import (
+    InstrumentId,
+    InstrumentProduct,
+    ValuationQuoteQuality,
+)
+from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
@@ -81,6 +88,20 @@ class CapitalOverview:
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
+    instruments: tuple[CapitalInstrumentStatus, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalInstrumentStatus:
+    """Dashboard projection joining the investable universe, ledger, and latest quote."""
+
+    instrument: InstrumentId
+    quantity: Decimal | None
+    average_price: Decimal | None
+    bid: Decimal | None
+    ask: Decimal | None
+    quote_observed_at: datetime | None
+    quote_quality: ValuationQuoteQuality | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,9 +176,10 @@ class CapitalDashboardReader:
         self._engine = engine
         self._config = config
 
-    def overview(self) -> CapitalOverview:
+    def overview(self, *, now: datetime | None = None) -> CapitalOverview:
         if not self._config.capital.enabled:
             return CapitalOverview(enabled=False)
+        now = datetime.now(UTC) if now is None else require_utc(now)
         with self._engine.connect() as connection:
             account = self._latest_payload(
                 connection,
@@ -275,7 +297,71 @@ class CapitalDashboardReader:
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
+            instruments=self._instrument_statuses(account=account, as_of=now),
         )
+
+    def _instrument_statuses(
+        self,
+        *,
+        account: PortfolioAccountSnapshot | None,
+        as_of: datetime,
+    ) -> tuple[CapitalInstrumentStatus, ...]:
+        """Keep zero holdings visible without polluting the non-zero position ledger."""
+
+        store = SqlMarketDataStore(self._engine)
+        schedule = store.latest_trading_schedule(as_of=as_of)
+        position_by_key = {
+            item.instrument.key: item for item in (() if account is None else account.positions)
+        }
+        rows: list[CapitalInstrumentStatus] = []
+        for spec in self._config.capital.execution_specs:
+            instrument = spec.instrument
+            position = position_by_key.get(instrument.key)
+            if instrument.product == InstrumentProduct.SPOT:
+                observed = store.latest_spot_quote(
+                    instrument=instrument,
+                    evaluation_at=as_of,
+                    visible_at=as_of,
+                )
+            else:
+                observed = store.latest_perpetual_quote(
+                    instrument=instrument,
+                    evaluation_at=as_of,
+                    visible_at=as_of,
+                )
+            valuation = None
+            if observed is not None:
+                valuation, _ = freeze_quote_views(
+                    instrument=instrument,
+                    quote=observed,
+                    as_of=as_of,
+                    maximum_live_age_seconds=self._config.capital.risk.maximum_quote_age_seconds,
+                    trading_schedule=(
+                        schedule
+                        if instrument.product == InstrumentProduct.TRADFI_PERPETUAL
+                        else None
+                    ),
+                )
+            rows.append(
+                CapitalInstrumentStatus(
+                    instrument=instrument,
+                    quantity=(
+                        None
+                        if account is None
+                        else Decimal("0")
+                        if position is None
+                        else position.quantity
+                    ),
+                    average_price=None if position is None else position.average_price,
+                    bid=None if valuation is None else valuation.bid,
+                    ask=None if valuation is None else valuation.ask,
+                    quote_observed_at=(
+                        None if valuation is None else valuation.observed_at
+                    ),
+                    quote_quality=None if valuation is None else valuation.quality,
+                )
+            )
+        return tuple(rows)
 
     def _policy_status(self) -> CapitalPolicyStatus:
         capital = self._config.capital
@@ -1025,6 +1111,29 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
     policy = overview.policy
     return {
         "enabled": overview.enabled,
+        "instruments": [
+            {
+                "instrument": item.instrument.key,
+                "symbol": item.instrument.symbol,
+                "product": item.instrument.product.value,
+                "quantity": None if item.quantity is None else str(item.quantity),
+                "average_price": (
+                    None if item.average_price is None else str(item.average_price)
+                ),
+                "bid": None if item.bid is None else str(item.bid),
+                "ask": None if item.ask is None else str(item.ask),
+                "price": (
+                    None
+                    if item.bid is None or item.ask is None
+                    else str((item.bid + item.ask) / Decimal("2"))
+                ),
+                "quote_observed_at": _iso(item.quote_observed_at),
+                "quote_quality": (
+                    None if item.quote_quality is None else item.quote_quality.value
+                ),
+            }
+            for item in overview.instruments
+        ],
         "policy": None
         if policy is None
         else {

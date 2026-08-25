@@ -92,7 +92,9 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-基础配置失败关闭资本链、Context Forecast 和 WorldModel 消融；Shadow profile 显式启用三者，执行边界是 Binance simulated；Testnet profile 再次关闭，不能继承 Shadow 权限。Mock 可投资域包含 BTC/PAXG Spot 与 SPY TradFi Perpetual，三者共用同一账户、成本、Risk、Planner、Execution 与恢复语义；TradFi 产品另外强制读取官方交易日历，并把普通和特殊 funding 纳入账户。已登记 Forecast 和候选资本授权只覆盖 BTC，PAXG 与 SPY 不因产品准入或 Reference 候选标记就自动获得方向或资本。SPY 合约历史较短且当前 Venue 没有名义利率实现，经济代理历史与具体产品成本历史仍须分层验证；在冻结选择制品、联合 Forecast 与总组合 allocator 完成前，Reference Policy 保持为空，观测台不能拿任一单资产补成账户主基准。
+基础配置失败关闭资本链、Context Forecast 和 WorldModel 消融；Shadow profile 显式启用三者，执行边界是 Binance simulated；Testnet profile 再次关闭，不能继承 Shadow 权限。Mock 可投资域包含 BTC/PAXG Spot 与 SPY TradFi Perpetual，三者共用同一账户、成本、Risk、Planner、Execution 与恢复语义；TradFi 产品另外强制读取官方交易日历，并把普通和特殊 funding 纳入账户。SPY 的经济暴露是美国权益，不冒充全球权益。已登记 Forecast 和候选资本授权只覆盖 BTC，PAXG 与 SPY 不因产品准入或 Reference 候选标记就自动获得方向或资本。
+
+`fetch-economic-series` 从 Kenneth French/CRSP 冻结含股息的美国市场总回报，从 World Bank Pink Sheet 自动解析当前黄金月度价格文件，并从 FRED 冻结 BLS CPI 作为 `REAL_CAPITAL_GROWTH` 的购买力折算序列。CPI 不是可投资暴露。每份数据保存官方原文件哈希、采集时间和 `CURRENT_VINTAGE_AT_COLLECTION`，只用于当前 Reference 的长期风险估计，不能冒充历史当时可见数据。SPY 合约历史、PAXG 现货历史、交易成本和 SPY 普通/特殊 funding 继续由 Binance 数据集独立拥有；代理层和产品层都通过冻结选择制品前，Reference Policy 保持为空，观测台不能拿任一单资产补成账户主基准。
 
 Risk 有两种合法输出：
 

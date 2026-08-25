@@ -32,6 +32,10 @@ from investment_manager.governance.audit.acceptance import AuditProfile, PhaseAA
 from investment_manager.governance.evaluation.outcome_service import (
     assemble_outcome_evaluation,
 )
+from investment_manager.governance.evaluation.reference_selection import (
+    load_reference_selection_artifact,
+    validate_reference_policy_selection,
+)
 from investment_manager.governance.models import (
     load_release_manifest,
     resolve_manifest_artifact,
@@ -267,6 +271,17 @@ def _preflight_release(
         repository_root=unit.project_root,
         required_ids=_required_release_artifacts(config),
     )
+    if reference := config.capital.reference_policy:
+        selection_path = resolve_manifest_artifact(
+            manifest,
+            reference.selection_artifact_id,
+            repository_root=unit.project_root,
+        )
+        selection = load_reference_selection_artifact(
+            selection_path,
+            expected_artifact_id=reference.selection_artifact_id,
+        )
+        validate_reference_policy_selection(selection, reference)
     audit = PhaseAAuditor(
         config,
         unit.project_root,

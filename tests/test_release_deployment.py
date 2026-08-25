@@ -99,11 +99,11 @@ def test_release_requires_the_bound_reference_selection_artifact() -> None:
         "allocations": (
             {
                 "implementation_key": "BINANCE:SPOT:BTCUSDT",
-                "target_weight": "0.10",
+                "target_exposure_fraction": "0.10",
             },
             {
                 "implementation_key": "CASH:USDT",
-                "target_weight": "0.90",
+                "target_exposure_fraction": "0.90",
             },
         ),
         "rebalance_band_fraction": "0.05",

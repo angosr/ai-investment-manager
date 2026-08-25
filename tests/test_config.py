@@ -41,7 +41,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v35"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v36"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -51,12 +51,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v35"
+    assert config.capital.version == "total-portfolio-capital-v36"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v4"
+        "binance-shadow-investable-v5"
     )
     assert config.capital.reference_policy is None
     assert tuple(
@@ -295,11 +295,11 @@ def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark()
         "allocations": (
             {
                 "implementation_key": "BINANCE:SPOT:BTCUSDT",
-                "target_weight": Decimal("0.10"),
+                "target_exposure_fraction": Decimal("0.10"),
             },
             {
                 "implementation_key": "CASH:USDT",
-                "target_weight": Decimal("0.90"),
+                "target_exposure_fraction": Decimal("0.90"),
             },
         ),
     }
@@ -321,11 +321,11 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
         "allocations": (
             {
                 "implementation_key": "BINANCE:SPOT:BTCUSDT",
-                "target_weight": Decimal("0.10"),
+                "target_exposure_fraction": Decimal("0.10"),
             },
             {
                 "implementation_key": "CASH:USDT",
-                "target_weight": Decimal("0.90"),
+                "target_exposure_fraction": Decimal("0.90"),
             },
         ),
     }

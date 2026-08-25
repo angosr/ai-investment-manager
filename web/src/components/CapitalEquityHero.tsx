@@ -70,6 +70,7 @@ function exposureLabel(value: string): string {
     NOMINAL_RATES: "名义利率",
     INFLATION_SENSITIVE: "通胀敏感资产",
     GLOBAL_EQUITY: "全球权益",
+    US_EQUITY: "美国权益",
     CREDIT: "信用",
     COMMODITY: "商品",
     FX: "外汇",

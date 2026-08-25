@@ -21,6 +21,18 @@ export interface Health {
 
 export interface CapitalOverview {
   enabled: boolean;
+  instruments: {
+    instrument: string;
+    symbol: string;
+    product: "SPOT" | "USD_M_PERPETUAL" | "TRADFI_PERPETUAL";
+    quantity: string | null;
+    average_price: string | null;
+    bid: string | null;
+    ask: string | null;
+    price: string | null;
+    quote_observed_at: string | null;
+    quote_quality: "LIVE_MARKET" | "CLOSED_MARKET" | "STALE_MARKET" | null;
+  }[];
   policy: {
     mandate_version: string;
     mandate_status: "PROVISIONAL" | "APPROVED";

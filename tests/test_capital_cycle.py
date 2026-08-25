@@ -960,7 +960,17 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert not account.positions
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 0
-    assert CapitalDashboardReader(engine, config).activity() == ()
+    reader = CapitalDashboardReader(engine, config)
+    assert reader.activity() == ()
+    dto = serialize_capital_overview(reader.overview(now=NOW))
+    assert [item["symbol"] for item in dto["instruments"]] == [
+        "BTCUSDT",
+        "PAXGUSDT",
+        "SPYUSDT",
+    ]
+    assert {item["quantity"] for item in dto["instruments"]} == {"0"}
+    assert dto["instruments"][0]["price"] == "99995"
+    assert dto["instruments"][1]["price"] is None
 
 
 def test_candidate_requires_only_its_own_executable_quote() -> None:
@@ -1309,12 +1319,12 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v4",
+        "universe_version": "binance-shadow-investable-v5",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
-            "GLOBAL_EQUITY",
             "INFLATION_SENSITIVE",
+            "US_EQUITY",
         ],
         "reference_policy_version": None,
     }
