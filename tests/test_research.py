@@ -709,7 +709,7 @@ def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility
             start=start,
             end=end,
             timeout_seconds=1,
-            clock=lambda: end + timedelta(days=1),
+            clock=lambda: datetime(2026, 8, 1, tzinfo=UTC),
             transport=httpx.MockTransport(handler),
         )
     )
@@ -771,8 +771,29 @@ def test_funding_history_rejects_untrusted_source_and_checksum() -> None:
                 start=start,
                 end=end,
                 timeout_seconds=1,
-                clock=lambda: end,
+                clock=lambda: datetime(2026, 8, 1, tzinfo=UTC),
                 transport=httpx.MockTransport(handler),
+            )
+        )
+
+
+def test_funding_history_rejects_unfinished_archive_month_before_network() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    end = datetime(2026, 8, 25, tzinfo=UTC)
+
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("未完成月份不得请求月度归档")
+
+    with pytest.raises(ValueError, match="不覆盖未完成月份"):
+        asyncio.run(
+            fetch_binance_funding_history(
+                base_url="https://data.binance.vision",
+                symbol="SPYUSDT",
+                start=start,
+                end=end,
+                timeout_seconds=1,
+                clock=lambda: end,
+                transport=httpx.MockTransport(unexpected_request),
             )
         )
 
@@ -811,7 +832,7 @@ def test_carry_history_aligns_all_series_and_verifies_funding_marks(tmp_path) ->
             start=start,
             end=end,
             timeout_seconds=1,
-            clock=lambda: end + timedelta(days=1),
+            clock=lambda: datetime(2026, 2, 1, tzinfo=UTC),
             transport=httpx.MockTransport(funding_handler),
         )
     )

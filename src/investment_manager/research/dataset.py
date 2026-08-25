@@ -573,6 +573,17 @@ async def fetch_binance_funding_history(
     collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
     if not start < end <= collected_at:
         raise ValueError("历史资金费率请求窗口或冻结时间非法")
+    current_month_started_at = datetime(
+        collected_at.year,
+        collected_at.month,
+        1,
+        tzinfo=UTC,
+    )
+    if end > current_month_started_at:
+        raise ValueError(
+            "Binance 月度资金费率归档不覆盖未完成月份；"
+            "end 必须不晚于当前 UTC 月初"
+        )
     symbol = symbol.upper()
     if not symbol.isalnum():
         raise ValueError("历史资金费率 symbol 非法")
