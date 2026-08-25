@@ -260,12 +260,12 @@ function AssessmentBody({
           </Section>
         ) : null}
 
-        <Section title="明确未接入的能力">
+        <Section title="当前观察边界">
           {snapshot.capability_summary.length ? snapshot.capability_summary.map((gap) => (
             <Item key={gap.domain} title={`${gap.domain} · ${coverageLabel(gap.status)}`}>
               {gap.missing_capabilities.join("、")}
             </Item>
-          )) : <Empty>本次没有未接入能力</Empty>}
+          )) : <Empty>本次输入的观察能力均为完整覆盖</Empty>}
         </Section>
 
         <details className={styles.rawDetails}>
