@@ -149,7 +149,7 @@ def operate_release(
             rollback_unit = current.rollback_unit
         writer_lease.acquire(blocking=True)
         try:
-            group = _start_until_ready(
+            group, active_rollback_unit = _start_candidate_or_rollback(
                 unit=unit,
                 config=loaded,
                 manifest=manifest,
@@ -158,34 +158,11 @@ def operate_release(
                 state_path=state_path,
                 timeout_seconds=readiness_timeout_seconds,
                 rollback_unit=rollback_unit,
+                rollback_fallback=rollback_fallback,
             )
-            active_rollback_unit = rollback_unit
-        except Exception as candidate_error:
-            if group is not None:
-                group.stop()
-            if rollback_unit is None:
-                writer_lease.release()
-                raise typer.BadParameter(
-                    f"候选 Release 未 ready 且没有可回滚版本：{candidate_error}"
-                ) from candidate_error
-            typer.echo(f"候选 Release 未 ready，回滚 {rollback_unit.manifest_id}")
-            rollback_config = load_config(rollback_unit.config_path)
-            rollback_manifest = load_release_manifest(rollback_unit.manifest_path)
-            try:
-                group = _start_until_ready(
-                    unit=rollback_unit,
-                    config=rollback_config,
-                    manifest=rollback_manifest,
-                    database_url=database_url,
-                    runtime_directory=runtime_root,
-                    state_path=state_path,
-                    timeout_seconds=readiness_timeout_seconds,
-                    rollback_unit=rollback_fallback,
-                )
-                active_rollback_unit = rollback_fallback
-            except Exception:
-                writer_lease.release()
-                raise
+        except Exception:
+            writer_lease.release()
+            raise
 
     assert group is not None
     typer.echo(
@@ -221,6 +198,55 @@ def operate_release(
             )
         group.stop()
         writer_lease.release()
+
+
+def _start_candidate_or_rollback(
+    *,
+    unit: ReleaseRuntimeUnit,
+    config: AppConfig,
+    manifest,
+    database_url: str,
+    runtime_directory: Path,
+    state_path: Path,
+    timeout_seconds: int,
+    rollback_unit: ReleaseRuntimeUnit | None,
+    rollback_fallback: ReleaseRuntimeUnit | None,
+) -> tuple[ManagedProcessGroup, ReleaseRuntimeUnit | None]:
+    try:
+        return (
+            _start_until_ready(
+                unit=unit,
+                config=config,
+                manifest=manifest,
+                database_url=database_url,
+                runtime_directory=runtime_directory,
+                state_path=state_path,
+                timeout_seconds=timeout_seconds,
+                rollback_unit=rollback_unit,
+            ),
+            rollback_unit,
+        )
+    except Exception as candidate_error:
+        if rollback_unit is None:
+            raise typer.BadParameter(
+                f"候选 Release 未 ready 且没有可回滚版本：{candidate_error}"
+            ) from candidate_error
+        typer.echo(f"候选 Release 未 ready，回滚 {rollback_unit.manifest_id}")
+        rollback_config = load_config(rollback_unit.config_path)
+        rollback_manifest = load_release_manifest(rollback_unit.manifest_path)
+        return (
+            _start_until_ready(
+                unit=rollback_unit,
+                config=rollback_config,
+                manifest=rollback_manifest,
+                database_url=database_url,
+                runtime_directory=runtime_directory,
+                state_path=state_path,
+                timeout_seconds=timeout_seconds,
+                rollback_unit=rollback_fallback,
+            ),
+            rollback_fallback,
+        )
 
 
 def _preflight_release(

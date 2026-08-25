@@ -5,10 +5,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import typer
 from pydantic import ValidationError
 
+from investment_manager.entrypoints.cli import release_commands
 from investment_manager.entrypoints.cli.release_commands import (
     _initialize_assembly_database,
+    _start_candidate_or_rollback,
 )
 from investment_manager.governance.release.deployment import (
     SERVICE_ORDER,
@@ -26,7 +29,7 @@ from investment_manager.governance.release.deployment import (
 from investment_manager.platform.database import build_engine, require_current_schema
 
 
-def _unit(tmp_path: Path) -> ReleaseRuntimeUnit:
+def _unit(tmp_path: Path, manifest_id: str = "release-test") -> ReleaseRuntimeUnit:
     root = tmp_path / "checkout"
     config = root / "config" / "investment-manager.shadow.yaml"
     manifest = tmp_path / "release-manifest.yaml"
@@ -40,7 +43,7 @@ def _unit(tmp_path: Path) -> ReleaseRuntimeUnit:
     )
     command.chmod(0o755)
     return ReleaseRuntimeUnit(
-        manifest_id="release-test",
+        manifest_id=manifest_id,
         code_version="a" * 40,
         project_root=root,
         config_path=config,
@@ -150,3 +153,77 @@ def test_assembly_database_has_the_same_runtime_schema_contract(tmp_path: Path) 
         require_current_schema(engine)
     finally:
         engine.dispose()
+
+
+def test_candidate_readiness_failure_rolls_back_the_complete_previous_unit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    candidate = _unit(tmp_path / "candidate", "release-candidate")
+    rollback = _unit(tmp_path / "rollback", "release-rollback")
+    fallback = _unit(tmp_path / "fallback", "release-fallback")
+    calls: list[tuple[str, str | None]] = []
+    rollback_group = object()
+
+    def start(**kwargs):
+        calls.append(
+            (
+                kwargs["unit"].manifest_id,
+                (
+                    kwargs["rollback_unit"].manifest_id
+                    if kwargs["rollback_unit"] is not None
+                    else None
+                ),
+            )
+        )
+        if len(calls) == 1:
+            raise TimeoutError("candidate warming timeout")
+        return rollback_group
+
+    monkeypatch.setattr(release_commands, "_start_until_ready", start)
+    monkeypatch.setattr(release_commands, "load_config", lambda _path: object())
+    monkeypatch.setattr(release_commands, "load_release_manifest", lambda _path: object())
+
+    group, next_rollback = _start_candidate_or_rollback(
+        unit=candidate,
+        config=object(),
+        manifest=object(),
+        database_url="postgresql://unused",
+        runtime_directory=tmp_path,
+        state_path=tmp_path / "state.json",
+        timeout_seconds=30,
+        rollback_unit=rollback,
+        rollback_fallback=fallback,
+    )
+
+    assert group is rollback_group
+    assert next_rollback == fallback
+    assert calls == [
+        ("release-candidate", "release-rollback"),
+        ("release-rollback", "release-fallback"),
+    ]
+
+
+def test_candidate_failure_without_a_previous_release_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    candidate = _unit(tmp_path / "candidate", "release-candidate")
+    monkeypatch.setattr(
+        release_commands,
+        "_start_until_ready",
+        lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("warming timeout")),
+    )
+
+    with pytest.raises(typer.BadParameter, match="没有可回滚版本"):
+        _start_candidate_or_rollback(
+            unit=candidate,
+            config=object(),
+            manifest=object(),
+            database_url="postgresql://unused",
+            runtime_directory=tmp_path,
+            state_path=tmp_path / "state.json",
+            timeout_seconds=30,
+            rollback_unit=None,
+            rollback_fallback=None,
+        )
