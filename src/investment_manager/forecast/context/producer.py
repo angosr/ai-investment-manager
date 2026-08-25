@@ -194,7 +194,6 @@ def context_spot_forecast_contract(
         cost_semantics_version=cost_semantics_version,
         validity_minutes=policy.validity_minutes,
         validity_conditions=(
-            "WORLD_MODEL_CURRENT",
             "EXECUTABLE_QUOTES_REMAIN_VALID",
         ),
         settlement_rule="completion-deadline-to-horizon-executable-spot-return-v2",

@@ -44,33 +44,10 @@ class PortfolioDecisionPolicy(FrozenModel):
         return self
 
 
-class ForecastExternalValidity(FrozenModel):
-    """Point-in-time validity of dependencies outside immutable Forecast time."""
-
-    checked_at: datetime
-    current: bool
-    reason_codes: tuple[str, ...] = ()
-    evidence_refs: tuple[str, ...] = ()
-
-    @model_validator(mode="after")
-    def state_and_evidence_must_be_canonical(self):
-        require_utc(self.checked_at)
-        for name in ("reason_codes", "evidence_refs"):
-            values = getattr(self, name)
-            if tuple(sorted(set(values))) != values:
-                raise ValueError(f"Forecast external validity {name} 必须唯一且排序")
-        if self.current and self.reason_codes:
-            raise ValueError("当前 Forecast external validity 不得包含失效原因")
-        if not self.current and not self.reason_codes:
-            raise ValueError("失效 Forecast external validity 必须包含原因")
-        return self
-
-
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast: Forecast
     capital_authorization: CandidateCapitalAuthorization | None = None
-    external_validity: ForecastExternalValidity | None = None
 
     @model_validator(mode="after")
     def forecast_permission_must_be_explicit(self):
@@ -544,12 +521,7 @@ class PortfolioDecisionEngine:
     ) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
         if not (item.forecast.available_at <= as_of < item.forecast.valid_until):
             return False, ("FORECAST_TIME_WINDOW_INVALID",), ()
-        external = item.external_validity
-        if external is None:
-            return True, (), ()
-        if external.checked_at != as_of:
-            raise ValueError("Forecast external validity 必须在当前决策时点检查")
-        return external.current, external.reason_codes, external.evidence_refs
+        return True, (), ()
 
     @classmethod
     def _forecast_is_current(

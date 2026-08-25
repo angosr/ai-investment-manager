@@ -49,7 +49,6 @@ from investment_manager.forecast.contracts import (
     ForecastProducerBinding,
     ForecastProducerKind,
 )
-from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import Forecast
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
@@ -58,7 +57,6 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import ExecutableQuote, InstrumentProduct
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.portfolio.decision import (
-    ForecastExternalValidity,
     PortfolioDecisionEngine,
     PortfolioSleeveInput,
 )
@@ -84,7 +82,6 @@ from investment_manager.risk.portfolio import (
 from investment_manager.risk.repository import SqlPortfolioRiskStore
 from investment_manager.scheduling.models import AnalysisTriggerType, TriggerBatch
 from investment_manager.settings import AppConfig
-from investment_manager.state.decision.packet import DecisionPacket
 
 logger = logging.getLogger(__name__)
 
@@ -107,19 +104,6 @@ class CapitalForecastProducer(Protocol):
     ) -> tuple[ForecastNoEstimate, ...]: ...
 
 
-class WorldModelHistory(Protocol):
-    def latest_before(
-        self,
-        *,
-        analysis_scope: str,
-        as_of: datetime,
-    ) -> ContextAssessment | None: ...
-
-    def assessment(self, assessment_id: str) -> ContextAssessment | None: ...
-
-    def packet_for_assessment(self, assessment_id: str) -> DecisionPacket | None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
     """One contract-bound producer and its risk/permission envelope."""
@@ -129,7 +113,6 @@ class CapitalForecastSource:
     producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
     capital_authorization: CandidateCapitalAuthorization
-    world_model_scope: str | None = None
 
     def __post_init__(self) -> None:
         if self.binding.contract_id != self.contract.contract_id:
@@ -142,123 +125,6 @@ class CapitalForecastSource:
             or self.binding.permission != ForecastPermission.CAPITAL_CANDIDATE
         ):
             raise ValueError("Capital Forecast source 与资本授权不一致")
-        requires_current_world_model = (
-            "WORLD_MODEL_CURRENT" in self.contract.validity_conditions
-        )
-        if requires_current_world_model != (self.world_model_scope is not None):
-            raise ValueError("Capital Forecast source 的 WorldModel 有效性检查未完整装配")
-
-
-def forecast_external_validity(
-    *,
-    world_models: WorldModelHistory,
-    world_model_scope: str | None,
-    forecast_world_model_id: str | None,
-    as_of: datetime,
-) -> ForecastExternalValidity | None:
-    """Resolve whether the Forecast's causal WorldModel remains current.
-
-    Snapshot identity is deliberately not the criterion.  A later assessment may
-    refresh every causal mechanism with new evidence while preserving the exact
-    structure the Forecast consumed.  The Forecast becomes stale only when that
-    structure changes, or when its immutable lineage cannot be proven.
-    """
-
-    if world_model_scope is None:
-        return None
-    if forecast_world_model_id is None:
-        raise ValueError("要求 WorldModel 当前有效的 Forecast 缺少认知身份")
-    latest = world_models.latest_before(
-        analysis_scope=world_model_scope,
-        as_of=as_of,
-    )
-    evidence_refs = tuple(
-        sorted(
-            {
-                forecast_world_model_id,
-                *((latest.assessment_id,) if latest is not None else ()),
-            }
-        )
-    )
-
-    def invalid(reason_code: str) -> ForecastExternalValidity:
-        return ForecastExternalValidity(
-            checked_at=as_of,
-            current=False,
-            reason_codes=(reason_code,),
-            evidence_refs=evidence_refs,
-        )
-
-    if latest is None:
-        return invalid("FORECAST_WORLD_MODEL_UNAVAILABLE")
-    if latest.assessment_id == forecast_world_model_id:
-        return ForecastExternalValidity(
-            checked_at=as_of,
-            current=True,
-            evidence_refs=evidence_refs,
-        )
-    source = world_models.assessment(forecast_world_model_id)
-    if (
-        source is None
-        or source.analysis_scope != world_model_scope
-        or source.available_at > as_of
-    ):
-        return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
-
-    # Walk the immutable packet lineage backwards, then apply each explicit
-    # one-to-one mechanism disposition forwards.  New or retired mechanisms are
-    # structural changes; refreshed claims/evidence under continuity are not.
-    transitions: list[ContextAssessment] = []
-    cursor = latest
-    visited = {cursor.assessment_id}
-    while cursor.assessment_id != source.assessment_id:
-        packet = world_models.packet_for_assessment(cursor.assessment_id)
-        previous_context = None if packet is None else packet.previous_context
-        previous_id = (
-            None if previous_context is None else previous_context.assessment_id
-        )
-        if previous_id is None or previous_id in visited:
-            return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
-        previous = world_models.assessment(previous_id)
-        if (
-            previous is None
-            or previous.analysis_scope != world_model_scope
-            or previous.available_at >= cursor.available_at
-        ):
-            return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
-        transitions.append(cursor)
-        visited.add(previous_id)
-        cursor = previous
-
-    active_ids = {item.mechanism_id for item in source.mechanisms}
-    for assessment in reversed(transitions):
-        continuation = {
-            item.continuity_ref: item.mechanism_id
-            for item in assessment.mechanisms
-            if item.continuity_ref is not None
-        }
-        retired = {
-            item.previous_mechanism_id for item in assessment.retired_mechanisms
-        }
-        continued_ids = active_ids.intersection(continuation)
-        unresolved_ids = active_ids - continued_ids - retired
-        descendant_ids = {continuation[item] for item in continued_ids}
-        current_ids = {item.mechanism_id for item in assessment.mechanisms}
-        if (
-            unresolved_ids
-            or active_ids.intersection(retired)
-            or current_ids != descendant_ids
-        ):
-            return invalid("FORECAST_WORLD_MODEL_CAUSAL_STRUCTURE_CHANGED")
-        active_ids = descendant_ids
-
-    return ForecastExternalValidity(
-        checked_at=as_of,
-        current=True,
-        evidence_refs=evidence_refs,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class CapitalTriggerConsumer:
     """Own capital on one coordinator and create idempotent Context slots."""
@@ -354,7 +220,6 @@ class CapitalCycleService:
         capital_behavior_id: str,
         market: SqlMarketDataStore,
         forecasts: SqlForecastStore,
-        world_models: SqlContextAssessmentStore,
         forecast_sources: tuple[CapitalForecastSource, ...],
         portfolio: SqlPortfolioStore,
         performance: SqlPortfolioPerformanceStore,
@@ -374,7 +239,6 @@ class CapitalCycleService:
         self._capital_behavior_id = capital_behavior_id
         self._market = market
         self._forecasts = forecasts
-        self._world_models = world_models
         self._forecast_sources = forecast_sources
         self._source_by_family = {
             item.contract.outcome_family_id: item for item in forecast_sources
@@ -884,12 +748,6 @@ class CapitalCycleService:
                 sleeve_id=sleeve_id,
                 forecast=forecast,
                 capital_authorization=source.capital_authorization,
-                external_validity=forecast_external_validity(
-                    world_models=self._world_models,
-                    world_model_scope=source.world_model_scope,
-                    forecast_world_model_id=forecast.world_model_id,
-                    as_of=as_of,
-                ),
             )
             existing = by_sleeve.get(sleeve_id)
             if existing is not None and existing != candidate:
@@ -912,12 +770,6 @@ class CapitalCycleService:
                 sleeve_id=position.sleeve_id,
                 forecast=forecast,
                 capital_authorization=source.capital_authorization,
-                external_validity=forecast_external_validity(
-                    world_models=self._world_models,
-                    world_model_scope=source.world_model_scope,
-                    forecast_world_model_id=forecast.world_model_id,
-                    as_of=as_of,
-                ),
             )
         return tuple(by_sleeve[item] for item in sorted(by_sleeve))
 
@@ -1010,12 +862,6 @@ class CapitalCycleService:
                     sleeve_id=position.sleeve_id,
                     forecast=forecast,
                     capital_authorization=source.capital_authorization,
-                    external_validity=forecast_external_validity(
-                        world_models=self._world_models,
-                        world_model_scope=source.world_model_scope,
-                        forecast_world_model_id=forecast.world_model_id,
-                        as_of=as_of,
-                    ),
                 )
             )
             profiles.append(self._risk_profile(position.sleeve_id, source))
@@ -1296,7 +1142,6 @@ def assemble_capital_cycle(
                     ),
                     risk_template=config.capital.sleeve_risk,
                     capital_authorization=authorization,
-                    world_model_scope=config.assessment.mandate.analysis_scope,
                 )
             )
         forecast_sources = tuple(configured_sources)
@@ -1328,7 +1173,6 @@ def assemble_capital_cycle(
         capital_behavior_id=config.capital.version,
         market=market,
         forecasts=forecasts,
-        world_models=world_models,
         forecast_sources=forecast_sources,
         portfolio=portfolio,
         performance=performance,

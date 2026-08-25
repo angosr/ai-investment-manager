@@ -8,7 +8,6 @@ from investment_manager.decision_cycle.capital import (
     CapitalForecastSource,
     CapitalTriggerConsumer,
     assemble_capital_cycle,
-    forecast_external_validity,
 )
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
 from investment_manager.entrypoints.dashboard.capital import (
@@ -76,129 +75,6 @@ NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
 _TEST_PRODUCER_ID = "test-capital-candidate"
 _TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
 _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
-
-
-@dataclass(frozen=True)
-class _MechanismRef:
-    mechanism_id: str
-    continuity_ref: str | None = None
-
-
-@dataclass(frozen=True)
-class _RetirementRef:
-    previous_mechanism_id: str
-
-
-@dataclass(frozen=True)
-class _AssessmentRef:
-    assessment_id: str
-    analysis_scope: str
-    available_at: datetime
-    mechanisms: tuple[_MechanismRef, ...]
-    retired_mechanisms: tuple[_RetirementRef, ...] = ()
-
-
-@dataclass(frozen=True)
-class _PreviousContextRef:
-    assessment_id: str
-
-
-@dataclass(frozen=True)
-class _PacketRef:
-    previous_context: _PreviousContextRef | None
-
-
-@dataclass(frozen=True)
-class _WorldModelLineageStub:
-    assessments: tuple[_AssessmentRef, ...]
-    latest_id: str
-    previous_by_id: dict[str, str]
-
-    def latest_before(self, **_kwargs):
-        return self.assessment(self.latest_id)
-
-    def assessment(self, assessment_id):
-        return next(
-            (item for item in self.assessments if item.assessment_id == assessment_id),
-            None,
-        )
-
-    def packet_for_assessment(self, assessment_id):
-        previous_id = self.previous_by_id.get(assessment_id)
-        return _PacketRef(
-            None if previous_id is None else _PreviousContextRef(previous_id)
-        )
-
-
-def test_world_model_evidence_refresh_preserves_forecast_validity() -> None:
-    source = _AssessmentRef(
-        assessment_id="world-model-old",
-        analysis_scope="portfolio",
-        available_at=NOW - timedelta(minutes=20),
-        mechanisms=(_MechanismRef("old-a"), _MechanismRef("old-b")),
-    )
-    refreshed = _AssessmentRef(
-        assessment_id="world-model-new",
-        analysis_scope="portfolio",
-        available_at=NOW - timedelta(minutes=10),
-        mechanisms=(
-            _MechanismRef("new-a", continuity_ref="old-a"),
-            _MechanismRef("new-b", continuity_ref="old-b"),
-        ),
-    )
-
-    validity = forecast_external_validity(
-        world_models=_WorldModelLineageStub(
-            assessments=(source, refreshed),
-            latest_id=refreshed.assessment_id,
-            previous_by_id={refreshed.assessment_id: source.assessment_id},
-        ),
-        world_model_scope="portfolio",
-        forecast_world_model_id=source.assessment_id,
-        as_of=NOW,
-    )
-
-    assert validity is not None
-    assert validity.current
-    assert validity.reason_codes == ()
-    assert validity.evidence_refs == ("world-model-new", "world-model-old")
-
-
-def test_world_model_causal_structure_change_invalidates_forecast() -> None:
-    source = _AssessmentRef(
-        assessment_id="world-model-old",
-        analysis_scope="portfolio",
-        available_at=NOW - timedelta(minutes=20),
-        mechanisms=(_MechanismRef("old-a"), _MechanismRef("old-b")),
-    )
-    changed = _AssessmentRef(
-        assessment_id="world-model-new",
-        analysis_scope="portfolio",
-        available_at=NOW - timedelta(minutes=10),
-        mechanisms=(
-            _MechanismRef("new-a", continuity_ref="old-a"),
-            _MechanismRef("new-c"),
-        ),
-        retired_mechanisms=(_RetirementRef("old-b"),),
-    )
-
-    validity = forecast_external_validity(
-        world_models=_WorldModelLineageStub(
-            assessments=(source, changed),
-            latest_id=changed.assessment_id,
-            previous_by_id={changed.assessment_id: source.assessment_id},
-        ),
-        world_model_scope="portfolio",
-        forecast_world_model_id=source.assessment_id,
-        as_of=NOW,
-    )
-
-    assert validity is not None
-    assert not validity.current
-    assert validity.reason_codes == (
-        "FORECAST_WORLD_MODEL_CAUSAL_STRUCTURE_CHANGED",
-    )
-    assert validity.evidence_refs == ("world-model-new", "world-model-old")
 
 
 def _assemble_capital_cycle(config, engine, **kwargs):
