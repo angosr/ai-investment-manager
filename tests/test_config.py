@@ -42,7 +42,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v40"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v44"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -52,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v41"
+    assert config.capital.version == "total-portfolio-capital-v43"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -68,7 +68,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v10"
-    assert config.information.version == "information-intake-v35"
+    assert config.information.version == "information-intake-v36"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.official_metric_slow_poll_seconds == 21_600
     assert config.decision_state.version == "portfolio-state-v37"
@@ -89,15 +89,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
     )
-    assert config.assessment.version == "context-assessment-v41"
-    assert config.outcome_evaluation.version == "outcome-window-v16"
+    assert config.assessment.version == "context-assessment-v42"
+    assert config.outcome_evaluation.version == "outcome-window-v19"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v10"
+        == "world-model-ablation-forward-v13"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v27"
+    assert config.trigger.version == "analysis-trigger-v28"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v10"
     regulation = next(
         item

@@ -136,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v41
+  version: total-portfolio-capital-v43
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -248,10 +248,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v15
+    version: btc-context-forecast-v17
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "9a2b55e4fc3180e6515716c10d104def039dc4693724a598fa244569d56e69a0"
+    producer_behavior_id: "5c3c19eb374c881469b55fb8845fa20f1ccf0450cb55691f4691226b9e18b3e0"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -259,7 +259,7 @@ capital:
     horizon_minutes: 240
     cadence_minutes: 240
     material_event_slots_enabled: true
-    material_event_slot_policy_version: portfolio-material-world-model-slot-v4
+    material_event_slot_policy_version: portfolio-material-world-model-slot-v6
     validity_minutes: 60
     completion_deadline_seconds: 1500
     minimum_remaining_horizon_minutes: 210
@@ -341,7 +341,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v16
+  version: outcome-window-v19
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -349,11 +349,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v10
+    version: world-model-ablation-forward-v13
     enabled: false
-    plan_id: world-model-ablation-forward-v10
-    # v10 只接收首个 v9 配对 Outcome 到期后的新行为槽；不是交易等待条件。
-    activated_at: 2026-08-25T20:00:00Z
+    plan_id: world-model-ablation-forward-v13
+    # 稳定币容量状态改变上游世界模型行为；只接收本版激活后的新槽。
+    activated_at: 2026-08-25T21:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -368,7 +368,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v27
+  version: analysis-trigger-v28
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
@@ -455,7 +455,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v35
+  version: information-intake-v36
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -594,7 +594,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v41
+  version: context-assessment-v42
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
