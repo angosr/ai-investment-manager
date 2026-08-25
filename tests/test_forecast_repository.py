@@ -16,6 +16,8 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
+    ForecastSlotOrigin,
 )
 from investment_manager.forecast.models import ForecastTarget
 from investment_manager.forecast.repository import SqlForecastStore
@@ -222,6 +224,55 @@ def test_forecast_ledger_validates_contract_slot_distribution_and_base_dependenc
     altered = base.model_copy(update={"expected_gross_bps": Decimal("11")})
     with pytest.raises(ValueError, match="expected_gross_bps"):
         store.record(altered)
+
+
+def test_cadence_recovery_anchor_ignores_newer_material_event_slots() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    contract = _contract()
+    contracts.record_contract(contract)
+    binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="trend",
+        producer_behavior_id="trend-event-slots-v1",
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(binding, activated_at=NOW)
+
+    def slot(at: datetime, cause: ForecastSlotCause) -> ForecastDecisionSlot:
+        return ForecastDecisionSlot.create(
+            contract,
+            slot_as_of=at,
+            cutoff_prices=(
+                ForecastPriceAnchor(
+                    instrument_id=contract.target.legs[0].instrument.key,
+                    price=Decimal("100"),
+                    observed_at=at,
+                    available_at=at,
+                    quote_ref=f"quote-{at.isoformat()}",
+                ),
+            ),
+            cause=cause,
+        )
+
+    cadence = slot(NOW, ForecastSlotCause.cadence(contract))
+    event = slot(
+        NOW + timedelta(hours=1),
+        ForecastSlotCause.material_state(
+            policy_version="material-world-model-slot-v1",
+            trigger_refs=("assessment-1", "state-1"),
+        ),
+    )
+    contracts.record_slot(cadence, binding=binding)
+    contracts.record_slot(event, binding=binding)
+
+    assert contracts.latest_obligated_slot_at(binding_id=binding.binding_id) == event.slot_as_of
+    assert contracts.latest_obligated_slot_at(
+        binding_id=binding.binding_id,
+        origin=ForecastSlotOrigin.CADENCE,
+    ) == cadence.slot_as_of
 
 
 def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior() -> None:

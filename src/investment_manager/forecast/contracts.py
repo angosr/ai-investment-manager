@@ -176,6 +176,49 @@ class ForecastContract(FrozenModel):
         return cls(contract_id=cls.identity_for(payload), **normalized)
 
 
+class ForecastSlotOrigin(StrEnum):
+    CADENCE = "CADENCE"
+    MATERIAL_STATE = "MATERIAL_STATE"
+
+
+class ForecastSlotCause(FrozenModel):
+    """Why one immutable Forecast obligation exists; never a direction signal."""
+
+    origin: ForecastSlotOrigin
+    policy_version: str = Field(min_length=1)
+    trigger_refs: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def origin_and_refs_must_be_consistent(self):
+        if tuple(sorted(set(self.trigger_refs))) != self.trigger_refs:
+            raise ValueError("Forecast slot trigger_refs 必须唯一且排序")
+        if self.origin == ForecastSlotOrigin.CADENCE and self.trigger_refs:
+            raise ValueError("定时 Forecast slot 不得伪造事件引用")
+        if self.origin == ForecastSlotOrigin.MATERIAL_STATE and not self.trigger_refs:
+            raise ValueError("材料事件 Forecast slot 必须引用触发事实")
+        return self
+
+    @classmethod
+    def cadence(cls, contract: ForecastContract) -> ForecastSlotCause:
+        return cls(
+            origin=ForecastSlotOrigin.CADENCE,
+            policy_version=contract.decision_slot_rule,
+        )
+
+    @classmethod
+    def material_state(
+        cls,
+        *,
+        policy_version: str,
+        trigger_refs: tuple[str, ...],
+    ) -> ForecastSlotCause:
+        return cls(
+            origin=ForecastSlotOrigin.MATERIAL_STATE,
+            policy_version=policy_version,
+            trigger_refs=tuple(sorted(set(trigger_refs))),
+        )
+
+
 class ForecastDecisionSlot(FrozenModel):
     slot_id: str = Field(min_length=1)
     contract_id: str = Field(min_length=1)
@@ -185,6 +228,7 @@ class ForecastDecisionSlot(FrozenModel):
     completion_deadline_at: datetime
     outcome_start_at: datetime | None = None
     evaluation_at: datetime
+    cause: ForecastSlotCause | None = None
 
     _utc_slot_as_of = field_validator("slot_as_of")(require_utc)
     _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
@@ -210,17 +254,35 @@ class ForecastDecisionSlot(FrozenModel):
         anchor_ids = tuple(item.instrument_id for item in self.cutoff_prices)
         if len(set(anchor_ids)) != len(anchor_ids):
             raise ValueError("ForecastDecisionSlot cutoff prices 不能重复 Instrument")
-        expected = self.identity_for(self.contract_id, self.slot_as_of)
+        expected = self.identity_for(
+            self.contract_id,
+            self.slot_as_of,
+            cause=self.cause,
+        )
         if self.slot_id != expected:
             raise ValueError("ForecastDecisionSlot slot_id 与合同/时点不一致")
         return self
 
     @staticmethod
-    def identity_for(contract_id: str, slot_as_of: datetime) -> str:
-        return stable_id(
-            "forecast_decision_slot",
+    def identity_for(
+        contract_id: str,
+        slot_as_of: datetime,
+        *,
+        cause: ForecastSlotCause | None = None,
+    ) -> str:
+        identity = (
             contract_id,
             require_utc(slot_as_of).isoformat(),
+        )
+        # ``None`` preserves immutable slots written before slot causes existed.
+        return (
+            stable_id("forecast_decision_slot", *identity)
+            if cause is None
+            else stable_id(
+                "forecast_decision_slot",
+                *identity,
+                content_hash(cause),
+            )
         )
 
     @classmethod
@@ -231,6 +293,7 @@ class ForecastDecisionSlot(FrozenModel):
         slot_as_of: datetime,
         cutoff_prices: tuple[ForecastPriceAnchor, ...],
         information_cutoff_at: datetime | None = None,
+        cause: ForecastSlotCause | None = None,
     ) -> ForecastDecisionSlot:
         slot_at = require_utc(slot_as_of)
         cutoff = require_utc(information_cutoff_at or slot_at)
@@ -238,7 +301,7 @@ class ForecastDecisionSlot(FrozenModel):
             seconds=contract.completion_deadline_seconds
         )
         return cls(
-            slot_id=cls.identity_for(contract.contract_id, slot_at),
+            slot_id=cls.identity_for(contract.contract_id, slot_at, cause=cause),
             contract_id=contract.contract_id,
             slot_as_of=slot_at,
             information_cutoff_at=cutoff,
@@ -251,6 +314,7 @@ class ForecastDecisionSlot(FrozenModel):
                 + timedelta(seconds=contract.outcome_start_delay_seconds)
             ),
             evaluation_at=cutoff + timedelta(minutes=contract.horizon_minutes),
+            cause=cause,
         )
 
 

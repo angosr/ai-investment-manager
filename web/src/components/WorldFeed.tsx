@@ -95,4 +95,5 @@ const EVENT_LABEL: Record<string, string> = {
   CANONICAL_FACT_REVISED: "事实修订",
   HEARTBEAT: "例行检查",
   FORECAST_SLOT_DUE: "预测时点",
+  FORECAST_EVENT_DUE: "材料变化后的预测更新",
 };

@@ -34,7 +34,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v34"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v35"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -44,7 +44,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "spot-capital-v29"
+    assert config.capital.version == "spot-capital-v30"
     assert config.capital.decision.version == "portfolio-net-edge-v8"
     assert config.information.version == "information-intake-v33"
     assert config.information.normalizer_version == "trendradar-collector-v9"
@@ -72,7 +72,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         == "world-model-ablation-forward-v6"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v24"
+    assert config.trigger.version == "analysis-trigger-v25"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(
         item

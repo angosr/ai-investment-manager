@@ -52,6 +52,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   HEARTBEAT: "例行定时检查",
   WORLD_MODEL_UPDATED: "世界认知完成更新",
   FORECAST_CADENCE: "固定预测时点",
+  FORECAST_EVENT_DUE: "材料变化后的预测更新",
 };
 
 interface ActionGroup {

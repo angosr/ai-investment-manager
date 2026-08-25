@@ -182,11 +182,6 @@ forecast_decision_slots = Table(
     Column("completion_deadline_at", DateTime(timezone=True), nullable=False),
     Column("evaluation_at", DateTime(timezone=True), nullable=False),
     Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "contract_id",
-        "slot_as_of",
-        name="uq_forecast_decision_slot_contract_time",
-    ),
 )
 Index(
     "ix_forecast_decision_slots_evaluation",

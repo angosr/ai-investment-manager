@@ -101,6 +101,20 @@ def run_trigger_service(
                             and config.capital.context_forecast.enabled
                             else None
                         ),
+                        material_event_slots_enabled=(
+                            config.capital.context_forecast.material_event_slots_enabled
+                            if config.assessment.enabled
+                            and config.capital.context_forecast is not None
+                            and config.capital.context_forecast.enabled
+                            else False
+                        ),
+                        material_event_slot_policy_version=(
+                            config.capital.context_forecast.material_event_slot_policy_version
+                            if config.assessment.enabled
+                            and config.capital.context_forecast is not None
+                            and config.capital.context_forecast.enabled
+                            else None
+                        ),
                         owner_symbol=config.assessment.review_trigger_symbol,
                         context_activation_at=capital_consumer.context_activation_at,
                     )

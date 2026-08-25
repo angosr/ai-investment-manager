@@ -62,6 +62,7 @@ class WorldModelReviewScheduler:
     manifest_id: str
     minimum_call_interval_seconds: int
     trigger_expiry_seconds: int
+    material_event_slots_enabled: bool = False
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def reconcile_latest(self, analysis_scope: str) -> bool:
@@ -93,16 +94,29 @@ class WorldModelReviewScheduler:
             symbol=self.symbol,
             pipeline_id=self.pipeline_id,
         )
+        packet = self.assessments.packet_for_assessment(assessment.assessment_id)
+        if packet is None:
+            raise ValueError("WorldModel 更新缺少权威 DecisionPacket")
+        event_slot_due = self.material_event_slots_enabled and bool(packet.deltas)
+        trigger_type = (
+            AnalysisTriggerType.FORECAST_EVENT_DUE
+            if event_slot_due
+            else AnalysisTriggerType.WORLD_MODEL_UPDATED
+        )
         self.triggers.record_trigger(
             build_trigger_event(
-                trigger_type=AnalysisTriggerType.WORLD_MODEL_UPDATED,
+                trigger_type=trigger_type,
                 symbol=self.symbol,
                 pipeline_id=self.pipeline_id,
                 occurred_at=assessment.available_at,
                 observed_at=assessment.available_at,
                 priority=100,
-                dedup_key=stable_id("world_model_updated", assessment.assessment_id),
-                evidence_ids=(assessment.assessment_id,),
+                dedup_key=stable_id(trigger_type.value.lower(), assessment.assessment_id),
+                evidence_ids=(
+                    (assessment.assessment_id, packet.packet_id, packet.state_id)
+                    if event_slot_due
+                    else (assessment.assessment_id,)
+                ),
                 plan_revision=plan.revision,
             )
         )
@@ -311,6 +325,11 @@ def assemble_assessment_application(
         manifest_id=manifest_id,
         minimum_call_interval_seconds=config.trigger.minimum_call_interval_seconds,
         trigger_expiry_seconds=config.trigger.trigger_expiry_seconds,
+        material_event_slots_enabled=bool(
+            config.capital.context_forecast is not None
+            and config.capital.context_forecast.enabled
+            and config.capital.context_forecast.material_event_slots_enabled
+        ),
     )
     scheduler.reconcile_latest(config.assessment.mandate.analysis_scope)
     def complete_world_model(assessment: ContextAssessment) -> None:

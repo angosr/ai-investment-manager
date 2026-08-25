@@ -39,7 +39,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v5"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v6"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -192,6 +192,7 @@ def context_forecast_input_projection(
             "information_cutoff_at": slot.information_cutoff_at,
             "completion_deadline_at": slot.completion_deadline_at,
             "evaluation_at": slot.evaluation_at,
+            "cause": slot.cause,
         },
         "forecast_contract": contract,
         "world_model": context_forecast_world_model_projection(assessment),

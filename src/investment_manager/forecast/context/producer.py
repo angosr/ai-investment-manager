@@ -24,6 +24,8 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
+    ForecastSlotOrigin,
 )
 from investment_manager.forecast.models import ContextAssessment, ForecastTarget
 from investment_manager.forecast.repository import SqlForecastStore
@@ -185,8 +187,16 @@ def context_spot_forecast_contract(
         allowed_orientations=(ForecastOrientation.CANONICAL,),
         outcome_buckets=policy.outcome_buckets,
         horizon_minutes=policy.horizon_minutes,
-        decision_slot_rule="fixed-utc-cadence-after-release-activation-v4",
-        evaluation_trigger="contract-cadence-only-v2",
+        decision_slot_rule=(
+            "fixed-cadence-and-material-world-model-v1"
+            if policy.material_event_slots_enabled
+            else "fixed-utc-cadence-after-release-activation-v4"
+        ),
+        evaluation_trigger=(
+            "cadence-or-material-world-model-slot-v1"
+            if policy.material_event_slots_enabled
+            else "contract-cadence-only-v2"
+        ),
         information_cutoff_rule="fresh-target-state-at-slot-v2",
         completion_deadline_seconds=policy.completion_deadline_seconds,
         minimum_remaining_horizon_minutes=policy.minimum_remaining_horizon_minutes,
@@ -229,11 +239,21 @@ class ContextForecastProducer:
         if self.contract.target.legs[0].instrument != self.instrument:
             raise ValueError("Context Forecast Instrument 与 Contract Target 不一致")
 
-    def produce(self, *, as_of: datetime) -> ForecastProductionResult:
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult:
         slot_as_of = require_utc(as_of)
+        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
         self.contracts.record_contract(self.contract)
         self.contracts.record_binding(self.binding, activated_at=self.activated_at)
-        slot_id = ForecastDecisionSlot.identity_for(self.contract.contract_id, slot_as_of)
+        slot_id = ForecastDecisionSlot.identity_for(
+            self.contract.contract_id,
+            slot_as_of,
+            cause=slot_cause,
+        )
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,
             producer_behavior_id=self.binding.producer_behavior_id,
@@ -275,6 +295,7 @@ class ContextForecastProducer:
                 slot_as_of=slot_as_of,
                 information_cutoff_at=information_cutoff,
                 cutoff_prices=cutoff_prices,
+                cause=slot_cause,
             )
             self.contracts.record_slot(slot, binding=self.binding)
         elif (
@@ -431,14 +452,20 @@ class ContextForecastProducer:
         *,
         as_of: datetime,
         completed_at: datetime,
+        cause: ForecastSlotCause | None = None,
     ) -> ForecastProductionResult:
         """Recover one scheduled obligation without running historical AI."""
 
         slot_as_of = require_utc(as_of)
         completed = require_utc(completed_at)
+        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
         self.contracts.record_contract(self.contract)
         self.contracts.record_binding(self.binding, activated_at=self.activated_at)
-        slot_id = ForecastDecisionSlot.identity_for(self.contract.contract_id, slot_as_of)
+        slot_id = ForecastDecisionSlot.identity_for(
+            self.contract.contract_id,
+            slot_as_of,
+            cause=slot_cause,
+        )
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,
             producer_behavior_id=self.binding.producer_behavior_id,
@@ -468,6 +495,7 @@ class ContextForecastProducer:
                 self.contract,
                 slot_as_of=slot_as_of,
                 cutoff_prices=cutoff_prices,
+                cause=slot_cause,
             )
             self.contracts.record_slot(slot, binding=self.binding)
         elif slot.cutoff_prices != cutoff_prices:
@@ -495,7 +523,8 @@ class ContextForecastProducer:
         before = require_utc(before_as_of)
         completed = require_utc(completed_at)
         latest = self.contracts.latest_obligated_slot_at(
-            binding_id=self.binding.binding_id
+            binding_id=self.binding.binding_id,
+            origin=ForecastSlotOrigin.CADENCE,
         )
         if latest is None:
             return ()
@@ -509,6 +538,7 @@ class ContextForecastProducer:
             result = self.record_deadline_missed(
                 as_of=cursor,
                 completed_at=completed,
+                cause=ForecastSlotCause.cadence(self.contract),
             )
             if isinstance(result, ForecastNoEstimate):
                 recovered.append(result)

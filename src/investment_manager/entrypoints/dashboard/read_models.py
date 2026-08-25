@@ -555,6 +555,7 @@ class DashboardReader:
             "CANONICAL_FACT_REVISED": "关键事实修订触发重新分析",
             "HEARTBEAT": "例行状态检查",
             "FORECAST_SLOT_DUE": "合同预测时点到期",
+            "FORECAST_EVENT_DUE": "材料变化触发预测更新",
         }
         sources = {
             "MARKET_SHOCK": "Binance 行情",
@@ -563,6 +564,7 @@ class DashboardReader:
             "CANONICAL_FACT_REVISED": "事实协调器",
             "HEARTBEAT": "系统调度",
             "FORECAST_SLOT_DUE": "预测调度",
+            "FORECAST_EVENT_DUE": "世界认知",
         }
         events: list[WorldEvent] = []
         for row in rows:

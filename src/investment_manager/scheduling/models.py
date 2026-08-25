@@ -96,6 +96,7 @@ class AnalysisTriggerType(StrEnum):
     AGENT_WAKEUP = "AGENT_WAKEUP"
     HEARTBEAT = "HEARTBEAT"
     FORECAST_SLOT_DUE = "FORECAST_SLOT_DUE"
+    FORECAST_EVENT_DUE = "FORECAST_EVENT_DUE"
     WORLD_MODEL_UPDATED = "WORLD_MODEL_UPDATED"
 
 
@@ -210,6 +211,7 @@ class AnalysisEventRule(FrozenModel):
             AnalysisTriggerType.AGENT_WAKEUP,
             AnalysisTriggerType.HEARTBEAT,
             AnalysisTriggerType.FORECAST_SLOT_DUE,
+            AnalysisTriggerType.FORECAST_EVENT_DUE,
             AnalysisTriggerType.WORLD_MODEL_UPDATED,
         }:
             raise ValueError("内部调度触发不通过事件规则订阅")
@@ -523,6 +525,7 @@ def trigger_plan_accepts(
     if trigger_type in {
         AnalysisTriggerType.HEARTBEAT.value,
         AnalysisTriggerType.FORECAST_SLOT_DUE.value,
+        AnalysisTriggerType.FORECAST_EVENT_DUE.value,
         AnalysisTriggerType.WORLD_MODEL_UPDATED.value,
     }:
         return True

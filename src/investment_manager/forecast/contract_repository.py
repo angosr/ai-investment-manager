@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -13,6 +13,7 @@ from investment_manager.forecast.contracts import (
     ForecastPermission,
     ForecastProducerBinding,
     ForecastSlotObligation,
+    ForecastSlotOrigin,
 )
 from investment_manager.forecast.tables import (
     forecast_contracts,
@@ -241,21 +242,41 @@ class SqlForecastContractStore:
         )
         return None if payload is None else ForecastSlotObligation.model_validate(payload)
 
-    def latest_obligated_slot_at(self, *, binding_id: str) -> datetime | None:
-        with self._engine.connect() as connection:
-            return connection.execute(
-                select(forecast_decision_slots.c.slot_as_of)
-                .select_from(
-                    forecast_slot_obligations.join(
-                        forecast_decision_slots,
-                        forecast_decision_slots.c.slot_id
-                        == forecast_slot_obligations.c.slot_id,
-                    )
+    def latest_obligated_slot_at(
+        self,
+        *,
+        binding_id: str,
+        origin: ForecastSlotOrigin | None = None,
+    ) -> datetime | None:
+        statement = (
+            select(forecast_decision_slots.c.slot_as_of)
+            .select_from(
+                forecast_slot_obligations.join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id
+                    == forecast_slot_obligations.c.slot_id,
                 )
-                .where(forecast_slot_obligations.c.binding_id == binding_id)
-                .order_by(forecast_decision_slots.c.slot_as_of.desc())
-                .limit(1)
+            )
+            .where(forecast_slot_obligations.c.binding_id == binding_id)
+        )
+        if origin is not None:
+            stored_origin = forecast_decision_slots.c.payload["cause"][
+                "origin"
+            ].as_string()
+            statement = statement.where(
+                or_(
+                    stored_origin == origin.value,
+                    # Slots before cause provenance existed were cadence-only.
+                    stored_origin.is_(None)
+                    if origin == ForecastSlotOrigin.CADENCE
+                    else False,
+                )
+            )
+        with self._engine.connect() as connection:
+            value = connection.execute(
+                statement.order_by(forecast_decision_slots.c.slot_as_of.desc()).limit(1)
             ).scalar_one_or_none()
+        return None if value is None else database_utc(value)
 
     def slot(self, slot_id: str) -> ForecastDecisionSlot | None:
         payload = self._payload(

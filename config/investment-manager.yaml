@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v29
+  version: spot-capital-v30
   enabled: false
   settlement_asset: USDT
   decision:
@@ -186,16 +186,18 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v10
+    version: btc-context-forecast-v11
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "d3b6a7e512b6b7e387e15cf5d3cbc35a4b7c9b1b47bb01e3caf29b2e19a39373"
+    producer_behavior_id: "48d5af38a3f340d854c35c2ce361b61ec44d4d58f20d655bc9f316a2df8d1c6d"
     outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v6
+    contract_version: btc-spot-directional-4h-v7
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
     horizon_minutes: 240
     cadence_minutes: 240
+    material_event_slots_enabled: true
+    material_event_slot_policy_version: material-world-model-slot-v1
     validity_minutes: 60
     completion_deadline_seconds: 1500
     minimum_remaining_horizon_minutes: 210
@@ -303,7 +305,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v24
+  version: analysis-trigger-v25
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
@@ -490,7 +492,7 @@ information:
       maximum_publication_age_seconds: 864000
 
 pipeline:
-  version: off-pipeline-v6
+  version: off-pipeline-v7
   ai_mode: "OFF"
 
 proposal:

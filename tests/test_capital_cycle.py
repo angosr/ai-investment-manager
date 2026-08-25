@@ -395,7 +395,8 @@ class _TriggerCapitalStub:
         self.calls.append(("recover", before_slot_at))
         return ()
 
-    def record_missed_forecast(self, *, slot_at, completed_at):
+    def record_missed_forecast(self, *, slot_at, completed_at, **kwargs):
+        del completed_at, kwargs
         self.calls.append(("missed", slot_at))
         return ()
 
@@ -454,6 +455,58 @@ def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> Non
     consumer.consume(_runtime_batch(AnalysisTriggerType.WORLD_MODEL_UPDATED, at=NOW))
 
     assert capital.calls == [("review", NOW)]
+
+
+def test_material_world_model_update_creates_event_forecast_slot() -> None:
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=NOW))
+
+    assert capital.calls == [("produce", NOW)]
+
+
+def test_late_material_world_model_update_records_no_estimate() -> None:
+    event_at = NOW
+    batch = _runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=event_at)
+    created_at = event_at + timedelta(minutes=30)
+    deadline = event_at + timedelta(minutes=35)
+    late_batch = TriggerBatch(
+        batch_id=stable_id(
+            "trigger_batch",
+            batch.symbol,
+            batch.pipeline_id,
+            batch.plan_revision,
+            *(item.trigger_id for item in batch.triggers),
+            deadline.isoformat(),
+        ),
+        symbol=batch.symbol,
+        pipeline_id=batch.pipeline_id,
+        plan_revision=batch.plan_revision,
+        created_at=created_at,
+        deadline=deadline,
+        triggers=batch.triggers,
+    )
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(late_batch)
+
+    assert capital.calls == [("missed", event_at), ("review", late_batch.created_at)]
 
 
 def test_late_cadence_is_a_no_estimate_then_current_risk_review() -> None:

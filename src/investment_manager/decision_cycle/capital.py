@@ -48,6 +48,7 @@ from investment_manager.forecast.contracts import (
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
 )
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import Forecast
@@ -87,13 +88,19 @@ logger = logging.getLogger(__name__)
 
 
 class CapitalForecastProducer(Protocol):
-    def produce(self, *, as_of: datetime) -> ForecastProductionResult: ...
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult: ...
 
     def record_deadline_missed(
         self,
         *,
         as_of: datetime,
         completed_at: datetime,
+        cause: ForecastSlotCause | None = None,
     ) -> ForecastProductionResult: ...
 
     def recover_deadline_missed(
@@ -125,6 +132,8 @@ class CapitalForecastSource:
             or self.binding.permission != ForecastPermission.CAPITAL_CANDIDATE
         ):
             raise ValueError("Capital Forecast source 与资本授权不一致")
+
+
 @dataclass(frozen=True, slots=True)
 class CapitalTriggerConsumer:
     """Own capital on one coordinator and create idempotent Context slots."""
@@ -132,6 +141,8 @@ class CapitalTriggerConsumer:
     capital: CapitalCycleService
     context_cadence_minutes: int | None = None
     context_completion_deadline_seconds: int | None = None
+    material_event_slots_enabled: bool = False
+    material_event_slot_policy_version: str | None = None
     owner_symbol: str | None = None
     context_activation_at: datetime | None = None
 
@@ -140,6 +151,12 @@ class CapitalTriggerConsumer:
             self.context_completion_deadline_seconds is None
         ):
             raise ValueError("Context cadence 与完成截止秒数必须同时配置")
+        if self.material_event_slots_enabled != (
+            self.material_event_slot_policy_version is not None
+        ):
+            raise ValueError("材料事件 Forecast 槽启用状态与政策版本必须同时配置")
+        if self.material_event_slots_enabled and self.context_cadence_minutes is None:
+            raise ValueError("材料事件 Forecast 槽必须复用 Context Forecast 合同")
         if self.context_activation_at is not None:
             require_utc(self.context_activation_at)
 
@@ -152,6 +169,63 @@ class CapitalTriggerConsumer:
         # facts; the assessment path remains free to observe every asset.
         if self.owner_symbol is not None and batch.symbol != self.owner_symbol:
             return None
+        material_triggers = tuple(
+            item
+            for item in batch.triggers
+            if item.trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE
+        )
+        if material_triggers:
+            if not self.material_event_slots_enabled:
+                return self.capital.review(batch)
+            assert self.material_event_slot_policy_version is not None
+            assert self.context_completion_deadline_seconds is not None
+            slot_at = max(item.occurred_at for item in material_triggers)
+            if (
+                self.context_activation_at is not None
+                and slot_at < self.context_activation_at
+            ):
+                return self.capital.review(batch)
+            trigger_refs = tuple(
+                sorted(
+                    {
+                        *(item.trigger_id for item in material_triggers),
+                        *(
+                            evidence_id
+                            for item in material_triggers
+                            for evidence_id in item.evidence_ids
+                        ),
+                    }
+                )
+            )
+            cause = ForecastSlotCause.material_state(
+                policy_version=self.material_event_slot_policy_version,
+                trigger_refs=trigger_refs,
+            )
+            event_cause_id = stable_id(
+                "context_forecast_material_event",
+                self.capital.portfolio_id,
+                cause.policy_version,
+                *cause.trigger_refs,
+            )
+            if self.capital.cause_completed(event_cause_id):
+                return self.capital.review(batch)
+            if batch.created_at > slot_at + timedelta(
+                seconds=self.context_completion_deadline_seconds
+            ):
+                self.capital.record_missed_forecast(
+                    slot_at=slot_at,
+                    completed_at=batch.created_at,
+                    cause=cause,
+                )
+                return self.capital.review(batch)
+            return self.capital.produce(
+                as_of=slot_at,
+                cause_id=event_cause_id,
+                trigger_batch_id=batch.batch_id,
+                symbol=batch.symbol,
+                trigger_types=(AnalysisTriggerType.FORECAST_EVENT_DUE.value,),
+                cause=cause,
+            )
         if self.context_cadence_minutes is not None and any(
             item.trigger_type
             in {
@@ -343,6 +417,7 @@ class CapitalCycleService:
         trigger_batch_id: str | None = None,
         symbol: str = "SYSTEM",
         trigger_types: tuple[str, ...] = (),
+        cause: ForecastSlotCause | None = None,
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         requested_at = require_utc(as_of)
         evaluation_cause_id = cause_id or stable_id(
@@ -369,7 +444,10 @@ class CapitalCycleService:
                 raise ValueError("Capital evaluation cause 已绑定不同触发事实")
             return self._recorded_result(prior_record)
         production_results = tuple(
-            source.producer.produce(as_of=requested_at) for source in self._forecast_sources
+            source.producer.produce(as_of=requested_at)
+            if cause is None
+            else source.producer.produce(as_of=requested_at, cause=cause)
+            for source in self._forecast_sources
         )
         generated_forecasts = tuple(
             item for item in production_results if not isinstance(item, ForecastNoEstimate)
@@ -506,15 +584,24 @@ class CapitalCycleService:
         *,
         slot_at: datetime,
         completed_at: datetime,
+        cause: ForecastSlotCause | None = None,
     ) -> tuple[ForecastProductionResult, ...]:
         """Ensure a late slot has a terminal result without rewriting an existing one."""
 
         slot = require_utc(slot_at)
         completed = require_utc(completed_at)
         results = tuple(
-            source.producer.record_deadline_missed(
-                as_of=slot,
-                completed_at=completed,
+            (
+                source.producer.record_deadline_missed(
+                    as_of=slot,
+                    completed_at=completed,
+                )
+                if cause is None
+                else source.producer.record_deadline_missed(
+                    as_of=slot,
+                    completed_at=completed,
+                    cause=cause,
+                )
             )
             for source in self._forecast_sources
         )

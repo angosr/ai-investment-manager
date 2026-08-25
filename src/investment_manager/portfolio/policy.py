@@ -52,6 +52,8 @@ class ContextForecastPolicy(StrictConfig):
     derivative_evidence_instrument_key: str | None = Field(default=None, min_length=1)
     horizon_minutes: int = Field(gt=0, le=43_200)
     cadence_minutes: int = Field(gt=0, le=43_200)
+    material_event_slots_enabled: bool = False
+    material_event_slot_policy_version: str | None = Field(default=None, min_length=1)
     validity_minutes: int = Field(gt=0, le=1_440)
     completion_deadline_seconds: int = Field(gt=0)
     minimum_remaining_horizon_minutes: int = Field(gt=0)
@@ -67,6 +69,10 @@ class ContextForecastPolicy(StrictConfig):
             raise ValueError("Context Forecast 必需特征必须唯一且排序")
         if self.cadence_minutes > self.horizon_minutes:
             raise ValueError("Context Forecast cadence 不能长于预测周期")
+        if self.material_event_slots_enabled != (
+            self.material_event_slot_policy_version is not None
+        ):
+            raise ValueError("Context Forecast 事件槽启用状态与政策版本必须同时配置")
         return self
 
 

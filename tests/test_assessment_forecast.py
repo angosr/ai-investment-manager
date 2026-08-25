@@ -46,6 +46,7 @@ from investment_manager.forecast.contracts import (
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
 )
 from investment_manager.forecast.models import (
     ContextAssessment,
@@ -388,7 +389,10 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
     )
 
 
-def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
+@pytest.mark.parametrize("material_event", (False, True))
+def test_context_forecast_persists_one_replay_safe_probability_result(
+    material_event: bool,
+) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     contexts = SqlContextAssessmentStore(engine)
@@ -413,8 +417,16 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
             )
         )
 
-    first = producer.produce(as_of=assessment.available_at)
-    replayed = producer.produce(as_of=assessment.available_at)
+    cause = (
+        ForecastSlotCause.material_state(
+            policy_version="material-world-model-slot-v1",
+            trigger_refs=(assessment.assessment_id, packet.packet_id, packet.state_id),
+        )
+        if material_event
+        else None
+    )
+    first = producer.produce(as_of=assessment.available_at, cause=cause)
+    replayed = producer.produce(as_of=assessment.available_at, cause=cause)
 
     assert isinstance(first, BaseForecast)
     assert replayed == first
@@ -435,6 +447,19 @@ def test_context_forecast_persists_one_replay_safe_probability_result() -> None:
     assert datetime.fromisoformat(
         analysis_input["decision_slot"]["information_cutoff_at"]
     ) == assessment.available_at
+    assert analysis_input["decision_slot"]["cause"] == {
+        "origin": "MATERIAL_STATE" if material_event else "CADENCE",
+        "policy_version": (
+            "material-world-model-slot-v1"
+            if material_event
+            else producer.contract.decision_slot_rule
+        ),
+        "trigger_refs": (
+            sorted([assessment.assessment_id, packet.packet_id, packet.state_id])
+            if material_event
+            else []
+        ),
+    }
     assert datetime.fromisoformat(analysis_input["target_state"]["as_of"]) == (
         assessment.available_at
     )
@@ -734,6 +759,52 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     assert update_messages[0].payload["trigger"]["evidence_ids"] == [
         world_model.assessment_id
     ]
+
+
+def test_material_world_model_update_creates_one_event_forecast_trigger(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    assessments = SqlContextAssessmentStore(engine)
+    packet = _packet()
+    assessment = _assessment()
+    assessments.record_packet(packet)
+    assessments.record_assessment(packet.packet_id, assessment)
+    triggers = SqlTriggerRepository(engine, app_config.trigger)
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="pipeline-event-forecast-v1",
+        manifest_id="manifest-event-forecast-v1",
+        updated_at=NOW,
+        heartbeat_seconds=900,
+    )
+    triggers.create_plan(plan)
+    scheduler = WorldModelReviewScheduler(
+        assessments=assessments,
+        triggers=triggers,
+        symbol=plan.symbol,
+        pipeline_id=plan.pipeline_id,
+        manifest_id=plan.manifest_id,
+        minimum_call_interval_seconds=app_config.trigger.minimum_call_interval_seconds,
+        trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
+        material_event_slots_enabled=True,
+    )
+
+    scheduler.publish_update(assessment)
+    scheduler.publish_update(assessment)
+
+    messages = tuple(
+        item
+        for item in triggers.pending_outbox(
+            as_of=assessment.available_at + timedelta(minutes=1)
+        )
+        if item.message_kind == "TRIGGER_CREATED"
+    )
+    assert len(messages) == 1
+    trigger = messages[0].payload["trigger"]
+    assert trigger["trigger_type"] == "FORECAST_EVENT_DUE"
+    assert trigger["evidence_ids"] == sorted(
+        [assessment.assessment_id, packet.packet_id, packet.state_id]
+    )
 
 
 def test_review_recovery_does_not_crash_before_trigger_plan(app_config) -> None:
