@@ -133,11 +133,11 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v27
+  version: spot-capital-v28
   enabled: false
   settlement_asset: USDT
   decision:
-    version: portfolio-net-edge-v6
+    version: portfolio-net-edge-v7
     portfolio_id: primary
     enabled: true
     minimum_conservative_net_bps: "5"

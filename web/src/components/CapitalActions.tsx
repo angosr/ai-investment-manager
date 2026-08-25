@@ -37,6 +37,8 @@ const REASON_LABELS: Record<string, string> = {
   FORECAST_TIME_WINDOW_INVALID: "预测已经超过允许使用的时间窗口",
   FORECAST_WORLD_MODEL_UNAVAILABLE: "预测依赖的世界认知已无法确认",
   FORECAST_WORLD_MODEL_SUPERSEDED: "预测引用的世界认知已被后续认知替代",
+  FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE: "预测依赖的世界认知演化链无法确认",
+  FORECAST_WORLD_MODEL_CAUSAL_STRUCTURE_CHANGED: "预测依赖的因果结构已经变化",
   PROGRAMMATIC_RISK_REVIEW: "完成程序化账户、持仓和硬风险复核",
   HOLDING_RISK_REVIEWED: "现有持仓已经完成程序化风险复核",
 };

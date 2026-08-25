@@ -83,6 +83,7 @@ from investment_manager.risk.portfolio import (
 from investment_manager.risk.repository import SqlPortfolioRiskStore
 from investment_manager.scheduling.models import AnalysisTriggerType, TriggerBatch
 from investment_manager.settings import AppConfig
+from investment_manager.state.decision.packet import DecisionPacket
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,10 @@ class WorldModelHistory(Protocol):
         analysis_scope: str,
         as_of: datetime,
     ) -> ContextAssessment | None: ...
+
+    def assessment(self, assessment_id: str) -> ContextAssessment | None: ...
+
+    def packet_for_assessment(self, assessment_id: str) -> DecisionPacket | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +155,13 @@ def forecast_external_validity(
     forecast_world_model_id: str | None,
     as_of: datetime,
 ) -> ForecastExternalValidity | None:
-    """Resolve contract-declared WorldModel validity at the capital cutoff."""
+    """Resolve whether the Forecast's causal WorldModel remains current.
+
+    Snapshot identity is deliberately not the criterion.  A later assessment may
+    refresh every causal mechanism with new evidence while preserving the exact
+    structure the Forecast consumed.  The Forecast becomes stale only when that
+    structure changes, or when its immutable lineage cannot be proven.
+    """
 
     if world_model_scope is None:
         return None
@@ -168,20 +179,78 @@ def forecast_external_validity(
             }
         )
     )
+
+    def invalid(reason_code: str) -> ForecastExternalValidity:
+        return ForecastExternalValidity(
+            checked_at=as_of,
+            current=False,
+            reason_codes=(reason_code,),
+            evidence_refs=evidence_refs,
+        )
+
     if latest is None:
+        return invalid("FORECAST_WORLD_MODEL_UNAVAILABLE")
+    if latest.assessment_id == forecast_world_model_id:
         return ForecastExternalValidity(
             checked_at=as_of,
-            current=False,
-            reason_codes=("FORECAST_WORLD_MODEL_UNAVAILABLE",),
+            current=True,
             evidence_refs=evidence_refs,
         )
-    if latest.assessment_id != forecast_world_model_id:
-        return ForecastExternalValidity(
-            checked_at=as_of,
-            current=False,
-            reason_codes=("FORECAST_WORLD_MODEL_SUPERSEDED",),
-            evidence_refs=evidence_refs,
+    source = world_models.assessment(forecast_world_model_id)
+    if (
+        source is None
+        or source.analysis_scope != world_model_scope
+        or source.available_at > as_of
+    ):
+        return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
+
+    # Walk the immutable packet lineage backwards, then apply each explicit
+    # one-to-one mechanism disposition forwards.  New or retired mechanisms are
+    # structural changes; refreshed claims/evidence under continuity are not.
+    transitions: list[ContextAssessment] = []
+    cursor = latest
+    visited = {cursor.assessment_id}
+    while cursor.assessment_id != source.assessment_id:
+        packet = world_models.packet_for_assessment(cursor.assessment_id)
+        previous_context = None if packet is None else packet.previous_context
+        previous_id = (
+            None if previous_context is None else previous_context.assessment_id
         )
+        if previous_id is None or previous_id in visited:
+            return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
+        previous = world_models.assessment(previous_id)
+        if (
+            previous is None
+            or previous.analysis_scope != world_model_scope
+            or previous.available_at >= cursor.available_at
+        ):
+            return invalid("FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE")
+        transitions.append(cursor)
+        visited.add(previous_id)
+        cursor = previous
+
+    active_ids = {item.mechanism_id for item in source.mechanisms}
+    for assessment in reversed(transitions):
+        continuation = {
+            item.continuity_ref: item.mechanism_id
+            for item in assessment.mechanisms
+            if item.continuity_ref is not None
+        }
+        retired = {
+            item.previous_mechanism_id for item in assessment.retired_mechanisms
+        }
+        continued_ids = active_ids.intersection(continuation)
+        unresolved_ids = active_ids - continued_ids - retired
+        descendant_ids = {continuation[item] for item in continued_ids}
+        current_ids = {item.mechanism_id for item in assessment.mechanisms}
+        if (
+            unresolved_ids
+            or active_ids.intersection(retired)
+            or current_ids != descendant_ids
+        ):
+            return invalid("FORECAST_WORLD_MODEL_CAUSAL_STRUCTURE_CHANGED")
+        active_ids = descendant_ids
+
     return ForecastExternalValidity(
         checked_at=as_of,
         current=True,
