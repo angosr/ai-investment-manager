@@ -81,13 +81,32 @@ class AttemptAudit:
     analysis_behavior_hash: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LatestAccountAttempt:
+    """Minimum persisted run state needed to restore account routing."""
+
+    account_id: str
+    status: str
+    failure: FailureClass | None
+    completed_at: datetime
+
+
 class RouterAuditStore(Protocol):
+    def latest_account_attempts(
+        self, account_ids: tuple[str, ...]
+    ) -> dict[str, LatestAccountAttempt]: ...
+
     def record_capacity(self, snapshot: CapacitySnapshot) -> None: ...
 
     def record_attempt(self, attempt: AttemptAudit) -> None: ...
 
 
 class NullRouterAuditStore:
+    def latest_account_attempts(
+        self, account_ids: tuple[str, ...]
+    ) -> dict[str, LatestAccountAttempt]:
+        return {}
+
     def record_capacity(self, snapshot: CapacitySnapshot) -> None:
         return None
 
@@ -186,7 +205,15 @@ class CodexAccountRouter:
         current = now or datetime.now(tz=UTC)
         if not self._policy.enabled:
             return AnalystResult(False, None, "CODEX_RUNTIME_DISABLED", completed_at=current)
-        self._refresh_capacity(current)
+        try:
+            self._refresh_capacity(current)
+        except Exception:
+            return AnalystResult(
+                False,
+                None,
+                "CODEX_AUDIT_READ_FAILED",
+                completed_at=_elapsed_time(current, router_started),
+            )
         attempted: set[str] = set()
         maximum_attempts = 1 + self._policy.max_account_switches
         invocation_id = stable_id(
@@ -259,7 +286,7 @@ class CodexAccountRouter:
                 )
             failure = result.failure or FailureClass.UNAVAILABLE
             runtime.recent_failures += 1
-            self._apply_failure(runtime, failure, current)
+            self._apply_failure(runtime, failure, audit.completed_at)
             if failure not in FAILOVER_FAILURES:
                 return AnalystResult(
                     False,
@@ -279,6 +306,13 @@ class CodexAccountRouter:
         )
 
     def _refresh_capacity(self, now: datetime) -> None:
+        latest_attempts = self._audit.latest_account_attempts(
+            tuple(
+                account.account_id
+                for account in self._registry.accounts
+                if account.enabled
+            )
+        )
         for account in self._registry.accounts:
             runtime = self._runtime[account.account_id]
             if not account.enabled or runtime.state in {
@@ -286,6 +320,24 @@ class CodexAccountRouter:
                 AccountState.DISABLED,
             }:
                 continue
+            latest_attempt = latest_attempts.get(account.account_id)
+            if (
+                latest_attempt is not None
+                and latest_attempt.status == "FAILED"
+                and latest_attempt.failure
+                in {
+                    FailureClass.TIMEOUT,
+                    FailureClass.PROCESS_CRASH,
+                    FailureClass.ACCOUNT_UPSTREAM_TRANSIENT,
+                }
+            ):
+                persisted_cooldown_until = latest_attempt.completed_at + timedelta(
+                    seconds=self._policy.transient_failure_cooldown_seconds
+                )
+                if persisted_cooldown_until > now:
+                    runtime.state = AccountState.COOLDOWN
+                    runtime.cooldown_until = persisted_cooldown_until
+                    continue
             if runtime.cooldown_until is not None and runtime.cooldown_until > now:
                 continue
             if (

@@ -1,11 +1,16 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from investment_manager.forecast.codex.capacity import CapacitySnapshot
-from investment_manager.forecast.codex.router import AttemptAudit, CodexLease
+from investment_manager.forecast.codex.protocol import FailureClass
+from investment_manager.forecast.codex.router import (
+    AttemptAudit,
+    CodexLease,
+    LatestAccountAttempt,
+)
 from investment_manager.forecast.tables import (
     codex_account_capacity,
     codex_account_leases,
@@ -92,6 +97,44 @@ class SqlCodexAuditStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+
+    def latest_account_attempts(
+        self, account_ids: tuple[str, ...]
+    ) -> dict[str, LatestAccountAttempt]:
+        if not account_ids:
+            return {}
+        rank = func.row_number().over(
+            partition_by=codex_runs.c.account_id,
+            order_by=(codex_runs.c.observed_at.desc(), codex_runs.c.run_id.desc()),
+        ).label("account_rank")
+        ranked = (
+            select(
+                codex_runs.c.account_id,
+                codex_runs.c.status,
+                codex_runs.c.error_class,
+                codex_runs.c.payload,
+                rank,
+            )
+            .where(codex_runs.c.account_id.in_(account_ids))
+            .subquery()
+        )
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(ranked).where(ranked.c.account_rank == 1)
+            ).mappings()
+            return {
+                row["account_id"]: LatestAccountAttempt(
+                    account_id=row["account_id"],
+                    status=row["status"],
+                    failure=(
+                        FailureClass(row["error_class"])
+                        if row["error_class"] is not None
+                        else None
+                    ),
+                    completed_at=datetime.fromisoformat(row["payload"]["completed_at"]),
+                )
+                for row in rows
+            }
 
     def record_capacity(self, snapshot: CapacitySnapshot) -> None:
         payload = {

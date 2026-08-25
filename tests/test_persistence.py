@@ -164,6 +164,12 @@ def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> Non
     store.record_attempt(attempt)
     store.record_attempt(attempt)
 
+    latest = store.latest_account_attempts(("codex_a", "codex_b"))
+    assert set(latest) == {"codex_a"}
+    assert latest["codex_a"].status == "FAILED"
+    assert latest["codex_a"].failure == FailureClass.RATE_LIMIT
+    assert latest["codex_a"].completed_at == now + timedelta(milliseconds=125)
+
     with pytest.raises(ValueError, match="审计事实不一致"):
         store.record_attempt(replace(attempt, status="SUCCEEDED", failure=None))
 

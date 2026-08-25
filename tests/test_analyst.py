@@ -38,8 +38,10 @@ from investment_manager.forecast.codex.protocol import (
 from investment_manager.forecast.codex.router import (
     AccountState,
     AnalystResult,
+    AttemptAudit,
     CodexAccountRouter,
     InMemoryAccountLeaseStore,
+    LatestAccountAttempt,
     assemble_codex_router,
 )
 from investment_manager.forecast.models import DirectionalView
@@ -94,6 +96,40 @@ def _proposal_executor(app_config) -> SubprocessCodexExecutor:
         _runtime(app_config),
         output_adapter=TypeAdapter(AnalystStructuredOutput),
     )
+
+
+@dataclass(slots=True)
+class SharedAuditStore:
+    attempts: list[AttemptAudit] = field(default_factory=list)
+
+    def latest_account_attempts(
+        self, account_ids: tuple[str, ...]
+    ) -> dict[str, LatestAccountAttempt]:
+        latest: dict[str, AttemptAudit] = {}
+        for attempt in self.attempts:
+            if attempt.account_id not in account_ids:
+                continue
+            previous = latest.get(attempt.account_id)
+            if previous is None or (attempt.observed_at, attempt.run_id) > (
+                previous.observed_at,
+                previous.run_id,
+            ):
+                latest[attempt.account_id] = attempt
+        return {
+            account_id: LatestAccountAttempt(
+                account_id=attempt.account_id,
+                status=attempt.status,
+                failure=attempt.failure,
+                completed_at=attempt.completed_at,
+            )
+            for account_id, attempt in latest.items()
+        }
+
+    def record_capacity(self, snapshot: CapacitySnapshot) -> None:
+        return None
+
+    def record_attempt(self, attempt: AttemptAudit) -> None:
+        self.attempts.append(attempt)
 
 
 def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_calibration(
@@ -798,6 +834,66 @@ def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_bat
     assert third.success
     assert third.account_id == "codex_a"
     assert router.account_states["codex_a"] == AccountState.HEALTHY
+
+
+def test_transient_cooldown_survives_router_reconstruction_and_starts_at_completion(
+    app_config, replay_input, tmp_path, monkeypatch
+) -> None:
+    registry = _account_registry(tmp_path)
+    runtime = _runtime(app_config)
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    audit = SharedAuditStore()
+    executor = FakeExecutor(
+        {
+            "codex_a": [InvocationResult(False, failure=FailureClass.TIMEOUT)],
+            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+        }
+    )
+    snapshots = {
+        "codex_a": _snapshot("codex_a", now, "10"),
+        "codex_b": _snapshot("codex_b", now, "20"),
+        "codex_c": _snapshot("codex_c", now, "30"),
+    }
+    first_clock = iter((0.0, 0.0, 0.0, 420.0, 420.0))
+    monkeypatch.setattr(
+        "investment_manager.forecast.codex.router.time.monotonic",
+        lambda: next(first_clock),
+    )
+    first_router = CodexAccountRouter(
+        registry,
+        runtime,
+        FakeProbe(snapshots),
+        executor,
+        audit=audit,
+    )
+
+    first = first_router.run(
+        RunBundle("cycle-1", tmp_path, "hash-1", "prompt"), now=now
+    )
+
+    assert not first.success
+    assert first.completed_at == now + timedelta(seconds=420)
+    monkeypatch.setattr(
+        "investment_manager.forecast.codex.router.time.monotonic",
+        lambda: 421.0,
+    )
+    fresh_router = CodexAccountRouter(
+        registry,
+        runtime,
+        FakeProbe(snapshots),
+        executor,
+        audit=audit,
+    )
+    second = fresh_router.run(
+        RunBundle("cycle-2", tmp_path, "hash-2", "prompt"),
+        now=now + timedelta(seconds=421),
+    )
+
+    assert second.success
+    assert second.account_id == "codex_b"
+    assert [item[0] for item in executor.calls] == ["codex_a", "codex_b"]
+    assert fresh_router.account_states["codex_a"] == AccountState.COOLDOWN
 
 
 def test_repeated_bundle_analysis_gets_a_distinct_invocation_identity(
