@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,11 +19,14 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class PerpetualMarketHealth:
     refresh_count: int = 0
+    quote_refresh_count: int = 0
     state_count: int = 0
     quote_count: int = 0
     settlement_count: int = 0
     last_refresh_at: datetime | None = None
+    last_quote_refresh_at: datetime | None = None
     last_error_class: str | None = None
+    last_quote_error_class: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,28 +61,69 @@ class BinancePerpetualMarketService:
         self.health = PerpetualMarketHealth()
 
     async def run(self, stop: asyncio.Event) -> None:
+        await asyncio.gather(
+            self._run_schedule(
+                stop,
+                operation=self.refresh,
+                interval_seconds=self._policy.perpetual_poll_seconds,
+                error_field="last_error_class",
+                error_message="perpetual market state refresh failed",
+            ),
+            self._run_schedule(
+                stop,
+                operation=self.refresh_quotes,
+                interval_seconds=self._policy.perpetual_quote_poll_seconds,
+                error_field="last_quote_error_class",
+                error_message="perpetual executable quote refresh failed",
+            ),
+        )
+
+    async def _run_schedule(
+        self,
+        stop: asyncio.Event,
+        *,
+        operation: Callable[[], Awaitable[None]],
+        interval_seconds: int,
+        error_field: str,
+        error_message: str,
+    ) -> None:
         while not stop.is_set():
             try:
-                await self.refresh()
-                self.health.last_error_class = None
+                await operation()
+                setattr(self.health, error_field, None)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if self.health.last_error_class != type(exc).__name__:
-                    logger.exception("perpetual market refresh failed")
-                self.health.last_error_class = type(exc).__name__
+                if getattr(self.health, error_field) != type(exc).__name__:
+                    logger.exception(error_message)
+                setattr(self.health, error_field, type(exc).__name__)
             with suppress(TimeoutError):
                 await asyncio.wait_for(
                     stop.wait(),
-                    timeout=self._policy.perpetual_poll_seconds,
+                    timeout=interval_seconds,
                 )
+
+    async def refresh_quotes(self) -> None:
+        await asyncio.gather(
+            *(
+                self._refresh_quote_instrument(item)
+                for item in self._policy.perpetual_instruments
+            )
+        )
+        self.health.quote_refresh_count += 1
+        self.health.last_quote_refresh_at = require_utc(self._clock())
+
+    async def _refresh_quote_instrument(self, instrument: InstrumentId) -> None:
+        quote = await self._client.fetch_quote(instrument)
+        if self._store.put_perpetual_quote(quote):
+            self.health.quote_count += 1
 
     async def refresh(self) -> None:
         started_at = require_utc(self._clock())
         try:
             results = await asyncio.gather(
                 *(
-                    self._refresh_instrument(item)
+                    self._refresh_state_instrument(item)
                     for item in self._policy.perpetual_instruments
                 )
             )
@@ -111,20 +155,14 @@ class BinancePerpetualMarketService:
         self.health.refresh_count += 1
         self.health.last_refresh_at = completed_at
 
-    async def _refresh_instrument(
+    async def _refresh_state_instrument(
         self,
         instrument: InstrumentId,
     ) -> tuple[datetime, int, int]:
-        state, quote = await asyncio.gather(
-            self._client.fetch_market_state(instrument),
-            self._client.fetch_quote(instrument),
-        )
+        state = await self._client.fetch_market_state(instrument)
         changed_count = 0
         if self._store.put_perpetual_state(state):
             self.health.state_count += 1
-            changed_count += 1
-        if self._store.put_perpetual_quote(quote):
-            self.health.quote_count += 1
             changed_count += 1
         previous_funding_at = self._expected_funding_at.get(instrument.key)
         history_due = previous_funding_at is None or state.observed_at >= previous_funding_at
@@ -141,7 +179,7 @@ class BinancePerpetualMarketService:
                     changed_count += 1
         self._expected_funding_at[instrument.key] = state.next_funding_time
         return (
-            max(state.observed_at, quote.observed_at),
-            2 + (len(settlements) if history_due else 0),
+            state.observed_at,
+            1 + (len(settlements) if history_due else 0),
             changed_count,
         )

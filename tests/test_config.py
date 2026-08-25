@@ -9,6 +9,7 @@ from investment_manager.forecast.context.estimate import context_forecast_behavi
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.portfolio.policy import FrequencyPolicy
 from investment_manager.settings import load_config
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
@@ -52,6 +53,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_500
     assert config.market_data.funding_history_lookback_hours == 720
+    assert config.market_data.version == "binance-public-shadow-v10"
+    assert config.market_data.perpetual_quote_poll_seconds == 5
+    assert (
+        config.market_data.perpetual_quote_poll_seconds
+        <= config.market_data.maximum_cross_market_quote_skew_seconds
+    )
     assert config.assessment.version == "context-assessment-v38"
     assert config.outcome_evaluation.version == "outcome-window-v13"
     assert config.outcome_evaluation.world_model_ablation is not None
@@ -123,6 +130,20 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "MARKET_VOLATILITY",
     )
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
+
+
+def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.market_data.model_dump(mode="python")
+    payload["perpetual_quote_poll_seconds"] = (
+        config.market_data.maximum_cross_market_quote_skew_seconds + 1
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="永续报价轮询间隔不得超过跨市场报价偏差上限",
+    ):
+        MarketDataPolicy.model_validate(payload)
 
 
 def test_historical_state_policy_does_not_require_future_source_rules() -> None:

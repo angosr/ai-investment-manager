@@ -340,7 +340,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v9
+  version: binance-public-shadow-v10
   symbols: [BTCUSDT, ETHUSDT]
   interval: 5m
   bar_window: 64
@@ -370,6 +370,7 @@ market_data:
       settlement_asset: USDT
       contract_multiplier: "1"
   perpetual_rest_base_url: https://fapi.binance.com
+  perpetual_quote_poll_seconds: 5
   perpetual_poll_seconds: 300
   funding_history_lookback_hours: 720
 

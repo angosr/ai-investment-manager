@@ -1145,18 +1145,20 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         )
         await service.refresh()
         await service.refresh()
+        await service.refresh_quotes()
         return service, client, store, refreshes
 
     service, client, store, refreshes = asyncio.run(scenario())
     assert client.history_calls == 1
     assert service.health.refresh_count == 2
+    assert service.health.quote_refresh_count == 1
     assert service.health.state_count == 1
     assert service.health.quote_count == 1
     assert service.health.settlement_count == 1
     assert refreshes[0].succeeded
-    assert refreshes[0].observation_count == 3
-    assert refreshes[0].changed_count == 3
-    assert refreshes[1].observation_count == 2
+    assert refreshes[0].observation_count == 2
+    assert refreshes[0].changed_count == 2
+    assert refreshes[1].observation_count == 1
     assert refreshes[1].changed_count == 0
     assert (
         store.latest_perpetual_state(
@@ -1208,6 +1210,48 @@ def test_perpetual_service_reports_failed_refresh_without_false_success(
     assert not refreshes[0].succeeded
     assert refreshes[0].error_class == "TimeoutError"
     assert refreshes[0].observation_count == 0
+
+
+def test_perpetual_quote_refresh_is_independent_from_slow_state_refresh(
+    app_config,
+) -> None:
+    class StateFailingClient:
+        async def fetch_market_state(self, instrument):
+            raise TimeoutError("slow state unavailable")
+
+        async def fetch_quote(self, instrument):
+            assert instrument == _perpetual_instrument()
+            return _perpetual_quote()
+
+    async def scenario():
+        store = InMemoryMarketDataStore()
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (_perpetual_instrument(),)}
+        )
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=StateFailingClient(),  # type: ignore[arg-type]
+            store=store,
+            clock=lambda: NOW,
+        )
+        with pytest.raises(TimeoutError):
+            await service.refresh()
+        await service.refresh_quotes()
+        return service, store
+
+    service, store = asyncio.run(scenario())
+
+    assert service.health.refresh_count == 0
+    assert service.health.quote_refresh_count == 1
+    assert service.health.quote_count == 1
+    assert (
+        store.latest_perpetual_quote(
+            instrument=_perpetual_instrument(),
+            evaluation_at=NOW,
+            visible_at=NOW,
+        )
+        == _perpetual_quote()
+    )
 
 
 def test_connector_uses_one_combined_public_stream_and_mock_stage_fails_closed(

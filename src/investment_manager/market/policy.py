@@ -35,6 +35,7 @@ class MarketDataPolicy(StrictConfig):
     maximum_cross_market_quote_skew_seconds: int = Field(default=15, ge=1, le=300)
     perpetual_instruments: tuple[InstrumentId, ...] = ()
     perpetual_rest_base_url: str = "https://fapi.binance.com"
+    perpetual_quote_poll_seconds: int = Field(default=5, ge=1, le=60)
     perpetual_poll_seconds: int = Field(default=300, ge=30, le=3600)
     funding_history_lookback_hours: int = Field(default=720, ge=8, le=720)
 
@@ -76,6 +77,12 @@ class MarketDataPolicy(StrictConfig):
         }[self.rest_base_url]
         if self.perpetual_rest_base_url != expected_perpetual_url:
             raise ValueError("Spot 与 Perpetual 行情必须使用同一 Binance 环境")
+        if (
+            self.perpetual_instruments
+            and self.perpetual_quote_poll_seconds
+            > self.maximum_cross_market_quote_skew_seconds
+        ):
+            raise ValueError("永续报价轮询间隔不得超过跨市场报价偏差上限")
         instrument_keys = tuple(item.key for item in self.perpetual_instruments)
         if tuple(sorted(set(instrument_keys))) != instrument_keys:
             raise ValueError("perpetual_instruments 必须按产品身份唯一且排序")
