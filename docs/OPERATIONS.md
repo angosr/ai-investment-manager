@@ -77,7 +77,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-当前资本执行模式是 Binance Spot simulated。Mock 可投资域包含 BTC 与 PAXG，二者共用同一账户、成本、Risk、Planner 与 Execution；现役 Forecast 仍只授权 BTC 实验，PAXG 不因完成产品准入就自动获得方向或资本。SPY TradFi Perpetual 只进入 Market 观察域，休市语义、长期 funding 与共同风险证据完成前不得进入资本域。当前暴露仍不足以构造与 Mandate 风险和长期目标匹配的 Reference Policy；观测台必须原样显示该缺口，不能拿任一单资产补成账户主基准，直至联合 Forecast 与总组合 allocator 通过独立迁移验收。
+基础配置失败关闭资本链、Context Forecast 和 WorldModel 消融；Shadow profile 显式启用三者，执行边界是 Binance Spot simulated；Testnet profile 再次关闭，不能继承 Shadow 权限。Mock 可投资域包含 BTC 与 PAXG，二者共用同一账户、成本、Risk、Planner 与 Execution；已登记 Forecast 和候选资本授权只覆盖 BTC，PAXG 不因产品准入就自动获得方向或资本。SPY TradFi Perpetual 只进入 Market 观察域，休市语义、长期 funding 与共同风险证据完成前不得进入资本域。当前暴露仍不足以构造与 Mandate 风险和长期目标匹配的 Reference Policy；观测台必须原样显示该缺口，不能拿任一单资产补成账户主基准，直至联合 Forecast 与总组合 allocator 通过独立迁移验收。
 
 Risk 有两种合法输出：
 

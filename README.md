@@ -1,6 +1,6 @@
 # Investment Manager
 
-这是一个以长期费用后资本增值为目标的 AI Investment Manager。AI、规则与优化器都可以承担经证据支持的投资职责，但必须共享同一条可追溯、可评价、受风险约束的资本链。当前运行目标是 10,000 USDT 的 Binance BTC Spot 模拟账户；它用于积累真实前瞻证据，不代表已经证明可稳定盈利。
+这是一个以长期费用后资本增值为目标的 AI Investment Manager。AI、规则与优化器都可以承担经证据支持的投资职责，但必须共享同一条可追溯、可评价、受风险约束的资本链。目标账户是在 Binance 可交易工具约束下管理 10,000 USDT 总资产；当前只有显式 Shadow profile 会启用隔离的 BTC Spot 前瞻实验，它不等于总组合已经运行或已经证明盈利。
 
 ## 权威资料
 
@@ -23,7 +23,7 @@ Evidence → State → WorldModel → Forecast → PortfolioTarget
                                                     Evaluation
 ```
 
-- 当前 Release 由 AI 把高密度、点时冻结的信息面板转成可反驳的 WorldModel 和可结算概率；这是现行实验分工，不是永久角色限制。
+- 已登记的实验行为由 AI 把高密度、点时冻结的信息面板转成可反驳的 WorldModel 和可结算概率；这是候选分工，不是永久角色限制，停用配置不会产生新 Forecast。
 - Portfolio 在现金、当前持有和合法候选之间比较真实未来成本。
 - Risk 对投资目标批准、缩减或拒绝；硬风险异常可直接签发只减险授权，但不能创造投资目标。
 - Execution 只消费 Risk 授权，并以稳定订单身份、恢复和对账收敛场所账户。
@@ -85,6 +85,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-系统已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。总资产 Mandate 与可投资域已成为冻结配置；Mock 可投资域现覆盖 BTC 与 PAXG Spot，SPY TradFi Perpetual 只积累产品观察，仍缺少经过长期产品与共同风险验证的权益、名义利率组合，因此 Reference Policy 保持未登记而不拿任一单资产补位。尚未完成的是足量前瞻样本、WorldModel 配对增量、事件触发的费用后增量、联合 Forecast、总组合 allocator、合格 Reference Policy、正式 Venue 等价性以及长期资本增量证据。
+代码已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置失败关闭资本、Context Forecast 和 WorldModel 消融；`investment-manager.shadow.yaml` 显式启用三者以积累 BTC Spot 组件证据，Testnet profile 再次关闭。总资产 Mandate 与可投资域已成为冻结配置；Mock 可投资域覆盖 BTC 与 PAXG Spot，但已登记 Forecast 和候选资本授权仍只覆盖 BTC，PAXG 不会自动获得仓位。SPY TradFi Perpetual 只积累产品观察；Reference Policy 为空，联合 Forecast 和总组合 allocator 尚未完成，因此总组合主实验没有启动。
 
-因此当前正确表述是：系统具备诚实检验盈利假设的闭环，仍不具备宣称稳定盈利的证据。
+因此当前正确表述是：仓库具备诚实检验部分盈利假设的基础设施，但总组合投资闭环尚未启用，也不具备宣称稳定盈利的证据。

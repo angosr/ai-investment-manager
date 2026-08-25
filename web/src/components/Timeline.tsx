@@ -15,7 +15,7 @@ type Tab = "actions" | "analysis" | "world";
 
 const HINTS: Record<Tab, string> = {
   actions: "只突出资金、仓位或风险变化；重复例行检查自动归并",
-  analysis: "AI 只提供风险与方向判断，不直接下单",
+  analysis: "AI 分析、投资判断与结构化决策",
   world: "按发生时间浏览永久事件档案；是否进入世界认知以分析快照中的证据引用为准",
 };
 

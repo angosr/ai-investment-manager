@@ -160,12 +160,9 @@ TradePlan 的短期有效期只约束“这次订单计划是否仍可执行”�
 
 ### 4.5 评价与权限
 
-Evaluation 分开回答四个问题：
+Evaluation 只服务两类裁决，不形成新的运行阶段。第一类是完整资本政策相对 Reference Policy 在真实成本和同风险口径下是否值得获得、保留或扩大资本；第二类是 WorldModel、Forecast 来源、触发政策、Portfolio 算法等可选组件是否提供可辨识的边际价值，因而应保留、替换还是删除。前者决定资本权限，后者负责归因和压缩复杂度。数据、账户、风险与执行不变量属于 Release 硬验收，不因短期盈利而放宽，也不包装成另一层 Alpha 评分。
 
-1. WorldModel 是否给 Forecast 带来增量；
-2. Forecast 是否优于无技巧和简单程序基线；
-3. Portfolio 是否把预测转化为费用后改善；
-4. Risk 与 Execution 是否在可接受回撤下保留了该改善。
+完整资本政策胜出不能证明其中每个组件都有效；某组件评分改善也不能证明整条政策值得交易。若总政策有效而某复杂组件没有边际贡献，应以不含该组件的更简单政策重新竞争并删除冗余；只有要声称“WorldModel 帮助了盈利”时，才必须同时具备同槽消融、Forecast 改善和费用后资本增量的贯通证据。这一关系是因果归因，不是要求所有实验按四道串行门禁逐层排队。
 
 总组合的主资本基准只有一个事前冻结、可实际执行且与 mandate 风险包络匹配的简单 Reference Policy；现金是生存与机会成本比较，不是另一个可随结果替换的主基准。Reference Policy 必须用当时合法 Instrument、真实现金流和同一账户约束机械推进，只有显式新实验才能改变。单一产品的被动持有只用于该产品实验的归因，不得出现在总账户主视图中冒充资产管理基准。这样既能判断账户是否真正增加财富，也能区分主动管理增量与被动承担 BTC、股票或其他 beta 的结果。
 
@@ -181,9 +178,9 @@ Reference 候选还必须在增长、通胀、通缩、流动性紧缩和相关�
 
 WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模型、State、合同、共同截止时间和输出 Schema 下，评价“读取 WorldModel”与“不读取 WorldModel”的 Forecast。配对分配在任一侧运行前持久化，两侧拥有真实可完成的共同期限；不能在正式 Forecast 成功后才用剩余时间补跑对照。对照结果只进入 Evaluation，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取与样本依赖和完整搜索历史相符的保守下界、校准、覆盖率和多个市场环境表现。静态无技巧分布不能替代滚动无条件分布、简单市场模型和可投资资本基线。
 
-Forecast 的采样政策也是行为的一部分。Cadence 窗口是连续、非选择性的基础义务；材料来源回答“满足冻结条件时是否及时重估”。每个终态按仅定时、仅材料或合并来源分层计算覆盖率、评分、不确定性和最低样本，总体再按唯一槽身份汇总。不能把材料相关样本加入仅定时样本门槛、用事件高发期加速一般能力 cohort、重复计算合并槽，或让材料样本在非重叠抽样中挤掉仅定时样本。总体统计只能在报告分层结果后，按预登记的共同事件或时间簇处理相关性。
+Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；只有真正的仅定时槽才属于非条件的一般能力样本。材料来源回答“满足冻结条件时是否及时重估”；合并槽虽然可以一次履行临近的 cadence 与材料响应义务，但它仍是条件样本，不能补足仅定时 cohort。每个终态按仅定时、仅材料或合并来源分层计算覆盖率、评分和不确定性，总体再按唯一槽身份汇总；共同 Outcome 和重叠时域按预登记时间簇处理，不能让来源多一个标签就多算一次成功。
 
-Evaluation 对外只提供一份版本化、确定性 `EvaluationReport` 投影。其身份绑定 EvaluationPlan、evaluator 版本、`as_of`、查询规则和全部输入引用；Dashboard 与主 Agent 必须读取同一报告，不能各自筛样本或重算结论。报告可以重建或缓存，不成为第二事实库；一旦被 EvaluationResult、ChangeProposal 或权限引用，其报告身份、内容哈希和输入集合必须冻结。
+不存在覆盖所有问题的通用 `EvaluationReport`。每个评价问题由唯一 evaluator 输出具有明确语义的类型化结果，其身份绑定 EvaluationPlan、evaluator 版本、`as_of`、查询规则和输入引用。`GovernanceSnapshot` 只是主 Agent 在某一时点可见的评价结果清单与治理上下文，引用这些结果而不复制指标或重算结论；Dashboard 直接读取相同 evaluator 的只读投影；权限只引用已经冻结的 `EvaluationResult`。三个消费者所需时效不同，不应被迫依赖一个不断膨胀的万能报告。
 
 任何实验资本资格必须引用不可变 EvaluationPlan；任何正式权限必须继续引用 EvaluationResult、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
 
@@ -231,7 +228,7 @@ Scheduling 只表达“何时重新运行哪项用例”，触发来源只有四
 
 Forecast 槽的来源只有两种：合同 cadence，以及冻结触发政策产生的材料 `State/Delta`。一个槽可以属于仅定时、仅材料或二者合并的规范来源集合，但只有一个身份、一个 information cutoff、一次生产义务和一个终态。来源集合、完成期限、Outcome、生产者行为和缺失处理都必须在结果可见前确定；每个合格槽都必须以 Forecast 或 `NO_ESTIMATE` 终结。事件槽不是临时插单，也不能只挑 AI 想交易的事件；它是一个显式的条件采样机制，而不是定时样本的替代品。
 
-每个 Forecast 槽必须保存规范来源集合、触发政策版本和实际 `State/Delta` 引用。触发政策只把已经规范化的材料变化映射成槽，并冻结允许的 delta 类别与材料等级、有效时间、目标产品、适用时域、`affected_assets` 交集或显式风险因子传导映射，以及事件间去重窗口；不满足条件的 delta 同样保存拒绝原因。它不解释方向、不读取仓位、WorldModel 观点或预测结果，也不根据 AI 是否想交易选择触发。材料变化发生在既有槽 information cutoff 之后时，只能形成新槽，不能修改旧槽输入。
+每个 Forecast 槽必须保存规范来源集合、触发政策版本和实际 `State/Delta` 引用。触发政策只回答一项材料变化是否足以让当前组合 ForecastContract 重新估计，并冻结允许的 delta 类别、材料等级、有效时间、适用时域、与 mandate 暴露的直接交集或显式风险因子传导，以及去重窗口；不满足条件的 delta 同样保存拒绝原因。它不为每个资产复制一套槽，不解释方向，不读取仓位、WorldModel 观点或预测结果，也不根据 AI 是否想交易选择触发。材料变化发生在既有槽 information cutoff 之后时，只能形成新槽，不能修改旧槽输入。
 
 触发协调器在调用生产者前原子归并同批义务。若材料变化发生在事前冻结的 cadence 合并窗口内、对应 cadence 尚未开始生产，系统可以立即创建一个同时覆盖 cadence 与该材料变化的合并槽；它以材料首次可用时点为 information cutoff，不等待未来信息，也不产生第二次 AI 调用。已开始或已终结的槽永不回写；材料变化晚于其 cutoff 时仍形成新的仅材料槽。事件去重只合并同一冻结窗口内等价的材料 delta，不能把不同事实压成一个事件。
 
@@ -337,13 +334,14 @@ investment_manager/
 
 明确否决：微服务化当前单库闭环；按“AI/传统量化”或“核心/战术”建立两条资金链；新闻直达订单；多空各建一个 Agent；Spot 与 Perpetual 互相伪装；把多币种、多个产品或大量小仓位冒充多资产配置；把 BTC 被动持有当作总账户永久基准；为了产生交易降低成本或风险真实性；用月度、首日、固定次数或固定日期代替经济时点；提前建设知识图谱、向量记忆、多 Agent 辩论、自动策略工厂或默认模型组合；用调用成功、事件数量、交易次数或页面丰富度冒充盈利能力。
 
-## 11. 组合设计依据
+## 11. 组合与工程设计依据
 
 - CPP Investments 的[2025 投资政策](https://www.cppinvestments.com/wp-content/uploads/2025/04/InvestmentStatement-InvestmentPortfolio-EN-Apr022025.pdf)在总组合层分别管理长期风险目标、因子、流动性和杠杆；其[2025 年报](https://www.cppinvestments.com/wp-content/uploads/attachments/CPP-Investments-F2025-Annual-Report-English.pdf)还明确区分市场风险目标与用于评价主动增值的可投资 Benchmark Portfolio。本设计因此让 Mandate 独立拥有绝对风险边界，让唯一 Reference Policy 只承担风险匹配的可投资中性实现和费用后反事实；当前规模不需要为这一区分再建立第二个基准对象。
 - NZ Super Fund 的[Reference Portfolio 方法](https://nzsuperfund.nz/how-we-invest/)把低成本被动组合与实际主动组合分开，用于识别主动管理是否增值。本设计因此把 Reference Policy 作为反事实基线，而不把任一当前热门资产当作长期基准。
 - Black 与 Litterman 的[Global Portfolio Optimization](https://rpc.cfainstitute.org/research/financial-analysts-journal/1992/faj-v48-n5-28)以中性收益先验承接没有观点的资产，再按观点不确定性调整。本设计只采用“先验 + 可校准观点 + 收缩”的原则，不预设必须实现原论文模型。
 - DeMiguel、Garlappi 与 Uppal 的[样本外组合比较](https://www.tse-fr.eu/sites/default/files/medias/doc/conf/fineco/papers_2010/uppal.pdf)显示复杂均值—方差规则可能因估计误差输给简单分散基线；Olivares-Nadal 与 DeMiguel 的[交易成本与稳健优化研究](https://pubsonline.informs.org/doi/10.1287/opre.2017.1699)进一步说明成本约束也能抑制估计误差。本设计因此强制简单基线、观点收缩和成本内生化，而不把优化器复杂度当作价值。
 - Gârleanu 与 Pedersen 的[含交易成本动态组合研究](https://www.nber.org/papers/w15205)说明在信号持续性和交易成本并存时，应从现有持仓部分向动态目标调整。本设计因此使用成本感知的目标权重和无交易区间，而不是每次 Forecast 清仓重建。
+- 开源交易引擎 NautilusTrader 的[当前架构](https://nautilustrader.io/docs/latest/concepts/architecture/)让 backtest、sandbox 与 live 复用同一内核，并把 Risk、Execution、账户状态和 Venue reconciliation 置于明确边界。本项目借鉴的是环境等价、类型化命令和恢复语义，不照搬其消息总线、组件数量或多 Venue 平台；现有单库闭环没有被证明需要更重的基础设施。
 
 这些外部方法只确定合理先验和否决明显错误；本项目采用何种先验、优化器、风险目标和资产集合，仍必须由自身点时回放、盲测和前瞻费用后结果决定。
 

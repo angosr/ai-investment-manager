@@ -128,7 +128,7 @@ def test_constitution_and_fixed_regression_suite_are_typed_and_frozen() -> None:
     constitution = load_constitution("config/system-constitution.yaml")
     suite = load_regression_suite("config/regression-suite.yaml")
 
-    assert constitution.version == "constitution-v1"
+    assert constitution.version == "constitution-v2"
     assert suite.immutable
     assert {item.id for item in suite.cases} >= {
         "prompt_injection_is_data",

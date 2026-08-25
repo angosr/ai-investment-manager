@@ -39,12 +39,15 @@ EvaluationResult
 | 订单、成交、账户和 Outcome | Execution、Evaluation | 结算现实成本和最终结果 |
 | Mandate、可投资域、Reference Policy | Governance | 冻结长期目标、合法工具和唯一总组合资本基准 |
 | EvaluationPlan | Governance | 在看结果前冻结考试 |
-| EvaluationReport | Governance 的 Evaluation | 以同一版本化查询向 Agent、Dashboard 和权限提供结论 |
+| 类型化评价结果 | 各问题所属的 evaluator | 以冻结口径回答一个明确评价问题 |
+| GovernanceSnapshot | Governance | 向主 Agent 提供点时治理上下文和评价结果引用 |
 | ChangeProposal | Governance | 绑定一个可证伪主张和实际变更 |
 | EvaluationResult / FailedExperiment | Governance | 保存结论、适用范围与搜索历史 |
 | ReleaseManifest / Authorization | Governance | 冻结运行行为和可撤销权限 |
 
-不新增通用 `ImprovementHypothesis`、`LearningMemory` 或 `Reflection` 真相表。假设属于 `ChangeProposal`，证据集合是按版本化查询规则从原事实重建的投影，原始推理留在运行制品。`EvaluationReport` 也不是第二事实库：其身份由 EvaluationPlan、evaluator 版本、`as_of`、查询规则和输入引用确定，可以重建或缓存；一旦被 Proposal、EvaluationResult 或权限引用，报告身份、内容哈希和输入集合即冻结。主 Agent 与 Dashboard 必须读取同一报告，不能各自筛样本或重算赢家。
+不新增通用 `ImprovementHypothesis`、`LearningMemory`、`Reflection` 或万能评价报告。假设属于 `ChangeProposal`，原始推理留在运行制品；Forecast、WorldModel 消融、资本结果等问题由各自唯一 evaluator 产生类型化、可重建的结果。结果身份由 EvaluationPlan、evaluator 版本、`as_of`、查询规则和输入引用确定；一旦被 Proposal 或 EvaluationResult 引用，身份、内容哈希和输入集合即冻结。Dashboard 读取同一 evaluator 的投影，不能自行筛样本或重算赢家；权限只读取已经冻结的 EvaluationResult。
+
+`GovernanceSnapshot` 是主 Agent 的唯一学习入口，但只是点时清单，不是第二事实库：它引用适用的类型化结果、当前 Mandate、Release、权限、计划和失败搜索历史，不复制一套指标定义。Snapshot 不得依赖 `legacy` 运行模型；有长期价值的历史事实必须迁入现役领域查询，无法可靠迁移的只保留为不可执行档案。任何新抽象都必须同时拥有一个不可由现有对象承担的业务不变量、明确所有者、真实消费者和故障响应；缺少任一项就删除，而不是给它补生命周期、状态机或适配层。
 
 行为身份必须覆盖会改变输出分布的模型、Prompt、Schema、输入投影、工具与执行合同；Release 只表示部署内容，不能替代行为身份。界面、日志或无关服务发布不得重置前瞻样本，行为实质变化也不得继承旧行为成绩。
 
@@ -66,7 +69,7 @@ Mandate、可投资域与 Reference Policy 是否真实可执行
 
 断点只说明价值在哪里消失，不自动说明深层原因。“AI 太保守”“缺少某项数据”“阈值过高”和“应该允许做空”都只是竞争假设。Agent 必须同时引用支持证据、反证、替代解释、保持不变项以及能推翻主张的结果。
 
-定时 Forecast cohort 必须持续结算未交易、现金、拒绝和 `NO_ESTIMATE`，否则系统只能学习实际发生的交易，无法识别系统性错失。材料事件槽是条件样本，必须与定时基础样本分别结算；它不能在非重叠抽样中挤掉定时槽，也不能补足定时 cohort 的最低样本。机会成本来自事前冻结的 Forecast、合法资本候选和可投资基线，不能从事后挑选的一段上涨倒推。
+Cadence 义务必须持续结算未交易、现金、拒绝和 `NO_ESTIMATE`，否则系统只能学习实际发生的交易，无法识别系统性错失。材料事件槽是条件样本；临近 cadence 时可以用一个合并槽避免重复决策，但合并槽只算一个条件样本，不能补足仅定时 cohort，也不能在总体中重复计数。机会成本来自事前冻结的 Forecast、合法资本候选和可投资基线，不能从事后挑选的一段上涨倒推。
 
 ## 4. EvaluationPlan 是唯一考试合同
 
@@ -84,23 +87,19 @@ Mandate、可投资域与 Reference Policy 是否真实可执行
 
 “一个主要假设”不等于只能修改一个文件或一层。若验证该假设必须同时修改数据契约、Forecast 和持久化，它们可以作为一个不可分割的纵向切片，但 Proposal 必须说明为什么拆分后无法独立评价；不能把多个独立盈利猜想捆绑后共同归功。
 
-## 5. 不可互相替代的证据层
+## 5. 只做两类价值裁决
 
-### 5.1 WorldModel 增量
+### 5.1 完整资本政策是否值得资金
 
-WorldModel 候选只能消费 [`WORLD_COGNITION_DESIGN.md`](WORLD_COGNITION_DESIGN.md#71-认知增量) 定义的同槽前瞻配对结果。文字更长、引用更多、机制验证正确或最终账户偶然盈利都不能替代该因果对照。若长期没有增量，演进动作是删除或改变 WorldModel 对 Forecast 的输入关系，而不是维护一套认知质量评分。
+资本权限只看完整政策在同一 Mandate、合法工具、风险预算和真实成本下，是否相对唯一 Reference Policy 产生可靠的费用后增值，并同时满足绝对复利、回撤、尾部和流动性约束。现金、继续持有和单资产被动暴露是生存或组件诊断，不得事后竞争总账户主基准。评价必须把 Reference Policy 的市场风险溢价、主动偏离以及 Risk/Execution/成本的保留或损耗分开显示，但最终由一条可对账的总组合反事实和真实账户结果决定资本资格。
 
-### 5.2 Forecast 增量
+回放最多证明实现和历史适配，Mock 最多证明决策链和模拟经济性；真实资本扩大必须依赖 Forecast 可用后的真实 Venue 成交、费用、账户与风险结果。一个组件的 proper score 改善不能替代这项裁决，反过来总账户偶然盈利也不能证明其中每个复杂组件有用。
 
-Forecast 候选只能消费同合同前瞻评价：滚动无条件分布、简单市场模型、proper score 保守下界、校准、覆盖率、时间依赖和完整搜索影响由 Forecast Evaluation 所有。均值略优或达到最小样本数都不能直接授予权限；换候选、Release、名称或评价器也不能清空同一 objective/scope 的搜索历史。
+### 5.2 可选组件是否值得存在
 
-### 5.3 触发增量
+组件评价只为归因和删除复杂度：WorldModel 使用同槽、同模型、同截止的前瞻配对消融；Forecast 使用同合同 proper score、校准、覆盖率、动态简单基线、时间依赖和完整搜索历史；事件响应用“cadence-only 政策”与“cadence 加材料响应政策”的同风险、费用后逻辑账户；Portfolio 算法与不含该组件的最简单可执行版本比较。结果由各自 evaluator 以类型化报告给出，不再汇入一个万能分数。
 
-触发政策回答的不是事件发生后 Forecast 是否准确，而是“增加材料事件响应”是否比仅保留定时槽改善费用后资本结果。它必须在相同 Forecast、Portfolio、Risk 和执行语义下，前瞻比较“仅定时槽”与“定时加事件槽”的同风险逻辑账户，并承担额外换手、成本和错误响应。定时与事件 Forecast 的覆盖率、评分和最低样本分别报告；改变 delta 资格、资产或风险因子映射、时域、去重窗口或完成期限都会产生新触发行为，不能继承旧政策结果。
-
-### 5.4 资本增量
-
-预测改善不等于资本改善。总组合资本候选只能消费独立、可对账的反事实账户结果，并与 mandate 唯一、事前冻结、风险匹配且可实际推进的简单 Reference Policy 同口径比较；现金、继续持有和单资产被动暴露是生存或组件归因诊断，不能事后竞争总账户主基准。评价分离 Reference Policy 的市场风险溢价、主动 Forecast/Portfolio 偏离，以及 Risk/Execution/成本的保留或损耗。回放最多证明实现和历史适配，Mock 最多证明决策链和模拟经济性；真实资本扩大必须依赖 Forecast 可用后的真实 Venue 成交、费用、账户与风险结果。认知、预测、触发和资本证据分别报告，不能用下一层的偶然盈利替代上一层因果识别。
+若完整政策有效但某组件没有稳定边际价值，下一候选应删除或替换该组件，再让更简单政策竞争；若组件有效而完整资本政策无增量，它只能保留研究资格，不能获得资本权限。只有同槽认知消融改善 Forecast，且该 Forecast 的主动偏离继续改善费用后资本结果，才可以声称世界认知协助了盈利。数据完整性、风险限制和执行一致性是无条件硬约束，不参与“盈利是否足以抵消错误”的投票。
 
 ## 6. 权限不是永久结论
 
@@ -118,7 +117,7 @@ Forecast 候选只能消费同合同前瞻评价：滚动无条件分布、简�
 
 ## 7. 主 Agent 的工作方式
 
-主 Agent 每次只读取同一份版本化、点时 `EvaluationReport`：mandate 与 Venue 覆盖、Reference Policy、事实质量、WorldModel 配对增量、定时与事件 Forecast 的分层评分和校准、触发政策资本增量、Portfolio 相对基准的主动偏离、Risk 拒绝、执行偏差、真实费用后账户结果和当前搜索历史。它不抓取页面、不自行拼 SQL，也不在 Prompt 中重实现统计判断。
+主 Agent 每次只读取一个版本化、点时 `GovernanceSnapshot`。Snapshot 引用当时适用的 Mandate、Venue 覆盖、Reference Policy、类型化组件评价、总组合资本评价、Risk/Execution 异常、权限、开放计划和失败搜索历史；它不把这些结果复制成自由文本指标。Agent 不抓取页面、不自行拼 SQL，也不在 Prompt 中重实现统计判断。
 
 它只完成以下闭环：
 
@@ -156,7 +155,7 @@ WorldModel 的文字质量或机制引用增加，而配对 Forecast 没有提�
 
 ### 事件密集期制造虚假进步
 
-短时间内多个相关事件产生许多重叠 Forecast 时，系统不能把它们当成多个独立胜利，也不能让它们替代本应到期的定时槽。等价 delta 按冻结规则去重，其余结果按共同事件和时间簇处理；触发政策最终只由包含额外交易成本的逻辑账户判断是否保留。若事件响应只增加调用和换手而没有资本增量，删除或收紧该政策，而不是继续叠加过滤器掩盖失败。
+短时间内多个相关事件产生许多重叠 Forecast 时，系统不能把它们当成多个独立胜利。等价 delta 按冻结规则去重；临近 cadence 的同一经济问题可以合并成一个槽，但该槽保持条件样本身份，其余结果按共同事件和时间簇处理。触发政策最终只由包含额外交易成本的逻辑账户判断是否保留；若事件响应只增加调用和换手而没有资本增量，删除或收紧原政策，不再叠加第二套过滤器补救。
 
 ## 9. 完成标准
 
@@ -171,7 +170,8 @@ WorldModel 的文字质量或机制引用增加，而配对 Forecast 没有提�
 - 每项实验资格绑定评价计划，每项正式权限绑定评价结果，二者都有资本包络、有效期和撤销条件；
 - 失败实现和被替代机制从生产代码删除，历史只保留不可执行事实；
 - Agent 可以选择不变更，且不能控制自己结果的选择、评分或权限；
-- Agent、Dashboard 与权限读取同一可复现 EvaluationReport；
+- 每个评价问题只有一个类型化 evaluator；Agent 通过 GovernanceSnapshot 引用其结果，Dashboard 读取同源投影，权限只读取冻结 EvaluationResult；
+- GovernanceSnapshot 不读取 `legacy` 运行模型，也不复制第二套评价真相；
 - 长期运行不会因想法、实验或 Release 数量增长出第二条投资链。
 
 满足这些条件只说明系统能够可靠淘汰错误并保留较优行为，不代表已经找到 Alpha。盈利能力仍只能由持续、点时、前瞻、费用后和风险调整的真实账户结果证明。
@@ -183,5 +183,7 @@ WorldModel 的文字质量或机制引用增加，而配对 Forecast 没有提�
 - [Testing by Betting](https://doi.org/10.1017/9781108914964)：序贯证据可以持续更新，但规则必须在观察结果前确定。
 - [Comparing Sequential Forecasters](https://arxiv.org/abs/2110.00115)：持续监控 proper-score 差异可以使用 anytime-valid 置信序列，但预测配对与停止规则仍须事前确定。
 - [LLMs Cannot Self-Correct Reasoning Yet](https://proceedings.iclr.cc/paper_files/paper/2024/hash/8b4add8b0aa8749d80a34ca5d941c355-Abstract-Conference.html)：没有外部反馈的语言反思不能代替可验证结果。
+- [Hidden Technical Debt in Machine Learning Systems](https://proceedings.neurips.cc/paper_files/paper/2015/file/86df7dcfd896fcaf2674f757a2463eba-Paper.pdf)：边界侵蚀、未声明消费者和反馈回路会让 ML 系统的维护成本在系统层累积。本设计因此坚持类型化 evaluator、显式消费者和删除重复投影。
+- [SWE-Gym](https://proceedings.mlr.press/v267/pan25g.html)：2025 年的真实代码环境研究显示，可执行环境、单元测试和 trajectory verifier 能显著改善并筛选软件 Agent。本项目据此把测试用于工程正确性、把冻结的市场与账户 Outcome 用于投资有效性，两者都不由候选 Agent 自行裁决。
 
 这些方法只约束系统如何减少自欺，不提供本项目的盈利证据。最终原则是：**Agent 扩大可证伪方案的搜索，冻结评价限制自我欺骗，现实结果决定权限，仓库只保留仍被需要的运行机制。**
