@@ -403,6 +403,11 @@ class PortfolioCandidateEvaluation(FrozenModel):
     minimum_net_bps: Decimal
     eligible: bool
     reason_codes: tuple[str, ...] = Field(min_length=1)
+    # ``None`` is reserved for immutable targets written before dependency
+    # validity was frozen with candidate economics.  New decisions always
+    # persist both tuples.
+    validity_reason_codes: tuple[str, ...] | None = None
+    validity_evidence_refs: tuple[str, ...] | None = None
 
     @model_validator(mode="after")
     def economics_and_result_must_be_consistent(self):
@@ -416,6 +421,19 @@ class PortfolioCandidateEvaluation(FrozenModel):
             raise ValueError("Portfolio candidate eligibility 与有效期、净收益和门槛不一致")
         if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
             raise ValueError("Portfolio candidate reason_codes 必须唯一且排序")
+        validity_values = (self.validity_reason_codes, self.validity_evidence_refs)
+        if (validity_values[0] is None) != (validity_values[1] is None):
+            raise ValueError("Portfolio candidate Forecast 有效性事实必须完整")
+        if self.validity_reason_codes is not None:
+            for name in ("validity_reason_codes", "validity_evidence_refs"):
+                values = getattr(self, name)
+                assert values is not None
+                if tuple(sorted(set(values))) != values:
+                    raise ValueError(f"Portfolio candidate {name} 必须唯一且排序")
+            if self.forecast_current and self.validity_reason_codes:
+                raise ValueError("当前 Portfolio candidate 不得包含 Forecast 失效原因")
+            if not self.forecast_current and not self.validity_reason_codes:
+                raise ValueError("失效 Portfolio candidate 必须包含 Forecast 失效原因")
         return self
 
 

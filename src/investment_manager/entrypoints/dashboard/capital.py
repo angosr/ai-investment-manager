@@ -101,6 +101,8 @@ class CapitalCandidateEconomics:
     desired_gross_notional: Decimal
     eligible: bool
     reason_codes: tuple[str, ...]
+    validity_reason_codes: tuple[str, ...] | None
+    validity_evidence_refs: tuple[str, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -873,6 +875,8 @@ class CapitalDashboardReader:
                     desired_gross_notional=evaluation.desired_gross_notional,
                     eligible=evaluation.eligible,
                     reason_codes=evaluation.reason_codes,
+                    validity_reason_codes=evaluation.validity_reason_codes,
+                    validity_evidence_refs=evaluation.validity_evidence_refs,
                 )
             )
         return tuple(candidates)
@@ -1152,6 +1156,16 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                         "desired_gross_notional": str(candidate.desired_gross_notional),
                         "eligible": candidate.eligible,
                         "reason_codes": list(candidate.reason_codes),
+                        "validity_reason_codes": (
+                            None
+                            if candidate.validity_reason_codes is None
+                            else list(candidate.validity_reason_codes)
+                        ),
+                        "validity_evidence_refs": (
+                            None
+                            if candidate.validity_evidence_refs is None
+                            else list(candidate.validity_evidence_refs)
+                        ),
                     }
                     for candidate in item.candidate_economics
                 ],

@@ -21,6 +21,7 @@ from investment_manager.market.models import (
     InstrumentProduct,
 )
 from investment_manager.portfolio.decision import (
+    ForecastExternalValidity,
     PortfolioDecisionEngine,
     PortfolioDecisionPolicy,
     PortfolioSleeveInput,
@@ -409,6 +410,38 @@ def test_expired_forecast_forces_an_existing_sleeve_to_cash() -> None:
     assert target.sleeves[0].decision_gross_bps == 0
     assert target.sleeves[0].cost.fee_bps == Decimal("10.00")
     assert "EXPIRED_FORECAST_EXIT" in target.reason_codes
+
+
+def test_superseded_world_model_forces_existing_sleeve_to_cash_with_evidence() -> None:
+    sleeve = _input(_forecast(expected_bps="100"))
+    sleeve = sleeve.model_copy(
+        update={
+            "external_validity": ForecastExternalValidity(
+                checked_at=NOW,
+                current=False,
+                reason_codes=("FORECAST_WORLD_MODEL_SUPERSEDED",),
+                evidence_refs=("world-model-new", "world-model-old"),
+            )
+        }
+    )
+
+    target = _engine().decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(sleeve,),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == 0
+    assert "EXPIRED_FORECAST_EXIT" in target.reason_codes
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert not candidate.forecast_current
+    assert candidate.validity_reason_codes == ("FORECAST_WORLD_MODEL_SUPERSEDED",)
+    assert candidate.validity_evidence_refs == ("world-model-new", "world-model-old")
 
 
 def test_cost_increases_when_desired_size_exceeds_visible_depth() -> None:

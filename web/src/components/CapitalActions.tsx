@@ -34,6 +34,9 @@ const REASON_LABELS: Record<string, string> = {
   POSITIVE_NET_EDGE_SELECTED: "预测扣除完整成本后达到入场门槛",
   REBALANCE_BELOW_MINIMUM: "仓位变化太小，不足以覆盖交易成本",
   EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",
+  FORECAST_TIME_WINDOW_INVALID: "预测已经超过允许使用的时间窗口",
+  FORECAST_WORLD_MODEL_UNAVAILABLE: "预测依赖的世界认知已无法确认",
+  FORECAST_WORLD_MODEL_SUPERSEDED: "预测引用的世界认知已被后续认知替代",
   PROGRAMMATIC_RISK_REVIEW: "完成程序化账户、持仓和硬风险复核",
   HOLDING_RISK_REVIEWED: "现有持仓已经完成程序化风险复核",
 };
@@ -169,10 +172,23 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 <dd>
                   信息截止 {item.information_cutoff_at} · 完成 {item.available_at} · 有效至 {item.valid_until}
                 </dd>
+                {item.validity_reason_codes?.length ? (
+                  <>
+                    <dt>预测为何失效</dt>
+                    <dd>
+                      {item.validity_reason_codes.map(
+                        (reason) => REASON_LABELS[reason] ?? reason,
+                      ).join("；")}
+                    </dd>
+                  </>
+                ) : null}
                 <dt>审计身份</dt>
                 <dd>
                   Forecast {item.forecast_id}
                   {item.world_model_id ? ` · WorldModel ${item.world_model_id}` : ""}
+                  {item.validity_evidence_refs?.length
+                    ? ` · 有效性证据 ${item.validity_evidence_refs.join(" / ")}`
+                    : ""}
                 </dd>
                 {item.analysis_input ? (
                   <>

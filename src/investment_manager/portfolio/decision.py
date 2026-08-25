@@ -44,10 +44,33 @@ class PortfolioDecisionPolicy(FrozenModel):
         return self
 
 
+class ForecastExternalValidity(FrozenModel):
+    """Point-in-time validity of dependencies outside immutable Forecast time."""
+
+    checked_at: datetime
+    current: bool
+    reason_codes: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def state_and_evidence_must_be_canonical(self):
+        require_utc(self.checked_at)
+        for name in ("reason_codes", "evidence_refs"):
+            values = getattr(self, name)
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"Forecast external validity {name} 必须唯一且排序")
+        if self.current and self.reason_codes:
+            raise ValueError("当前 Forecast external validity 不得包含失效原因")
+        if not self.current and not self.reason_codes:
+            raise ValueError("失效 Forecast external validity 必须包含原因")
+        return self
+
+
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast: Forecast
     capital_authorization: CandidateCapitalAuthorization | None = None
+    external_validity: ForecastExternalValidity | None = None
 
     @model_validator(mode="after")
     def forecast_permission_must_be_explicit(self):
@@ -326,7 +349,7 @@ class PortfolioDecisionEngine:
                     "POSITIVE_NET_EDGE_SELECTED"
                     if item.sleeve_id in eligible_ids
                     else "FORECAST_INVALID_CASH"
-                    if not self._forecast_is_current(item.forecast, as_of=as_of)
+                    if not self._forecast_is_current(item, as_of=as_of)
                     else "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
                     if candidate_evaluations[item.sleeve_id].eligible
                     else "NON_POSITIVE_NET_EDGE_CASH"
@@ -344,7 +367,7 @@ class PortfolioDecisionEngine:
         )
         invalid_holding_exit = any(
             current_by_sleeve[item.sleeve_id] > 0
-            and not self._forecast_is_current(item.forecast, as_of=as_of)
+            and not self._forecast_is_current(item, as_of=as_of)
             for item in sleeves
         )
         below_rebalance_minimum = (
@@ -431,7 +454,9 @@ class PortfolioDecisionEngine:
         current_notional: Decimal,
         evaluation_notional: Decimal,
     ) -> PortfolioCandidateEvaluation:
-        forecast_current = self._forecast_is_current(item.forecast, as_of=as_of)
+        forecast_current, validity_reason_codes, validity_evidence_refs = (
+            self._forecast_validity(item, as_of=as_of)
+        )
         gross = remaining_target_gross_bps(
             item.forecast,
             current_gross_notional=current_notional,
@@ -474,6 +499,8 @@ class PortfolioDecisionEngine:
             decision_net_bps=net,
             minimum_net_bps=threshold,
             eligible=eligible,
+            validity_reason_codes=validity_reason_codes,
+            validity_evidence_refs=validity_evidence_refs,
             reason_codes=(
                 "ELIGIBLE_FOR_ALLOCATION"
                 if eligible
@@ -510,8 +537,28 @@ class PortfolioDecisionEngine:
         )
 
     @staticmethod
-    def _forecast_is_current(forecast: Forecast, *, as_of: datetime) -> bool:
-        return forecast.available_at <= as_of < forecast.valid_until
+    def _forecast_validity(
+        item: PortfolioSleeveInput,
+        *,
+        as_of: datetime,
+    ) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
+        if not (item.forecast.available_at <= as_of < item.forecast.valid_until):
+            return False, ("FORECAST_TIME_WINDOW_INVALID",), ()
+        external = item.external_validity
+        if external is None:
+            return True, (), ()
+        if external.checked_at != as_of:
+            raise ValueError("Forecast external validity 必须在当前决策时点检查")
+        return external.current, external.reason_codes, external.evidence_refs
+
+    @classmethod
+    def _forecast_is_current(
+        cls,
+        item: PortfolioSleeveInput,
+        *,
+        as_of: datetime,
+    ) -> bool:
+        return cls._forecast_validity(item, as_of=as_of)[0]
 
     def _target(
         self,

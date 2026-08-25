@@ -136,6 +136,8 @@ export interface CapitalAction {
     desired_gross_notional: string;
     eligible: boolean;
     reason_codes: string[];
+    validity_reason_codes: string[] | null;
+    validity_evidence_refs: string[] | null;
   }[];
 }
 

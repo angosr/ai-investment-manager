@@ -8,6 +8,7 @@ from investment_manager.decision_cycle.capital import (
     CapitalForecastSource,
     CapitalTriggerConsumer,
     assemble_capital_cycle,
+    forecast_external_validity,
 )
 from investment_manager.decision_cycle.portfolio import TradePlanExecutionResult
 from investment_manager.entrypoints.dashboard.capital import (
@@ -75,6 +76,29 @@ NOW = datetime(2026, 9, 1, 0, 5, tzinfo=UTC)
 _TEST_PRODUCER_ID = "test-capital-candidate"
 _TEST_PRODUCER_VERSION = "test-capital-candidate-v1"
 _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
+
+
+def test_world_model_validity_is_resolved_from_point_in_time_latest_assessment() -> None:
+    @dataclass(frozen=True)
+    class AssessmentRef:
+        assessment_id: str
+
+    @dataclass(frozen=True)
+    class WorldModelHistoryStub:
+        def latest_before(self, **_kwargs):
+            return AssessmentRef(assessment_id="world-model-new")
+
+    validity = forecast_external_validity(
+        world_models=WorldModelHistoryStub(),
+        world_model_scope="portfolio",
+        forecast_world_model_id="world-model-old",
+        as_of=NOW,
+    )
+
+    assert validity is not None
+    assert not validity.current
+    assert validity.reason_codes == ("FORECAST_WORLD_MODEL_SUPERSEDED",)
+    assert validity.evidence_refs == ("world-model-new", "world-model-old")
 
 
 def _assemble_capital_cycle(config, engine, **kwargs):
