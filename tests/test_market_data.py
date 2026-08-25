@@ -54,6 +54,15 @@ from investment_manager.market.runtime import (
 NOW = datetime(2026, 8, 18, 12, 10, tzinfo=UTC)
 
 
+class RecordingTriggerSink:
+    def __init__(self) -> None:
+        self.triggers = []
+
+    def record_trigger(self, trigger):
+        self.triggers.append(trigger)
+        return True
+
+
 def _millis(value: datetime) -> int:
     return int(value.timestamp() * 1000)
 
@@ -878,15 +887,7 @@ def test_rest_bootstrap_excludes_current_bar_and_builds_visible_snapshot(app_con
 
 
 def test_market_shock_detector_filters_ticks_before_creating_trigger(app_config) -> None:
-    class RecordingSink:
-        def __init__(self) -> None:
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -917,15 +918,7 @@ def test_market_shock_detector_filters_ticks_before_creating_trigger(app_config)
 
 
 def test_market_shock_routes_to_portfolio_owner_without_losing_subject(app_config) -> None:
-    class RecordingSink:
-        def __init__(self) -> None:
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -948,16 +941,115 @@ def test_market_shock_routes_to_portfolio_owner_without_losing_subject(app_confi
     assert sink.triggers[0].affected_symbols == ("ETHUSDT",)
 
 
+def test_market_shock_publishes_one_ordinary_event_per_portfolio_episode(
+    app_config,
+) -> None:
+    sink = RecordingTriggerSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.01"),
+        window_seconds=600,
+        trigger_expiry_seconds=900,
+        sink=sink,
+        analysis_owner_symbol="BTCUSDT",
+        trigger_symbols=("BTCUSDT", "ETHUSDT"),
+    )
+    observations = (
+        _trade(NOW + timedelta(seconds=1), trade_id=1).model_copy(
+            update={"symbol": "BTCUSDT", "price": Decimal("100")}
+        ),
+        _trade(NOW + timedelta(seconds=2), trade_id=2).model_copy(
+            update={"symbol": "ETHUSDT", "price": Decimal("100")}
+        ),
+        _trade(NOW + timedelta(seconds=3), trade_id=3).model_copy(
+            update={"symbol": "BTCUSDT", "price": Decimal("101.01")}
+        ),
+        _trade(NOW + timedelta(seconds=4), trade_id=4).model_copy(
+            update={"symbol": "ETHUSDT", "price": Decimal("101.01")}
+        ),
+    )
+
+    assert [detector.observe(item) for item in observations] == [False, False, True, False]
+    assert len(sink.triggers) == 1
+    assert sink.triggers[0].priority < 100
+    assert sink.triggers[0].affected_symbols == ("BTCUSDT",)
+
+
+def test_market_shock_allows_one_urgent_escalation_in_portfolio_episode(
+    app_config,
+) -> None:
+    sink = RecordingTriggerSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.01"),
+        window_seconds=600,
+        trigger_expiry_seconds=900,
+        sink=sink,
+        analysis_owner_symbol="BTCUSDT",
+        trigger_symbols=("BTCUSDT", "ETHUSDT"),
+    )
+    observations = (
+        _trade(NOW + timedelta(seconds=1), trade_id=1).model_copy(
+            update={"symbol": "BTCUSDT", "price": Decimal("100")}
+        ),
+        _trade(NOW + timedelta(seconds=2), trade_id=2).model_copy(
+            update={"symbol": "ETHUSDT", "price": Decimal("100")}
+        ),
+        _trade(NOW + timedelta(seconds=3), trade_id=3).model_copy(
+            update={"symbol": "BTCUSDT", "price": Decimal("101.01")}
+        ),
+        _trade(NOW + timedelta(seconds=4), trade_id=4).model_copy(
+            update={"symbol": "ETHUSDT", "price": Decimal("101.30")}
+        ),
+        _trade(NOW + timedelta(seconds=5), trade_id=5).model_copy(
+            update={"symbol": "ETHUSDT", "price": Decimal("102.60")}
+        ),
+    )
+
+    assert [detector.observe(item) for item in observations] == [
+        False,
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert [item.priority for item in sink.triggers] == [80, 100]
+    assert sink.triggers[1].affected_symbols == ("ETHUSDT",)
+
+
+def test_market_shock_starts_new_portfolio_episode_after_window(app_config) -> None:
+    sink = RecordingTriggerSink()
+    detector = MarketShockDetector(
+        pipeline_id=app_config.pipeline.version,
+        relative_move_threshold=Decimal("0.01"),
+        window_seconds=600,
+        trigger_expiry_seconds=900,
+        sink=sink,
+        analysis_owner_symbol="BTCUSDT",
+        trigger_symbols=("BTCUSDT", "ETHUSDT"),
+    )
+    first = _trade(NOW + timedelta(seconds=1), trade_id=1).model_copy(
+        update={"symbol": "BTCUSDT", "price": Decimal("100")}
+    )
+    first_shock = _trade(NOW + timedelta(seconds=2), trade_id=2).model_copy(
+        update={"symbol": "BTCUSDT", "price": Decimal("101.01")}
+    )
+    next_baseline = _trade(NOW + timedelta(seconds=603), trade_id=3).model_copy(
+        update={"symbol": "BTCUSDT", "price": Decimal("102.03")}
+    )
+    next_shock = _trade(NOW + timedelta(seconds=604), trade_id=4).model_copy(
+        update={"symbol": "BTCUSDT", "price": Decimal("103.06")}
+    )
+
+    assert not detector.observe(first)
+    assert detector.observe(first_shock)
+    assert not detector.observe(next_baseline)
+    assert detector.observe(next_shock)
+    assert len(sink.triggers) == 2
+
+
 def test_market_shock_does_not_route_observation_only_symbols(app_config) -> None:
-    class RecordingSink:
-        def __init__(self) -> None:
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -980,15 +1072,7 @@ def test_market_shock_does_not_route_observation_only_symbols(app_config) -> Non
 
 
 def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
-    class RecordingSink:
-        def __init__(self):
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -1012,7 +1096,7 @@ def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
     assert not detector.observe(shocked_bar)
     assert len(sink.triggers) == 1
 
-    fallback_sink = RecordingSink()
+    fallback_sink = RecordingTriggerSink()
     fallback = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -1025,15 +1109,7 @@ def test_market_shock_closed_bar_is_fallback_not_duplicate(app_config) -> None:
 
 
 def test_market_shock_detects_reversal_and_cross_window_gap(app_config) -> None:
-    class RecordingSink:
-        def __init__(self):
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    reversal_sink = RecordingSink()
+    reversal_sink = RecordingTriggerSink()
     reversal = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -1052,7 +1128,7 @@ def test_market_shock_detects_reversal_and_cross_window_gap(app_config) -> None:
     ]
     assert results == [False, False, True]
 
-    gap_sink = RecordingSink()
+    gap_sink = RecordingTriggerSink()
     gap = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -1072,15 +1148,7 @@ def test_market_shock_detects_reversal_and_cross_window_gap(app_config) -> None:
 
 
 def test_market_shock_uses_rolling_window_across_fixed_boundaries(app_config) -> None:
-    class RecordingSink:
-        def __init__(self):
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),
@@ -1104,15 +1172,7 @@ def test_market_shock_uses_rolling_window_across_fixed_boundaries(app_config) ->
 
 
 def test_market_shock_rebases_and_cools_down_after_trigger(app_config) -> None:
-    class RecordingSink:
-        def __init__(self):
-            self.triggers = []
-
-        def record_trigger(self, trigger):
-            self.triggers.append(trigger)
-            return True
-
-    sink = RecordingSink()
+    sink = RecordingTriggerSink()
     detector = MarketShockDetector(
         pipeline_id=app_config.pipeline.version,
         relative_move_threshold=Decimal("0.02"),

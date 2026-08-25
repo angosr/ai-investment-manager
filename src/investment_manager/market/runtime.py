@@ -59,8 +59,14 @@ class _MarketShockWindow:
     last_triggered_at: datetime | None = None
 
 
+@dataclass(slots=True)
+class _MarketShockEpisode:
+    started_at: datetime
+    urgent_published: bool
+
+
 class MarketShockDetector:
-    """以内存有界的滚动秒级窗口检测冲击；同窗口冷却并从当前价重新定基。"""
+    """检测资产价格冲击，并在分析作用域内形成唯一的组合冲击事件。"""
 
     def __init__(
         self,
@@ -87,6 +93,7 @@ class MarketShockDetector:
             raise ValueError("市场冲击触发品种必须唯一")
         self._trigger_symbols = None if trigger_symbols is None else frozenset(trigger_symbols)
         self._windows: dict[str, _MarketShockWindow] = {}
+        self._episodes: dict[str, _MarketShockEpisode] = {}
 
     def observe(self, event: MarketEvent) -> bool:
         if self._trigger_symbols is not None and event.symbol not in self._trigger_symbols:
@@ -123,23 +130,22 @@ class MarketShockDetector:
             )
         if relative_move < self._threshold:
             return False
-        state = self._windows.get(event.symbol)
-        if (
-            state is not None
-            and state.last_triggered_at is not None
-            and occurred_at - state.last_triggered_at < timedelta(seconds=self._window_seconds)
-        ):
+        priority = min(100, max(1, int(relative_move / self._threshold * 80)))
+        scope = self._analysis_owner_symbol or event.symbol
+        if not self._admit_episode(scope=scope, observed_at=observed_at, priority=priority):
+            # Every threshold crossing starts a fresh measurement window even
+            # when its portfolio event is suppressed. Otherwise an old extreme
+            # can be recycled into a false new episode at the window boundary.
             reference_price = event.close if isinstance(event, ClosedMarketBar) else event.price
             self._windows[event.symbol] = self._new_window(
                 observed_at if isinstance(event, ClosedMarketBar) else occurred_at,
                 reference_price,
-                last_triggered_at=state.last_triggered_at,
+                last_triggered_at=occurred_at,
             )
             return False
-        priority = min(100, max(1, int(relative_move / self._threshold * 80)))
         trigger = build_trigger_event(
             trigger_type=AnalysisTriggerType.MARKET_SHOCK,
-            symbol=self._analysis_owner_symbol or event.symbol,
+            symbol=scope,
             pipeline_id=self._pipeline_id,
             occurred_at=occurred_at,
             observed_at=observed_at,
@@ -157,6 +163,29 @@ class MarketShockDetector:
             last_triggered_at=occurred_at,
         )
         return inserted
+
+    def _admit_episode(
+        self,
+        *,
+        scope: str,
+        observed_at: datetime,
+        priority: int,
+    ) -> bool:
+        observed_at = require_utc(observed_at)
+        episode = self._episodes.get(scope)
+        if (
+            episode is None
+            or observed_at - episode.started_at >= timedelta(seconds=self._window_seconds)
+        ):
+            self._episodes[scope] = _MarketShockEpisode(
+                started_at=observed_at,
+                urgent_published=priority == 100,
+            )
+            return True
+        if priority == 100 and not episode.urgent_published:
+            episode.urgent_published = True
+            return True
+        return False
 
     def _observe_trade(
         self,

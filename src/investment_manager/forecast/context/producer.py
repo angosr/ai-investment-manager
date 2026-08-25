@@ -200,12 +200,12 @@ def context_spot_forecast_contract(
         outcome_buckets=policy.outcome_buckets,
         horizon_minutes=policy.horizon_minutes,
         decision_slot_rule=(
-            "fixed-cadence-and-material-world-model-v2"
+            "fixed-cadence-and-portfolio-material-world-model-v3"
             if policy.material_event_slots_enabled
             else "fixed-utc-cadence-after-release-activation-v4"
         ),
         evaluation_trigger=(
-            "cadence-or-material-world-model-slot-v2"
+            "cadence-or-portfolio-material-world-model-slot-v3"
             if policy.material_event_slots_enabled
             else "contract-cadence-only-v2"
         ),
