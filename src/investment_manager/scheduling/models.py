@@ -19,6 +19,8 @@ class TriggerReason(StrEnum):
     HEARTBEAT = "HEARTBEAT"
     EVENT_BATCH = "EVENT_BATCH"
     AGENT_WAKEUP = "AGENT_WAKEUP"
+    # Immutable historical payload compatibility; no current producer uses it.
+    POSITION_RECHECK = "POSITION_RECHECK"
 
 
 class TriggerDecision(FrozenModel):
@@ -91,6 +93,8 @@ class AnalysisTriggerType(StrEnum):
     CANONICAL_FACT_REVISED = "CANONICAL_FACT_REVISED"
     INTELLIGENCE_INSERTED = "INTELLIGENCE_INSERTED"
     MARKET_SHOCK = "MARKET_SHOCK"
+    # Immutable TriggerPlan compatibility; bootstrap no longer registers this rule.
+    POSITION_RECHECK = "POSITION_RECHECK"
     AGENT_WAKEUP = "AGENT_WAKEUP"
     HEARTBEAT = "HEARTBEAT"
     FORECAST_SLOT_DUE = "FORECAST_SLOT_DUE"

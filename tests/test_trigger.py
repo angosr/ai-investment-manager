@@ -239,6 +239,26 @@ def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
     assert created[0].event_rules[1].minimum_priority == 80
 
 
+def test_retired_position_recheck_rule_remains_read_compatible(replay_input) -> None:
+    plan = build_initial_trigger_plan(
+        symbol="BTCUSDT",
+        pipeline_id="historical-pipeline",
+        manifest_id="historical-manifest",
+        updated_at=replay_input.market.as_of,
+        heartbeat_seconds=900,
+        event_rules=(
+            AnalysisEventRule(
+                rule_id="position-recheck-default",
+                trigger_type=AnalysisTriggerType.POSITION_RECHECK,
+            ),
+        ),
+    )
+
+    restored = type(plan).model_validate(plan.model_dump(mode="json"))
+
+    assert restored == plan
+
+
 def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_plan(
     app_config, replay_input,
 ) -> None:
