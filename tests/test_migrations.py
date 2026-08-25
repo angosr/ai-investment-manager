@@ -47,11 +47,6 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
 
     require_current_schema(engine)
     with engine.begin() as connection:
-        connection.execute(
-            text("UPDATE alembic_version SET version_num = 'r6a9d3e2f842'")
-        )
-    require_current_schema(engine)
-    with engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = 'stale-version'"))
     with pytest.raises(RuntimeError, match="数据库 Schema 版本不匹配"):
         require_current_schema(engine)

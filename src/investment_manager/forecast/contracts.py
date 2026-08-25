@@ -204,24 +204,6 @@ class ForecastSlotCause(FrozenModel):
     policy_version: str = Field(min_length=1)
     trigger_refs: tuple[str, ...] = ()
 
-    @model_validator(mode="before")
-    @classmethod
-    def accept_only_empty_retired_source_fields(cls, value):
-        """Bridge r6 facts until the s7 cause-normalization migration runs."""
-
-        if not isinstance(value, dict):
-            return value
-        additional = value.get("additional_origins")
-        anchor = value.get("cadence_anchor_at")
-        if additional not in (None, []) or anchor is not None:
-            raise ValueError("退役 combined Forecast slot 不能作为单一来源读取")
-        if "additional_origins" not in value and "cadence_anchor_at" not in value:
-            return value
-        canonical = dict(value)
-        canonical.pop("additional_origins", None)
-        canonical.pop("cadence_anchor_at", None)
-        return canonical
-
     @model_validator(mode="after")
     def origin_and_refs_must_be_consistent(self):
         if tuple(sorted(set(self.trigger_refs))) != self.trigger_refs:

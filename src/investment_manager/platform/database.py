@@ -6,7 +6,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 metadata = MetaData()
 DATABASE_SCHEMA_VERSION = "s7c4e1a9f263"
-DATABASE_SCHEMA_COMPATIBLE_VERSIONS = ("r6a9d3e2f842", DATABASE_SCHEMA_VERSION)
 
 # Immutable audit remnants from the retired physical CAP/CONTEXT split.  They
 # have no repository or runtime consumer; declaring them here only prevents
@@ -47,9 +46,8 @@ def require_current_schema(engine: Engine) -> None:
             )
     except SQLAlchemyError as exc:
         raise RuntimeError("数据库 Schema 版本不可读；拒绝启动运行服务") from exc
-    if len(versions) != 1 or versions[0] not in DATABASE_SCHEMA_COMPATIBLE_VERSIONS:
+    if versions != (DATABASE_SCHEMA_VERSION,):
         observed = versions[0] if len(versions) == 1 else "MISSING_OR_MULTIPLE_HEADS"
         raise RuntimeError(
-            "数据库 Schema 版本不匹配："
-            f"expected={DATABASE_SCHEMA_COMPATIBLE_VERSIONS}, observed={observed}"
+            f"数据库 Schema 版本不匹配：expected={DATABASE_SCHEMA_VERSION}, observed={observed}"
         )

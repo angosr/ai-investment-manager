@@ -301,21 +301,6 @@ def test_material_slot_preserves_legacy_identity() -> None:
     )
 
 
-def test_slot_cause_bridge_accepts_only_retired_empty_source_fields() -> None:
-    cause = ForecastSlotCause.material_state(
-        policy_version="material-world-model-slot-v1",
-        trigger_refs=("delta-1",),
-    )
-    payload = cause.model_dump(mode="json")
-    payload.update(additional_origins=[], cadence_anchor_at=None)
-
-    assert ForecastSlotCause.model_validate(payload) == cause
-    with pytest.raises(ValueError, match="combined"):
-        ForecastSlotCause.model_validate(
-            {**payload, "additional_origins": [ForecastSlotOrigin.CADENCE.value]}
-        )
-
-
 def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
