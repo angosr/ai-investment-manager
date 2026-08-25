@@ -265,7 +265,7 @@ def _preflight_release(
     validate_manifest_artifacts(
         manifest,
         repository_root=unit.project_root,
-        required_ids=("web-dist",),
+        required_ids=_required_release_artifacts(config),
     )
     audit = PhaseAAuditor(
         config,
@@ -354,6 +354,14 @@ def _initialize_assembly_database(engine) -> None:
             text("INSERT INTO alembic_version (version_num) VALUES (:version)"),
             {"version": DATABASE_SCHEMA_VERSION},
         )
+
+
+def _required_release_artifacts(config: AppConfig) -> tuple[str, ...]:
+    reference = config.capital.reference_policy
+    required = {"web-dist"}
+    if reference is not None:
+        required.add(reference.selection_artifact_id)
+    return tuple(sorted(required))
 
 
 def _require_safe_cutover(

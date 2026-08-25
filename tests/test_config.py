@@ -15,7 +15,11 @@ from investment_manager.governance.policy import DeploymentStage
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.platform.database import build_engine
-from investment_manager.portfolio.policy import FrequencyPolicy, MandateStatus
+from investment_manager.portfolio.policy import (
+    EconomicExposure,
+    FrequencyPolicy,
+    MandateStatus,
+)
 from investment_manager.settings import load_config
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
@@ -47,12 +51,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v33"
+    assert config.capital.version == "total-portfolio-capital-v34"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v2"
+        "binance-shadow-investable-v3"
     )
     assert config.capital.reference_policy is None
     assert tuple(
@@ -282,6 +286,7 @@ def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark()
         "version": "invalid-btc-reference-v1",
         "mandate_version": config.capital.mandate.version,
         "universe_version": config.capital.investable_universe.version,
+        "selection_artifact_id": "invalid-btc-reference-selection-v1",
         "rebalance_band_fraction": Decimal("0.05"),
         "allocations": (
             {
@@ -302,11 +307,12 @@ def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark()
 def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.capital.model_dump(mode="python")
-    payload["investable_universe"]["instruments"][0]["reference_eligible"] = True
+    payload["investable_universe"]["instruments"][0]["reference_candidate"] = True
     payload["reference_policy"] = {
         "version": "underdiversified-reference-v1",
         "mandate_version": config.capital.mandate.version,
         "universe_version": config.capital.investable_universe.version,
+        "selection_artifact_id": "underdiversified-reference-selection-v1",
         "rebalance_band_fraction": Decimal("0.05"),
         "allocations": (
             {
@@ -323,6 +329,19 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
     validated = type(config.capital).model_validate(payload)
     assert validated.reference_policy is not None
     assert validated.reference_policy.version == "underdiversified-reference-v1"
+
+
+def test_investable_universe_cannot_exceed_the_owner_mandate() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.capital.model_dump(mode="python")
+    payload["mandate"]["allowed_exposures"] = tuple(
+        exposure
+        for exposure in payload["mandate"]["allowed_exposures"]
+        if exposure != EconomicExposure.CRYPTO_NETWORK
+    )
+
+    with pytest.raises(ValidationError, match="Mandate 未允许"):
+        type(config.capital).model_validate(payload)
 
 
 def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:

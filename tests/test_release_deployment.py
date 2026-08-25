@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from investment_manager.entrypoints.cli import release_commands
 from investment_manager.entrypoints.cli.release_commands import (
     _initialize_assembly_database,
+    _required_release_artifacts,
     _start_candidate_or_rollback,
 )
 from investment_manager.governance.release.deployment import (
@@ -27,6 +28,7 @@ from investment_manager.governance.release.deployment import (
     service_command,
 )
 from investment_manager.platform.database import build_engine, require_current_schema
+from investment_manager.settings import load_config
 
 
 def _unit(tmp_path: Path, manifest_id: str = "release-test") -> ReleaseRuntimeUnit:
@@ -79,6 +81,39 @@ def test_release_children_import_candidate_before_existing_pythonpath(tmp_path: 
         "/existing",
     ]
     assert environment["SAFE"] == "yes"
+
+
+def test_release_requires_the_bound_reference_selection_artifact() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    assert _required_release_artifacts(config) == ("web-dist",)
+
+    payload = config.model_dump(mode="python")
+    payload["capital"]["investable_universe"]["instruments"][0][
+        "reference_candidate"
+    ] = True
+    payload["capital"]["reference_policy"] = {
+        "version": "reference-v1",
+        "mandate_version": config.capital.mandate.version,
+        "universe_version": config.capital.investable_universe.version,
+        "selection_artifact_id": "reference-selection-v1",
+        "allocations": (
+            {
+                "implementation_key": "BINANCE:SPOT:BTCUSDT",
+                "target_weight": "0.10",
+            },
+            {
+                "implementation_key": "CASH:USDT",
+                "target_weight": "0.90",
+            },
+        ),
+        "rebalance_band_fraction": "0.05",
+    }
+    configured = type(config).model_validate(payload)
+
+    assert _required_release_artifacts(configured) == (
+        "reference-selection-v1",
+        "web-dist",
+    )
 
 
 def test_ready_state_requires_exact_complete_service_set(tmp_path: Path) -> None:

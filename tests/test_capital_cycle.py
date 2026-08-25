@@ -1086,17 +1086,17 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     dto = serialize_capital_overview(overview)
     assert "forecast_evidence" not in dto
     assert dto["policy"] == {
-        "mandate_version": "provisional-total-portfolio-real-growth-v1",
+        "mandate_version": "provisional-total-portfolio-real-growth-v2",
         "mandate_status": "PROVISIONAL",
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-            "universe_version": "binance-shadow-investable-v2",
-            "covered_exposures": [
-                "CASH",
-                "CRYPTO_NETWORK",
-                "INFLATION_SENSITIVE",
-            ],
+        "universe_version": "binance-shadow-investable-v3",
+        "covered_exposures": [
+            "CASH",
+            "CRYPTO_NETWORK",
+            "INFLATION_SENSITIVE",
+        ],
         "reference_policy_version": None,
     }
     assert dto["account"]["equity"] == "9997.9750"

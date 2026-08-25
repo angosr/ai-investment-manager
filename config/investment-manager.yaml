@@ -133,11 +133,11 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v33
+  version: total-portfolio-capital-v34
   enabled: false
   settlement_asset: USDT
   mandate:
-    version: provisional-total-portfolio-real-growth-v1
+    version: provisional-total-portfolio-real-growth-v2
     status: PROVISIONAL
     portfolio_id: primary
     base_currency: USDT
@@ -147,21 +147,22 @@ capital:
     maximum_drawdown_fraction: "0.10"
     maximum_stress_loss_fraction: "0.10"
     maximum_gross_exposure_fraction: "1.00"
-    strategic_exposures:
+    allowed_exposures:
       - CASH
+      - CRYPTO_NETWORK
       - GLOBAL_EQUITY
       - INFLATION_SENSITIVE
       - NOMINAL_RATES
   investable_universe:
-    version: binance-shadow-investable-v2
-    mandate_version: provisional-total-portfolio-real-growth-v1
+    version: binance-shadow-investable-v3
+    mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
         economic_exposure: CRYPTO_NETWORK
-        reference_eligible: false
+        reference_candidate: false
       - instrument_key: BINANCE:SPOT:PAXGUSDT
         economic_exposure: INFLATION_SENSITIVE
-        reference_eligible: true
+        reference_candidate: true
   # 当前 Venue 尚无通过 Mandate 风险匹配验证的低成本基准，故拒绝用 BTC 补位。
   reference_policy: null
   decision:

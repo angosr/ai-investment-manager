@@ -70,13 +70,13 @@ class InvestmentMandatePolicy(StrictConfig):
     maximum_drawdown_fraction: UnitInterval
     maximum_stress_loss_fraction: UnitInterval
     maximum_gross_exposure_fraction: Decimal = Field(gt=0, le=2)
-    strategic_exposures: tuple[EconomicExposure, ...] = Field(min_length=2)
+    allowed_exposures: tuple[EconomicExposure, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def objective_and_exposures_are_canonical(self):
-        if tuple(sorted(set(self.strategic_exposures))) != self.strategic_exposures:
-            raise ValueError("Mandate strategic exposures 必须唯一且排序")
-        if EconomicExposure.CASH not in self.strategic_exposures:
+        if tuple(sorted(set(self.allowed_exposures))) != self.allowed_exposures:
+            raise ValueError("Mandate allowed exposures 必须唯一且排序")
+        if EconomicExposure.CASH not in self.allowed_exposures:
             raise ValueError("Mandate 必须把现金视为正式经济暴露")
         return self
 
@@ -84,7 +84,7 @@ class InvestmentMandatePolicy(StrictConfig):
 class InvestableInstrumentPolicy(StrictConfig):
     instrument_key: str = Field(min_length=1)
     economic_exposure: EconomicExposure
-    reference_eligible: bool = False
+    reference_candidate: bool = False
 
     @model_validator(mode="after")
     def cash_is_not_a_traded_instrument(self):
@@ -125,6 +125,7 @@ class ReferencePortfolioPolicy(StrictConfig):
     version: str = Field(min_length=1)
     mandate_version: str = Field(min_length=1)
     universe_version: str = Field(min_length=1)
+    selection_artifact_id: str = Field(min_length=1)
     allocations: tuple[ReferenceAllocationPolicy, ...] = Field(min_length=2)
     rebalance_band_fraction: UnitInterval
 
@@ -224,6 +225,13 @@ class CapitalPolicy(StrictConfig):
         )
         if universe_keys != spec_keys:
             raise ValueError("Investable universe 必须唯一覆盖 Capital execution specs")
+        disallowed_exposures = {
+            item.economic_exposure
+            for item in self.investable_universe.instruments
+            if item.economic_exposure not in self.mandate.allowed_exposures
+        }
+        if disallowed_exposures:
+            raise ValueError("Investable universe 包含 Mandate 未允许的经济暴露")
         if self.risk.maximum_drawdown_fraction > self.mandate.maximum_drawdown_fraction:
             raise ValueError("Capital Risk 回撤上限不得宽于 Mandate")
         if (
@@ -248,7 +256,7 @@ class CapitalPolicy(StrictConfig):
                 **{
                     item.instrument_key: item.economic_exposure
                     for item in self.investable_universe.instruments
-                    if item.reference_eligible
+                    if item.reference_candidate
                 },
             }
             allocation_keys = tuple(
