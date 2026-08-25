@@ -123,6 +123,20 @@
 .worldEvidenceGood b {
   color: var(--good);
 }
+.forecastSources {
+  align-items: baseline;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--faint);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 5px 16px;
+  padding: 9px 16px;
+}
+.forecastSources b {
+  color: var(--text);
+  font-weight: 600;
+}
 @media (max-width: 640px) {
   .tabs {
     gap: 14px;

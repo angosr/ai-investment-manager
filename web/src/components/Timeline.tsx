@@ -119,6 +119,9 @@ function CapitalTimeline({
           {forecastEvaluation?.world_model_ablation ? (
             <WorldModelEvidenceLine evidence={forecastEvaluation.world_model_ablation} />
           ) : null}
+          {forecastEvaluation?.forecast_evidence ? (
+            <ForecastSourceLine evidence={forecastEvaluation.forecast_evidence} />
+          ) : null}
           {assessmentStatus?.quality ? (
             <AssessmentQualityLine quality={assessmentStatus.quality} />
           ) : null}
@@ -141,6 +144,43 @@ function CapitalTimeline({
         </div>
       )}
     </section>
+  );
+}
+
+function ForecastSourceLine({
+  evidence,
+}: {
+  evidence: NonNullable<ForecastEvaluationEvidence["forecast_evidence"]>;
+}) {
+  const labels = {
+    CADENCE_ONLY: "定时",
+    MATERIAL_STATE_ONLY: "材料事件",
+  } as const;
+  const sources = evidence.source_evidence ?? [];
+  return (
+    <div className={styles.forecastSources}>
+      <b>预测来源</b>
+      {sources.map((source) => {
+        const item = source.evidence;
+        const coverage = item.result_coverage === null
+          ? "—"
+          : `${(Number(item.result_coverage) * 100).toFixed(0)}%`;
+        const brier = item.mean_brier_score === null
+          ? "—"
+          : Number(item.mean_brier_score).toFixed(3);
+        return (
+          <span key={source.stratum}>
+            {labels[source.stratum]}：到期 {item.due_slot_count} · 输出 {item.forecast_count}
+            {` · 无估计 ${item.no_estimate_count} · 结算 ${item.settled_forecast_count}`}
+            {` · 覆盖 ${coverage} · Brier ${brier}`}
+          </span>
+        );
+      })}
+      <span>
+        独立样本 {evidence.non_overlapping_sample_count}
+        /{evidence.required_non_overlapping_samples}
+      </span>
+    </div>
   );
 }
 

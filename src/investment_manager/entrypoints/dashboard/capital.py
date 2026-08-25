@@ -27,6 +27,7 @@ from investment_manager.forecast.context.evaluation import (
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
+    ForecastSlotStratum,
 )
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -576,7 +577,7 @@ class CapitalDashboardReader:
                     permission_evidence_eligible=contract.permission_evidence_eligible,
                 ),
             )
-            for stratum in observed_strata
+            for stratum in ForecastSlotStratum
         )
         overall = evaluate_forecast_evidence(
             tuple(cases),

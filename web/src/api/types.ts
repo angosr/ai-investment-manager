@@ -163,7 +163,7 @@ export interface AssessmentFeed {
 }
 
 export interface ForecastEvaluationEvidence {
-  forecast_evidence: Record<string, unknown> | null;
+  forecast_evidence: ForecastEvidenceSummary | null;
   world_model_ablation: {
     plan_id: string;
     as_of: string;
@@ -180,6 +180,28 @@ export interface ForecastEvaluationEvidence {
     minimum_sample_size: number;
     evidence_sufficient: boolean;
   } | null;
+}
+
+export interface ForecastEvidenceSummary {
+  status:
+    | "NO_SETTLED_SAMPLES"
+    | "INSUFFICIENT_EVIDENCE"
+    | "ABOVE_BENCHMARK"
+    | "BELOW_BENCHMARK"
+    | "INCONCLUSIVE"
+    | "DIAGNOSTIC_ONLY";
+  due_slot_count: number;
+  forecast_count: number;
+  no_estimate_count: number;
+  settled_forecast_count: number;
+  non_overlapping_sample_count: number;
+  required_non_overlapping_samples: number;
+  result_coverage: string | null;
+  mean_brier_score: string | null;
+  source_evidence?: {
+    stratum: "CADENCE_ONLY" | "MATERIAL_STATE_ONLY";
+    evidence: ForecastEvidenceSummary;
+  }[];
 }
 
 export interface Page<T> {
