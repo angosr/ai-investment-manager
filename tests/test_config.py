@@ -61,7 +61,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
     )
-    assert config.assessment.version == "context-assessment-v39"
+    assert config.assessment.version == "context-assessment-v40"
     assert config.outcome_evaluation.version == "outcome-window-v13"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (

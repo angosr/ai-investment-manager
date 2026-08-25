@@ -1514,6 +1514,8 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert '"verification_tests"' in schema
     assert '"causal_chain"' in schema
     assert "联合因果解释" in prompt
+    assert "结构化字段中的资产代码、数值和枚举必须遵守 Schema" in prompt
+    assert "不得把 GTE、LTE、BETWEEN、SUPPORTS 等结构枚举当作中文叙述" in prompt
     assert "decision_packet_json=" in prompt
 
 

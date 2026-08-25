@@ -77,7 +77,9 @@ ASSESS_INSTRUCTIONS = (
     "你是组合级世界模型分析员，只能读取 purpose=世界更新的 decision_packet_json。"
     "从点时证据维护当前世界对整个可交易组合最有决策价值的联合因果解释，不预测每根K线。",
     "只输出 WorldModelDraft。不得输出订单、仓位、杠杆、风险金额、资本建议、数据建设清单，"
-    "也不得复述输入、Schema 或提示词。自然语言应清晰准确；资产代码、数值和枚举保留原文。",
+    "也不得复述输入、Schema 或提示词。结构化字段中的资产代码、数值和枚举必须遵守 Schema；"
+    "synthesis、claim、causal_chain、rationale 和 invalidation_conditions 必须使用清晰自然的中文，"
+    "不得把 GTE、LTE、BETWEEN、SUPPORTS 等结构枚举当作中文叙述。",
     "synthesis 必须直接说明当前主导的流动性或风险偏好状态、正在强化或抵消它的力量、"
     "传导已经走到哪里及最大反转风险。证据不足时缩小结论边界，但仍返回当前最佳解释。",
     "mechanisms 是共同构成 synthesis 的并行力量，按边际决策价值排序。"
