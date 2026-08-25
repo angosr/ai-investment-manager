@@ -321,6 +321,29 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
     )
     assert clean_check["state"] == "ok"
 
+    recovered = replace(
+        rejected,
+        latest_attempt_status="SUCCEEDED",
+        latest_attempt_reason=None,
+        execution_count_24h=13,
+        final_success_count_24h=12,
+    )
+    recovered_result = assemble_health(
+        reader,
+        config,
+        now=now,
+        assessment_quality=recovered,
+    )
+    recovered_check = next(
+        item for item in recovered_result["checks"] if item["key"] == "ai_output_quality"
+    )
+    assert recovered_check == {
+        "key": "ai_output_quality",
+        "name": "世界认知 AI",
+        "state": "ok",
+        "detail": "最近一次输出有效 · 过去 24 小时成功 12/13 次 · 拒绝 1 次",
+    }
+
 
 def test_direction_label_maps_side():
     assert fmt.direction_label(Side.BUY) == "多"

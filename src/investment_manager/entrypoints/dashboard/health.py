@@ -86,12 +86,17 @@ def _assessment_output_quality_check(status: AssessmentQualityStatus) -> dict:
     elif latest == "NO_ATTEMPT":
         state = "unknown"
         detail = "当前世界认知行为版本尚无分析尝试"
-    elif rejected:
-        state = "warn"
-        detail = f"最近一次有效 · 当前行为过去 24 小时拒绝 {rejected} 次"
     else:
         state = "ok"
-        detail = "最近一次输出有效 · 当前行为过去 24 小时无质量拒绝"
+        if status.execution_count_24h:
+            detail = (
+                "最近一次输出有效 · 过去 24 小时成功 "
+                f"{status.final_success_count_24h}/{status.execution_count_24h} 次"
+            )
+            if rejected:
+                detail += f" · 拒绝 {rejected} 次"
+        else:
+            detail = "最近一次输出有效"
     return _check("ai_output_quality", "世界认知 AI", state, detail)
 
 
