@@ -136,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v40
+  version: total-portfolio-capital-v41
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -173,7 +173,7 @@ capital:
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
-    version: portfolio-net-edge-v9
+    version: portfolio-net-edge-v10
     portfolio_id: primary
     enabled: true
     minimum_conservative_net_bps: "5"

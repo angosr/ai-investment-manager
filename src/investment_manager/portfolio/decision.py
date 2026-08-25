@@ -268,9 +268,14 @@ class PortfolioDecisionEngine:
 
         single_limit = account.equity * self._policy.maximum_single_sleeve_fraction
         candidate_notional = {
-            item.sleeve_id: min(
-                single_limit,
-                self._allocation_limit(item, equity=account.equity),
+            item.sleeve_id: self._candidate_notional(
+                item,
+                allocation_limit=min(
+                    single_limit,
+                    self._allocation_limit(item, equity=account.equity),
+                ),
+                current_notional=current_by_sleeve[item.sleeve_id],
+                as_of=as_of,
             )
             for item in sleeves
         }
@@ -326,7 +331,7 @@ class PortfolioDecisionEngine:
                     "POSITIVE_NET_EDGE_SELECTED"
                     if item.sleeve_id in eligible_ids
                     else "FORECAST_INVALID_CASH"
-                    if not self._forecast_is_current(item, as_of=as_of)
+                    if not candidate_evaluations[item.sleeve_id].forecast_current
                     else "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
                     if candidate_evaluations[item.sleeve_id].eligible
                     else "NON_POSITIVE_NET_EDGE_CASH"
@@ -344,7 +349,7 @@ class PortfolioDecisionEngine:
         )
         invalid_holding_exit = any(
             current_by_sleeve[item.sleeve_id] > 0
-            and not self._forecast_is_current(item, as_of=as_of)
+            and not candidate_evaluations[item.sleeve_id].forecast_current
             for item in sleeves
         )
         below_rebalance_minimum = (
@@ -397,7 +402,15 @@ class PortfolioDecisionEngine:
         if eligible_ids:
             valid_until = min(
                 valid_until,
-                *(item.forecast.valid_until for item in sleeves if item.sleeve_id in eligible_ids),
+                *(
+                    self._target_support_until(
+                        item,
+                        current_notional=current_by_sleeve[item.sleeve_id],
+                        desired_notional=desired_by_sleeve[item.sleeve_id],
+                    )
+                    for item in sleeves
+                    if item.sleeve_id in eligible_ids
+                ),
             )
         payload = {
             "cycle_id": cycle_id,
@@ -432,7 +445,12 @@ class PortfolioDecisionEngine:
         evaluation_notional: Decimal,
     ) -> PortfolioCandidateEvaluation:
         forecast_current, validity_reason_codes, validity_evidence_refs = (
-            self._forecast_validity(item, as_of=as_of)
+            self._forecast_validity(
+                item,
+                as_of=as_of,
+                current_notional=current_notional,
+                evaluation_notional=evaluation_notional,
+            )
         )
         gross = remaining_target_gross_bps(
             item.forecast,
@@ -518,19 +536,43 @@ class PortfolioDecisionEngine:
         item: PortfolioSleeveInput,
         *,
         as_of: datetime,
+        current_notional: Decimal,
+        evaluation_notional: Decimal,
     ) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
-        if not (item.forecast.available_at <= as_of < item.forecast.valid_until):
+        retaining_only = (
+            current_notional > 0 and evaluation_notional <= current_notional
+        )
+        support_until = (
+            item.forecast.economic_horizon_end
+            if retaining_only
+            else item.forecast.valid_until
+        )
+        if not (item.forecast.available_at <= as_of < support_until):
             return False, ("FORECAST_TIME_WINDOW_INVALID",), ()
         return True, (), ()
 
-    @classmethod
-    def _forecast_is_current(
-        cls,
+    @staticmethod
+    def _candidate_notional(
         item: PortfolioSleeveInput,
         *,
+        allocation_limit: Decimal,
+        current_notional: Decimal,
         as_of: datetime,
-    ) -> bool:
-        return cls._forecast_validity(item, as_of=as_of)[0]
+    ) -> Decimal:
+        if current_notional > 0 and as_of >= item.forecast.valid_until:
+            return min(allocation_limit, current_notional)
+        return allocation_limit
+
+    @staticmethod
+    def _target_support_until(
+        item: PortfolioSleeveInput,
+        *,
+        current_notional: Decimal,
+        desired_notional: Decimal,
+    ) -> datetime:
+        if current_notional > 0 and desired_notional <= current_notional:
+            return item.forecast.economic_horizon_end
+        return item.forecast.valid_until
 
     def _target(
         self,

@@ -391,19 +391,83 @@ def test_base_forecast_requires_exact_behavior_authorization() -> None:
         )
 
 
-def test_expired_forecast_forces_an_existing_sleeve_to_cash() -> None:
-    expired = _forecast(
+@pytest.mark.parametrize(
+    ("maximum_allocation_fraction", "expected_notional", "expected_fee_bps"),
+    (("0.20", "1000", "10.00"), ("0.05", "500", "20.00")),
+)
+def test_expired_entry_window_can_only_retain_or_reduce_an_existing_sleeve(
+    maximum_allocation_fraction: str,
+    expected_notional: str,
+    expected_fee_bps: str,
+) -> None:
+    entry_expired = _forecast(
+        available_at=NOW - timedelta(hours=2),
+        valid_until=NOW - timedelta(hours=1),
+    )
+    sleeve = _input(entry_expired)
+    sleeve = sleeve.model_copy(
+        update={
+            "capital_authorization": sleeve.capital_authorization.model_copy(
+                update={
+                    "maximum_allocation_fraction": Decimal(
+                        maximum_allocation_fraction
+                    )
+                }
+            )
+        }
+    )
+    target = _engine().decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(sleeve,),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == Decimal(expected_notional)
+    assert target.sleeves[0].decision_gross_bps == Decimal("40")
+    assert target.sleeves[0].cost.fee_bps == Decimal(expected_fee_bps)
+    assert target.candidate_evaluations is not None
+    assert target.candidate_evaluations[0].forecast_current
+    assert target.candidate_evaluations[0].eligible
+    assert "EXPIRED_FORECAST_EXIT" not in target.reason_codes
+
+
+def test_expired_entry_window_cannot_create_a_new_sleeve() -> None:
+    entry_expired = _forecast(
         available_at=NOW - timedelta(hours=2),
         valid_until=NOW - timedelta(hours=1),
     )
     target = _engine().decide(
         cycle_id="cycle-1",
         as_of=NOW,
-        account=_account(holding=True),
-        sleeves=(_input(expired),),
+        account=_account(),
+        sleeves=(_input(entry_expired),),
         quotes=_quotes(),
         execution_specs=_specs(),
     )
+
+    assert target is not None
+    assert target.sleeves == ()
+    assert target.candidate_evaluations is not None
+    assert not target.candidate_evaluations[0].forecast_current
+
+
+def test_economic_horizon_end_forces_an_existing_sleeve_to_cash() -> None:
+    horizon_expired = _forecast(
+        available_at=NOW - timedelta(hours=25),
+        valid_until=NOW - timedelta(hours=24),
+    )
+    target = _engine().decide(
+        cycle_id="cycle-1",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(_input(horizon_expired),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
     assert target is not None
     assert target.sleeves[0].desired_gross_notional == 0
     assert target.sleeves[0].decision_gross_bps == 0
