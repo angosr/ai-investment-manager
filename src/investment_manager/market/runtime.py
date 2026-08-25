@@ -601,7 +601,10 @@ class MarketRuntime:
                 tasks.create_task(self.spot.run(stop))
                 tasks.create_task(self.perpetual.run(stop))
         finally:
-            await asyncio.gather(*(transport.aclose() for transport in self._transports))
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        await asyncio.gather(*(transport.aclose() for transport in self._transports))
 
 
 def assemble_shadow_market_stream(

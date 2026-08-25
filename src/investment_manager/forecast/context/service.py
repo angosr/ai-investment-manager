@@ -313,13 +313,25 @@ class AssessmentTemporalWorker(SingleActivityWorker):
         )
 
 
-def assemble_assessment_application(
+@dataclass(frozen=True, slots=True)
+class AssessmentServiceAssembly:
+    """Purely constructed worker graph; activation may update durable wakeups."""
+
+    application: AssessmentApplication
+    scheduler: WorldModelReviewScheduler
+    analysis_scope: str
+
+    def activate(self) -> None:
+        self.scheduler.reconcile_latest(self.analysis_scope)
+
+
+def assemble_assessment_service(
     config: AppConfig,
     database_url: str,
     *,
     code_version: str,
     manifest_id: str,
-) -> AssessmentApplication:
+) -> AssessmentServiceAssembly:
     engine = build_engine(database_url)
     require_current_schema(engine)
     analyst = assemble_codex_context_analyst(
@@ -348,17 +360,20 @@ def assemble_assessment_application(
             and config.capital.context_forecast.material_event_slots_enabled
         ),
     )
-    scheduler.reconcile_latest(config.assessment.mandate.analysis_scope)
     def complete_world_model(assessment: ContextAssessment) -> None:
         scheduler.schedule(assessment)
         scheduler.publish_update(assessment)
 
-    return AssessmentApplication(
-        ContextAssessmentExecutor(
-            assessments,
-            analyst,
-            on_success=complete_world_model,
-        )
+    return AssessmentServiceAssembly(
+        application=AssessmentApplication(
+            ContextAssessmentExecutor(
+                assessments,
+                analyst,
+                on_success=complete_world_model,
+            )
+        ),
+        scheduler=scheduler,
+        analysis_scope=config.assessment.mandate.analysis_scope,
     )
 
 

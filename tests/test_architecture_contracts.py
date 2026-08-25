@@ -48,6 +48,10 @@ CLI_CONTRACT = {
     "invalidate-evaluation-plan": "database_url,plan_id,reason_code,evidence_id",
     "market-stream": "config,database_url,release_manifest",
     "outcome-evaluation-service": "config,database_url,release_manifest",
+    "operate-release": (
+        "project_root,config,release_manifest,database_url,runtime_directory,command_path,"
+        "readiness_timeout_seconds,dashboard_host,dashboard_port"
+    ),
     "perpetual-trend-walk-forward": (
         "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
     ),
@@ -225,6 +229,9 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "governance-service",
             "information-collector",
             "dashboard-service",
+        },
+        "entrypoints/cli/release_commands.py": {
+            "operate-release",
         },
         "entrypoints/cli/research_commands.py": {
             "fetch-binance-history",

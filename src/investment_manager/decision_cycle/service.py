@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from temporalio.client import Client
@@ -39,6 +40,102 @@ from investment_manager.settings import AppConfig
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
 
 
+@dataclass(frozen=True, slots=True)
+class TriggerServiceAssembly:
+    """Trigger graph constructed before leadership or durable activation."""
+
+    repository: SqlTriggerRepository
+    activities: TriggerCoordinatorActivities
+    context_forecast_activation_at: datetime | None
+
+
+def assemble_trigger_service(
+    *,
+    config: AppConfig,
+    manifest: ReleaseManifest,
+    engine,
+    repository: SqlTriggerRepository | None = None,
+) -> TriggerServiceAssembly:
+    """Assemble the production graph without acquiring leadership or creating plans."""
+
+    repository = repository or SqlTriggerRepository(engine, config.trigger)
+    capital_consumer = (
+        _assemble_capital_consumer(config=config, engine=engine, manifest=manifest)
+        if config.capital.enabled
+        else None
+    )
+    activities = TriggerCoordinatorActivities(
+        TriggerDispatchBuilder(
+            config=config,
+            packet_preparation=(
+                assemble_decision_packet_preparation(config, engine)
+                if config.assessment.enabled
+                else None
+            ),
+            assessment_history=(
+                SqlContextAssessmentStore(engine) if config.assessment.enabled else None
+            ),
+            batch_recorder=repository,
+            program_forecast_producers=(),
+            program_batch_consumers=(
+                CapitalTriggerConsumer(
+                    capital_consumer,
+                    context_cadence_minutes=(
+                        config.capital.context_forecast.cadence_minutes
+                        if config.assessment.enabled
+                        and config.capital.context_forecast is not None
+                        and config.capital.context_forecast.enabled
+                        else None
+                    ),
+                    context_completion_deadline_seconds=(
+                        config.capital.context_forecast.completion_deadline_seconds
+                        if config.assessment.enabled
+                        and config.capital.context_forecast is not None
+                        and config.capital.context_forecast.enabled
+                        else None
+                    ),
+                    material_event_slots_enabled=(
+                        config.capital.context_forecast.material_event_slots_enabled
+                        if config.assessment.enabled
+                        and config.capital.context_forecast is not None
+                        and config.capital.context_forecast.enabled
+                        else False
+                    ),
+                    material_event_slot_policy_version=(
+                        config.capital.context_forecast.material_event_slot_policy_version
+                        if config.assessment.enabled
+                        and config.capital.context_forecast is not None
+                        and config.capital.context_forecast.enabled
+                        else None
+                    ),
+                    material_event_cadence_merge_seconds=(
+                        config.capital.context_forecast.material_event_cadence_merge_seconds
+                        if config.assessment.enabled
+                        and config.capital.context_forecast is not None
+                        and config.capital.context_forecast.enabled
+                        else 0
+                    ),
+                    owner_symbol=config.assessment.review_trigger_symbol,
+                    context_activation_at=capital_consumer.context_activation_at,
+                )
+                if config.assessment.enabled
+                else capital_consumer,
+            )
+            if capital_consumer is not None
+            else (),
+        )
+    )
+    return TriggerServiceAssembly(
+        repository=repository,
+        activities=activities,
+        context_forecast_activation_at=(
+            capital_consumer.context_activation_at
+            if capital_consumer is not None
+            else None
+        ),
+    )
+
+
 def run_trigger_service(
     *,
     config: AppConfig,
@@ -64,75 +161,11 @@ def run_trigger_service(
         )
         if terminated and on_superseded is not None:
             on_superseded(terminated)
-        capital_consumer = (
-            _assemble_capital_consumer(
-                config=config,
-                engine=engine,
-                manifest=manifest,
-            )
-            if config.capital.enabled
-            else None
-        )
-        activities = TriggerCoordinatorActivities(
-            TriggerDispatchBuilder(
-                config=config,
-                packet_preparation=(
-                    assemble_decision_packet_preparation(config, engine)
-                    if config.assessment.enabled
-                    else None
-                ),
-                assessment_history=(
-                    SqlContextAssessmentStore(engine) if config.assessment.enabled else None
-                ),
-                batch_recorder=repository,
-                program_forecast_producers=(),
-                program_batch_consumers=(
-                    CapitalTriggerConsumer(
-                        capital_consumer,
-                        context_cadence_minutes=(
-                            config.capital.context_forecast.cadence_minutes
-                            if config.assessment.enabled
-                            and config.capital.context_forecast is not None
-                            and config.capital.context_forecast.enabled
-                            else None
-                        ),
-                        context_completion_deadline_seconds=(
-                            config.capital.context_forecast.completion_deadline_seconds
-                            if config.assessment.enabled
-                            and config.capital.context_forecast is not None
-                            and config.capital.context_forecast.enabled
-                            else None
-                        ),
-                        material_event_slots_enabled=(
-                            config.capital.context_forecast.material_event_slots_enabled
-                            if config.assessment.enabled
-                            and config.capital.context_forecast is not None
-                            and config.capital.context_forecast.enabled
-                            else False
-                        ),
-                        material_event_slot_policy_version=(
-                            config.capital.context_forecast.material_event_slot_policy_version
-                            if config.assessment.enabled
-                            and config.capital.context_forecast is not None
-                            and config.capital.context_forecast.enabled
-                            else None
-                        ),
-                        material_event_cadence_merge_seconds=(
-                            config.capital.context_forecast.material_event_cadence_merge_seconds
-                            if config.assessment.enabled
-                            and config.capital.context_forecast is not None
-                            and config.capital.context_forecast.enabled
-                            else 0
-                        ),
-                        owner_symbol=config.assessment.review_trigger_symbol,
-                        context_activation_at=capital_consumer.context_activation_at,
-                    )
-                    if config.assessment.enabled
-                    else capital_consumer,
-                )
-                if capital_consumer is not None
-                else (),
-            )
+        assembly = assemble_trigger_service(
+            config=config,
+            manifest=manifest,
+            engine=engine,
+            repository=repository,
         )
         dispatcher = TriggerOutboxDispatcherService(
             repository=repository,
@@ -140,16 +173,12 @@ def run_trigger_service(
                 client,
                 config,
                 repository,
-                context_forecast_activation_at=(
-                    capital_consumer.context_activation_at
-                    if capital_consumer is not None
-                    else None
-                ),
+                context_forecast_activation_at=assembly.context_forecast_activation_at,
             ),
             poll_seconds=config.trigger.outbox_fallback_poll_seconds,
             wakeup=wakeup,
         )
-        async with TriggerTemporalWorker(client, config.temporal, activities):
+        async with TriggerTemporalWorker(client, config.temporal, assembly.activities):
             await dispatcher.run(asyncio.Event())
 
     leadership = PostgresTriggerLeadership(

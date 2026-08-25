@@ -188,6 +188,10 @@ AI 历史重放可验证数据、Schema 和稳定性，但不能排除模型训�
 
 Release 必须冻结所有会改变实际行为或用户所见事实的内容：代码、配置、Schema、Prompt/模型绑定、运行时外部制品和前端构建产物。进程从该提交的冻结 checkout 或内容寻址制品启动，不能从持续开发工作树或未登记的 `web/dist` 提供现役版本。切流 readiness 读取新 Release 自己的 Worker、调度、数据、账户和已启用生产者事实；事实尚未形成时显示 warming，不得用旧 Release 记录或“进程在线”冒充 ready，也不得为了 ready 伪造资本行动。
 
+Release 的投资晋升裁决与本机切换是两个相邻但不重叠的职责：Governance 只产生已授权的完整 Manifest，唯一发布入口只机械执行该 Manifest，不再评价 Alpha、修改配置或选择候选。入口在旧版本仍运行时，从候选冻结 checkout 使用候选代码完成无写入预检：校验代码、配置、Schema 兼容性、制品和六个现役服务的真实装配；装配必须把构造与激活分开，不能为了预检创建 TriggerPlan、Forecast、账户或其他业务事实。预检不通过时旧版本完全不动。
+
+切换窗口先从权威运行事实确认没有 active batch、非终态 ExecutionGroup，且账户能够从已对账快照恢复。随后由一个本机互斥租约保证任何时刻只有一组写进程：停止旧版本后按 Market/Information、Outcome/Trigger/Assessment 的依赖顺序启动候选，Dashboard 不参与写链并最后切换。候选只有在有界时间内同时证明进程仍存活、Temporal Worker 正在轮询候选任务队列、TriggerPlan 已绑定候选 Manifest、新 Market/Information 观测已经产生、账户恢复一致且已启用 Producer 可达时才 ready；历史健康记录、旧进程产生的事实和单纯端口在线不能代替这些条件。超时或任一进程退出时先完整停止候选，再用同一入口和原冻结参数恢复上一完整 Release；Schema 不兼容回滚时只能发布向前兼容的恢复版本，禁止自动 downgrade。每次预检、切换、ready、失败和回滚保存脱敏且内容寻址的运行回执，但不复制业务事实或建立第二份 Release 状态库。
+
 AI 输入容量按最终模型可见投影校验：确定性 State、机制验证观测和上一轮认知写入后仍必须满足运行时上限。中间 Packet 预算可以指导证据选择，但不能替代最终容量不变量；运行时失败不得被用作正常的信息淘汰机制。
 
 Release 是部署身份，Pipeline 是写入与协调语义，ProducerBehavior 是预测行为身份，三者不得互相代替。代码或界面发布在 Pipeline 语义未变时只把现有 TriggerPlan 递增 revision 重绑定到新 Manifest，保留同一 Temporal 协调器的 `last_analysis_at`、待处理事件和未来唤醒；只有写入/协调语义实际改变才切换 Pipeline。行为等价的 Release 也不得重置 Forecast cohort。

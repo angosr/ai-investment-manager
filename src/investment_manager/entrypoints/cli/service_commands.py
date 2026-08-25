@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -20,7 +21,7 @@ from investment_manager.forecast.context.analyst import assess_behavior_hash
 from investment_manager.forecast.context.application import AssessmentCommand
 from investment_manager.forecast.context.service import (
     AssessmentTemporalCoordinator,
-    assemble_assessment_application,
+    assemble_assessment_service,
     run_assessment_worker_process,
 )
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
@@ -54,7 +55,11 @@ from investment_manager.information.official.source import (
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.market.runtime import MarketShockDetector, assemble_shadow_market_stream
+from investment_manager.market.runtime import (
+    MarketRuntime,
+    MarketShockDetector,
+    assemble_shadow_market_stream,
+)
 from investment_manager.platform.orchestration import OrchestrationPolicySnapshot
 from investment_manager.scheduling.application import (
     set_trigger_heartbeat as apply_trigger_heartbeat,
@@ -81,6 +86,52 @@ from investment_manager.state.official_ingestion import (
 from investment_manager.state.repository import SqlFactStateStore
 
 
+def assemble_market_service(loaded, engine) -> MarketRuntime:
+    """Construct the exact market service graph without starting network I/O."""
+
+    store = SqlMarketDataStore(engine)
+    triggers = SqlTriggerRepository(engine, loaded.trigger)
+    detector = MarketShockDetector(
+        pipeline_id=loaded.pipeline.version,
+        relative_move_threshold=loaded.trigger.volatility_jump_threshold,
+        window_seconds=loaded.trigger.volatility_window_seconds,
+        trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
+        sink=triggers,
+        analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
+        trigger_symbols=loaded.analysis_symbols,
+    )
+    coverage = SqlInformationCoverageStore(engine)
+
+    def record_perpetual_refresh(refresh: PerpetualRefreshResult) -> None:
+        coverage.put(
+            build_source_poll_record(
+                source_stream_id="binance-usdm-market",
+                domain=CausalDomain.SPOT_DERIVATIVES,
+                status=(
+                    SourcePollStatus.FAILED
+                    if not refresh.succeeded
+                    else (
+                        SourcePollStatus.CHANGED
+                        if refresh.changed_count
+                        else SourcePollStatus.UNCHANGED
+                    )
+                ),
+                started_at=refresh.started_at,
+                completed_at=refresh.completed_at,
+                latest_publication_at=refresh.latest_publication_at,
+                observation_count=refresh.observation_count,
+                error_class=refresh.error_class,
+            )
+        )
+
+    return assemble_shadow_market_stream(
+        loaded,
+        store,
+        market_observer=detector.observe,
+        perpetual_refresh_observer=record_perpetual_refresh,
+    )
+
+
 @app.command("assessment-worker")
 def assessment_worker(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
@@ -98,13 +149,14 @@ def assessment_worker(
     loaded, manifest = load_runtime_release(config, release_manifest)
     engine = runtime_engine(database_url)
     engine.dispose()
-    application = assemble_assessment_application(
+    assembly = assemble_assessment_service(
         loaded,
         database_url,
         code_version=manifest.code_version,
         manifest_id=manifest.manifest_id,
     )
-    run_assessment_worker_process(config=loaded, application=application)
+    assembly.activate()
+    run_assessment_worker_process(config=loaded, application=assembly.application)
 
 
 @app.command("submit-context-assessment")
@@ -152,47 +204,7 @@ def market_stream(
 
     loaded, _ = load_runtime_release(config, release_manifest)
     engine = runtime_engine(database_url)
-    store = SqlMarketDataStore(engine)
-    triggers = SqlTriggerRepository(engine, loaded.trigger)
-    detector = MarketShockDetector(
-        pipeline_id=loaded.pipeline.version,
-        relative_move_threshold=loaded.trigger.volatility_jump_threshold,
-        window_seconds=loaded.trigger.volatility_window_seconds,
-        trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
-        sink=triggers,
-        analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
-        trigger_symbols=loaded.analysis_symbols,
-    )
-    coverage = SqlInformationCoverageStore(engine)
-
-    def record_perpetual_refresh(refresh: PerpetualRefreshResult) -> None:
-        coverage.put(
-            build_source_poll_record(
-                source_stream_id="binance-usdm-market",
-                domain=CausalDomain.SPOT_DERIVATIVES,
-                status=(
-                    SourcePollStatus.FAILED
-                    if not refresh.succeeded
-                    else (
-                        SourcePollStatus.CHANGED
-                        if refresh.changed_count
-                        else SourcePollStatus.UNCHANGED
-                    )
-                ),
-                started_at=refresh.started_at,
-                completed_at=refresh.completed_at,
-                latest_publication_at=refresh.latest_publication_at,
-                observation_count=refresh.observation_count,
-                error_class=refresh.error_class,
-            )
-        )
-
-    service = assemble_shadow_market_stream(
-        loaded,
-        store,
-        market_observer=detector.observe,
-        perpetual_refresh_observer=record_perpetual_refresh,
-    )
+    service = assemble_market_service(loaded, engine)
     asyncio.run(service.run(asyncio.Event()))
 
 
@@ -378,21 +390,17 @@ def governance_service(
     asyncio.run(run())
 
 
-@app.command("information-collector")
-def information_collector(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ] = Path("config/release-manifest.yaml"),
-) -> None:
-    """持续采集新闻聚合与 Fed 一手事实，并发布可靠分析触发。"""
+@dataclass(frozen=True, slots=True)
+class InformationServiceAssembly:
+    services: tuple[object, ...]
 
-    loaded, _ = load_runtime_release(config, release_manifest)
+    async def run(self, stop: asyncio.Event) -> None:
+        await asyncio.gather(*(service.run(stop) for service in self.services))
+
+
+def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
+    """Construct the exact collector graph without polling or persisting facts."""
+
     policy = loaded.information
     transport = StreamableHttpMcpTransport(
         policy.trendradar_mcp_url,
@@ -435,7 +443,6 @@ def information_collector(
                 maximum_age_seconds=loaded.trigger.trigger_expiry_seconds,
             )
         )
-    engine = runtime_engine(database_url)
     coverage_store = SqlInformationCoverageStore(engine)
     collector = InformationCollector(
         tuple(sources),
@@ -536,18 +543,36 @@ def information_collector(
         poll_recorder=coverage_store,
     )
 
-    async def run() -> None:
-        stop = asyncio.Event()
-        await asyncio.gather(
-            service.run(stop),
-            official_service.run(stop),
-            metric_service.run(stop),
-            aggregate_flow_service.run(stop),
-            regulatory_service.run(stop),
-            treasury_buyback_service.run(stop),
+    return InformationServiceAssembly(
+        services=(
+            service,
+            official_service,
+            metric_service,
+            aggregate_flow_service,
+            regulatory_service,
+            treasury_buyback_service,
         )
+    )
 
-    asyncio.run(run())
+
+@app.command("information-collector")
+def information_collector(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    database_url: Annotated[
+        str,
+        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
+    ],
+    release_manifest: Annotated[
+        Path,
+        typer.Option("--release-manifest", exists=True, dir_okay=False),
+    ] = Path("config/release-manifest.yaml"),
+) -> None:
+    """持续采集新闻聚合与 Fed 一手事实，并发布可靠分析触发。"""
+
+    loaded, _ = load_runtime_release(config, release_manifest)
+    assembly = assemble_information_service(loaded, runtime_engine(database_url))
+
+    asyncio.run(assembly.run(asyncio.Event()))
 
 
 @app.command("dashboard-service")

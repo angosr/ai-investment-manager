@@ -33,6 +33,21 @@
 
 新 Release 启动后先保持 warming。只有当前 Manifest 已接管 TriggerPlan、Worker 正常，且行情、信息与账户事实满足新鲜度，才允许切换只读入口；不能单纯以进程在线宣称 ready。若 Pipeline 与 ProducerBehavior 均未改变，发布应重绑定现有 TriggerPlan 并延续其节拍与 cohort，不得为制造“新版本行动”重算既有事实。
 
+冻结与测试完成后只使用一个现役发布入口，不再手工依次后台启动六个命令：
+
+```bash
+PYTHONPATH='<candidate-checkout>/src' \
+INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
+  .venv/bin/investment-manager operate-release \
+  --project-root '<candidate-checkout>' \
+  --config '<candidate-checkout>/config/investment-manager.shadow.yaml' \
+  --release-manifest '<release-catalog>/release-manifest.yaml'
+```
+
+入口自身必须从候选 checkout 导入代码，否则拒绝运行。它在旧 Release 仍 ready 时用临时事实库完成六个真实服务图装配，在生产库只读取 Schema、账户与切换安全事实；随后停止旧 supervisor，持有单写者锁，先启动五个核心服务。只有候选 PID 已成为 Temporal poller、TriggerPlan 已绑定候选 Manifest、启动后出现新 Market/Information 观测、账户可恢复且没有 pending execution，才最后启动 Dashboard。任一条件超时或进程退出都会停止整个候选并恢复状态文件中上一完整 Release。`.runtime/managed-release/active-release.json` 只保存脱敏运行参数、PID 和状态；日志按 Manifest 分目录保存，不保存数据库 URL 或凭证。
+
+第一次从历史手工进程迁入该入口时，先运行同样的冻结审计，再完整停止未受管的旧进程组，然后启动入口；此后禁止重新使用手工后台进程。数据库迁移不由发布入口猜测执行：候选要求数据库已经位于唯一 Alembic head；需要不兼容迁移时必须先准备向前兼容的恢复 Release 和备份，不能依赖自动 downgrade。
+
 ## 3. 数据库
 
 ```bash
@@ -90,18 +105,9 @@ Execution 对稳定 `client_order_id` 先查询后提交。未知结果、部分
 
 ## 8. 启停与切换
 
-启动顺序：
+PostgreSQL、Temporal 和所需上游服务先独立就绪；业务 Release 统一由 `operate-release` 监督。入口固定按 Market/Information → Outcome/Trigger/Assessment → Dashboard 启动，按相反顺序停止，并在整个业务进程生命周期持有单写者锁。切换前它从同源健康事实确认 Coordinator 没有 active batch、Outbox 无到期待投递、账户已对账且没有非终态 ExecutionGroup；不复制 pending，不并行启动两个资本消费者，也不以旧 Release 的观测满足候选 readiness。
 
-1. PostgreSQL、Temporal；
-2. 数据库迁移；
-3. market 和 information；
-4. outcome、trigger、assessment；
-5. dashboard；
-6. 检查当前 Release health 和 warming 缺项。
-
-切换前确认旧 Coordinator 没有 active batch 和未处理 pending；停止旧写进程后再启动新 pipeline。不要复制旧 pending 到新行为，也不要让两个资本消费者同时写同一账户。
-
-停止顺序相反。先停止新触发，再允许运行中的 Activity 和 ExecutionGroup 收敛，最后停止数据源。强制退出后，下次启动必须先恢复 Outbox、Workflow、订单查询和账户投影，再接受新增风险。
+收到 INT/TERM 后 supervisor 先标记 STOPPING，再停止 Dashboard、Assessment、Trigger、Outcome、Information 和 Market。异常强制退出后，不得只删除 PID 文件重启；先确认受管状态中的进程均已消失，再由同一入口恢复 Outbox、Workflow、订单查询和账户投影，最后接受新增风险。
 
 ## 9. 故障判断
 
@@ -115,4 +121,4 @@ Execution 对稳定 `client_order_id` 先查询后提交。未知结果、部分
 
 ## 10. 回滚
 
-回滚单位是完整 ReleaseManifest，不是单文件。回滚代码前确认旧 Schema 能否读取新增事实；不可逆迁移需要向前兼容的恢复 Release，不能直接 downgrade。历史 Forecast、授权、成交和 Outcome 始终保留。
+回滚单位是完整 ReleaseManifest，不是单文件。候选在 bounded readiness 内失败时，发布入口先完整停止候选，再用上一状态中冻结的 checkout、配置和 Manifest 恢复全部服务；不能只回滚 Trigger、Prompt 或前端。回滚代码前确认旧 Schema 能否读取新增事实；不可逆迁移需要向前兼容的恢复 Release，不能直接 downgrade。历史 Forecast、授权、成交和 Outcome 始终保留。
