@@ -18,6 +18,7 @@ from investment_manager.information.official.metrics import (
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
+    STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
@@ -65,6 +66,7 @@ _ARKB_HOLDINGS_URL = (
 )
 _BITB_HOLDINGS_URL = "https://bitbetf.com/"
 _FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+_STABLECOIN_SUPPLY_URL = "https://stablecoins.llama.fi/stablecoincharts/all"
 _FRED_SERIES_BY_STREAM = {
     FRED_SP500_STREAM_ID: "SP500",
     FRED_HIGH_YIELD_OAS_STREAM_ID: "BAMLH0A0HYM2",
@@ -194,6 +196,7 @@ class HttpOfficialMetricSource:
         NYFED_RATES_STREAM_ID,
         NYFED_RRP_STREAM_ID,
         NYFED_SOMA_STREAM_ID,
+        STABLECOIN_SUPPLY_STREAM_ID,
         TGA_STREAM_ID,
         TREASURY_AUCTION_STREAM_ID,
         TREASURY_YIELD_STREAM_ID,
@@ -203,7 +206,7 @@ class HttpOfficialMetricSource:
         self,
         *,
         timeout_seconds: int,
-        maximum_bytes: int = 1_000_000,
+        maximum_bytes: int = 2_000_000,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         if timeout_seconds < 1 or maximum_bytes < 1:
@@ -325,6 +328,8 @@ class HttpOfficialMetricSource:
             return _NYFED_SOMA_URL, "application/json"
         if stream_id == NYFED_RATES_STREAM_ID:
             return _NYFED_RATES_URL, "application/json"
+        if stream_id == STABLECOIN_SUPPLY_STREAM_ID:
+            return _STABLECOIN_SUPPLY_URL, "application/json"
         raise ValueError(f"未知官方指标流: {stream_id}")
 
 

@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.execution.policy import ExecutionPolicy
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.estimate import (
     ContextForecastTargetStateBehavior,
     context_forecast_behavior_hash,
@@ -41,7 +42,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v38"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v39"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -51,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v38"
+    assert config.capital.version == "total-portfolio-capital-v39"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -67,12 +68,13 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v8"
-    assert config.information.version == "information-intake-v34"
+    assert config.information.version == "information-intake-v35"
     assert config.information.normalizer_version == "trendradar-collector-v9"
-    assert config.decision_state.version == "portfolio-state-v36"
+    assert config.information.official_metric_slow_poll_seconds == 21_600
+    assert config.decision_state.version == "portfolio-state-v37"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
-    assert config.decision_state.delta_policy.version == "state-delta-v15"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v40"
+    assert config.decision_state.delta_policy.version == "state-delta-v16"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v41"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v18"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -87,16 +89,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
     )
-    assert config.assessment.version == "context-assessment-v40"
-    assert config.outcome_evaluation.version == "outcome-window-v15"
+    assert config.assessment.version == "context-assessment-v41"
+    assert config.outcome_evaluation.version == "outcome-window-v16"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v9"
+        == "world-model-ablation-forward-v10"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v27"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v10"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -135,6 +137,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
         "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
+    onchain = next(
+        item
+        for item in config.information.coverage_requirements
+        if item.domain.value == "ONCHAIN_SUPPLY"
+    )
+    assert onchain.source_stream_ids == ("defillama-usd-stablecoin-supply",)
+    assert onchain.source_capabilities == {
+        "defillama-usd-stablecoin-supply": ("STABLECOIN_SUPPLY",),
+    }
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.packet_policy.maximum_calendar_context_distance_seconds == 604_800
     assert config.decision_state.official_fact_policy.affected_assets == (
@@ -147,6 +158,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "US_MONETARY_LIQUIDITY",
         "US_INTEREST_RATES",
         "US_DOLLAR",
+        "CRYPTO_LIQUIDITY_CAPACITY",
         "BTC_INSTITUTIONAL_FLOW",
         "ETH_INSTITUTIONAL_FLOW",
         "US_EQUITY_RISK_APPETITE",
@@ -272,6 +284,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         config.capital.context_forecast,
         contract,
         state_behavior,
+        configured_assess_behavior_hash(config),
     )
     assert config.capital.context_forecast.producer_behavior_id == behavior_id
     assert context_forecast_behavior_hash(
@@ -279,6 +292,14 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         config.capital.context_forecast,
         contract,
         state_behavior.model_copy(update={"bar_window": state_behavior.bar_window + 1}),
+        configured_assess_behavior_hash(config),
+    ) != behavior_id
+    assert context_forecast_behavior_hash(
+        config.codex_runtime,
+        config.capital.context_forecast,
+        contract,
+        state_behavior,
+        "0" * 64,
     ) != behavior_id
 
 

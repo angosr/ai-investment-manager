@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from enum import StrEnum
 from html.parser import HTMLParser
+from itertools import pairwise
 from typing import Literal
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -32,6 +33,7 @@ ISHARES_SOURCE_ID = "ishares"
 ARK_SOURCE_ID = "ark-invest"
 BITWISE_SOURCE_ID = "bitwise"
 FRED_SOURCE_ID = "federal-reserve-bank-st-louis-fred"
+DEFILLAMA_SOURCE_ID = "defillama"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_AUCTION_STREAM_ID = "treasury-auction-results"
@@ -46,6 +48,7 @@ BITB_HOLDINGS_STREAM_ID = "bitwise-bitb-holdings"
 FRED_SP500_STREAM_ID = "fred-sp500"
 FRED_HIGH_YIELD_OAS_STREAM_ID = "fred-us-high-yield-oas"
 FRED_WTI_STREAM_ID = "fred-wti"
+STABLECOIN_SUPPLY_STREAM_ID = "defillama-usd-stablecoin-supply"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_AUCTION_FACT_TYPE = "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT"
@@ -60,37 +63,27 @@ BITB_HOLDINGS_FACT_TYPE = "BITB_HOLDINGS_SNAPSHOT"
 US_EQUITY_MARKET_FACT_TYPE = "US_EQUITY_MARKET_SNAPSHOT"
 US_HIGH_YIELD_CREDIT_FACT_TYPE = "US_HIGH_YIELD_CREDIT_SNAPSHOT"
 US_WTI_OIL_FACT_TYPE = "US_WTI_OIL_SNAPSHOT"
+USD_STABLECOIN_SUPPLY_FACT_TYPE = "USD_STABLECOIN_SUPPLY_SNAPSHOT"
 
-OFFICIAL_METRIC_FACT_TYPES = frozenset(
-    {
-        TGA_FACT_TYPE,
-        TREASURY_AUCTION_FACT_TYPE,
-        TREASURY_YIELD_FACT_TYPE,
-        FED_BROAD_DOLLAR_FACT_TYPE,
-        NYFED_RRP_FACT_TYPE,
-        NYFED_SOMA_FACT_TYPE,
-        NYFED_RATES_FACT_TYPE,
-        IBIT_HOLDINGS_FACT_TYPE,
-        ARKB_HOLDINGS_FACT_TYPE,
-        BITB_HOLDINGS_FACT_TYPE,
-        US_EQUITY_MARKET_FACT_TYPE,
-        US_HIGH_YIELD_CREDIT_FACT_TYPE,
-        US_WTI_OIL_FACT_TYPE,
-    }
-)
-OFFICIAL_METRIC_RISK_FACTORS = frozenset(
-    {
-        "US_DOLLAR",
-        "US_FISCAL_LIQUIDITY",
-        "US_INTEREST_RATES",
-        "US_MONETARY_LIQUIDITY",
-        "US_MONETARY_POLICY",
-        "US_EQUITY_RISK_APPETITE",
-        "US_HIGH_YIELD_CREDIT_RISK",
-        "US_ENERGY_INFLATION",
-        "BTC_INSTITUTIONAL_HOLDINGS",
-    }
-)
+OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE = {
+    TGA_FACT_TYPE: frozenset({"US_FISCAL_LIQUIDITY"}),
+    TREASURY_AUCTION_FACT_TYPE: frozenset(
+        {"US_FISCAL_LIQUIDITY", "US_INTEREST_RATES"}
+    ),
+    TREASURY_YIELD_FACT_TYPE: frozenset({"US_INTEREST_RATES"}),
+    FED_BROAD_DOLLAR_FACT_TYPE: frozenset({"US_DOLLAR"}),
+    NYFED_RRP_FACT_TYPE: frozenset({"US_MONETARY_LIQUIDITY"}),
+    NYFED_SOMA_FACT_TYPE: frozenset({"US_MONETARY_LIQUIDITY"}),
+    NYFED_RATES_FACT_TYPE: frozenset({"US_MONETARY_POLICY"}),
+    IBIT_HOLDINGS_FACT_TYPE: frozenset({"BTC_INSTITUTIONAL_HOLDINGS"}),
+    ARKB_HOLDINGS_FACT_TYPE: frozenset({"BTC_INSTITUTIONAL_HOLDINGS"}),
+    BITB_HOLDINGS_FACT_TYPE: frozenset({"BTC_INSTITUTIONAL_HOLDINGS"}),
+    US_EQUITY_MARKET_FACT_TYPE: frozenset({"US_EQUITY_RISK_APPETITE"}),
+    US_HIGH_YIELD_CREDIT_FACT_TYPE: frozenset({"US_HIGH_YIELD_CREDIT_RISK"}),
+    US_WTI_OIL_FACT_TYPE: frozenset({"US_ENERGY_INFLATION"}),
+    USD_STABLECOIN_SUPPLY_FACT_TYPE: frozenset({"CRYPTO_LIQUIDITY_CAPACITY"}),
+}
+OFFICIAL_METRIC_FACT_TYPES = frozenset(OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE)
 
 
 class OfficialMetricName(StrEnum):
@@ -147,6 +140,16 @@ class OfficialMetricName(StrEnum):
     US_HIGH_YIELD_OAS_CHANGE_1D_BPS = "us_high_yield_oas_change_1d_bps"
     WTI_USD_PER_BARREL = "wti_usd_per_barrel"
     WTI_CHANGE_1D_PCT = "wti_change_1d_pct"
+    USD_STABLECOIN_SUPPLY_USD_M = "usd_stablecoin_supply_usd_m"
+    USD_STABLECOIN_SUPPLY_CHANGE_1D_USD_M = (
+        "usd_stablecoin_supply_change_1d_usd_m"
+    )
+    USD_STABLECOIN_SUPPLY_CHANGE_7D_USD_M = (
+        "usd_stablecoin_supply_change_7d_usd_m"
+    )
+    USD_STABLECOIN_SUPPLY_CHANGE_30D_USD_M = (
+        "usd_stablecoin_supply_change_30d_usd_m"
+    )
 
 
 class OfficialMetricUnit(StrEnum):
@@ -229,6 +232,7 @@ class OfficialMetricSnapshot(FrozenModel):
             "assets.ark-funds.com",
             "bitbetf.com",
             "fred.stlouisfed.org",
+            "stablecoins.llama.fi",
         }:
             raise ValueError("结构化指标 URL 不在固定可信域名")
         names = tuple(item.name.value for item in self.metrics)
@@ -309,6 +313,7 @@ def parse_official_metric_document(
         FRED_SP500_STREAM_ID: _parse_fred_sp500,
         FRED_HIGH_YIELD_OAS_STREAM_ID: _parse_fred_high_yield_oas,
         FRED_WTI_STREAM_ID: _parse_fred_wti,
+        STABLECOIN_SUPPLY_STREAM_ID: _parse_stablecoin_supply,
     }
     parser = parsers.get(stream_id)
     if parser is None:
@@ -704,6 +709,132 @@ def _parse_fred_wti(
         percentage_change=True,
         source_url=source_url,
         observed_at=observed_at,
+        payload_ref=payload_ref,
+    )
+
+
+def _parse_stablecoin_supply(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    """Project the latest completed UTC day of aggregate USD stablecoin supply.
+
+    The current UTC row can still change while DefiLlama refreshes underlying
+    chains.  Excluding it gives replay and production the same finalized-day
+    semantics.  Aggregate supply is liquidity capacity, not a directional
+    crypto-return signal; downstream mechanisms must still verify where the
+    liquidity went and whether prices responded.
+    """
+
+    try:
+        document = json.loads(content, parse_float=Decimal)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("DefiLlama 稳定币供给 JSON 非法") from exc
+    if not isinstance(document, list):
+        raise ValueError("DefiLlama 稳定币供给 JSON 必须为数组")
+
+    by_date: dict[date, Decimal] = {}
+    for raw in document:
+        if not isinstance(raw, dict):
+            raise ValueError("DefiLlama 稳定币供给条目必须为对象")
+        raw_timestamp = raw.get("date")
+        if not isinstance(raw_timestamp, (str, int)) or isinstance(raw_timestamp, bool):
+            raise ValueError("DefiLlama 稳定币供给日期非法")
+        try:
+            timestamp = int(raw_timestamp)
+            timestamp_at = datetime.fromtimestamp(timestamp, tz=UTC)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError("DefiLlama 稳定币供给日期非法") from exc
+        if timestamp_at.time() != time.min:
+            raise ValueError("DefiLlama 稳定币供给日期必须是 UTC 日界")
+        effective_date = timestamp_at.date()
+        if effective_date > observed_at.date():
+            raise ValueError("DefiLlama 稳定币供给包含未来日期")
+        if effective_date == observed_at.date():
+            continue
+        circulating = raw.get("totalCirculating")
+        if not isinstance(circulating, dict) or "peggedUSD" not in circulating:
+            raise ValueError("DefiLlama 稳定币供给缺少 peggedUSD")
+        value = _decimal(
+            circulating["peggedUSD"],
+            name="DefiLlama totalCirculating.peggedUSD",
+        )
+        if value <= 0:
+            raise ValueError("DefiLlama 美元稳定币供给必须为正数")
+        if effective_date in by_date:
+            raise ValueError("DefiLlama 稳定币供给包含重复日期")
+        by_date[effective_date] = value / Decimal("1000000")
+
+    observations = tuple(sorted(by_date.items()))
+    if len(observations) < 61:
+        raise ValueError("DefiLlama 稳定币供给缺少至少 61 个已完成日")
+    recent = observations[-61:]
+    if any(
+        current[0] - previous[0] != timedelta(days=1)
+        for previous, current in pairwise(recent)
+    ):
+        raise ValueError("DefiLlama 稳定币供给最近 61 日不连续")
+
+    latest_date, latest = observations[-1]
+    changes = {
+        distance: latest - observations[-1 - distance][1]
+        for distance in (1, 7, 30)
+    }
+    return _snapshot(
+        source_id=DEFILLAMA_SOURCE_ID,
+        source_tier=SourceTier.AGGREGATOR,
+        stream_id=STABLECOIN_SUPPLY_STREAM_ID,
+        domain=CausalDomain.ONCHAIN_SUPPLY,
+        fact_type=USD_STABLECOIN_SUPPLY_FACT_TYPE,
+        effective_date=latest_date,
+        headline="DefiLlama aggregated circulating USD stablecoin supply",
+        risk_factors=("CRYPTO_LIQUIDITY_CAPACITY",),
+        metrics=(
+            _metric(
+                OfficialMetricName.USD_STABLECOIN_SUPPLY_USD_M,
+                latest,
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_1D_USD_M,
+                changes[1],
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_7D_USD_M,
+                changes[7],
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+            _metric(
+                OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_30D_USD_M,
+                changes[30],
+                OfficialMetricUnit.USD_MILLIONS,
+            ),
+        ),
+        change_context=_most_unusual_change_context(
+            observations,
+            candidates=(
+                (
+                    OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_1D_USD_M,
+                    1,
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
+                (
+                    OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_7D_USD_M,
+                    7,
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
+                (
+                    OfficialMetricName.USD_STABLECOIN_SUPPLY_CHANGE_30D_USD_M,
+                    30,
+                    OfficialMetricUnit.USD_MILLIONS,
+                ),
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        # The API does not expose a row-level publication timestamp.  First
+        # observation is the earliest honest point-in-time availability bound.
+        source_published_at=observed_at,
         payload_ref=payload_ref,
     )
 
@@ -1450,6 +1581,8 @@ def _stream_source_id(stream_id: str) -> str:
         FRED_WTI_STREAM_ID,
     }:
         return FRED_SOURCE_ID
+    if stream_id == STABLECOIN_SUPPLY_STREAM_ID:
+        return DEFILLAMA_SOURCE_ID
     if stream_id == IBIT_HOLDINGS_STREAM_ID:
         return ISHARES_SOURCE_ID
     if stream_id == ARKB_HOLDINGS_STREAM_ID:

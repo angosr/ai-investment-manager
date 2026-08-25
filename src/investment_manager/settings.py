@@ -31,11 +31,11 @@ from investment_manager.governance.policy import (
 )
 from investment_manager.information.aggregated_flows import (
     AGGREGATED_FLOW_FACT_TYPES,
-    AGGREGATED_FLOW_RISK_FACTORS,
+    AGGREGATED_FLOW_RISK_FACTORS_BY_TYPE,
 )
 from investment_manager.information.official.metrics import (
     OFFICIAL_METRIC_FACT_TYPES,
-    OFFICIAL_METRIC_RISK_FACTORS,
+    OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE,
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
@@ -131,10 +131,14 @@ class AppConfig(StrictConfig):
         configured_fact_types = {
             item.fact_type for item in self.decision_state.delta_policy.rules
         }
-        if configured_fact_types & OFFICIAL_METRIC_FACT_TYPES:
-            configured_risk_factors.update(OFFICIAL_METRIC_RISK_FACTORS)
-        if configured_fact_types & AGGREGATED_FLOW_FACT_TYPES:
-            configured_risk_factors.update(AGGREGATED_FLOW_RISK_FACTORS)
+        for fact_type in configured_fact_types & OFFICIAL_METRIC_FACT_TYPES:
+            configured_risk_factors.update(
+                OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE[fact_type]
+            )
+        for fact_type in configured_fact_types & AGGREGATED_FLOW_FACT_TYPES:
+            configured_risk_factors.update(
+                AGGREGATED_FLOW_RISK_FACTORS_BY_TYPE[fact_type]
+            )
         if not configured_risk_factors.issubset(required_risk_factors):
             raise ValueError("DecisionState 风险因子必须属于 Assessment mandate")
         if self.assessment.enabled and not self.codex_runtime.enabled:

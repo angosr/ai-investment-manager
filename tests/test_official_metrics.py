@@ -20,6 +20,7 @@ from investment_manager.information.official.metrics import (
     NYFED_RATES_STREAM_ID,
     NYFED_RRP_STREAM_ID,
     NYFED_SOMA_STREAM_ID,
+    STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
@@ -77,6 +78,24 @@ def _documents() -> dict[str, OfficialMetricDocument]:
       <rss:item><cb:observationPeriod>2026-08-14</cb:observationPeriod>
         <cb:value>118.9028</cb:value></rss:item>
     </rdf:RDF>"""
+    stablecoin_start = OBSERVED_AT.date() - timedelta(days=62)
+    stablecoin_rows = [
+        {
+            "date": str(
+                int(
+                    datetime.combine(
+                        stablecoin_start + timedelta(days=index),
+                        datetime.min.time(),
+                        tzinfo=UTC,
+                    ).timestamp()
+                )
+            ),
+            "totalCirculating": {
+                "peggedUSD": 300_000_000_000 + index * 100_000_000,
+            },
+        }
+        for index in range(63)
+    ]
     payloads = {
         TREASURY_AUCTION_STREAM_ID: (
             "https://www.treasurydirect.gov/TA_WS/securities/search?format=json",
@@ -178,6 +197,11 @@ def _documents() -> dict[str, OfficialMetricDocument]:
             "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DCOILWTICO",
             fred_csv("DCOILWTICO", Decimal("70"), Decimal("0.5")),
             "text/csv",
+        ),
+        STABLECOIN_SUPPLY_STREAM_ID: (
+            "https://stablecoins.llama.fi/stablecoincharts/all",
+            json.dumps(stablecoin_rows).encode(),
+            "application/json",
         ),
         NYFED_RRP_STREAM_ID: (
             "https://markets.newyorkfed.org/api/rp/reverserepo/propositions/search.json",
@@ -343,7 +367,7 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 13
+    assert len({item.fact_type for item in snapshots}) == 14
     assert {
         item.observation.source_tier
         for item in snapshots
@@ -353,6 +377,7 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
         item.observation.source_tier == SourceTier.FIRST_PARTY
         for item in snapshots
         if not item.stream_id.startswith("fred-")
+        and item.stream_id != STABLECOIN_SUPPLY_STREAM_ID
     )
     tga = next(item for item in snapshots if item.stream_id == TGA_STREAM_ID)
     assert {item.name.value: item.value for item in tga.metrics}["tga_change_1d_usd_m"] == -1329
@@ -375,6 +400,17 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     bitb_values = {item.name.value: item.value for item in bitb.metrics}
     assert bitb_values["btc_etp_holdings"] == Decimal("37871.96676424")
     assert bitb_values["btc_etp_shares_outstanding"] == Decimal("69780000")
+    stablecoin = next(
+        item for item in snapshots if item.stream_id == STABLECOIN_SUPPLY_STREAM_ID
+    )
+    stablecoin_values = {
+        item.name.value: item.value for item in stablecoin.metrics
+    }
+    assert stablecoin.observation.source_tier == SourceTier.AGGREGATOR
+    assert stablecoin.effective_date == OBSERVED_AT.date() - timedelta(days=1)
+    assert stablecoin_values["usd_stablecoin_supply_change_1d_usd_m"] == 100
+    assert stablecoin_values["usd_stablecoin_supply_change_7d_usd_m"] == 700
+    assert stablecoin_values["usd_stablecoin_supply_change_30d_usd_m"] == 3_000
 
 
 def test_pre_v10_ibit_metric_name_remains_readable_but_is_not_emitted() -> None:
@@ -391,6 +427,34 @@ def test_pre_v10_ibit_metric_name_remains_readable_but_is_not_emitted() -> None:
     assert "ibit_holdings_market_value_usd_m" in {
         item.name.value for item in snapshot.metrics
     }
+
+
+def test_stablecoin_supply_rejects_future_rows_instead_of_hiding_them() -> None:
+    document = _documents()[STABLECOIN_SUPPLY_STREAM_ID]
+    rows = json.loads(document.content)
+    rows.append(
+        {
+            "date": str(
+                int(
+                    datetime.combine(
+                        OBSERVED_AT.date() + timedelta(days=1),
+                        datetime.min.time(),
+                        tzinfo=UTC,
+                    ).timestamp()
+                )
+            ),
+            "totalCirculating": {"peggedUSD": 310_000_000_000},
+        }
+    )
+
+    with pytest.raises(ValueError, match="未来日期"):
+        parse_official_metric_document(
+            document.stream_id,
+            json.dumps(rows).encode(),
+            source_url=document.source_url,
+            media_type=document.media_type,
+            observed_at=OBSERVED_AT,
+        )
 
 
 def test_metric_ingestion_is_idempotent_and_appends_only_semantic_revision() -> None:

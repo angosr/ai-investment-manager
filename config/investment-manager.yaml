@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v36
+  version: portfolio-state-v37
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v15
@@ -23,7 +23,7 @@ decision_state:
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v15
+    version: state-delta-v16
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -75,6 +75,9 @@ decision_state:
       - fact_type: TREASURY_BUYBACK_OPERATION_SCHEDULE
         materiality: NORMAL
         reason_code: TREASURY_BUYBACK_SCHEDULE_REVISION
+      - fact_type: USD_STABLECOIN_SUPPLY_SNAPSHOT
+        materiality: HIGH
+        reason_code: USD_STABLECOIN_SUPPLY_REVISION
       - fact_type: US_DIGITAL_ASSET_RULEMAKING
         materiality: HIGH
         reason_code: US_DIGITAL_ASSET_RULEMAKING_REVISION
@@ -97,7 +100,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v40
+    version: decision-packet-policy-v41
     schema_version: decision-packet-v18
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -133,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v38
+  version: total-portfolio-capital-v39
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -243,10 +246,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v14
+    version: btc-context-forecast-v15
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "facc14fd411a97bf57a84896df7064cce79a8473d4292f73a6f42ac855dd9f60"
+    producer_behavior_id: "9a2b55e4fc3180e6515716c10d104def039dc4693724a598fa244569d56e69a0"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -336,7 +339,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v15
+  version: outcome-window-v16
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -344,10 +347,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v9
+    version: world-model-ablation-forward-v10
     enabled: false
-    plan_id: world-model-ablation-forward-v9
-    activated_at: 2026-08-25T16:00:00Z
+    plan_id: world-model-ablation-forward-v10
+    # v10 只接收首个 v9 配对 Outcome 到期后的新行为槽；不是交易等待条件。
+    activated_at: 2026-08-25T20:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -449,7 +453,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v34
+  version: information-intake-v35
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -488,7 +492,8 @@ information:
   treasury_buyback_result_lookback_seconds: 604800
   regulatory_poll_seconds: 300
   official_metric_poll_seconds: 300
-  official_metric_slow_poll_seconds: 900
+  # 日频/周频结构化状态每 6 小时复核；拍卖结果仍走 5 分钟快速组。
+  official_metric_slow_poll_seconds: 21600
   etf_aggregate_flow_poll_seconds: 300
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
@@ -534,9 +539,11 @@ information:
         binance-usdm-market: [BINANCE_PERPETUAL, BINANCE_SPOT]
       maximum_publication_age_seconds: 900
     - domain: ONCHAIN_SUPPLY
-      source_stream_ids: []
+      source_stream_ids: [defillama-usd-stablecoin-supply]
       required_capabilities: [EXCHANGE_BALANCES, REALIZED_SUPPLY, STABLECOIN_SUPPLY]
-      maximum_publication_age_seconds: 3600
+      source_capabilities:
+        defillama-usd-stablecoin-supply: [STABLECOIN_SUPPLY]
+      maximum_publication_age_seconds: 172800
     - domain: CROSS_ASSET_EXTERNAL
       # FRED 三项是明确标注的日频聚合证据，只用于宏观传导验证，不冒充一手或盘中行情。
       source_stream_ids: [fed-broad-dollar, fred-sp500, fred-us-high-yield-oas, fred-wti, treasury-yield-curve]
@@ -585,11 +592,11 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v40
+  version: context-assessment-v41
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
-    version: primary-portfolio-mandate-v9
+    version: primary-portfolio-mandate-v10
     analysis_scope: primary-portfolio
     question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；不为没有独立盈利证据的候选制造资本结论。
     assets:
@@ -600,7 +607,7 @@ assessment:
         market_symbol: ETHUSDT
         horizons_minutes: [60, 240]
     # 顺序是 Packet 容量不足时的因果优先级：外生政策/流动性、定价中介、资金行为、交叉验证。
-    required_risk_factors: [US_MONETARY_POLICY, US_FISCAL_LIQUIDITY, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_DOLLAR, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
+    required_risk_factors: [US_MONETARY_POLICY, US_FISCAL_LIQUIDITY, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_DOLLAR, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

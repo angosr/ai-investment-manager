@@ -11,6 +11,7 @@ from investment_manager.information.official.metrics import (
     FRED_HIGH_YIELD_OAS_STREAM_ID,
     FRED_SP500_STREAM_ID,
     FRED_WTI_STREAM_ID,
+    STABLECOIN_SUPPLY_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
@@ -207,6 +208,31 @@ def test_fred_aggregator_streams_use_bounded_single_series_csv(
     assert query["id"] == series_id
     assert query["cosd"] == "2025-08-15"
     assert query["coed"] == "2026-08-20"
+
+
+def test_stablecoin_supply_uses_one_pinned_aggregate_history_endpoint() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 2:
+            return httpx.Response(304)
+        return httpx.Response(200, content=b"[]", headers={"etag": '"supply-1"'})
+
+    source = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = source.fetch(STABLECOIN_SUPPLY_STREAM_ID, observed_at=OBSERVED_AT)
+    second = source.fetch(STABLECOIN_SUPPLY_STREAM_ID, observed_at=OBSERVED_AT)
+
+    assert first is not None and first.media_type == "application/json"
+    assert str(requests[0].url) == (
+        "https://stablecoins.llama.fi/stablecoincharts/all"
+    )
+    assert requests[1].headers["if-none-match"] == '"supply-1"'
+    assert second is None
 
 
 def test_fomc_calendar_uses_stable_ordinal_and_eastern_release_time() -> None:

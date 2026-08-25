@@ -22,6 +22,7 @@ from investment_manager.forecast.codex.router import (
     RouterAuditStore,
     assemble_codex_router,
 )
+from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
 from investment_manager.forecast.models import ContextAssessment
 from investment_manager.forecast.policy import CodexRuntimePolicy
@@ -39,7 +40,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v7"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v8"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -149,6 +150,7 @@ def context_forecast_behavior_hash(
     policy: ContextForecastPolicy,
     contract: ForecastContract,
     target_state_behavior: ContextForecastTargetStateBehavior,
+    world_model_behavior_id: str,
 ) -> str:
     return content_hash(
         {
@@ -160,6 +162,7 @@ def context_forecast_behavior_hash(
             ),
             "contract": contract,
             "target_state_behavior": target_state_behavior,
+            "world_model_behavior_id": world_model_behavior_id,
             "policy": policy.model_dump(
                 mode="json",
                 exclude={"producer_behavior_id", "enabled"},
@@ -308,6 +311,7 @@ class ContextForecastRunBundleBuilder:
         policy: ContextForecastPolicy,
         contract: ForecastContract,
         target_state_behavior: ContextForecastTargetStateBehavior,
+        world_model_behavior_id: str,
         *,
         code_version: str,
         configuration_hash: str,
@@ -316,6 +320,7 @@ class ContextForecastRunBundleBuilder:
         self._policy = policy
         self._contract = contract
         self._target_state_behavior = target_state_behavior
+        self._world_model_behavior_id = world_model_behavior_id
         self._code_version = code_version
         self._configuration_hash = configuration_hash
 
@@ -326,6 +331,7 @@ class ContextForecastRunBundleBuilder:
             self._policy,
             self._contract,
             self._target_state_behavior,
+            self._world_model_behavior_id,
         )
 
     @property
@@ -471,6 +477,7 @@ def assemble_codex_context_forecast_analyst(
         policy,
         contract,
         target_state_behavior,
+        configured_assess_behavior_hash(config),
     )
     if policy.producer_behavior_id != expected:
         raise ValueError("Context Forecast producer_behavior_id 未覆盖当前完整分析行为")
@@ -487,6 +494,7 @@ def assemble_codex_context_forecast_analyst(
             policy,
             contract,
             target_state_behavior,
+            configured_assess_behavior_hash(config),
             code_version=code_version,
             configuration_hash=content_hash(config),
         ),
