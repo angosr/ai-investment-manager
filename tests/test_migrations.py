@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, insert, inspect, select, text
 
+from investment_manager.forecast.tables import forecast_contracts, forecast_decision_slots
 from investment_manager.legacy.repository import analysis_cycles
 from investment_manager.market.tables import market_quotes
 from investment_manager.platform.database import require_current_schema
@@ -42,6 +45,11 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
     command.check(config)
     assert not wrong_database.exists()
 
+    require_current_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE alembic_version SET version_num = 'r6a9d3e2f842'")
+        )
     require_current_schema(engine)
     with engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = 'stale-version'"))
@@ -163,3 +171,81 @@ def test_world_model_migration_keeps_only_canonical_v2_in_active_ledger(tmp_path
     assert "views" not in transitional
     assert "market_mechanism" not in transitional
     assert archived == {"assessment-old", "assessment-transitional"}
+
+
+def test_forecast_cause_migration_removes_only_retired_empty_fields(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'forecast-cause.db'}"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "r6a9d3e2f842")
+    engine = create_engine(database_url)
+    contract_payload = {
+        "contract_id": "contract",
+        "contract_version": "version",
+        "outcome_family_id": "family",
+        "target": {
+            "target_id": "target",
+            "legs": [],
+            "quantity_mode": "INDEPENDENT_NOTIONAL",
+        },
+        "horizon_minutes": 240,
+    }
+    retired_payload = {
+        "slot_id": "retired-empty-fields",
+        "contract_id": "contract",
+        "slot_as_of": "2026-08-25T12:00:00Z",
+        "information_cutoff_at": "2026-08-25T12:00:00Z",
+        "completion_deadline_at": "2026-08-25T12:25:00Z",
+        "evaluation_at": "2026-08-25T16:00:00Z",
+        "cause": {
+            "origin": "CADENCE",
+            "policy_version": "fixed-cadence-v1",
+            "trigger_refs": [],
+            "additional_origins": [],
+            "cadence_anchor_at": None,
+        },
+    }
+    canonical_payload = {
+        **retired_payload,
+        "slot_id": "already-canonical",
+        "cause": {
+            "origin": "CADENCE",
+            "policy_version": "fixed-cadence-v1",
+            "trigger_refs": [],
+        },
+    }
+    slot_as_of = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(forecast_contracts).values(
+                contract_id="contract",
+                contract_version="version",
+                outcome_family_id="family",
+                target_id="target",
+                horizon_minutes=240,
+                payload=contract_payload,
+            )
+        )
+        for payload in (retired_payload, canonical_payload):
+            connection.execute(
+                insert(forecast_decision_slots).values(
+                    slot_id=payload["slot_id"],
+                    contract_id="contract",
+                    slot_as_of=slot_as_of,
+                    information_cutoff_at=slot_as_of,
+                    completion_deadline_at=slot_as_of + timedelta(minutes=25),
+                    evaluation_at=slot_as_of + timedelta(hours=4),
+                    payload=payload,
+                )
+            )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        payloads = dict(
+            connection.execute(
+                select(forecast_decision_slots.c.slot_id, forecast_decision_slots.c.payload)
+            ).all()
+        )
+    assert payloads["retired-empty-fields"]["cause"] == canonical_payload["cause"]
+    assert payloads["already-canonical"] == canonical_payload
