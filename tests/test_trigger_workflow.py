@@ -21,6 +21,7 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.scheduling.models import (
     AnalysisEventRule,
     AnalysisTriggerType,
+    TriggerBatch,
     TriggerOutboxKind,
     build_initial_trigger_plan,
     build_trigger_batch,
@@ -455,6 +456,15 @@ def test_trigger_activity_marks_post_projection_failure_for_frozen_retry() -> No
         broken.build_analysis_dispatches(batch.model_dump(mode="json"))
     assert raised.value.type == "PermanentDomainError"
     assert raised.value.non_retryable is True
+
+    class BrokenNestedContractBuilder:
+        def build(self, _batch):
+            TriggerBatch.model_validate({})
+
+    nested = TriggerCoordinatorActivities(builder=BrokenNestedContractBuilder())
+    with pytest.raises(ApplicationError) as nested_error:
+        nested.build_analysis_dispatches(batch.model_dump(mode="json"))
+    assert nested_error.value.type == "PermanentDomainError"
 
 
 def test_trigger_activity_serializes_single_portfolio_state_projection() -> None:

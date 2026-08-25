@@ -385,18 +385,19 @@ class TriggerCoordinatorActivities:
     def build_analysis_dispatches(self, raw_batch: dict[str, Any]) -> dict[str, Any]:
         try:
             batch = TriggerBatch.model_validate(raw_batch)
-            # Every batch projects the same portfolio State chain. Temporal may
-            # execute synchronous activities on multiple threads, but parallel
-            # builds would race the single previous_state_id and create no useful
-            # latency advantage. Keep the read/project/admit boundary serial.
-            with self._build_lock:
-                dispatches = self.builder.build(batch)
         except ValidationError as exc:
             raise ApplicationError(
                 "TriggerBatch 未通过契约校验",
                 type="InvalidTriggerBatch",
                 non_retryable=True,
             ) from exc
+        try:
+            # Every batch projects the same portfolio State chain. Temporal may
+            # execute synchronous activities on multiple threads, but parallel
+            # builds would race the single previous_state_id and create no useful
+            # latency advantage. Keep the read/project/admit boundary serial.
+            with self._build_lock:
+                dispatches = self.builder.build(batch)
         except AnalysisCallDeferred as exc:
             # Admission is checked after all enabled consumers have frozen their
             # inputs.  Keep that exact batch so a persisted Delta cannot become

@@ -350,7 +350,7 @@ class CapitalCycleService:
         self,
         *,
         capital_policy: CapitalPolicy,
-        pipeline_version: str,
+        capital_behavior_id: str,
         market: SqlMarketDataStore,
         forecasts: SqlForecastStore,
         world_models: SqlContextAssessmentStore,
@@ -370,7 +370,7 @@ class CapitalCycleService:
         if tuple(sorted(set(families))) != tuple(sorted(families)):
             raise ValueError("Capital Forecast source family 必须唯一")
         self._policy = capital_policy
-        self._pipeline_version = pipeline_version
+        self._capital_behavior_id = capital_behavior_id
         self._market = market
         self._forecasts = forecasts
         self._world_models = world_models
@@ -405,7 +405,7 @@ class CapitalCycleService:
                 stable_id(
                     "capital_cycle_record",
                     self._policy.decision.portfolio_id,
-                    self._pipeline_version,
+                    self._capital_behavior_id,
                     cause_id,
                 )
             )
@@ -432,7 +432,7 @@ class CapitalCycleService:
             stable_id(
                 "capital_cycle_record",
                 self._policy.decision.portfolio_id,
-                self._pipeline_version,
+                self._capital_behavior_id,
                 cause_id,
             )
         )
@@ -483,14 +483,14 @@ class CapitalCycleService:
         evaluation_cause_id = cause_id or stable_id(
             "capital_manual_evaluation",
             self._policy.decision.portfolio_id,
-            self._pipeline_version,
+            self._capital_behavior_id,
             requested_at.isoformat(),
         )
         prior_record = self._cycle_records.get(
             stable_id(
                 "capital_cycle_record",
                 self._policy.decision.portfolio_id,
-                self._pipeline_version,
+                self._capital_behavior_id,
                 evaluation_cause_id,
             )
         )
@@ -764,7 +764,10 @@ class CapitalCycleService:
         self._cycle_records.record(
             CapitalCycleRecord.create(
                 portfolio_id=self._policy.decision.portfolio_id,
-                pipeline_id=self._pipeline_version,
+                # The legacy storage field is named ``pipeline_id``.  Its value is
+                # deliberately the venue-neutral capital behavior identity, never
+                # a system-stage or execution-venue identity.
+                pipeline_id=self._capital_behavior_id,
                 cause_id=cause_id,
                 trigger_batch_id=trigger_batch_id,
                 symbol=symbol,
@@ -1307,7 +1310,7 @@ def assemble_capital_cycle(
     )
     return CapitalCycleService(
         capital_policy=config.capital,
-        pipeline_version=config.pipeline.version,
+        capital_behavior_id=config.capital.version,
         market=market,
         forecasts=forecasts,
         world_models=world_models,

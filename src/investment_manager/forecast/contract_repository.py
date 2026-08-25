@@ -47,7 +47,7 @@ class SqlForecastContractStore:
                 "payload": contract.model_dump(mode="json"),
             },
             expected=contract,
-            model=ForecastContract,
+            loader=ForecastContract.model_validate,
             conflict="ForecastContract contract_id 已存在且内容不同",
         )
 
@@ -83,7 +83,7 @@ class SqlForecastContractStore:
                 "payload": binding.model_dump(mode="json"),
             },
             expected=binding,
-            model=ForecastProducerBinding,
+            loader=load_forecast_producer_binding,
             conflict="ForecastProducerBinding binding_id 已存在且内容不同",
         )
 
@@ -310,7 +310,7 @@ class SqlForecastContractStore:
                 "payload": result.model_dump(mode="json"),
             },
             expected=result,
-            model=ForecastNoEstimate,
+            loader=ForecastNoEstimate.model_validate,
             conflict="ForecastNoEstimate result_id 已存在且内容不同",
         )
 
@@ -352,7 +352,7 @@ class SqlForecastContractStore:
         identity: str,
         values: dict[str, object],
         expected,
-        model,
+        loader,
         conflict: str,
     ) -> bool:
         try:
@@ -361,7 +361,7 @@ class SqlForecastContractStore:
             return True
         except IntegrityError:
             payload = self._payload(table, identity_column, identity)
-            if payload is None or model.model_validate(payload) != expected:
+            if payload is None or loader(payload) != expected:
                 raise ValueError(conflict) from None
             return False
 

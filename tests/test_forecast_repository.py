@@ -276,6 +276,10 @@ def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior(
     assert resolved.binding_id == legacy_id
     assert resolved.permission == ForecastPermission.CAPITAL_CANDIDATE
     assert contracts.binding_activation_at(resolved.binding_id) == NOW
+    assert not contracts.record_binding(
+        resolved,
+        activated_at=NOW + timedelta(hours=2),
+    )
 
 
 def test_slot_outcome_settles_once_for_every_producer(ledger) -> None:

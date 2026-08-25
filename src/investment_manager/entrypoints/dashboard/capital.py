@@ -160,7 +160,9 @@ class CapitalDashboardReader:
                 capital_cycle_records.c.evaluated_at,
                 capital_cycle_records.c.record_id,
                 CapitalCycleRecord,
-                where_clause=(capital_cycle_records.c.pipeline_id == self._config.pipeline.version),
+                where_clause=(
+                    capital_cycle_records.c.pipeline_id == self._config.capital.version
+                ),
             )
             target = self._latest_payload(
                 connection,

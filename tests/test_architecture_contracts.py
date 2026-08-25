@@ -1273,12 +1273,17 @@ def test_capital_application_does_not_select_deployment_adapter() -> None:
     assert "DeploymentStage" not in source
     assert "SqlMockProductVenue" not in source
     assert "config.shadow" not in source
+    assert "config.pipeline" not in source
     assert "config" not in {
         item.arg for item in (*initializer.args.args, *initializer.args.kwonlyargs)
     }
     assert "capital_policy" in {
         item.arg for item in (*initializer.args.args, *initializer.args.kwonlyargs)
     }
+    assert "capital_behavior_id" in {
+        item.arg for item in (*initializer.args.args, *initializer.args.kwonlyargs)
+    }
+    assert "pipeline_version" not in service_source
     assert all(
         token not in service_source
         for token in ("deployment", "shadow", "testnet", "simulation", "模拟", "仿真")

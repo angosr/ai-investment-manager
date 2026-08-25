@@ -1026,6 +1026,8 @@ def test_capital_cycle_decides_at_forecast_availability_not_trigger_creation() -
     record = CapitalCycleRecord.model_validate(payload)
     assert record.triggered_at == NOW
     assert record.evaluated_at == available_at
+    assert record.pipeline_id == config.capital.version
+    assert record.pipeline_id != config.pipeline.version
 
 
 def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
