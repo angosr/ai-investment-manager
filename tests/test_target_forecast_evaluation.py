@@ -57,12 +57,14 @@ def test_forecast_evidence_scores_only_non_overlapping_cases() -> None:
         required_non_overlapping_samples=2,
     )
 
-    assert evidence.status == ForecastEvidenceStatus.ABOVE_BENCHMARK
+    assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
     assert evidence.settled_forecast_count == 3
     assert evidence.non_overlapping_sample_count == 2
     assert evidence.mean_brier_score == Decimal("0.13")
     assert evidence.benchmark_mean_brier_score == Decimal("0.5")
     assert evidence.brier_skill == Decimal("0.37")
+    assert evidence.rolling_benchmark_mean_brier_score is None
+    assert evidence.market_benchmark_mean_brier_score is None
     assert evidence.result_coverage == Decimal("1")
 
 
@@ -122,27 +124,94 @@ def test_forecast_evidence_uses_only_prior_settled_history_for_dynamic_baseline(
 
 def test_forecast_evidence_does_not_claim_a_tied_mean_is_skill() -> None:
     start = datetime(2026, 8, 1, tzinfo=UTC)
-    cases = tuple(
+    realized = ("UP", "DOWN", "UP", "DOWN", "UP")
+    cases = (
+        *(
+            _case(
+                f"history-{index}",
+                start + timedelta(hours=4 * index),
+                outcome,
+                (("DOWN", "0.5"), ("UP", "0.5")),
+                market_state_key="RANGING",
+            )
+            for index, outcome in enumerate(realized)
+        ),
         _case(
-            f"case-{index}",
-            start + timedelta(hours=4 * index),
+            "ready-1",
+            start + timedelta(hours=20),
+            "DOWN",
+            (("DOWN", "0.4375"), ("UP", "0.5625")),
+            market_state_key="RANGING",
+        ),
+        _case(
+            "ready-2",
+            start + timedelta(hours=24),
             "UP",
             (("DOWN", "0.5"), ("UP", "0.5")),
-        )
-        for index in range(2)
+            market_state_key="RANGING",
+        ),
     )
 
     evidence = evaluate_forecast_evidence(
         cases,
-        due_slot_count=2,
-        forecast_count=2,
+        due_slot_count=7,
+        forecast_count=7,
         no_estimate_count=0,
         required_non_overlapping_samples=2,
     )
 
     assert evidence.status == ForecastEvidenceStatus.INCONCLUSIVE
+    assert evidence.rolling_baseline_ready_count == 2
+    assert evidence.market_baseline_ready_count == 2
     assert evidence.rolling_brier_skill == Decimal("0.0")
     assert evidence.rolling_brier_skill_lower_bound == Decimal("0.0")
+
+
+def test_forecast_evidence_claims_skill_only_with_enough_dynamic_pairs() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    realized = ("UP", "DOWN", "UP", "DOWN", "UP")
+    cases = (
+        *(
+            _case(
+                f"history-{index}",
+                start + timedelta(hours=4 * index),
+                outcome,
+                (("DOWN", "0.5"), ("UP", "0.5")),
+                market_state_key="RANGING",
+            )
+            for index, outcome in enumerate(realized)
+        ),
+        _case(
+            "ready-1",
+            start + timedelta(hours=20),
+            "DOWN",
+            (("DOWN", "0.9"), ("UP", "0.1")),
+            market_state_key="RANGING",
+        ),
+        _case(
+            "ready-2",
+            start + timedelta(hours=24),
+            "UP",
+            (("DOWN", "0.1"), ("UP", "0.9")),
+            market_state_key="RANGING",
+        ),
+    )
+
+    evidence = evaluate_forecast_evidence(
+        cases,
+        due_slot_count=7,
+        forecast_count=7,
+        no_estimate_count=0,
+        required_non_overlapping_samples=2,
+    )
+
+    assert evidence.status == ForecastEvidenceStatus.ABOVE_BENCHMARK
+    assert evidence.rolling_baseline_ready_count == 2
+    assert evidence.market_baseline_ready_count == 2
+    assert evidence.rolling_brier_skill_lower_bound is not None
+    assert evidence.rolling_brier_skill_lower_bound > 0
+    assert evidence.market_brier_skill_lower_bound is not None
+    assert evidence.market_brier_skill_lower_bound > 0
 
 
 def test_dynamic_baseline_excludes_outcomes_not_yet_settled_at_cutoff() -> None:
@@ -179,7 +248,8 @@ def test_dynamic_baseline_excludes_outcomes_not_yet_settled_at_cutoff() -> None:
 
     assert evidence.rolling_baseline_ready_count == 0
     assert evidence.market_baseline_ready_count == 0
-    assert evidence.rolling_benchmark_mean_brier_score == Decimal("0.50")
+    assert evidence.rolling_benchmark_mean_brier_score is None
+    assert evidence.market_benchmark_mean_brier_score is None
 
 
 def test_market_baseline_is_distinct_from_rolling_unconditional_history() -> None:
@@ -215,7 +285,4 @@ def test_market_baseline_is_distinct_from_rolling_unconditional_history() -> Non
 
     assert evidence.rolling_baseline_ready_count == 6
     assert evidence.market_baseline_ready_count == 1
-    assert (
-        evidence.rolling_benchmark_mean_brier_score
-        != evidence.market_benchmark_mean_brier_score
-    )
+    assert evidence.rolling_benchmark_mean_brier_score != evidence.market_benchmark_mean_brier_score

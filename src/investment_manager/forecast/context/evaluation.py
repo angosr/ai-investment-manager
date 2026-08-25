@@ -9,7 +9,7 @@ from enum import StrEnum
 
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v2"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v3"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
@@ -156,46 +156,69 @@ def evaluate_forecast_evidence(
     )
     assert model_brier is not None and benchmark_brier is not None
     model_scores = tuple(
-        multiclass_brier_score(item.probabilities, item.realized_bucket_id)
-        for item in independent
+        multiclass_brier_score(item.probabilities, item.realized_bucket_id) for item in independent
     )
     rolling_cases = _dynamic_benchmarks(cases, independent, condition_on_market=False)
     market_cases = _dynamic_benchmarks(cases, independent, condition_on_market=True)
     rolling_scores = tuple(
-        multiclass_brier_score(probabilities, item.realized_bucket_id)
-        for item, probabilities, _ready in rolling_cases
+        (
+            multiclass_brier_score(probabilities, item.realized_bucket_id),
+            model_score,
+        )
+        for (item, probabilities, ready), model_score in zip(
+            rolling_cases,
+            model_scores,
+            strict=True,
+        )
+        if ready
     )
     market_scores = tuple(
-        multiclass_brier_score(probabilities, item.realized_bucket_id)
-        for item, probabilities, _ready in market_cases
+        (
+            multiclass_brier_score(probabilities, item.realized_bucket_id),
+            model_score,
+        )
+        for (item, probabilities, ready), model_score in zip(
+            market_cases,
+            model_scores,
+            strict=True,
+        )
+        if ready
     )
-    rolling_brier = _mean(rolling_scores)
-    market_brier = _mean(market_scores)
-    assert rolling_brier is not None and market_brier is not None
-    rolling_differences = tuple(
-        baseline - model
-        for baseline, model in zip(rolling_scores, model_scores, strict=True)
-    )
-    market_differences = tuple(
-        baseline - model
-        for baseline, model in zip(market_scores, model_scores, strict=True)
-    )
+    rolling_brier = _mean(tuple(baseline for baseline, _model in rolling_scores))
+    market_brier = _mean(tuple(baseline for baseline, _model in market_scores))
+    rolling_differences = tuple(baseline - model for baseline, model in rolling_scores)
+    market_differences = tuple(baseline - model for baseline, model in market_scores)
     rolling_skill = _mean(rolling_differences)
     market_skill = _mean(market_differences)
-    assert rolling_skill is not None and market_skill is not None
-    rolling_lower, rolling_upper = _mean_confidence_interval(rolling_differences)
-    market_lower, market_upper = _mean_confidence_interval(market_differences)
+    rolling_interval = _optional_mean_confidence_interval(rolling_differences)
+    market_interval = _optional_mean_confidence_interval(market_differences)
+    rolling_lower = None if rolling_interval is None else rolling_interval[0]
+    rolling_upper = None if rolling_interval is None else rolling_interval[1]
+    market_lower = None if market_interval is None else market_interval[0]
+    market_upper = None if market_interval is None else market_interval[1]
     rolling_ready_count = sum(ready for _item, _probabilities, ready in rolling_cases)
     market_ready_count = sum(ready for _item, _probabilities, ready in market_cases)
     status = (
         ForecastEvidenceStatus.DIAGNOSTIC_ONLY
         if not permission_evidence_eligible
         else ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
-        if len(independent) < required_non_overlapping_samples
+        if (
+            len(independent) < required_non_overlapping_samples
+            or rolling_ready_count < required_non_overlapping_samples
+            or market_ready_count < required_non_overlapping_samples
+        )
         else ForecastEvidenceStatus.ABOVE_BENCHMARK
-        if rolling_lower > 0 and market_lower > 0
+        if (
+            rolling_lower is not None
+            and market_lower is not None
+            and rolling_lower > 0
+            and market_lower > 0
+        )
         else ForecastEvidenceStatus.BELOW_BENCHMARK
-        if rolling_upper < 0 or market_upper < 0
+        if (
+            (rolling_upper is not None and rolling_upper < 0)
+            or (market_upper is not None and market_upper < 0)
+        )
         else ForecastEvidenceStatus.INCONCLUSIVE
     )
     return ForecastEvidence(
@@ -222,12 +245,8 @@ def evaluate_forecast_evidence(
         market_brier_skill_lower_bound=market_lower,
         market_brier_skill_upper_bound=market_upper,
         market_baseline_ready_count=market_ready_count,
-        mean_expected_gross_bps=_mean(
-            tuple(item.expected_gross_bps for item in independent)
-        ),
-        mean_realized_gross_bps=_mean(
-            tuple(item.realized_gross_bps for item in independent)
-        ),
+        mean_expected_gross_bps=_mean(tuple(item.expected_gross_bps for item in independent)),
+        mean_realized_gross_bps=_mean(tuple(item.realized_gross_bps for item in independent)),
     )
 
 
@@ -257,8 +276,7 @@ def multiclass_brier_score(
         raise ValueError("Brier 真实 bucket 不属于预测分布")
     return sum(
         (
-            (probability - (Decimal("1") if bucket_id == realized else Decimal("0")))
-            ** 2
+            (probability - (Decimal("1") if bucket_id == realized else Decimal("0"))) ** 2
             for bucket_id, probability in probabilities
         ),
         Decimal("0"),
@@ -292,8 +310,7 @@ def _dynamic_benchmarks(
             item
             for item in all_cases
             if item.forecast_id != current.forecast_id
-            and (item.outcome_available_at or item.evaluation_at)
-            <= current.information_cutoff_at
+            and (item.outcome_available_at or item.evaluation_at) <= current.information_cutoff_at
         )
         matched = tuple(
             item
@@ -313,10 +330,7 @@ def _dynamic_benchmarks(
         probabilities = tuple(
             (
                 bucket_id,
-                (
-                    Decimal(counts[bucket_id])
-                    + DYNAMIC_BASELINE_PRIOR_STRENGTH * prior_probability
-                )
+                (Decimal(counts[bucket_id]) + DYNAMIC_BASELINE_PRIOR_STRENGTH * prior_probability)
                 / denominator,
             )
             for bucket_id, prior_probability in current.benchmark_probabilities
@@ -341,6 +355,14 @@ def _mean_confidence_interval(
     standard_error = (variance / Decimal(len(values))).sqrt()
     margin = PAIRED_SKILL_INTERVAL_Z * standard_error
     return mean - margin, mean + margin
+
+
+def _optional_mean_confidence_interval(
+    values: tuple[Decimal, ...],
+) -> tuple[Decimal, Decimal] | None:
+    if not values:
+        return None
+    return _mean_confidence_interval(values)
 
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal | None:
