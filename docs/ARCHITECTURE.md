@@ -94,7 +94,7 @@ Portfolio 每次解决同一个问题：从已对账的当前组合出发，在�
 
 Mandate 先冻结记账本位、实际购买力目标、投资时域、可用流动性与提款需要、可容忍的回撤/尾部损失/永久损失、杠杆边界和允许的经济暴露；它不预先规定必须持有哪些资产类别或战略权重。可投资域再把经济暴露映射到当时真实可交易的 Instrument，并且不得超出 Mandate 允许范围。记账本位只统一核算，不等于经济上无风险：当前 USDT 余额仍有美元购买力、稳定币发行人、脱锚和交易场所风险，必须进入 State、压力测试与评价。现金、利率、增长、通胀、信用、权益、商品、外汇和加密网络等才是风险收益来源，Spot、Perpetual、ETF 或未来其他场所产品只是实现工具。同一经济暴露存在多个产品时，只保留费用、流动性、跟踪、税费、funding、保证金和场所风险后最有效的合法表达；不能因产品数量增加而重复计算分散化。
 
-Mandate 中无法从市场数据推导的偏好必须来自资产所有者：可追加或提取的现金、最低流动性、真实购买力参照、可接受的永久损失和回撤、杠杆与法律限制。`APPROVED` Mandate 还必须冻结购买力计量序列、外部申购/提款与投资收益的分离规则，以及目标时域；只写 `REAL_CAPITAL_GROWTH` 字样而没有可计算口径，不能评价目标是否实现。Agent 可以指出目标内部矛盾、提出更稳健的候选并运行隔离模拟，但不能根据近期行情、模型输出或为了产生订单静默改写这些边界。信息尚不完整时只能登记明确版本的临时 Mock Mandate；它可以用来验证全尺寸模拟经济性，不能登记总组合 Reference 或冒充正式资本授权。Mandate 不是频繁优化参数，只有资产所有者约束改变或长期证据推翻其实现假设时才建立新版本。
+Mandate 中无法从市场数据推导的偏好必须来自资产所有者：可追加或提取的现金、最低流动性、真实购买力参照、可接受的永久损失和回撤、杠杆与法律限制。`APPROVED` Mandate 还必须冻结可计算的购买力契约：权威来源与序列、币种/消费范围、发布滞后、修订和缺失处理、外部申购/提款与投资收益的分离规则，以及目标时域。Mandate 绑定这份长期计量契约，Reference 计划只能冻结当次符合契约的数据集哈希；它不得自行选择 CPI、换一个国家或重定义现金流。只写 `REAL_CAPITAL_GROWTH` 字样而没有这些口径，不能评价目标是否实现。Agent 可以指出目标内部矛盾、提出更稳健的候选并运行隔离模拟，但不能根据近期行情、模型输出或为了产生订单静默改写这些边界。信息尚不完整时只能登记明确版本的临时 Mock Mandate；它可以用明示的假设口径验证全尺寸模拟经济性，即使候选通过技术评价，Release 也不得据此登记总组合 Reference 或授予正式资本。Mandate 不是频繁优化参数，只有资产所有者约束改变或长期证据推翻其实现假设时才建立新版本。
 
 观察域可以大于可投资域。系统必须理解无法直接交易但会影响组合的利率、财政、信用和跨资产事实；只有通过产品语义、市场时段、容量、账户权限与执行验收的 Instrument 才能进入 Portfolio。若当前 Venue 无法提供足以构造目标组合的经济暴露，系统必须暴露 mandate/Venue 不匹配，不能把若干高度相关的币或长期持有永续合约伪装成多资产配置。
 
@@ -170,7 +170,7 @@ Evaluation 只服务两类裁决，不形成新的运行阶段。第一类是完
 
 Reference Policy 的构造本身必须简单、透明且不使用主动 WorldModel：它先把 Instrument 映射到非重复经济风险，再以 mandate 的时域、流动性和总风险边界事前指定一个中性目标暴露，并以冻结暴露带再平衡。固定暴露、风险平衡、最小方差等可以在设计阶段帮助资产所有者形成候选，但同一计划只登记一个候选，后续历史评价只有否决权，不能在看完多个结果后挑一个“赢家”。如果资产所有者要改用另一种中性风险设定，必须建立新计划并重新积累独立证据，不能复用已揭盲结果。Mandate 的允许暴露是法律与所有者边界，不是必须凑齐的资产清单；最终 Reference 可以稀疏，但必须由共同压力情景、风险贡献和费用后购买力结果证明与总风险匹配，不能用产品数量或人工 `eligible` 标签自证。它不能随最新 AI 观点或近期表现变化，否则既失去基准含义，也与实际 Portfolio 重叠。
 
-Reference 资格只由一份不可变选择制品授予。制品同时冻结两层不同证据：经济暴露层使用足够覆盖周期与压力状态的点时代理历史，回答该风险来源长期如何表现；实现产品层使用真实合约规则、可成交报价、交易时段、fee、spread、slippage、funding、basis、分红或其他现金流和场所事件，回答该暴露能否由当前 Instrument 忠实持有。新上市衍生品可以借更长的底层历史估计经济风险，但不得把底层历史冒充该合约自己的 funding、basis、流动性或规则历史。任一层缺失时只保留候选状态，不登记 Reference。
+Reference 资格只由一份不可变选择制品授予。制品同时冻结两层不同证据：经济暴露层使用足够覆盖周期与压力状态的点时代理历史，回答该风险来源长期如何表现；实现产品层使用真实合约规则、可成交报价、交易时段、fee、spread、slippage、funding、basis、分红或其他现金流和场所事件，回答该暴露能否由当前 Instrument 忠实持有。新上市衍生品可以借更长的底层历史估计经济风险，但不得把底层历史冒充该合约自己的 funding、basis、流动性或规则历史。产品证据的最小数量与覆盖必须由现金流频率、交易时段、需要覆盖的状态和未建模误差对总风险的上限推导，不把“两年”或任一统一天数当成跨产品真理。规则、结算或可恢复执行缺失时直接拒绝；只是历史较短时，可在既有 Mock 试验权限内积累真实实现证据，但只有将未知性缓冲、不利 funding/basis 和流动性压力一并计入后仍满足 Mandate，才能登记 Reference。任一层无法给出这种边界时只保留候选状态。
 
 经济代理还必须明确数据版本语义。为“现在开始生效”的静态 Reference 选择，可以使用采集时冻结的当前版本长历史估计无条件风险，但它只能支持该采集时点之后的政策选择，不能声称重建了过去每个日期当时可见的数据，更不能评价历史择时能力。数据源后续修订产生新的内容寻址数据集；除非启动新的预登记选择实验并重新通过盲测，否则不能改写已经冻结的 Reference。权益代理必须包含总回报，价格指数不能因历史更长而忽略股息；经济代理与真实实现产品的现金流仍分层结算。
 
@@ -190,9 +190,9 @@ WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模
 
 Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；每个固定时点都必须保留独立的仅定时槽。材料来源回答“满足冻结条件时是否及时重估”，不能消费、提前履行或改写 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也无法构造仅定时资本反事实。每个终态按仅定时或仅材料来源分层计算覆盖率、评分和不确定性；共同 Outcome 和重叠时域按预登记时间簇处理，不能把相关事件当成多个独立成功。
 
-不存在覆盖所有问题的通用 `EvaluationReport`。每个评价问题由唯一 evaluator 输出具有明确语义的类型化结果，其身份绑定 EvaluationPlan、evaluator 版本、`as_of`、查询规则和输入引用。`GovernanceSnapshot` 只是主 Agent 在某一时点可见的评价结果清单与治理上下文，引用这些结果而不复制指标或重算结论；Dashboard 直接读取相同 evaluator 的只读投影；权限只引用已经冻结的 `EvaluationResult`。三个消费者所需时效不同，不应被迫依赖一个不断膨胀的万能报告。
+不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。“计划”和“结果”是治理语义，不是强迫所有问题共用一个 Python 模型：Release 候选、Reference 资格、Forecast 评分和 WorldModel 消融分别由自己唯一 evaluator 定义最小类型化计划与结果，无关字段不用 `null` 塞进万能 Schema。Governance 只登记它们的类型、稳定身份、内容哈希、作用域、依赖、结论和废止关系，不复制问题指标。每个评价问题在同一作用域只允许一份生效计划，结果身份绑定该计划、evaluator 版本、`as_of`、查询规则和输入引用。`GovernanceSnapshot` 只是主 Agent 在某一时点可见的结果引用清单与治理上下文；Dashboard 直接读取同一 evaluator 的只读投影；权限只引用适用的冻结结果。三个消费者不重算结论，也不共享一个不断膨胀的指标袋。
 
-任何实验资本资格必须引用不可变 EvaluationPlan；任何正式权限必须继续引用 EvaluationResult、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
+任何实验资本资格必须引用对应问题的不可变类型化计划；任何正式权限必须继续引用适用的类型化结果、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
 
 AI 历史重放可验证数据、Schema 和稳定性，但不能排除模型训练知识泄漏，因此 AI Alpha 和资本权限只由真实前瞻样本证明。任何“已实现”“运行健康”“文字更深”或少量模拟盈利都不等于稳定盈利。
 
@@ -301,7 +301,7 @@ investment_manager/
 - Forecast 的时域、结果分布、触发和结算；
 - 输入投影、生产者行为和完成期限；
 - 成本、资金费用、组合政策和风险包络；
-- EvaluationPlan、配对对照、动态简单基线、样本依赖和搜索历史；
+- 各问题的类型化评价计划、配对对照、动态简单基线、样本依赖和搜索历史；
 - 实验候选资本资格、未来正式资本准入、最大损失、有效期、退化与停止条件。
 
 当前 Spot 验证 cohort 是这套架构的一个标量 Forecast 组件实验，不是资产管理方案，也不定义长期基准、资产域、风险预算或实施顺序。其冻结参数和证据目标见 [`WORLD_COGNITION_DESIGN.md` 第 8 节](WORLD_COGNITION_DESIGN.md#8-当前证据计划)。同一 cohort 运行期间不得漂移，但它不构成研究和登记独立总组合实验的总闸门。
@@ -358,7 +358,8 @@ investment_manager/
 ## 11. 组合与工程设计依据
 
 - CPP Investments 的[2025 投资政策](https://www.cppinvestments.com/wp-content/uploads/2025/04/InvestmentStatement-InvestmentPortfolio-EN-Apr022025.pdf)在总组合层分别管理长期风险目标、因子、流动性和杠杆；其[2025 年报](https://www.cppinvestments.com/wp-content/uploads/attachments/CPP-Investments-F2025-Annual-Report-English.pdf)还明确区分市场风险目标与用于评价主动增值的可投资 Benchmark Portfolio。本设计因此让 Mandate 独立拥有绝对风险边界，让唯一 Reference Policy 只承担风险匹配的可投资中性实现和费用后反事实；当前规模不需要为这一区分再建立第二个基准对象。
-- NZ Super Fund 的[Investment Risk Allocation Policy](https://nzsuperfund.nz/assets/Publications/Policies/Investment-Risk-Allocation-Policy.pdf)把 Reference Portfolio 定义为资产所有者批准的简单、低成本、均衡风险设定，而把价格偏离判断留给 Actual Portfolio；其[Derivatives Policy](https://nzsuperfund.nz/assets/Publications/Policies/Derivatives-Policy.pdf)分别报告 gross/net derivative exposure，并以现金和压力流动性管理 collateral。本设计因此不让 Agent 按历史收益挑选自己的主基准，也不把衍生品名义、现金资产和保证金压成一个权重字段。
+- NZ Super Fund 的[2026 投资政策声明](https://nzsuperfund.nz/assets/Publications/Policies/NZSF-Statement-of-Investment-Policies-Standards-and-Procedures-2026-v2.pdf)把目标、风险偏好和 Reference Portfolio 保留为资产所有者的战略决定，把 Reference 定义为简单、低成本、可投资的总风险设定，而把主动偏离留给 Actual Portfolio；其[Derivatives Policy](https://nzsuperfund.nz/assets/Publications/Policies/Derivatives-Policy.pdf)分别报告 gross/net derivative exposure，并以现金和压力流动性管理 collateral。本设计因此不让 Agent 选择购买力目标或按历史收益挑选自己的主基准，也不把衍生品名义、现金资产和保证金压成一个权重字段。
+- 欧盟对市场风险内模的[2024/1085 委托条例](https://eur-lex.europa.eu/eli/reg_del/2024/1085/oj)要求新产品在正式批准、受限额度和持续监控下引入，并单独验证代理时间序列对风险与分散化的影响。本设计借鉴的是“短历史不等于零风险，也不等于永久禁用”：新产品可在有限 Mock 包络内积累证据，但经济代理不能冒充合约自身的 funding、basis、流动性和场所风险。
 - Black 与 Litterman 的[Global Portfolio Optimization](https://rpc.cfainstitute.org/research/financial-analysts-journal/1992/faj-v48-n5-28)以中性收益先验承接没有观点的资产，再按观点不确定性调整。本设计只采用“先验 + 可校准观点 + 收缩”的原则，不预设必须实现原论文模型。
 - DeMiguel、Garlappi 与 Uppal 的[样本外组合比较](https://www.tse-fr.eu/sites/default/files/medias/doc/conf/fineco/papers_2010/uppal.pdf)显示复杂均值—方差规则可能因估计误差输给简单分散基线；Olivares-Nadal 与 DeMiguel 的[交易成本与稳健优化研究](https://pubsonline.informs.org/doi/10.1287/opre.2017.1699)进一步说明成本约束也能抑制估计误差。本设计因此强制简单基线、观点收缩和成本内生化，而不把优化器复杂度当作价值。
 - Gârleanu 与 Pedersen 的[含交易成本动态组合研究](https://www.nber.org/papers/w15205)说明在信号持续性和交易成本并存时，应从现有持仓部分向动态目标调整。本设计因此使用成本感知的目标暴露和无交易区间，而不是每次 Forecast 清仓重建。

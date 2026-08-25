@@ -15,11 +15,11 @@
         ↓
 定位首个可验证断点
         ↓
-ChangeProposal + EvaluationPlan
+类型化评价计划 + ChangeProposal
         ↓
 隔离候选 / 前瞻评价
         ↓
-EvaluationResult
+类型化评价结果
         ↓
 保留、删除、限权、扩权或撤权
         ↓
@@ -38,14 +38,14 @@ EvaluationResult
 | Forecast、Target、RiskDecision | Forecast、Portfolio、Risk | 判断决策在哪一层失去价值 |
 | 订单、成交、账户和 Outcome | Execution、Evaluation | 结算现实成本和最终结果 |
 | Mandate、可投资域、Reference Policy | Governance | 冻结长期目标、合法工具和唯一总组合资本基准 |
-| EvaluationPlan | Governance | 在看结果前冻结考试 |
+| 类型化评价计划 | 问题所属 evaluator 定义，Governance 登记 | 在看结果前冻结考试 |
 | 类型化评价结果 | 各问题所属的 evaluator | 以冻结口径回答一个明确评价问题 |
 | GovernanceSnapshot | Governance | 向主 Agent 提供点时治理上下文和评价结果引用 |
 | ChangeProposal | Governance | 绑定一个可证伪主张和实际变更 |
-| EvaluationResult / FailedExperiment | Governance | 保存结论、适用范围与搜索历史 |
+| FailedExperiment | Governance | 保存否定结论、适用范围与搜索历史 |
 | ReleaseManifest / Authorization | Governance | 冻结运行行为和可撤销权限 |
 
-不新增通用 `ImprovementHypothesis`、`LearningMemory`、`Reflection` 或万能评价报告。假设属于 `ChangeProposal`，原始推理留在运行制品；Forecast、WorldModel 消融、资本结果等问题由各自唯一 evaluator 产生类型化、可重建的结果。结果身份由 EvaluationPlan、evaluator 版本、`as_of`、查询规则和输入引用确定；一旦被 Proposal 或 EvaluationResult 引用，身份、内容哈希和输入集合即冻结。Dashboard 读取同一 evaluator 的投影，不能自行筛样本或重算赢家；权限只读取已经冻结的 EvaluationResult。
+不新增通用 `ImprovementHypothesis`、`LearningMemory`、`Reflection`、万能 `EvaluationPlan` 或万能评价报告。假设属于 `ChangeProposal`，原始推理留在运行制品；Release 候选、Reference、Forecast、WorldModel 消融和资本结果由各自唯一 evaluator 定义最小类型化计划与可重建结果。Governance 只登记类型、身份、内容哈希、作用域、依赖、结论和废止关系，不把所有问题压成指标袋。结果身份由它对应的类型化计划、evaluator 版本、`as_of`、查询规则和输入引用确定；一旦被 Proposal 或权限引用，身份、内容哈希和输入集合即冻结。Dashboard 读取同一 evaluator 的投影，不能自行筛样本或重算赢家；权限只读取已经冻结且未废止的适用结果。
 
 `GovernanceSnapshot` 是主 Agent 的唯一学习入口，但只是点时清单，不是第二事实库：它引用适用的类型化结果、当前 Mandate、Release、权限、计划和失败搜索历史，不复制一套指标定义。Snapshot 不得依赖 `legacy` 运行模型；有长期价值的历史事实必须迁入现役领域查询，无法可靠迁移的只保留为不可执行档案。任何新抽象都必须同时拥有一个不可由现有对象承担的业务不变量、明确所有者、真实消费者和故障响应；缺少任一项就删除，而不是给它补生命周期、状态机或适配层。
 
@@ -71,9 +71,9 @@ Mandate、可投资域与 Reference Policy 是否真实可执行
 
 Cadence 义务必须持续结算未交易、现金、拒绝和 `NO_ESTIMATE`，否则系统只能学习实际发生的交易，无法识别系统性错失。材料事件槽是条件样本，不能消费或替代临近的固定 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也使 cadence-only 资本反事实不可识别。机会成本来自事前冻结的 Forecast、合法资本候选和可投资基线，不能从事后挑选的一段上涨倒推。
 
-## 4. EvaluationPlan 是唯一考试合同
+## 4. 每个问题只有一份类型化考试合同
 
-任何可能改变投资行为或未来权限的候选，在读取对应结果前必须由一个不可变 `EvaluationPlan` 冻结：
+任何可能改变投资行为或未来权限的候选，在读取对应结果前必须由该问题的不可变类型化计划冻结。所有计划都只共享一组治理不变量：稳定身份与内容哈希、预登记时间、问题作用域、输入截止、evaluator 身份、通过/失败/证据不足规则、搜索历史和废止语义。其余字段归问题本身：Release 变更计划绑定 base/candidate Manifest 与回归套件；Reference 计划绑定 Mandate、唯一候选、经济代理和产品证据；前瞻 Forecast 计划绑定行为、槽、Outcome 和样本依赖。不适用的概念不以空字段出现。一份投资行为变更计划至少冻结：
 
 - base Release、producer behavior、ForecastContract、适用 mandate、可投资域和 Reference Policy；
 - 一个主要因果假设、保持不变项及不可拆分的跨层修改理由；
@@ -103,7 +103,7 @@ Cadence 义务必须持续结算未交易、现金、拒绝和 `NO_ESTIMATE`，�
 
 ## 6. 权限不是永久结论
 
-权限只有两种证据依据：为产生新证据而授予的实验资格必须引用 `EvaluationPlan`；保留或扩大既有行为的正式权限必须继续引用已通过的 `EvaluationResult`。二者都绑定 producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结：
+权限只有两种证据依据：为产生新证据而授予的实验资格必须引用对应问题的类型化计划；保留或扩大既有行为的正式权限必须继续引用已通过且未废止的适用结果。二者都绑定 producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结：
 
 - 适用产品、方向、账户和决策作用域；
 - 环境与最大资本、gross/net exposure 和风险预算；
@@ -129,7 +129,7 @@ Cadence 义务必须持续结算未交易、现金、拒绝和 `NO_ESTIMATE`，�
 
 Agent 不以自由文本创建问题身份，不通过修改指标让自己的候选获胜，不在活动 cohort 上原地调参，也不把多个失败候选拼成未经评价的组合。没有足够前瞻证据时可以改进可恢复性、真实性和观察能力，但不得把这些工程进展描述成 Alpha。
 
-Mandate、Reference Policy 和 evaluator 定义是考试坐标，不是普通 Alpha 参数。主 Agent 可以发现其错误并提出独立治理变更，但同一 Proposal 不得同时修改考试坐标和让某个投资候选凭新坐标晋级。坐标变化后，旧事实和历史授权仍按原身份解释，新候选从新计划积累证据，二者不得合并评价；不为此增加“评价纪元”对象。历史可追溯不等于当前仍可下单：只要运行中 Mandate、Reference 或 evaluator 被替换或废止，依赖旧坐标的权限就不得自动继承到新坐标；在新评价与明确批准前，只能继续满足旧契约的减险或按新的合法 Reference 管理中性暴露，不能新增主动风险。若只是修复 evaluator 实现错误，则从不可变原事实用新 evaluator 重算并显式废止受影响的旧 EvaluationResult，不能静默覆盖结论或自动继承权限。这样既允许系统纠错，也阻止 Agent 通过降低标准、选择较弱 Reference 或重写历史给自己发奖。
+Mandate、Reference Policy 和 evaluator 定义是考试坐标，不是普通 Alpha 参数。主 Agent 可以发现其错误并提出独立治理变更，但同一 Proposal 不得同时修改考试坐标和让某个投资候选凭新坐标晋级。坐标变化后，旧事实和历史授权仍按原身份解释，新候选从新计划积累证据，二者不得合并评价；不为此增加“评价纪元”对象。历史可追溯不等于当前仍可下单：只要运行中 Mandate、Reference 或 evaluator 被替换或废止，依赖旧坐标的权限就不得自动继承到新坐标；在新评价与明确批准前，只能继续满足旧契约的减险或按新的合法 Reference 管理中性暴露，不能新增主动风险。若只是修复 evaluator 实现错误，则从不可变原事实用新 evaluator 重算并显式废止受影响的旧类型化结果，不能静默覆盖结论或自动继承权限。这样既允许系统纠错，也阻止 Agent 通过降低标准、选择较弱 Reference 或重写历史给自己发奖。
 
 只有实际出现多个长期并发实验争抢同一数据、行为、评价窗口或组合风险预算，并且现有 Proposal/Gate 无法安全串行化时，才设计更复杂的冲突图、实验租约或自动资源调度。想象中的规模不是新增平台的理由。
 
@@ -177,7 +177,7 @@ Reference 实现遗漏 funding、股息或保证金占用，或者 evaluator 存
 - 失败实现和被替代机制从生产代码删除，历史只保留不可执行事实；
 - Agent 可以选择不变更，且不能控制自己结果的选择、评分或权限；
 - Mandate、Reference 或 evaluator 变化与 Alpha 候选分开治理，受影响旧结论可追溯失效而不被覆写；
-- 每个评价问题只有一个类型化 evaluator；Agent 通过 GovernanceSnapshot 引用其结果，Dashboard 读取同源投影，权限只读取冻结 EvaluationResult；
+- 每个评价问题只有一个类型化 evaluator 和一份生效计划；Agent 通过 GovernanceSnapshot 引用其结果，Dashboard 读取同源投影，权限只读取冻结且未废止的适用结果；
 - GovernanceSnapshot 不读取 `legacy` 运行模型，也不复制第二套评价真相；
 - 长期运行不会因想法、实验或 Release 数量增长出第二条投资链。
 
