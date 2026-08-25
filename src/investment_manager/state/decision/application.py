@@ -121,8 +121,8 @@ class DecisionPacketPreparation:
         if maximum_cross_market_quote_skew_seconds < 1:
             raise ValueError("DecisionPacket 跨市场报价偏差配置非法")
         perpetual_symbols = tuple(item.symbol for item in perpetual_instruments)
-        if tuple(sorted(set(perpetual_symbols))) != perpetual_symbols:
-            raise ValueError("DecisionPacket perpetual_instruments 必须按 symbol 唯一且排序")
+        if len(set(perpetual_symbols)) != len(perpetual_symbols):
+            raise ValueError("DecisionPacket perpetual_instruments 的 symbol 不得重复")
         self._market_store = market_store
         self._event_reader = event_reader
         self._facts = facts

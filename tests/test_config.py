@@ -14,8 +14,10 @@ from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.policy import MarketDataPolicy
+from investment_manager.platform.database import build_engine
 from investment_manager.portfolio.policy import FrequencyPolicy, MandateStatus
 from investment_manager.settings import load_config
+from investment_manager.state.decision.service import assemble_decision_packet_preparation
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
 
 
@@ -184,6 +186,15 @@ def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
     assert tuple(
         item.symbol for item in restored.market_data.perpetual_instruments
     ) == ("SPYUSDT", "BTCUSDT", "ETHUSDT", "XRPUSDT")
+
+
+def test_shadow_decision_packet_composition_accepts_observation_only_products() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    engine = build_engine("sqlite+pysqlite:///:memory:")
+    try:
+        assemble_decision_packet_preparation(config, engine)
+    finally:
+        engine.dispose()
 
 
 def test_historical_state_policy_does_not_require_future_source_rules() -> None:

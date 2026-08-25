@@ -477,7 +477,9 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
-        perpetual_instruments=(instrument, observation_only),
+        # MarketDataPolicy 的规范顺序按完整产品身份排列；DecisionPacket 只按
+        # mandate symbol 取值，不得另设一套互相冲突的 symbol 排序合同。
+        perpetual_instruments=(observation_only, instrument),
         funding_history_lookback_hours=24,
         maximum_perpetual_age_seconds=900,
         clock=lambda: OBSERVED_AT,
