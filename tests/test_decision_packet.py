@@ -22,6 +22,9 @@ from investment_manager.forecast.context.contract import (
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
     assessment_current_evidence_ids,
+    assessment_persistable_event_ids,
+    assessment_visible_evidence_ids,
+    assessment_world_model_evidence_ids,
     build_assess_prompt,
     finalize_world_model,
 )
@@ -187,6 +190,7 @@ def _packet(
     *,
     previous_context=None,
     intelligence_events: tuple[IntelligenceEvent, ...] = (),
+    review_requests: tuple[PacketReviewRequest, ...] = (),
     as_of=None,
     packet_schema_version: str = "decision-packet-v1",
     mandate: AnalysisMandate | None = None,
@@ -217,6 +221,7 @@ def _packet(
         ),
         facts=(_fact(state_as_of),),
         intelligence_events=intelligence_events,
+        review_requests=review_requests,
         account=replay_input.account,
         markets=(market_eth, market_btc),
         features=(feature_eth, feature_btc),
@@ -1538,6 +1543,63 @@ def test_assess_schema_restricts_retirement_to_current_evidence(
     assert set(retirement_ids) == set(assessment_current_evidence_ids(packet))
     assert "old-1" not in retirement_ids
     assert "old-2" not in retirement_ids
+
+
+def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
+    app_config,
+    replay_input,
+) -> None:
+    event = IntelligenceEvent(
+        evidence_id="weak-attention-lead",
+        normalizer_version="test-normalizer-v1",
+        acquisition_route="aggregator",
+        event_time=replay_input.market.as_of - timedelta(minutes=1),
+        observed_at=replay_input.market.as_of,
+        source="aggregator-flash",
+        title="重大但尚未独立核验的外部线索",
+        body="该线索需要立即复核，但不能单独支持方向。",
+        symbols=("BTCUSDT", "ETHUSDT"),
+        relevance=Decimal("0.85"),
+        impact=Decimal("0.8415"),
+        source_reliability=Decimal("0.60"),
+        novelty=Decimal("1"),
+    )
+    _, packet = _packet(
+        app_config,
+        replay_input,
+        intelligence_events=(event,),
+        review_requests=(
+            PacketReviewRequest.create(
+                requested_at=replay_input.market.as_of,
+                reason="复核高影响待核验线索。",
+                evidence_ids=(event.evidence_id,),
+            ),
+        ),
+    )
+    packet_event = packet.intelligence_events[0]
+    assert packet_event.directional_support_eligible is False
+    assert packet_event.evidence_ref in assessment_visible_evidence_ids(packet)
+    assert packet_event.evidence_ref not in assessment_world_model_evidence_ids(packet)
+    assert packet_event.evidence_ref not in assessment_current_evidence_ids(packet)
+    assert packet_event.evidence_ref not in assessment_persistable_event_ids(packet)
+
+    schema = assess_output_schema(packet)
+    definitions = schema["$defs"]
+    causal_ids = definitions["ContextCausalNode"]["properties"]["evidence_ids"][
+        "items"
+    ]["enum"]
+    conflicting_ids = definitions["ContextMechanismDraft"]["properties"][
+        "conflicting_evidence_ids"
+    ]["items"]["enum"]
+    retirement_ids = definitions["ContextMechanismRetirement"]["properties"][
+        "evidence_ids"
+    ]["items"]["enum"]
+    event_ids = definitions["ContextEventReferenceUpdate"]["properties"][
+        "evidence_id"
+    ]["enum"]
+    for allowed_ids in (causal_ids, conflicting_ids, retirement_ids, event_ids):
+        assert packet_event.evidence_ref not in allowed_ids
+    assert "directional_support_eligible=false" in build_assess_prompt(packet)
 
 
 def test_finalize_assessment_writes_only_current_world_model_schema(
