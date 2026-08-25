@@ -12,8 +12,9 @@ from investment_manager.forecast.context.estimate import (
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.policy import MarketDataPolicy
-from investment_manager.portfolio.policy import FrequencyPolicy
+from investment_manager.portfolio.policy import FrequencyPolicy, MandateStatus
 from investment_manager.settings import load_config
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
 
@@ -44,7 +45,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "spot-capital-v30"
+    assert config.capital.version == "total-portfolio-capital-v32"
+    assert config.capital.mandate.portfolio_id == "primary"
+    assert config.capital.mandate.status == MandateStatus.PROVISIONAL
+    assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
+    assert config.capital.investable_universe.version == (
+        "binance-shadow-investable-v1"
+    )
+    assert config.capital.reference_policy is None
     assert config.capital.decision.version == "portfolio-net-edge-v8"
     assert config.information.version == "information-intake-v33"
     assert config.information.normalizer_version == "trendradar-collector-v9"
@@ -151,6 +159,28 @@ def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
         MarketDataPolicy.model_validate(payload)
 
 
+def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["market_data"]["perpetual_instruments"] = (
+        *payload["market_data"]["perpetual_instruments"],
+        InstrumentId(
+            venue="BINANCE",
+            product=InstrumentProduct.USD_M_PERPETUAL,
+            symbol="XRPUSDT",
+            base_asset="XRP",
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        ).model_dump(mode="python"),
+    )
+
+    restored = config.__class__.model_validate(payload)
+
+    assert tuple(
+        item.symbol for item in restored.market_data.perpetual_instruments
+    ) == ("BTCUSDT", "ETHUSDT", "XRPUSDT")
+
+
 def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "investment-manager.yaml")
@@ -227,6 +257,56 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         contract,
         state_behavior.model_copy(update={"bar_window": state_behavior.bar_window + 1}),
     ) != behavior_id
+
+
+def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.capital.model_dump(mode="python")
+    payload["reference_policy"] = {
+        "version": "invalid-btc-reference-v1",
+        "mandate_version": config.capital.mandate.version,
+        "universe_version": config.capital.investable_universe.version,
+        "rebalance_band_fraction": Decimal("0.05"),
+        "allocations": (
+            {
+                "implementation_key": "BINANCE:SPOT:BTCUSDT",
+                "target_weight": Decimal("0.10"),
+            },
+            {
+                "implementation_key": "CASH:USDT",
+                "target_weight": Decimal("0.90"),
+            },
+        ),
+    }
+
+    with pytest.raises(ValidationError, match="不合格的实现产品"):
+        type(config.capital).model_validate(payload)
+
+
+def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.capital.model_dump(mode="python")
+    payload["investable_universe"]["instruments"][0]["reference_eligible"] = True
+    payload["reference_policy"] = {
+        "version": "underdiversified-reference-v1",
+        "mandate_version": config.capital.mandate.version,
+        "universe_version": config.capital.investable_universe.version,
+        "rebalance_band_fraction": Decimal("0.05"),
+        "allocations": (
+            {
+                "implementation_key": "BINANCE:SPOT:BTCUSDT",
+                "target_weight": Decimal("0.10"),
+            },
+            {
+                "implementation_key": "CASH:USDT",
+                "target_weight": Decimal("0.90"),
+            },
+        ),
+    }
+
+    validated = type(config.capital).model_validate(payload)
+    assert validated.reference_policy is not None
+    assert validated.reference_policy.version == "underdiversified-reference-v1"
 
 
 def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:

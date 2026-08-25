@@ -21,6 +21,16 @@ export interface Health {
 
 export interface CapitalOverview {
   enabled: boolean;
+  policy: {
+    mandate_version: string;
+    mandate_status: "PROVISIONAL" | "APPROVED";
+    objective: "REAL_CAPITAL_GROWTH";
+    horizon_years: number;
+    base_currency: string;
+    universe_version: string;
+    covered_exposures: string[];
+    reference_policy_version: string | null;
+  } | null;
   account: {
     as_of: string;
     cash_balance: string;
@@ -66,10 +76,7 @@ export interface CapitalEquityPoint extends EquityPoint {
   net_pnl: string | null;
   drawdown_fraction: string;
   cash_benchmark_equity: string | null;
-  passive_benchmark_equity: string | null;
   increment_vs_cash: string | null;
-  increment_vs_passive: string | null;
-  passive_drawdown_fraction: string | null;
 }
 
 export interface CapitalAction {

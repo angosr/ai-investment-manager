@@ -27,7 +27,7 @@ export function CapitalEquityHero({
             <small>USDT</small>
           </div>
           <div className={styles.hint}>
-            实线为费用后账户权益，虚线为持现基准；单一资产被动持有不作为总账户基准。
+            实线为费用后账户权益，虚线为持现基准。
           </div>
         </div>
       </div>
@@ -39,6 +39,7 @@ export function CapitalEquityHero({
           emptyMessage="等待资本账户形成连续权益点"
         />
       </div>
+      {data?.policy ? <PortfolioPolicyLine policy={data.policy} /> : null}
       <div className={styles.stats}>
         <Stat k="当前权益" v={account ? `${account.equity} USDT` : "—"} />
         <Stat k="可用现金" v={account ? `${account.cash_balance} USDT` : "—"} />
@@ -47,6 +48,33 @@ export function CapitalEquityHero({
       </div>
     </section>
   );
+}
+
+function PortfolioPolicyLine({ policy }: { policy: NonNullable<CapitalOverview["policy"]> }) {
+  const covered = policy.covered_exposures.map(exposureLabel).join("、");
+  const reference = policy.reference_policy_version
+    ? `总组合基准 ${policy.reference_policy_version}`
+    : "总组合基准尚未建立：尚无通过风险匹配验证的可执行组合";
+  const mandate = policy.mandate_status === "APPROVED" ? "目标约束已确认" : "目标约束待正式确认";
+  return (
+    <div className={styles.policyLine}>
+      <b>总资产目标</b>
+      <span>{policy.horizon_years} 年以上实际购买力增长 · {mandate} · 可投资域覆盖 {covered} · {reference}</span>
+    </div>
+  );
+}
+
+function exposureLabel(value: string): string {
+  return {
+    CASH: "现金",
+    NOMINAL_RATES: "名义利率",
+    INFLATION_SENSITIVE: "通胀敏感资产",
+    GLOBAL_EQUITY: "全球权益",
+    CREDIT: "信用",
+    COMMODITY: "商品",
+    FX: "外汇",
+    CRYPTO_NETWORK: "加密网络",
+  }[value] ?? value;
 }
 
 function cashBenchmarkCurve(points: CapitalEquityPoint[]): EquityPoint[] {

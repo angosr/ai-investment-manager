@@ -9,12 +9,15 @@ from typing import Any, Protocol
 
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.models import InstrumentId
+from investment_manager.market.models import InstrumentId, TradFiMarket
 from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
     PerpetualMarketState,
     PerpetualQuote,
+    TradingScheduleSnapshot,
+    TradingSession,
+    TradingSessionType,
 )
 
 
@@ -30,6 +33,49 @@ class JsonHttpTransport(Protocol):
 class BinanceUsdmRestClient:
     transport: JsonHttpTransport
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+    async def fetch_trading_schedule(self) -> TradingScheduleSnapshot:
+        raw = await self.transport.get("/fapi/v1/tradingSchedule", {})
+        observed_at = require_utc(self.clock())
+        if not isinstance(raw, dict) or not isinstance(raw.get("marketSchedules"), dict):
+            raise ValueError("Binance tradingSchedule REST 响应非法")
+        exchange_time = _from_milliseconds(int(raw["updateTime"]))
+        sessions: list[TradingSession] = []
+        schedules = raw["marketSchedules"]
+        for market_name, payload in schedules.items():
+            try:
+                market = TradFiMarket(str(market_name))
+            except ValueError:
+                continue
+            if not isinstance(payload, dict) or not isinstance(payload.get("sessions"), list):
+                raise ValueError("Binance tradingSchedule 市场时段非法")
+            for item in payload["sessions"]:
+                sessions.append(
+                    TradingSession(
+                        market=market,
+                        starts_at=_from_milliseconds(int(item["startTime"])),
+                        ends_at=_from_milliseconds(int(item["endTime"])),
+                        session_type=TradingSessionType(str(item["type"])),
+                    )
+                )
+        sessions.sort(
+            key=lambda item: (
+                item.market.value,
+                item.starts_at,
+                item.ends_at,
+                item.session_type.value,
+            )
+        )
+        return TradingScheduleSnapshot(
+            schedule_id=stable_id(
+                "tradfi_trading_schedule",
+                exchange_time.isoformat(),
+            ),
+            exchange_time=exchange_time,
+            observed_at=observed_at,
+            sessions=tuple(sessions),
+            source="binance-usdm-trading-schedule-rest",
+        )
 
     async def fetch_quote(self, instrument: InstrumentId) -> PerpetualQuote:
         raw = await self.transport.get(

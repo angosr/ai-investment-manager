@@ -68,6 +68,20 @@
   grid-template-columns: repeat(4, 1fr);
   border-top: 1px solid var(--line-soft);
 }
+.policyLine {
+  align-items: baseline;
+  border-top: 1px solid var(--line-soft);
+  color: var(--faint);
+  display: flex;
+  font-size: 11px;
+  gap: 10px;
+  padding: 9px 16px;
+}
+.policyLine b {
+  color: var(--muted);
+  flex: none;
+  font-weight: 600;
+}
 .stat {
   padding: 12px 16px;
   border-left: 1px solid var(--line-soft);

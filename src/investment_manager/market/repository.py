@@ -23,6 +23,7 @@ from investment_manager.market.perpetual.models import (
     FundingSettlement,
     PerpetualMarketState,
     PerpetualQuote,
+    TradingScheduleSnapshot,
 )
 from investment_manager.market.tables import (
     funding_settlements,
@@ -32,6 +33,7 @@ from investment_manager.market.tables import (
     market_trades,
     perpetual_market_states,
     perpetual_quotes,
+    tradfi_trading_schedules,
 )
 from investment_manager.platform.database import metadata
 
@@ -50,6 +52,8 @@ class MarketDataStore(Protocol):
     def put_perpetual_quote(self, quote: PerpetualQuote) -> bool: ...
 
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool: ...
+
+    def put_trading_schedule(self, schedule: TradingScheduleSnapshot) -> bool: ...
 
     def latest_spot_quote(
         self,
@@ -79,6 +83,10 @@ class MarketDataStore(Protocol):
         end: datetime,
         visible_at: datetime,
     ) -> tuple[FundingSettlement, ...]: ...
+
+    def latest_trading_schedule(
+        self, *, as_of: datetime
+    ) -> TradingScheduleSnapshot | None: ...
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade: ...
 
@@ -165,6 +173,10 @@ def _funding_settlement_facts(settlement: FundingSettlement) -> dict[str, Any]:
     return settlement.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _trading_schedule_facts(schedule: TradingScheduleSnapshot) -> dict[str, Any]:
+    return schedule.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
 def trade_at_or_before(
     engine: Engine,
     *,
@@ -199,6 +211,7 @@ class InMemoryMarketDataStore:
     _perpetual_states: dict[str, PerpetualMarketState] = field(default_factory=dict)
     _perpetual_quotes: dict[str, PerpetualQuote] = field(default_factory=dict)
     _funding_settlements: dict[str, FundingSettlement] = field(default_factory=dict)
+    _trading_schedules: dict[str, TradingScheduleSnapshot] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def put_quote(self, quote: MarketQuote) -> bool:
@@ -271,6 +284,16 @@ class InMemoryMarketDataStore:
                     raise ValueError("settlement_id 冲突且 Funding 事实不一致")
                 return False
             self._funding_settlements[settlement.settlement_id] = settlement
+            return True
+
+    def put_trading_schedule(self, schedule: TradingScheduleSnapshot) -> bool:
+        with self._lock:
+            existing = self._trading_schedules.get(schedule.schedule_id)
+            if existing is not None:
+                if _trading_schedule_facts(existing) != _trading_schedule_facts(schedule):
+                    raise ValueError("schedule_id 冲突且交易日历事实不一致")
+                return False
+            self._trading_schedules[schedule.schedule_id] = schedule
             return True
 
     def latest_spot_quote(
@@ -373,6 +396,22 @@ class InMemoryMarketDataStore:
                     ),
                 )
             )
+
+    def latest_trading_schedule(
+        self, *, as_of: datetime
+    ) -> TradingScheduleSnapshot | None:
+        as_of = require_utc(as_of)
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._trading_schedules.values()
+                if item.exchange_time <= as_of and item.observed_at <= as_of
+            )
+        return max(
+            visible,
+            key=lambda item: (item.exchange_time, item.observed_at, item.schedule_id),
+            default=None,
+        )
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
         as_of = require_utc(as_of)
@@ -622,6 +661,32 @@ class SqlMarketDataStore:
                 raise ValueError("settlement_id 冲突且 Funding 事实不一致") from None
             return False
 
+    def put_trading_schedule(self, schedule: TradingScheduleSnapshot) -> bool:
+        payload = schedule.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(tradfi_trading_schedules).values(
+                        schedule_id=schedule.schedule_id,
+                        exchange_time=schedule.exchange_time,
+                        observed_at=schedule.observed_at,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(tradfi_trading_schedules.c.payload).where(
+                        tradfi_trading_schedules.c.schedule_id == schedule.schedule_id
+                    )
+                ).scalar_one()
+            if _trading_schedule_facts(
+                TradingScheduleSnapshot.model_validate(existing)
+            ) != _trading_schedule_facts(schedule):
+                raise ValueError("schedule_id 冲突且交易日历事实不一致") from None
+            return False
+
     def latest_spot_quote(
         self,
         *,
@@ -729,6 +794,30 @@ class SqlMarketDataStore:
                 )
             ).scalars()
             return tuple(FundingSettlement.model_validate(item) for item in payloads)
+
+    def latest_trading_schedule(
+        self, *, as_of: datetime
+    ) -> TradingScheduleSnapshot | None:
+        as_of = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(tradfi_trading_schedules.c.payload)
+                .where(
+                    tradfi_trading_schedules.c.exchange_time <= as_of,
+                    tradfi_trading_schedules.c.observed_at <= as_of,
+                )
+                .order_by(
+                    tradfi_trading_schedules.c.exchange_time.desc(),
+                    tradfi_trading_schedules.c.observed_at.desc(),
+                    tradfi_trading_schedules.c.schedule_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return (
+            TradingScheduleSnapshot.model_validate(payload)
+            if payload is not None
+            else None
+        )
 
     def latest_trade(self, *, symbol: str, as_of: datetime) -> MarketTrade:
         as_of = require_utc(as_of)

@@ -88,6 +88,20 @@ Index(
     funding_settlements.c.observed_at,
 )
 
+tradfi_trading_schedules = Table(
+    "tradfi_trading_schedules",
+    metadata,
+    Column("schedule_id", String(128), primary_key=True),
+    Column("exchange_time", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_tradfi_trading_schedules_time",
+    tradfi_trading_schedules.c.exchange_time,
+    tradfi_trading_schedules.c.observed_at,
+)
+
 
 market_tables = (
     market_quotes,
@@ -96,4 +110,5 @@ market_tables = (
     perpetual_market_states,
     perpetual_quotes,
     funding_settlements,
+    tradfi_trading_schedules,
 )

@@ -869,6 +869,16 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     )
     dto = serialize_capital_overview(overview)
     assert "forecast_evidence" not in dto
+    assert dto["policy"] == {
+        "mandate_version": "provisional-total-portfolio-real-growth-v1",
+        "mandate_status": "PROVISIONAL",
+        "objective": "REAL_CAPITAL_GROWTH",
+        "horizon_years": 5,
+        "base_currency": "USDT",
+        "universe_version": "binance-shadow-investable-v1",
+        "covered_exposures": ["CASH", "CRYPTO_NETWORK"],
+        "reference_policy_version": None,
+    }
     assert dto["account"]["equity"] == "9997.9750"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
@@ -891,11 +901,8 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "equity": "9997.9750",
         "net_pnl": "-2.0250",
         "drawdown_fraction": "0.0002025",
-        "cash_benchmark_equity": None,
-        "passive_benchmark_equity": None,
-        "increment_vs_cash": None,
-        "increment_vs_passive": None,
-        "passive_drawdown_fraction": None,
+        "cash_benchmark_equity": "10000",
+        "increment_vs_cash": "-2.0250",
     }
     newest_equity_page = CapitalDashboardReader(engine, config).equity_history(limit=1)
     older_equity_page = CapitalDashboardReader(engine, config).equity_history(

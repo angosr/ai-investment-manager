@@ -77,7 +77,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-当前资本模式是 Binance BTC Spot simulated。Portfolio 只在现货多头、当前持有和现金之间比较完成后可成交收益与尚未发生的成本。
+当前资本执行模式是 Binance BTC Spot simulated。它运行在总资产 Mandate 下，但现役可投资域只覆盖结算现金与 BTC Spot，尚不能构造与 Mandate 风险和长期目标匹配的 Reference Policy；观测台必须原样显示该缺口，不能把旧被动 BTC 实验补成账户主基准。当前 Portfolio 仍只在现货多头、当前持有和现金之间比较完成后可成交收益与尚未发生的成本，直至总组合 allocator 通过独立迁移验收。
 
 Risk 有两种合法输出：
 

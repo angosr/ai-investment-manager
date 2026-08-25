@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.models import InstrumentId
+from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.market.repository import MarketDataStore
@@ -23,6 +23,7 @@ class PerpetualMarketHealth:
     state_count: int = 0
     quote_count: int = 0
     settlement_count: int = 0
+    schedule_count: int = 0
     last_refresh_at: datetime | None = None
     last_quote_refresh_at: datetime | None = None
     last_error_class: str | None = None
@@ -121,6 +122,7 @@ class BinancePerpetualMarketService:
     async def refresh(self) -> None:
         started_at = require_utc(self._clock())
         try:
+            schedule = await self._refresh_schedule_if_required()
             results = await asyncio.gather(
                 *(
                     self._refresh_state_instrument(item)
@@ -144,16 +146,33 @@ class BinancePerpetualMarketService:
             completed_at=completed_at,
             succeeded=True,
             latest_publication_at=max(
-                (item[0] for item in results),
+                (
+                    *(item[0] for item in results),
+                    *(schedule[:1] if schedule is not None else ()),
+                ),
                 default=None,
             ),
-            observation_count=sum(item[1] for item in results),
-            changed_count=sum(item[2] for item in results),
+            observation_count=sum(item[1] for item in results)
+            + (1 if schedule is not None else 0),
+            changed_count=sum(item[2] for item in results)
+            + (int(schedule[1]) if schedule is not None else 0),
         )
         if self._refresh_observer is not None:
             self._refresh_observer(refresh)
         self.health.refresh_count += 1
         self.health.last_refresh_at = completed_at
+
+    async def _refresh_schedule_if_required(self) -> tuple[datetime, bool] | None:
+        if not any(
+            item.product == InstrumentProduct.TRADFI_PERPETUAL
+            for item in self._policy.perpetual_instruments
+        ):
+            return None
+        schedule = await self._client.fetch_trading_schedule()
+        inserted = self._store.put_trading_schedule(schedule)
+        if inserted:
+            self.health.schedule_count += 1
+        return schedule.observed_at, inserted
 
     async def _refresh_state_instrument(
         self,

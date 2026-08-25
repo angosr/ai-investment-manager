@@ -9,12 +9,98 @@ from pydantic import Field, field_validator, model_validator
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import (
+    InstrumentId,
+    InstrumentProduct,
+    TradFiMarket,
+)
 
 
 class FundingRateType(StrEnum):
     REGULAR = "REGULAR"
     SPECIAL = "SPECIAL"
+
+
+class TradingSessionType(StrEnum):
+    PRE_MARKET = "PRE_MARKET"
+    REGULAR = "REGULAR"
+    AFTER_MARKET = "AFTER_MARKET"
+    OVERNIGHT = "OVERNIGHT"
+    NO_TRADING = "NO_TRADING"
+
+    @property
+    def tradable(self) -> bool:
+        return self != TradingSessionType.NO_TRADING
+
+
+class TradingSession(FrozenModel):
+    market: TradFiMarket
+    starts_at: datetime
+    ends_at: datetime
+    session_type: TradingSessionType
+
+    _utc_starts = field_validator("starts_at")(require_utc)
+    _utc_ends = field_validator("ends_at")(require_utc)
+
+    @model_validator(mode="after")
+    def interval_is_positive(self):
+        if self.starts_at >= self.ends_at:
+            raise ValueError("TradFi 交易时段起点必须早于终点")
+        return self
+
+
+class TradingScheduleSnapshot(FrozenModel):
+    schedule_id: str = Field(min_length=1)
+    exchange_time: datetime
+    observed_at: datetime
+    sessions: tuple[TradingSession, ...] = Field(min_length=1)
+    source: str = Field(min_length=1)
+
+    _utc_exchange_time = field_validator("exchange_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_sessions_are_canonical(self):
+        if self.exchange_time > self.observed_at:
+            raise ValueError("TradFi 交易日历发布时间不能晚于观察时间")
+        if self.schedule_id != stable_id(
+            "tradfi_trading_schedule",
+            self.exchange_time.isoformat(),
+        ):
+            raise ValueError("TradFi 交易日历身份与发布时间不一致")
+        ordering = tuple(
+            (item.market.value, item.starts_at, item.ends_at, item.session_type.value)
+            for item in self.sessions
+        )
+        if tuple(sorted(set(ordering))) != ordering:
+            raise ValueError("TradFi 交易时段必须唯一且按市场和时间排序")
+        previous_by_market: dict[TradFiMarket, TradingSession] = {}
+        for session in self.sessions:
+            previous = previous_by_market.get(session.market)
+            if previous is not None and session.starts_at < previous.ends_at:
+                raise ValueError("TradFi 同一市场交易时段不能重叠")
+            previous_by_market[session.market] = session
+        return self
+
+    def session_at(
+        self,
+        *,
+        instrument: InstrumentId,
+        at: datetime,
+    ) -> TradingSession | None:
+        at = require_utc(at)
+        if instrument.product != InstrumentProduct.TRADFI_PERPETUAL:
+            raise ValueError("交易日历只能查询 TradFi Perpetual")
+        market = instrument.tradfi_market
+        assert market is not None
+        return next(
+            (
+                item
+                for item in self.sessions
+                if item.market == market and item.starts_at <= at < item.ends_at
+            ),
+            None,
+        )
 
 
 class PerpetualQuote(FrozenModel):

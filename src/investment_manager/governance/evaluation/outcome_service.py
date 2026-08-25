@@ -18,10 +18,6 @@ from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
-from investment_manager.governance.evaluation.capital_benchmark import (
-    SqlCapitalBenchmarkEvaluator,
-    build_capital_benchmark_policy,
-)
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
 from investment_manager.governance.evaluation.outcome_workflow import (
     OUTCOME_EVALUATION_ACTIVITY_NAME,
@@ -245,7 +241,6 @@ class OutcomeEvaluationSupervisorHealth:
     target_forecast_settled: int = 0
     target_forecast_outcome_unavailable: int = 0
     target_forecast_pending: int = 0
-    capital_benchmark_points: int = 0
     world_model_ablation_assignments: int = 0
     world_model_ablation_settled_pairs: int = 0
     world_model_ablation_failed_controls: int = 0
@@ -254,7 +249,6 @@ class OutcomeEvaluationSupervisorHealth:
     last_candidate_error_class: str | None = None
     last_forecast_error_class: str | None = None
     last_target_forecast_error_class: str | None = None
-    last_capital_benchmark_error_class: str | None = None
     last_world_model_ablation_error_class: str | None = None
 
 
@@ -265,7 +259,6 @@ class OutcomeEvaluationSupervisor:
     candidate_settler: CandidateOutcomeSettler
     forecast_settler: AnalysisForecastOutcomeSettler
     target_forecast_settler: ForecastOutcomeSettler
-    capital_benchmark_evaluator: SqlCapitalBenchmarkEvaluator | None = None
     world_model_ablation_runner: WorldModelAblationRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
@@ -317,20 +310,6 @@ class OutcomeEvaluationSupervisor:
                 if self.health.last_target_forecast_error_class != type(exc).__name__:
                     logger.exception("target forecast settlement failed")
                 self.health.last_target_forecast_error_class = type(exc).__name__
-            if self.capital_benchmark_evaluator is not None:
-                try:
-                    written = await asyncio.to_thread(
-                        self.capital_benchmark_evaluator.reconcile,
-                        as_of=now,
-                    )
-                    self.health.capital_benchmark_points += written
-                    self.health.last_capital_benchmark_error_class = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    if self.health.last_capital_benchmark_error_class != type(exc).__name__:
-                        logger.exception("capital benchmark evaluation failed")
-                    self.health.last_capital_benchmark_error_class = type(exc).__name__
             if self.world_model_ablation_runner is not None:
                 try:
                     report = await asyncio.to_thread(
@@ -397,7 +376,6 @@ def assemble_outcome_evaluation(
     engine = build_engine(database_url)
     repository = SqlOutcomeWindowRepository(engine)
     coordinator = OutcomeEvaluationTemporalCoordinator(client, config.temporal)
-    capital_benchmark_policy = build_capital_benchmark_policy(config)
     ablation_runner = _assemble_world_model_ablation(
         config=config,
         engine=engine,
@@ -433,11 +411,6 @@ def assemble_outcome_evaluation(
                 maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
                 maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
                 settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
-            ),
-            capital_benchmark_evaluator=(
-                None
-                if capital_benchmark_policy is None
-                else SqlCapitalBenchmarkEvaluator(engine, capital_benchmark_policy)
             ),
             world_model_ablation_runner=ablation_runner,
         ),

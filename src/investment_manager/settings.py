@@ -89,8 +89,10 @@ class AppConfig(StrictConfig):
         perpetual_symbols = tuple(
             item.symbol for item in self.market_data.perpetual_instruments
         )
-        if self.assessment.enabled and set(perpetual_symbols) != set(mandate_symbols):
-            raise ValueError("启用 ContextAssessment 时 Perpetual universe 必须完整覆盖 Mandate")
+        if self.assessment.enabled and not set(mandate_symbols).issubset(
+            perpetual_symbols
+        ):
+            raise ValueError("启用 ContextAssessment 时 Perpetual 观测域必须覆盖 Mandate")
         if self.assessment.enabled and (
             self.assessment.review_trigger_symbol not in mandate_symbols
         ):

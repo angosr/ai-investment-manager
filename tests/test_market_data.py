@@ -18,6 +18,7 @@ from investment_manager.market.models import (
     InstrumentProduct,
     MarketQuote,
     MarketTrade,
+    TradFiMarket,
 )
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
 from investment_manager.market.perpetual.models import (
@@ -25,6 +26,9 @@ from investment_manager.market.perpetual.models import (
     FundingSettlement,
     PerpetualMarketState,
     PerpetualQuote,
+    TradingScheduleSnapshot,
+    TradingSession,
+    TradingSessionType,
 )
 from investment_manager.market.perpetual.service import BinancePerpetualMarketService
 from investment_manager.market.repository import (
@@ -117,8 +121,44 @@ def _perpetual_instrument() -> InstrumentId:
     )
 
 
-def _perpetual_state(*, observed_at: datetime = NOW) -> PerpetualMarketState:
-    instrument = _perpetual_instrument()
+def _tradfi_instrument() -> InstrumentId:
+    return InstrumentId(
+        product=InstrumentProduct.TRADFI_PERPETUAL,
+        symbol="SPYUSDT",
+        base_asset="SPY",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+        tradfi_market=TradFiMarket.EQUITY,
+    )
+
+
+def _trading_schedule(*, observed_at: datetime = NOW) -> TradingScheduleSnapshot:
+    exchange_time = observed_at - timedelta(seconds=1)
+    return TradingScheduleSnapshot(
+        schedule_id=stable_id(
+            "tradfi_trading_schedule",
+            exchange_time.isoformat(),
+        ),
+        exchange_time=exchange_time,
+        observed_at=observed_at,
+        sessions=(
+            TradingSession(
+                market=TradFiMarket.EQUITY,
+                starts_at=NOW - timedelta(hours=2),
+                ends_at=NOW + timedelta(hours=2),
+                session_type=TradingSessionType.REGULAR,
+            ),
+        ),
+        source="test",
+    )
+
+
+def _perpetual_state(
+    *,
+    observed_at: datetime = NOW,
+    instrument: InstrumentId | None = None,
+) -> PerpetualMarketState:
+    instrument = instrument or _perpetual_instrument()
     exchange_time = observed_at - timedelta(seconds=1)
     return PerpetualMarketState(
         state_id=stable_id(
@@ -154,8 +194,9 @@ def _perpetual_quote(
     *,
     observed_at: datetime = NOW,
     update_id: int | None = 42,
+    instrument: InstrumentId | None = None,
 ) -> PerpetualQuote:
-    instrument = _perpetual_instrument()
+    instrument = instrument or _perpetual_instrument()
     exchange_time = observed_at - timedelta(seconds=1)
     marker: str | int = update_id if update_id is not None else exchange_time.isoformat()
     return PerpetualQuote(
@@ -172,8 +213,12 @@ def _perpetual_quote(
     )
 
 
-def _funding_settlement(*, observed_at: datetime = NOW) -> FundingSettlement:
-    instrument = _perpetual_instrument()
+def _funding_settlement(
+    *,
+    observed_at: datetime = NOW,
+    instrument: InstrumentId | None = None,
+) -> FundingSettlement:
+    instrument = instrument or _perpetual_instrument()
     funding_time = NOW - timedelta(hours=4)
     return FundingSettlement(
         settlement_id=stable_id(
@@ -200,6 +245,17 @@ def test_market_interval_seconds_are_canonical(app_config, interval, seconds) ->
     policy = app_config.market_data.model_copy(update={"interval": interval})
 
     assert policy.interval_seconds == seconds
+
+
+def test_tradfi_instrument_requires_the_official_market_calendar() -> None:
+    with pytest.raises(ValueError, match="官方交易日历"):
+        InstrumentId(
+            product=InstrumentProduct.TRADFI_PERPETUAL,
+            symbol="SPYUSDT",
+            base_asset="SPY",
+            quote_asset="USDT",
+            settlement_asset="USDT",
+        )
 
 
 def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> None:
@@ -577,6 +633,22 @@ class FakePerpetualTransport:
         self.reverse_funding = reverse_funding
 
     async def get(self, path, params):
+        if path.endswith("tradingSchedule"):
+            assert params == {}
+            return {
+                "updateTime": _millis(NOW - timedelta(seconds=1)),
+                "marketSchedules": {
+                    "EQUITY": {
+                        "sessions": [
+                            {
+                                "startTime": _millis(NOW - timedelta(hours=2)),
+                                "endTime": _millis(NOW + timedelta(hours=2)),
+                                "type": "REGULAR",
+                            }
+                        ]
+                    }
+                },
+            }
         if path.endswith("bookTicker"):
             return {
                 "symbol": params["symbol"],
@@ -652,6 +724,7 @@ class FakePerpetualTransport:
 def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
     async def scenario():
         client = BinanceUsdmRestClient(FakePerpetualTransport(), clock=lambda: NOW)
+        schedule = await client.fetch_trading_schedule()
         quote = await client.fetch_quote(_perpetual_instrument())
         state = await client.fetch_market_state(_perpetual_instrument())
         settlements = await client.fetch_funding_settlements(
@@ -659,9 +732,14 @@ def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
             start=NOW - timedelta(hours=12),
             end=NOW,
         )
-        return quote, state, settlements
+        return schedule, quote, state, settlements
 
-    quote, state, settlements = asyncio.run(scenario())
+    schedule, quote, state, settlements = asyncio.run(scenario())
+    assert schedule.model_dump(exclude={"source"}) == _trading_schedule().model_dump(
+        exclude={"source"}
+    )
+    assert schedule.source == "binance-usdm-trading-schedule-rest"
+    assert schedule.session_at(instrument=_tradfi_instrument(), at=NOW) is not None
     assert quote.model_dump(exclude={"source"}) == _perpetual_quote().model_dump(exclude={"source"})
     assert quote.source == "binance-usdm-book-ticker-rest"
     assert state.exchange_time == NOW - timedelta(seconds=1)
@@ -1030,10 +1108,12 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
     state = _perpetual_state()
     quote = _perpetual_quote()
     settlement = _funding_settlement()
+    schedule = _trading_schedule()
 
     assert store.put_perpetual_state(state)
     assert store.put_perpetual_quote(quote)
     assert store.put_funding_settlement(settlement)
+    assert store.put_trading_schedule(schedule)
     assert not store.put_perpetual_state(
         state.model_copy(
             update={
@@ -1058,6 +1138,14 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
             }
         )
     )
+    assert not store.put_trading_schedule(
+        schedule.model_copy(
+            update={
+                "observed_at": NOW + timedelta(seconds=1),
+                "source": "recovered-rest",
+            }
+        )
+    )
     with pytest.raises(ValueError, match="事实不一致"):
         store.put_perpetual_state(state.model_copy(update={"mark_price": Decimal("101")}))
     with pytest.raises(ValueError, match="事实不一致"):
@@ -1066,6 +1154,18 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         )
     with pytest.raises(ValueError, match="事实不一致"):
         store.put_perpetual_quote(quote.model_copy(update={"ask": Decimal("100.2")}))
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_trading_schedule(
+            schedule.model_copy(
+                update={
+                    "sessions": (
+                        schedule.sessions[0].model_copy(
+                            update={"session_type": TradingSessionType.NO_TRADING}
+                        ),
+                    )
+                }
+            )
+        )
 
     assert (
         store.latest_perpetual_state(
@@ -1106,6 +1206,10 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         end=NOW,
         visible_at=NOW,
     ) == (settlement,)
+    assert (
+        store.latest_trading_schedule(as_of=NOW - timedelta(seconds=1)) is None
+    )
+    assert store.latest_trading_schedule(as_of=NOW) == schedule
 
 
 def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
@@ -1175,6 +1279,48 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
         )
         == _perpetual_quote()
     )
+
+
+def test_tradfi_refresh_persists_the_official_schedule_before_market_state(
+    app_config,
+) -> None:
+    instrument = _tradfi_instrument()
+
+    class FakeClient:
+        async def fetch_trading_schedule(self):
+            return _trading_schedule()
+
+        async def fetch_market_state(self, requested):
+            assert requested == instrument
+            return _perpetual_state(instrument=instrument)
+
+        async def fetch_funding_settlements(self, requested, *, start, end):
+            assert requested == instrument
+            assert start == NOW - timedelta(hours=720)
+            assert end == NOW
+            return (_funding_settlement(instrument=instrument),)
+
+    async def scenario():
+        store = InMemoryMarketDataStore()
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (instrument,)}
+        )
+        refreshes = []
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=FakeClient(),  # type: ignore[arg-type]
+            store=store,
+            refresh_observer=refreshes.append,
+            clock=lambda: NOW,
+        )
+        await service.refresh()
+        return service, store, refreshes
+
+    service, store, refreshes = asyncio.run(scenario())
+    assert service.health.schedule_count == 1
+    assert store.latest_trading_schedule(as_of=NOW) == _trading_schedule()
+    assert refreshes[0].observation_count == 3
+    assert refreshes[0].changed_count == 3
 
 
 def test_perpetual_service_reports_failed_refresh_without_false_success(

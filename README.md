@@ -85,6 +85,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-系统已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。尚未完成的是足量前瞻样本、可真实运行的 WorldModel 配对对照、事件触发的费用后增量、总组合 Reference Policy、正式 Venue 等价性以及长期资本增量证据。
+系统已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。总资产 Mandate 与可投资域已成为冻结配置；当前 Venue 只有现金和 BTC Spot，不能构造满足 Mandate 的低成本多资产 Reference Policy，因此主基准保持未登记而不拿 BTC 补位。尚未完成的是足量前瞻样本、WorldModel 配对增量、事件触发的费用后增量、合格多资产工具与 Reference Policy、正式 Venue 等价性以及长期资本增量证据。
 
 因此当前正确表述是：系统具备诚实检验盈利假设的闭环，仍不具备宣称稳定盈利的证据。

@@ -133,9 +133,34 @@ calibration:
   artifacts: []
 
 capital:
-  version: spot-capital-v30
+  version: total-portfolio-capital-v32
   enabled: false
   settlement_asset: USDT
+  mandate:
+    version: provisional-total-portfolio-real-growth-v1
+    status: PROVISIONAL
+    portfolio_id: primary
+    base_currency: USDT
+    objective: REAL_CAPITAL_GROWTH
+    horizon_years: 5
+    minimum_liquidity_fraction: "0.20"
+    maximum_drawdown_fraction: "0.10"
+    maximum_stress_loss_fraction: "0.10"
+    maximum_gross_exposure_fraction: "1.00"
+    strategic_exposures:
+      - CASH
+      - GLOBAL_EQUITY
+      - INFLATION_SENSITIVE
+      - NOMINAL_RATES
+  investable_universe:
+    version: binance-shadow-investable-v1
+    mandate_version: provisional-total-portfolio-real-growth-v1
+    instruments:
+      - instrument_key: BINANCE:SPOT:BTCUSDT
+        economic_exposure: CRYPTO_NETWORK
+        reference_eligible: false
+  # 当前 Venue 尚无通过 Mandate 风险匹配验证的低成本基准，故拒绝用 BTC 补位。
+  reference_policy: null
   decision:
     version: portfolio-net-edge-v8
     portfolio_id: primary

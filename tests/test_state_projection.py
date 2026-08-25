@@ -7,7 +7,12 @@ from investment_manager.information.collector import InMemoryEventStore
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import FeatureEngine
-from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
+from investment_manager.market.models import (
+    InstrumentId,
+    InstrumentProduct,
+    MarketQuote,
+    TradFiMarket,
+)
 from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
@@ -435,6 +440,15 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         rate_type=FundingRateType.REGULAR,
         source="test",
     )
+    observation_only = InstrumentId(
+        venue="BINANCE",
+        product=InstrumentProduct.TRADFI_PERPETUAL,
+        symbol="SPYUSDT",
+        base_asset="SPY",
+        quote_asset="USDT",
+        settlement_asset="USDT",
+        tradfi_market=TradFiMarket.EQUITY,
+    )
     market_store = _PointInTimeMarketStore(
         replay_input.market,
         perpetual_state=state,
@@ -463,7 +477,7 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
         maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
-        perpetual_instruments=(instrument,),
+        perpetual_instruments=(instrument, observation_only),
         funding_history_lookback_hours=24,
         maximum_perpetual_age_seconds=900,
         clock=lambda: OBSERVED_AT,

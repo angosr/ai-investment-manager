@@ -342,8 +342,14 @@ class DecisionPacketPreparation:
         if not self._perpetual_by_symbol:
             return ()
         mandate_symbols = tuple(item.market_symbol for item in mandate.assets)
-        if set(self._perpetual_by_symbol) != set(mandate_symbols):
-            raise ValueError("DecisionPacket Perpetual universe 与 Mandate 不一致")
+        missing_symbols = tuple(
+            symbol for symbol in mandate_symbols if symbol not in self._perpetual_by_symbol
+        )
+        if missing_symbols:
+            raise ValueError(
+                "DecisionPacket Perpetual 观测域未覆盖 Mandate: "
+                + ", ".join(missing_symbols)
+            )
         market_by_symbol = {item.symbol: item for item in markets}
         snapshots: list[DerivativeContextSnapshot] = []
         for asset in mandate.assets:

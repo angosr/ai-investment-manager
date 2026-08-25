@@ -155,8 +155,8 @@ Index(
     outcome_window_reports.c.window_end,
 )
 
-capital_benchmark_points = Table(
-    "capital_benchmark_points",
+historical_capital_benchmark_points = Table(
+    "historical_capital_benchmark_points",
     metadata,
     Column("point_id", String(128), primary_key=True),
     Column("policy_id", String(128), nullable=False),
@@ -215,15 +215,15 @@ world_model_ablation_results = Table(
     Column("payload", JSON, nullable=False),
 )
 Index(
-    "uq_capital_benchmark_policy_account",
-    capital_benchmark_points.c.policy_id,
-    capital_benchmark_points.c.account_snapshot_id,
+    "uq_historical_capital_benchmark_policy_account",
+    historical_capital_benchmark_points.c.policy_id,
+    historical_capital_benchmark_points.c.account_snapshot_id,
     unique=True,
 )
 Index(
-    "ix_capital_benchmark_policy_revision",
-    capital_benchmark_points.c.policy_id,
-    capital_benchmark_points.c.revision,
+    "ix_historical_capital_benchmark_policy_revision",
+    historical_capital_benchmark_points.c.policy_id,
+    historical_capital_benchmark_points.c.revision,
 )
 
 change_proposals = Table(

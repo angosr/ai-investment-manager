@@ -182,9 +182,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 95
+    assert len(contract) == 96
     assert content_hash(contract) == (
-        "f66da5bbc9d2df9a0001ab738a36b22a608ac70f39b907ebba633b3b807d8bc0"
+        "44726cd99df34e48b3e212658793017f42399a6bb9f1aa1ebd86d3f6141b9544"
     )
 
 
@@ -671,6 +671,7 @@ def test_market_tables_have_one_domain_owner_and_no_repository_reexports() -> No
         "market_trades",
         "perpetual_market_states",
         "perpetual_quotes",
+        "tradfi_trading_schedules",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

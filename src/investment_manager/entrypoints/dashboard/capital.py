@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_, false, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
@@ -43,15 +43,10 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
-from investment_manager.governance.evaluation.capital_benchmark import (
-    CapitalBenchmarkPoint,
-    build_capital_benchmark_policy,
-)
 from investment_manager.governance.evaluation.world_model_ablation import (
     SqlWorldModelAblationRepository,
     WorldModelAblationReport,
 )
-from investment_manager.governance.tables import capital_benchmark_points
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
@@ -60,6 +55,7 @@ from investment_manager.portfolio.models import (
     PortfolioPerformanceInterval,
     PortfolioTarget,
 )
+from investment_manager.portfolio.policy import EconomicExposure, MandateStatus
 from investment_manager.portfolio.repository import load_portfolio_target
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
@@ -75,6 +71,7 @@ from investment_manager.settings import AppConfig
 @dataclass(frozen=True, slots=True)
 class CapitalOverview:
     enabled: bool
+    policy: CapitalPolicyStatus | None = None
     account: PortfolioAccountSnapshot | None = None
     cycle_record: CapitalCycleRecord | None = None
     target: PortfolioTarget | None = None
@@ -84,6 +81,18 @@ class CapitalOverview:
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalPolicyStatus:
+    mandate_version: str
+    mandate_status: MandateStatus
+    objective: str
+    horizon_years: int
+    base_currency: str
+    universe_version: str
+    covered_exposures: tuple[EconomicExposure, ...]
+    reference_policy_version: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,10 +145,7 @@ class CapitalEquityPoint:
     net_pnl: Decimal | None
     drawdown_fraction: Decimal
     cash_benchmark_equity: Decimal | None
-    passive_benchmark_equity: Decimal | None
     increment_vs_cash: Decimal | None
-    increment_vs_passive: Decimal | None
-    passive_drawdown_fraction: Decimal | None
 
 
 class CapitalDashboardReader:
@@ -148,7 +154,6 @@ class CapitalDashboardReader:
     def __init__(self, engine: Engine, config: AppConfig) -> None:
         self._engine = engine
         self._config = config
-        self._capital_benchmark_policy = build_capital_benchmark_policy(config)
 
     def overview(self) -> CapitalOverview:
         if not self._config.capital.enabled:
@@ -260,6 +265,7 @@ class CapitalDashboardReader:
             )
         return CapitalOverview(
             enabled=True,
+            policy=self._policy_status(),
             account=account,
             cycle_record=cycle_record,
             target=target,
@@ -269,6 +275,27 @@ class CapitalDashboardReader:
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
+        )
+
+    def _policy_status(self) -> CapitalPolicyStatus:
+        capital = self._config.capital
+        covered = {
+            EconomicExposure.CASH,
+            *(item.economic_exposure for item in capital.investable_universe.instruments),
+        }
+        return CapitalPolicyStatus(
+            mandate_version=capital.mandate.version,
+            mandate_status=capital.mandate.status,
+            objective=capital.mandate.objective,
+            horizon_years=capital.mandate.horizon_years,
+            base_currency=capital.mandate.base_currency,
+            universe_version=capital.investable_universe.version,
+            covered_exposures=tuple(sorted(covered)),
+            reference_policy_version=(
+                None
+                if capital.reference_policy is None
+                else capital.reference_policy.version
+            ),
         )
 
     def forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
@@ -489,31 +516,9 @@ class CapitalDashboardReader:
 
         if limit < 1 or limit > 101:
             raise ValueError("Capital equity internal limit 必须在 1..101")
-        benchmark_join = (
-            false()
-            if self._capital_benchmark_policy is None
-            else and_(
-                capital_benchmark_points.c.account_snapshot_id
-                == portfolio_account_snapshots.c.snapshot_id,
-                capital_benchmark_points.c.policy_id
-                == self._capital_benchmark_policy.policy_id,
-            )
-        )
-        statement = (
-            select(
-                portfolio_account_snapshots.c.payload,
-                capital_benchmark_points.c.payload.label("benchmark_payload"),
-            )
-            .select_from(
-                portfolio_account_snapshots.outerjoin(
-                    capital_benchmark_points,
-                    benchmark_join,
-                )
-            )
-            .where(
-                portfolio_account_snapshots.c.portfolio_id
-                == self._config.capital.decision.portfolio_id
-            )
+        portfolio_id = self._config.capital.decision.portfolio_id
+        statement = select(portfolio_account_snapshots.c.payload).where(
+            portfolio_account_snapshots.c.portfolio_id == portfolio_id
         )
         if cursor is not None:
             statement = statement.where(
@@ -524,23 +529,28 @@ class CapitalDashboardReader:
                 )
             )
         with self._engine.connect() as connection:
+            baseline_payload = connection.execute(
+                select(portfolio_account_snapshots.c.payload)
+                .where(portfolio_account_snapshots.c.portfolio_id == portfolio_id)
+                .order_by(
+                    portfolio_account_snapshots.c.revision,
+                    portfolio_account_snapshots.c.as_of,
+                    portfolio_account_snapshots.c.snapshot_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            baseline = (
+                None
+                if baseline_payload is None
+                else PortfolioAccountSnapshot.model_validate(baseline_payload)
+            )
             rows = connection.execute(
                 statement.order_by(
                     portfolio_account_snapshots.c.as_of.desc(),
                     portfolio_account_snapshots.c.snapshot_id.desc(),
                 ).limit(limit)
             )
-            snapshots = tuple(
-                (
-                    PortfolioAccountSnapshot.model_validate(row.payload),
-                    (
-                        None
-                        if row.benchmark_payload is None
-                        else CapitalBenchmarkPoint.model_validate(row.benchmark_payload)
-                    ),
-                )
-                for row in rows
-            )
+            snapshots = tuple(PortfolioAccountSnapshot.model_validate(row.payload) for row in rows)
         return tuple(
             CapitalEquityPoint(
                 snapshot_id=account.snapshot_id,
@@ -554,28 +564,15 @@ class CapitalDashboardReader:
                 ),
                 drawdown_fraction=account.drawdown_fraction,
                 cash_benchmark_equity=(
-                    benchmark.cash_equity if benchmark is not None else None
-                ),
-                passive_benchmark_equity=(
-                    benchmark.passive_equity if benchmark is not None else None
+                    baseline.equity if baseline is not None else None
                 ),
                 increment_vs_cash=(
-                    benchmark.actual_increment_vs_cash
-                    if benchmark is not None
-                    else None
-                ),
-                increment_vs_passive=(
-                    benchmark.actual_increment_vs_passive
-                    if benchmark is not None
-                    else None
-                ),
-                passive_drawdown_fraction=(
-                    benchmark.passive_drawdown_fraction
-                    if benchmark is not None
+                    account.equity - baseline.equity
+                    if baseline is not None
                     else None
                 ),
             )
-            for account, benchmark in snapshots
+            for account in snapshots
         )
 
     @staticmethod
@@ -1025,8 +1022,21 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
     target = overview.target
     risk = overview.risk
     performance = overview.latest_performance
+    policy = overview.policy
     return {
         "enabled": overview.enabled,
+        "policy": None
+        if policy is None
+        else {
+            "mandate_version": policy.mandate_version,
+            "mandate_status": policy.mandate_status.value,
+            "objective": policy.objective,
+            "horizon_years": policy.horizon_years,
+            "base_currency": policy.base_currency,
+            "universe_version": policy.universe_version,
+            "covered_exposures": [item.value for item in policy.covered_exposures],
+            "reference_policy_version": policy.reference_policy_version,
+        },
         "account": None
         if account is None
         else {
@@ -1255,23 +1265,8 @@ def serialize_capital_equity(items: tuple[CapitalEquityPoint, ...]) -> dict:
                     if item.cash_benchmark_equity is None
                     else str(item.cash_benchmark_equity)
                 ),
-                "passive_benchmark_equity": (
-                    None
-                    if item.passive_benchmark_equity is None
-                    else str(item.passive_benchmark_equity)
-                ),
                 "increment_vs_cash": (
                     None if item.increment_vs_cash is None else str(item.increment_vs_cash)
-                ),
-                "increment_vs_passive": (
-                    None
-                    if item.increment_vs_passive is None
-                    else str(item.increment_vs_passive)
-                ),
-                "passive_drawdown_fraction": (
-                    None
-                    if item.passive_drawdown_fraction is None
-                    else str(item.passive_drawdown_fraction)
                 ),
             }
             for item in items

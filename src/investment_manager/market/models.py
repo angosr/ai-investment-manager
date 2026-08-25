@@ -22,6 +22,14 @@ class InstrumentProduct(StrEnum):
     TRADFI_PERPETUAL = "TRADFI_PERPETUAL"
 
 
+class TradFiMarket(StrEnum):
+    EQUITY = "EQUITY"
+    COMMODITY = "COMMODITY"
+    KR_EQUITY = "KR_EQUITY"
+    HK_EQUITY = "HK_EQUITY"
+    CN_EQUITY = "CN_EQUITY"
+
+
 class InstrumentId(FrozenModel):
     """Product-qualified market identity; a symbol alone is never sufficient."""
 
@@ -32,6 +40,10 @@ class InstrumentId(FrozenModel):
     quote_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
     settlement_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
     contract_multiplier: PositiveDecimal = Decimal("1")
+    tradfi_market: TradFiMarket | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def product_contract_must_be_consistent(self):
@@ -49,6 +61,10 @@ class InstrumentId(FrozenModel):
             InstrumentProduct.TRADFI_PERPETUAL,
         } and self.settlement_asset != self.quote_asset:
             raise ValueError("Binance Perpetual settlement_asset 必须等于 quote_asset")
+        if (self.product == InstrumentProduct.TRADFI_PERPETUAL) != (
+            self.tradfi_market is not None
+        ):
+            raise ValueError("TradFi Perpetual 必须且只能声明官方交易日历")
         return self
 
     @property
