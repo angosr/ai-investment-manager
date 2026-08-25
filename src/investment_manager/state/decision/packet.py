@@ -414,6 +414,9 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                 "spot_flow_observed_at",
                 "spot_flow_window_minutes",
                 "spot_taker_buy_sell_ratio",
+                "spot_mid_range_bps",
+                "reference_spot_mid_deviation_bps",
+                "widest_spot_spread_bps",
                 "positioning_observed_at",
                 "positioning_window_minutes",
                 "open_interest_change_fraction",
@@ -651,6 +654,29 @@ class PacketDerivativeState(FrozenModel):
         ge=0,
         exclude_if=lambda value: value is None,
     )
+    cross_venue_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    spot_venue_count: int | None = Field(
+        default=None,
+        ge=3,
+        exclude_if=lambda value: value is None,
+    )
+    spot_mid_range_bps: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    reference_spot_mid_deviation_bps: Decimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    widest_spot_spread_bps: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     positioning_observed_at: datetime | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -712,6 +738,7 @@ class PacketDerivativeState(FrozenModel):
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
     _utc_spot_flow_observed = field_validator("spot_flow_observed_at")(optional_utc)
+    _utc_cross_venue_observed = field_validator("cross_venue_observed_at")(optional_utc)
     _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
@@ -727,6 +754,22 @@ class PacketDerivativeState(FrozenModel):
             value is not None for value in spot_values
         ):
             raise ValueError("决策包现货主动成交摘要必须完整或全部缺省")
+        cross_venue_values = (
+            self.cross_venue_observed_at,
+            self.spot_venue_count,
+            self.spot_mid_range_bps,
+            self.reference_spot_mid_deviation_bps,
+            self.widest_spot_spread_bps,
+        )
+        if any(value is not None for value in cross_venue_values) and not all(
+            value is not None for value in cross_venue_values
+        ):
+            raise ValueError("决策包跨场所现货摘要必须完整或全部缺省")
+        if (
+            self.cross_venue_observed_at is not None
+            and self.cross_venue_observed_at > self.observed_at
+        ):
+            raise ValueError("决策包跨场所现货摘要不能晚于结构状态")
         values = (
             self.positioning_observed_at,
             self.positioning_window_minutes,
@@ -1766,6 +1809,13 @@ class DecisionPacketBuilder:
             spot_taker_buy_sell_ratio=snapshot.spot_taker_buy_sell_ratio,
             spot_taker_buy_volume=snapshot.spot_taker_buy_volume,
             spot_taker_sell_volume=snapshot.spot_taker_sell_volume,
+            cross_venue_observed_at=snapshot.cross_venue_observed_at,
+            spot_venue_count=snapshot.spot_venue_count,
+            spot_mid_range_bps=snapshot.spot_mid_range_bps,
+            reference_spot_mid_deviation_bps=(
+                snapshot.reference_spot_mid_deviation_bps
+            ),
+            widest_spot_spread_bps=snapshot.widest_spot_spread_bps,
             positioning_observed_at=snapshot.positioning_observed_at,
             positioning_window_minutes=snapshot.positioning_window_minutes,
             open_interest=snapshot.open_interest,

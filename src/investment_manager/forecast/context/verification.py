@@ -258,6 +258,9 @@ def packet_feature_observations(
             "trailing_funding_rate_stddev_bps",
             "trailing_funding_positive_fraction",
             "spot_taker_buy_sell_ratio",
+            "spot_mid_range_bps",
+            "reference_spot_mid_deviation_bps",
+            "widest_spot_spread_bps",
             "open_interest_change_fraction",
             "global_long_account_fraction",
             "taker_buy_sell_ratio",
@@ -289,6 +292,13 @@ def _derivative_feature_source(
     item: PacketDerivativeState,
     field: str,
 ) -> tuple[datetime, str]:
+    if field in {
+        "spot_mid_range_bps",
+        "reference_spot_mid_deviation_bps",
+        "widest_spot_spread_bps",
+    }:
+        assert item.cross_venue_observed_at is not None
+        return item.cross_venue_observed_at, "cross_venue_spot"
     if field.startswith("spot_"):
         assert item.spot_flow_observed_at is not None
         return item.spot_flow_observed_at, "spot_flow"

@@ -17,10 +17,12 @@ from investment_manager.market.features import (
 )
 from investment_manager.market.models import (
     ClosedMarketBar,
+    CrossVenueSpotQuote,
     InstrumentId,
     InstrumentProduct,
     MarketQuote,
     MarketTrade,
+    SpotVenue,
     TradFiMarket,
     ValuationQuoteQuality,
 )
@@ -35,6 +37,7 @@ from investment_manager.market.perpetual.models import (
     TradingSessionType,
 )
 from investment_manager.market.perpetual.service import BinancePerpetualMarketService
+from investment_manager.market.policy import CrossVenueSpotPolicy, CrossVenueSpotProduct
 from investment_manager.market.repository import (
     InMemoryMarketDataStore,
     SqlMarketDataStore,
@@ -45,7 +48,10 @@ from investment_manager.market.runtime import (
     BinanceMessageParser,
     BinancePublicRestClient,
     BinanceWebSocketConnector,
+    CoinbaseSpotClient,
+    CrossVenueSpotService,
     HttpxPublicJsonTransport,
+    KrakenSpotClient,
     MarketBootstrapper,
     MarketShockDetector,
     assemble_shadow_market_stream,
@@ -91,6 +97,44 @@ def _aligned_spot_quote(spot, *, observed_at: datetime = NOW) -> MarketQuote:
         ask=spot.ask,
         ask_quantity="3",
         source="test",
+    )
+
+
+def _cross_venue_quote(
+    venue: SpotVenue,
+    *,
+    bid: str,
+    ask: str,
+    observed_at: datetime = NOW,
+    marker: str | None = None,
+) -> CrossVenueSpotQuote:
+    marker = marker or (
+        "123"
+        if venue == SpotVenue.COINBASE
+        else (observed_at - timedelta(milliseconds=1)).isoformat()
+    )
+    return CrossVenueSpotQuote(
+        quote_id=stable_id(
+            "cross_venue_spot_quote",
+            venue.value,
+            "BTCUSDT",
+            marker,
+        ),
+        venue=venue,
+        symbol="BTCUSDT",
+        provider_symbol=("BTC-USDT" if venue == SpotVenue.COINBASE else "BTC/USDT"),
+        exchange_time=observed_at - timedelta(milliseconds=1),
+        observed_at=observed_at,
+        bid=bid,
+        bid_quantity="1",
+        ask=ask,
+        ask_quantity="2",
+        source_sequence=(marker if venue == SpotVenue.COINBASE else None),
+        source=(
+            "coinbase-exchange-rest"
+            if venue == SpotVenue.COINBASE
+            else "kraken-spot-rest"
+        ),
     )
 
 
@@ -408,6 +452,62 @@ def test_derivative_context_is_dense_point_in_time_evidence(replay_input) -> Non
     )
 
 
+def test_derivative_context_compresses_fresh_independent_spot_venues(replay_input) -> None:
+    spot = replay_input.market.model_copy(
+        update={"cycle_id": "cross-venue", "as_of": NOW, "observed_at": NOW}
+    )
+    external = (
+        _cross_venue_quote(SpotVenue.COINBASE, bid="99.8", ask="100.0"),
+        _cross_venue_quote(SpotVenue.KRAKEN, bid="100.2", ask="100.3"),
+    )
+
+    snapshot = build_derivative_context_snapshot(
+        cycle_id="cross-venue",
+        asset="BTC",
+        spot=spot,
+        aligned_spot_quote=_aligned_spot_quote(spot),
+        state=_perpetual_state(observed_at=NOW),
+        quote=_perpetual_quote(observed_at=NOW),
+        settlements=(),
+        funding_window_hours=24,
+        maximum_quote_skew_seconds=15,
+        cross_venue_quotes=external,
+        maximum_cross_venue_age_seconds=30,
+    )
+
+    assert snapshot.spot_venue_count == 3
+    assert snapshot.cross_venue_observed_at == NOW
+    assert snapshot.spot_mid_range_bps is not None
+    assert snapshot.spot_mid_range_bps > 0
+    assert snapshot.reference_spot_mid_deviation_bps is not None
+    assert snapshot.widest_spot_spread_bps is not None
+    assert {item.quote_id for item in external}.issubset(snapshot.input_refs)
+
+    stale = tuple(
+        item.model_copy(
+            update={
+                "exchange_time": NOW - timedelta(seconds=31, milliseconds=1),
+                "observed_at": NOW - timedelta(seconds=31),
+            }
+        )
+        for item in external
+    )
+    with pytest.raises(ValueError, match="已过期"):
+        build_derivative_context_snapshot(
+            cycle_id="cross-venue",
+            asset="BTC",
+            spot=spot,
+            aligned_spot_quote=_aligned_spot_quote(spot),
+            state=_perpetual_state(observed_at=NOW),
+            quote=_perpetual_quote(observed_at=NOW),
+            settlements=(),
+            funding_window_hours=24,
+            maximum_quote_skew_seconds=15,
+            cross_venue_quotes=stale,
+            maximum_cross_venue_age_seconds=30,
+        )
+
+
 def test_derivative_basis_uses_time_aligned_spot_quote_not_latest_snapshot(
     replay_input,
 ) -> None:
@@ -670,6 +770,149 @@ class FakeHttpTransport:
                 ],
             ]
         raise AssertionError(path)
+
+
+def test_cross_venue_clients_parse_first_party_l1_books_and_store_point_in_time() -> None:
+    product = CrossVenueSpotProduct(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        coinbase_product_id="BTC-USDT",
+        kraken_pair="BTC/USDT",
+    )
+
+    class CoinbaseTransport:
+        async def get(self, path, params):
+            assert path == "/products/BTC-USDT/book"
+            assert params == {"level": 1}
+            return {
+                "bids": [["99.9", "2", 1]],
+                "asks": [["100.1", "3", 1]],
+                "sequence": 123,
+                "time": (NOW - timedelta(milliseconds=2)).isoformat(),
+            }
+
+    class KrakenTransport:
+        async def get(self, path, params):
+            assert path == "/0/public/Depth"
+            assert params == {"pair": "BTC/USDT", "count": 1, "assetVersion": 1}
+            exchange_seconds = Decimal(str((NOW - timedelta(milliseconds=1)).timestamp()))
+            return {
+                "error": [],
+                "result": {
+                    "BTC/USDT": {
+                        "bids": [["99.8", "4", str(exchange_seconds)]],
+                        "asks": [["100.2", "5", str(exchange_seconds)]],
+                    }
+                },
+            }
+
+    async def scenario():
+        return await asyncio.gather(
+            CoinbaseSpotClient(CoinbaseTransport(), clock=lambda: NOW).fetch(product),
+            KrakenSpotClient(KrakenTransport(), clock=lambda: NOW).fetch(product),
+        )
+
+    coinbase, kraken = asyncio.run(scenario())
+    assert coinbase.venue == SpotVenue.COINBASE
+    assert coinbase.source_sequence == "123"
+    assert kraken.venue == SpotVenue.KRAKEN
+    assert kraken.exchange_time == NOW - timedelta(milliseconds=1)
+
+    store = InMemoryMarketDataStore()
+    assert store.put_cross_venue_spot_quote(coinbase)
+    assert store.put_cross_venue_spot_quote(kraken)
+    assert store.latest_cross_venue_spot_quotes(
+        symbol="BTCUSDT",
+        venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
+        as_of=NOW,
+    ) == (coinbase, kraken)
+
+
+def test_cross_venue_service_refreshes_each_source_independently_without_ai_trigger() -> None:
+    products = (
+        CrossVenueSpotProduct(
+            symbol="BTCUSDT",
+            base_asset="BTC",
+            quote_asset="USDT",
+            coinbase_product_id="BTC-USDT",
+            kraken_pair="BTC/USDT",
+        ),
+        CrossVenueSpotProduct(
+            symbol="ETHUSDT",
+            base_asset="ETH",
+            quote_asset="USDT",
+            coinbase_product_id="ETH-USDT",
+            kraken_pair="ETH/USDT",
+        ),
+    )
+
+    class CoinbaseTransport:
+        async def get(self, path, params):
+            symbol = path.split("/")[2].replace("-", "")
+            assert params == {"level": 1}
+            return {
+                "bids": [["99.9", "2", 1]],
+                "asks": [["100.1", "3", 1]],
+                "sequence": 123 if symbol == "BTCUSDT" else 456,
+                "time": (NOW - timedelta(milliseconds=2)).isoformat(),
+            }
+
+    class KrakenTransport:
+        async def get(self, path, params):
+            assert path == "/0/public/Depth"
+            pair = params["pair"]
+            exchange_seconds = str((NOW - timedelta(milliseconds=1)).timestamp())
+            return {
+                "error": [],
+                "result": {
+                    pair: {
+                        "bids": [["99.8", "4", exchange_seconds]],
+                        "asks": [["100.2", "5", exchange_seconds]],
+                    }
+                },
+            }
+
+    async def scenario():
+        store = InMemoryMarketDataStore()
+        stop = asyncio.Event()
+        refreshes = []
+
+        def observe(result):
+            refreshes.append(result)
+            if len(refreshes) == 2:
+                stop.set()
+
+        service = CrossVenueSpotService(
+            policy=CrossVenueSpotPolicy(
+                version="cross-venue-spot-test-v1",
+                products=products,
+                poll_seconds=10,
+                maximum_age_seconds=30,
+            ),
+            coinbase=CoinbaseSpotClient(CoinbaseTransport(), clock=lambda: NOW),
+            kraken=KrakenSpotClient(KrakenTransport(), clock=lambda: NOW),
+            store=store,
+            refresh_observer=observe,
+            clock=lambda: NOW,
+        )
+        await service.run(stop)
+        return store, service, tuple(refreshes)
+
+    store, service, refreshes = asyncio.run(scenario())
+    assert tuple(sorted(item.venue for item in refreshes)) == (
+        SpotVenue.COINBASE,
+        SpotVenue.KRAKEN,
+    )
+    assert all(item.succeeded and item.observation_count == 2 for item in refreshes)
+    assert service.health.quote_count == 4
+    assert len(
+        store.latest_cross_venue_spot_quotes(
+            symbol="ETHUSDT",
+            venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
+            as_of=NOW,
+        )
+    ) == 2
 
 
 def test_http_transport_reuses_and_closes_one_connection_pool(monkeypatch) -> None:
@@ -1261,6 +1504,42 @@ def test_market_store_is_idempotent_and_never_uses_future_observations(backend) 
     assert snapshot.last == Decimal("100.05")
     assert snapshot.observed_at == NOW
     assert snapshot.bars[-1].volume == Decimal("10")
+
+
+@pytest.mark.parametrize("backend", ["memory", "sql"])
+def test_cross_venue_spot_store_is_immutable_and_point_in_time(backend) -> None:
+    if backend == "memory":
+        store = InMemoryMarketDataStore()
+    else:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        create_market_schema(engine)
+        store = SqlMarketDataStore(engine)
+    current = (
+        _cross_venue_quote(SpotVenue.COINBASE, bid="99.9", ask="100.1"),
+        _cross_venue_quote(SpotVenue.KRAKEN, bid="99.8", ask="100.2"),
+    )
+    future = _cross_venue_quote(
+        SpotVenue.COINBASE,
+        bid="100.9",
+        ask="101.1",
+        observed_at=NOW + timedelta(minutes=1),
+        marker="124",
+    )
+    assert all(store.put_cross_venue_spot_quote(item) for item in current)
+    assert store.put_cross_venue_spot_quote(future)
+    assert not store.put_cross_venue_spot_quote(
+        current[0].model_copy(
+            update={
+                "observed_at": NOW + timedelta(seconds=1),
+                "source": "recovered-rest",
+            }
+        )
+    )
+    assert store.latest_cross_venue_spot_quotes(
+        symbol="BTCUSDT",
+        venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
+        as_of=NOW,
+    ) == current
 
 
 @pytest.mark.parametrize("backend", ["memory", "sql"])

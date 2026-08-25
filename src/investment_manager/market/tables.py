@@ -12,6 +12,24 @@ market_quotes = Table(
 )
 Index("ix_market_quotes_symbol_observed", market_quotes.c.symbol, market_quotes.c.observed_at)
 
+cross_venue_spot_quotes = Table(
+    "cross_venue_spot_quotes",
+    metadata,
+    Column("quote_id", String(128), primary_key=True),
+    Column("venue", String(32), nullable=False),
+    Column("symbol", String(32), nullable=False),
+    Column("exchange_time", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_cross_venue_spot_quotes_venue_symbol_time",
+    cross_venue_spot_quotes.c.venue,
+    cross_venue_spot_quotes.c.symbol,
+    cross_venue_spot_quotes.c.exchange_time,
+    cross_venue_spot_quotes.c.observed_at,
+)
+
 market_trades = Table(
     "market_trades",
     metadata,
@@ -105,6 +123,7 @@ Index(
 
 market_tables = (
     market_quotes,
+    cross_venue_spot_quotes,
     market_trades,
     market_bars,
     perpetual_market_states,

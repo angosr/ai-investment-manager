@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import (
     FrozenModel,
@@ -28,6 +29,11 @@ class TradFiMarket(StrEnum):
     KR_EQUITY = "KR_EQUITY"
     HK_EQUITY = "HK_EQUITY"
     CN_EQUITY = "CN_EQUITY"
+
+
+class SpotVenue(StrEnum):
+    COINBASE = "COINBASE"
+    KRAKEN = "KRAKEN"
 
 
 class InstrumentId(FrozenModel):
@@ -208,6 +214,48 @@ class MarketQuote(FrozenModel):
     def ask_must_not_be_below_bid(self):
         if self.ask < self.bid:
             raise ValueError("ask 不能低于 bid")
+        return self
+
+
+class CrossVenueSpotQuote(FrozenModel):
+    """Immutable first-seen L1 quote from an independent spot venue."""
+
+    quote_id: str = Field(min_length=1)
+    venue: SpotVenue
+    symbol: str = Field(pattern=r"^[A-Z0-9]+$")
+    provider_symbol: str = Field(min_length=1)
+    exchange_time: datetime
+    observed_at: datetime
+    bid: PositiveDecimal
+    bid_quantity: Money
+    ask: PositiveDecimal
+    ask_quantity: Money
+    source_sequence: str | None = Field(default=None, min_length=1)
+    source: str = Field(min_length=1)
+
+    _utc_exchange_time = field_validator("exchange_time")(require_utc)
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def identity_and_timing_must_be_valid(self):
+        if self.exchange_time > self.observed_at:
+            raise ValueError("跨场所现货 exchange_time 不能晚于首次观察时间")
+        if self.ask < self.bid:
+            raise ValueError("跨场所现货 ask 不能低于 bid")
+        marker = self.source_sequence or self.exchange_time.isoformat()
+        if self.quote_id != stable_id(
+            "cross_venue_spot_quote",
+            self.venue.value,
+            self.symbol,
+            marker,
+        ):
+            raise ValueError("跨场所现货 quote_id 与来源身份不一致")
+        expected_source = {
+            SpotVenue.COINBASE: "coinbase-exchange-rest",
+            SpotVenue.KRAKEN: "kraken-spot-rest",
+        }[self.venue]
+        if self.source != expected_source:
+            raise ValueError("跨场所现货来源与 venue 不一致")
         return self
 
 

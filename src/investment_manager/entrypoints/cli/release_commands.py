@@ -59,6 +59,8 @@ from investment_manager.governance.release.deployment import (
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.tables import source_poll_records
+from investment_manager.market.models import SpotVenue
+from investment_manager.market.tables import cross_venue_spot_quotes
 from investment_manager.platform.database import (
     DATABASE_SCHEMA_VERSION,
     build_engine,
@@ -618,14 +620,29 @@ async def _core_readiness_missing(
             perpetual_at = reader.latest_perpetual_observed_at()
             if perpetual_at is None or perpetual_at < group.started_at:
                 missing.append("market-perpetual")
+        if config.market_data.cross_venue_spot is not None:
+            with engine.connect() as connection:
+                for venue in SpotVenue:
+                    latest_cross_venue = connection.scalar(
+                        select(func.max(cross_venue_spot_quotes.c.observed_at)).where(
+                            cross_venue_spot_quotes.c.venue == venue.value
+                        )
+                    )
+                    if latest_cross_venue is None or latest_cross_venue < group.started_at:
+                        missing.append(f"market-cross-venue:{venue.value}")
 
+        market_coverage_streams = {
+            "binance-usdm-market",
+            "coinbase-spot-market",
+            "kraken-spot-market",
+        }
         information_streams = tuple(
             sorted(
                 {
                     stream
                     for requirement in config.information.coverage_requirements
                     for stream in requirement.source_stream_ids
-                    if stream != "binance-usdm-market"
+                    if stream not in market_coverage_streams
                 }
             )
         )

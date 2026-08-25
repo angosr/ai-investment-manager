@@ -8,9 +8,11 @@ from investment_manager.information.models import IntelligenceEvent
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import FeatureEngine
 from investment_manager.market.models import (
+    CrossVenueSpotQuote,
     InstrumentId,
     InstrumentProduct,
     MarketQuote,
+    SpotVenue,
     TradFiMarket,
 )
 from investment_manager.market.perpetual.models import (
@@ -31,6 +33,7 @@ from investment_manager.state.decision.packet import (
     DecisionPacketCapacityError,
     MandateAsset,
     PacketReviewRequest,
+    decision_packet_analysis_projection,
 )
 from investment_manager.state.decision.repository import SqlDecisionPacketAssembler
 from investment_manager.state.evidence_repository import (
@@ -92,11 +95,13 @@ class _PointInTimeMarketStore:
         perpetual_state=None,
         perpetual_quote=None,
         funding_settlements=(),
+        cross_venue_quotes=(),
     ) -> None:
         self.market = market
         self.perpetual_state = perpetual_state
         self.perpetual_quote = perpetual_quote
         self.settlements = funding_settlements
+        self.cross_venue_quotes = cross_venue_quotes
 
     def snapshot(self, *, cycle_id, symbol, interval, as_of, bar_window, source):
         assert symbol == self.market.symbol
@@ -138,6 +143,16 @@ class _PointInTimeMarketStore:
             if item.instrument == instrument
             and start <= item.funding_time < end
             and item.observed_at <= visible_at
+        )
+
+    def latest_cross_venue_spot_quotes(self, *, symbol, venues, as_of):
+        return tuple(
+            item
+            for item in self.cross_venue_quotes
+            if item.symbol == symbol
+            and item.venue in venues
+            and item.exchange_time <= as_of
+            and item.observed_at <= as_of
         )
 
 
@@ -442,6 +457,47 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         rate_type=FundingRateType.REGULAR,
         source="test",
     )
+    coinbase_sequence = "123"
+    kraken_marker = exchange_at.isoformat()
+    cross_venue_quotes = (
+        CrossVenueSpotQuote(
+            quote_id=stable_id(
+                "cross_venue_spot_quote",
+                SpotVenue.COINBASE.value,
+                "BTCUSDT",
+                coinbase_sequence,
+            ),
+            venue=SpotVenue.COINBASE,
+            symbol="BTCUSDT",
+            provider_symbol="BTC-USDT",
+            exchange_time=exchange_at,
+            observed_at=OBSERVED_AT,
+            bid="99.9",
+            bid_quantity="1",
+            ask="100.1",
+            ask_quantity="1",
+            source_sequence=coinbase_sequence,
+            source="coinbase-exchange-rest",
+        ),
+        CrossVenueSpotQuote(
+            quote_id=stable_id(
+                "cross_venue_spot_quote",
+                SpotVenue.KRAKEN.value,
+                "BTCUSDT",
+                kraken_marker,
+            ),
+            venue=SpotVenue.KRAKEN,
+            symbol="BTCUSDT",
+            provider_symbol="BTC/USDT",
+            exchange_time=exchange_at,
+            observed_at=OBSERVED_AT,
+            bid="100.2",
+            bid_quantity="1",
+            ask="100.3",
+            ask_quantity="1",
+            source="kraken-spot-rest",
+        ),
+    )
     observation_only = InstrumentId(
         venue="BINANCE",
         product=InstrumentProduct.TRADFI_PERPETUAL,
@@ -456,6 +512,7 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         perpetual_state=state,
         perpetual_quote=quote,
         funding_settlements=(settlement,),
+        cross_venue_quotes=cross_venue_quotes,
     )
     facts = SqlFactStateStore(engine)
     preparation = DecisionPacketPreparation(
@@ -484,6 +541,8 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         perpetual_instruments=(observation_only, instrument),
         funding_history_lookback_hours=24,
         maximum_perpetual_age_seconds=900,
+        cross_venue_spot_venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
+        maximum_cross_venue_spot_age_seconds=30,
         clock=lambda: OBSERVED_AT,
     )
     mandate = AnalysisMandate(
@@ -514,7 +573,16 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
     assert result.status == PacketPreparationStatus.READY
     assert result.packet is not None
     assert len(result.packet.derivative_states) == 1
-    assert result.packet.derivative_states[0].last_funding_rate_bps == 1
+    derivative = result.packet.derivative_states[0]
+    assert derivative.last_funding_rate_bps == 1
+    assert derivative.spot_venue_count == 3
+    assert derivative.spot_mid_range_bps is not None
+    projected = decision_packet_analysis_projection(result.packet)["derivative_states"][0]
+    assert "cross_venue_observed_at" not in projected
+    assert "spot_venue_count" not in projected
+    assert projected["spot_mid_range_bps"] is not None
+    assert "reference_spot_mid_deviation_bps" in projected
+    assert "widest_spot_spread_bps" in projected
     frozen_state = facts.state(result.state_id)
     assert frozen_state is not None
     assert len(frozen_state.derivative_snapshot_refs) == 1

@@ -38,7 +38,7 @@ from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.features import FeatureEngine, build_derivative_context_snapshot
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
 from investment_manager.market.policy import FeaturePolicy
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.portfolio.policy import ContextForecastPolicy
@@ -90,6 +90,8 @@ class MarketContextTargetStateProvider:
     bar_window: int
     funding_lookback_hours: int
     maximum_quote_skew_seconds: int
+    cross_venue_spot_venues: tuple[SpotVenue, ...] = ()
+    maximum_cross_venue_spot_age_seconds: int = 30
 
     def build(self, *, as_of: datetime) -> ContextForecastTargetState:
         at = require_utc(as_of)
@@ -160,6 +162,10 @@ class MarketContextTargetStateProvider:
                     ),
                     funding_window_hours=self.funding_lookback_hours,
                     maximum_quote_skew_seconds=self.maximum_quote_skew_seconds,
+                    cross_venue_quotes=self._cross_venue_quotes(as_of=at),
+                    maximum_cross_venue_age_seconds=(
+                        self.maximum_cross_venue_spot_age_seconds
+                    ),
                 )
                 derivative_states = (self._derivative_state(derivative),)
                 refs.update(derivative.input_refs)
@@ -170,6 +176,22 @@ class MarketContextTargetStateProvider:
             derivative_states=derivative_states,
             input_refs=tuple(sorted(refs)),
         )
+
+    def _cross_venue_quotes(self, *, as_of: datetime):
+        if not self.cross_venue_spot_venues:
+            return ()
+        quotes = self.market.latest_cross_venue_spot_quotes(
+            symbol=self.spot.symbol,
+            venues=self.cross_venue_spot_venues,
+            as_of=as_of,
+        )
+        if len(quotes) != len(self.cross_venue_spot_venues) or any(
+            (as_of - item.observed_at).total_seconds()
+            > self.maximum_cross_venue_spot_age_seconds
+            for item in quotes
+        ):
+            return ()
+        return quotes
 
     @staticmethod
     def _derivative_state(snapshot) -> PacketDerivativeState:

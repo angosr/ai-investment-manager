@@ -14,6 +14,48 @@ class FeaturePolicy(StrictConfig):
     volatility_window: int = Field(default=8, ge=2)
 
 
+class CrossVenueSpotProduct(StrictConfig):
+    symbol: str = Field(pattern=r"^[A-Z0-9]+$")
+    base_asset: str = Field(pattern=r"^[A-Z0-9]+$")
+    quote_asset: str = Field(pattern=r"^[A-Z0-9]+$")
+    coinbase_product_id: str = Field(pattern=r"^[A-Z0-9]+-[A-Z0-9]+$")
+    kraken_pair: str = Field(pattern=r"^[A-Z0-9/]+$")
+
+    @model_validator(mode="after")
+    def product_symbols_must_match(self):
+        if self.symbol != f"{self.base_asset}{self.quote_asset}":
+            raise ValueError("跨场所现货 symbol 必须由 base_asset 与 quote_asset 组成")
+        if self.coinbase_product_id != f"{self.base_asset}-{self.quote_asset}":
+            raise ValueError("Coinbase product id 与跨场所现货资产不一致")
+        if self.kraken_pair != f"{self.base_asset}/{self.quote_asset}":
+            raise ValueError("Kraken pair 与跨场所现货资产不一致")
+        return self
+
+
+class CrossVenueSpotPolicy(StrictConfig):
+    version: str
+    products: tuple[CrossVenueSpotProduct, ...] = Field(min_length=1, max_length=20)
+    poll_seconds: int = Field(default=10, ge=5, le=300)
+    maximum_age_seconds: int = Field(default=30, ge=10, le=900)
+    coinbase_base_url: str = "https://api.exchange.coinbase.com"
+    kraken_base_url: str = "https://api.kraken.com"
+
+    @model_validator(mode="after")
+    def sources_and_products_must_be_canonical(self):
+        if self.coinbase_base_url != "https://api.exchange.coinbase.com":
+            raise ValueError("跨场所现货 Coinbase 必须使用官方生产 REST")
+        if self.kraken_base_url != "https://api.kraken.com":
+            raise ValueError("跨场所现货 Kraken 必须使用官方生产 REST")
+        symbols = tuple(item.symbol for item in self.products)
+        if tuple(sorted(set(symbols))) != symbols:
+            raise ValueError("跨场所现货 products 必须按 symbol 唯一排序")
+        if any(item.quote_asset != "USDT" for item in self.products):
+            raise ValueError("跨场所现货只比较同为 USDT 计价的盘口")
+        if self.maximum_age_seconds < self.poll_seconds * 2:
+            raise ValueError("跨场所现货最大年龄必须容忍至少一次失败轮询")
+        return self
+
+
 class MarketDataPolicy(StrictConfig):
     version: str
     symbols: tuple[str, ...] = Field(
@@ -38,6 +80,7 @@ class MarketDataPolicy(StrictConfig):
     perpetual_quote_poll_seconds: int = Field(default=5, ge=1, le=60)
     perpetual_poll_seconds: int = Field(default=300, ge=30, le=3600)
     funding_history_lookback_hours: int = Field(default=720, ge=8, le=720)
+    cross_venue_spot: CrossVenueSpotPolicy | None = None
 
     @property
     def interval_seconds(self) -> int:
@@ -95,4 +138,8 @@ class MarketDataPolicy(StrictConfig):
             for item in self.perpetual_instruments
         ):
             raise ValueError("perpetual_instruments 只能包含 Binance Perpetual")
+        if self.cross_venue_spot is not None:
+            cross_symbols = tuple(item.symbol for item in self.cross_venue_spot.products)
+            if any(symbol not in self.symbols for symbol in cross_symbols):
+                raise ValueError("跨场所现货产品必须属于 Binance Spot 行情范围")
         return self

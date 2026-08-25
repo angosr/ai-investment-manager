@@ -40,6 +40,9 @@ def _shadow_config(app_config) -> AppConfig:
         "manual_approval_ref": None,
     }
     raw["market_data"]["symbols"] = ("BTCUSDT",)
+    raw["market_data"]["cross_venue_spot"]["products"] = (
+        raw["market_data"]["cross_venue_spot"]["products"][0],
+    )
     raw["assessment"]["mandate"]["assets"] = (raw["assessment"]["mandate"]["assets"][0],)
     raw["decision_state"]["official_fact_policy"]["affected_assets"] = ("BTC",)
     return AppConfig.model_validate(raw)

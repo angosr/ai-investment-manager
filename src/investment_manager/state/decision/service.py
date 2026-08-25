@@ -5,6 +5,7 @@ from sqlalchemy.engine import Engine
 from investment_manager.information.coverage import SqlInformationCoverageStore
 from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.features import FeatureEngine
+from investment_manager.market.models import SpotVenue
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.application import DecisionPacketPreparation
@@ -46,5 +47,15 @@ def assemble_decision_packet_preparation(
         maximum_perpetual_age_seconds=config.market_data.perpetual_poll_seconds * 3,
         maximum_cross_market_quote_skew_seconds=(
             config.market_data.maximum_cross_market_quote_skew_seconds
+        ),
+        cross_venue_spot_venues=(
+            tuple(sorted(SpotVenue, key=lambda item: item.value))
+            if config.market_data.cross_venue_spot is not None
+            else ()
+        ),
+        maximum_cross_venue_spot_age_seconds=(
+            config.market_data.cross_venue_spot.maximum_age_seconds
+            if config.market_data.cross_venue_spot is not None
+            else 30
         ),
     )

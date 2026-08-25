@@ -14,7 +14,7 @@ from investment_manager.forecast.context.estimate import (
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
-from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.platform.database import build_engine
 from investment_manager.portfolio.policy import (
@@ -51,7 +51,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         <= config.codex_runtime.maximum_prompt_characters
     )
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v46"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v47"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -61,7 +61,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v45"
+    assert config.capital.version == "total-portfolio-capital-v46"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -77,20 +77,20 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v10"
-    assert config.information.version == "information-intake-v36"
+    assert config.information.version == "information-intake-v37"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v39"
+    assert config.decision_state.version == "portfolio-state-v40"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
     assert config.decision_state.delta_policy.version == "state-delta-v16"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v43"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v18"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v44"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v12"
+    assert config.market_data.version == "binance-public-shadow-v13"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
@@ -98,12 +98,19 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
     )
-    assert config.assessment.version == "context-assessment-v44"
-    assert config.outcome_evaluation.version == "outcome-window-v21"
+    assert config.market_data.cross_venue_spot is not None
+    assert config.market_data.cross_venue_spot.version == "cross-venue-spot-v1"
+    assert config.market_data.cross_venue_spot.poll_seconds == 10
+    assert config.market_data.cross_venue_spot.maximum_age_seconds == 30
+    assert tuple(
+        item.symbol for item in config.market_data.cross_venue_spot.products
+    ) == ("BTCUSDT", "ETHUSDT")
+    assert config.assessment.version == "context-assessment-v45"
+    assert config.outcome_evaluation.version == "outcome-window-v22"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v15"
+        == "world-model-ablation-forward-v16"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v28"
@@ -146,6 +153,27 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
         "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
+    spot_derivatives = next(
+        item
+        for item in config.information.coverage_requirements
+        if item.domain.value == "SPOT_DERIVATIVES"
+    )
+    assert spot_derivatives.source_stream_ids == (
+        "binance-usdm-market",
+        "coinbase-spot-market",
+        "kraken-spot-market",
+    )
+    assert spot_derivatives.source_capabilities == {
+        "binance-usdm-market": ("BINANCE_PERPETUAL", "BINANCE_SPOT"),
+        "coinbase-spot-market": ("MULTI_VENUE_SPOT",),
+        "kraken-spot-market": ("MULTI_VENUE_SPOT",),
+    }
+    assert spot_derivatives.required_capabilities == (
+        "BINANCE_PERPETUAL",
+        "BINANCE_SPOT",
+        "MULTI_VENUE_SPOT",
+        "OPTIONS_POSITIONING",
+    )
     onchain = next(
         item
         for item in config.information.coverage_requirements
@@ -295,6 +323,11 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         funding_lookback_hours=config.market_data.funding_history_lookback_hours,
         maximum_quote_skew_seconds=(
             config.market_data.maximum_cross_market_quote_skew_seconds
+        ),
+        cross_venue_spot_version=config.market_data.cross_venue_spot.version,
+        cross_venue_spot_venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
+        maximum_cross_venue_spot_age_seconds=(
+            config.market_data.cross_venue_spot.maximum_age_seconds
         ),
     )
     behavior_id = context_forecast_behavior_hash(

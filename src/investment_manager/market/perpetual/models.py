@@ -342,6 +342,29 @@ class DerivativeContextSnapshot(FrozenModel):
         ge=0,
         exclude_if=lambda value: value is None,
     )
+    cross_venue_observed_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    spot_venue_count: int | None = Field(
+        default=None,
+        ge=3,
+        exclude_if=lambda value: value is None,
+    )
+    spot_mid_range_bps: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    reference_spot_mid_deviation_bps: Decimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    widest_spot_spread_bps: Decimal | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
     positioning_observed_at: datetime | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -405,6 +428,7 @@ class DerivativeContextSnapshot(FrozenModel):
     _utc_observed_at = field_validator("observed_at")(require_utc)
     _utc_next_funding = field_validator("next_funding_time")(require_utc)
     _utc_spot_flow_observed = field_validator("spot_flow_observed_at")(optional_utc)
+    _utc_cross_venue_observed = field_validator("cross_venue_observed_at")(optional_utc)
     _utc_positioning_observed = field_validator("positioning_observed_at")(optional_utc)
 
     @model_validator(mode="after")
@@ -428,6 +452,22 @@ class DerivativeContextSnapshot(FrozenModel):
             raise ValueError("现货主动成交摘要必须完整或全部缺省")
         if self.spot_flow_observed_at is not None and self.spot_flow_observed_at > self.as_of:
             raise ValueError("现货主动成交摘要不能晚于 as_of")
+        cross_venue_values = (
+            self.cross_venue_observed_at,
+            self.spot_venue_count,
+            self.spot_mid_range_bps,
+            self.reference_spot_mid_deviation_bps,
+            self.widest_spot_spread_bps,
+        )
+        if any(item is not None for item in cross_venue_values) and not all(
+            item is not None for item in cross_venue_values
+        ):
+            raise ValueError("跨场所现货摘要必须完整或全部缺省")
+        if (
+            self.cross_venue_observed_at is not None
+            and self.cross_venue_observed_at > self.as_of
+        ):
+            raise ValueError("跨场所现货摘要不能晚于 as_of")
         has_summary = (
             self.trailing_funding_rate_mean_bps is not None
             and self.trailing_funding_rate_sum_bps is not None

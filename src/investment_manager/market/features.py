@@ -8,6 +8,7 @@ from itertools import pairwise
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
+    CrossVenueSpotQuote,
     ExecutableQuote,
     FeatureSnapshot,
     InstrumentId,
@@ -97,6 +98,8 @@ def build_derivative_context_snapshot(
     settlements: tuple[FundingSettlement, ...],
     funding_window_hours: int,
     maximum_quote_skew_seconds: int,
+    cross_venue_quotes: tuple[CrossVenueSpotQuote, ...] = (),
+    maximum_cross_venue_age_seconds: int = 30,
 ) -> DerivativeContextSnapshot:
     """Project executable basis and funding history into one dense, replayable fact."""
 
@@ -104,6 +107,8 @@ def build_derivative_context_snapshot(
         raise ValueError("Funding 汇总窗口必须在 1..720 小时")
     if maximum_quote_skew_seconds < 1:
         raise ValueError("跨市场报价时间偏差上限必须为正数")
+    if maximum_cross_venue_age_seconds < 1:
+        raise ValueError("跨场所现货最大年龄必须为正数")
     if state.instrument != quote.instrument or state.instrument.symbol != spot.symbol:
         raise ValueError("衍生品状态、报价和 Spot 快照必须属于同一产品标的")
     if aligned_spot_quote.symbol != spot.symbol:
@@ -146,12 +151,22 @@ def build_derivative_context_snapshot(
         ) / Decimal(len(rates_bps))
         rate_min = min(rates_bps)
     spot_flow = _spot_flow_summary(spot, window_minutes=60)
+    cross_venue = _cross_venue_spot_summary(
+        spot=spot,
+        aligned_spot_quote=aligned_spot_quote,
+        quotes=cross_venue_quotes,
+        maximum_age_seconds=maximum_cross_venue_age_seconds,
+    )
     return DerivativeContextSnapshot(
         cycle_id=cycle_id,
         asset=asset,
         instrument=state.instrument,
         as_of=spot.as_of,
-        observed_at=max(state.observed_at, quote.observed_at),
+        observed_at=max(
+            state.observed_at,
+            quote.observed_at,
+            *(item.observed_at for item in cross_venue_quotes),
+        ),
         mark_index_premium_bps=(state.mark_price / state.index_price - Decimal("1"))
         * Decimal("10000"),
         executable_short_basis_bps=(
@@ -171,6 +186,7 @@ def build_derivative_context_snapshot(
         funding_window_hours=funding_window_hours,
         next_funding_time=state.next_funding_time,
         **spot_flow,
+        **cross_venue,
         positioning_observed_at=state.positioning_observed_at,
         positioning_window_minutes=state.positioning_window_minutes,
         open_interest=state.open_interest,
@@ -190,10 +206,61 @@ def build_derivative_context_snapshot(
                     state.state_id,
                     quote.quote_id,
                     *(item.settlement_id for item in visible),
+                    *(item.quote_id for item in cross_venue_quotes),
                 }
             )
         ),
     )
+
+
+def _cross_venue_spot_summary(
+    *,
+    spot: MarketSnapshot,
+    aligned_spot_quote: MarketQuote,
+    quotes: tuple[CrossVenueSpotQuote, ...],
+    maximum_age_seconds: int,
+) -> dict[str, Decimal | datetime | int]:
+    if not quotes:
+        return {}
+    if len(quotes) < 2:
+        raise ValueError("跨场所现货摘要至少需要两个独立外部场所")
+    venues = tuple(item.venue.value for item in quotes)
+    if tuple(sorted(set(venues))) != venues:
+        raise ValueError("跨场所现货报价必须按 venue 唯一排序")
+    if any(item.symbol != spot.symbol for item in quotes):
+        raise ValueError("跨场所现货报价必须属于同一标的")
+    if any(item.observed_at > spot.as_of for item in quotes):
+        raise ValueError("跨场所现货报价不能在 as_of 后才可见")
+    if any(
+        (spot.as_of - item.observed_at).total_seconds() > maximum_age_seconds
+        for item in quotes
+    ):
+        raise ValueError("跨场所现货报价已过期")
+    binance_mid = (aligned_spot_quote.bid + aligned_spot_quote.ask) / Decimal("2")
+    external_mids = tuple((item.bid + item.ask) / Decimal("2") for item in quotes)
+    mids = tuple(sorted((binance_mid, *external_mids)))
+    middle = len(mids) // 2
+    median_mid = (
+        mids[middle]
+        if len(mids) % 2
+        else (mids[middle - 1] + mids[middle]) / Decimal("2")
+    )
+    spreads = (
+        (aligned_spot_quote.ask - aligned_spot_quote.bid) / binance_mid,
+        *(
+            (item.ask - item.bid) / ((item.ask + item.bid) / Decimal("2"))
+            for item in quotes
+        ),
+    )
+    return {
+        "cross_venue_observed_at": max(item.observed_at for item in quotes),
+        "spot_venue_count": 1 + len(quotes),
+        "spot_mid_range_bps": (mids[-1] / mids[0] - Decimal("1"))
+        * Decimal("10000"),
+        "reference_spot_mid_deviation_bps": (binance_mid / median_mid - Decimal("1"))
+        * Decimal("10000"),
+        "widest_spot_spread_bps": max(spreads) * Decimal("10000"),
+    }
 
 
 def _spot_flow_summary(

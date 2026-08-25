@@ -5,7 +5,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 metadata = MetaData()
-DATABASE_SCHEMA_VERSION = "s7c4e1a9f263"
+DATABASE_SCHEMA_VERSION = "t8e2c5a1b704"
 
 # Immutable audit remnants from the retired physical CAP/CONTEXT split.  They
 # have no repository or runtime consumer; declaring them here only prevents

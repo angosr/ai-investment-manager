@@ -56,6 +56,8 @@ from investment_manager.information.repository import SqlEventStore
 from investment_manager.market.perpetual.service import PerpetualRefreshResult
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.runtime import (
+    CROSS_VENUE_STREAM_ID_BY_VENUE,
+    CrossVenueRefreshResult,
     MarketRuntime,
     MarketShockDetector,
     assemble_shadow_market_stream,
@@ -125,11 +127,38 @@ def assemble_market_service(loaded, engine) -> MarketRuntime:
             )
         )
 
+    def record_cross_venue_refresh(refresh: CrossVenueRefreshResult) -> None:
+        cross_policy = loaded.market_data.cross_venue_spot
+        if cross_policy is None:
+            raise RuntimeError("收到跨场所行情结果但能力未配置")
+        coverage.put(
+            build_source_poll_record(
+                source_stream_id=CROSS_VENUE_STREAM_ID_BY_VENUE[refresh.venue],
+                domain=CausalDomain.SPOT_DERIVATIVES,
+                status=(
+                    SourcePollStatus.FAILED
+                    if not refresh.succeeded
+                    else (
+                        SourcePollStatus.CHANGED
+                        if refresh.changed_count
+                        else SourcePollStatus.UNCHANGED
+                    )
+                ),
+                started_at=refresh.started_at,
+                completed_at=refresh.completed_at,
+                poll_interval_seconds=cross_policy.poll_seconds,
+                latest_publication_at=refresh.latest_publication_at,
+                observation_count=refresh.observation_count,
+                error_class=refresh.error_class,
+            )
+        )
+
     return assemble_shadow_market_stream(
         loaded,
         store,
         market_observer=detector.observe,
         perpetual_refresh_observer=record_perpetual_refresh,
+        cross_venue_refresh_observer=record_cross_venue_refresh,
     )
 
 

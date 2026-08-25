@@ -19,16 +19,22 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
     ClosedMarketBar,
+    CrossVenueSpotQuote,
     MarketEvent,
     MarketQuote,
     MarketTrade,
+    SpotVenue,
 )
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
 from investment_manager.market.perpetual.service import (
     BinancePerpetualMarketService,
     PerpetualRefreshResult,
 )
-from investment_manager.market.policy import MarketDataPolicy
+from investment_manager.market.policy import (
+    CrossVenueSpotPolicy,
+    CrossVenueSpotProduct,
+    MarketDataPolicy,
+)
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.settings import AppConfig
@@ -440,6 +446,226 @@ class BinancePublicRestClient:
         return tuple(bars)
 
 
+CROSS_VENUE_STREAM_ID_BY_VENUE = {
+    SpotVenue.COINBASE: "coinbase-spot-market",
+    SpotVenue.KRAKEN: "kraken-spot-market",
+}
+
+
+def _parse_iso_timestamp(value: str) -> datetime:
+    return require_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+
+
+@dataclass(slots=True)
+class CoinbaseSpotClient:
+    transport: JsonHttpTransport
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+    async def fetch(self, product: CrossVenueSpotProduct) -> CrossVenueSpotQuote:
+        raw = await self.transport.get(
+            f"/products/{product.coinbase_product_id}/book",
+            {"level": 1},
+        )
+        if not isinstance(raw, dict):
+            raise ValueError("Coinbase L1 盘口响应必须是对象")
+        bids = raw.get("bids")
+        asks = raw.get("asks")
+        if (
+            not isinstance(bids, list)
+            or not bids
+            or not isinstance(bids[0], list)
+            or len(bids[0]) < 2
+            or not isinstance(asks, list)
+            or not asks
+            or not isinstance(asks[0], list)
+            or len(asks[0]) < 2
+        ):
+            raise ValueError("Coinbase L1 盘口缺少最佳买卖价")
+        exchange_time = _parse_iso_timestamp(str(raw["time"]))
+        observed_at = max(require_utc(self.clock()), exchange_time)
+        sequence = str(raw["sequence"])
+        return CrossVenueSpotQuote(
+            quote_id=stable_id(
+                "cross_venue_spot_quote",
+                SpotVenue.COINBASE.value,
+                product.symbol,
+                sequence,
+            ),
+            venue=SpotVenue.COINBASE,
+            symbol=product.symbol,
+            provider_symbol=product.coinbase_product_id,
+            exchange_time=exchange_time,
+            observed_at=observed_at,
+            bid=Decimal(str(bids[0][0])),
+            bid_quantity=Decimal(str(bids[0][1])),
+            ask=Decimal(str(asks[0][0])),
+            ask_quantity=Decimal(str(asks[0][1])),
+            source_sequence=sequence,
+            source="coinbase-exchange-rest",
+        )
+
+
+@dataclass(slots=True)
+class KrakenSpotClient:
+    transport: JsonHttpTransport
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+
+    async def fetch(self, product: CrossVenueSpotProduct) -> CrossVenueSpotQuote:
+        raw = await self.transport.get(
+            "/0/public/Depth",
+            {"pair": product.kraken_pair, "count": 1, "assetVersion": 1},
+        )
+        if not isinstance(raw, dict) or raw.get("error") != []:
+            raise ValueError("Kraken L1 盘口响应包含错误")
+        result = raw.get("result")
+        if not isinstance(result, dict) or len(result) != 1:
+            raise ValueError("Kraken L1 盘口缺少唯一产品")
+        provider_symbol, book = next(iter(result.items()))
+        if not isinstance(book, dict):
+            raise ValueError("Kraken L1 盘口产品必须是对象")
+        bids = book.get("bids")
+        asks = book.get("asks")
+        if (
+            not isinstance(bids, list)
+            or not bids
+            or not isinstance(bids[0], list)
+            or len(bids[0]) < 3
+            or not isinstance(asks, list)
+            or not asks
+            or not isinstance(asks[0], list)
+            or len(asks[0]) < 3
+        ):
+            raise ValueError("Kraken L1 盘口缺少最佳买卖价")
+        if str(provider_symbol) != product.kraken_pair:
+            raise ValueError("Kraken L1 盘口产品与请求不一致")
+        exchange_time = datetime.fromtimestamp(
+            float(max(Decimal(str(bids[0][2])), Decimal(str(asks[0][2])))),
+            tz=UTC,
+        )
+        observed_at = max(require_utc(self.clock()), exchange_time)
+        marker = exchange_time.isoformat()
+        return CrossVenueSpotQuote(
+            quote_id=stable_id(
+                "cross_venue_spot_quote",
+                SpotVenue.KRAKEN.value,
+                product.symbol,
+                marker,
+            ),
+            venue=SpotVenue.KRAKEN,
+            symbol=product.symbol,
+            provider_symbol=product.kraken_pair,
+            exchange_time=exchange_time,
+            observed_at=observed_at,
+            bid=Decimal(str(bids[0][0])),
+            bid_quantity=Decimal(str(bids[0][1])),
+            ask=Decimal(str(asks[0][0])),
+            ask_quantity=Decimal(str(asks[0][1])),
+            source="kraken-spot-rest",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CrossVenueRefreshResult:
+    venue: SpotVenue
+    started_at: datetime
+    completed_at: datetime
+    succeeded: bool
+    latest_publication_at: datetime | None = None
+    observation_count: int = 0
+    changed_count: int = 0
+    error_class: str | None = None
+
+
+@dataclass(slots=True)
+class CrossVenueSpotHealth:
+    refresh_count: int = 0
+    quote_count: int = 0
+    last_refresh_at: datetime | None = None
+    last_error_by_venue: dict[SpotVenue, str] = field(default_factory=dict)
+
+
+class CrossVenueSpotService:
+    """Poll independent first-party L1 books without creating AI triggers."""
+
+    def __init__(
+        self,
+        *,
+        policy: CrossVenueSpotPolicy,
+        coinbase: CoinbaseSpotClient,
+        kraken: KrakenSpotClient,
+        store: MarketDataStore,
+        refresh_observer: Callable[[CrossVenueRefreshResult], None] | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._policy = policy
+        self._clients = {
+            SpotVenue.COINBASE: coinbase,
+            SpotVenue.KRAKEN: kraken,
+        }
+        self._store = store
+        self._refresh_observer = refresh_observer
+        self._clock = clock
+        self.health = CrossVenueSpotHealth()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await asyncio.gather(
+                *(self._refresh_venue(venue) for venue in self._clients)
+            )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=self._policy.poll_seconds)
+
+    async def _refresh_venue(self, venue: SpotVenue) -> None:
+        started_at = require_utc(self._clock())
+        client = self._clients[venue]
+        try:
+            quotes = await asyncio.gather(
+                *(client.fetch(product) for product in self._policy.products)
+            )
+            changed = sum(self._store.put_cross_venue_spot_quote(item) for item in quotes)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            completed_at = max(require_utc(self._clock()), started_at)
+            previous_error = self.health.last_error_by_venue.get(venue)
+            if previous_error != type(exc).__name__:
+                logger.exception(
+                    "cross-venue spot refresh failed",
+                    extra={"venue": venue.value},
+                )
+            self.health.last_error_by_venue[venue] = type(exc).__name__
+            self._notify(
+                CrossVenueRefreshResult(
+                    venue=venue,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    succeeded=False,
+                    error_class=type(exc).__name__,
+                )
+            )
+            return
+        completed_at = max(require_utc(self._clock()), started_at)
+        self.health.last_error_by_venue.pop(venue, None)
+        self.health.refresh_count += 1
+        self.health.quote_count += changed
+        self.health.last_refresh_at = completed_at
+        self._notify(
+            CrossVenueRefreshResult(
+                venue=venue,
+                started_at=started_at,
+                completed_at=completed_at,
+                succeeded=True,
+                latest_publication_at=max(item.exchange_time for item in quotes),
+                observation_count=len(quotes),
+                changed_count=changed,
+            )
+        )
+
+    def _notify(self, result: CrossVenueRefreshResult) -> None:
+        if self._refresh_observer is not None:
+            self._refresh_observer(result)
+
+
 @dataclass(slots=True)
 class MarketBootstrapper:
     client: BinancePublicRestClient
@@ -619,16 +845,20 @@ class BinanceMarketStreamService:
 class MarketRuntime:
     spot: BinanceMarketStreamService
     perpetual: BinancePerpetualMarketService | None = None
+    cross_venue: CrossVenueSpotService | None = None
     _transports: tuple[HttpxPublicJsonTransport, ...] = ()
 
     async def run(self, stop: asyncio.Event) -> None:
         try:
-            if self.perpetual is None:
+            if self.perpetual is None and self.cross_venue is None:
                 await self.spot.run(stop)
                 return
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(self.spot.run(stop))
-                tasks.create_task(self.perpetual.run(stop))
+                if self.perpetual is not None:
+                    tasks.create_task(self.perpetual.run(stop))
+                if self.cross_venue is not None:
+                    tasks.create_task(self.cross_venue.run(stop))
         finally:
             await self.aclose()
 
@@ -642,6 +872,8 @@ def assemble_shadow_market_stream(
     *,
     market_observer: Callable[[MarketEvent], bool] | None = None,
     perpetual_refresh_observer: Callable[[PerpetualRefreshResult], None]
+    | None = None,
+    cross_venue_refresh_observer: Callable[[CrossVenueRefreshResult], None]
     | None = None,
 ) -> MarketRuntime:
     if (
@@ -674,8 +906,28 @@ def assemble_shadow_market_stream(
             store=store,
             refresh_observer=perpetual_refresh_observer,
         )
+    cross_venue = None
+    if policy.cross_venue_spot is not None:
+        cross_policy = policy.cross_venue_spot
+        coinbase_transport = HttpxPublicJsonTransport(
+            cross_policy.coinbase_base_url,
+            policy.rest_timeout_seconds,
+        )
+        kraken_transport = HttpxPublicJsonTransport(
+            cross_policy.kraken_base_url,
+            policy.rest_timeout_seconds,
+        )
+        transports.extend((coinbase_transport, kraken_transport))
+        cross_venue = CrossVenueSpotService(
+            policy=cross_policy,
+            coinbase=CoinbaseSpotClient(coinbase_transport),
+            kraken=KrakenSpotClient(kraken_transport),
+            store=store,
+            refresh_observer=cross_venue_refresh_observer,
+        )
     return MarketRuntime(
         spot=spot,
         perpetual=perpetual,
+        cross_venue=cross_venue,
         _transports=tuple(transports),
     )

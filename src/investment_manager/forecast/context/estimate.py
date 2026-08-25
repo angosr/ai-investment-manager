@@ -30,7 +30,7 @@ from investment_manager.forecast.results import ForecastMechanismEffect
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.models import InstrumentId
+from investment_manager.market.models import InstrumentId, SpotVenue
 from investment_manager.market.policy import FeaturePolicy
 from investment_manager.portfolio.policy import ContextForecastPolicy
 from investment_manager.settings import AppConfig
@@ -40,7 +40,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v8"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v9"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -108,6 +108,9 @@ class ContextForecastTargetState(FrozenModel):
                 "mark_index_premium_bps",
                 "executable_short_basis_bps",
                 "last_funding_rate_bps",
+                "spot_mid_range_bps",
+                "reference_spot_mid_deviation_bps",
+                "widest_spot_spread_bps",
                 "open_interest_change_fraction",
                 "global_long_account_fraction",
                 "taker_buy_sell_ratio",
@@ -127,6 +130,20 @@ class ContextForecastTargetStateBehavior(FrozenModel):
     bar_window: int = Field(ge=8, le=1_000)
     funding_lookback_hours: int = Field(ge=8, le=720)
     maximum_quote_skew_seconds: int = Field(ge=1, le=300)
+    cross_venue_spot_version: str | None = Field(default=None, min_length=1)
+    cross_venue_spot_venues: tuple[SpotVenue, ...] = ()
+    maximum_cross_venue_spot_age_seconds: int = Field(default=30, ge=1, le=900)
+
+    @model_validator(mode="after")
+    def cross_venue_contract_must_be_complete(self):
+        enabled = self.cross_venue_spot_version is not None
+        if enabled != bool(self.cross_venue_spot_venues):
+            raise ValueError("Forecast 跨场所现货行为必须完整启用或关闭")
+        if self.cross_venue_spot_venues and tuple(
+            sorted(set(self.cross_venue_spot_venues), key=lambda item: item.value)
+        ) != self.cross_venue_spot_venues:
+            raise ValueError("Forecast 跨场所现货 venues 必须唯一排序")
+        return self
 
 
 CONTEXT_FORECAST_INSTRUCTIONS = (

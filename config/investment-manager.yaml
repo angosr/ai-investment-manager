@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v39
+  version: portfolio-state-v40
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v15
@@ -100,8 +100,8 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v43
-    schema_version: decision-packet-v18
+    version: decision-packet-policy-v44
+    schema_version: decision-packet-v19
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
     maximum_facts: 20
@@ -136,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v45
+  version: total-portfolio-capital-v46
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -248,10 +248,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v19
+    version: btc-context-forecast-v20
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "59947f09201bd22b50371e2b566ed6d0db6fbc5a6bb7ce5b6dfd4c93916bfdd5"
+    producer_behavior_id: "a9b68d9d586b6c2d49988aef8783977c8e0c6b2af866e56b44a6f8348c3f0b4c"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -341,7 +341,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v21
+  version: outcome-window-v22
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -349,11 +349,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v15
+    version: world-model-ablation-forward-v16
     enabled: false
-    plan_id: world-model-ablation-forward-v15
+    plan_id: world-model-ablation-forward-v16
     # 冻结输入容量合同已修复；只接收本版激活后的新槽。
-    activated_at: 2026-08-25T22:50:00Z
+    activated_at: 2026-08-26T00:30:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -406,7 +406,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v12
+  version: binance-public-shadow-v13
   symbols: [BTCUSDT, ETHUSDT, PAXGUSDT]
   interval: 5m
   bar_window: 64
@@ -447,6 +447,23 @@ market_data:
   perpetual_quote_poll_seconds: 5
   perpetual_poll_seconds: 300
   funding_history_lookback_hours: 720
+  cross_venue_spot:
+    version: cross-venue-spot-v1
+    poll_seconds: 10
+    maximum_age_seconds: 30
+    coinbase_base_url: https://api.exchange.coinbase.com
+    kraken_base_url: https://api.kraken.com
+    products:
+      - symbol: BTCUSDT
+        base_asset: BTC
+        quote_asset: USDT
+        coinbase_product_id: BTC-USDT
+        kraken_pair: BTC/USDT
+      - symbol: ETHUSDT
+        base_asset: ETH
+        quote_asset: USDT
+        coinbase_product_id: ETH-USDT
+        kraken_pair: ETH/USDT
 
 shadow:
   version: shadow-simulation-v2
@@ -455,7 +472,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v36
+  version: information-intake-v37
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -535,10 +552,12 @@ information:
         ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
       maximum_publication_age_seconds: 345600
     - domain: SPOT_DERIVATIVES
-      source_stream_ids: [binance-usdm-market]
+      source_stream_ids: [binance-usdm-market, coinbase-spot-market, kraken-spot-market]
       required_capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT, MULTI_VENUE_SPOT, OPTIONS_POSITIONING]
       source_capabilities:
         binance-usdm-market: [BINANCE_PERPETUAL, BINANCE_SPOT]
+        coinbase-spot-market: [MULTI_VENUE_SPOT]
+        kraken-spot-market: [MULTI_VENUE_SPOT]
       maximum_publication_age_seconds: 900
     - domain: ONCHAIN_SUPPLY
       source_stream_ids: [defillama-usd-stablecoin-supply]
@@ -594,7 +613,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v44
+  version: context-assessment-v45
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

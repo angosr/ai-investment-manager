@@ -13,11 +13,13 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import (
     ClosedMarketBar,
+    CrossVenueSpotQuote,
     InstrumentId,
     InstrumentProduct,
     MarketQuote,
     MarketSnapshot,
     MarketTrade,
+    SpotVenue,
 )
 from investment_manager.market.perpetual.models import (
     FundingSettlement,
@@ -26,6 +28,7 @@ from investment_manager.market.perpetual.models import (
     TradingScheduleSnapshot,
 )
 from investment_manager.market.tables import (
+    cross_venue_spot_quotes,
     funding_settlements,
     market_bars,
     market_quotes,
@@ -42,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 class MarketDataStore(Protocol):
     def put_quote(self, quote: MarketQuote) -> bool: ...
+
+    def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool: ...
 
     def put_trade(self, trade: MarketTrade) -> bool: ...
 
@@ -62,6 +67,14 @@ class MarketDataStore(Protocol):
         evaluation_at: datetime,
         visible_at: datetime,
     ) -> MarketQuote | None: ...
+
+    def latest_cross_venue_spot_quotes(
+        self,
+        *,
+        symbol: str,
+        venues: tuple[SpotVenue, ...],
+        as_of: datetime,
+    ) -> tuple[CrossVenueSpotQuote, ...]: ...
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime
@@ -157,6 +170,10 @@ def _quote_market_facts(quote: MarketQuote) -> dict[str, Any]:
     return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
 
 
+def _cross_venue_quote_facts(quote: CrossVenueSpotQuote) -> dict[str, Any]:
+    return quote.model_dump(exclude={"observed_at", "source"}, mode="json")
+
+
 def _trade_market_facts(trade: MarketTrade) -> dict[str, Any]:
     return trade.model_dump(exclude={"observed_at", "source"}, mode="json")
 
@@ -206,6 +223,7 @@ def trade_at_or_before(
 @dataclass(slots=True)
 class InMemoryMarketDataStore:
     _quotes: dict[str, MarketQuote] = field(default_factory=dict)
+    _cross_venue_quotes: dict[str, CrossVenueSpotQuote] = field(default_factory=dict)
     _trades: dict[tuple[str, int], MarketTrade] = field(default_factory=dict)
     _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
     _perpetual_states: dict[str, PerpetualMarketState] = field(default_factory=dict)
@@ -222,6 +240,16 @@ class InMemoryMarketDataStore:
                     raise ValueError("quote_id 冲突且事实不一致")
                 return False
             self._quotes[quote.quote_id] = quote
+            return True
+
+    def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool:
+        with self._lock:
+            existing = self._cross_venue_quotes.get(quote.quote_id)
+            if existing is not None:
+                if _cross_venue_quote_facts(existing) != _cross_venue_quote_facts(quote):
+                    raise ValueError("跨场所 quote_id 冲突且事实不一致")
+                return False
+            self._cross_venue_quotes[quote.quote_id] = quote
             return True
 
     def put_trade(self, trade: MarketTrade) -> bool:
@@ -322,6 +350,35 @@ class InMemoryMarketDataStore:
             key=lambda item: (item.observed_at, item.quote_id),
             default=None,
         )
+
+    def latest_cross_venue_spot_quotes(
+        self,
+        *,
+        symbol: str,
+        venues: tuple[SpotVenue, ...],
+        as_of: datetime,
+    ) -> tuple[CrossVenueSpotQuote, ...]:
+        at = require_utc(as_of)
+        if tuple(sorted(set(venues), key=lambda item: item.value)) != venues:
+            raise ValueError("跨场所现货 venues 必须唯一排序")
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._cross_venue_quotes.values()
+                if item.symbol == symbol
+                and item.venue in venues
+                and item.exchange_time <= at
+                and item.observed_at <= at
+            )
+        latest = {
+            venue: max(
+                (item for item in visible if item.venue == venue),
+                key=lambda item: (item.exchange_time, item.observed_at, item.quote_id),
+                default=None,
+            )
+            for venue in venues
+        }
+        return tuple(item for item in (latest[venue] for venue in venues) if item is not None)
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime
@@ -510,6 +567,34 @@ class SqlMarketDataStore:
                 quote
             ):
                 raise ValueError("quote_id 冲突且事实不一致") from None
+            return False
+
+    def put_cross_venue_spot_quote(self, quote: CrossVenueSpotQuote) -> bool:
+        payload = quote.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(cross_venue_spot_quotes).values(
+                        quote_id=quote.quote_id,
+                        venue=quote.venue.value,
+                        symbol=quote.symbol,
+                        exchange_time=quote.exchange_time,
+                        observed_at=quote.observed_at,
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(cross_venue_spot_quotes.c.payload).where(
+                        cross_venue_spot_quotes.c.quote_id == quote.quote_id
+                    )
+                ).scalar_one()
+            if _cross_venue_quote_facts(
+                CrossVenueSpotQuote.model_validate(existing)
+            ) != _cross_venue_quote_facts(quote):
+                raise ValueError("跨场所 quote_id 冲突且事实不一致") from None
             return False
 
     def put_trade(self, trade: MarketTrade) -> bool:
@@ -715,6 +800,38 @@ class SqlMarketDataStore:
                 .limit(1)
             ).scalar_one_or_none()
         return MarketQuote.model_validate(payload) if payload is not None else None
+
+    def latest_cross_venue_spot_quotes(
+        self,
+        *,
+        symbol: str,
+        venues: tuple[SpotVenue, ...],
+        as_of: datetime,
+    ) -> tuple[CrossVenueSpotQuote, ...]:
+        at = require_utc(as_of)
+        if tuple(sorted(set(venues), key=lambda item: item.value)) != venues:
+            raise ValueError("跨场所现货 venues 必须唯一排序")
+        latest: list[CrossVenueSpotQuote] = []
+        with self._engine.connect() as connection:
+            for venue in venues:
+                payload = connection.execute(
+                    select(cross_venue_spot_quotes.c.payload)
+                    .where(
+                        cross_venue_spot_quotes.c.venue == venue.value,
+                        cross_venue_spot_quotes.c.symbol == symbol,
+                        cross_venue_spot_quotes.c.exchange_time <= at,
+                        cross_venue_spot_quotes.c.observed_at <= at,
+                    )
+                    .order_by(
+                        cross_venue_spot_quotes.c.exchange_time.desc(),
+                        cross_venue_spot_quotes.c.observed_at.desc(),
+                        cross_venue_spot_quotes.c.quote_id.desc(),
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+                if payload is not None:
+                    latest.append(CrossVenueSpotQuote.model_validate(payload))
+        return tuple(latest)
 
     def latest_perpetual_state(
         self, *, instrument: InstrumentId, as_of: datetime

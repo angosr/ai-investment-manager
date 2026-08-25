@@ -17,7 +17,7 @@ from investment_manager.market.features import (
     FeatureEngine,
     build_derivative_context_snapshot,
 )
-from investment_manager.market.models import InstrumentId, MarketSnapshot
+from investment_manager.market.models import InstrumentId, MarketSnapshot, SpotVenue
 from investment_manager.market.perpetual.models import DerivativeContextSnapshot
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.state.decision.packet import (
@@ -113,6 +113,8 @@ class DecisionPacketPreparation:
         funding_history_lookback_hours: int = 24,
         maximum_perpetual_age_seconds: int = 900,
         maximum_cross_market_quote_skew_seconds: int = 15,
+        cross_venue_spot_venues: tuple[SpotVenue, ...] = (),
+        maximum_cross_venue_spot_age_seconds: int = 30,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not market_interval or not market_source:
@@ -125,6 +127,12 @@ class DecisionPacketPreparation:
             raise ValueError("DecisionPacket Perpetual age 配置非法")
         if maximum_cross_market_quote_skew_seconds < 1:
             raise ValueError("DecisionPacket 跨市场报价偏差配置非法")
+        if maximum_cross_venue_spot_age_seconds < 1:
+            raise ValueError("DecisionPacket 跨场所现货年龄配置非法")
+        if tuple(
+            sorted(set(cross_venue_spot_venues), key=lambda item: item.value)
+        ) != cross_venue_spot_venues:
+            raise ValueError("DecisionPacket 跨场所现货 venues 必须唯一排序")
         perpetual_symbols = tuple(item.symbol for item in perpetual_instruments)
         if len(set(perpetual_symbols)) != len(perpetual_symbols):
             raise ValueError("DecisionPacket perpetual_instruments 的 symbol 不得重复")
@@ -147,6 +155,10 @@ class DecisionPacketPreparation:
         self._maximum_perpetual_age_seconds = maximum_perpetual_age_seconds
         self._maximum_cross_market_quote_skew_seconds = (
             maximum_cross_market_quote_skew_seconds
+        )
+        self._cross_venue_spot_venues = cross_venue_spot_venues
+        self._maximum_cross_venue_spot_age_seconds = (
+            maximum_cross_venue_spot_age_seconds
         )
         self._clock = clock
 
@@ -425,6 +437,21 @@ class DecisionPacketPreparation:
                 end=as_of,
                 visible_at=as_of,
             )
+            cross_venue_quotes = ()
+            if self._cross_venue_spot_venues:
+                cross_venue_quotes = self._market_store.latest_cross_venue_spot_quotes(
+                    symbol=asset.market_symbol,
+                    venues=self._cross_venue_spot_venues,
+                    as_of=as_of,
+                )
+                if len(cross_venue_quotes) != len(
+                    self._cross_venue_spot_venues
+                ) or any(
+                    (as_of - item.observed_at).total_seconds()
+                    > self._maximum_cross_venue_spot_age_seconds
+                    for item in cross_venue_quotes
+                ):
+                    cross_venue_quotes = ()
             snapshots.append(
                 build_derivative_context_snapshot(
                     cycle_id=analysis_id,
@@ -437,6 +464,10 @@ class DecisionPacketPreparation:
                     funding_window_hours=self._funding_history_lookback_hours,
                     maximum_quote_skew_seconds=(
                         self._maximum_cross_market_quote_skew_seconds
+                    ),
+                    cross_venue_quotes=cross_venue_quotes,
+                    maximum_cross_venue_age_seconds=(
+                        self._maximum_cross_venue_spot_age_seconds
                     ),
                 )
             )

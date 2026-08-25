@@ -62,6 +62,7 @@ from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
     InstrumentProduct,
+    SpotVenue,
     ValuationQuote,
 )
 from investment_manager.market.repository import SqlMarketDataStore
@@ -1290,6 +1291,21 @@ def assemble_capital_cycle(
                 maximum_quote_skew_seconds=(
                     config.market_data.maximum_cross_market_quote_skew_seconds
                 ),
+                cross_venue_spot_version=(
+                    config.market_data.cross_venue_spot.version
+                    if config.market_data.cross_venue_spot is not None
+                    else None
+                ),
+                cross_venue_spot_venues=(
+                    tuple(sorted(SpotVenue, key=lambda item: item.value))
+                    if config.market_data.cross_venue_spot is not None
+                    else ()
+                ),
+                maximum_cross_venue_spot_age_seconds=(
+                    config.market_data.cross_venue_spot.maximum_age_seconds
+                    if config.market_data.cross_venue_spot is not None
+                    else 30
+                ),
             )
             contract = context_spot_forecast_contract(
                 policy=context,
@@ -1351,6 +1367,12 @@ def assemble_capital_cycle(
                             ),
                             maximum_quote_skew_seconds=(
                                 target_state_behavior.maximum_quote_skew_seconds
+                            ),
+                            cross_venue_spot_venues=(
+                                target_state_behavior.cross_venue_spot_venues
+                            ),
+                            maximum_cross_venue_spot_age_seconds=(
+                                target_state_behavior.maximum_cross_venue_spot_age_seconds
                             ),
                         ),
                         analysis_scope=config.assessment.mandate.analysis_scope,
