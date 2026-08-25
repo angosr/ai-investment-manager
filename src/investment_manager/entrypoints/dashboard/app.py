@@ -13,9 +13,10 @@ from pathlib import Path
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 from temporalio.client import Client
 
 from investment_manager.entrypoints.dashboard import serializers as ser
@@ -46,6 +47,18 @@ from investment_manager.settings import AppConfig
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100
 _EQUITY_WINDOWS = {"6h": 6, "24h": 24, "7d": 168, "30d": 720}
+
+
+class _DashboardStaticFiles(StaticFiles):
+    """Always revalidate the shell while caching content-addressed build assets."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.media_type == "text/html":
+            response.headers["Cache-Control"] = "no-cache"
+        elif path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def create_app(
@@ -386,7 +399,11 @@ def create_app(
         exception_handlers={InvalidPageCursor: _invalid_page_cursor},
     )
     if web_dist is not None and web_dist.is_dir():
-        app.mount("/", StaticFiles(directory=str(web_dist), html=True), name="web")
+        app.mount(
+            "/",
+            _DashboardStaticFiles(directory=str(web_dist), html=True),
+            name="web",
+        )
     return app
 
 

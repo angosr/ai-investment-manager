@@ -215,6 +215,39 @@ def _dashboard_world_model(
     )
 
 
+def test_dashboard_revalidates_shell_and_caches_hashed_assets(
+    app_config,
+    tmp_path: Path,
+) -> None:
+    web_dist = tmp_path / "web-dist"
+    assets = web_dist / "assets"
+    assets.mkdir(parents=True)
+    (web_dist / "index.html").write_text(
+        '<script src="/assets/index-contenthash.js"></script>',
+        encoding="utf-8",
+    )
+    (assets / "index-contenthash.js").write_text("export {};", encoding="utf-8")
+    application = create_app(
+        app_config,
+        f"sqlite+pysqlite:///{tmp_path / 'dashboard.sqlite'}",
+        web_dist=web_dist,
+    )
+
+    async def request_static_files() -> tuple[httpx.Response, httpx.Response]:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
+            return await client.get("/"), await client.get("/assets/index-contenthash.js")
+
+    shell, asset = asyncio.run(request_static_files())
+
+    assert shell.status_code == 200
+    assert shell.headers["cache-control"] == "no-cache"
+    assert asset.status_code == 200
+    assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
 def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
     as_of = datetime(2026, 8, 22, 18, tzinfo=UTC)
     packet = _dashboard_assessment_packet(as_of=as_of, analysis_scope="primary-portfolio")
