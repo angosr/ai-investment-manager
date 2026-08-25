@@ -25,6 +25,7 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_activity,
     serialize_capital_equity,
     serialize_capital_overview,
+    serialize_forecast_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.pagination import (
@@ -118,7 +119,7 @@ def create_app(
         coordinator_facts = await coordinator_statuses()
 
         def read_health() -> dict:
-            capital_overview = capital_reader.overview(now=now)
+            capital_overview = capital_reader.overview()
             assessment_quality = (
                 reader.assessment_quality_status(now=now)
                 if config.assessment.enabled
@@ -146,9 +147,15 @@ def create_app(
         )
 
     async def capital(_request: Request) -> JSONResponse:
-        now = datetime.now(UTC)
-        overview = await run_in_threadpool(capital_reader.overview, now=now)
+        overview = await run_in_threadpool(capital_reader.overview)
         return _json(serialize_capital_overview(overview))
+
+    async def forecast_evidence(_request: Request) -> JSONResponse:
+        evidence = await run_in_threadpool(
+            capital_reader.forecast_evidence,
+            now=datetime.now(UTC),
+        )
+        return _json(serialize_forecast_evidence(evidence))
 
     async def capital_activity(request: Request) -> JSONResponse:
         limit = _parse_limit(request)
@@ -382,6 +389,7 @@ def create_app(
         Route("/api/capital", capital),
         Route("/api/capital/equity", capital_equity),
         Route("/api/capital/activity", capital_activity),
+        Route("/api/evaluation/forecast", forecast_evidence),
         Route("/api/assessment/cycles", assessment_cycles),
         Route(
             "/api/assessment/cycles/{cycle_id}",

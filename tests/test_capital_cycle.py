@@ -783,7 +783,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         )
         assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 2
 
-    overview = CapitalDashboardReader(engine, config).overview(now=NOW)
+    overview = CapitalDashboardReader(engine, config).overview()
     assert (
         SqlPortfolioStore(engine).latest_account(
             portfolio_id=config.capital.decision.portfolio_id,
@@ -792,6 +792,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         == first.account
     )
     dto = serialize_capital_overview(overview)
+    assert "forecast_evidence" not in dto
     assert dto["account"]["equity"] == "9997.9750"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
@@ -1057,7 +1058,7 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
 
     assert isinstance(after_restart, TradePlanExecutionResult)
     assert not after_restart.account.sleeves
-    overview = CapitalDashboardReader(engine, config).overview(now=missed)
+    overview = CapitalDashboardReader(engine, config).overview()
     dto = serialize_capital_overview(overview)
     assert dto["decision"]["as_of"] == missed.isoformat()
     assert "PROGRAMMATIC_RISK_EXIT" in dto["decision"]["reason_codes"]

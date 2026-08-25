@@ -420,6 +420,8 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
                     f"/api/assessment/records/{bad_assessment.assessment_id}"
                 ),
                 client.get("/api/capital/activity"),
+                client.get("/api/capital"),
+                client.get("/api/evaluation/forecast"),
                 client.get("/api/events"),
             )
 
@@ -430,6 +432,8 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         assessment_detail,
         bad_assessment_detail,
         capital_rows,
+        capital_overview,
+        forecast_evidence,
         events,
     ) = asyncio.run(read_endpoints())
 
@@ -475,6 +479,10 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         "input_snapshot"
     ]
     assert bad_assessment_detail.status_code == 200
+    assert capital_overview.status_code == 200
+    assert "forecast_evidence" not in capital_overview.json()
+    assert forecast_evidence.status_code == 200
+    assert forecast_evidence.json() == {"forecast_evidence": None}
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": [], "next_cursor": None}

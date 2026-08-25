@@ -15,7 +15,10 @@ import pytest
 
 from investment_manager.entrypoints.dashboard import formatting as fmt
 from investment_manager.entrypoints.dashboard import serializers as ser
-from investment_manager.entrypoints.dashboard.capital import CapitalOverview
+from investment_manager.entrypoints.dashboard.capital import (
+    CapitalOverview,
+    serialize_forecast_evidence,
+)
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
@@ -27,6 +30,7 @@ from investment_manager.entrypoints.dashboard.read_models import (
 )
 from investment_manager.entrypoints.dashboard.resources import sample_host_resources
 from investment_manager.execution.models import Side
+from investment_manager.forecast.context.evaluation import evaluate_forecast_evidence
 
 
 def _intent(side: Side) -> SimpleNamespace:
@@ -35,6 +39,47 @@ def _intent(side: Side) -> SimpleNamespace:
         entry=SimpleNamespace(price=Decimal("63140")),
         stop_price=Decimal("61980"),
     )
+
+
+def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
+    evidence = evaluate_forecast_evidence(
+        (),
+        due_slot_count=1,
+        forecast_count=1,
+        no_estimate_count=0,
+        required_non_overlapping_samples=30,
+    )
+
+    assert serialize_forecast_evidence(evidence) == {
+        "forecast_evidence": {
+            "evaluation_version": "context-forecast-evidence-v3",
+            "status": "NO_SETTLED_SAMPLES",
+            "terminal_result_count": 1,
+            "due_slot_count": 1,
+            "forecast_count": 1,
+            "no_estimate_count": 0,
+            "settled_forecast_count": 0,
+            "non_overlapping_sample_count": 0,
+            "required_non_overlapping_samples": 30,
+            "permission_evidence_eligible": True,
+            "mean_brier_score": None,
+            "benchmark_mean_brier_score": None,
+            "brier_skill": None,
+            "rolling_benchmark_mean_brier_score": None,
+            "rolling_brier_skill": None,
+            "rolling_brier_skill_lower_bound": None,
+            "rolling_brier_skill_upper_bound": None,
+            "rolling_baseline_ready_count": 0,
+            "market_benchmark_mean_brier_score": None,
+            "market_brier_skill": None,
+            "market_brier_skill_lower_bound": None,
+            "market_brier_skill_upper_bound": None,
+            "market_baseline_ready_count": 0,
+            "mean_expected_gross_bps": None,
+            "mean_realized_gross_bps": None,
+            "result_coverage": "1",
+        }
+    }
 
 
 def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:

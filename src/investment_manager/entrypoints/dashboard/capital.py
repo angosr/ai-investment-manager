@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
 
@@ -76,7 +76,6 @@ class CapitalOverview:
     performance_interval_count: int = 0
     cumulative_net_pnl: Decimal = Decimal("0")
     latest_performance: PortfolioPerformanceInterval | None = None
-    forecast_evidence: ForecastEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,8 +142,7 @@ class CapitalDashboardReader:
         self._config = config
         self._capital_benchmark_policy = build_capital_benchmark_policy(config)
 
-    def overview(self, *, now: datetime) -> CapitalOverview:
-        now = require_utc(now)
+    def overview(self) -> CapitalOverview:
         if not self._config.capital.enabled:
             return CapitalOverview(enabled=False)
         with self._engine.connect() as connection:
@@ -250,7 +248,6 @@ class CapitalDashboardReader:
                     == self._config.capital.decision.portfolio_id
                 ),
             )
-            forecast_evidence = self._forecast_evidence(connection, now=now)
         return CapitalOverview(
             enabled=True,
             account=account,
@@ -262,8 +259,12 @@ class CapitalDashboardReader:
             performance_interval_count=performance_count,
             cumulative_net_pnl=cumulative_net_pnl,
             latest_performance=latest_performance,
-            forecast_evidence=forecast_evidence,
         )
+
+    def forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
+        now = require_utc(now)
+        with self._engine.connect() as connection:
+            return self._forecast_evidence(connection, now=now)
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
         policy = self._config.capital.context_forecast
@@ -1009,103 +1010,35 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
                 "return_fraction": str(performance.return_fraction),
             },
         },
-        "forecast_evidence": None
-        if overview.forecast_evidence is None
-        else {
-            "evaluation_version": overview.forecast_evidence.evaluation_version,
-            "status": overview.forecast_evidence.status.value,
-            "terminal_result_count": overview.forecast_evidence.terminal_result_count,
-            "due_slot_count": overview.forecast_evidence.due_slot_count,
-            "result_coverage": (
-                None
-                if overview.forecast_evidence.result_coverage is None
-                else str(overview.forecast_evidence.result_coverage)
-            ),
-            "permission_evidence_eligible": (
-                overview.forecast_evidence.permission_evidence_eligible
-            ),
-            "forecast_count": overview.forecast_evidence.forecast_count,
-            "no_estimate_count": overview.forecast_evidence.no_estimate_count,
-            "settled_forecast_count": overview.forecast_evidence.settled_forecast_count,
-            "non_overlapping_sample_count": (
-                overview.forecast_evidence.non_overlapping_sample_count
-            ),
-            "required_non_overlapping_samples": (
-                overview.forecast_evidence.required_non_overlapping_samples
-            ),
-            "mean_brier_score": (
-                None
-                if overview.forecast_evidence.mean_brier_score is None
-                else str(overview.forecast_evidence.mean_brier_score)
-            ),
-            "benchmark_mean_brier_score": (
-                None
-                if overview.forecast_evidence.benchmark_mean_brier_score is None
-                else str(overview.forecast_evidence.benchmark_mean_brier_score)
-            ),
-            "brier_skill": (
-                None
-                if overview.forecast_evidence.brier_skill is None
-                else str(overview.forecast_evidence.brier_skill)
-            ),
-            "rolling_benchmark_mean_brier_score": (
-                None
-                if overview.forecast_evidence.rolling_benchmark_mean_brier_score is None
-                else str(overview.forecast_evidence.rolling_benchmark_mean_brier_score)
-            ),
-            "rolling_brier_skill": (
-                None
-                if overview.forecast_evidence.rolling_brier_skill is None
-                else str(overview.forecast_evidence.rolling_brier_skill)
-            ),
-            "rolling_brier_skill_lower_bound": (
-                None
-                if overview.forecast_evidence.rolling_brier_skill_lower_bound is None
-                else str(overview.forecast_evidence.rolling_brier_skill_lower_bound)
-            ),
-            "rolling_brier_skill_upper_bound": (
-                None
-                if overview.forecast_evidence.rolling_brier_skill_upper_bound is None
-                else str(overview.forecast_evidence.rolling_brier_skill_upper_bound)
-            ),
-            "rolling_baseline_ready_count": (
-                overview.forecast_evidence.rolling_baseline_ready_count
-            ),
-            "market_benchmark_mean_brier_score": (
-                None
-                if overview.forecast_evidence.market_benchmark_mean_brier_score is None
-                else str(overview.forecast_evidence.market_benchmark_mean_brier_score)
-            ),
-            "market_brier_skill": (
-                None
-                if overview.forecast_evidence.market_brier_skill is None
-                else str(overview.forecast_evidence.market_brier_skill)
-            ),
-            "market_brier_skill_lower_bound": (
-                None
-                if overview.forecast_evidence.market_brier_skill_lower_bound is None
-                else str(overview.forecast_evidence.market_brier_skill_lower_bound)
-            ),
-            "market_brier_skill_upper_bound": (
-                None
-                if overview.forecast_evidence.market_brier_skill_upper_bound is None
-                else str(overview.forecast_evidence.market_brier_skill_upper_bound)
-            ),
-            "market_baseline_ready_count": (
-                overview.forecast_evidence.market_baseline_ready_count
-            ),
-            "mean_expected_gross_bps": (
-                None
-                if overview.forecast_evidence.mean_expected_gross_bps is None
-                else str(overview.forecast_evidence.mean_expected_gross_bps)
-            ),
-            "mean_realized_gross_bps": (
-                None
-                if overview.forecast_evidence.mean_realized_gross_bps is None
-                else str(overview.forecast_evidence.mean_realized_gross_bps)
-            ),
-        },
     }
+
+
+def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
+    if evidence is None:
+        return {"forecast_evidence": None}
+    optional_decimals = (
+        "result_coverage",
+        "mean_brier_score",
+        "benchmark_mean_brier_score",
+        "brier_skill",
+        "rolling_benchmark_mean_brier_score",
+        "rolling_brier_skill",
+        "rolling_brier_skill_lower_bound",
+        "rolling_brier_skill_upper_bound",
+        "market_benchmark_mean_brier_score",
+        "market_brier_skill",
+        "market_brier_skill_lower_bound",
+        "market_brier_skill_upper_bound",
+        "mean_expected_gross_bps",
+        "mean_realized_gross_bps",
+    )
+    payload = asdict(evidence)
+    payload["status"] = evidence.status.value
+    payload["result_coverage"] = evidence.result_coverage
+    for field_name in optional_decimals:
+        value = getattr(evidence, field_name)
+        payload[field_name] = None if value is None else str(value)
+    return {"forecast_evidence": payload}
 
 
 def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
