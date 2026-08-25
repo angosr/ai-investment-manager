@@ -63,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-Context Forecast 由 TriggerCoordinator 直接唤醒，不依赖 heartbeat 相位或临时时点。当前槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存来源、政策和触发引用。材料事件落在冻结的 cadence 合并窗口内时，两项义务合并为一个同时标记 `CADENCE` 与 `MATERIAL_STATE` 的经济槽，只调用一次 Forecast；窗口外则保持独立。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+Context Forecast 由 TriggerCoordinator 直接唤醒，不依赖 heartbeat 相位或临时时点。当前槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存单一来源、政策和触发引用。两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；

@@ -41,7 +41,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v37"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v38"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -51,7 +51,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v37"
+    assert config.capital.version == "total-portfolio-capital-v38"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -88,14 +88,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         <= config.market_data.maximum_cross_market_quote_skew_seconds
     )
     assert config.assessment.version == "context-assessment-v40"
-    assert config.outcome_evaluation.version == "outcome-window-v14"
+    assert config.outcome_evaluation.version == "outcome-window-v15"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v8"
+        == "world-model-ablation-forward-v9"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v26"
+    assert config.trigger.version == "analysis-trigger-v27"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v9"
     regulation = next(
         item

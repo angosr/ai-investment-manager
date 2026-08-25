@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v37
+  version: total-portfolio-capital-v38
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -243,19 +243,18 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v13
+    version: btc-context-forecast-v14
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "bbc62ea51c939a30c637554a4be5dd3d4016aa493eee7215c6bac92be445c4c4"
+    producer_behavior_id: "facc14fd411a97bf57a84896df7064cce79a8473d4292f73a6f42ac855dd9f60"
     outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v9
+    contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
     horizon_minutes: 240
     cadence_minutes: 240
     material_event_slots_enabled: true
-    material_event_slot_policy_version: portfolio-material-world-model-slot-v3
-    material_event_cadence_merge_seconds: 900
+    material_event_slot_policy_version: portfolio-material-world-model-slot-v4
     validity_minutes: 60
     completion_deadline_seconds: 1500
     minimum_remaining_horizon_minutes: 210
@@ -337,7 +336,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v14
+  version: outcome-window-v15
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -345,10 +344,10 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v8
+    version: world-model-ablation-forward-v9
     enabled: false
-    plan_id: world-model-ablation-forward-v8
-    activated_at: 2026-08-25T15:00:00Z
+    plan_id: world-model-ablation-forward-v9
+    activated_at: 2026-08-25T16:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -363,7 +362,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v26
+  version: analysis-trigger-v27
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120

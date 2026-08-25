@@ -279,12 +279,6 @@ class SqlForecastContractStore:
         if payload is None:
             return None
         slot = ForecastDecisionSlot.model_validate(payload)
-        if (
-            origin == ForecastSlotOrigin.CADENCE
-            and slot.cause is not None
-            and slot.cause.cadence_anchor_at is not None
-        ):
-            return slot.cause.cadence_anchor_at
         return slot.slot_as_of
 
     def slot(self, slot_id: str) -> ForecastDecisionSlot | None:

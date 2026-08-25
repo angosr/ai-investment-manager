@@ -53,7 +53,7 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
 
     assert serialize_forecast_evidence(evidence) == {
         "forecast_evidence": {
-            "evaluation_version": "context-forecast-evidence-v4",
+            "evaluation_version": "context-forecast-evidence-v5",
             "status": "NO_SETTLED_SAMPLES",
             "terminal_result_count": 1,
             "due_slot_count": 1,

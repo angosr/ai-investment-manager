@@ -10,7 +10,7 @@ from enum import StrEnum
 from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v4"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v5"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")

@@ -275,7 +275,7 @@ def test_cadence_recovery_anchor_ignores_newer_material_event_slots() -> None:
     ) == cadence.slot_as_of
 
 
-def test_combined_slot_preserves_legacy_identity_and_cadence_anchor() -> None:
+def test_material_slot_preserves_legacy_identity() -> None:
     contract = _contract()
     legacy_cause = ForecastSlotCause.material_state(
         policy_version="material-world-model-slot-v1",
@@ -299,42 +299,6 @@ def test_combined_slot_preserves_legacy_identity_and_cadence_anchor() -> None:
             }
         ),
     )
-
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
-    contracts = SqlForecastContractStore(engine)
-    contracts.record_contract(contract)
-    binding = ForecastProducerBinding.create(
-        contract_id=contract.contract_id,
-        producer_kind=ForecastProducerKind.PROGRAM,
-        producer_id="trend",
-        producer_behavior_id="trend-combined-slots-v1",
-        permission=ForecastPermission.RESEARCH,
-    )
-    contracts.record_binding(binding, activated_at=NOW)
-    cadence_anchor = NOW + timedelta(hours=1)
-    cause = ForecastSlotCause.cadence_material_state(
-        policy_version="material-world-model-slot-v2",
-        trigger_refs=("delta-1",),
-        cadence_anchor_at=cadence_anchor,
-    )
-    combined = ForecastDecisionSlot.create(
-        contract,
-        slot_as_of=NOW + timedelta(minutes=50),
-        cutoff_prices=(),
-        cause=cause,
-    )
-    contracts.record_slot(combined, binding=binding)
-
-    assert cause.origins == (
-        ForecastSlotOrigin.CADENCE,
-        ForecastSlotOrigin.MATERIAL_STATE,
-    )
-    assert contracts.latest_obligated_slot_at(
-        binding_id=binding.binding_id,
-        origin=ForecastSlotOrigin.CADENCE,
-    ) == cadence_anchor
-
 
 def test_binding_resolution_preserves_legacy_identity_for_same_neutral_behavior() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
