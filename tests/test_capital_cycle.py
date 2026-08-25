@@ -45,7 +45,20 @@ from investment_manager.forecast.results import BaseForecast, ForecastBucketProb
 from investment_manager.forecast.tables import forecast_decision_slots, forecasts
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.market.models import InstrumentId, InstrumentProduct, MarketQuote
+from investment_manager.market.models import (
+    InstrumentId,
+    InstrumentProduct,
+    MarketQuote,
+    TradFiMarket,
+)
+from investment_manager.market.perpetual.models import (
+    FundingRateType,
+    FundingSettlement,
+    PerpetualQuote,
+    TradingScheduleSnapshot,
+    TradingSession,
+    TradingSessionType,
+)
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.market.tables import market_quotes
 from investment_manager.portfolio.models import (
@@ -126,6 +139,26 @@ def _test_paxg_target() -> ForecastTarget:
     )
 
 
+def _test_spy_target() -> ForecastTarget:
+    return ForecastTarget.create(
+        (
+            ForecastLeg(
+                instrument=InstrumentId(
+                    venue="BINANCE",
+                    product=InstrumentProduct.TRADFI_PERPETUAL,
+                    symbol="SPYUSDT",
+                    base_asset="SPY",
+                    quote_asset="USDT",
+                    settlement_asset="USDT",
+                    tradfi_market=TradFiMarket.EQUITY,
+                ),
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+            ),
+        )
+    )
+
+
 @dataclass(frozen=True)
 class _FixedMockForecastProducer:
     store: SqlForecastStore
@@ -147,7 +180,9 @@ class _FixedMockForecastProducer:
             ForecastPriceAnchor(
                 instrument_id=item.instrument.key,
                 price=(
-                    Decimal("100000")
+                    Decimal("765.1")
+                    if item.instrument.symbol == "SPYUSDT"
+                    else Decimal("100000")
                     if item.instrument.product == InstrumentProduct.SPOT
                     else Decimal("100300")
                 ),
@@ -403,6 +438,82 @@ def _put_market(
                 source="test",
             )
         )
+
+
+def _put_spy_market(
+    market: SqlMarketDataStore,
+    *,
+    at: datetime,
+    sequence: int,
+    bid: str = "765.0",
+    ask: str = "765.1",
+    session_type: TradingSessionType = TradingSessionType.REGULAR,
+) -> InstrumentId:
+    instrument = _test_spy_target().legs[0].instrument
+    exchange_time = at - timedelta(seconds=1)
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", instrument.key, sequence),
+            instrument=instrument,
+            exchange_time=exchange_time,
+            observed_at=at,
+            bid=Decimal(bid),
+            bid_quantity=Decimal("100"),
+            ask=Decimal(ask),
+            ask_quantity=Decimal("100"),
+            update_id=sequence,
+            source="test",
+        )
+    )
+    market.put_trading_schedule(
+        TradingScheduleSnapshot(
+            schedule_id=stable_id(
+                "tradfi_trading_schedule",
+                exchange_time.isoformat(),
+            ),
+            exchange_time=exchange_time,
+            observed_at=at,
+            sessions=(
+                TradingSession(
+                    market=TradFiMarket.EQUITY,
+                    starts_at=at - timedelta(hours=1),
+                    ends_at=at + timedelta(hours=1),
+                    session_type=session_type,
+                ),
+            ),
+            source="test",
+        )
+    )
+    return instrument
+
+
+def _put_spy_funding(
+    market: SqlMarketDataStore,
+    *,
+    instrument: InstrumentId,
+    funding_time: datetime,
+    observed_at: datetime,
+    rate: str,
+    mark_price: str,
+    rate_type: FundingRateType,
+) -> None:
+    market.put_funding_settlement(
+        FundingSettlement(
+            settlement_id=stable_id(
+                "funding_settlement",
+                instrument.key,
+                funding_time.isoformat(),
+                rate_type.value,
+            ),
+            instrument=instrument,
+            funding_time=funding_time,
+            observed_at=observed_at,
+            funding_rate=Decimal(rate),
+            mark_price=Decimal(mark_price),
+            rate_type=rate_type,
+            source="test",
+        )
+    )
 
 
 
@@ -904,6 +1015,112 @@ def test_held_product_still_requires_valuation_and_execution_quotes() -> None:
         service.produce(as_of=later)
 
 
+def test_tradfi_candidate_uses_schedule_funding_and_one_product_account() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    instrument = _put_spy_market(market, at=NOW, sequence=81)
+    configured, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("80"),
+        maximum_allocation_fraction=Decimal("0.10"),
+        target=_test_spy_target(),
+    )
+
+    opened = service.produce(
+        as_of=NOW,
+        cause_id="tradfi-open",
+        trigger_batch_id="tradfi-open",
+        symbol="SPYUSDT",
+        trigger_types=("REFERENCE_PRODUCT_QUALIFICATION",),
+    )
+
+    assert isinstance(opened, TradePlanExecutionResult)
+    assert opened.account.positions[0].instrument == instrument
+    assert opened.account.positions[0].quantity == Decimal("1.30")
+    assert opened.account.cash_balance > opened.account.equity
+    assert opened.account.cash_balance < Decimal("10000")
+
+    _put_spy_funding(
+        market,
+        instrument=instrument,
+        funding_time=NOW + timedelta(hours=4),
+        observed_at=NOW + timedelta(hours=4, seconds=1),
+        rate="0.0001",
+        mark_price="765",
+        rate_type=FundingRateType.REGULAR,
+    )
+    _put_spy_funding(
+        market,
+        instrument=instrument,
+        funding_time=NOW + timedelta(hours=6),
+        observed_at=NOW + timedelta(hours=6, seconds=1),
+        rate="-0.0002",
+        mark_price="768",
+        rate_type=FundingRateType.SPECIAL,
+    )
+    later = NOW + timedelta(hours=8)
+    _put_spy_market(
+        market,
+        at=later,
+        sequence=82,
+        bid="770.0",
+        ask="770.1",
+    )
+
+    reviewed = service.produce(
+        as_of=later,
+        cause_id="tradfi-review",
+        trigger_batch_id="tradfi-review",
+        symbol="SPYUSDT",
+        trigger_types=("HEARTBEAT",),
+    )
+
+    assert reviewed.trade_plan is not None
+    assert not reviewed.trade_plan.groups
+    account = SqlPortfolioStore(engine).latest_account(
+        portfolio_id=configured.capital.decision.portfolio_id,
+        as_of=later,
+    )
+    assert account is not None
+    assert account.accounting is not None
+    assert account.accounting.funding_pnl == Decimal("0.10023")
+    assert account.positions[0].quantity == Decimal("1.30")
+    assert account.reconciled
+    assert configured.capital.reference_policy is None
+
+
+def test_tradfi_candidate_cannot_trade_during_an_official_closed_session() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_spy_market(
+        market,
+        at=NOW,
+        sequence=83,
+        session_type=TradingSessionType.NO_TRADING,
+    )
+    _configured, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("80"),
+        maximum_allocation_fraction=Decimal("0.10"),
+        target=_test_spy_target(),
+    )
+
+    with pytest.raises(PointInTimeInputUnavailable, match=r"候选当前不可执行.*SPYUSDT"):
+        service.produce(
+            as_of=NOW,
+            cause_id="tradfi-closed",
+            trigger_batch_id="tradfi-closed",
+            symbol="SPYUSDT",
+            trigger_types=("REFERENCE_PRODUCT_QUALIFICATION",),
+        )
+
+
 def test_pending_group_requires_quotes_without_a_prior_account_position() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
@@ -963,7 +1180,8 @@ def test_context_forecast_resolves_read_only_evidence_outside_execution_scope(
         item.instrument.key for item in config.capital.execution_specs
     }
     assert {item.instrument.product for item in config.capital.execution_specs} == {
-        InstrumentProduct.SPOT
+        InstrumentProduct.SPOT,
+        InstrumentProduct.TRADFI_PERPETUAL,
     }
 
 
@@ -1091,10 +1309,11 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v3",
+        "universe_version": "binance-shadow-investable-v4",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
+            "GLOBAL_EQUITY",
             "INFLATION_SENSITIVE",
         ],
         "reference_policy_version": None,

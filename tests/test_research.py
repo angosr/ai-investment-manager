@@ -35,6 +35,7 @@ from investment_manager.market.models import (
     FeatureSnapshot,
     MarketSnapshot,
 )
+from investment_manager.market.perpetual.models import FundingRateType
 from investment_manager.research.carry import (
     CarryFundingSettlement,
     CarryInstrumentSpec,
@@ -735,6 +736,85 @@ def test_funding_history_verifies_archive_and_freezes_post_settlement_visibility
     (target / "observations.json").write_text(json.dumps(rows))
     with pytest.raises(ValueError, match="内容哈希"):
         catalog.load(dataset.manifest.dataset_id)
+
+
+def test_verified_funding_history_preserves_special_cashflows_and_interval_changes(
+    tmp_path,
+) -> None:
+    start = datetime(2026, 6, 18, 0, 0, 0, 1000, tzinfo=UTC)
+    end = start + timedelta(hours=16)
+    times = (
+        start,
+        start + timedelta(microseconds=8000),
+        start + timedelta(hours=1),
+        start + timedelta(hours=2),
+        start + timedelta(hours=3),
+        start + timedelta(hours=4),
+        start + timedelta(hours=8),
+    )
+    intervals = ("1", "1", "1", "1", "1", "1", "8")
+    rates = (
+        "0.00002292",
+        "-0.00239112",
+        "0.00003682",
+        "0",
+        "0",
+        "0.00000286",
+        "0.00019584",
+    )
+    filename = "SPYUSDT-fundingRate-2026-06.zip"
+    archive = _funding_archive(
+        filename,
+        tuple(
+            (
+                str(int(at.timestamp() * 1000)),
+                interval,
+                rate,
+            )
+            for at, interval, rate in zip(times, intervals, rates, strict=True)
+        ),
+    )
+    checksum = hashlib.sha256(archive).hexdigest()
+    rest_rows = [
+        {
+            "symbol": "SPYUSDT",
+            "fundingTime": int(at.timestamp() * 1000),
+            "fundingRate": rate,
+            "markPrice": "746.2",
+            "rateType": "Special" if index == 1 else "Regular",
+        }
+        for index, (at, rate) in enumerate(zip(times, rates, strict=True))
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "fapi.binance.com":
+            return httpx.Response(200, json=rest_rows)
+        if request.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=f"{checksum}  {filename}\n")
+        return httpx.Response(200, content=archive)
+
+    dataset = asyncio.run(
+        fetch_binance_funding_history(
+            base_url="https://data.binance.vision",
+            verification_base_url="https://fapi.binance.com",
+            symbol="SPYUSDT",
+            start=start,
+            end=end,
+            timeout_seconds=1,
+            clock=lambda: datetime(2026, 7, 1, tzinfo=UTC),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert dataset.manifest.schema_version == "historical-funding-rates-v2"
+    assert dataset.manifest.verification_source == "binance-usdm-funding-rest"
+    assert dataset.manifest.verification_hash is not None
+    assert dataset.observations[1].rate_type == FundingRateType.SPECIAL
+    assert dataset.observations[1].mark_price == Decimal("746.2")
+    catalog = HistoricalFundingDatasetCatalog(tmp_path)
+    target = catalog.store(dataset)
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
+    assert len(json.loads((target / "observations.json").read_text())[0]) == 6
 
 
 def test_funding_history_rejects_untrusted_source_and_checksum() -> None:

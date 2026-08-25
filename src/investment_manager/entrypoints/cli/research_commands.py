@@ -149,6 +149,7 @@ def fetch_binance_funding_history_command(
     dataset = asyncio.run(
         fetch_binance_funding_history(
             base_url="https://data.binance.vision",
+            verification_base_url="https://fapi.binance.com",
             symbol=canonical_symbol,
             start=_parse_utc_option(start, name="start"),
             end=_parse_utc_option(end, name="end"),

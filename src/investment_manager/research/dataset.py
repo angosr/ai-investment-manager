@@ -23,6 +23,7 @@ from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import ClosedMarketBar
+from investment_manager.market.perpetual.models import FundingRateType
 
 _INTERVAL_MILLISECONDS = {
     "1m": 60_000,
@@ -38,6 +39,7 @@ _INTERVAL_MILLISECONDS = {
 
 _BINANCE_FUNDING_ARCHIVE_SOURCE = "binance-public-data-usdm-funding-rate"
 _BINANCE_FUNDING_AVAILABILITY_LAG = timedelta(minutes=1)
+_BINANCE_FUNDING_REST_SOURCE = "binance-usdm-funding-rest"
 
 
 class InstrumentSpec(FrozenModel):
@@ -370,6 +372,8 @@ class FundingRateObservation(FrozenModel):
     available_at: datetime
     funding_interval_hours: int = Field(gt=0, le=24)
     funding_rate: Decimal
+    mark_price: Decimal | None = Field(default=None, gt=0)
+    rate_type: FundingRateType | None = None
 
     _utc_funding_time = field_validator("funding_time")(require_utc)
     _utc_available_at = field_validator("available_at")(require_utc)
@@ -387,9 +391,10 @@ class FundingSourceArtifact(FrozenModel):
 
 
 class HistoricalFundingDatasetManifest(FrozenModel):
-    schema_version: Literal["historical-funding-rates-v1"] = (
-        "historical-funding-rates-v1"
-    )
+    schema_version: Literal[
+        "historical-funding-rates-v1",
+        "historical-funding-rates-v2",
+    ] = "historical-funding-rates-v1"
     dataset_id: str
     symbol: str
     venue: Literal["BINANCE_USDM"] = "BINANCE_USDM"
@@ -405,6 +410,8 @@ class HistoricalFundingDatasetManifest(FrozenModel):
     observation_count: int = Field(gt=0)
     observations_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_artifacts: tuple[FundingSourceArtifact, ...] = Field(min_length=1)
+    verification_source: Literal["binance-usdm-funding-rest"] | None = None
+    verification_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     _utc_collected_at = field_validator("collected_at")(require_utc)
     _utc_requested_start = field_validator("requested_start")(require_utc)
@@ -437,17 +444,23 @@ class HistoricalFundingDatasetManifest(FrozenModel):
         ]
         if keys != expected_keys:
             raise ValueError("资金费率来源月档没有完整覆盖请求窗口")
-        expected = stable_id(
-            "historical_funding_dataset",
-            self.schema_version,
-            self.source,
-            self.symbol,
-            self.venue,
-            self.availability_lag_seconds,
-            self.requested_start,
-            self.requested_end,
-            self.observations_hash,
-            self.source_artifacts,
+        verified = self.schema_version == "historical-funding-rates-v2"
+        if verified != (
+            self.verification_source is not None and self.verification_hash is not None
+        ):
+            raise ValueError("资金费率 Schema 与 REST 验证身份不一致")
+        expected = _funding_dataset_id(
+            schema_version=self.schema_version,
+            source=self.source,
+            symbol=self.symbol,
+            venue=self.venue,
+            availability_lag_seconds=self.availability_lag_seconds,
+            requested_start=self.requested_start,
+            requested_end=self.requested_end,
+            observations_hash=self.observations_hash,
+            source_artifacts=self.source_artifacts,
+            verification_source=self.verification_source,
+            verification_hash=self.verification_hash,
         )
         if self.dataset_id != expected:
             raise ValueError("历史资金费率数据集 ID 与冻结内容不一致")
@@ -488,7 +501,13 @@ class HistoricalFundingDatasetCatalog:
         try:
             _write_json(
                 temporary / "observations.json",
-                [_compact_funding(item) for item in dataset.observations],
+                [
+                    _compact_funding(
+                        item,
+                        schema_version=dataset.manifest.schema_version,
+                    )
+                    for item in dataset.observations
+                ],
             )
             _write_json(
                 temporary / "manifest.json",
@@ -561,6 +580,7 @@ async def fetch_binance_funding_history(
     start: datetime,
     end: datetime,
     timeout_seconds: int,
+    verification_base_url: str | None = None,
     clock: Callable[[], datetime] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> HistoricalFundingDataset:
@@ -568,6 +588,10 @@ async def fetch_binance_funding_history(
 
     if base_url.rstrip("/") != "https://data.binance.vision":
         raise ValueError("资金费率历史只接受 Binance 官方公开数据站")
+    if verification_base_url is not None and (
+        verification_base_url.rstrip("/") != "https://fapi.binance.com"
+    ):
+        raise ValueError("资金费率明细只接受 Binance 官方 USD-M REST")
     start = require_utc(start)
     end = require_utc(end)
     collected_at = require_utc((clock or (lambda: datetime.now(UTC)))())
@@ -634,10 +658,26 @@ async def fetch_binance_funding_history(
     )
     if not observations:
         raise ValueError("指定区间没有 Binance 资金费率结算事实")
-    digest = _funding_observations_hash(observations)
+    verification_hash = None
+    schema_version = "historical-funding-rates-v1"
+    if verification_base_url is not None:
+        observations, verification_hash = await _verify_funding_observations(
+            base_url=verification_base_url,
+            symbol=symbol,
+            start=start,
+            end=end,
+            archived=observations,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+        )
+        schema_version = "historical-funding-rates-v2"
+    digest = _funding_observations_hash(
+        observations,
+        schema_version=schema_version,
+    )
     source_artifacts = tuple(sorted(artifacts, key=lambda item: item.archive_key))
     payload = {
-        "schema_version": "historical-funding-rates-v1",
+        "schema_version": schema_version,
         "source": _BINANCE_FUNDING_ARCHIVE_SOURCE,
         "symbol": symbol,
         "venue": "BINANCE_USDM",
@@ -646,12 +686,13 @@ async def fetch_binance_funding_history(
         "requested_end": end,
         "observations_hash": digest,
         "source_artifacts": source_artifacts,
+        "verification_source": (
+            _BINANCE_FUNDING_REST_SOURCE if verification_hash is not None else None
+        ),
+        "verification_hash": verification_hash,
     }
     manifest = HistoricalFundingDatasetManifest(
-        dataset_id=stable_id(
-            "historical_funding_dataset",
-            *payload.values(),
-        ),
+        dataset_id=_funding_dataset_id(**payload),
         collected_at=collected_at,
         first_available_at=observations[0].available_at,
         last_available_at=observations[-1].available_at,
@@ -965,12 +1006,14 @@ def _events_hash(events: Iterable[IntelligenceEvent]) -> str:
 
 def _funding_observations_hash(
     observations: Iterable[FundingRateObservation],
+    *,
+    schema_version: str = "historical-funding-rates-v1",
 ) -> str:
     digest = hashlib.sha256()
     for observation in observations:
         digest.update(
             json.dumps(
-                _compact_funding(observation),
+                _compact_funding(observation, schema_version=schema_version),
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode()
@@ -1030,9 +1073,18 @@ def _validate_funding_observations(
         for item in observations
     ):
         raise ValueError("历史资金费率包含窗口外事实或可见延迟不一致")
+    verified = manifest.schema_version == "historical-funding-rates-v2"
+    if any(
+        verified != (item.mark_price is not None and item.rate_type is not None)
+        for item in observations
+    ):
+        raise ValueError("历史资金费率明细与 Schema 验证级别不一致")
     for previous, current in pairwise(observations):
         if current.funding_time - previous.funding_time > timedelta(
-            hours=previous.funding_interval_hours,
+            hours=max(
+                previous.funding_interval_hours,
+                current.funding_interval_hours,
+            ),
             minutes=1,
         ):
             raise ValueError("历史资金费率结算序列存在缺口")
@@ -1048,7 +1100,13 @@ def _validate_funding_observations(
         or observations[-1].available_at != manifest.last_available_at
     ):
         raise ValueError("历史资金费率可见边界与 Manifest 不一致")
-    if _funding_observations_hash(observations) != manifest.observations_hash:
+    if (
+        _funding_observations_hash(
+            observations,
+            schema_version=manifest.schema_version,
+        )
+        != manifest.observations_hash
+    ):
         raise ValueError("历史资金费率内容哈希与 Manifest 不一致")
 
 
@@ -1064,27 +1122,43 @@ def _compact_bar(bar: ClosedMarketBar) -> list[Any]:
     ]
 
 
-def _compact_funding(observation: FundingRateObservation) -> list[Any]:
-    return [
+def _compact_funding(
+    observation: FundingRateObservation,
+    *,
+    schema_version: str,
+) -> list[Any]:
+    values = [
         int(observation.funding_time.timestamp() * 1000),
         int(observation.available_at.timestamp() * 1000),
         observation.funding_interval_hours,
         str(observation.funding_rate),
     ]
+    if schema_version == "historical-funding-rates-v1":
+        return values
+    if schema_version != "historical-funding-rates-v2":
+        raise ValueError("未知历史资金费率 Schema")
+    if observation.mark_price is None or observation.rate_type is None:
+        raise ValueError("v2 历史资金费率缺少 Mark Price 或 rate type")
+    return [*values, str(observation.mark_price), observation.rate_type.value]
 
 
 def _funding_from_compact(
     row: Any,
     manifest: HistoricalFundingDatasetManifest,
 ) -> FundingRateObservation:
-    if not isinstance(row, list) or len(row) != 4:
-        raise ValueError("历史资金费率条目必须包含 4 个字段")
+    expected_length = (
+        4 if manifest.schema_version == "historical-funding-rates-v1" else 6
+    )
+    if not isinstance(row, list) or len(row) != expected_length:
+        raise ValueError(f"历史资金费率条目必须包含 {expected_length} 个字段")
     return FundingRateObservation(
         symbol=manifest.symbol,
         funding_time=datetime.fromtimestamp(int(row[0]) / 1000, tz=UTC),
         available_at=datetime.fromtimestamp(int(row[1]) / 1000, tz=UTC),
         funding_interval_hours=int(row[2]),
         funding_rate=Decimal(str(row[3])),
+        mark_price=(None if expected_length == 4 else Decimal(str(row[4]))),
+        rate_type=(None if expected_length == 4 else FundingRateType(str(row[5]))),
     )
 
 
@@ -1158,6 +1232,140 @@ def _funding_rows_from_archive(
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Binance 资金费率 CSV 条目非法: {filename}") from exc
     return rows
+
+
+async def _verify_funding_observations(
+    *,
+    base_url: str,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    archived: tuple[FundingRateObservation, ...],
+    timeout_seconds: int,
+    transport: httpx.AsyncBaseTransport | None,
+) -> tuple[tuple[FundingRateObservation, ...], str]:
+    rows: list[dict[str, Any]] = []
+    cursor = int(start.timestamp() * 1000)
+    end_millis = int(end.timestamp() * 1000) - 1
+    async with httpx.AsyncClient(
+        base_url=base_url,
+        timeout=timeout_seconds,
+        follow_redirects=False,
+        transport=transport,
+    ) as client:
+        while cursor <= end_millis:
+            response = await client.get(
+                "/fapi/v1/fundingRate",
+                params={
+                    "symbol": symbol,
+                    "startTime": cursor,
+                    "endTime": end_millis,
+                    "limit": 1000,
+                },
+            )
+            response.raise_for_status()
+            page = response.json()
+            if not isinstance(page, list):
+                raise ValueError("Binance Funding REST 根节点必须为数组")
+            if not page:
+                break
+            if any(not isinstance(item, dict) for item in page):
+                raise ValueError("Binance Funding REST 条目必须为对象")
+            rows.extend(page)
+            last_time = int(page[-1].get("fundingTime", -1))
+            if last_time < cursor:
+                raise ValueError("Binance Funding REST 分页时间没有前进")
+            cursor = last_time + 1
+            if len(page) < 1000:
+                break
+
+    details: dict[datetime, tuple[Decimal, Decimal, FundingRateType]] = {}
+    normalized: list[list[Any]] = []
+    type_map = {
+        "Regular": FundingRateType.REGULAR,
+        "Special": FundingRateType.SPECIAL,
+    }
+    try:
+        for row in rows:
+            if str(row["symbol"]).upper() != symbol:
+                raise ValueError("Binance Funding REST 返回了其他品种")
+            funding_time = datetime.fromtimestamp(
+                int(row["fundingTime"]) / 1000,
+                tz=UTC,
+            )
+            funding_rate = Decimal(str(row["fundingRate"]))
+            mark_price = Decimal(str(row["markPrice"]))
+            rate_type = type_map[str(row["rateType"])]
+            if mark_price <= 0 or funding_time in details:
+                raise ValueError("Binance Funding REST Mark Price 或时间身份非法")
+            details[funding_time] = (funding_rate, mark_price, rate_type)
+            normalized.append(
+                [
+                    int(funding_time.timestamp() * 1000),
+                    str(funding_rate),
+                    str(mark_price),
+                    rate_type.value,
+                ]
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("Binance Funding REST"):
+            raise
+        raise ValueError("Binance Funding REST 条目非法") from exc
+
+    archived_times = {item.funding_time for item in archived}
+    if set(details) != archived_times:
+        raise ValueError("Binance Funding REST 与校验归档结算集合不一致")
+    verified: list[FundingRateObservation] = []
+    for observation in archived:
+        funding_rate, mark_price, rate_type = details[observation.funding_time]
+        if funding_rate != observation.funding_rate:
+            raise ValueError("Binance Funding REST 与校验归档费率不一致")
+        verified.append(
+            observation.model_copy(
+                update={
+                    "mark_price": mark_price,
+                    "rate_type": rate_type,
+                }
+            )
+        )
+    verification_hash = hashlib.sha256(
+        json.dumps(
+            normalized,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return tuple(verified), verification_hash
+
+
+def _funding_dataset_id(
+    *,
+    schema_version: str,
+    source: str,
+    symbol: str,
+    venue: str,
+    availability_lag_seconds: int,
+    requested_start: datetime,
+    requested_end: datetime,
+    observations_hash: str,
+    source_artifacts: tuple[FundingSourceArtifact, ...],
+    verification_source: str | None,
+    verification_hash: str | None,
+) -> str:
+    identity: list[Any] = [
+        schema_version,
+        source,
+        symbol,
+        venue,
+        availability_lag_seconds,
+        requested_start,
+        requested_end,
+        observations_hash,
+        source_artifacts,
+    ]
+    if schema_version == "historical-funding-rates-v2":
+        identity.extend((verification_source, verification_hash))
+    return stable_id("historical_funding_dataset", *identity)
 
 
 def _bar_from_compact(row: Any, manifest: HistoricalDatasetManifest) -> ClosedMarketBar:

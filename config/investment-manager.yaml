@@ -133,7 +133,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v34
+  version: total-portfolio-capital-v35
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -154,7 +154,7 @@ capital:
       - INFLATION_SENSITIVE
       - NOMINAL_RATES
   investable_universe:
-    version: binance-shadow-investable-v3
+    version: binance-shadow-investable-v4
     mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
@@ -163,7 +163,10 @@ capital:
       - instrument_key: BINANCE:SPOT:PAXGUSDT
         economic_exposure: INFLATION_SENSITIVE
         reference_candidate: true
-  # 当前 Venue 尚无通过 Mandate 风险匹配验证的低成本基准，故拒绝用 BTC 补位。
+      - instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+        economic_exposure: GLOBAL_EQUITY
+        reference_candidate: true
+  # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
     version: portfolio-net-edge-v8
@@ -176,8 +179,8 @@ capital:
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
-    version: multi-spot-portfolio-risk-v5
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT]
+    version: multi-product-portfolio-risk-v6
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
@@ -194,8 +197,8 @@ capital:
     reduction_authorization_seconds: 300
     kill_switch: false
   planner:
-    version: multi-spot-trade-planner-v3
-    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT]
+    version: multi-product-trade-planner-v4
+    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
   execution_specs:
     - instrument:
         venue: BINANCE
@@ -218,6 +221,19 @@ capital:
         contract_multiplier: "1"
       quantity_step: "0.0001"
       minimum_order_notional: "5"
+      fee_bps: "12.5"
+    - instrument:
+        venue: BINANCE
+        product: TRADFI_PERPETUAL
+        symbol: SPYUSDT
+        base_asset: SPY
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+        tradfi_market: EQUITY
+      quantity_step: "0.01"
+      minimum_order_notional: "5"
+      # 对模拟盘使用保守全成本，不能继承可能到期的临时费率优惠。
       fee_bps: "12.5"
   sleeve_risk:
     version: spot-position-risk-v2
