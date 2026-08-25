@@ -68,7 +68,7 @@ from investment_manager.portfolio.models import (
     PortfolioAccountSnapshot,
     SleeveTarget,
 )
-from investment_manager.portfolio.policy import SleeveRiskTemplate
+from investment_manager.portfolio.policy import CapitalPolicy, SleeveRiskTemplate
 from investment_manager.portfolio.repository import (
     SqlCapitalCycleStore,
     SqlPortfolioPerformanceStore,
@@ -349,7 +349,8 @@ class CapitalCycleService:
     def __init__(
         self,
         *,
-        config: AppConfig,
+        capital_policy: CapitalPolicy,
+        pipeline_version: str,
         market: SqlMarketDataStore,
         forecasts: SqlForecastStore,
         world_models: SqlContextAssessmentStore,
@@ -368,7 +369,8 @@ class CapitalCycleService:
         families = tuple(item.contract.outcome_family_id for item in forecast_sources)
         if tuple(sorted(set(families))) != tuple(sorted(families)):
             raise ValueError("Capital Forecast source family 必须唯一")
-        self._config = config
+        self._policy = capital_policy
+        self._pipeline_version = pipeline_version
         self._market = market
         self._forecasts = forecasts
         self._world_models = world_models
@@ -393,7 +395,7 @@ class CapitalCycleService:
 
     @property
     def portfolio_id(self) -> str:
-        return self._config.capital.decision.portfolio_id
+        return self._policy.decision.portfolio_id
 
     def cause_completed(self, cause_id: str) -> bool:
         """Whether this pipeline already completed one durable capital cause."""
@@ -402,8 +404,8 @@ class CapitalCycleService:
             self._cycle_records.get(
                 stable_id(
                     "capital_cycle_record",
-                    self._config.capital.decision.portfolio_id,
-                    self._config.pipeline.version,
+                    self._policy.decision.portfolio_id,
+                    self._pipeline_version,
                     cause_id,
                 )
             )
@@ -429,8 +431,8 @@ class CapitalCycleService:
         prior = self._cycle_records.get(
             stable_id(
                 "capital_cycle_record",
-                self._config.capital.decision.portfolio_id,
-                self._config.pipeline.version,
+                self._policy.decision.portfolio_id,
+                self._pipeline_version,
                 cause_id,
             )
         )
@@ -438,7 +440,7 @@ class CapitalCycleService:
             return self._recorded_result(prior)
         result = self._observe(as_of=requested_at)
         account = self._portfolio.latest_account(
-            portfolio_id=self._config.capital.decision.portfolio_id,
+            portfolio_id=self._policy.decision.portfolio_id,
             as_of=requested_at,
         )
         if account is None:
@@ -480,15 +482,15 @@ class CapitalCycleService:
         requested_at = require_utc(as_of)
         evaluation_cause_id = cause_id or stable_id(
             "capital_manual_evaluation",
-            self._config.capital.decision.portfolio_id,
-            self._config.pipeline.version,
+            self._policy.decision.portfolio_id,
+            self._pipeline_version,
             requested_at.isoformat(),
         )
         prior_record = self._cycle_records.get(
             stable_id(
                 "capital_cycle_record",
-                self._config.capital.decision.portfolio_id,
-                self._config.pipeline.version,
+                self._policy.decision.portfolio_id,
+                self._pipeline_version,
                 evaluation_cause_id,
             )
         )
@@ -515,7 +517,7 @@ class CapitalCycleService:
                 (requested_at, *(item.completed_at for item in no_estimates))
             )
             account_head = self._portfolio.head_account(
-                portfolio_id=self._config.capital.decision.portfolio_id
+                portfolio_id=self._policy.decision.portfolio_id
             )
             # A recovered cadence slot may predate the account ledger head.  Its
             # no-estimate result already lives in the Forecast audit trail; it is
@@ -586,7 +588,7 @@ class CapitalCycleService:
             account=account,
             quotes=decision_quotes,
             risk_profiles=risk_profiles,
-            execution_specs=self._config.capital.execution_specs,
+            execution_specs=self._policy.execution_specs,
         )
         plan = decision.trade_plan
         if plan is None or not plan.groups:
@@ -712,7 +714,7 @@ class CapitalCycleService:
         if target is None and expected_forecast_cycle is not None:
             target = self._portfolio.target_for_cycle(expected_forecast_cycle)
         account = self._portfolio.latest_account(
-            portfolio_id=self._config.capital.decision.portfolio_id,
+            portfolio_id=self._policy.decision.portfolio_id,
             as_of=requested_at,
         )
         if account is None:
@@ -761,8 +763,8 @@ class CapitalCycleService:
             execution_authorization_id = None
         self._cycle_records.record(
             CapitalCycleRecord.create(
-                portfolio_id=self._config.capital.decision.portfolio_id,
-                pipeline_id=self._config.pipeline.version,
+                portfolio_id=self._policy.decision.portfolio_id,
+                pipeline_id=self._pipeline_version,
                 cause_id=cause_id,
                 trigger_batch_id=trigger_batch_id,
                 symbol=symbol,
@@ -808,8 +810,8 @@ class CapitalCycleService:
     ) -> str:
         return stable_id(
             "capital_forecast_cycle",
-            self._config.capital.decision.portfolio_id,
-            self._config.capital.decision.version,
+            self._policy.decision.portfolio_id,
+            self._policy.decision.version,
             tuple(sorted(item.forecast_id for item in forecasts)),
         )
 
@@ -868,7 +870,7 @@ class CapitalCycleService:
             if source is None:
                 raise ValueError("Capital Forecast family 未绑定合格 source")
             sleeve_id = SleeveTarget.identity_for(
-                portfolio_id=self._config.capital.decision.portfolio_id,
+                portfolio_id=self._policy.decision.portfolio_id,
                 forecast_family=forecast.outcome_family_id,
                 forecast_target_id=forecast.target.target_id,
             )
@@ -943,7 +945,7 @@ class CapitalCycleService:
         )
         account = self._portfolio.account_for_cycle(
             cycle_id=projection_cycle_id,
-            portfolio_id=self._config.capital.decision.portfolio_id,
+            portfolio_id=self._policy.decision.portfolio_id,
         )
         if account is None:
             return None
@@ -972,8 +974,8 @@ class CapitalCycleService:
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         cycle_id = stable_id(
             "capital_observation",
-            self._config.capital.version,
-            self._config.capital.decision.portfolio_id,
+            self._policy.version,
+            self._policy.decision.portfolio_id,
             as_of.isoformat(),
         )
         self._recover(as_of=as_of, cycle_id=cycle_id)
@@ -1021,7 +1023,7 @@ class CapitalCycleService:
             account=account,
             quotes=decision_quotes,
             risk_profiles=tuple(profiles),
-            execution_specs=self._config.capital.execution_specs,
+            execution_specs=self._policy.execution_specs,
         )
         plan = protected.trade_plan
         if (
@@ -1036,7 +1038,7 @@ class CapitalCycleService:
                 account=account,
                 quotes=decision_quotes,
                 risk_profiles=tuple(profiles),
-                execution_specs=self._config.capital.execution_specs,
+                execution_specs=self._policy.execution_specs,
             )
             plan = protected.trade_plan
         if plan is None or not plan.groups:
@@ -1078,7 +1080,7 @@ class CapitalCycleService:
         as_of: datetime,
         quotes: tuple[ExecutableQuote, ...],
     ) -> PortfolioAccountSnapshot:
-        portfolio_id = self._config.capital.decision.portfolio_id
+        portfolio_id = self._policy.decision.portfolio_id
         with self._portfolio.account_projection_lock(portfolio_id=portfolio_id):
             account = self._portfolio.account_for_cycle(
                 cycle_id=cycle_id,
@@ -1101,7 +1103,7 @@ class CapitalCycleService:
         return account
 
     def _quotes(self, *, as_of: datetime) -> tuple[ExecutableQuote, ...]:
-        instruments = tuple(item.instrument for item in self._config.capital.execution_specs)
+        instruments = tuple(item.instrument for item in self._policy.execution_specs)
         values = []
         for instrument in instruments:
             if instrument.product == InstrumentProduct.SPOT:
@@ -1138,7 +1140,7 @@ class CapitalCycleService:
         observed_times = tuple(item.observed_at for item in values)
         if observed_times and (
             max(observed_times) - min(observed_times)
-        ).total_seconds() > self._config.capital.risk.maximum_quote_skew_seconds:
+        ).total_seconds() > self._policy.risk.maximum_quote_skew_seconds:
             raise PointInTimeInputUnavailable("Capital 多产品可成交报价时间偏差过大")
         return tuple(sorted(values, key=lambda item: item.instrument.key))
 
@@ -1304,7 +1306,8 @@ def assemble_capital_cycle(
         observations=observations,
     )
     return CapitalCycleService(
-        config=config,
+        capital_policy=config.capital,
+        pipeline_version=config.pipeline.version,
         market=market,
         forecasts=forecasts,
         world_models=world_models,

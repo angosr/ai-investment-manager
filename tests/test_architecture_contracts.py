@@ -1256,10 +1256,33 @@ def test_capital_application_does_not_select_deployment_adapter() -> None:
     source = (PACKAGE_ROOT / "decision_cycle" / "capital.py").read_text(
         encoding="utf-8"
     )
+    module = ast.parse(source)
+    service = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "CapitalCycleService"
+    )
+    initializer = next(
+        node
+        for node in service.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    service_source = ast.get_source_segment(source, service)
+    assert service_source is not None
 
     assert "DeploymentStage" not in source
     assert "SqlMockProductVenue" not in source
     assert "config.shadow" not in source
+    assert "config" not in {
+        item.arg for item in (*initializer.args.args, *initializer.args.kwonlyargs)
+    }
+    assert "capital_policy" in {
+        item.arg for item in (*initializer.args.args, *initializer.args.kwonlyargs)
+    }
+    assert all(
+        token not in service_source
+        for token in ("deployment", "shadow", "testnet", "simulation", "模拟", "仿真")
+    )
 
 
 def test_package_root_contains_only_composition_entries() -> None:
