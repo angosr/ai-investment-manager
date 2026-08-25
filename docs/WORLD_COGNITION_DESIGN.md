@@ -230,7 +230,7 @@ Context Forecast 的 producer behavior 必须绑定产生其上游 WorldModel �
 
 ### 7.3 资本增量
 
-Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和唯一风险匹配的简单 Reference Policy，统一计入手续费、点差、滑点、funding、延迟、换手和强制退出。Reference Policy 以同一时点的合法产品、风险包络和账户约束机械推进；单资产被动持有只评价对应单产品实验，不是总账户主基准。评价同时报告净收益、回撤、尾部损失、相对 Reference Policy 的增值和跟踪风险，不以交易次数或短期正 PnL 代替长期复利证据。
+Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和唯一风险匹配的简单 Reference Policy，统一计入手续费、点差、滑点、funding、延迟、换手和强制退出。手续费必须按产品和订单流动性角色取值：有可用的[账户级 commission 事实](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/account-endpoints#query-commission-rates-user_data)时使用该事实；模拟盘尚不能取得目标实盘账户费率时，使用[官方费率表](https://www.binance.com/en/fee/trading)中的非促销普通账户 taker 费率，不得用一个全局数字覆盖现货、永续与不同场所，也不得把临时优惠当作长期 Alpha。Reference Policy 以同一时点的合法产品、风险包络和账户约束机械推进；单资产被动持有只评价对应单产品实验，不是总账户主基准。评价同时报告净收益、回撤、尾部损失、相对 Reference Policy 的增值和跟踪风险，不以交易次数或短期正 PnL 代替长期复利证据。
 
 每个反事实账户必须由当时合法产品、可执行价格和同一风险预算机械推进，不能从事后最优资产或收盘价拼接。预测评分、Mock 资本改善和真实 Venue 资本改善分别报告；前两者不能自动授予正式资金权限。
 

@@ -52,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v39"
+    assert config.capital.version == "total-portfolio-capital-v40"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -67,7 +67,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:PAXGUSDT",
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
     )
-    assert config.capital.decision.version == "portfolio-net-edge-v8"
+    assert config.capital.decision.version == "portfolio-net-edge-v9"
     assert config.information.version == "information-intake-v35"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.official_metric_slow_poll_seconds == 21_600
@@ -259,6 +259,14 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
     )
     assert evidence_instrument.key not in {
         item.instrument.key for item in config.capital.execution_specs
+    }
+    fee_bps_by_instrument = {
+        item.instrument.key: item.fee_bps for item in config.capital.execution_specs
+    }
+    assert fee_bps_by_instrument == {
+        "BINANCE:SPOT:BTCUSDT": Decimal("10"),
+        "BINANCE:SPOT:PAXGUSDT": Decimal("10"),
+        "BINANCE:TRADFI_PERPETUAL:SPYUSDT": Decimal("50"),
     }
     contract = context_spot_forecast_contract(
         policy=config.capital.context_forecast,

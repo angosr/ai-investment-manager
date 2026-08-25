@@ -1144,6 +1144,21 @@ def test_tradfi_candidate_uses_schedule_funding_and_one_product_account() -> Non
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     instrument = _put_spy_market(market, at=NOW, sequence=81)
+    # This test isolates funding/account mechanics; production fee semantics are
+    # asserted in test_config and would correctly reject this synthetic 80bps edge.
+    execution_specs = tuple(
+        item.model_copy(update={"fee_bps": Decimal("10")})
+        if item.instrument.symbol == "SPYUSDT"
+        else item
+        for item in config.capital.execution_specs
+    )
+    config = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={"execution_specs": execution_specs}
+            )
+        }
+    )
     configured, service = _candidate_service(
         config,
         engine,
@@ -1402,7 +1417,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert first.groups[0].terminal
     assert first.groups[0].valid_until == NOW + timedelta(minutes=30)
     assert first.account.equity < Decimal("10000")
-    assert first.account.equity == Decimal("9997.9750")
+    assert first.account.equity == Decimal("9998.350")
     assert first.account.revision == 1
     assert content_hash(first.account) == content_hash(
         first.account.model_copy(update={"revision": 0})
@@ -1441,7 +1456,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         ],
         "reference_policy_version": None,
     }
-    assert dto["account"]["equity"] == "9997.9750"
+    assert dto["account"]["equity"] == "9998.350"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
         "active_group_count": 0,
@@ -1449,22 +1464,22 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "total_order_count": 1,
     }
     assert dto["performance"]["interval_count"] == 1
-    assert dto["performance"]["cumulative_net_pnl"] == "-2.0250"
+    assert dto["performance"]["cumulative_net_pnl"] == "-1.650"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
-    assert dto["performance"]["latest"]["net_pnl"] == "-2.0250"
+    assert dto["performance"]["latest"]["net_pnl"] == "-1.650"
     equity_points = CapitalDashboardReader(engine, config).equity_history()
     by_revision = sorted(equity_points, key=lambda item: item.revision)
     assert [item.revision for item in by_revision] == [0, 1]
-    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9997.9750")]
+    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9998.350")]
     assert serialize_capital_equity(tuple(by_revision))["points"][-1] == {
         "snapshot_id": first.account.snapshot_id,
         "at": NOW.isoformat(),
         "revision": 1,
-        "equity": "9997.9750",
-        "net_pnl": "-2.0250",
-        "drawdown_fraction": "0.0002025",
+        "equity": "9998.350",
+        "net_pnl": "-1.650",
+        "drawdown_fraction": "0.000165",
         "cash_benchmark_equity": "10000",
-        "increment_vs_cash": "-2.0250",
+        "increment_vs_cash": "-1.650",
     }
     newest_equity_page = CapitalDashboardReader(engine, config).equity_history(limit=1)
     older_equity_page = CapitalDashboardReader(engine, config).equity_history(

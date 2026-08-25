@@ -136,7 +136,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v39
+  version: total-portfolio-capital-v40
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -173,7 +173,7 @@ capital:
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
-    version: portfolio-net-edge-v8
+    version: portfolio-net-edge-v9
     portfolio_id: primary
     enabled: true
     minimum_conservative_net_bps: "5"
@@ -214,7 +214,8 @@ capital:
         contract_multiplier: "1"
       quantity_step: "0.00001"
       minimum_order_notional: "5"
-      fee_bps: "12.5"
+      # Binance 普通账户 Spot taker 非促销费率；点差与深度滑点由成本模型另计。
+      fee_bps: "10"
     - instrument:
         venue: BINANCE
         product: SPOT
@@ -225,7 +226,8 @@ capital:
         contract_multiplier: "1"
       quantity_step: "0.0001"
       minimum_order_notional: "5"
-      fee_bps: "12.5"
+      # Binance 普通账户 Spot taker 非促销费率；点差与深度滑点由成本模型另计。
+      fee_bps: "10"
     - instrument:
         venue: BINANCE
         product: TRADFI_PERPETUAL
@@ -237,8 +239,8 @@ capital:
         tradfi_market: EQUITY
       quantity_step: "0.01"
       minimum_order_notional: "5"
-      # 对模拟盘使用保守全成本，不能继承可能到期的临时费率优惠。
-      fee_bps: "12.5"
+      # TradFi Perps 沿用 USDⓈ-M 普通账户非促销 taker 费率；不继承临时优惠。
+      fee_bps: "50"
   sleeve_risk:
     version: spot-position-risk-v2
     basis_stress_bps: "100"
