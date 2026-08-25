@@ -22,7 +22,10 @@ from investment_manager.entrypoints.cli.support import (
 from investment_manager.entrypoints.cli.support import (
     runtime_engine as _runtime_engine,
 )
-from investment_manager.governance.models import current_clean_code_version
+from investment_manager.governance.models import (
+    committed_file_revision,
+    current_clean_code_version,
+)
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.scheduling.repository import SqlTriggerRepository
@@ -34,6 +37,9 @@ def record_reference_rejection_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     information_cutoff: Annotated[str, typer.Option(help="YYYY-MM-DD 信息截止日")],
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path(
+        "."
+    ),
     economic_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
         ".runtime/economic-series"
     ),
@@ -47,12 +53,13 @@ def record_reference_rejection_command(
         ".runtime/quote-datasets"
     ),
     result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
-        ".runtime/reference-selections"
+        "evidence/reference-selections"
     ),
 ) -> None:
     """记录 Reference 经济或产品证据失败的不可变拒绝；不能授予资格。"""
 
     from investment_manager.governance.evaluation.reference_selection import (
+        ReferencePlanRegistration,
         ReferenceSelectionCatalog,
         build_reference_rejection,
         load_reference_selection_plan,
@@ -60,6 +67,7 @@ def record_reference_rejection_command(
     from investment_manager.research.reference import (
         collect_reference_evidence,
         evaluate_reference_economics,
+        persist_reference_evidence_manifests,
     )
 
     try:
@@ -70,7 +78,19 @@ def record_reference_rejection_command(
     if cutoff > evaluated_at.date():
         raise typer.BadParameter("information-cutoff 不能晚于当前 UTC 日期")
     loaded = load_config(config)
+    root = project_root.resolve()
     registered = load_reference_selection_plan(plan)
+    registration_commit, registration_time = committed_file_revision(
+        plan,
+        repository_root=root,
+    )
+    plan_registration = ReferencePlanRegistration(
+        repository_path=plan.resolve().relative_to(root).as_posix(),
+        commit=registration_commit,
+        committed_at=registration_time,
+        plan_hash=content_hash(registered),
+    )
+    evaluator_code_version = current_clean_code_version(repository_root=root)
     instruments = {
         item.instrument.key: item.instrument for item in loaded.capital.execution_specs
     }
@@ -94,6 +114,8 @@ def record_reference_rejection_command(
     catalog = ReferenceSelectionCatalog(result_catalog)
     artifact = catalog.rejection(
         plan_hash=content_hash(registered),
+        plan_registration=plan_registration,
+        evaluator_code_version=evaluator_code_version,
         information_cutoff=cutoff,
         evidence=evidence,
         economic_development_metrics=economics.development,
@@ -103,6 +125,8 @@ def record_reference_rejection_command(
     if artifact is None:
         artifact = build_reference_rejection(
             plan=registered,
+            plan_registration=plan_registration,
+            evaluator_code_version=evaluator_code_version,
             evidence=evidence,
             evaluated_at=evaluated_at,
             information_cutoff=cutoff,
@@ -111,6 +135,14 @@ def record_reference_rejection_command(
             economic_stress_results=economics.stress,
         )
     target = catalog.store(artifact)
+    manifest_paths = persist_reference_evidence_manifests(
+        evidence,
+        economic_catalog=economic_catalog,
+        product_catalog=product_catalog,
+        funding_catalog=funding_catalog,
+        quote_catalog=quote_catalog,
+        target_root=result_catalog / artifact.artifact_id / "evidence-manifests",
+    )
     typer.echo(
         json.dumps(
             {
@@ -119,6 +151,7 @@ def record_reference_rejection_command(
                 "evidence_count": len(artifact.evidence),
                 "reason_codes": artifact.results[0].reason_codes,
                 "path": str(target),
+                "evidence_manifests": [str(path) for path in manifest_paths],
             },
             ensure_ascii=False,
             indent=2,

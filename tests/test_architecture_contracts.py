@@ -60,8 +60,8 @@ CLI_CONTRACT = {
         "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
     ),
     "record-reference-rejection": (
-        "config,plan,information_cutoff,economic_catalog,product_catalog,funding_catalog,"
-        "quote_catalog,result_catalog"
+        "config,plan,information_cutoff,project_root,economic_catalog,product_catalog,"
+        "funding_catalog,quote_catalog,result_catalog"
     ),
     "paired-decision-tape": (
         "config,database_url,pipeline_version,symbol,plan_id,signal_end,"

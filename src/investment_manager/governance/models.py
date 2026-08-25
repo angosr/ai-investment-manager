@@ -830,6 +830,42 @@ def current_clean_code_version(
     return head
 
 
+def committed_file_revision(
+    path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> tuple[str, datetime]:
+    """Return the commit that froze the exact current bytes of one tracked file."""
+
+    root = (repository_root or _source_repository_root()).resolve()
+    target = path.resolve()
+    try:
+        relative = target.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError("预登记文件必须位于治理源码仓库内") from exc
+    dirty = _git_output(
+        root,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        relative,
+    )
+    if dirty:
+        raise ValueError("预登记文件尚未提交或存在未提交变更")
+    commit = _git_output(root, "log", "-1", "--format=%H", "--", relative)
+    if not commit:
+        raise ValueError("预登记文件没有可验证的提交历史")
+    committed_blob = _git_output(root, "rev-parse", f"{commit}:{relative}")
+    current_blob = _git_output(root, "hash-object", relative)
+    if committed_blob != current_blob:
+        raise ValueError("预登记文件内容与登记提交不一致")
+    committed_at = datetime.fromisoformat(
+        _git_output(root, "show", "-s", "--format=%cI", commit)
+    )
+    return commit, require_utc(committed_at)
+
+
 def _source_repository_root() -> Path:
     source = Path(__file__).resolve()
     for candidate in source.parents:

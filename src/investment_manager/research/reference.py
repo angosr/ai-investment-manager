@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from investment_manager.governance.evaluation.reference_selection import (
 )
 from investment_manager.kernel.identity import content_hash
 from investment_manager.market.models import InstrumentId, InstrumentProduct
+from investment_manager.platform.artifacts import write_json_artifact
 from investment_manager.portfolio.policy import EconomicExposure
 from investment_manager.research.dataset import (
     HistoricalDatasetCatalog,
@@ -405,6 +407,49 @@ def collect_reference_evidence(
         if found is not None:
             evidence.append(found)
     return tuple(sorted(evidence, key=lambda item: (item.layer, item.scope, item.evidence_id)))
+
+
+def persist_reference_evidence_manifests(
+    evidence: tuple[ReferenceSelectionEvidence, ...],
+    *,
+    economic_catalog: Path,
+    product_catalog: Path,
+    funding_catalog: Path,
+    quote_catalog: Path,
+    target_root: Path,
+) -> tuple[Path, ...]:
+    """Persist only the source manifests actually used by one selection result."""
+
+    catalogs = (
+        economic_catalog,
+        product_catalog,
+        funding_catalog,
+        quote_catalog,
+    )
+    targets: list[Path] = []
+    for item in evidence:
+        candidates = tuple(
+            root / item.evidence_id / "manifest.json"
+            for root in catalogs
+            if (root / item.evidence_id / "manifest.json").is_file()
+        )
+        if len(candidates) != 1:
+            raise ValueError(
+                f"Reference 证据清单必须唯一可恢复：{item.evidence_id}"
+            )
+        raw = json.loads(candidates[0].read_text(encoding="utf-8"))
+        if content_hash(raw) != item.content_hash:
+            raise ValueError(f"Reference 证据清单内容不一致：{item.evidence_id}")
+        target = target_root / f"{item.evidence_id}.json"
+        targets.append(
+            write_json_artifact(
+                root=target_root,
+                target=target,
+                prefix=".reference-evidence-",
+                payload=raw,
+            )
+        )
+    return tuple(targets)
 
 
 def _evidence_for_requirement(

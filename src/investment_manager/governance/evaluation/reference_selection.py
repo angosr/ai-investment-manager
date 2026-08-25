@@ -35,6 +35,25 @@ class ReferenceSelectionStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ReferencePlanRegistration(FrozenModel):
+    version: Literal["reference-plan-registration-v1"] = (
+        "reference-plan-registration-v1"
+    )
+    repository_path: str = Field(min_length=1)
+    commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    committed_at: datetime
+    plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    _utc_committed_at = field_validator("committed_at")(require_utc)
+
+    @model_validator(mode="after")
+    def path_is_repository_relative(self):
+        path = Path(self.repository_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("Reference 计划登记路径必须位于源码仓库内")
+        return self
+
+
 class ReferenceSelectionEvidence(FrozenModel):
     layer: ReferenceEvidenceLayer
     scope: str = Field(min_length=1)
@@ -240,14 +259,16 @@ class ReferenceCandidateResult(FrozenModel):
 
 
 class ReferenceSelectionArtifact(FrozenModel):
-    version: Literal["reference-selection-artifact-v2"] = (
-        "reference-selection-artifact-v2"
+    version: Literal["reference-selection-artifact-v3"] = (
+        "reference-selection-artifact-v3"
     )
     artifact_id: str = Field(min_length=1)
     evaluated_at: datetime
     information_cutoff: date
     plan: ReferenceSelectionPlan
     plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plan_registration: ReferencePlanRegistration
+    evaluator_code_version: str = Field(pattern=r"^[0-9a-f]{40}$")
     evidence: tuple[ReferenceSelectionEvidence, ...]
     results: tuple[ReferenceCandidateResult, ...] = Field(min_length=1)
     status: ReferenceSelectionStatus
@@ -259,6 +280,10 @@ class ReferenceSelectionArtifact(FrozenModel):
     def identity_and_selection_match(self):
         if self.plan_hash != content_hash(self.plan):
             raise ValueError("Reference 选择结果未绑定计划内容")
+        if self.plan_registration.plan_hash != self.plan_hash:
+            raise ValueError("Reference 选择结果与计划登记内容不一致")
+        if self.evaluated_at <= self.plan_registration.committed_at:
+            raise ValueError("Reference 选择必须在计划耐久登记后评价")
         if self.information_cutoff > self.evaluated_at.date():
             raise ValueError("Reference 选择结果使用了评价时尚不可见的信息")
         if self.evaluated_at <= self.plan.registered_at:
@@ -419,6 +444,8 @@ class ReferenceSelectionCatalog:
         self,
         *,
         plan_hash: str,
+        plan_registration: ReferencePlanRegistration,
+        evaluator_code_version: str,
         information_cutoff: date,
         evidence: tuple[ReferenceSelectionEvidence, ...],
         economic_development_metrics: ReferenceEconomicMetrics | None,
@@ -432,6 +459,8 @@ class ReferenceSelectionCatalog:
             if (
                 artifact.status == ReferenceSelectionStatus.REJECTED
                 and artifact.plan_hash == plan_hash
+                and artifact.plan_registration == plan_registration
+                and artifact.evaluator_code_version == evaluator_code_version
                 and artifact.information_cutoff == information_cutoff
                 and artifact.evidence == evidence
                 and all(
@@ -539,6 +568,8 @@ def build_reference_selection_artifact(**values: object) -> ReferenceSelectionAr
 def build_reference_rejection(
     *,
     plan: ReferenceSelectionPlan,
+    plan_registration: ReferencePlanRegistration,
+    evaluator_code_version: str,
     evidence: tuple[ReferenceSelectionEvidence, ...],
     evaluated_at: datetime,
     information_cutoff: date,
@@ -590,6 +621,8 @@ def build_reference_rejection(
         information_cutoff=information_cutoff,
         plan=plan,
         plan_hash=content_hash(plan),
+        plan_registration=plan_registration,
+        evaluator_code_version=evaluator_code_version,
         evidence=evidence,
         results=(result,),
         status=ReferenceSelectionStatus.REJECTED,

@@ -22,6 +22,7 @@ from investment_manager.governance.models import (
     StageResult,
     build_evaluation_plan_invalidation,
     build_governance_snapshot,
+    committed_file_revision,
     evaluation_plan_invalidation_id,
     load_constitution,
     load_regression_suite,
@@ -168,6 +169,43 @@ def test_runtime_release_requires_exact_clean_code_version(monkeypatch, tmp_path
     )
     with pytest.raises(ValueError, match="未提交变更"):
         validate_manifest_code_version(manifest, repository_root=tmp_path)
+
+
+def test_committed_file_revision_binds_current_blob_and_commit_time(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    target = tmp_path / "config" / "plan.yaml"
+    target.parent.mkdir()
+    target.write_text("version: v1\n", encoding="utf-8")
+    observations = iter(
+        (
+            "",
+            "a" * 40,
+            "b" * 40,
+            "b" * 40,
+            "2026-08-24T12:30:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        "investment_manager.governance.models._git_output",
+        lambda _root, *_arguments: next(observations),
+    )
+
+    commit, committed_at = committed_file_revision(
+        target,
+        repository_root=tmp_path,
+    )
+
+    assert commit == "a" * 40
+    assert committed_at == datetime(2026, 8, 24, 12, 30, tzinfo=UTC)
+
+    monkeypatch.setattr(
+        "investment_manager.governance.models._git_output",
+        lambda _root, *_arguments: " M config/plan.yaml",
+    )
+    with pytest.raises(ValueError, match="尚未提交"):
+        committed_file_revision(target, repository_root=tmp_path)
 
 
 def test_historical_runtime_release_rejects_changed_configuration() -> None:

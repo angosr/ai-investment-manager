@@ -14,6 +14,7 @@ from investment_manager.governance.evaluation.reference_selection import (
     ReferenceEconomicMetrics,
     ReferenceEvidenceLayer,
     ReferenceEvidenceRequirement,
+    ReferencePlanRegistration,
     ReferenceQualificationPolicy,
     ReferenceRiskContribution,
     ReferenceSelectionCatalog,
@@ -34,6 +35,7 @@ from investment_manager.portfolio.policy import (
     ReferenceAllocationPolicy,
     ReferencePortfolioPolicy,
 )
+from investment_manager.research.reference import persist_reference_evidence_manifests
 
 
 def test_rejected_selection_artifact_cannot_grant_reference_policy() -> None:
@@ -43,6 +45,8 @@ def test_rejected_selection_artifact_cannot_grant_reference_policy() -> None:
         information_cutoff=date(2026, 8, 24),
         plan=plan,
         plan_hash=content_hash(plan),
+        plan_registration=_registration(plan),
+        evaluator_code_version="b" * 40,
         evidence=(),
         results=(
             ReferenceCandidateResult(
@@ -73,10 +77,60 @@ def test_registered_reference_plan_is_content_addressed_and_rejection_only() -> 
     }
 
 
+def test_reference_result_must_follow_durable_plan_registration() -> None:
+    plan, _candidate = _plan()
+    registration = _registration(plan).model_copy(
+        update={"committed_at": datetime(2026, 8, 26, tzinfo=UTC)}
+    )
+
+    with pytest.raises(ValidationError, match="耐久登记后"):
+        build_reference_rejection(
+            plan=plan,
+            plan_registration=registration,
+            evaluator_code_version="b" * 40,
+            evidence=(),
+            evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
+            information_cutoff=date(2026, 8, 24),
+        )
+
+
+def test_only_selected_reference_source_manifests_are_persisted(tmp_path: Path) -> None:
+    source_root = tmp_path / "economic"
+    source = source_root / "evidence-1" / "manifest.json"
+    source.parent.mkdir(parents=True)
+    raw = {"dataset_id": "evidence-1", "observations_hash": "a" * 64}
+    source.write_text(json.dumps(raw), encoding="utf-8")
+    selected = (
+        ReferenceSelectionEvidence(
+            layer=ReferenceEvidenceLayer.ECONOMIC_PROXY,
+            scope="US_EQUITY",
+            evidence_id="evidence-1",
+            content_hash=content_hash(raw),
+            first_effective_date=date(1960, 1, 1),
+            last_effective_date=date(2026, 1, 1),
+            observation_count=100,
+        ),
+    )
+
+    targets = persist_reference_evidence_manifests(
+        selected,
+        economic_catalog=source_root,
+        product_catalog=tmp_path / "products",
+        funding_catalog=tmp_path / "funding",
+        quote_catalog=tmp_path / "quotes",
+        target_root=tmp_path / "durable",
+    )
+
+    assert len(targets) == 1
+    assert json.loads(targets[0].read_text(encoding="utf-8")) == raw
+
+
 def test_rejection_records_economic_or_evidence_failure_only(tmp_path: Path) -> None:
     plan, _candidate = _plan()
     artifact = build_reference_rejection(
         plan=plan,
+        plan_registration=_registration(plan),
+        evaluator_code_version="b" * 40,
         evidence=(),
         evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
         information_cutoff=date(2026, 8, 24),
@@ -89,6 +143,8 @@ def test_rejection_records_economic_or_evidence_failure_only(tmp_path: Path) -> 
     catalog.store(artifact)
     assert catalog.rejection(
         plan_hash=artifact.plan_hash,
+        plan_registration=artifact.plan_registration,
+        evaluator_code_version=artifact.evaluator_code_version,
         information_cutoff=artifact.information_cutoff,
         evidence=artifact.evidence,
         economic_development_metrics=None,
@@ -111,6 +167,8 @@ def test_rejection_records_economic_or_evidence_failure_only(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="必须运行完整费用后评价"):
         build_reference_rejection(
             plan=plan,
+            plan_registration=_registration(plan),
+            evaluator_code_version="b" * 40,
             evidence=complete,
             evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
             information_cutoff=date(2026, 8, 24),
@@ -138,6 +196,8 @@ def test_qualified_selection_binds_exact_winner_and_policy(tmp_path: Path) -> No
         information_cutoff=date(2026, 8, 24),
         plan=plan,
         plan_hash=content_hash(plan),
+        plan_registration=_registration(plan),
+        evaluator_code_version="b" * 40,
         evidence=evidence,
         results=(
             ReferenceCandidateResult(
@@ -195,6 +255,8 @@ def test_qualified_selection_requires_every_pre_registered_evidence_layer() -> N
             information_cutoff=date(2026, 8, 24),
             plan=plan,
             plan_hash=content_hash(plan),
+            plan_registration=_registration(plan),
+            evaluator_code_version="b" * 40,
             evidence=(),
             results=(
                 ReferenceCandidateResult(
@@ -278,6 +340,15 @@ def _plan():
         candidates=(candidate,),
     )
     return plan, candidate
+
+
+def _registration(plan) -> ReferencePlanRegistration:
+    return ReferencePlanRegistration(
+        repository_path="config/reference-selection-plan.yaml",
+        commit="a" * 40,
+        committed_at=datetime(2026, 8, 24, 1, tzinfo=UTC),
+        plan_hash=content_hash(plan),
+    )
 
 
 def _metrics() -> ReferenceCandidateMetrics:
