@@ -286,6 +286,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.capital.model_dump(mode="python")
+    payload["mandate"]["status"] = MandateStatus.APPROVED
     payload["reference_policy"] = {
         "version": "invalid-btc-reference-v1",
         "mandate_version": config.capital.mandate.version,
@@ -311,6 +312,7 @@ def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark()
 def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.capital.model_dump(mode="python")
+    payload["mandate"]["status"] = MandateStatus.APPROVED
     payload["investable_universe"]["instruments"][0]["reference_candidate"] = True
     payload["reference_policy"] = {
         "version": "underdiversified-reference-v1",
@@ -333,6 +335,31 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
     validated = type(config.capital).model_validate(payload)
     assert validated.reference_policy is not None
     assert validated.reference_policy.version == "underdiversified-reference-v1"
+
+
+def test_provisional_mandate_cannot_grant_reference_policy() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.capital.model_dump(mode="python")
+    payload["reference_policy"] = {
+        "version": "invalid-provisional-reference-v1",
+        "mandate_version": config.capital.mandate.version,
+        "universe_version": config.capital.investable_universe.version,
+        "selection_artifact_id": "invalid-provisional-reference-selection-v1",
+        "rebalance_band_fraction": Decimal("0.05"),
+        "allocations": (
+            {
+                "implementation_key": "BINANCE:SPOT:PAXGUSDT",
+                "target_exposure_fraction": Decimal("0.10"),
+            },
+            {
+                "implementation_key": "CASH:USDT",
+                "target_exposure_fraction": Decimal("0.90"),
+            },
+        ),
+    }
+
+    with pytest.raises(ValidationError, match="资产所有者已批准"):
+        type(config.capital).model_validate(payload)
 
 
 def test_investable_universe_cannot_exceed_the_owner_mandate() -> None:

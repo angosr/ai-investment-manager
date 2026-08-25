@@ -240,6 +240,8 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital Risk gross 上限不得宽于 Mandate")
         reference = self.reference_policy
         if reference is not None:
+            if self.mandate.status != MandateStatus.APPROVED:
+                raise ValueError("Reference Policy 只能绑定资产所有者已批准的 Mandate")
             if (
                 reference.mandate_version != self.mandate.version
                 or reference.universe_version != self.investable_universe.version

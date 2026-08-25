@@ -91,6 +91,7 @@ def test_release_requires_the_bound_reference_selection_artifact() -> None:
     assert _required_release_artifacts(config) == ("web-dist",)
 
     payload = config.model_dump(mode="python")
+    payload["capital"]["mandate"]["status"] = "APPROVED"
     payload["capital"]["investable_universe"]["instruments"][0][
         "reference_candidate"
     ] = True
