@@ -24,6 +24,7 @@ from investment_manager.forecast.context.contract import (
     ContextAssessmentContractError,
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
+    assessment_current_evidence_ids,
     assessment_previous_mechanism_ids,
     assessment_visible_event_ids,
     assessment_visible_evidence_ids,
@@ -36,7 +37,7 @@ from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
 ASSESS_INPUT_VERSION = "world-model-input-v3"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v4"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v5"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -60,6 +61,9 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     retirement = definitions["ContextMechanismRetirement"]
     retirement["properties"]["previous_mechanism_id"]["enum"] = list(
         previous_mechanism_ids
+    )
+    retirement["properties"]["evidence_ids"]["items"]["enum"] = list(
+        sorted(assessment_current_evidence_ids(packet))
     )
     retired_mechanisms = draft["properties"]["retired_mechanisms"]
     retired_mechanisms["maxItems"] = len(previous_mechanism_ids)

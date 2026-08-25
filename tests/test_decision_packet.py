@@ -21,6 +21,7 @@ from investment_manager.forecast.context.contract import (
     WorldModelDraft,
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
+    assessment_current_evidence_ids,
     build_assess_prompt,
     finalize_world_model,
 )
@@ -1514,6 +1515,26 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert '"causal_chain"' in schema
     assert "联合因果解释" in prompt
     assert "decision_packet_json=" in prompt
+
+
+def test_assess_schema_restricts_retirement_to_current_evidence(
+    app_config,
+    replay_input,
+) -> None:
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-retirement-schema",
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+
+    schema = assess_output_schema(packet)
+    retirement_ids = schema["$defs"]["ContextMechanismRetirement"]["properties"][
+        "evidence_ids"
+    ]["items"]["enum"]
+
+    assert set(retirement_ids) == set(assessment_current_evidence_ids(packet))
+    assert "old-1" not in retirement_ids
+    assert "old-2" not in retirement_ids
 
 
 def test_finalize_assessment_writes_only_current_world_model_schema(
