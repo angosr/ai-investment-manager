@@ -9,9 +9,9 @@ capital:
   context_forecast:
     enabled: true
   candidate_capital_authorizations:
-    - version: btc-context-candidate-v12
+    - version: btc-context-candidate-v13
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "5c3c19eb374c881469b55fb8845fa20f1ccf0450cb55691f4691226b9e18b3e0"
+      producer_behavior_id: "72c603c23fc4dcbac3a918cf2e000b2da9e0cbf134c5752a77252be9e475ac8d"
       outcome_family_id: btc-spot-directional-4h
       hypothesis_fingerprint: "eaa9bfa274aeaee59f6e8d2cd3539fed24a4ca76503fcc8dbf9a7a1dad5e0073"
       maximum_allocation_fraction: "0.10"
@@ -45,7 +45,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-spot-capital-shadow-v44
+  version: world-forecast-spot-capital-shadow-v45
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

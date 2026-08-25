@@ -1256,12 +1256,22 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
     assert packet.omitted_fact_revision_ids == ("fiscal-cash",)
 
 
-def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
+def test_analysis_projection_exposes_partial_observation_boundary(
     app_config,
     replay_input,
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    coverage = DomainCoverageSnapshot(
+    current = DomainCoverageSnapshot(
+        domain=CausalDomain.CROSS_ASSET_EXTERNAL,
+        status=CoverageStatus.CURRENT,
+        as_of=packet.as_of,
+        source_stream_ids=("cross-asset",),
+        covered_capabilities=("USD",),
+        latest_success_at=packet.as_of,
+        latest_publication_at=packet.as_of,
+        latest_poll_refs=("source-poll-current",),
+    )
+    partial = DomainCoverageSnapshot(
         domain=CausalDomain.FISCAL_DEBT,
         status=CoverageStatus.PARTIAL,
         as_of=packet.as_of,
@@ -1272,11 +1282,36 @@ def test_analysis_projection_compacts_healthy_coverage_to_decision_boundary(
         latest_publication_at=packet.as_of,
         latest_poll_refs=("source-poll-1",),
     )
+    failed = DomainCoverageSnapshot(
+        domain=CausalDomain.MONETARY_INFLATION,
+        status=CoverageStatus.SOURCE_FAILED,
+        as_of=packet.as_of,
+        source_stream_ids=("macro-release",),
+        covered_capabilities=("POLICY_DECISIONS",),
+        missing_capabilities=("INFLATION_SURPRISE",),
+        latest_success_at=packet.as_of,
+        latest_publication_at=packet.as_of,
+        latest_poll_refs=("source-poll-failed",),
+    )
     projected = decision_packet_analysis_projection(
-        packet.model_copy(update={"information_coverage": (coverage,)})
+        packet.model_copy(update={"information_coverage": (current, partial, failed)})
     )
 
-    assert projected["capability_summary"] == ()
+    assert projected["capability_summary"] == (
+        {
+            "domain": "FISCAL_DEBT",
+            "status": "PARTIAL",
+            "missing_capabilities": ("DEBT_ISSUANCE",),
+        },
+        {
+            "domain": "MONETARY_INFLATION",
+            "status": "SOURCE_FAILED",
+            "missing_capabilities": ("INFLATION_SURPRISE",),
+        },
+    )
+    assert "information_coverage" not in projected
+    assert "coverage_gap_codes" not in projected
+    assert "data_quality_codes" not in projected
 
 
 def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
@@ -1897,33 +1932,6 @@ def test_world_model_retirement_requires_current_evidence(
             analysis_behavior_hash=HASH,
             available_at=packet.as_of + timedelta(seconds=20),
         )
-
-
-def test_analysis_projection_exposes_compact_capability_summary_not_gap_wall(
-    app_config,
-    replay_input,
-) -> None:
-    _, packet = _packet(app_config, replay_input)
-    coverage = DomainCoverageSnapshot(
-        domain=CausalDomain.FISCAL_DEBT,
-        status=CoverageStatus.PARTIAL,
-        as_of=packet.as_of,
-        source_stream_ids=("treasury-buyback-schedule",),
-        covered_capabilities=("DEBT_REPURCHASE",),
-        missing_capabilities=("DEBT_ISSUANCE",),
-        latest_success_at=packet.as_of,
-        latest_publication_at=packet.as_of,
-        latest_poll_refs=("source-poll-1",),
-    )
-
-    projected = decision_packet_analysis_projection(
-        packet.model_copy(update={"information_coverage": (coverage,)})
-    )
-
-    assert projected["capability_summary"] == ()
-    assert "information_coverage" not in projected
-    assert "coverage_gap_codes" not in projected
-    assert "data_quality_codes" not in projected
 
 
 def test_packet_rejects_future_derivative_observation(app_config, replay_input) -> None:

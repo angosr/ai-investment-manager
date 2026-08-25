@@ -513,7 +513,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
             "missing_capabilities": item.missing_capabilities,
         }
         for item in packet.information_coverage
-        if item.status == CoverageStatus.NOT_CONFIGURED
+        if item.status != CoverageStatus.CURRENT
     )
     payload.pop("information_coverage", None)
     return payload
