@@ -86,7 +86,6 @@ class CoverageRequirement(StrictConfig):
     source_stream_ids: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
     source_capabilities: dict[str, tuple[str, ...]] = Field(default_factory=dict)
-    maximum_poll_age_seconds: int = Field(default=300, ge=10, le=604_800)
     maximum_publication_age_seconds: int | None = Field(
         default=None,
         ge=10,

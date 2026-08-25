@@ -67,7 +67,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v8"
-    assert config.information.version == "information-intake-v33"
+    assert config.information.version == "information-intake-v34"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.decision_state.version == "portfolio-state-v36"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
@@ -135,7 +135,6 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         ),
         "ishares-ibit-holdings": ("BTC_ETF_IBIT_HOLDINGS",),
     }
-    assert institutional.maximum_poll_age_seconds == 1200
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800
     assert config.decision_state.packet_policy.maximum_calendar_context_distance_seconds == 604_800
     assert config.decision_state.official_fact_policy.affected_assets == (

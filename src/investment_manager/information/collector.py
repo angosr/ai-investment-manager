@@ -723,6 +723,7 @@ class InformationCollector:
         *,
         poll_recorder: SourcePollRecorder | None = None,
         coverage_bindings: dict[str, tuple[str, CausalDomain]] | None = None,
+        poll_interval_seconds: int = 60,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         source_ids = [item.source_id for item in sources]
@@ -739,11 +740,14 @@ class InformationCollector:
             raise ValueError("coverage binding source_stream_id 必须唯一")
         if bool(bindings) != (poll_recorder is not None):
             raise ValueError("coverage binding 与 poll recorder 必须同时配置")
+        if poll_interval_seconds < 1:
+            raise ValueError("coverage poll interval 必须为正数")
         self._sources = sources
         self._normalizer = normalizer
         self._store = store
         self._poll_recorder = poll_recorder
         self._coverage_bindings = bindings
+        self._poll_interval_seconds = poll_interval_seconds
         self._clock = clock
 
     def collect(self, *, observed_at: datetime) -> CollectionResult:
@@ -822,6 +826,7 @@ class InformationCollector:
                     status=status,
                     started_at=started_at,
                     completed_at=completed_at,
+                    poll_interval_seconds=self._poll_interval_seconds,
                     latest_publication_at=latest_publication_at,
                     observation_count=observation_count,
                     new_fact_count=new_fact_count,

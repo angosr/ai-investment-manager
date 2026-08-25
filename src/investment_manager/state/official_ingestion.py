@@ -418,6 +418,7 @@ class RegulatoryOfficialCollectorService:
             status=status,
             started_at=started_at,
             completed_at=completed_at,
+            poll_interval_seconds=self._poll_seconds,
             latest_publication_at=max(
                 (
                     item.record.observation.source_published_at
@@ -673,6 +674,11 @@ class FedOfficialCollectorService:
             status=status,
             started_at=started_at,
             completed_at=completed_at,
+            poll_interval_seconds=(
+                self._monetary_poll_seconds
+                if kind == "monetary"
+                else self._calendar_poll_seconds
+            ),
             latest_publication_at=max(publications, default=None),
             observation_count=len(records),
             new_fact_count=(
@@ -932,6 +938,7 @@ class TreasuryBuybackCollectorService:
             status=status,
             started_at=started_at,
             completed_at=completed_at,
+            poll_interval_seconds=self._poll_seconds,
             latest_publication_at=max(
                 (item.record.observation.observed_at for item in records),
                 default=None,

@@ -118,6 +118,7 @@ def assemble_market_service(loaded, engine) -> MarketRuntime:
                 ),
                 started_at=refresh.started_at,
                 completed_at=refresh.completed_at,
+                poll_interval_seconds=loaded.market_data.perpetual_poll_seconds,
                 latest_publication_at=refresh.latest_publication_at,
                 observation_count=refresh.observation_count,
                 error_class=refresh.error_class,
@@ -463,6 +464,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
             source.source_id: (source.source_stream_id, source.causal_domain)
             for source in publication_sources
         },
+        poll_interval_seconds=policy.collection_interval_seconds,
     )
     service = InformationCollectorService(
         collector,

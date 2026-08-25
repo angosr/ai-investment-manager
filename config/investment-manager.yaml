@@ -449,7 +449,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v33
+  version: information-intake-v34
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -499,7 +499,6 @@ information:
         treasury-auction-results: [AUCTION_ABSORPTION, DEBT_ISSUANCE]
         treasury-buyback-schedule: [DEBT_REPURCHASE, FISCAL_CALENDAR]
         treasury-tga-balance: [TREASURY_CASH]
-      maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 172800
     - domain: MONETARY_INFLATION
       source_stream_ids: [fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
@@ -509,7 +508,6 @@ information:
         nyfed-reference-rates: [POLICY_IMPLEMENTATION]
         nyfed-reverse-repo: [POLICY_IMPLEMENTATION]
         nyfed-soma-holdings: [POLICY_IMPLEMENTATION]
-      maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
     - domain: REGULATION_LEGISLATION
       source_stream_ids: [federal-register-digital-assets, ofac-recent-actions, treasury-press-releases]
@@ -518,7 +516,6 @@ information:
         federal-register-digital-assets: [AGENCY_RULEMAKING]
         ofac-recent-actions: [SANCTIONS_ACTIONS]
         treasury-press-releases: [EXECUTIVE_POLICY_ACTIONS]
-      maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 604800
     - domain: INSTITUTIONAL_FLOWS
       # 发行人持仓与聚合净流量保持不同证据等级，不能互相冒充。
@@ -529,19 +526,16 @@ information:
         bitwise-bitb-holdings: [BTC_ETF_BITB_HOLDINGS]
         bykaranteli-etf-aggregate-flows: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
         ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
-      maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 345600
     - domain: SPOT_DERIVATIVES
       source_stream_ids: [binance-usdm-market]
       required_capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT, MULTI_VENUE_SPOT, OPTIONS_POSITIONING]
       source_capabilities:
         binance-usdm-market: [BINANCE_PERPETUAL, BINANCE_SPOT]
-      maximum_poll_age_seconds: 900
       maximum_publication_age_seconds: 900
     - domain: ONCHAIN_SUPPLY
       source_stream_ids: []
       required_capabilities: [EXCHANGE_BALANCES, REALIZED_SUPPLY, STABLECOIN_SUPPLY]
-      maximum_poll_age_seconds: 300
       maximum_publication_age_seconds: 3600
     - domain: CROSS_ASSET_EXTERNAL
       # FRED 三项是明确标注的日频聚合证据，只用于宏观传导验证，不冒充一手或盘中行情。
@@ -553,7 +547,6 @@ information:
         fred-us-high-yield-oas: [CREDIT]
         fred-wti: [ENERGY]
         treasury-yield-curve: [UST_YIELD_CURVE]
-      maximum_poll_age_seconds: 1200
       maximum_publication_age_seconds: 864000
 
 pipeline:

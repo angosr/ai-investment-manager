@@ -386,6 +386,11 @@ class OfficialMetricCollectorService:
             status=status,
             started_at=started_at,
             completed_at=completed_at,
+            poll_interval_seconds=(
+                self._slow_poll_seconds
+                if stream_id in SLOW_OFFICIAL_METRIC_STREAMS
+                else self._fast_poll_seconds
+            ),
             latest_publication_at=(
                 None if record is None else record.record.observation.source_published_at
             ),
@@ -508,6 +513,7 @@ class AggregatedEtfFlowCollectorService:
             status=status,
             started_at=started_at,
             completed_at=completed_at,
+            poll_interval_seconds=self._poll_seconds,
             latest_publication_at=max(publications, default=None),
             observation_count=0 if result is None else len(result.records),
             new_fact_count=(

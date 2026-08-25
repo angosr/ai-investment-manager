@@ -14,6 +14,7 @@ from investment_manager.information.models import (
     SourcePollStatus,
 )
 from investment_manager.information.policy import CoverageRequirement
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.schema import create_schema
 
 AS_OF = datetime(2026, 8, 21, 16, tzinfo=UTC)
@@ -33,19 +34,53 @@ def test_empty_capability_fields_do_not_change_legacy_snapshot_identity() -> Non
     assert "missing_capabilities" not in payload
 
 
-def test_empty_validity_does_not_change_legacy_poll_identity() -> None:
+def test_poll_records_persist_their_own_freshness_deadline() -> None:
     poll = build_source_poll_record(
         source_stream_id="legacy-source",
         domain=CausalDomain.FISCAL_DEBT,
         status=SourcePollStatus.UNCHANGED,
         started_at=AS_OF - timedelta(seconds=1),
         completed_at=AS_OF,
+        poll_interval_seconds=60,
     )
 
     payload = poll.model_dump(mode="json")
 
+    assert poll.poll_fresh_until == AS_OF + timedelta(seconds=120)
     assert "valid_until" not in payload
     assert SourcePollRecord.model_validate(payload) == poll
+
+
+def test_legacy_poll_record_remains_readable_but_has_no_freshness_proof() -> None:
+    payload = {
+        "source_stream_id": "legacy-source",
+        "domain": CausalDomain.FISCAL_DEBT,
+        "status": SourcePollStatus.UNCHANGED,
+        "started_at": AS_OF - timedelta(seconds=1),
+        "completed_at": AS_OF,
+        "latest_publication_at": None,
+        "observation_count": 0,
+        "new_fact_count": 0,
+        "error_class": None,
+    }
+    poll = SourcePollRecord.model_validate(
+        {
+            "poll_id": stable_id("source_poll", content_hash(payload)),
+            **payload,
+        }
+    )
+
+    assert poll.poll_fresh_until is None
+
+    store = _store()
+    store.put(poll)
+    snapshot = store.snapshot(
+        as_of=AS_OF,
+        requirements=(
+            _requirement(CausalDomain.FISCAL_DEBT, ("legacy-source",)),
+        ),
+    )[0]
+    assert snapshot.status == CoverageStatus.SOURCE_STALE
 
 
 def _store() -> SqlInformationCoverageStore:
@@ -58,13 +93,11 @@ def _requirement(
     domain: CausalDomain,
     streams: tuple[str, ...],
     *,
-    poll_age: int = 120,
     publication_age: int | None = None,
 ) -> CoverageRequirement:
     return CoverageRequirement(
         domain=domain,
         source_stream_ids=streams,
-        maximum_poll_age_seconds=poll_age,
         maximum_publication_age_seconds=publication_age,
     )
 
@@ -78,6 +111,7 @@ def test_coverage_distinguishes_current_unconfigured_and_stale() -> None:
             status=SourcePollStatus.UNCHANGED,
             started_at=AS_OF - timedelta(seconds=31),
             completed_at=AS_OF - timedelta(seconds=30),
+            poll_interval_seconds=60,
             latest_publication_at=AS_OF - timedelta(days=3),
         )
     )
@@ -88,6 +122,7 @@ def test_coverage_distinguishes_current_unconfigured_and_stale() -> None:
             status=SourcePollStatus.CHANGED,
             started_at=AS_OF - timedelta(minutes=11),
             completed_at=AS_OF - timedelta(minutes=10),
+            poll_interval_seconds=60,
             latest_publication_at=AS_OF - timedelta(minutes=10),
             observation_count=1,
         )
@@ -121,6 +156,7 @@ def test_coverage_distinguishes_failed_source_from_no_recent_publication() -> No
             status=SourcePollStatus.UNCHANGED,
             started_at=AS_OF - timedelta(seconds=21),
             completed_at=AS_OF - timedelta(seconds=20),
+            poll_interval_seconds=60,
             latest_publication_at=AS_OF - timedelta(days=3),
         )
     )
@@ -131,6 +167,7 @@ def test_coverage_distinguishes_failed_source_from_no_recent_publication() -> No
             status=SourcePollStatus.FAILED,
             started_at=AS_OF - timedelta(seconds=11),
             completed_at=AS_OF - timedelta(seconds=10),
+            poll_interval_seconds=60,
             error_class="TimeoutError",
         )
     )
@@ -164,6 +201,7 @@ def test_calendar_validity_prevents_false_stale_publication() -> None:
             status=SourcePollStatus.UNCHANGED,
             started_at=AS_OF - timedelta(seconds=21),
             completed_at=AS_OF - timedelta(seconds=20),
+            poll_interval_seconds=60,
             latest_publication_at=AS_OF - timedelta(days=30),
             valid_until=AS_OF + timedelta(days=30),
         )
@@ -191,6 +229,7 @@ def test_coverage_is_point_in_time_and_ignores_future_recovery() -> None:
         status=SourcePollStatus.FAILED,
         started_at=AS_OF - timedelta(seconds=11),
         completed_at=AS_OF - timedelta(seconds=10),
+        poll_interval_seconds=60,
         error_class="ConnectError",
     )
     recovered = build_source_poll_record(
@@ -199,6 +238,7 @@ def test_coverage_is_point_in_time_and_ignores_future_recovery() -> None:
         status=SourcePollStatus.UNCHANGED,
         started_at=AS_OF + timedelta(seconds=9),
         completed_at=AS_OF + timedelta(seconds=10),
+        poll_interval_seconds=60,
     )
     assert store.put(failed)
     assert store.put(recovered)
@@ -226,6 +266,7 @@ def test_failed_latest_poll_retains_last_success_and_publication() -> None:
         status=SourcePollStatus.CHANGED,
         started_at=AS_OF - timedelta(seconds=31),
         completed_at=AS_OF - timedelta(seconds=30),
+        poll_interval_seconds=60,
         latest_publication_at=AS_OF - timedelta(seconds=31),
         observation_count=6,
     )
@@ -235,6 +276,7 @@ def test_failed_latest_poll_retains_last_success_and_publication() -> None:
         status=SourcePollStatus.FAILED,
         started_at=AS_OF - timedelta(seconds=11),
         completed_at=AS_OF - timedelta(seconds=10),
+        poll_interval_seconds=60,
         error_class="TimeoutError",
     )
     store.put(succeeded)
@@ -265,6 +307,7 @@ def test_multi_source_domain_is_only_current_when_every_source_is_fresh() -> Non
         status=SourcePollStatus.UNCHANGED,
         started_at=AS_OF - timedelta(seconds=31),
         completed_at=AS_OF - timedelta(seconds=30),
+        poll_interval_seconds=60,
         latest_publication_at=AS_OF - timedelta(hours=1),
     )
     store.put(first)
@@ -280,17 +323,18 @@ def test_multi_source_domain_is_only_current_when_every_source_is_fresh() -> Non
             source_stream_id="first-party-b",
             domain=CausalDomain.MONETARY_INFLATION,
             status=SourcePollStatus.UNCHANGED,
-            started_at=AS_OF - timedelta(seconds=21),
-            completed_at=AS_OF - timedelta(seconds=20),
-            latest_publication_at=AS_OF - timedelta(hours=2),
+            started_at=AS_OF - timedelta(hours=3, seconds=1),
+            completed_at=AS_OF - timedelta(hours=3),
+            poll_interval_seconds=21_600,
+            latest_publication_at=AS_OF - timedelta(hours=4),
         )
     )
     complete = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
 
     assert missing.status == CoverageStatus.SOURCE_STALE
     assert complete.status == CoverageStatus.CURRENT
-    assert complete.latest_success_at == first.completed_at
-    assert complete.latest_publication_at == AS_OF - timedelta(hours=2)
+    assert complete.latest_success_at == AS_OF - timedelta(hours=3)
+    assert complete.latest_publication_at == AS_OF - timedelta(hours=4)
 
 
 def test_fresh_sources_are_partial_when_decision_capabilities_are_missing() -> None:
@@ -301,6 +345,7 @@ def test_fresh_sources_are_partial_when_decision_capabilities_are_missing() -> N
         status=SourcePollStatus.CHANGED,
         started_at=AS_OF - timedelta(seconds=31),
         completed_at=AS_OF - timedelta(seconds=30),
+        poll_interval_seconds=60,
         latest_publication_at=AS_OF - timedelta(minutes=5),
         observation_count=1,
         new_fact_count=1,
@@ -313,7 +358,6 @@ def test_fresh_sources_are_partial_when_decision_capabilities_are_missing() -> N
         source_capabilities={
             "treasury-yield-curve": ("UST_YIELD_CURVE",),
         },
-        maximum_poll_age_seconds=120,
         maximum_publication_age_seconds=3_600,
     )
 

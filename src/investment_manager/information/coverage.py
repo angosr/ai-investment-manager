@@ -26,23 +26,33 @@ def build_source_poll_record(
     status: SourcePollStatus,
     started_at: datetime,
     completed_at: datetime,
+    poll_interval_seconds: int,
     latest_publication_at: datetime | None = None,
     valid_until: datetime | None = None,
     observation_count: int = 0,
     new_fact_count: int = 0,
     error_class: str | None = None,
 ) -> SourcePollRecord:
+    if poll_interval_seconds < 1:
+        raise ValueError("来源轮询周期必须为正数")
+    completed_at = require_utc(completed_at)
     payload = {
         "source_stream_id": source_stream_id,
         "domain": domain,
         "status": status,
         "started_at": require_utc(started_at),
-        "completed_at": require_utc(completed_at),
+        "completed_at": completed_at,
         "latest_publication_at": latest_publication_at,
         "observation_count": observation_count,
         "new_fact_count": new_fact_count,
         "error_class": error_class,
     }
+    if status != SourcePollStatus.FAILED:
+        # One delayed opportunity is tolerated; two missed cycles mean the
+        # collector no longer proves that this source is current.
+        payload["poll_fresh_until"] = completed_at + timedelta(
+            seconds=2 * poll_interval_seconds
+        )
     if valid_until is not None:
         payload["valid_until"] = require_utc(valid_until)
     return SourcePollRecord(
@@ -221,15 +231,15 @@ class SqlInformationCoverageStore:
             if item in latest_publication_by_stream
         )
         latest_publication = min(publications, default=None)
-        fresh_after = as_of - timedelta(
-            seconds=requirement.maximum_poll_age_seconds
-        )
         latest_polls_failed = any(
             item.status == SourcePollStatus.FAILED for item in polls
         )
         if latest_polls_failed:
             status = CoverageStatus.SOURCE_FAILED
-        elif len(successes) != len(streams) or latest_success < fresh_after:
+        elif len(successes) != len(streams) or any(
+            item.poll_fresh_until is None or item.poll_fresh_until < as_of
+            for item in successes
+        ):
             status = CoverageStatus.SOURCE_STALE
         elif requirement.maximum_publication_age_seconds is not None and any(
             not _stream_has_current_publication_or_validity(
