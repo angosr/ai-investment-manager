@@ -85,6 +85,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-代码已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置失败关闭资本、Context Forecast 和 WorldModel 消融；`investment-manager.shadow.yaml` 显式启用三者以积累 BTC Spot 组件证据，Testnet profile 再次关闭。总资产 Mandate 与可投资域已成为冻结配置；Mock 可投资域包含 BTC/PAXG Spot 与 SPY TradFi Perpetual，三者复用同一账户、Risk、Planner、Mock Venue、funding 和恢复语义，但已登记 Forecast 和候选资本授权仍只覆盖 BTC。长期美国权益总回报和黄金价格经济代理已可从一手来源内容寻址冻结，仍与 Binance 产品历史和成本严格分层。PAXG 与 SPY 只是 Reference 实现候选，不会因产品或代理数据准入自动获得方向或仓位；Reference Policy 仍为空，联合 Forecast、冻结选择制品和总组合 allocator 尚未完成，因此总组合主实验没有启动。
+代码已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。基础配置失败关闭资本、Context Forecast 和 WorldModel 消融；`investment-manager.shadow.yaml` 显式启用三者以积累 BTC Spot 组件证据，Testnet profile 再次关闭。总资产 Mandate 与可投资域已成为冻结配置；Mock 可投资域包含 BTC/PAXG Spot 与 SPY TradFi Perpetual，三者复用同一账户、Risk、Planner、Mock Venue、funding 和恢复语义，但已登记 Forecast 和候选资本授权仍只覆盖 BTC。长期美国权益总回报和黄金价格经济代理已可从一手来源内容寻址冻结，仍与 Binance 产品历史和成本严格分层。PAXG、SPY 与现金的唯一中性 Reference 候选及其数据、窗口、压力和资格阈值已预登记；当前拒绝制品已证明该候选在 1960–2015 开发段的费用前实际年化为负且回撤超过预登记上限，同时仍缺足量双边报价、产品规则和 SPY 合约/funding 历史。Reference Policy 因此仍为空；不应为这个已经经济失败的候选继续补产品证据或调权重，总组合主实验没有启动。
 
 因此当前正确表述是：仓库具备诚实检验部分盈利假设的基础设施，但总组合投资闭环尚未启用，也不具备宣称稳定盈利的证据。

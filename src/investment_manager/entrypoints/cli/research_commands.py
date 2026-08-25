@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated
@@ -27,6 +27,103 @@ from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
+
+
+@app.command("record-reference-rejection")
+def record_reference_rejection_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    plan: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    information_cutoff: Annotated[str, typer.Option(help="YYYY-MM-DD 信息截止日")],
+    economic_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/economic-series"
+    ),
+    product_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    funding_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/funding-datasets"
+    ),
+    quote_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/quote-datasets"
+    ),
+    result_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/reference-selections"
+    ),
+) -> None:
+    """记录 Reference 经济或产品证据失败的不可变拒绝；不能授予资格。"""
+
+    from investment_manager.governance.evaluation.reference_selection import (
+        ReferenceSelectionCatalog,
+        build_reference_rejection,
+        load_reference_selection_plan,
+    )
+    from investment_manager.research.reference import (
+        collect_reference_evidence,
+        evaluate_reference_economics,
+    )
+
+    try:
+        cutoff = date.fromisoformat(information_cutoff)
+    except ValueError as exc:
+        raise typer.BadParameter("information-cutoff 必须是 YYYY-MM-DD") from exc
+    evaluated_at = datetime.now(UTC)
+    if cutoff > evaluated_at.date():
+        raise typer.BadParameter("information-cutoff 不能晚于当前 UTC 日期")
+    loaded = load_config(config)
+    registered = load_reference_selection_plan(plan)
+    instruments = {
+        item.instrument.key: item.instrument for item in loaded.capital.execution_specs
+    }
+    evidence = collect_reference_evidence(
+        registered,
+        instruments=instruments,
+        information_cutoff=cutoff,
+        economic_catalog=economic_catalog,
+        product_catalog=product_catalog,
+        funding_catalog=funding_catalog,
+        quote_catalog=quote_catalog,
+    )
+    economics = evaluate_reference_economics(
+        registered,
+        economic_catalog=economic_catalog,
+        exposure_by_implementation={
+            item.instrument_key: item.economic_exposure
+            for item in loaded.capital.investable_universe.instruments
+        },
+    )
+    catalog = ReferenceSelectionCatalog(result_catalog)
+    artifact = catalog.rejection(
+        plan_hash=content_hash(registered),
+        information_cutoff=cutoff,
+        evidence=evidence,
+        economic_development_metrics=economics.development,
+        economic_blind_metrics=economics.blind,
+        economic_stress_results=economics.stress,
+    )
+    if artifact is None:
+        artifact = build_reference_rejection(
+            plan=registered,
+            evidence=evidence,
+            evaluated_at=evaluated_at,
+            information_cutoff=cutoff,
+            economic_development_metrics=economics.development,
+            economic_blind_metrics=economics.blind,
+            economic_stress_results=economics.stress,
+        )
+    target = catalog.store(artifact)
+    typer.echo(
+        json.dumps(
+            {
+                "artifact_id": artifact.artifact_id,
+                "status": artifact.status,
+                "evidence_count": len(artifact.evidence),
+                "reason_codes": artifact.results[0].reason_codes,
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @app.command("freeze-executable-quotes")

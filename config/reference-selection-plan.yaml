@@ -1,0 +1,88 @@
+version: reference-selection-plan-v2
+plan_id: reference_selection_plan_5a04c8005c8c04d8dc41
+registered_at: 2026-08-25T12:53:37Z
+mandate_version: provisional-total-portfolio-real-growth-v2
+universe_version: binance-shadow-investable-v5
+risk_policy_version: multi-product-portfolio-risk-v6
+cost_model_version: executable-state-transition-v1
+development_start: 1960-01-01
+development_end: 2016-01-01
+blind_start: 2016-01-01
+blind_end: 2026-01-01
+evidence_requirements:
+  - layer: ECONOMIC_PROXY
+    scope: INFLATION_SENSITIVE
+    minimum_observation_count: 600
+    minimum_span_days: 18250
+    fixed_evidence_id: historical_economic_series_2ba31ef4ef4c5f2b558e
+    fixed_content_hash: e179097e26186769dde39c3e3ecdc4c1e4b93c1e064582f2967d3d34464f0725
+  - layer: ECONOMIC_PROXY
+    scope: US_EQUITY
+    minimum_observation_count: 5000
+    minimum_span_days: 18250
+    fixed_evidence_id: historical_economic_series_ba97b40f042388278e45
+    fixed_content_hash: c4cae4856aaf90b6dd9f9deec3a314815f3f51b4030c8a979e4aead22c37b3bf
+  - layer: EXECUTABLE_QUOTES
+    scope: BINANCE:SPOT:PAXGUSDT
+    minimum_observation_count: 8640
+    minimum_span_days: 30
+  - layer: EXECUTABLE_QUOTES
+    scope: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+    minimum_observation_count: 8640
+    minimum_span_days: 30
+  - layer: OBJECTIVE_DEFLATOR
+    scope: US_CPI_REAL_PURCHASING_POWER
+    minimum_observation_count: 600
+    minimum_span_days: 18250
+    fixed_evidence_id: historical_economic_series_3abd061b67f0abe0cbe0
+    fixed_content_hash: c1cfbcec9141f6dd3a690eefc41ec6891353dc8726f392b80d72160cbe72b3ae
+  - layer: PRODUCT_BARS
+    scope: BINANCE:SPOT:PAXGUSDT
+    minimum_observation_count: 730
+    minimum_span_days: 730
+  - layer: PRODUCT_BARS
+    scope: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+    minimum_observation_count: 730
+    minimum_span_days: 730
+  - layer: PRODUCT_CASH_FLOWS
+    scope: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+    minimum_observation_count: 2000
+    minimum_span_days: 730
+  - layer: PRODUCT_RULES
+    scope: BINANCE:SPOT:PAXGUSDT
+    minimum_observation_count: 1
+    minimum_span_days: 0
+  - layer: PRODUCT_RULES
+    scope: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+    minimum_observation_count: 1
+    minimum_span_days: 0
+stress_windows:
+  - stress_id: covid-liquidity-shock
+    start: 2020-02-01
+    end: 2020-05-01
+  - stress_id: global-financial-crisis
+    start: 2007-10-01
+    end: 2009-04-01
+  - stress_id: inflation-rates-shock
+    start: 2022-01-01
+    end: 2023-01-01
+  - stress_id: stagflation-oil-shock
+    start: 1973-01-01
+    end: 1975-01-01
+qualification:
+  minimum_annualized_real_return_fraction: "0"
+  maximum_drawdown_fraction: "0.10"
+  maximum_worst_stress_loss_fraction: "0.10"
+  maximum_annualized_turnover_fraction: "0.50"
+  maximum_annualized_cost_fraction: "0.01"
+  maximum_single_risk_contribution_fraction: "0.70"
+candidates:
+  - candidate_id: reference_candidate_25bfbce4e78a19617a70
+    allocations:
+      - implementation_key: BINANCE:SPOT:PAXGUSDT
+        target_exposure_fraction: "0.15"
+      - implementation_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+        target_exposure_fraction: "0.15"
+      - implementation_key: CASH:USDT
+        target_exposure_fraction: "0.70"
+    rebalance_band_fraction: "0.05"

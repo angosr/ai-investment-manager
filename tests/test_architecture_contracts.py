@@ -59,6 +59,10 @@ CLI_CONTRACT = {
     "perpetual-trend-walk-forward": (
         "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
     ),
+    "record-reference-rejection": (
+        "config,plan,information_cutoff,economic_catalog,product_catalog,funding_catalog,"
+        "quote_catalog,result_catalog"
+    ),
     "paired-decision-tape": (
         "config,database_url,pipeline_version,symbol,plan_id,signal_end,"
         "source_blind_evaluation_id,dataset_id,horizon_minutes,maximum_age_minutes,"
@@ -238,6 +242,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "operate-release",
         },
         "entrypoints/cli/research_commands.py": {
+            "record-reference-rejection",
             "freeze-executable-quotes",
             "fetch-economic-series",
             "fetch-binance-history",

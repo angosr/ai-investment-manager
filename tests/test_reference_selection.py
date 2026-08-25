@@ -11,15 +11,21 @@ from pydantic import ValidationError
 from investment_manager.governance.evaluation.reference_selection import (
     ReferenceCandidateMetrics,
     ReferenceCandidateResult,
+    ReferenceEconomicMetrics,
     ReferenceEvidenceLayer,
+    ReferenceEvidenceRequirement,
+    ReferenceQualificationPolicy,
     ReferenceRiskContribution,
     ReferenceSelectionCatalog,
     ReferenceSelectionEvidence,
     ReferenceSelectionStatus,
+    ReferenceStressResult,
     ReferenceStressWindow,
     build_reference_candidate,
+    build_reference_rejection,
     build_reference_selection_artifact,
     build_reference_selection_plan,
+    load_reference_selection_plan,
     validate_reference_policy_selection,
 )
 from investment_manager.kernel.identity import content_hash
@@ -53,24 +59,79 @@ def test_rejected_selection_artifact_cannot_grant_reference_policy() -> None:
         validate_reference_policy_selection(artifact, policy)
 
 
+def test_registered_reference_plan_is_content_addressed_and_rejection_only() -> None:
+    plan = load_reference_selection_plan(Path("config/reference-selection-plan.yaml"))
+
+    assert plan.plan_id == "reference_selection_plan_5a04c8005c8c04d8dc41"
+    assert len(plan.candidates) == 1
+    assert plan.candidates[0].allocations[-1].implementation_key == "CASH:USDT"
+    assert plan.qualification.minimum_annualized_real_return_fraction == 0
+    assert {item.fixed_evidence_id for item in plan.evidence_requirements} - {None} == {
+        "historical_economic_series_2ba31ef4ef4c5f2b558e",
+        "historical_economic_series_3abd061b67f0abe0cbe0",
+        "historical_economic_series_ba97b40f042388278e45",
+    }
+
+
+def test_rejection_records_economic_or_evidence_failure_only(tmp_path: Path) -> None:
+    plan, _candidate = _plan()
+    artifact = build_reference_rejection(
+        plan=plan,
+        evidence=(),
+        evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
+        information_cutoff=date(2026, 8, 24),
+    )
+
+    assert artifact.status == ReferenceSelectionStatus.REJECTED
+    assert artifact.selected_candidate_id is None
+    assert artifact.results[0].reason_codes
+    catalog = ReferenceSelectionCatalog(tmp_path)
+    catalog.store(artifact)
+    assert catalog.rejection(
+        plan_hash=artifact.plan_hash,
+        information_cutoff=artifact.information_cutoff,
+        evidence=artifact.evidence,
+        economic_development_metrics=None,
+        economic_blind_metrics=None,
+        economic_stress_results=(),
+    ) == artifact
+
+    complete = tuple(
+        ReferenceSelectionEvidence(
+            layer=requirement.layer,
+            scope=requirement.scope,
+            evidence_id=requirement.fixed_evidence_id or f"evidence-{index}",
+            content_hash=requirement.fixed_content_hash or content_hash(index),
+            first_effective_date=date(1960, 1, 1),
+            last_effective_date=date(2026, 8, 24),
+            observation_count=requirement.minimum_observation_count,
+        )
+        for index, requirement in enumerate(plan.evidence_requirements)
+    )
+    with pytest.raises(ValueError, match="必须运行完整费用后评价"):
+        build_reference_rejection(
+            plan=plan,
+            evidence=complete,
+            evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
+            information_cutoff=date(2026, 8, 24),
+        )
+
+
 def test_qualified_selection_binds_exact_winner_and_policy(tmp_path: Path) -> None:
     plan, candidate = _plan()
     metrics = _metrics()
+    economic_metrics = _economic_metrics()
     evidence = tuple(
         ReferenceSelectionEvidence(
-            layer=layer,
-            scope=(
-                "US_CPI"
-                if layer == ReferenceEvidenceLayer.OBJECTIVE_DEFLATOR
-                else "BINANCE:SPOT:PAXGUSDT"
-            ),
-            evidence_id=f"evidence-{layer.value.lower()}",
-            content_hash=content_hash({"layer": layer}),
+            layer=requirement.layer,
+            scope=requirement.scope,
+            evidence_id=f"evidence-{requirement.layer.value.lower()}",
+            content_hash=content_hash({"layer": requirement.layer}),
             first_effective_date=date(1960, 1, 1),
             last_effective_date=date(2026, 6, 30),
             observation_count=100,
         )
-        for layer in plan.required_layers
+        for requirement in plan.evidence_requirements
     )
     artifact = build_reference_selection_artifact(
         evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
@@ -82,8 +143,22 @@ def test_qualified_selection_binds_exact_winner_and_policy(tmp_path: Path) -> No
             ReferenceCandidateResult(
                 candidate_id=candidate.candidate_id,
                 status=ReferenceSelectionStatus.QUALIFIED,
+                economic_development_metrics=economic_metrics,
+                economic_blind_metrics=economic_metrics,
+                economic_stress_results=(
+                    ReferenceStressResult(
+                        stress_id="global-financial-crisis",
+                        loss_fraction=Decimal("0.06"),
+                    ),
+                ),
                 development_metrics=metrics,
                 blind_metrics=metrics,
+                stress_results=(
+                    ReferenceStressResult(
+                        stress_id="global-financial-crisis",
+                        loss_fraction=Decimal("0.06"),
+                    ),
+                ),
             ),
         ),
         status=ReferenceSelectionStatus.QUALIFIED,
@@ -112,8 +187,9 @@ def test_qualified_selection_binds_exact_winner_and_policy(tmp_path: Path) -> No
 def test_qualified_selection_requires_every_pre_registered_evidence_layer() -> None:
     plan, candidate = _plan()
     metrics = _metrics()
+    economic_metrics = _economic_metrics()
 
-    with pytest.raises(ValidationError, match="缺少预登记证据层"):
+    with pytest.raises(ValidationError, match="缺少预登记证据"):
         build_reference_selection_artifact(
             evaluated_at=datetime(2026, 8, 25, tzinfo=UTC),
             information_cutoff=date(2026, 8, 24),
@@ -124,8 +200,22 @@ def test_qualified_selection_requires_every_pre_registered_evidence_layer() -> N
                 ReferenceCandidateResult(
                     candidate_id=candidate.candidate_id,
                     status=ReferenceSelectionStatus.QUALIFIED,
+                    economic_development_metrics=economic_metrics,
+                    economic_blind_metrics=economic_metrics,
+                    economic_stress_results=(
+                        ReferenceStressResult(
+                            stress_id="global-financial-crisis",
+                            loss_fraction=Decimal("0.06"),
+                        ),
+                    ),
                     development_metrics=metrics,
                     blind_metrics=metrics,
+                    stress_results=(
+                        ReferenceStressResult(
+                            stress_id="global-financial-crisis",
+                            loss_fraction=Decimal("0.06"),
+                        ),
+                    ),
                 ),
             ),
             status=ReferenceSelectionStatus.QUALIFIED,
@@ -157,13 +247,33 @@ def _plan():
         development_end=date(2015, 1, 1),
         blind_start=date(2016, 1, 1),
         blind_end=date(2026, 8, 1),
-        required_layers=tuple(sorted(ReferenceEvidenceLayer)),
+        evidence_requirements=tuple(
+            ReferenceEvidenceRequirement(
+                layer=layer,
+                scope=(
+                    "US_CPI"
+                    if layer == ReferenceEvidenceLayer.OBJECTIVE_DEFLATOR
+                    else "BINANCE:SPOT:PAXGUSDT"
+                ),
+                minimum_observation_count=100,
+                minimum_span_days=365,
+            )
+            for layer in sorted(ReferenceEvidenceLayer)
+        ),
         stress_windows=(
             ReferenceStressWindow(
                 stress_id="global-financial-crisis",
                 start=date(2007, 10, 1),
                 end=date(2009, 4, 1),
             ),
+        ),
+        qualification=ReferenceQualificationPolicy(
+            minimum_annualized_real_return_fraction=Decimal("0"),
+            maximum_drawdown_fraction=Decimal("0.10"),
+            maximum_worst_stress_loss_fraction=Decimal("0.10"),
+            maximum_annualized_turnover_fraction=Decimal("0.50"),
+            maximum_annualized_cost_fraction=Decimal("0.01"),
+            maximum_single_risk_contribution_fraction=Decimal("1"),
         ),
         candidates=(candidate,),
     )
@@ -176,9 +286,24 @@ def _metrics() -> ReferenceCandidateMetrics:
         annualized_real_return_fraction=Decimal("0.01"),
         annualized_volatility_fraction=Decimal("0.02"),
         maximum_drawdown_fraction=Decimal("0.08"),
-        worst_stress_loss_fraction=Decimal("0.06"),
         annualized_turnover_fraction=Decimal("0.10"),
         annualized_cost_fraction=Decimal("0.00025"),
+        risk_contributions=(
+            ReferenceRiskContribution(
+                exposure=EconomicExposure.INFLATION_SENSITIVE,
+                fraction=Decimal("1"),
+            ),
+        ),
+    )
+
+
+def _economic_metrics() -> ReferenceEconomicMetrics:
+    return ReferenceEconomicMetrics(
+        annualized_nominal_return_fraction=Decimal("0.03"),
+        annualized_real_return_fraction=Decimal("0.01"),
+        annualized_volatility_fraction=Decimal("0.02"),
+        maximum_drawdown_fraction=Decimal("0.08"),
+        annualized_turnover_fraction=Decimal("0.10"),
         risk_contributions=(
             ReferenceRiskContribution(
                 exposure=EconomicExposure.INFLATION_SENSITIVE,

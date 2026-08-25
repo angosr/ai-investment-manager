@@ -96,6 +96,17 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 `fetch-economic-series` 从 Kenneth French/CRSP 冻结含股息的美国市场总回报，从 World Bank Pink Sheet 自动解析当前黄金月度价格文件，并从 FRED 冻结 BLS CPI 作为 `REAL_CAPITAL_GROWTH` 的购买力折算序列。CPI 不是可投资暴露。每份数据保存官方原文件哈希、采集时间和 `CURRENT_VINTAGE_AT_COLLECTION`，只用于当前 Reference 的长期风险估计，不能冒充历史当时可见数据。SPY 合约历史、PAXG 现货历史、交易成本和 SPY 普通/特殊 funding 继续由 Binance 数据集独立拥有；代理层和产品层都通过冻结选择制品前，Reference Policy 保持为空，观测台不能拿任一单资产补成账户主基准。
 
+`config/reference-selection-plan.yaml` 是当前唯一 Reference 候选的预登记事实。运行以下命令会同时计算冻结经济代理的开发、盲测和压力结果，并保存经济阈值失败或产品证据缺口的不可变拒绝。若两类拒绝理由都不存在，命令会拒绝继续，必须改由完整费用后 evaluator 依据真实产品现金流授予或拒绝资格：
+
+```bash
+.venv/bin/investment-manager record-reference-rejection \
+  --config config/investment-manager.shadow.yaml \
+  --plan config/reference-selection-plan.yaml \
+  --information-cutoff YYYY-MM-DD
+```
+
+同一计划、截止日和证据集合重复运行返回同一制品，不制造重复“报告”。发现器先按 manifest 筛选产品作用域，仅对实际入选的数据集做完整哈希和内容核验；缺少报价、规则或足够长的 SPY funding/产品历史必须原样显示为 `REJECTED`，不得降低门槛或改用美股经济代理冒充合约现金流。
+
 Risk 有两种合法输出：
 
 - 对 PortfolioTarget 批准、缩减或拒绝；
