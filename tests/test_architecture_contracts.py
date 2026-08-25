@@ -76,7 +76,6 @@ CLI_CONTRACT = {
     ),
     "research-catalog": "evaluation_catalog,blind_evaluation_catalog",
     "reset-portfolio-protection": "config,database_url,reason,acknowledge_risk",
-    "run-mock": "input_path,config",
     "screen-signals": (
         "config,dataset_id,signal_start,signal_end,candidate,event_dataset_id,catalog,"
         "event_catalog,spread_bps,minimum_non_overlapping_samples,"
@@ -218,7 +217,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "invalidate-evaluation-plan",
             "validate-config",
             "reset-portfolio-protection",
-            "run-mock",
             "phase-a-audit",
             "shadow-audit",
             "challenger-audit",

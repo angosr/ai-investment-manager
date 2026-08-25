@@ -39,7 +39,6 @@ from investment_manager.legacy.calibration import (
     uncalibrated_ref,
 )
 from investment_manager.legacy.candidate_evaluation import SqlCandidateOutcomeStore
-from investment_manager.legacy.cycle import AnalysisCycle, CycleInput
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.settings import load_config
 
@@ -253,18 +252,6 @@ def reset_portfolio_protection(
             indent=2,
         )
     )
-
-
-@app.command("run-mock")
-def run_mock(
-    input_path: Annotated[Path, typer.Option("--input", exists=True, dir_okay=False)],
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-) -> None:
-    loaded = load_config(config)
-    raw = json.loads(input_path.read_text(encoding="utf-8"))
-    cycle_input = CycleInput.model_validate(raw)
-    result = AnalysisCycle.create(loaded).run(cycle_input)
-    typer.echo(result.model_dump_json(indent=2))
 
 
 @app.command("phase-a-audit")
