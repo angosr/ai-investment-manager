@@ -5,7 +5,10 @@ import pytest
 from pydantic import ValidationError
 
 from investment_manager.execution.policy import ExecutionPolicy
-from investment_manager.forecast.context.estimate import context_forecast_behavior_hash
+from investment_manager.forecast.context.estimate import (
+    ContextForecastTargetStateBehavior,
+    context_forecast_behavior_hash,
+)
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
 from investment_manager.forecast.policy import CodexRuntimePolicy
 from investment_manager.governance.policy import DeploymentStage
@@ -66,7 +69,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v5"
+        == "world-model-ablation-forward-v6"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v24"
@@ -183,6 +186,15 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         for item in config.capital.execution_specs
         if item.instrument.key == config.capital.context_forecast.target_instrument_key
     )
+    evidence_instrument = next(
+        item
+        for item in config.market_data.perpetual_instruments
+        if item.key
+        == config.capital.context_forecast.derivative_evidence_instrument_key
+    )
+    assert evidence_instrument.key not in {
+        item.instrument.key for item in config.capital.execution_specs
+    }
     contract = context_spot_forecast_contract(
         policy=config.capital.context_forecast,
         instrument=instrument,
@@ -191,13 +203,47 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
     assert contract.outcome_start_delay_seconds == 0
     assert contract.permission_evidence_eligible
     assert contract.settlement_rule == ("completion-deadline-to-horizon-executable-spot-return-v2")
-    assert config.capital.context_forecast.producer_behavior_id == (
-        context_forecast_behavior_hash(
-            config.codex_runtime,
-            config.capital.context_forecast,
-            contract,
-        )
+    state_behavior = ContextForecastTargetStateBehavior(
+        feature_policy=config.feature,
+        spot_instrument=instrument,
+        derivative_evidence_instrument=evidence_instrument,
+        interval=config.market_data.interval,
+        bar_window=config.market_data.bar_window,
+        funding_lookback_hours=config.market_data.funding_history_lookback_hours,
+        maximum_quote_skew_seconds=(
+            config.market_data.maximum_cross_market_quote_skew_seconds
+        ),
     )
+    behavior_id = context_forecast_behavior_hash(
+        config.codex_runtime,
+        config.capital.context_forecast,
+        contract,
+        state_behavior,
+    )
+    assert config.capital.context_forecast.producer_behavior_id == behavior_id
+    assert context_forecast_behavior_hash(
+        config.codex_runtime,
+        config.capital.context_forecast,
+        contract,
+        state_behavior.model_copy(update={"bar_window": state_behavior.bar_window + 1}),
+    ) != behavior_id
+
+
+def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["capital"]["context_forecast"]["derivative_evidence_instrument_key"] = (
+        "BINANCE:USD_M_PERPETUAL:ETHUSDT"
+    )
+
+    with pytest.raises(ValidationError, match="证据产品必须与 target 同标的计价"):
+        type(config).model_validate(payload)
+
+    payload["capital"]["context_forecast"]["derivative_evidence_instrument_key"] = (
+        "BINANCE:USD_M_PERPETUAL:SOLUSDT"
+    )
+    with pytest.raises(ValidationError, match="必须属于 MarketData 只读 universe"):
+        type(config).model_validate(payload)
 
 
 def test_capital_quote_alignment_must_cover_spot_freeze_interval() -> None:

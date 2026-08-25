@@ -1221,9 +1221,13 @@ def test_current_runtime_identity_uses_product_name() -> None:
 def test_capital_decision_language_is_venue_neutral() -> None:
     paths = (
         PACKAGE_ROOT / "forecast" / "contracts.py",
+        PACKAGE_ROOT / "forecast" / "context" / "contract.py",
+        PACKAGE_ROOT / "forecast" / "context" / "estimate.py",
+        PACKAGE_ROOT / "forecast" / "context" / "producer.py",
         PACKAGE_ROOT / "portfolio" / "decision.py",
         PACKAGE_ROOT / "portfolio" / "models.py",
         PACKAGE_ROOT / "portfolio" / "policy.py",
+        PACKAGE_ROOT / "state" / "decision" / "packet.py",
         PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
         ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
         ROOT / "web" / "src" / "components" / "CapitalEquityHero.tsx",
@@ -1235,11 +1239,15 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         "MockCandidate",
         "MOCK",
         "MOCK_HYPOTHESIS",
+        "shadow",
+        "testnet",
+        "simulation",
         "模拟盘",
         "模拟交易",
         "模拟订单",
         "模拟执行",
         "模拟账户",
+        "仿真",
     )
 
     violations = {

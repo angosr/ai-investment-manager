@@ -31,6 +31,7 @@ from investment_manager.forecast.codex.repository import (
     SqlCodexAuditStore,
 )
 from investment_manager.forecast.context.estimate import (
+    ContextForecastTargetStateBehavior,
     assemble_codex_context_forecast_analyst,
 )
 from investment_manager.forecast.context.producer import (
@@ -1202,13 +1203,22 @@ def assemble_capital_cycle(
                 raise ValueError("Context Forecast target 不在 Capital execution_specs")
             perpetual = next(
                 (
-                    item.instrument
-                    for item in config.capital.execution_specs
-                    if item.instrument.product != InstrumentProduct.SPOT
-                    and item.instrument.base_asset == instrument.base_asset
-                    and item.instrument.quote_asset == instrument.quote_asset
+                    item
+                    for item in config.market_data.perpetual_instruments
+                    if item.key == context.derivative_evidence_instrument_key
                 ),
                 None,
+            )
+            target_state_behavior = ContextForecastTargetStateBehavior(
+                feature_policy=config.feature,
+                spot_instrument=instrument,
+                derivative_evidence_instrument=perpetual,
+                interval=config.market_data.interval,
+                bar_window=config.market_data.bar_window,
+                funding_lookback_hours=config.market_data.funding_history_lookback_hours,
+                maximum_quote_skew_seconds=(
+                    config.market_data.maximum_cross_market_quote_skew_seconds
+                ),
             )
             contract = context_spot_forecast_contract(
                 policy=context,
@@ -1258,16 +1268,18 @@ def assemble_capital_cycle(
                         instrument=instrument,
                         target_states=MarketContextTargetStateProvider(
                             market=market,
-                            feature_policy=config.feature,
-                            spot=instrument,
-                            perpetual=perpetual,
-                            interval=config.market_data.interval,
-                            bar_window=config.market_data.bar_window,
+                            feature_policy=target_state_behavior.feature_policy,
+                            spot=target_state_behavior.spot_instrument,
+                            perpetual=(
+                                target_state_behavior.derivative_evidence_instrument
+                            ),
+                            interval=target_state_behavior.interval,
+                            bar_window=target_state_behavior.bar_window,
                             funding_lookback_hours=(
-                                config.market_data.funding_history_lookback_hours
+                                target_state_behavior.funding_lookback_hours
                             ),
                             maximum_quote_skew_seconds=(
-                                config.market_data.maximum_cross_market_quote_skew_seconds
+                                target_state_behavior.maximum_quote_skew_seconds
                             ),
                         ),
                         analysis_scope=config.assessment.mandate.analysis_scope,
@@ -1276,6 +1288,7 @@ def assemble_capital_cycle(
                             config,
                             policy=context,
                             contract=contract,
+                            target_state_behavior=target_state_behavior,
                             code_version=code_version,
                             leases=SqlAccountLeaseStore(engine),
                             audit=SqlCodexAuditStore(engine),

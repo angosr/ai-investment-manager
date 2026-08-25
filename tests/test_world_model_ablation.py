@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine, func, select
@@ -43,8 +43,6 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 
-ACTIVATION = datetime(2026, 8, 25, 4, tzinfo=UTC)
-
 
 class _FixedControlAnalyst:
     def __init__(self, completed_at: datetime) -> None:
@@ -78,10 +76,10 @@ class _FixedControlAnalyst:
         )
 
 
-def _release(manifest_id: str) -> ReleaseManifest:
+def _release(manifest_id: str, *, activation: datetime) -> ReleaseManifest:
     return ReleaseManifest(
         manifest_id=manifest_id,
-        created_at=ACTIVATION - timedelta(hours=2),
+        created_at=activation - timedelta(hours=2),
         status="CHALLENGER",
         code_version="a" * 40,
         configuration_hash="b" * 64,
@@ -93,6 +91,9 @@ def _release(manifest_id: str) -> ReleaseManifest:
 
 def _seed(engine):
     config = load_config("config/investment-manager.shadow.yaml")
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    activation = policy.activated_at
     context = config.capital.context_forecast
     assert context is not None
     instrument = next(
@@ -116,20 +117,20 @@ def _seed(engine):
     cutoff = ForecastPriceAnchor(
         instrument_id=instrument.key,
         price=Decimal("100"),
-        observed_at=ACTIVATION,
-        available_at=ACTIVATION,
+        observed_at=activation,
+        available_at=activation,
         quote_ref="cutoff-quote",
     )
     slot = ForecastDecisionSlot.create(
         contract,
-        slot_as_of=ACTIVATION,
+        slot_as_of=activation,
         cutoff_prices=(cutoff,),
     )
     contracts = SqlForecastContractStore(engine)
     contracts.record_contract(contract)
-    contracts.record_binding(binding, activated_at=ACTIVATION)
+    contracts.record_binding(binding, activated_at=activation)
     contracts.record_slot(slot, binding=binding)
-    formal_available = ACTIVATION + timedelta(minutes=5)
+    formal_available = activation + timedelta(minutes=5)
     formal_input = {
         "purpose": "FORECAST_ESTIMATE",
         "decision_slot": {
@@ -157,7 +158,7 @@ def _seed(engine):
             ],
         },
         "target_state": {
-            "as_of": ACTIVATION,
+            "as_of": activation,
             "asset_states": [{"asset": "BTC", "return_fraction": "0.01"}],
             "derivative_states": [],
             "coverage_gap_codes": [],
@@ -196,8 +197,8 @@ def _seed(engine):
                 quote_ref="entry-quote",
             ),
         ),
-        information_cutoff_at=ACTIVATION,
-        input_observed_at=ACTIVATION,
+        information_cutoff_at=activation,
+        input_observed_at=activation,
         available_at=formal_available,
         valid_until=formal_available + timedelta(minutes=60),
         outcome_probabilities=probabilities,
@@ -222,8 +223,8 @@ def _seed(engine):
         governance=governance,
         config=config,
         contract=contract,
-        release=_release("release-ablation-v1"),
-        registered_at=ACTIVATION - timedelta(hours=1),
+        release=_release("release-ablation-v1", activation=activation),
+        registered_at=activation - timedelta(hours=1),
     )
     return config, contract, binding, slot, formal, plan
 
@@ -289,13 +290,15 @@ def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     config, contract, _binding, _slot, _formal, first = _seed(engine)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
 
     repeated = ensure_world_model_ablation_plan(
         governance=SqlGovernanceRepository(engine),
         config=config,
         contract=contract,
-        release=_release("release-ablation-v2"),
-        registered_at=ACTIVATION - timedelta(minutes=30),
+        release=_release("release-ablation-v2", activation=policy.activated_at),
+        registered_at=policy.activated_at - timedelta(minutes=30),
     )
 
     assert repeated == first
@@ -398,7 +401,9 @@ def test_formal_no_estimate_enters_conservative_skill_bound() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     config, contract, binding, _slot, formal, plan = _seed(engine)
-    missing_at = ACTIVATION + timedelta(hours=4)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    missing_at = policy.activated_at + timedelta(hours=4)
     cutoff = ForecastPriceAnchor(
         instrument_id=contract.target.legs[0].instrument.key,
         price=Decimal("100"),

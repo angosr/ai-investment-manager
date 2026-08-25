@@ -9,11 +9,11 @@ capital:
   context_forecast:
     enabled: true
   candidate_capital_authorizations:
-    - version: btc-context-candidate-v3
+    - version: btc-context-candidate-v4
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "f09f5e972ff37a21a316d6aa1a9084e9d86c79617b9d6ad225599cf33c5aecf8"
+      producer_behavior_id: "23bc2aea0efc2f7feb3bd629c96311844515608de635be79dcf56e4bc20f00c2"
       outcome_family_id: btc-spot-directional-4h
-      hypothesis_fingerprint: "d9ccc31ba7d90b84b3dc6c37f10637c698bcd91f0e4a887bff05e68493221111"
+      hypothesis_fingerprint: "e64183df0bc320eab3a071397e4ca91bdd8853bc49cd39e5be8683f00a32cba4"
       maximum_allocation_fraction: "0.10"
       minimum_entry_net_bps: "10"
       minimum_hold_net_bps: "0"

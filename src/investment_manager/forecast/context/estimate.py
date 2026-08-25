@@ -29,6 +29,8 @@ from investment_manager.forecast.results import ForecastMechanismEffect
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
+from investment_manager.market.models import InstrumentId
+from investment_manager.market.policy import FeaturePolicy
 from investment_manager.portfolio.policy import ContextForecastPolicy
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import (
@@ -37,7 +39,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v4"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v5"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -114,6 +116,18 @@ class ContextForecastTargetState(FrozenModel):
         return tuple(sorted(selectors))
 
 
+class ContextForecastTargetStateBehavior(FrozenModel):
+    """Immutable identity of the deterministic point-in-time state producer."""
+
+    feature_policy: FeaturePolicy
+    spot_instrument: InstrumentId
+    derivative_evidence_instrument: InstrumentId | None = None
+    interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
+    bar_window: int = Field(ge=8, le=1_000)
+    funding_lookback_hours: int = Field(ge=8, le=720)
+    maximum_quote_skew_seconds: int = Field(ge=1, le=300)
+
+
 CONTEXT_FORECAST_INSTRUCTIONS = (
     "你是概率预测员。输入只包含一个已持久化世界模型、目标相关点时状态和一份预登记预测合同。",
     "你只回答合同定义的终点收益落入各 bucket 的概率；不得输出订单、仓位、杠杆、精确收益点数、止损、"
@@ -134,6 +148,7 @@ def context_forecast_behavior_hash(
     runtime: CodexRuntimePolicy,
     policy: ContextForecastPolicy,
     contract: ForecastContract,
+    target_state_behavior: ContextForecastTargetStateBehavior,
 ) -> str:
     return content_hash(
         {
@@ -144,6 +159,7 @@ def context_forecast_behavior_hash(
                 ContextForecastStructuredOutput.model_json_schema()
             ),
             "contract": contract,
+            "target_state_behavior": target_state_behavior,
             "policy": policy.model_dump(
                 mode="json",
                 exclude={"producer_behavior_id", "enabled"},
@@ -288,6 +304,7 @@ class ContextForecastRunBundleBuilder:
         runtime: CodexRuntimePolicy,
         policy: ContextForecastPolicy,
         contract: ForecastContract,
+        target_state_behavior: ContextForecastTargetStateBehavior,
         *,
         code_version: str,
         configuration_hash: str,
@@ -295,6 +312,7 @@ class ContextForecastRunBundleBuilder:
         self._runtime = runtime
         self._policy = policy
         self._contract = contract
+        self._target_state_behavior = target_state_behavior
         self._code_version = code_version
         self._configuration_hash = configuration_hash
 
@@ -304,6 +322,7 @@ class ContextForecastRunBundleBuilder:
             self._runtime,
             self._policy,
             self._contract,
+            self._target_state_behavior,
         )
 
     @property
@@ -439,6 +458,7 @@ def assemble_codex_context_forecast_analyst(
     *,
     policy: ContextForecastPolicy,
     contract: ForecastContract,
+    target_state_behavior: ContextForecastTargetStateBehavior,
     code_version: str,
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
@@ -447,6 +467,7 @@ def assemble_codex_context_forecast_analyst(
         config.codex_runtime,
         policy,
         contract,
+        target_state_behavior,
     )
     if policy.producer_behavior_id != expected:
         raise ValueError("Context Forecast producer_behavior_id 未覆盖当前完整分析行为")
@@ -462,6 +483,7 @@ def assemble_codex_context_forecast_analyst(
             config.codex_runtime,
             policy,
             contract,
+            target_state_behavior,
             code_version=code_version,
             configuration_hash=content_hash(config),
         ),

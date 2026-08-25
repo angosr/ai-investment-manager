@@ -49,6 +49,7 @@ class ContextForecastPolicy(StrictConfig):
     outcome_family_id: str = Field(min_length=1)
     contract_version: str = Field(min_length=1)
     target_instrument_key: str = Field(min_length=1)
+    derivative_evidence_instrument_key: str | None = Field(default=None, min_length=1)
     horizon_minutes: int = Field(gt=0, le=43_200)
     cadence_minutes: int = Field(gt=0, le=43_200)
     validity_minutes: int = Field(gt=0, le=1_440)

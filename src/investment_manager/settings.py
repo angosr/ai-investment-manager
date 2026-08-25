@@ -188,6 +188,37 @@ class AppConfig(StrictConfig):
                 != self.market_data.maximum_cross_market_quote_skew_seconds
             ):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
+        context = self.capital.context_forecast
+        if context is not None and context.enabled:
+            target = next(
+                (
+                    item.instrument
+                    for item in self.capital.execution_specs
+                    if item.instrument.key == context.target_instrument_key
+                ),
+                None,
+            )
+            if target is None:
+                raise ValueError("Context Forecast target 必须属于 Capital execution_specs")
+            evidence_key = context.derivative_evidence_instrument_key
+            if evidence_key is not None:
+                evidence = next(
+                    (
+                        item
+                        for item in self.market_data.perpetual_instruments
+                        if item.key == evidence_key
+                    ),
+                    None,
+                )
+                if evidence is None:
+                    raise ValueError(
+                        "Context Forecast 衍生品证据必须属于 MarketData 只读 universe"
+                    )
+                if (
+                    evidence.base_asset != target.base_asset
+                    or evidence.quote_asset != target.quote_asset
+                ):
+                    raise ValueError("Context Forecast 证据产品必须与 target 同标的计价")
         permissions = self.capital.candidate_capital_authorizations
         if permissions and not self.capital.enabled:
             raise ValueError("禁用 Capital 时不得保留 candidate capital authorization")
