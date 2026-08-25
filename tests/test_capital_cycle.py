@@ -31,6 +31,8 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
+    ForecastSlotOrigin,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -390,6 +392,9 @@ class _TriggerCapitalStub:
     def __init__(self, *, completed: bool = False) -> None:
         self.calls: list[tuple[str, datetime]] = []
         self.completed = completed
+        self.completed_causes: set[str] = set()
+        self.causes: list[ForecastSlotCause | None] = []
+        self.produced_trigger_types: list[tuple[str, ...]] = []
 
     def recover_missed_forecasts(self, *, before_slot_at, completed_at):
         self.calls.append(("recover", before_slot_at))
@@ -405,11 +410,13 @@ class _TriggerCapitalStub:
         return None
 
     def cause_completed(self, cause_id):
-        del cause_id
-        return self.completed
+        return self.completed or cause_id in self.completed_causes
 
     def produce(self, *, as_of, **kwargs):
-        del kwargs
+        cause_id = kwargs["cause_id"]
+        self.completed_causes.add(cause_id)
+        self.causes.append(kwargs.get("cause"))
+        self.produced_trigger_types.append(kwargs["trigger_types"])
         self.calls.append(("produce", as_of))
         return None
 
@@ -443,6 +450,46 @@ def _runtime_batch(trigger_type: AnalysisTriggerType, *, at: datetime) -> Trigge
     )
 
 
+def _runtime_mixed_forecast_batch(*, at: datetime) -> TriggerBatch:
+    triggers = tuple(
+        sorted(
+            (
+                build_trigger_event(
+                    trigger_type=trigger_type,
+                    symbol="BTCUSDT",
+                    pipeline_id="test-pipeline",
+                    occurred_at=at,
+                    observed_at=at,
+                    priority=100,
+                    dedup_key=f"{trigger_type.value}:{at.isoformat()}",
+                )
+                for trigger_type in (
+                    AnalysisTriggerType.FORECAST_EVENT_DUE,
+                    AnalysisTriggerType.FORECAST_SLOT_DUE,
+                )
+            ),
+            key=lambda item: item.trigger_id,
+        )
+    )
+    deadline = at + timedelta(minutes=5)
+    return TriggerBatch(
+        batch_id=stable_id(
+            "trigger_batch",
+            "BTCUSDT",
+            "test-pipeline",
+            1,
+            *(item.trigger_id for item in triggers),
+            deadline.isoformat(),
+        ),
+        symbol="BTCUSDT",
+        pipeline_id="test-pipeline",
+        plan_revision=1,
+        created_at=at,
+        deadline=deadline,
+        triggers=triggers,
+    )
+
+
 def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> None:
     capital = _TriggerCapitalStub()
     consumer = CapitalTriggerConsumer(
@@ -457,7 +504,7 @@ def test_world_model_wakeup_reviews_risk_without_creating_forecast_slot() -> Non
     assert capital.calls == [("review", NOW)]
 
 
-def test_material_world_model_update_creates_event_forecast_slot() -> None:
+def test_material_world_model_update_near_cadence_creates_one_combined_slot() -> None:
     capital = _TriggerCapitalStub()
     consumer = CapitalTriggerConsumer(
         capital=capital,
@@ -465,12 +512,74 @@ def test_material_world_model_update_creates_event_forecast_slot() -> None:
         context_completion_deadline_seconds=1500,
         material_event_slots_enabled=True,
         material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
         owner_symbol="BTCUSDT",
     )
 
     consumer.consume(_runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=NOW))
 
-    assert capital.calls == [("produce", NOW)]
+    assert capital.calls == [("recover", NOW.replace(minute=0)), ("produce", NOW)]
+    assert capital.causes[0] is not None
+    assert capital.causes[0].origins == (
+        ForecastSlotOrigin.CADENCE,
+        ForecastSlotOrigin.MATERIAL_STATE,
+    )
+
+
+def test_mixed_forecast_batch_runs_one_combined_producer_call() -> None:
+    at = NOW.replace(hour=4, minute=5)
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_mixed_forecast_batch(at=at))
+
+    assert capital.calls == [
+        ("recover", at.replace(minute=0)),
+        ("produce", at),
+    ]
+    assert capital.produced_trigger_types == [
+        ("FORECAST_CADENCE", "FORECAST_EVENT_DUE")
+    ]
+
+
+def test_material_slot_before_cadence_suppresses_second_forecast_call() -> None:
+    event_at = NOW.replace(hour=3, minute=50)
+    cadence_at = NOW.replace(hour=4, minute=0)
+    capital = _TriggerCapitalStub()
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        material_event_slots_enabled=True,
+        material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(
+        _runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=event_at)
+    )
+    consumer.consume(
+        _runtime_batch(AnalysisTriggerType.FORECAST_SLOT_DUE, at=cadence_at)
+    )
+
+    assert capital.calls == [
+        ("recover", cadence_at),
+        ("produce", event_at),
+        ("recover", cadence_at),
+        ("review", cadence_at),
+    ]
+    assert len(capital.causes) == 1
+    assert capital.causes[0] is not None
+    assert capital.causes[0].cadence_anchor_at == cadence_at
 
 
 def test_late_material_world_model_update_records_no_estimate() -> None:
@@ -501,6 +610,7 @@ def test_late_material_world_model_update_records_no_estimate() -> None:
         context_completion_deadline_seconds=1500,
         material_event_slots_enabled=True,
         material_event_slot_policy_version="material-world-model-slot-v1",
+        material_event_cadence_merge_seconds=900,
         owner_symbol="BTCUSDT",
     )
 

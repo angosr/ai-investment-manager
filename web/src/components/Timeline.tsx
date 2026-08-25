@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { SnapshotPayload } from "../api/types";
-import type { AssessmentQuality } from "../api/types";
+import type { AssessmentQuality, ForecastEvaluationEvidence } from "../api/types";
 import { useLive, usePagedLive } from "../hooks";
 import type { PagedLive } from "../hooks";
 import { hhmm } from "../lib/format";
@@ -90,6 +90,7 @@ function CapitalTimeline({
     "cycles",
   );
   const assessmentStatus = useLive(() => api.latestAssessment(), "cycles");
+  const forecastEvaluation = useLive(() => api.forecastEvaluation(), "cycles");
   const events = usePagedLive(
     (cursor) => api.events(cursor),
     "events",
@@ -115,6 +116,9 @@ function CapitalTimeline({
         </div>
       ) : tab === "analysis" ? (
         <div>
+          {forecastEvaluation?.world_model_ablation ? (
+            <WorldModelEvidenceLine evidence={forecastEvaluation.world_model_ablation} />
+          ) : null}
           {assessmentStatus?.quality ? (
             <AssessmentQualityLine quality={assessmentStatus.quality} />
           ) : null}
@@ -137,6 +141,32 @@ function CapitalTimeline({
         </div>
       )}
     </section>
+  );
+}
+
+function WorldModelEvidenceLine({
+  evidence,
+}: {
+  evidence: NonNullable<ForecastEvaluationEvidence["world_model_ablation"]>;
+}) {
+  const sampleProgress = `${evidence.conservative_sample_count} / ${evidence.minimum_sample_size}`;
+  const headline = evidence.evidence_sufficient
+    ? "世界认知已显示稳定预测增量"
+    : evidence.conservative_sample_count < evidence.minimum_sample_size
+      ? "世界认知增量仍在前瞻验证"
+      : "当前证据尚未证明世界认知有稳定增量";
+  const execution = evidence.assignments === 0
+    ? "尚无符合计划的输入槽"
+    : `同槽对照 ${evidence.assignments} 次：成功 ${evidence.successful_controls}`
+      + `，失败 ${evidence.failed_controls}，等待 ${evidence.pending_controls}`;
+  return (
+    <div className={`${styles.worldEvidence} ${evidence.evidence_sufficient ? styles.worldEvidenceGood : ""}`}>
+      <div>
+        <b>{headline}</b>
+        <span>独立结算样本 {sampleProgress}</span>
+      </div>
+      <p>{execution}；完整预测配对已结算 {evidence.settled_pairs} 次。</p>
+    </div>
   );
 }
 

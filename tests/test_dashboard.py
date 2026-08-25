@@ -18,6 +18,7 @@ from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalOverview,
     serialize_forecast_evidence,
+    serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.read_models import (
@@ -52,7 +53,7 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
 
     assert serialize_forecast_evidence(evidence) == {
         "forecast_evidence": {
-            "evaluation_version": "context-forecast-evidence-v3",
+            "evaluation_version": "context-forecast-evidence-v4",
             "status": "NO_SETTLED_SAMPLES",
             "terminal_result_count": 1,
             "due_slot_count": 1,
@@ -78,6 +79,45 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
             "mean_expected_gross_bps": None,
             "mean_realized_gross_bps": None,
             "result_coverage": "1",
+        }
+    }
+
+
+def test_world_model_ablation_has_a_compact_audit_projection() -> None:
+    at = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    report = SimpleNamespace(
+        plan_id="world-model-ablation-forward-v7",
+        as_of=at,
+        formal_forecast_count=3,
+        formal_no_estimate_count=1,
+        assignments=3,
+        pending_controls=1,
+        successful_controls=2,
+        failed_controls=0,
+        settled_pairs=1,
+        conservative_sample_count=2,
+        mean_brier_improvement=Decimal("0.125"),
+        conservative_improvement_lower_bound=None,
+        minimum_sample_size=30,
+        evidence_sufficient=False,
+    )
+
+    assert serialize_world_model_ablation_evidence(report) == {
+        "world_model_ablation": {
+            "plan_id": "world-model-ablation-forward-v7",
+            "as_of": at.isoformat(),
+            "formal_forecast_count": 3,
+            "formal_no_estimate_count": 1,
+            "assignments": 3,
+            "pending_controls": 1,
+            "successful_controls": 2,
+            "failed_controls": 0,
+            "settled_pairs": 1,
+            "conservative_sample_count": 2,
+            "mean_brier_improvement": "0.125",
+            "conservative_improvement_lower_bound": None,
+            "minimum_sample_size": 30,
+            "evidence_sufficient": False,
         }
     }
 

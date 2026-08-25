@@ -69,7 +69,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v6"
+        == "world-model-ablation-forward-v7"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v25"

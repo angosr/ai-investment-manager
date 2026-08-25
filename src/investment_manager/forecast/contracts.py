@@ -181,22 +181,81 @@ class ForecastSlotOrigin(StrEnum):
     MATERIAL_STATE = "MATERIAL_STATE"
 
 
+class ForecastSlotStratum(StrEnum):
+    CADENCE_ONLY = "CADENCE_ONLY"
+    MATERIAL_STATE_ONLY = "MATERIAL_STATE_ONLY"
+    COMBINED = "COMBINED"
+
+    @classmethod
+    def for_origins(
+        cls,
+        origins: tuple[ForecastSlotOrigin, ...],
+    ) -> ForecastSlotStratum:
+        canonical = tuple(sorted(set(origins)))
+        if canonical == (ForecastSlotOrigin.CADENCE,):
+            return cls.CADENCE_ONLY
+        if canonical == (ForecastSlotOrigin.MATERIAL_STATE,):
+            return cls.MATERIAL_STATE_ONLY
+        if canonical == (
+            ForecastSlotOrigin.CADENCE,
+            ForecastSlotOrigin.MATERIAL_STATE,
+        ):
+            return cls.COMBINED
+        raise ValueError("Forecast slot 来源集合不受支持")
+
+
 class ForecastSlotCause(FrozenModel):
     """Why one immutable Forecast obligation exists; never a direction signal."""
 
     origin: ForecastSlotOrigin
     policy_version: str = Field(min_length=1)
     trigger_refs: tuple[str, ...] = ()
+    additional_origins: tuple[ForecastSlotOrigin, ...] = ()
+    cadence_anchor_at: datetime | None = None
+
+    _utc_cadence_anchor_at = field_validator("cadence_anchor_at")(optional_utc)
 
     @model_validator(mode="after")
     def origin_and_refs_must_be_consistent(self):
         if tuple(sorted(set(self.trigger_refs))) != self.trigger_refs:
             raise ValueError("Forecast slot trigger_refs 必须唯一且排序")
-        if self.origin == ForecastSlotOrigin.CADENCE and self.trigger_refs:
+        if tuple(sorted(set(self.additional_origins))) != self.additional_origins:
+            raise ValueError("Forecast slot additional_origins 必须唯一且排序")
+        if self.origin in self.additional_origins:
+            raise ValueError("Forecast slot 主来源不得重复出现在附加来源")
+        origins = self.origins
+        if ForecastSlotOrigin.MATERIAL_STATE not in origins and self.trigger_refs:
             raise ValueError("定时 Forecast slot 不得伪造事件引用")
-        if self.origin == ForecastSlotOrigin.MATERIAL_STATE and not self.trigger_refs:
+        if ForecastSlotOrigin.MATERIAL_STATE in origins and not self.trigger_refs:
             raise ValueError("材料事件 Forecast slot 必须引用触发事实")
+        if self.additional_origins and self.cadence_anchor_at is None:
+            raise ValueError("合并 Forecast slot 必须冻结 cadence 锚点")
+        if (
+            self.cadence_anchor_at is not None
+            and ForecastSlotOrigin.CADENCE not in origins
+        ):
+            raise ValueError("非 cadence Forecast slot 不得冻结 cadence 锚点")
         return self
+
+    @property
+    def origins(self) -> tuple[ForecastSlotOrigin, ...]:
+        return tuple(sorted({self.origin, *self.additional_origins}))
+
+    def identity_payload(self) -> dict[str, object]:
+        """Keep historical single-origin slot identities byte-for-byte stable."""
+
+        payload: dict[str, object] = {
+            "origin": self.origin.value,
+            "policy_version": self.policy_version,
+            "trigger_refs": self.trigger_refs,
+        }
+        if self.additional_origins:
+            payload["additional_origins"] = tuple(
+                item.value for item in self.additional_origins
+            )
+        if self.cadence_anchor_at is not None:
+            payload["cadence_anchor_at"] = self.cadence_anchor_at
+        return payload
 
     @classmethod
     def cadence(cls, contract: ForecastContract) -> ForecastSlotCause:
@@ -218,6 +277,22 @@ class ForecastSlotCause(FrozenModel):
             trigger_refs=tuple(sorted(set(trigger_refs))),
         )
 
+    @classmethod
+    def cadence_material_state(
+        cls,
+        *,
+        policy_version: str,
+        trigger_refs: tuple[str, ...],
+        cadence_anchor_at: datetime,
+    ) -> ForecastSlotCause:
+        return cls(
+            origin=ForecastSlotOrigin.CADENCE,
+            additional_origins=(ForecastSlotOrigin.MATERIAL_STATE,),
+            policy_version=policy_version,
+            trigger_refs=tuple(sorted(set(trigger_refs))),
+            cadence_anchor_at=require_utc(cadence_anchor_at),
+        )
+
 
 class ForecastDecisionSlot(FrozenModel):
     slot_id: str = Field(min_length=1)
@@ -235,6 +310,18 @@ class ForecastDecisionSlot(FrozenModel):
     _utc_completion_deadline_at = field_validator("completion_deadline_at")(require_utc)
     _utc_outcome_start_at = field_validator("outcome_start_at")(optional_utc)
     _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
+
+    @property
+    def origins(self) -> tuple[ForecastSlotOrigin, ...]:
+        return (
+            (ForecastSlotOrigin.CADENCE,)
+            if self.cause is None
+            else self.cause.origins
+        )
+
+    @property
+    def stratum(self) -> ForecastSlotStratum:
+        return ForecastSlotStratum.for_origins(self.origins)
 
     @model_validator(mode="after")
     def identity_and_time_are_canonical(self):
@@ -281,7 +368,7 @@ class ForecastDecisionSlot(FrozenModel):
             else stable_id(
                 "forecast_decision_slot",
                 *identity,
-                content_hash(cause),
+                content_hash(cause.identity_payload()),
             )
         )
 

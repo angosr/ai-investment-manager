@@ -60,7 +60,7 @@ from investment_manager.forecast.models import (
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.forecast.tables import assessment_executions
-from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
     ClosedMarketBar,
     InstrumentId,
@@ -350,7 +350,25 @@ class _PacketTargetStateProvider:
         )
 
 
-def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
+class _RecordingForecastPreflight:
+    def __init__(self, analyst) -> None:
+        self.analyst = analyst
+        self.calls = 0
+        self.analysis_input = None
+
+    def before_estimate(
+        self,
+        *,
+        slot,
+        formal_producer_behavior_id,
+        formal_analysis_input,
+    ) -> None:
+        assert self.analyst.calls == 0
+        self.calls += 1
+        self.analysis_input = formal_analysis_input
+
+
+def _context_forecast_producer(engine, analyst, *, preflight=None) -> ContextForecastProducer:
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
@@ -386,6 +404,7 @@ def _context_forecast_producer(engine, analyst) -> ContextForecastProducer:
         target_states=_PacketTargetStateProvider(packet),
         analysis_scope="crypto-portfolio",
         activated_at=NOW,
+        preflight=preflight,
     )
 
 
@@ -400,7 +419,8 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assessment = contexts.record_assessment(packet.packet_id, _assessment())
     completed_at = assessment.available_at + timedelta(seconds=10)
     analyst = _FixedProbabilityAnalyst(completed_at)
-    producer = _context_forecast_producer(engine, analyst)
+    preflight = _RecordingForecastPreflight(analyst)
+    producer = _context_forecast_producer(engine, analyst, preflight=preflight)
     market = SqlMarketDataStore(engine)
     for index, observed_at in enumerate((NOW, completed_at), start=1):
         market.put_quote(
@@ -475,6 +495,8 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
         for token in ("shadow", "testnet", "mock", "模拟", "仿真")
     )
     assert first.analysis_input_hash == content_hash(analysis_input)
+    assert preflight.calls == 1
+    assert json.loads(canonical_json(preflight.analysis_input)) == analysis_input
     assert analyst.calls == 1
 
 
@@ -792,6 +814,16 @@ def test_material_world_model_update_creates_one_event_forecast_trigger(app_conf
     scheduler.publish_update(assessment)
     scheduler.publish_update(assessment)
 
+    replayed_assessment = assessment.model_copy(
+        update={
+            "assessment_id": "assessment-2",
+            "analysis_behavior_hash": "c" * 64,
+            "available_at": assessment.available_at + timedelta(seconds=10),
+        }
+    )
+    assessments.record_assessment(packet.packet_id, replayed_assessment)
+    scheduler.publish_update(replayed_assessment)
+
     messages = tuple(
         item
         for item in triggers.pending_outbox(
@@ -803,7 +835,12 @@ def test_material_world_model_update_creates_one_event_forecast_trigger(app_conf
     trigger = messages[0].payload["trigger"]
     assert trigger["trigger_type"] == "FORECAST_EVENT_DUE"
     assert trigger["evidence_ids"] == sorted(
-        [assessment.assessment_id, packet.packet_id, packet.state_id]
+        [
+            assessment.assessment_id,
+            packet.packet_id,
+            packet.state_id,
+            *(item.delta_id for item in packet.deltas),
+        ]
     )
 
 

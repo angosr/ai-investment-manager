@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -21,9 +21,13 @@ from investment_manager.execution.tables import (
 from investment_manager.forecast.context.evaluation import (
     ForecastEvidence,
     ForecastScoringCase,
+    ForecastSourceEvidence,
     evaluate_forecast_evidence,
 )
-from investment_manager.forecast.contracts import ForecastContract
+from investment_manager.forecast.contracts import (
+    ForecastContract,
+    ForecastDecisionSlot,
+)
 from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
@@ -42,6 +46,10 @@ from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.governance.evaluation.capital_benchmark import (
     CapitalBenchmarkPoint,
     build_capital_benchmark_policy,
+)
+from investment_manager.governance.evaluation.world_model_ablation import (
+    SqlWorldModelAblationRepository,
+    WorldModelAblationReport,
 )
 from investment_manager.governance.tables import capital_benchmark_points
 from investment_manager.kernel.time import require_utc
@@ -268,6 +276,30 @@ class CapitalDashboardReader:
         with self._engine.connect() as connection:
             return self._forecast_evidence(connection, now=now)
 
+    def world_model_ablation_evidence(
+        self, *, now: datetime
+    ) -> WorldModelAblationReport | None:
+        """Read the active prospective comparison without registering or mutating it."""
+
+        now = require_utc(now)
+        policy = self._config.outcome_evaluation.world_model_ablation
+        context = self._config.capital.context_forecast
+        if (
+            policy is None
+            or not policy.enabled
+            or context is None
+            or not context.enabled
+        ):
+            return None
+        return SqlWorldModelAblationRepository(self._engine).report(
+            plan_id=policy.plan_id,
+            evaluation_version=self._config.outcome_evaluation.target_forecast_version,
+            minimum_sample_size=policy.minimum_sample_size,
+            formal_producer_behavior_id=context.producer_behavior_id,
+            activated_at=policy.activated_at,
+            as_of=now,
+        )
+
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
         policy = self._config.capital.context_forecast
         if policy is None or not policy.enabled:
@@ -281,48 +313,51 @@ class CapitalDashboardReader:
         if contract_row is None:
             return None
         contract = ForecastContract.model_validate(contract_row.payload)
-        due_slot_count = int(
-            connection.scalar(
-                select(func.count())
-                .select_from(
-                    forecast_slot_obligations.join(
-                        forecast_decision_slots,
-                        forecast_decision_slots.c.slot_id
-                        == forecast_slot_obligations.c.slot_id,
-                    )
-                )
-                .where(
-                    forecast_decision_slots.c.contract_id == contract.contract_id,
-                    forecast_slot_obligations.c.producer_id == policy.producer_id,
-                    forecast_slot_obligations.c.producer_behavior_id
-                    == policy.producer_behavior_id,
-                    forecast_decision_slots.c.completion_deadline_at <= now,
+        due_rows = connection.execute(
+            select(
+                forecast_decision_slots.c.slot_id,
+                forecast_decision_slots.c.payload,
+            )
+            .select_from(
+                forecast_slot_obligations.join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id
+                    == forecast_slot_obligations.c.slot_id,
                 )
             )
-            or 0
-        )
-        forecast_count = int(
-            connection.scalar(
-                select(func.count())
-                .select_from(forecast_records)
+            .where(
+                forecast_decision_slots.c.contract_id == contract.contract_id,
+                forecast_slot_obligations.c.producer_id == policy.producer_id,
+                forecast_slot_obligations.c.producer_behavior_id
+                == policy.producer_behavior_id,
+                forecast_decision_slots.c.completion_deadline_at <= now,
+            )
+        ).all()
+        due_slots = {
+            row.slot_id: ForecastDecisionSlot.model_validate(row.payload)
+            for row in due_rows
+        }
+        forecast_slot_ids = tuple(
+            connection.scalars(
+                select(forecast_records.c.decision_slot_id)
                 .join(
                     forecast_decision_slots,
-                    forecast_decision_slots.c.slot_id == forecast_records.c.decision_slot_id,
+                    forecast_decision_slots.c.slot_id
+                    == forecast_records.c.decision_slot_id,
                 )
                 .where(
                     forecast_records.c.contract_id == contract.contract_id,
                     forecast_records.c.kind == ForecastResultKind.BASE.value,
                     forecast_records.c.producer_id == policy.producer_id,
-                    forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_records.c.producer_behavior_id
+                    == policy.producer_behavior_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                 )
-            )
-            or 0
+            ).all()
         )
-        no_estimate_count = int(
-            connection.scalar(
-                select(func.count())
-                .select_from(forecast_no_estimates)
+        no_estimate_slot_ids = tuple(
+            connection.scalars(
+                select(forecast_no_estimates.c.slot_id)
                 .join(
                     forecast_decision_slots,
                     forecast_decision_slots.c.slot_id == forecast_no_estimates.c.slot_id,
@@ -330,14 +365,24 @@ class CapitalDashboardReader:
                 .where(
                     forecast_no_estimates.c.contract_id == contract.contract_id,
                     forecast_no_estimates.c.producer_id == policy.producer_id,
-                    forecast_no_estimates.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_no_estimates.c.producer_behavior_id
+                    == policy.producer_behavior_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                 )
-            )
-            or 0
+            ).all()
         )
+        terminal_slot_ids = {*forecast_slot_ids, *no_estimate_slot_ids}
+        if not terminal_slot_ids.issubset(due_slots):
+            raise ValueError("Forecast evidence 终态缺少对应到期槽")
+        due_slot_count = len(due_slots)
+        forecast_count = len(forecast_slot_ids)
+        no_estimate_count = len(no_estimate_slot_ids)
         rows = connection.execute(
-            select(forecast_records.c.payload, forecast_outcomes.c.payload)
+            select(
+                forecast_records.c.payload,
+                forecast_outcomes.c.payload,
+                forecast_decision_slots.c.payload,
+            )
             .select_from(
                 forecast_records.join(
                     forecast_outcomes,
@@ -347,6 +392,10 @@ class CapitalDashboardReader:
                         forecast_outcomes.c.evaluation_version
                         == self._config.outcome_evaluation.target_forecast_version,
                     ),
+                ).join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id
+                    == forecast_records.c.decision_slot_id,
                 )
             )
             .where(
@@ -365,6 +414,7 @@ class CapitalDashboardReader:
         for row in rows:
             forecast = BaseForecast.model_validate(row[0])
             outcome = ForecastOutcome.model_validate(row[1])
+            slot = ForecastDecisionSlot.model_validate(row[2])
             assert outcome.gross_target_return_bps is not None
             assert outcome.realized_bucket_id is not None
             cases.append(
@@ -382,9 +432,40 @@ class CapitalDashboardReader:
                     realized_gross_bps=outcome.gross_target_return_bps,
                     market_state_key=self._forecast_market_state_key(forecast),
                     outcome_available_at=outcome.settled_at,
+                    source_stratum=slot.stratum,
                 )
             )
-        return evaluate_forecast_evidence(
+        observed_strata = tuple(
+            sorted(
+                {slot.stratum for slot in due_slots.values()},
+                key=lambda item: item.value,
+            )
+        )
+        source_evidence = tuple(
+            ForecastSourceEvidence(
+                stratum=stratum,
+                evidence=evaluate_forecast_evidence(
+                    tuple(item for item in cases if item.source_stratum == stratum),
+                    due_slot_count=sum(
+                        slot.stratum == stratum for slot in due_slots.values()
+                    ),
+                    forecast_count=sum(
+                        due_slots[slot_id].stratum == stratum
+                        for slot_id in forecast_slot_ids
+                    ),
+                    no_estimate_count=sum(
+                        due_slots[slot_id].stratum == stratum
+                        for slot_id in no_estimate_slot_ids
+                    ),
+                    required_non_overlapping_samples=(
+                        self._config.calibration.minimum_non_overlapping_samples
+                    ),
+                    permission_evidence_eligible=contract.permission_evidence_eligible,
+                ),
+            )
+            for stratum in observed_strata
+        )
+        overall = evaluate_forecast_evidence(
             tuple(cases),
             due_slot_count=due_slot_count,
             forecast_count=forecast_count,
@@ -392,8 +473,11 @@ class CapitalDashboardReader:
             required_non_overlapping_samples=(
                 self._config.calibration.minimum_non_overlapping_samples
             ),
-            permission_evidence_eligible=contract.permission_evidence_eligible,
+            permission_evidence_eligible=(
+                contract.permission_evidence_eligible and len(observed_strata) <= 1
+            ),
         )
+        return replace(overall, source_evidence=source_evidence)
 
     def equity_history(
         self,
@@ -1018,6 +1102,43 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
 def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
     if evidence is None:
         return {"forecast_evidence": None}
+    return {"forecast_evidence": _serialize_forecast_evidence_payload(evidence)}
+
+
+def serialize_world_model_ablation_evidence(
+    report: WorldModelAblationReport | None,
+) -> dict:
+    if report is None:
+        return {"world_model_ablation": None}
+    return {
+        "world_model_ablation": {
+            "plan_id": report.plan_id,
+            "as_of": _iso(report.as_of),
+            "formal_forecast_count": report.formal_forecast_count,
+            "formal_no_estimate_count": report.formal_no_estimate_count,
+            "assignments": report.assignments,
+            "pending_controls": report.pending_controls,
+            "successful_controls": report.successful_controls,
+            "failed_controls": report.failed_controls,
+            "settled_pairs": report.settled_pairs,
+            "conservative_sample_count": report.conservative_sample_count,
+            "mean_brier_improvement": (
+                None
+                if report.mean_brier_improvement is None
+                else str(report.mean_brier_improvement)
+            ),
+            "conservative_improvement_lower_bound": (
+                None
+                if report.conservative_improvement_lower_bound is None
+                else str(report.conservative_improvement_lower_bound)
+            ),
+            "minimum_sample_size": report.minimum_sample_size,
+            "evidence_sufficient": report.evidence_sufficient,
+        }
+    }
+
+
+def _serialize_forecast_evidence_payload(evidence: ForecastEvidence) -> dict:
     optional_decimals = (
         "result_coverage",
         "mean_brier_score",
@@ -1035,12 +1156,21 @@ def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
         "mean_realized_gross_bps",
     )
     payload = asdict(evidence)
+    payload.pop("source_evidence", None)
     payload["status"] = evidence.status.value
     payload["result_coverage"] = evidence.result_coverage
     for field_name in optional_decimals:
         value = getattr(evidence, field_name)
         payload[field_name] = None if value is None else str(value)
-    return {"forecast_evidence": payload}
+    if evidence.source_evidence:
+        payload["source_evidence"] = [
+            {
+                "stratum": item.stratum.value,
+                "evidence": _serialize_forecast_evidence_payload(item.evidence),
+            }
+            for item in evidence.source_evidence
+        ]
+    return payload
 
 
 def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:

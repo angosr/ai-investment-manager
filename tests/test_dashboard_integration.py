@@ -482,7 +482,10 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert capital_overview.status_code == 200
     assert "forecast_evidence" not in capital_overview.json()
     assert forecast_evidence.status_code == 200
-    assert forecast_evidence.json() == {"forecast_evidence": None}
+    assert forecast_evidence.json() == {
+        "forecast_evidence": None,
+        "world_model_ablation": None,
+    }
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": [], "next_cursor": None}

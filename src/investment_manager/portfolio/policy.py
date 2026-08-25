@@ -54,6 +54,7 @@ class ContextForecastPolicy(StrictConfig):
     cadence_minutes: int = Field(gt=0, le=43_200)
     material_event_slots_enabled: bool = False
     material_event_slot_policy_version: str | None = Field(default=None, min_length=1)
+    material_event_cadence_merge_seconds: int = Field(default=0, ge=0, le=3_600)
     validity_minutes: int = Field(gt=0, le=1_440)
     completion_deadline_seconds: int = Field(gt=0)
     minimum_remaining_horizon_minutes: int = Field(gt=0)
@@ -73,6 +74,15 @@ class ContextForecastPolicy(StrictConfig):
             self.material_event_slot_policy_version is not None
         ):
             raise ValueError("Context Forecast 事件槽启用状态与政策版本必须同时配置")
+        if self.material_event_slots_enabled != (
+            self.material_event_cadence_merge_seconds > 0
+        ):
+            raise ValueError("Context Forecast 事件槽与 cadence 合并窗口必须同时启用")
+        if self.material_event_cadence_merge_seconds > min(
+            self.completion_deadline_seconds,
+            self.cadence_minutes * 30,
+        ):
+            raise ValueError("Context Forecast 合并窗口必须短于完成期限和半个 cadence")
         return self
 
 

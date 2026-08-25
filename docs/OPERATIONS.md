@@ -44,16 +44,17 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 账户、Forecast、Outcome、风险授权、订单观察和世界认知是不可变事实。不得用 SQL 手工修正文案或删除失败记录；错误生产者通过新行为/Release 替换，旧事实保留用于评价。
 
-## 4. 触发与固定预测节拍
+## 4. Forecast 槽与恢复
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-事件触发只更新 WorldModel或复核当前持仓，不直接改变固定 Forecast cohort。Context Forecast 由 TriggerCoordinator 按 ProducerBinding 激活点和 ForecastContract cadence 在槽边界直接唤醒，不依赖 heartbeat 相位或临时时点：
+Context Forecast 由 TriggerCoordinator 直接唤醒，不依赖 heartbeat 相位或临时时点。当前槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存来源、政策和触发引用。材料事件落在冻结的 cadence 合并窗口内时，两项义务合并为一个同时标记 `CADENCE` 与 `MATERIAL_STATE` 的经济槽，只调用一次 Forecast；窗口外则保持独立。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
 - 服务停机错过截止后恢复为 `DEADLINE_MISSED`，不得事后调用 AI；
 - ProducerBinding 首次激活前已经开始的槽不归属于该行为，也不能追记为漏报；行为等价的新 Release 不重置该激活点；
+- 材料事件发生在旧槽 information cutoff 之后时产生新事件槽，不能修改旧 Forecast；
 - 失败槽只进入 Forecast 覆盖与健康，不制造虚假资本行动。
 
 Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。全现金且没有新 Forecast/Target/订单时不生成行动条目。

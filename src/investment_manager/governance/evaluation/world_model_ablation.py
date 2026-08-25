@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -61,13 +62,14 @@ from investment_manager.governance.tables import (
     world_model_ablation_results,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
-from investment_manager.kernel.time import require_utc
+from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.settings import AppConfig
 
 CONTROL_INPUT_VERSION = "context-forecast-no-world-model-v1"
 CONTROL_OUTPUT_VERSION = "context-forecast-no-world-model-output-v2"
-CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
+LEGACY_CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
+CONTROL_CALL_ORDER = "PREASSIGNED_INDEPENDENT_WORKERS"
 _MAXIMUM_MULTICLASS_BRIER_SCORE = Decimal("2")
 CONTROL_INSTRUCTIONS = (
     "你是概率预测员。输入只包含一份预登记预测合同和目标相关的点时市场状态。",
@@ -122,7 +124,7 @@ class WorldModelAblationAssignment(FrozenModel):
     formal_producer_behavior_id: str
     control_behavior_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     information_cutoff_at: datetime
-    formal_available_at: datetime
+    formal_available_at: datetime | None = None
     assigned_at: datetime
     completion_deadline_at: datetime
     evaluation_at: datetime
@@ -135,21 +137,28 @@ class WorldModelAblationAssignment(FrozenModel):
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
-    _utc_formal_available_at = field_validator("formal_available_at")(require_utc)
+    _utc_formal_available_at = field_validator("formal_available_at")(optional_utc)
     _utc_assigned_at = field_validator("assigned_at")(require_utc)
     _utc_completion_deadline_at = field_validator("completion_deadline_at")(require_utc)
     _utc_evaluation_at = field_validator("evaluation_at")(require_utc)
 
     @model_validator(mode="after")
     def identities_inputs_and_timing_are_frozen(self):
-        if self.call_order != CONTROL_CALL_ORDER:
-            raise ValueError("WorldModel control 必须服从正式预测优先顺序")
-        if not (
+        if self.call_order not in {CONTROL_CALL_ORDER, LEGACY_CONTROL_CALL_ORDER}:
+            raise ValueError("WorldModel control 调用安排不受支持")
+        if self.call_order == LEGACY_CONTROL_CALL_ORDER:
+            if self.formal_available_at is None or not (
+                self.information_cutoff_at
+                <= self.formal_available_at
+                <= self.assigned_at
+            ):
+                raise ValueError("旧 WorldModel control 时间顺序非法")
+        elif self.formal_available_at is not None or not (
             self.information_cutoff_at
-            <= self.formal_available_at
             <= self.assigned_at
+            < self.completion_deadline_at
         ):
-            raise ValueError("WorldModel control 时间顺序非法")
+            raise ValueError("WorldModel control 必须在正式调用前且共同截止前分配")
         if not self.information_cutoff_at < self.completion_deadline_at < self.evaluation_at:
             raise ValueError("WorldModel control 截止时间非法")
         control_input = _canonical_payload(self.control_input_json, "control input")
@@ -287,7 +296,7 @@ def ensure_world_model_ablation_plan(
         "formal_contract_id": contract.contract_id,
         "formal_producer_behavior_id": context.producer_behavior_id,
         "control_behavior_hash": behavior_hash,
-        "assignment_rule": "ALL_SUCCESSFUL_FORMAL_FORECASTS_AT_OR_AFTER_ACTIVATION",
+        "assignment_rule": "ALL_INPUT_READY_SLOTS_BEFORE_FORMAL_CALL_AT_OR_AFTER_ACTIVATION",
         "formal_missing_rule": "COUNT_AUTHORITATIVE_FORECAST_NO_ESTIMATE_TERMINALS",
         "missing_score_rule": (
             "LOWER_BOUND_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
@@ -307,7 +316,8 @@ def ensure_world_model_ablation_plan(
         minimum_sample_size=policy.minimum_sample_size,
         hard_guardrails=(
             "CONTROL_NEVER_ENTERS_CAPITAL",
-            "FORMAL_FIRST_CAPITAL_PRIORITY",
+            "ASSIGNMENT_PRECEDES_BOTH_CALLS",
+            "INDEPENDENT_WORKERS_SHARE_SLOT_DEADLINE",
             "NO_HISTORICAL_BACKFILL",
             "SAME_SLOT_STATE_CONTRACT_AND_MODEL",
             "CONTROL_OUTPUT_PROBABILITY_ONLY",
@@ -347,22 +357,20 @@ def ensure_world_model_ablation_plan(
 def build_world_model_ablation_assignment(
     *,
     plan: EvaluationPlan,
-    formal: BaseForecast,
     slot: ForecastDecisionSlot,
+    formal_producer_behavior_id: str,
+    formal_analysis_input: dict[str, object],
     assigned_at: datetime,
 ) -> WorldModelAblationAssignment:
     spec = plan.candidate_spec_snapshot
     if not isinstance(spec, dict):
         raise ValueError("WorldModel control plan 缺少冻结规格")
     if (
-        formal.contract_id != spec.get("formal_contract_id")
-        or formal.producer_behavior_id != spec.get("formal_producer_behavior_id")
-        or slot.contract_id != formal.contract_id
+        formal_producer_behavior_id != spec.get("formal_producer_behavior_id")
+        or slot.contract_id != spec.get("formal_contract_id")
     ):
-        raise ValueError("WorldModel control 正式预测不属于预登记 cohort")
-    if formal.analysis_input_json is None or formal.analysis_input_hash is None:
-        raise ValueError("WorldModel control 正式预测缺少冻结输入")
-    raw = _canonical_payload(formal.analysis_input_json, "formal input")
+        raise ValueError("WorldModel control 正式行为不属于预登记 cohort")
+    raw = _canonical_payload(canonical_json(formal_analysis_input), "formal input")
     world_model = raw.get("world_model")
     if not isinstance(world_model, dict):
         raise ValueError("WorldModel control 正式输入缺少 world_model")
@@ -374,7 +382,10 @@ def build_world_model_ablation_assignment(
         raise ValueError("WorldModel control 正式输入结构不完整")
     if decision_slot.get("decision_slot_id") != slot.slot_id:
         raise ValueError("WorldModel control 正式输入绑定了错误 slot")
-    bucket_ids = tuple(item.bucket_id for item in formal.outcome_probabilities)
+    parsed_contract = ForecastContract.model_validate(forecast_contract)
+    if parsed_contract.contract_id != slot.contract_id:
+        raise ValueError("WorldModel control 输入合同与 slot 不一致")
+    bucket_ids = tuple(item.bucket_id for item in parsed_contract.outcome_buckets)
     schema = world_model_control_output_schema_for_ids(
         decision_slot_id=slot.slot_id,
         bucket_ids=bucket_ids,
@@ -388,25 +399,30 @@ def build_world_model_ablation_assignment(
     control_input_json = canonical_json(control_input)
     output_schema_json = canonical_json(schema)
     behavior_hash = str(spec["control_behavior_hash"])
+    formal_forecast_id = stable_id(
+        "base_forecast",
+        slot.slot_id,
+        formal_producer_behavior_id,
+    )
     values = {
         "assignment_id": stable_id(
             "world_model_ablation_assignment",
             plan.plan_id,
-            formal.forecast_id,
+            formal_forecast_id,
         ),
         "plan_id": plan.plan_id,
-        "formal_forecast_id": formal.forecast_id,
+        "formal_forecast_id": formal_forecast_id,
         "decision_slot_id": slot.slot_id,
-        "contract_id": formal.contract_id,
-        "formal_producer_behavior_id": formal.producer_behavior_id,
+        "contract_id": slot.contract_id,
+        "formal_producer_behavior_id": formal_producer_behavior_id,
         "control_behavior_hash": behavior_hash,
-        "information_cutoff_at": formal.information_cutoff_at,
-        "formal_available_at": formal.available_at,
+        "information_cutoff_at": slot.information_cutoff_at,
+        "formal_available_at": None,
         "assigned_at": require_utc(assigned_at),
         "completion_deadline_at": slot.completion_deadline_at,
         "evaluation_at": slot.evaluation_at,
         "call_order": CONTROL_CALL_ORDER,
-        "formal_analysis_input_hash": formal.analysis_input_hash,
+        "formal_analysis_input_hash": content_hash(raw),
         "control_input_json": control_input_json,
         "control_input_hash": content_hash(control_input),
         "output_schema_json": output_schema_json,
@@ -481,50 +497,6 @@ class CodexWorldModelControlAnalyst:
 class SqlWorldModelAblationRepository:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
-
-    def unassigned_formal_forecasts(
-        self,
-        *,
-        plan_id: str,
-        formal_producer_behavior_id: str,
-        activated_at: datetime,
-        limit: int,
-    ) -> tuple[tuple[BaseForecast, ForecastDecisionSlot], ...]:
-        joined = forecasts.join(
-            forecast_decision_slots,
-            forecast_decision_slots.c.slot_id == forecasts.c.decision_slot_id,
-        ).outerjoin(
-            world_model_ablation_assignments,
-            and_(
-                world_model_ablation_assignments.c.plan_id == plan_id,
-                world_model_ablation_assignments.c.formal_forecast_id
-                == forecasts.c.forecast_id,
-            ),
-        )
-        with self._engine.connect() as connection:
-            rows = connection.execute(
-                select(forecasts.c.payload, forecast_decision_slots.c.payload)
-                .select_from(joined)
-                .where(
-                    forecasts.c.kind == "BASE",
-                    forecasts.c.producer_behavior_id == formal_producer_behavior_id,
-                    forecast_decision_slots.c.information_cutoff_at
-                    >= require_utc(activated_at),
-                    world_model_ablation_assignments.c.assignment_id.is_(None),
-                )
-                .order_by(
-                    forecast_decision_slots.c.information_cutoff_at,
-                    forecasts.c.forecast_id,
-                )
-                .limit(limit)
-            ).all()
-        return tuple(
-            (
-                BaseForecast.model_validate(row[0]),
-                ForecastDecisionSlot.model_validate(row[1]),
-            )
-            for row in rows
-        )
 
     def record_assignment(self, assignment: WorldModelAblationAssignment) -> bool:
         try:
@@ -630,7 +602,7 @@ class SqlWorldModelAblationRepository:
             forecast_outcomes.c.evaluation_version == evaluation_version,
         )
         joined = (
-            world_model_ablation_assignments.join(
+            world_model_ablation_assignments.outerjoin(
                 forecasts,
                 forecasts.c.forecast_id
                 == world_model_ablation_assignments.c.formal_forecast_id,
@@ -714,9 +686,11 @@ class SqlWorldModelAblationRepository:
                 if outcome is not None and outcome.status == ForecastOutcomeStatus.SETTLED
                 else None
             )
-            formal = BaseForecast.model_validate(formal_raw)
+            formal = (
+                None if formal_raw is None else BaseForecast.model_validate(formal_raw)
+            )
             formal_score = None
-            if settled_outcome is not None:
+            if settled_outcome is not None and formal is not None:
                 assert settled_outcome.realized_bucket_id is not None
                 formal_score = multiclass_brier_score(
                     tuple(
@@ -752,7 +726,7 @@ class SqlWorldModelAblationRepository:
                     )
                 continue
             succeeded += 1
-            if settled_outcome is None:
+            if settled_outcome is None or formal is None:
                 continue
             control = WorldModelControlStructuredOutput.model_validate_json(
                 result.output_json
@@ -840,19 +814,6 @@ class WorldModelAblationRunner:
 
     def reconcile(self, *, as_of: datetime) -> WorldModelAblationReport:
         now = require_utc(as_of)
-        for formal, slot in self.repository.unassigned_formal_forecasts(
-            plan_id=self.plan.plan_id,
-            formal_producer_behavior_id=self.formal_producer_behavior_id,
-            activated_at=self.policy.activated_at,
-            limit=self.policy.maximum_batch_size,
-        ):
-            assignment = build_world_model_ablation_assignment(
-                plan=self.plan,
-                formal=formal,
-                slot=slot,
-                assigned_at=now,
-            )
-            self.repository.record_assignment(assignment)
         for assignment in self.repository.pending_assignments(
             plan_id=self.plan.plan_id,
             limit=self.policy.maximum_batch_size,
@@ -878,6 +839,92 @@ class WorldModelAblationRunner:
             activated_at=self.policy.activated_at,
             as_of=now,
         )
+
+
+@dataclass(slots=True)
+class WorldModelAblationPreallocator:
+    """Freeze the pair before the formal producer is allowed to call Codex."""
+
+    policy: WorldModelAblationPolicy
+    plan: EvaluationPlan
+    formal_producer_behavior_id: str
+    repository: SqlWorldModelAblationRepository
+    clock: Callable[[], datetime]
+
+    def before_estimate(
+        self,
+        *,
+        slot: ForecastDecisionSlot,
+        formal_producer_behavior_id: str,
+        formal_analysis_input: dict[str, object],
+    ) -> None:
+        if slot.information_cutoff_at < self.policy.activated_at:
+            return
+        if formal_producer_behavior_id != self.formal_producer_behavior_id:
+            raise ValueError("WorldModel control preflight 绑定了错误正式行为")
+        formal_forecast_id = stable_id(
+            "base_forecast",
+            slot.slot_id,
+            formal_producer_behavior_id,
+        )
+        assignment_id = stable_id(
+            "world_model_ablation_assignment",
+            self.plan.plan_id,
+            formal_forecast_id,
+        )
+        existing = self.repository.assignment(assignment_id)
+        if existing is not None:
+            expected = build_world_model_ablation_assignment(
+                plan=self.plan,
+                slot=slot,
+                formal_producer_behavior_id=formal_producer_behavior_id,
+                formal_analysis_input=formal_analysis_input,
+                assigned_at=existing.assigned_at,
+            )
+            if existing != expected:
+                raise ValueError("WorldModel control 重试绑定了不同输入")
+            return
+        assigned_at = require_utc(self.clock())
+        if assigned_at >= slot.completion_deadline_at:
+            return
+        assignment = build_world_model_ablation_assignment(
+            plan=self.plan,
+            slot=slot,
+            formal_producer_behavior_id=formal_producer_behavior_id,
+            formal_analysis_input=formal_analysis_input,
+            assigned_at=assigned_at,
+        )
+        self.repository.record_assignment(assignment)
+
+
+def assemble_world_model_ablation_preallocator(
+    config: AppConfig,
+    *,
+    engine: Engine,
+    release: ReleaseManifest,
+    contract: ForecastContract,
+    clock: Callable[[], datetime],
+) -> WorldModelAblationPreallocator | None:
+    policy = config.outcome_evaluation.world_model_ablation
+    context = config.capital.context_forecast
+    if policy is None or not policy.enabled:
+        return None
+    if context is None or not context.enabled:
+        raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
+    plan = ensure_world_model_ablation_plan(
+        governance=SqlGovernanceRepository(engine),
+        config=config,
+        contract=contract,
+        release=release,
+        registered_at=clock(),
+    )
+    return WorldModelAblationPreallocator(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=context.producer_behavior_id,
+        repository=SqlWorldModelAblationRepository(engine),
+        clock=clock,
+    )
 
 
 def assemble_world_model_ablation_analyst(
@@ -1053,11 +1100,13 @@ __all__ = [
     "CodexWorldModelControlAnalyst",
     "SqlWorldModelAblationRepository",
     "WorldModelAblationAssignment",
+    "WorldModelAblationPreallocator",
     "WorldModelAblationReport",
     "WorldModelAblationResult",
     "WorldModelAblationRunner",
     "WorldModelAblationStatus",
     "assemble_world_model_ablation_analyst",
+    "assemble_world_model_ablation_preallocator",
     "build_world_model_ablation_assignment",
     "ensure_world_model_ablation_plan",
     "world_model_ablation_behavior_hash",

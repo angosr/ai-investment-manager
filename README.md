@@ -1,12 +1,13 @@
 # Investment Manager
 
-这是一个由 Codex 提供跨域因果分析、程序负责预测合同、组合、风控、执行和评价的低频投资管理系统。当前运行目标是 10,000 USDT 的 Binance BTC Spot 模拟账户；它用于积累真实前瞻证据，不代表已经证明可稳定盈利。
+这是一个以长期费用后资本增值为目标的 AI Investment Manager。AI、规则与优化器都可以承担经证据支持的投资职责，但必须共享同一条可追溯、可评价、受风险约束的资本链。当前运行目标是 10,000 USDT 的 Binance BTC Spot 模拟账户；它用于积累真实前瞻证据，不代表已经证明可稳定盈利。
 
 ## 权威资料
 
 - [AGENTS.md](AGENTS.md)：投资与工程原则。
 - [架构设计](docs/ARCHITECTURE.md)：唯一投资闭环、领域边界和硬不变量。
 - [世界认知设计](docs/WORLD_COGNITION_DESIGN.md)：信息覆盖、因果推理、Forecast 与评价方法。
+- [学习与演进设计](docs/SELF_EVOLUTION_DESIGN.md)：结果如何改变未来行为与资本权限。
 - [观测台设计](docs/DASHBOARD_DESIGN.md)：网页只读投影和信息顺序。
 - [运行手册](docs/OPERATIONS.md)：部署、恢复、触发和故障处理。
 
@@ -22,11 +23,12 @@ Evidence → State → WorldModel → Forecast → PortfolioTarget
                                                     Evaluation
 ```
 
-- AI 只把高密度、点时冻结的信息面板转成可反驳的 WorldModel 和可结算概率，不读取账户来决定下单。
+- 当前 Release 由 AI 把高密度、点时冻结的信息面板转成可反驳的 WorldModel 和可结算概率；这是现行实验分工，不是永久角色限制。
 - Portfolio 在现金、当前持有和合法候选之间比较真实未来成本。
 - Risk 对投资目标批准、缩减或拒绝；硬风险异常可直接签发只减险授权，但不能创造投资目标。
 - Execution 只消费 Risk 授权，并以稳定订单身份、恢复和对账收敛场所账户。
-- 动态事件更新 WorldModel 或复核持仓；Forecast 由合同槽边界直接唤醒，不依赖 heartbeat 相位。错过的槽位记录 `NO_ESTIMATE`，不事后补跑 AI。
+- 无论建议来自 AI、规则、优化器或人工，都不能绕过 Portfolio、Risk、Execution 和有效授权直接改变账户。
+- 动态事件更新 WorldModel；Forecast 由定时槽或冻结的材料状态事件槽直接唤醒，不依赖 heartbeat 相位。只有新 Forecast 才能改变 Alpha 资本目标，错过的槽位记录 `NO_ESTIMATE`，不事后补跑 AI。
 - 模拟盘和未来正式盘在 Venue 边界以上必须使用同一条链；正式 Venue 尚未达到等价性，因此保持失败关闭。
 
 ## 目录
@@ -83,6 +85,6 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' .venv/bin/alembic upgrade head
 
 ## 当前证据边界
 
-系统已经能保存世界认知、固定 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。尚未完成的是足量前瞻样本、WorldModel 相对无认知对照的增量、费用后资本增量以及正式 Venue 等价性。
+系统已经能保存世界认知、定时与材料事件 Forecast 槽、明确失败、Portfolio 选择、只减险授权、模拟成交、账户和 Outcome，并区分 Forecast 可用前后的收益。尚未完成的是足量前瞻样本、可真实运行的 WorldModel 配对对照、事件触发的费用后增量、总组合 Reference Policy、正式 Venue 等价性以及长期资本增量证据。
 
 因此当前正确表述是：系统具备诚实检验盈利假设的闭环，仍不具备宣称稳定盈利的证据。

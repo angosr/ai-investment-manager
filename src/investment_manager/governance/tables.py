@@ -176,7 +176,10 @@ world_model_ablation_assignments = Table(
     metadata,
     Column("assignment_id", String(128), primary_key=True),
     Column("plan_id", ForeignKey("evaluation_plans.plan_id"), nullable=False),
-    Column("formal_forecast_id", ForeignKey("forecasts.forecast_id"), nullable=False),
+    # The formal forecast id is deterministic from slot + behavior and is
+    # reserved before either paired AI call starts.  It therefore cannot carry
+    # an immediate FK to a Forecast row that does not exist yet.
+    Column("formal_forecast_id", String(128), nullable=False),
     Column("decision_slot_id", String(128), nullable=False),
     Column("assigned_at", DateTime(timezone=True), nullable=False),
     Column("completion_deadline_at", DateTime(timezone=True), nullable=False),

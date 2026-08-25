@@ -98,28 +98,45 @@ class WorldModelReviewScheduler:
         if packet is None:
             raise ValueError("WorldModel 更新缺少权威 DecisionPacket")
         event_slot_due = self.material_event_slots_enabled and bool(packet.deltas)
+        delta_ids = tuple(sorted(item.delta_id for item in packet.deltas))
         trigger_type = (
             AnalysisTriggerType.FORECAST_EVENT_DUE
             if event_slot_due
             else AnalysisTriggerType.WORLD_MODEL_UPDATED
         )
-        self.triggers.record_trigger(
-            build_trigger_event(
-                trigger_type=trigger_type,
-                symbol=self.symbol,
-                pipeline_id=self.pipeline_id,
-                occurred_at=assessment.available_at,
-                observed_at=assessment.available_at,
-                priority=100,
-                dedup_key=stable_id(trigger_type.value.lower(), assessment.assessment_id),
-                evidence_ids=(
-                    (assessment.assessment_id, packet.packet_id, packet.state_id)
-                    if event_slot_due
-                    else (assessment.assessment_id,)
-                ),
-                plan_revision=plan.revision,
-            )
+        trigger = build_trigger_event(
+            trigger_type=trigger_type,
+            symbol=self.symbol,
+            pipeline_id=self.pipeline_id,
+            occurred_at=assessment.available_at,
+            observed_at=assessment.available_at,
+            priority=100,
+            dedup_key=stable_id(
+                trigger_type.value.lower(),
+                *(delta_ids if event_slot_due else (assessment.assessment_id,)),
+            ),
+            evidence_ids=(
+                (
+                    assessment.assessment_id,
+                    packet.packet_id,
+                    packet.state_id,
+                    *delta_ids,
+                )
+                if event_slot_due
+                else (assessment.assessment_id,)
+            ),
+            plan_revision=plan.revision,
         )
+        # A material delta owns one event Forecast opportunity. Re-running the
+        # WorldModel for the same immutable delta may improve the current model,
+        # but must not manufacture another prospective sample.
+        if event_slot_due and self.triggers.trigger(trigger.trigger_id) is not None:
+            return
+        try:
+            self.triggers.record_trigger(trigger)
+        except ValueError:
+            if not event_slot_due or self.triggers.trigger(trigger.trigger_id) is None:
+                raise
 
     def schedule(self, assessment: ContextAssessment) -> None:
         now = max(require_utc(self.clock()), assessment.available_at)

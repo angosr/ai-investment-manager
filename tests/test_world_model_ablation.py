@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine, func, select
 
 from investment_manager.forecast.codex.router import AnalystResult
@@ -32,6 +33,7 @@ from investment_manager.forecast.results import (
 from investment_manager.forecast.tables import forecasts
 from investment_manager.governance.evaluation.world_model_ablation import (
     SqlWorldModelAblationRepository,
+    WorldModelAblationPreallocator,
     WorldModelAblationRunner,
     WorldModelControlStructuredOutput,
     build_world_model_ablation_assignment,
@@ -89,7 +91,7 @@ def _release(manifest_id: str, *, activation: datetime) -> ReleaseManifest:
     )
 
 
-def _seed(engine):
+def _seed(engine, *, record_formal: bool = True):
     config = load_config("config/investment-manager.shadow.yaml")
     policy = config.outcome_evaluation.world_model_ablation
     assert policy is not None
@@ -217,7 +219,8 @@ def _seed(engine):
         analysis_input_json=canonical_json(formal_input),
         analysis_input_hash=content_hash(formal_input),
     )
-    SqlForecastStore(engine).record(formal)
+    if record_formal:
+        SqlForecastStore(engine).record(formal)
     governance = SqlGovernanceRepository(engine)
     plan = ensure_world_model_ablation_plan(
         governance=governance,
@@ -227,6 +230,24 @@ def _seed(engine):
         registered_at=activation - timedelta(hours=1),
     )
     return config, contract, binding, slot, formal, plan
+
+
+def _preassign(repository, config, plan, slot, formal, *, assigned_at=None):
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    at = assigned_at or slot.information_cutoff_at + timedelta(minutes=1)
+    preallocator = WorldModelAblationPreallocator(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        repository=repository,
+        clock=lambda: at,
+    )
+    preallocator.before_estimate(
+        slot=slot,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        formal_analysis_input=json.loads(formal.analysis_input_json),
+    )
 
 
 def _gain_outcome(config, contract, slot) -> ForecastOutcome:
@@ -263,13 +284,17 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
 def test_control_assignment_removes_world_model_and_freezes_shared_contract() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    _config, _contract, _binding, slot, formal, plan = _seed(engine)
+    _config, _contract, _binding, slot, formal, plan = _seed(
+        engine,
+        record_formal=False,
+    )
 
     assignment = build_world_model_ablation_assignment(
         plan=plan,
-        formal=formal,
         slot=slot,
-        assigned_at=formal.available_at + timedelta(minutes=1),
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        formal_analysis_input=json.loads(formal.analysis_input_json),
+        assigned_at=slot.information_cutoff_at + timedelta(minutes=1),
     )
     control_input = json.loads(assignment.control_input_json)
     formal_input = json.loads(formal.analysis_input_json)
@@ -278,12 +303,81 @@ def test_control_assignment_removes_world_model_and_freezes_shared_contract() ->
     assert control_input["forecast_contract"] == formal_input["forecast_contract"]
     assert control_input["target_state"] == formal_input["target_state"]
     assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
-    assert assignment.call_order == "FORMAL_FIRST_CAPITAL_PRIORITY"
+    assert assignment.formal_available_at is None
+    assert assignment.call_order == "PREASSIGNED_INDEPENDENT_WORKERS"
     output_schema = json.loads(assignment.output_schema_json)
     control_fields = output_schema["$defs"]["WorldModelControlForecastDraft"][
         "properties"
     ]
     assert set(control_fields) == {"decision_slot_id", "outcome_probabilities"}
+    repository = SqlWorldModelAblationRepository(engine)
+    assert repository.record_assignment(assignment)
+    assert repository.assignment(assignment.assignment_id) == assignment
+
+
+def test_preassigned_control_runs_without_waiting_for_formal_forecast() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, _contract, _binding, slot, formal, plan = _seed(
+        engine,
+        record_formal=False,
+    )
+    repository = SqlWorldModelAblationRepository(engine)
+    _preassign(repository, config, plan, slot, formal)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    analyst = _FixedControlAnalyst(
+        slot.information_cutoff_at + timedelta(minutes=3)
+    )
+    runner = WorldModelAblationRunner(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        repository=repository,
+        analyst=analyst,
+    )
+
+    report = runner.reconcile(
+        as_of=slot.information_cutoff_at + timedelta(minutes=2)
+    )
+
+    assert analyst.calls == 1
+    assert report.assignments == 1
+    assert report.successful_controls == 1
+    assert report.formal_forecast_count == 0
+    assert report.settled_pairs == 0
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(forecasts)) == 0
+
+
+def test_preassignment_retry_rejects_input_drift() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, _contract, _binding, slot, formal, plan = _seed(
+        engine,
+        record_formal=False,
+    )
+    repository = SqlWorldModelAblationRepository(engine)
+    _preassign(repository, config, plan, slot, formal)
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    preallocator = WorldModelAblationPreallocator(
+        policy=policy,
+        plan=plan,
+        formal_producer_behavior_id=formal.producer_behavior_id,
+        repository=repository,
+        clock=lambda: slot.information_cutoff_at + timedelta(minutes=2),
+    )
+    changed_input = json.loads(formal.analysis_input_json)
+    changed_input["target_state"]["asset_states"][0]["return_fraction"] = "0.02"
+
+    with pytest.raises(ValueError, match="重试绑定了不同输入"):
+        preallocator.before_estimate(
+            slot=slot,
+            formal_producer_behavior_id=formal.producer_behavior_id,
+            formal_analysis_input=changed_input,
+        )
 
 
 def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
@@ -321,6 +415,7 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
         repository=repository,
         analyst=analyst,
     )
+    _preassign(repository, config, plan, slot, formal)
 
     first = runner.reconcile(as_of=formal.available_at + timedelta(minutes=1))
     replay = runner.reconcile(as_of=formal.available_at + timedelta(minutes=2))
@@ -371,6 +466,7 @@ def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None
         repository=repository,
         analyst=analyst,
     )
+    _preassign(repository, config, plan, slot, formal)
 
     first = runner.reconcile(as_of=slot.completion_deadline_at + timedelta(seconds=1))
     replay = runner.reconcile(as_of=slot.completion_deadline_at + timedelta(minutes=1))

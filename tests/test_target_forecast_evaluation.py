@@ -1,11 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from investment_manager.forecast.context.evaluation import (
     ForecastEvidenceStatus,
     ForecastScoringCase,
     evaluate_forecast_evidence,
 )
+from investment_manager.forecast.contracts import ForecastSlotStratum
 
 
 def _case(
@@ -16,6 +19,7 @@ def _case(
     *,
     market_state_key: str | None = None,
     outcome_available_at: datetime | None = None,
+    source_stratum: ForecastSlotStratum = ForecastSlotStratum.CADENCE_ONLY,
 ) -> ForecastScoringCase:
     return ForecastScoringCase(
         forecast_id=name,
@@ -28,7 +32,54 @@ def _case(
         realized_gross_bps=Decimal("20") if realized == "UP" else Decimal("-20"),
         market_state_key=market_state_key,
         outcome_available_at=outcome_available_at,
+        source_stratum=source_stratum,
     )
+
+
+def test_forecast_evidence_rejects_duplicate_interval_within_source_stratum() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    cases = (
+        _case("first", start, "UP", (("DOWN", "0.2"), ("UP", "0.8"))),
+        _case("duplicate", start, "UP", (("DOWN", "0.3"), ("UP", "0.7"))),
+    )
+
+    with pytest.raises(ValueError, match="同一 Forecast 来源层"):
+        evaluate_forecast_evidence(
+            cases,
+            due_slot_count=2,
+            forecast_count=2,
+            no_estimate_count=0,
+            required_non_overlapping_samples=2,
+        )
+
+
+def test_forecast_evidence_tie_break_never_depends_on_forecast_id() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    cadence = _case(
+        "z-cadence",
+        start,
+        "UP",
+        (("DOWN", "0.2"), ("UP", "0.8")),
+    )
+    material = _case(
+        "a-material",
+        start,
+        "DOWN",
+        (("DOWN", "0.7"), ("UP", "0.3")),
+        source_stratum=ForecastSlotStratum.MATERIAL_STATE_ONLY,
+    )
+
+    evidence = evaluate_forecast_evidence(
+        (material, cadence),
+        due_slot_count=2,
+        forecast_count=2,
+        no_estimate_count=0,
+        required_non_overlapping_samples=2,
+        permission_evidence_eligible=False,
+    )
+
+    assert evidence.status == ForecastEvidenceStatus.DIAGNOSTIC_ONLY
+    assert evidence.mean_brier_score == Decimal("0.08")
 
 
 def test_forecast_evidence_scores_only_non_overlapping_cases() -> None:

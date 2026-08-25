@@ -249,7 +249,7 @@ class SqlForecastContractStore:
         origin: ForecastSlotOrigin | None = None,
     ) -> datetime | None:
         statement = (
-            select(forecast_decision_slots.c.slot_as_of)
+            select(forecast_decision_slots.c.payload)
             .select_from(
                 forecast_slot_obligations.join(
                     forecast_decision_slots,
@@ -273,10 +273,19 @@ class SqlForecastContractStore:
                 )
             )
         with self._engine.connect() as connection:
-            value = connection.execute(
+            payload = connection.execute(
                 statement.order_by(forecast_decision_slots.c.slot_as_of.desc()).limit(1)
             ).scalar_one_or_none()
-        return None if value is None else database_utc(value)
+        if payload is None:
+            return None
+        slot = ForecastDecisionSlot.model_validate(payload)
+        if (
+            origin == ForecastSlotOrigin.CADENCE
+            and slot.cause is not None
+            and slot.cause.cadence_anchor_at is not None
+        ):
+            return slot.cause.cadence_anchor_at
+        return slot.slot_as_of
 
     def slot(self, slot_id: str) -> ForecastDecisionSlot | None:
         payload = self._payload(

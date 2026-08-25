@@ -7,9 +7,10 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v3"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v4"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
@@ -36,6 +37,7 @@ class ForecastScoringCase:
     realized_gross_bps: Decimal
     market_state_key: str | None = None
     outcome_available_at: datetime | None = None
+    source_stratum: ForecastSlotStratum = ForecastSlotStratum.CADENCE_ONLY
 
     def __post_init__(self) -> None:
         require_utc(self.information_cutoff_at)
@@ -82,12 +84,19 @@ class ForecastEvidence:
     market_baseline_ready_count: int
     mean_expected_gross_bps: Decimal | None
     mean_realized_gross_bps: Decimal | None
+    source_evidence: tuple[ForecastSourceEvidence, ...] = ()
 
     @property
     def result_coverage(self) -> Decimal | None:
         if self.due_slot_count == 0:
             return None
         return Decimal(self.terminal_result_count) / Decimal(self.due_slot_count)
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastSourceEvidence:
+    stratum: ForecastSlotStratum
+    evidence: ForecastEvidence
 
 
 def evaluate_forecast_evidence(
@@ -251,6 +260,17 @@ def evaluate_forecast_evidence(
 
 
 def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastScoringCase, ...]:
+    interval_keys: set[tuple[datetime, datetime, ForecastSlotStratum]] = set()
+    for item in cases:
+        interval_key = (
+            item.information_cutoff_at,
+            item.evaluation_at,
+            item.source_stratum,
+        )
+        if interval_key in interval_keys:
+            raise ValueError("同一 Forecast 来源层不能重复记录同一评价区间")
+        interval_keys.add(interval_key)
+
     selected: list[ForecastScoringCase] = []
     prior_evaluation_at: datetime | None = None
     for item in sorted(
@@ -258,7 +278,7 @@ def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastSc
         key=lambda value: (
             value.information_cutoff_at,
             value.evaluation_at,
-            value.forecast_id,
+            value.source_stratum.value,
         ),
     ):
         if prior_evaluation_at is not None and item.information_cutoff_at < prior_evaluation_at:

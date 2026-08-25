@@ -17,6 +17,9 @@ from investment_manager.decision_cycle.trigger import (
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.governance.evaluation.world_model_ablation import (
+    assemble_world_model_ablation_preallocator,
+)
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
@@ -65,8 +68,7 @@ def run_trigger_service(
             _assemble_capital_consumer(
                 config=config,
                 engine=engine,
-                code_version=manifest.code_version,
-                producer_activation_at=manifest.created_at,
+                manifest=manifest,
             )
             if config.capital.enabled
             else None
@@ -114,6 +116,13 @@ def run_trigger_service(
                             and config.capital.context_forecast is not None
                             and config.capital.context_forecast.enabled
                             else None
+                        ),
+                        material_event_cadence_merge_seconds=(
+                            config.capital.context_forecast.material_event_cadence_merge_seconds
+                            if config.assessment.enabled
+                            and config.capital.context_forecast is not None
+                            and config.capital.context_forecast.enabled
+                            else 0
                         ),
                         owner_symbol=config.assessment.review_trigger_symbol,
                         context_activation_at=capital_consumer.context_activation_at,
@@ -168,15 +177,33 @@ def _assemble_capital_consumer(
     *,
     config: AppConfig,
     engine,
-    code_version: str,
-    producer_activation_at: datetime,
+    manifest: ReleaseManifest,
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
+    ablation_policy = config.outcome_evaluation.world_model_ablation
+
+    def paired_preflight(contract):
+        preflight = assemble_world_model_ablation_preallocator(
+            config,
+            engine=engine,
+            release=manifest,
+            contract=contract,
+            clock=lambda: datetime.now(UTC),
+        )
+        if preflight is None:
+            raise ValueError("WorldModel 配对 preflight 未启用")
+        return preflight
+
     return assemble_capital_cycle(
         config,
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
-        code_version=code_version,
-        producer_activation_at=producer_activation_at,
+        code_version=manifest.code_version,
+        producer_activation_at=manifest.created_at,
+        context_forecast_preflight_factory=(
+            paired_preflight
+            if ablation_policy is not None and ablation_policy.enabled
+            else None
+        ),
     )

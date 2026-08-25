@@ -26,6 +26,7 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_equity,
     serialize_capital_overview,
     serialize_forecast_evidence,
+    serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.pagination import (
@@ -151,11 +152,20 @@ def create_app(
         return _json(serialize_capital_overview(overview))
 
     async def forecast_evidence(_request: Request) -> JSONResponse:
-        evidence = await run_in_threadpool(
-            capital_reader.forecast_evidence,
-            now=datetime.now(UTC),
+        now = datetime.now(UTC)
+        evidence, ablation = await asyncio.gather(
+            run_in_threadpool(capital_reader.forecast_evidence, now=now),
+            run_in_threadpool(
+                capital_reader.world_model_ablation_evidence,
+                now=now,
+            ),
         )
-        return _json(serialize_forecast_evidence(evidence))
+        return _json(
+            {
+                **serialize_forecast_evidence(evidence),
+                **serialize_world_model_ablation_evidence(ablation),
+            }
+        )
 
     async def capital_activity(request: Request) -> JSONResponse:
         limit = _parse_limit(request)

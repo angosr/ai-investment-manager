@@ -96,11 +96,43 @@
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 7%, var(--panel));
 }
+.worldEvidence {
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+  padding: 11px 16px;
+}
+.worldEvidence > div {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.worldEvidence b {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.worldEvidence span,
+.worldEvidence p {
+  font-size: 11px;
+}
+.worldEvidence p {
+  color: var(--faint);
+  margin: 4px 0 0;
+}
+.worldEvidenceGood b {
+  color: var(--good);
+}
 @media (max-width: 640px) {
   .tabs {
     gap: 14px;
   }
   .quality {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .worldEvidence > div {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;

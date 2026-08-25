@@ -134,6 +134,15 @@ class SqlTriggerRepository:
             return False
         return True
 
+    def trigger(self, trigger_id: str) -> AnalysisTriggerEvent | None:
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(analysis_trigger_events.c.payload).where(
+                    analysis_trigger_events.c.trigger_id == trigger_id
+                )
+            ).scalar_one_or_none()
+        return None if payload is None else AnalysisTriggerEvent.model_validate(payload)
+
     def record_batch(self, batch: TriggerBatch, *, analysis_submitted_at: datetime) -> bool:
         analysis_submitted_at = require_utc(analysis_submitted_at)
         payload = batch.model_dump(mode="json")

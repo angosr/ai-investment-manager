@@ -13,7 +13,7 @@ export function CapitalEquityHero({
   const account = data?.account ?? null;
   const net = data?.performance.cumulative_net_pnl ?? null;
   const curve = capitalCurve(points);
-  const passiveCurve = benchmarkCurve(points);
+  const cashCurve = cashBenchmarkCurve(points);
   const latestPoint = [...points].sort((left, right) => right.revision - left.revision)[0] ?? null;
   const baseline = Number(curve[0]?.equity ?? 0);
 
@@ -27,36 +27,36 @@ export function CapitalEquityHero({
             <small>USDT</small>
           </div>
           <div className={styles.hint}>
-            实线为资本账户权益，虚线为同资金上限买入并持有 BTC 的可执行价格基准；两者均已计交易成本。
+            实线为费用后账户权益，虚线为持现基准；单一资产被动持有不作为总账户基准。
           </div>
         </div>
       </div>
       <div className={styles.chartWrap}>
         <EquityChart
           curve={curve}
-          comparisonCurve={passiveCurve}
+          comparisonCurve={cashCurve}
           baseline={baseline}
           emptyMessage="等待资本账户形成连续权益点"
         />
       </div>
       <div className={styles.stats}>
         <Stat k="当前权益" v={account ? `${account.equity} USDT` : "—"} />
+        <Stat k="可用现金" v={account ? `${account.cash_balance} USDT` : "—"} />
         <Stat k="相对持现" v={moneyDelta(latestPoint?.increment_vs_cash ?? null)} />
-        <Stat k="相对被动持有 BTC" v={moneyDelta(latestPoint?.increment_vs_passive ?? null)} />
         <Stat k="当前回撤" v={account ? `${fractionPercent(account.drawdown_fraction)}%` : "—"} tone="neg" />
       </div>
     </section>
   );
 }
 
-function benchmarkCurve(points: CapitalEquityPoint[]): EquityPoint[] {
+function cashBenchmarkCurve(points: CapitalEquityPoint[]): EquityPoint[] {
   return [...points]
     .sort((left, right) => left.revision - right.revision)
     .filter(
-      (point): point is CapitalEquityPoint & { passive_benchmark_equity: string } =>
-        point.passive_benchmark_equity !== null,
+      (point): point is CapitalEquityPoint & { cash_benchmark_equity: string } =>
+        point.cash_benchmark_equity !== null,
     )
-    .map(({ at, passive_benchmark_equity }) => ({ at, equity: passive_benchmark_equity }));
+    .map(({ at, cash_benchmark_equity }) => ({ at, equity: cash_benchmark_equity }));
 }
 
 function capitalCurve(points: CapitalEquityPoint[]): EquityPoint[] {

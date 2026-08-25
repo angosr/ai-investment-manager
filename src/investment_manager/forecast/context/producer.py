@@ -62,6 +62,18 @@ class ContextProbabilityAnalyst(Protocol):
     ) -> AnalystResult: ...
 
 
+class ContextForecastPreflight(Protocol):
+    """Persist prospective evaluation identity before the formal AI call."""
+
+    def before_estimate(
+        self,
+        *,
+        slot: ForecastDecisionSlot,
+        formal_producer_behavior_id: str,
+        formal_analysis_input: dict[str, object],
+    ) -> None: ...
+
+
 class ContextTargetStateProvider(Protocol):
     def build(self, *, as_of: datetime) -> ContextForecastTargetState: ...
 
@@ -188,12 +200,12 @@ def context_spot_forecast_contract(
         outcome_buckets=policy.outcome_buckets,
         horizon_minutes=policy.horizon_minutes,
         decision_slot_rule=(
-            "fixed-cadence-and-material-world-model-v1"
+            "fixed-cadence-and-material-world-model-v2"
             if policy.material_event_slots_enabled
             else "fixed-utc-cadence-after-release-activation-v4"
         ),
         evaluation_trigger=(
-            "cadence-or-material-world-model-slot-v1"
+            "cadence-or-material-world-model-slot-v2"
             if policy.material_event_slots_enabled
             else "contract-cadence-only-v2"
         ),
@@ -227,6 +239,7 @@ class ContextForecastProducer:
     target_states: ContextTargetStateProvider
     analysis_scope: str
     activated_at: datetime
+    preflight: ContextForecastPreflight | None = None
 
     def __post_init__(self) -> None:
         require_utc(self.activated_at)
@@ -362,6 +375,19 @@ class ContextForecastProducer:
                 detail="CUTOFF_QUOTE_MISSING_OR_STALE",
             )
 
+        analysis_input = context_forecast_input_projection(
+            slot=slot,
+            contract=self.contract,
+            assessment=assessment,
+            packet=packet,
+            target_state=target_state,
+        )
+        if self.preflight is not None:
+            self.preflight.before_estimate(
+                slot=slot,
+                formal_producer_behavior_id=self.binding.producer_behavior_id,
+                formal_analysis_input=analysis_input,
+            )
         result = self.analyst.estimate(
             slot=slot,
             assessment=assessment,

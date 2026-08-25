@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -35,6 +36,7 @@ from investment_manager.forecast.context.estimate import (
     assemble_codex_context_forecast_analyst,
 )
 from investment_manager.forecast.context.producer import (
+    ContextForecastPreflight,
     ContextForecastProducer,
     ForecastProductionResult,
     MarketContextTargetStateProvider,
@@ -143,6 +145,7 @@ class CapitalTriggerConsumer:
     context_completion_deadline_seconds: int | None = None
     material_event_slots_enabled: bool = False
     material_event_slot_policy_version: str | None = None
+    material_event_cadence_merge_seconds: int = 0
     owner_symbol: str | None = None
     context_activation_at: datetime | None = None
 
@@ -155,8 +158,22 @@ class CapitalTriggerConsumer:
             self.material_event_slot_policy_version is not None
         ):
             raise ValueError("材料事件 Forecast 槽启用状态与政策版本必须同时配置")
+        if self.material_event_slots_enabled != (
+            self.material_event_cadence_merge_seconds > 0
+        ):
+            raise ValueError("材料事件 Forecast 槽与 cadence 合并窗口必须同时配置")
         if self.material_event_slots_enabled and self.context_cadence_minutes is None:
             raise ValueError("材料事件 Forecast 槽必须复用 Context Forecast 合同")
+        if (
+            self.context_cadence_minutes is not None
+            and self.context_completion_deadline_seconds is not None
+            and self.material_event_cadence_merge_seconds
+            > min(
+                self.context_completion_deadline_seconds,
+                self.context_cadence_minutes * 30,
+            )
+        ):
+            raise ValueError("材料事件 cadence 合并窗口过长")
         if self.context_activation_at is not None:
             require_utc(self.context_activation_at)
 
@@ -174,9 +191,17 @@ class CapitalTriggerConsumer:
             for item in batch.triggers
             if item.trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE
         )
+        cadence_due = self.context_cadence_minutes is not None and any(
+            item.trigger_type
+            in {
+                AnalysisTriggerType.HEARTBEAT,
+                AnalysisTriggerType.FORECAST_SLOT_DUE,
+            }
+            for item in batch.triggers
+        )
         if material_triggers:
             if not self.material_event_slots_enabled:
-                return self.capital.review(batch)
+                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
             assert self.material_event_slot_policy_version is not None
             assert self.context_completion_deadline_seconds is not None
             slot_at = max(item.occurred_at for item in material_triggers)
@@ -201,14 +226,6 @@ class CapitalTriggerConsumer:
                 policy_version=self.material_event_slot_policy_version,
                 trigger_refs=trigger_refs,
             )
-            event_cause_id = stable_id(
-                "context_forecast_material_event",
-                self.capital.portfolio_id,
-                cause.policy_version,
-                *cause.trigger_refs,
-            )
-            if self.capital.cause_completed(event_cause_id):
-                return self.capital.review(batch)
             if batch.created_at > slot_at + timedelta(
                 seconds=self.context_completion_deadline_seconds
             ):
@@ -217,8 +234,45 @@ class CapitalTriggerConsumer:
                     completed_at=batch.created_at,
                     cause=cause,
                 )
+                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
+            cadence_anchor = self._merge_cadence_anchor(slot_at)
+            if cadence_anchor is not None:
+                cause = ForecastSlotCause.cadence_material_state(
+                    policy_version=self.material_event_slot_policy_version,
+                    trigger_refs=trigger_refs,
+                    cadence_anchor_at=cadence_anchor,
+                )
+                cause_id = self._cadence_cause_id(cadence_anchor)
+                self.capital.recover_missed_forecasts(
+                    before_slot_at=cadence_anchor,
+                    completed_at=batch.created_at,
+                )
+                if self.capital.cause_completed(cause_id):
+                    return self.capital.review(batch)
+                return self.capital.produce(
+                    as_of=slot_at,
+                    cause_id=cause_id,
+                    trigger_batch_id=batch.batch_id,
+                    symbol=batch.symbol,
+                    trigger_types=tuple(
+                        sorted(
+                            {
+                                AnalysisTriggerType.FORECAST_EVENT_DUE.value,
+                                "FORECAST_CADENCE",
+                            }
+                        )
+                    ),
+                    cause=cause,
+                )
+            event_cause_id = stable_id(
+                "context_forecast_material_event",
+                self.capital.portfolio_id,
+                cause.policy_version,
+                *cause.trigger_refs,
+            )
+            if self.capital.cause_completed(event_cause_id):
                 return self.capital.review(batch)
-            return self.capital.produce(
+            result = self.capital.produce(
                 as_of=slot_at,
                 cause_id=event_cause_id,
                 trigger_batch_id=batch.batch_id,
@@ -226,62 +280,82 @@ class CapitalTriggerConsumer:
                 trigger_types=(AnalysisTriggerType.FORECAST_EVENT_DUE.value,),
                 cause=cause,
             )
-        if self.context_cadence_minutes is not None and any(
-            item.trigger_type
-            in {
-                AnalysisTriggerType.HEARTBEAT,
-                AnalysisTriggerType.FORECAST_SLOT_DUE,
-            }
-            for item in batch.triggers
+            if cadence_due:
+                self._consume_cadence(batch)
+            return result
+        if cadence_due:
+            return self._consume_cadence(batch)
+        return self.capital.review(batch)
+
+    def _merge_cadence_anchor(self, event_at: datetime) -> datetime | None:
+        assert self.context_cadence_minutes is not None
+        cadence_seconds = self.context_cadence_minutes * 60
+        current = datetime.fromtimestamp(
+            int(event_at.timestamp()) // cadence_seconds * cadence_seconds,
+            tz=UTC,
+        )
+        next_anchor = current + timedelta(seconds=cadence_seconds)
+        candidates = tuple(
+            anchor
+            for anchor in (current, next_anchor)
+            if abs((event_at - anchor).total_seconds())
+            <= self.material_event_cadence_merge_seconds
+            and (
+                self.context_activation_at is None
+                or anchor >= self.context_activation_at
+            )
+        )
+        for anchor in sorted(candidates, key=lambda value: abs(event_at - value)):
+            if not self.capital.cause_completed(self._cadence_cause_id(anchor)):
+                return anchor
+        return None
+
+    def _cadence_cause_id(self, slot_at: datetime) -> str:
+        assert self.context_cadence_minutes is not None
+        return stable_id(
+            "context_forecast_cadence",
+            self.capital.portfolio_id,
+            self.context_cadence_minutes * 60,
+            slot_at.isoformat(),
+        )
+
+    def _consume_cadence(
+        self,
+        batch: TriggerBatch,
+    ) -> PortfolioPipelineResult | TradePlanExecutionResult | None:
+        assert self.context_cadence_minutes is not None
+        assert self.context_completion_deadline_seconds is not None
+        cadence_seconds = self.context_cadence_minutes * 60
+        slot_at = datetime.fromtimestamp(
+            int(batch.created_at.timestamp()) // cadence_seconds * cadence_seconds,
+            tz=UTC,
+        )
+        if (
+            self.context_activation_at is not None
+            and slot_at < self.context_activation_at
         ):
-            cadence_seconds = self.context_cadence_minutes * 60
-            slot_at = datetime.fromtimestamp(
-                int(batch.created_at.timestamp()) // cadence_seconds * cadence_seconds,
-                tz=UTC,
-            )
-            if (
-                self.context_activation_at is not None
-                and slot_at < self.context_activation_at
-            ):
-                return self.capital.review(batch)
-            assert self.context_completion_deadline_seconds is not None
-            cadence_cause_id = stable_id(
-                "context_forecast_cadence",
-                self.capital.portfolio_id,
-                cadence_seconds,
-                slot_at.isoformat(),
-            )
-            self.capital.recover_missed_forecasts(
-                before_slot_at=slot_at,
+            return self.capital.review(batch)
+        cadence_cause_id = self._cadence_cause_id(slot_at)
+        self.capital.recover_missed_forecasts(
+            before_slot_at=slot_at,
+            completed_at=batch.created_at,
+        )
+        if self.capital.cause_completed(cadence_cause_id):
+            return self.capital.review(batch)
+        if batch.created_at > slot_at + timedelta(
+            seconds=self.context_completion_deadline_seconds
+        ):
+            self.capital.record_missed_forecast(
+                slot_at=slot_at,
                 completed_at=batch.created_at,
             )
-            # A Forecast belongs to the cadence slot, while account/risk review
-            # belongs to every heartbeat.  Once the slot is complete, its later
-            # heartbeats must never reclassify it as missed merely because the
-            # completion deadline has elapsed.
-            if self.capital.cause_completed(cadence_cause_id):
-                return self.capital.review(batch)
-            if batch.created_at > slot_at + timedelta(
-                seconds=self.context_completion_deadline_seconds
-            ):
-                self.capital.record_missed_forecast(
-                    slot_at=slot_at,
-                    completed_at=batch.created_at,
-                )
-                return self.capital.review(batch)
-            # The first heartbeat in a cadence slot creates its Forecast.  Later
-            # heartbeats must still refresh the account and protect holdings;
-            # returning the old cadence result would leave account facts stale
-            # for the entire forecast horizon.
-            if self.capital.cause_completed(cadence_cause_id):
-                return self.capital.review(batch)
-            return self.capital.produce(
-                as_of=slot_at,
-                cause_id=cadence_cause_id,
-                symbol=batch.symbol,
-                trigger_types=("FORECAST_CADENCE",),
-            )
-        return self.capital.review(batch)
+            return self.capital.review(batch)
+        return self.capital.produce(
+            as_of=slot_at,
+            cause_id=cadence_cause_id,
+            symbol=batch.symbol,
+            trigger_types=("FORECAST_CADENCE",),
+        )
 
 
 class CapitalCycleService:
@@ -1106,6 +1180,9 @@ def assemble_capital_cycle(
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
     code_version: str | None = None,
     producer_activation_at: datetime | None = None,
+    context_forecast_preflight_factory: (
+        Callable[[ForecastContract], ContextForecastPreflight] | None
+    ) = None,
 ) -> CapitalCycleService:
     if not config.capital.enabled:
         raise ValueError("Capital cycle 未启用")
@@ -1217,6 +1294,11 @@ def assemble_capital_cycle(
                         ),
                         analysis_scope=config.assessment.mandate.analysis_scope,
                         activated_at=context_activation_at,
+                        preflight=(
+                            None
+                            if context_forecast_preflight_factory is None
+                            else context_forecast_preflight_factory(contract)
+                        ),
                         analyst=assemble_codex_context_forecast_analyst(
                             config,
                             policy=context,

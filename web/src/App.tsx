@@ -63,11 +63,11 @@ function CapitalDashboard({
   onOpenSnapshot: (snapshot: SnapshotPayload) => void;
 }) {
   const capital = useLive(() => api.capital(), "capital");
-  const equity = useLive(() => api.capitalEquity(), "equity");
+  const equity = useLive(() => api.capitalEquityHistory(), "equity");
   return (
     <div className={styles.grid}>
       <main className={styles.main}>
-        <CapitalEquityHero data={capital} points={equity?.items ?? []} />
+        <CapitalEquityHero data={capital} points={equity ?? []} />
         <LatestAssessment />
         <Timeline onOpenSnapshot={onOpenSnapshot} capitalMode />
       </main>

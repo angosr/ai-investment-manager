@@ -10,6 +10,7 @@ import type {
   CycleDetail,
   CycleRow,
   Equity,
+  ForecastEvaluationEvidence,
   Health,
   Page,
   Position,
@@ -31,6 +32,24 @@ function pagePath(path: string, cursor?: string, limit = 30): string {
   return `${path}?${query.toString()}`;
 }
 
+async function allPages<T>(
+  fetchPage: (cursor?: string) => Promise<Page<T>>,
+): Promise<T[]> {
+  const items: T[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await fetchPage(cursor);
+    items.push(...page.items);
+    if (page.nextCursor === null) return items;
+    if (seenCursors.has(page.nextCursor)) {
+      throw new Error("分页游标重复，拒绝展示不完整权益历史");
+    }
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+}
+
 export const api = {
   health: () => getJson<Health>("/api/health"),
   capital: () => getJson<CapitalOverview>("/api/capital"),
@@ -41,6 +60,8 @@ export const api = {
     }>(pagePath("/api/capital/equity", cursor, limit));
     return { items: result.points, nextCursor: result.next_cursor };
   },
+  capitalEquityHistory: () =>
+    allPages((cursor) => api.capitalEquity(cursor, 100)),
   capitalActivity: async (cursor?: string, limit = 30): Promise<Page<CapitalAction>> => {
     const result = await getJson<{ actions: CapitalAction[]; next_cursor: string | null }>(
       pagePath("/api/capital/activity", cursor, limit),
@@ -59,6 +80,8 @@ export const api = {
     getJson<AssessmentFeed>(pagePath("/api/assessment/records", cursor, limit)),
   latestAssessment: () =>
     getJson<AssessmentFeed>("/api/assessment/records?limit=1"),
+  forecastEvaluation: () =>
+    getJson<ForecastEvaluationEvidence>("/api/evaluation/forecast"),
   assessmentRecord: (id: string) =>
     getJson<AssessmentRecordDetail>(
       `/api/assessment/records/${encodeURIComponent(id)}`,
