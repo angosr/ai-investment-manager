@@ -7,7 +7,6 @@ from pathlib import Path
 import yaml
 
 from investment_manager.forecast.codex.protocol import codex_runtime_integrity_matches
-from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.models import (
     load_constitution,
     load_regression_suite,
@@ -95,10 +94,7 @@ class PhaseAAuditor:
     def _runtime_boundary(self) -> AuditCheck:
         deployment = self._config.deployment
         if self._profile == AuditProfile.PRIVATE_CODEX_CHALLENGER:
-            analysis_enabled = (
-                self._config.pipeline.ai_mode == AiMode.PROPOSE
-                or self._config.assessment.enabled
-            )
+            analysis_enabled = self._config.assessment.enabled
             safe = (
                 deployment.stage == DeploymentStage.SHADOW
                 and analysis_enabled

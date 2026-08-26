@@ -9,7 +9,7 @@ from typing import Annotated
 
 import typer
 
-from investment_manager.entrypoints.cli.root import app
+from investment_manager.entrypoints.cli.research_root import app
 from investment_manager.entrypoints.cli.support import (
     parse_research_symbol as _parse_research_symbol,
 )

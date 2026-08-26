@@ -38,6 +38,7 @@ research = [
 
 [project.scripts]
 investment-manager = "investment_manager.entrypoints.cli:app"
+investment-manager-research = "investment_manager.entrypoints.research_cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/investment_manager"]

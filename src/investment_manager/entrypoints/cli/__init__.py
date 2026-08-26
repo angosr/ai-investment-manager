@@ -2,7 +2,6 @@
 
 from investment_manager.entrypoints.cli import commands as _commands  # noqa: F401
 from investment_manager.entrypoints.cli import release_commands as _release_commands  # noqa: F401
-from investment_manager.entrypoints.cli import research_commands as _research_commands  # noqa: F401
 from investment_manager.entrypoints.cli import service_commands as _service_commands  # noqa: F401
 from investment_manager.entrypoints.cli.root import app
 

@@ -1,9 +1,7 @@
 from pathlib import Path
 
-import pytest
 import yaml
 
-from investment_manager.forecast.policy import AiMode
 from investment_manager.governance.audit.acceptance import AuditProfile, CheckStatus, PhaseAAuditor
 from investment_manager.governance.models import load_release_manifest
 from investment_manager.governance.policy import DeploymentStage
@@ -94,16 +92,10 @@ def test_public_shadow_audit_binds_exact_runtime_release(
     assert failed_checks["TYPED_GOVERNANCE_ASSETS"].status == CheckStatus.FAIL
 
 
-@pytest.mark.parametrize(
-    ("ai_mode", "assessment_enabled"),
-    ((AiMode.PROPOSE, False), (AiMode.OFF, True)),
-)
 def test_private_challenger_audit_accepts_exact_runtime_release(
     app_config,
     tmp_path,
     monkeypatch,
-    ai_mode,
-    assessment_enabled,
 ) -> None:
     root = Path(__file__).resolve().parents[1]
     first, *remaining = app_config.codex_accounts.accounts
@@ -115,11 +107,8 @@ def test_private_challenger_audit_accepts_exact_runtime_release(
                     "shadow_market_data_enabled": True,
                 }
             ),
-            "pipeline": app_config.pipeline.model_copy(
-                update={"ai_mode": ai_mode}
-            ),
             "assessment": app_config.assessment.model_copy(
-                update={"enabled": assessment_enabled}
+                update={"enabled": True}
             ),
             "codex_runtime": app_config.codex_runtime.model_copy(
                 update={"enabled": True, "isolation_verified": True}

@@ -8,6 +8,7 @@ from sqlalchemy import UniqueConstraint
 from typer.main import get_command
 
 from investment_manager.entrypoints.cli import app
+from investment_manager.entrypoints.research_cli import app as research_app
 from investment_manager.kernel.identity import content_hash
 from investment_manager.schema import compose_metadata
 
@@ -99,6 +100,26 @@ CLI_CONTRACT = {
         "minimum_average_net_return_bps_lower_bound,maximum_drawdown_fraction,"
         "minimum_positive_fold_fraction,include_trades,register_only"
     ),
+}
+
+RESEARCH_COMMAND_NAMES = {
+    "blind-evaluate",
+    "build-edge-calibration",
+    "diagnose-legacy-analysis-forecasts",
+    "fetch-binance-carry-history",
+    "fetch-binance-funding-history",
+    "fetch-binance-history",
+    "fetch-binance-usdm-history",
+    "fetch-economic-series",
+    "freeze-event-history",
+    "freeze-executable-quotes",
+    "paired-decision-tape",
+    "perpetual-trend-walk-forward",
+    "record-reference-rejection",
+    "replay-event-triggers",
+    "research-catalog",
+    "screen-signals",
+    "walk-forward",
 }
 
 
@@ -203,20 +224,32 @@ def test_schema_shape_is_frozen_during_structure_migration() -> None:
 
 
 def test_cli_subcommand_parameter_contract_is_frozen() -> None:
-    root = get_command(app)
-    observed = {
+    production = get_command(app)
+    research = get_command(research_app)
+    observed_production = {
         name: ",".join(parameter.name for parameter in command.params)
-        for name, command in sorted(root.commands.items())
+        for name, command in sorted(production.commands.items())
+    }
+    observed_research = {
+        name: ",".join(parameter.name for parameter in command.params)
+        for name, command in sorted(research.commands.items())
     }
 
-    assert observed == CLI_CONTRACT
+    assert observed_production == {
+        name: contract
+        for name, contract in CLI_CONTRACT.items()
+        if name not in RESEARCH_COMMAND_NAMES
+    }
+    assert observed_research == {
+        name: contract
+        for name, contract in CLI_CONTRACT.items()
+        if name in RESEARCH_COMMAND_NAMES
+    }
 
 
 def test_cli_commands_are_owned_by_change_reason() -> None:
     expected = {
         "entrypoints/cli/commands.py": {
-            "build-edge-calibration",
-            "diagnose-legacy-analysis-forecasts",
             "invalidate-evaluation-plan",
             "validate-config",
             "reset-portfolio-protection",
@@ -226,6 +259,10 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "codex-isolation-audit",
             "binance-testnet-audit",
             "binance-testnet-order-test",
+        },
+        "entrypoints/cli/legacy_research_commands.py": {
+            "build-edge-calibration",
+            "diagnose-legacy-analysis-forecasts",
         },
         "entrypoints/cli/service_commands.py": {
             "assessment-worker",
@@ -1209,7 +1246,10 @@ def test_old_package_and_console_entry_are_removed() -> None:
     assert not (ROOT / "src" / "quant_core").exists()
     assert project["name"] == "investment-manager"
     assert project["scripts"] == {
-        "investment-manager": "investment_manager.entrypoints.cli:app"
+        "investment-manager": "investment_manager.entrypoints.cli:app",
+        "investment-manager-research": (
+            "investment_manager.entrypoints.research_cli:app"
+        ),
     }
     assert not (PACKAGE_ROOT / "cli.py").exists()
     assert not (PACKAGE_ROOT / "dashboard").exists()

@@ -114,7 +114,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 `config/reference-selection-plan.yaml` 是当前唯一 Reference 候选计划；必须先提交计划，之后 evaluator 才接受其精确字节。命令会把登记提交、登记时间、计划哈希和 evaluator 提交写进结果，同时只把实际命中的源 Manifest 保存到 `evidence/reference-selections/<artifact-id>/evidence-manifests/`。结果和 Manifest 必须与本次代码一起提交；原始大数据仍留在内容寻址数据目录，Manifest 已保存其原文件或观测哈希。若计划未提交、被修改或经济失败与产品缺口都不存在，命令拒绝继续：
 
 ```bash
-.venv/bin/investment-manager record-reference-rejection \
+.venv/bin/investment-manager-research record-reference-rejection \
   --config config/investment-manager.shadow.yaml \
   --plan config/reference-selection-plan.yaml \
   --project-root . \
