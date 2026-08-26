@@ -354,6 +354,38 @@ def test_derivative_projection_rejects_unquantified_mapping_uncertainty() -> Non
         )
 
 
+def test_projection_validates_the_forward_envelope_at_decimal_precision_boundary() -> None:
+    contract = _contract()
+    forecast = _forecast(contract)
+    uncertainty = Decimal("9.987654321098765432109876543")
+
+    projection = project_product_payoff(
+        contract=contract,
+        forecast=forecast,
+        state=_state(
+            instrument=PERPETUAL,
+            direction=ExposureDirection.LONG,
+            entry="100.1",
+            funding="2",
+            uncertainty=str(uncertainty),
+            margin="0.1",
+        ),
+        economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+        projection_version="linear-product-payoff-v1",
+    )
+
+    assert all(
+        item.conservative_payoff_bps == item.payoff_bps - uncertainty
+        for item in projection.outcome_payoffs
+    )
+    # Reverse subtraction suffers cancellation at Decimal's fixed precision;
+    # it cannot define whether the forward conservative envelope is correct.
+    assert any(
+        item.payoff_bps - item.conservative_payoff_bps != uncertainty
+        for item in projection.outcome_payoffs
+    )
+
+
 def _decision_projection_inputs():
     contract = _contract()
     forecast = _forecast(contract)

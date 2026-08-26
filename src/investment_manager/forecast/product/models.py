@@ -142,8 +142,8 @@ class ProductPayoffProjection(FrozenModel):
         if self.expected_gross_bps != expected:
             raise ValueError("Product projection 期望收益与 payoff 分布不一致")
         if any(
-            item.payoff_bps - item.conservative_payoff_bps
-            != self.mapping_uncertainty_bps
+            item.conservative_payoff_bps
+            != item.payoff_bps - self.mapping_uncertainty_bps
             for item in self.outcome_payoffs
         ):
             raise ValueError("Product projection 映射不确定性未进入各情景保守包络")
