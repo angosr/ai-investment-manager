@@ -388,13 +388,7 @@ export interface AssessmentInputSnapshot {
       review_at: string;
     }[];
   };
-  capability_summary:
-    | Record<string, { status?: string; missing?: string[] }>
-    | {
-        domain: string;
-        status: string;
-        missing_capabilities: string[];
-      }[];
+  capability_summary: Record<string, { status?: string; missing?: string[] }>;
   state_features?: {
     algorithm_version: string;
     regime_states: AssessmentStateFeature[];

@@ -283,13 +283,6 @@ function AssessmentBody({
 function normalizeCapabilityGaps(
   summary: AssessmentInputSnapshot["capability_summary"],
 ): { domain: string; status: string; missing: string[] }[] {
-  if (Array.isArray(summary)) {
-    return summary.map((item) => ({
-      domain: item.domain,
-      status: item.status,
-      missing: item.missing_capabilities,
-    }));
-  }
   return Object.entries(summary).map(([domain, value]) => ({
     domain,
     status: value.status ?? "PARTIAL",
