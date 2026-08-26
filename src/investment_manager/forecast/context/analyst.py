@@ -36,7 +36,7 @@ from investment_manager.kernel.identity import canonical_json, content_hash, sta
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
-ASSESS_INPUT_VERSION = "world-model-input-v3"
+ASSESS_INPUT_VERSION = "world-model-input-v4"
 ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v6"
 
 

@@ -1645,12 +1645,17 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
         review_requests=(
             PacketReviewRequest.create(
                 requested_at=replay_input.market.as_of,
-                reason="复核高影响待核验线索。",
+                reason="复核高优先级待核验线索。",
                 evidence_ids=(event.evidence_id,),
             ),
         ),
     )
     packet_event = packet.intelligence_events[0]
+    projected_event = decision_packet_analysis_projection(packet)[
+        "intelligence_events"
+    ][0]
+    assert projected_event["attention_priority"] == "0.8415"
+    assert "impact" not in projected_event
     assert packet_event.directional_support_eligible is False
     assert packet_event.evidence_ref in assessment_visible_evidence_ids(packet)
     assert packet_event.evidence_ref not in assessment_world_model_evidence_ids(packet)
@@ -1673,6 +1678,7 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     ]["enum"]
     for allowed_ids in (causal_ids, conflicting_ids, retirement_ids, event_ids):
         assert packet_event.evidence_ref not in allowed_ids
+    assert "attention_priority 只是" in build_assess_prompt(packet)
     assert "directional_support_eligible=false" in build_assess_prompt(packet)
 
 

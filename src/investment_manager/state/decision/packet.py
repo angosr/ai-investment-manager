@@ -139,7 +139,9 @@ def _analysis_intelligence_event(item: PacketIntelligenceEvent) -> dict[str, obj
         "title": item.title,
         "body": item.body,
         "symbols": item.symbols,
-        "impact": _analysis_decimal(item.impact),
+        # The upstream value ranks which unverified headline deserves attention;
+        # feed position and coarse mandate relevance do not measure real-world impact.
+        "attention_priority": _analysis_decimal(item.impact),
         "source_reliability": _analysis_decimal(item.source_reliability),
         "novelty": _analysis_decimal(item.novelty),
         "directly_triggered": item.directly_triggered,
