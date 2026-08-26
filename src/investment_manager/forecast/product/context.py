@@ -215,23 +215,31 @@ class ContextProductPayoffProjector:
             or spec.minimum_order_notional != rules.minimum_notional
         ):
             return ()
-        if not market_state.next_funding_time > as_of:
-            return ()
         funding_rule_refs: tuple[str, ...] = ()
-        if market_state.next_funding_time > forecast.economic_horizon_end:
+        next_funding_time = market_state.next_funding_time
+        interval_hours = rules.funding_interval_hours
+        if (
+            next_funding_time <= forecast.economic_horizon_end
+            and interval_hours is None
+        ):
+            inferred = self._inferred_funding_interval(
+                instrument=instrument,
+                as_of=as_of,
+            )
+            if inferred is None:
+                return ()
+            interval_hours, funding_rule_refs = inferred
+        if next_funding_time <= as_of:
+            assert interval_hours is not None
+            interval = timedelta(hours=interval_hours)
+            elapsed_intervals = int((as_of - next_funding_time) // interval) + 1
+            next_funding_time += interval * elapsed_intervals
+        if next_funding_time > forecast.economic_horizon_end:
             settlement_count = 0
         else:
-            interval_hours = rules.funding_interval_hours
-            if interval_hours is None:
-                inferred = self._inferred_funding_interval(
-                    instrument=instrument,
-                    as_of=as_of,
-                )
-                if inferred is None:
-                    return ()
-                interval_hours, funding_rule_refs = inferred
+            assert interval_hours is not None
             settlement_count = self._funding_settlement_count(
-                next_funding_at=market_state.next_funding_time,
+                next_funding_at=next_funding_time,
                 horizon_end=forecast.economic_horizon_end,
                 interval_hours=interval_hours,
             )

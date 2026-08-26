@@ -1264,6 +1264,7 @@ def _put_context_market(
     at: datetime,
     update_id: int,
     include_spot: bool = True,
+    next_funding_time: datetime | None = None,
 ) -> None:
     if include_spot:
         market.put_quote(
@@ -1307,7 +1308,7 @@ def _put_context_market(
             index_price=Decimal("100"),
             last_funding_rate=Decimal("0.0001"),
             interest_rate=Decimal("0.0001"),
-            next_funding_time=at + timedelta(hours=2),
+            next_funding_time=next_funding_time or at + timedelta(hours=2),
             source="test",
         )
     )
@@ -1317,12 +1318,19 @@ def _context_projector_fixture(
     *,
     rule_observed_at: datetime | None = None,
     funding_override: bool = True,
+    market_observed_at: datetime | None = None,
+    next_funding_time: datetime | None = None,
 ):
     contract = _contract()
     forecast = _forecast(contract)
-    at = forecast.available_at
+    at = market_observed_at or forecast.available_at
     market = InMemoryMarketDataStore()
-    _put_context_market(market, at=at, update_id=7)
+    _put_context_market(
+        market,
+        at=at,
+        update_id=7,
+        next_funding_time=next_funding_time,
+    )
     rules = _product_rules(
         rule_observed_at or at,
         funding_override=funding_override,
@@ -1386,6 +1394,25 @@ def test_context_projector_emits_spot_and_both_legal_perpetual_directions() -> N
     assert len(derivatives) == 2
     assert all(rules.rules_id in item.product_rule_refs for item in derivatives)
     assert all(item.expected_funding_bps == Decimal("0.5") for item in derivatives)
+    assert len(store.values) == 3
+
+
+def test_context_projector_advances_fresh_lagging_funding_schedule() -> None:
+    forecast, _, rules, store, projector = _context_projector_fixture(
+        market_observed_at=NOW,
+        next_funding_time=NOW + timedelta(seconds=30),
+    )
+
+    projections = projector.project(forecast, as_of=forecast.available_at)
+
+    derivatives = tuple(
+        item
+        for item in projections
+        if item.target.legs[0].instrument == PERPETUAL
+    )
+    assert len(derivatives) == 2
+    assert all(rules.rules_id in item.product_rule_refs for item in derivatives)
+    assert all(item.expected_funding_bps == Decimal("0") for item in derivatives)
     assert len(store.values) == 3
 
 
