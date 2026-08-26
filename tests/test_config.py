@@ -53,7 +53,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.pipeline.ai_mode.value == "OFF"
     assert config.pipeline.version == "world-forecast-product-capital-shadow-v51"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
-    assert config.temporal.version == "temporal-analysis-v3"
+    assert config.temporal.version == "temporal-analysis-v4"
     assert config.temporal.activity_start_to_close_seconds == 890
     assert config.temporal.activity_schedule_to_close_seconds == 900
     assert config.shadow.analysis_deadline_seconds == 900
@@ -108,7 +108,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
     assert config.assessment.version == "context-assessment-v47"
-    assert config.outcome_evaluation.version == "outcome-window-v26"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v27"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version

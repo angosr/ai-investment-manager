@@ -364,7 +364,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v26
+  version: typed-outcome-settlement-v27
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1
@@ -410,7 +410,7 @@ trigger:
   dispatcher_advisory_lock_key: 817221901
 
 temporal:
-  version: temporal-analysis-v3
+  version: temporal-analysis-v4
   address: 127.0.0.1:7233
   namespace: default
   task_queue: investment-manager-analysis-v1
