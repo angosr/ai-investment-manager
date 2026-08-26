@@ -561,6 +561,59 @@ def test_portfolio_selects_one_best_product_expression_for_one_forecast() -> Non
     assert "ALTERNATIVE_PRODUCT_EXPRESSION_REJECTED" in target.reason_codes
 
 
+def test_portfolio_scales_experimental_size_from_full_cost_downside() -> None:
+    contract = _contract()
+    forecast = _forecast(contract).model_copy(
+        update={
+            "outcome_probabilities": (
+                ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.25")),
+                ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.40")),
+                ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.35")),
+            ),
+            "expected_gross_bps": Decimal("10"),
+        }
+    )
+    forecast, projections, sleeves, quotes, specs = _decision_projection_inputs(forecast)
+    spot_projection = projections[0]
+    spot_sleeve = next(item for item in sleeves if item.payoff_projection == spot_projection)
+    spot_quotes = tuple(item for item in quotes if item.instrument == SPOT)
+    spot_specs = tuple(item for item in specs if item.instrument == SPOT)
+
+    target = _decision_engine().decide(
+        cycle_id="downside-sized-cycle",
+        as_of=forecast.available_at,
+        account=_decision_account(
+            at=forecast.available_at,
+            cycle_id="downside-sized-cycle",
+        ),
+        sleeves=(spot_sleeve,),
+        quotes=spot_quotes,
+        execution_specs=spot_specs,
+    )
+
+    assert target is not None and target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    downside_second_moment = sum(
+        (
+            bucket.probability
+            * min(
+                bucket.conservative_payoff_bps - candidate.cost.total_bps,
+                Decimal("0"),
+            )
+            ** 2
+            for bucket in spot_projection.outcome_payoffs
+        ),
+        Decimal("0"),
+    )
+    expected = (
+        Decimal("10000")
+        * candidate.decision_net_bps
+        / downside_second_moment.sqrt()
+    )
+    assert Decimal("0") < expected < Decimal("3000")
+    assert target.sleeves[0].desired_gross_notional == expected
+
+
 def test_bearish_forecast_can_select_the_short_product_expression() -> None:
     contract = _contract()
     bullish = _forecast(contract)

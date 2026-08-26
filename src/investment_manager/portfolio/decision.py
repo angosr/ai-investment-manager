@@ -431,17 +431,32 @@ class PortfolioDecisionEngine:
                     for item in candidates
                     if item.sleeve_id != current_id
                 )
-        capacity_candidates = [
+        allocation_candidates = [
             item for item in eligible if item.sleeve_id in selected_expression_ids
         ]
-        desired_by_sleeve: dict[str, Decimal] = {}
-        remaining_capacity = account.equity * self._policy.maximum_total_exposure_fraction
-        for item in capacity_candidates:
-            desired = min(candidate_notional[item.sleeve_id], remaining_capacity)
-            if desired <= 0:
-                break
-            desired_by_sleeve[item.sleeve_id] = desired
-            remaining_capacity -= desired
+        requested_by_sleeve = {
+            item.sleeve_id: min(
+                candidate_notional[item.sleeve_id],
+                account.equity
+                * self._downside_scaled_allocation_fraction(
+                    item,
+                    candidate_evaluations[item.sleeve_id],
+                ),
+            )
+            for item in allocation_candidates
+        }
+        total_requested = sum(requested_by_sleeve.values(), Decimal("0"))
+        total_limit = account.equity * self._policy.maximum_total_exposure_fraction
+        scale = (
+            min(Decimal("1"), total_limit / total_requested)
+            if total_requested > 0
+            else Decimal("0")
+        )
+        desired_by_sleeve = {
+            sleeve_id: requested * scale
+            for sleeve_id, requested in requested_by_sleeve.items()
+            if requested > 0
+        }
 
         eligible_ids = set(desired_by_sleeve)
         targets = tuple(
@@ -635,7 +650,7 @@ class PortfolioDecisionEngine:
             threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
-        eligible = forecast_current and net >= threshold
+        eligible = forecast_current and net > 0 and net >= threshold
         return PortfolioCandidateEvaluation(
             sleeve_id=item.sleeve_id,
             forecast_id=item.forecast.forecast_id,
@@ -836,6 +851,41 @@ class PortfolioDecisionEngine:
     def _allocation_limit(self, item: PortfolioSleeveInput, *, equity: Decimal) -> Decimal:
         del item
         return equity * self._policy.maximum_single_sleeve_fraction
+
+    def _downside_scaled_allocation_fraction(
+        self,
+        item: PortfolioSleeveInput,
+        candidate: PortfolioCandidateEvaluation,
+    ) -> Decimal:
+        """Size one viable view from its own complete-cost downside distribution."""
+
+        projection = item.payoff_projection
+        if projection is None:
+            # Historical sources without product scenarios keep their previous
+            # concentration-capped semantics. The active portfolio experiment
+            # always supplies a ProductPayoffProjection.
+            return self._policy.maximum_single_sleeve_fraction
+        remaining_shift = candidate.decision_gross_bps - projection.conservative_gross_bps
+        downside_second_moment = sum(
+            (
+                bucket.probability
+                * min(
+                    bucket.conservative_payoff_bps
+                    + remaining_shift
+                    - candidate.cost.total_bps,
+                    Decimal("0"),
+                )
+                ** 2
+                for bucket in projection.outcome_payoffs
+            ),
+            Decimal("0"),
+        )
+        if downside_second_moment == 0:
+            return self._policy.maximum_single_sleeve_fraction
+        return min(
+            self._policy.maximum_single_sleeve_fraction,
+            candidate.decision_net_bps / downside_second_moment.sqrt(),
+        )
 
     @staticmethod
     def _quotes(

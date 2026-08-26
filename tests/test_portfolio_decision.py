@@ -344,6 +344,30 @@ def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
     assert candidate.reason_codes == ("NON_POSITIVE_NET_EDGE_CASH",)
 
 
+def test_zero_net_edge_never_receives_capital_when_threshold_is_zero() -> None:
+    engine = PortfolioDecisionEngine(
+        PortfolioDecisionPolicy(
+            version="zero-threshold-v1",
+            portfolio_id="primary",
+            enabled=True,
+            minimum_conservative_net_bps=Decimal("0"),
+        )
+    )
+    target = engine.decide(
+        cycle_id="zero-edge-cycle",
+        as_of=NOW,
+        account=_account(),
+        sleeves=(_input(_forecast(expected_bps="20")),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None and target.sleeves == ()
+    assert target.candidate_evaluations is not None
+    assert target.candidate_evaluations[0].decision_net_bps == 0
+    assert not target.candidate_evaluations[0].eligible
+
+
 def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None:
     forecast = _forecast()
     favorable = remaining_target_gross_bps(

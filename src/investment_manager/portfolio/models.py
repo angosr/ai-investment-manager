@@ -411,7 +411,9 @@ class PortfolioCandidateEvaluation(FrozenModel):
         if self.cost.gross_notional != self.evaluation_gross_notional:
             raise ValueError("Portfolio candidate 评估名义金额必须与成本模型一致")
         if self.eligible != (
-            self.forecast_current and self.decision_net_bps >= self.minimum_net_bps
+            self.forecast_current
+            and self.decision_net_bps > 0
+            and self.decision_net_bps >= self.minimum_net_bps
         ):
             raise ValueError("Portfolio candidate eligibility 与有效期、净收益和门槛不一致")
         if tuple(sorted(set(self.reason_codes))) != self.reason_codes:
