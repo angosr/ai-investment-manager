@@ -374,11 +374,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v20
+    version: world-model-ablation-forward-v21
     enabled: false
-    plan_id: world-model-ablation-forward-v20
-    # 只接收当前因果基线不能被事件输入淘汰后的新槽；旧行为继续独立结算。
-    activated_at: 2026-08-26T06:00:00Z
+    plan_id: world-model-ablation-forward-v21
+    # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
+    activated_at: 2026-08-26T08:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 

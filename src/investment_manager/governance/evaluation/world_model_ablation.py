@@ -34,7 +34,10 @@ from investment_manager.forecast.codex.router import (
 from investment_manager.forecast.context.estimate import (
     ContextForecastProbabilityDraft,
 )
-from investment_manager.forecast.context.evaluation import multiclass_brier_score
+from investment_manager.forecast.context.evaluation import (
+    multiclass_brier_score,
+    select_non_overlapping_intervals,
+)
 from investment_manager.forecast.contracts import ForecastContract, ForecastDecisionSlot
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -70,6 +73,8 @@ CONTROL_INPUT_VERSION = "context-forecast-no-world-model-v1"
 CONTROL_OUTPUT_VERSION = "context-forecast-no-world-model-output-v2"
 LEGACY_CONTROL_CALL_ORDER = "FORMAL_FIRST_CAPITAL_PRIORITY"
 CONTROL_CALL_ORDER = "PREASSIGNED_INDEPENDENT_WORKERS"
+SAMPLE_SELECTION_RULE = "GREEDY_NON_OVERLAPPING_INFORMATION_CUTOFF_TO_EVALUATION_V1"
+UNCERTAINTY_METHOD = "NEWEY_WEST_LAG_1_ON_NON_OVERLAPPING_V1"
 _MAXIMUM_MULTICLASS_BRIER_SCORE = Decimal("2")
 CONTROL_INSTRUCTIONS = (
     "你是概率预测员。输入只包含一份预登记预测合同和目标相关的点时市场状态。",
@@ -85,9 +90,7 @@ class WorldModelControlForecastDraft(FrozenModel):
     """Probability-only control with no semantic WorldModel references."""
 
     decision_slot_id: str = Field(min_length=1)
-    outcome_probabilities: tuple[ContextForecastProbabilityDraft, ...] = Field(
-        min_length=3
-    )
+    outcome_probabilities: tuple[ContextForecastProbabilityDraft, ...] = Field(min_length=3)
 
 
 class WorldModelControlStructuredOutput(FrozenModel):
@@ -148,15 +151,11 @@ class WorldModelAblationAssignment(FrozenModel):
             raise ValueError("WorldModel control 调用安排不受支持")
         if self.call_order == LEGACY_CONTROL_CALL_ORDER:
             if self.formal_available_at is None or not (
-                self.information_cutoff_at
-                <= self.formal_available_at
-                <= self.assigned_at
+                self.information_cutoff_at <= self.formal_available_at <= self.assigned_at
             ):
                 raise ValueError("旧 WorldModel control 时间顺序非法")
         elif self.formal_available_at is not None or not (
-            self.information_cutoff_at
-            <= self.assigned_at
-            < self.completion_deadline_at
+            self.information_cutoff_at <= self.assigned_at < self.completion_deadline_at
         ):
             raise ValueError("WorldModel control 必须在正式调用前且共同截止前分配")
         if not self.information_cutoff_at < self.completion_deadline_at < self.evaluation_at:
@@ -247,6 +246,16 @@ class WorldModelAblationReport(FrozenModel):
     _utc_as_of = field_validator("as_of")(require_utc)
 
 
+@dataclass(frozen=True, slots=True)
+class _AblationScoreCase:
+    identity: str
+    information_cutoff_at: datetime
+    evaluation_at: datetime
+    conservative_improvement: Decimal
+    formal_score: Decimal | None = None
+    control_score: Decimal | None = None
+
+
 def world_model_ablation_behavior_hash(
     *,
     config: AppConfig,
@@ -302,6 +311,8 @@ def ensure_world_model_ablation_plan(
             "LOWER_BOUND_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
         ),
         "permission_rule": "ALL_SETTLED_TERMINALS_ENTER_CONSERVATIVE_SKILL_BOUND",
+        "sample_selection": SAMPLE_SELECTION_RULE,
+        "uncertainty_method": UNCERTAINTY_METHOD,
         "call_order": CONTROL_CALL_ORDER,
         "input_difference": "REMOVE_WORLD_MODEL_SEMANTIC_CONTENT_ONLY",
         "outcome_join": config.outcome_evaluation.target_forecast_version,
@@ -319,6 +330,7 @@ def ensure_world_model_ablation_plan(
             "ASSIGNMENT_PRECEDES_BOTH_CALLS",
             "INDEPENDENT_WORKERS_SHARE_SLOT_DEADLINE",
             "NO_HISTORICAL_BACKFILL",
+            "OVERLAPPING_OUTCOME_WINDOWS_COUNT_ONCE",
             "SAME_SLOT_STATE_CONTRACT_AND_MODEL",
             "CONTROL_OUTPUT_PROBABILITY_ONLY",
         ),
@@ -365,10 +377,9 @@ def build_world_model_ablation_assignment(
     spec = plan.candidate_spec_snapshot
     if not isinstance(spec, dict):
         raise ValueError("WorldModel control plan 缺少冻结规格")
-    if (
-        formal_producer_behavior_id != spec.get("formal_producer_behavior_id")
-        or slot.contract_id != spec.get("formal_contract_id")
-    ):
+    if formal_producer_behavior_id != spec.get(
+        "formal_producer_behavior_id"
+    ) or slot.contract_id != spec.get("formal_contract_id"):
         raise ValueError("WorldModel control 正式行为不属于预登记 cohort")
     raw = _canonical_payload(canonical_json(formal_analysis_input), "formal input")
     world_model = raw.get("world_model")
@@ -596,6 +607,19 @@ class SqlWorldModelAblationRepository:
         activated_at: datetime,
         as_of: datetime,
     ) -> WorldModelAblationReport:
+        plan = SqlGovernanceRepository(self._engine).get_plan(plan_id)
+        if plan is None or not isinstance(plan.candidate_spec_snapshot, dict):
+            raise ValueError("WorldModel control report 缺少预登记计划")
+        spec = plan.candidate_spec_snapshot
+        formal_contract_id = spec.get("formal_contract_id")
+        if not isinstance(formal_contract_id, str) or not formal_contract_id:
+            raise ValueError("WorldModel control plan 缺少冻结正式合同")
+        if (
+            spec.get("formal_producer_behavior_id") != formal_producer_behavior_id
+            or spec.get("sample_selection") != SAMPLE_SELECTION_RULE
+            or spec.get("uncertainty_method") != UNCERTAINTY_METHOD
+        ):
+            raise ValueError("WorldModel control report 与预登记评价语义不一致")
         outcome_join = and_(
             forecast_outcomes.c.decision_slot_id
             == world_model_ablation_assignments.c.decision_slot_id,
@@ -604,8 +628,7 @@ class SqlWorldModelAblationRepository:
         joined = (
             world_model_ablation_assignments.outerjoin(
                 forecasts,
-                forecasts.c.forecast_id
-                == world_model_ablation_assignments.c.formal_forecast_id,
+                forecasts.c.forecast_id == world_model_ablation_assignments.c.formal_forecast_id,
             )
             .outerjoin(
                 world_model_ablation_results,
@@ -636,9 +659,9 @@ class SqlWorldModelAblationRepository:
                 )
                 .where(
                     forecasts.c.kind == "BASE",
+                    forecasts.c.contract_id == formal_contract_id,
                     forecasts.c.producer_behavior_id == formal_producer_behavior_id,
-                    forecast_decision_slots.c.information_cutoff_at
-                    >= require_utc(activated_at),
+                    forecast_decision_slots.c.information_cutoff_at >= require_utc(activated_at),
                 )
             ).scalar_one()
             no_estimate_rows = connection.execute(
@@ -654,17 +677,15 @@ class SqlWorldModelAblationRepository:
                     ).outerjoin(
                         forecast_outcomes,
                         and_(
-                            forecast_outcomes.c.decision_slot_id
-                            == forecast_no_estimates.c.slot_id,
+                            forecast_outcomes.c.decision_slot_id == forecast_no_estimates.c.slot_id,
                             forecast_outcomes.c.evaluation_version == evaluation_version,
                         ),
                     )
                 )
                 .where(
-                    forecast_no_estimates.c.producer_behavior_id
-                    == formal_producer_behavior_id,
-                    forecast_decision_slots.c.information_cutoff_at
-                    >= require_utc(activated_at),
+                    forecast_no_estimates.c.contract_id == formal_contract_id,
+                    forecast_no_estimates.c.producer_behavior_id == formal_producer_behavior_id,
+                    forecast_decision_slots.c.information_cutoff_at >= require_utc(activated_at),
                 )
             ).all()
             formal_no_estimate_count = len(no_estimate_rows)
@@ -672,30 +693,23 @@ class SqlWorldModelAblationRepository:
         pending = 0
         failed = 0
         succeeded = 0
-        formal_scores: list[Decimal] = []
-        control_scores: list[Decimal] = []
-        improvements: list[Decimal] = []
-        conservative_improvements: list[tuple[datetime, str, Decimal]] = []
+        settled_pairs = 0
+        score_cases: list[_AblationScoreCase] = []
         for assignment_raw, result_raw, formal_raw, outcome_raw in rows:
             assignment = WorldModelAblationAssignment.model_validate(assignment_raw)
-            outcome = (
-                None if outcome_raw is None else ForecastOutcome.model_validate(outcome_raw)
-            )
+            outcome = None if outcome_raw is None else ForecastOutcome.model_validate(outcome_raw)
             settled_outcome = (
                 outcome
                 if outcome is not None and outcome.status == ForecastOutcomeStatus.SETTLED
                 else None
             )
-            formal = (
-                None if formal_raw is None else BaseForecast.model_validate(formal_raw)
-            )
+            formal = None if formal_raw is None else BaseForecast.model_validate(formal_raw)
             formal_score = None
             if settled_outcome is not None and formal is not None:
                 assert settled_outcome.realized_bucket_id is not None
                 formal_score = multiclass_brier_score(
                     tuple(
-                        (item.bucket_id, item.probability)
-                        for item in formal.outcome_probabilities
+                        (item.bucket_id, item.probability) for item in formal.outcome_probabilities
                     ),
                     settled_outcome.realized_bucket_id,
                 )
@@ -705,11 +719,12 @@ class SqlWorldModelAblationRepository:
                 else:
                     failed += 1
                     if formal_score is not None:
-                        conservative_improvements.append(
-                            (
-                                assignment.evaluation_at,
-                                assignment.assignment_id,
-                                -formal_score,
+                        score_cases.append(
+                            _AblationScoreCase(
+                                identity=assignment.assignment_id,
+                                information_cutoff_at=assignment.information_cutoff_at,
+                                evaluation_at=assignment.evaluation_at,
+                                conservative_improvement=-formal_score,
                             )
                         )
                 continue
@@ -717,20 +732,19 @@ class SqlWorldModelAblationRepository:
             if result.status != WorldModelAblationStatus.SUCCEEDED:
                 failed += 1
                 if formal_score is not None:
-                    conservative_improvements.append(
-                        (
-                            assignment.evaluation_at,
-                            assignment.assignment_id,
-                            -formal_score,
+                    score_cases.append(
+                        _AblationScoreCase(
+                            identity=assignment.assignment_id,
+                            information_cutoff_at=assignment.information_cutoff_at,
+                            evaluation_at=assignment.evaluation_at,
+                            conservative_improvement=-formal_score,
                         )
                     )
                 continue
             succeeded += 1
             if settled_outcome is None or formal is None:
                 continue
-            control = WorldModelControlStructuredOutput.model_validate_json(
-                result.output_json
-            )
+            control = WorldModelControlStructuredOutput.model_validate_json(result.output_json)
             assert formal_score is not None
             assert settled_outcome.realized_bucket_id is not None
             control_score = multiclass_brier_score(
@@ -740,14 +754,18 @@ class SqlWorldModelAblationRepository:
                 ),
                 settled_outcome.realized_bucket_id,
             )
-            formal_scores.append(formal_score)
-            control_scores.append(control_score)
-            improvement = control_score - formal_score
-            improvements.append(improvement)
-            conservative_improvements.append(
-                (assignment.evaluation_at, assignment.assignment_id, improvement)
+            settled_pairs += 1
+            score_cases.append(
+                _AblationScoreCase(
+                    identity=assignment.assignment_id,
+                    information_cutoff_at=assignment.information_cutoff_at,
+                    evaluation_at=assignment.evaluation_at,
+                    formal_score=formal_score,
+                    control_score=control_score,
+                    conservative_improvement=control_score - formal_score,
+                )
             )
-        for result_id, evaluation_at, outcome_raw in no_estimate_rows:
+        for result_id, _evaluation_at, outcome_raw in no_estimate_rows:
             if outcome_raw is None:
                 continue
             outcome = ForecastOutcome.model_validate(outcome_raw)
@@ -757,17 +775,45 @@ class SqlWorldModelAblationRepository:
             # WorldModel skill, assume the absent formal forecast was maximally
             # wrong and the unobserved control was perfect.  This is the exact
             # multiclass Brier range, not an operational failure-rate threshold.
-            conservative_improvements.append(
-                (evaluation_at, result_id, -_MAXIMUM_MULTICLASS_BRIER_SCORE)
+            score_cases.append(
+                _AblationScoreCase(
+                    identity=result_id,
+                    information_cutoff_at=outcome.information_cutoff_at,
+                    evaluation_at=outcome.evaluation_at,
+                    conservative_improvement=-_MAXIMUM_MULTICLASS_BRIER_SCORE,
+                )
             )
-        pair_count = len(improvements)
-        formal_mean = _mean(formal_scores)
-        control_mean = _mean(control_scores)
-        improvement_mean = _mean(improvements)
-        conservative_values = tuple(
-            value
-            for _evaluation_at, _identity, value in sorted(conservative_improvements)
+        independent = select_non_overlapping_intervals(
+            tuple(score_cases),
+            identity=lambda item: item.identity,
+            information_cutoff_at=lambda item: item.information_cutoff_at,
+            evaluation_at=lambda item: item.evaluation_at,
+            stratum=lambda _item: plan_id,
         )
+        paired = tuple(
+            item
+            for item in independent
+            if item.formal_score is not None and item.control_score is not None
+        )
+        resolved_pairs: list[tuple[Decimal, Decimal]] = []
+        for item in paired:
+            assert item.formal_score is not None
+            assert item.control_score is not None
+            resolved_pairs.append((item.formal_score, item.control_score))
+        resolved_formal_scores = [formal for formal, _control in resolved_pairs]
+        resolved_control_scores = [control for _formal, control in resolved_pairs]
+        improvements = [
+            control - formal
+            for formal, control in zip(
+                resolved_formal_scores,
+                resolved_control_scores,
+                strict=True,
+            )
+        ]
+        formal_mean = _mean(resolved_formal_scores)
+        control_mean = _mean(resolved_control_scores)
+        improvement_mean = _mean(improvements)
+        conservative_values = tuple(item.conservative_improvement for item in independent)
         conservative_mean = _mean(list(conservative_values))
         lower_bound = (
             None
@@ -787,7 +833,7 @@ class SqlWorldModelAblationRepository:
             pending_controls=pending,
             successful_controls=succeeded,
             failed_controls=failed,
-            settled_pairs=pair_count,
+            settled_pairs=settled_pairs,
             conservative_sample_count=len(conservative_values),
             formal_mean_brier=formal_mean,
             control_mean_brier=control_mean,

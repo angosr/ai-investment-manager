@@ -285,6 +285,51 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
     )
 
 
+def _record_no_estimate_case(
+    engine,
+    *,
+    config,
+    contract,
+    binding,
+    slot_at: datetime,
+    quote_ref: str,
+) -> ForecastDecisionSlot:
+    cutoff = ForecastPriceAnchor(
+        instrument_id=contract.target.legs[0].instrument.key,
+        price=Decimal("100"),
+        observed_at=slot_at,
+        available_at=slot_at,
+        quote_ref=quote_ref,
+    )
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=slot_at,
+        cutoff_prices=(cutoff,),
+    )
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_slot(slot, binding=binding)
+    contracts.record_no_estimate(
+        ForecastNoEstimate(
+            result_id=stable_id(
+                "forecast_no_estimate",
+                slot.slot_id,
+                binding.producer_behavior_id,
+            ),
+            slot_id=slot.slot_id,
+            contract_id=contract.contract_id,
+            producer_kind=ForecastProducerKind.CONTEXT,
+            producer_id=binding.producer_id,
+            producer_behavior_id=binding.producer_behavior_id,
+            reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
+            information_cutoff_at=slot.information_cutoff_at,
+            attempted_at=slot_at,
+            completed_at=slot_at,
+        )
+    )
+    SqlForecastStore(engine).record_outcome(_gain_outcome(config, contract, slot))
+    return slot
+
+
 def test_preregistration_and_runtime_share_one_formal_contract() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
@@ -302,6 +347,13 @@ def test_preregistration_and_runtime_share_one_formal_contract() -> None:
     contract = configured_world_model_ablation_contract(config)
 
     assert plan.candidate_spec_snapshot["formal_contract_id"] == contract.contract_id
+    assert plan.candidate_spec_snapshot["sample_selection"] == (
+        "GREEDY_NON_OVERLAPPING_INFORMATION_CUTOFF_TO_EVALUATION_V1"
+    )
+    assert plan.candidate_spec_snapshot["uncertainty_method"] == (
+        "NEWEY_WEST_LAG_1_ON_NON_OVERLAPPING_V1"
+    )
+    assert "OVERLAPPING_OUTCOME_WINDOWS_COUNT_ONCE" in plan.hard_guardrails
     assert (
         preregister_world_model_ablation_plan(
             config=config,
@@ -338,9 +390,7 @@ def test_control_assignment_removes_world_model_and_freezes_shared_contract() ->
     assert assignment.formal_available_at is None
     assert assignment.call_order == "PREASSIGNED_INDEPENDENT_WORKERS"
     output_schema = json.loads(assignment.output_schema_json)
-    control_fields = output_schema["$defs"]["WorldModelControlForecastDraft"][
-        "properties"
-    ]
+    control_fields = output_schema["$defs"]["WorldModelControlForecastDraft"]["properties"]
     assert set(control_fields) == {"decision_slot_id", "outcome_probabilities"}
     repository = SqlWorldModelAblationRepository(engine)
     assert repository.record_assignment(assignment)
@@ -358,9 +408,7 @@ def test_preassigned_control_runs_without_waiting_for_formal_forecast() -> None:
     _preassign(repository, config, plan, slot, formal)
     policy = config.outcome_evaluation.world_model_ablation
     assert policy is not None
-    analyst = _FixedControlAnalyst(
-        slot.information_cutoff_at + timedelta(minutes=3)
-    )
+    analyst = _FixedControlAnalyst(slot.information_cutoff_at + timedelta(minutes=3))
     runner = WorldModelAblationRunner(
         policy=policy,
         plan=plan,
@@ -370,9 +418,7 @@ def test_preassigned_control_runs_without_waiting_for_formal_forecast() -> None:
         analyst=analyst,
     )
 
-    report = runner.reconcile(
-        as_of=slot.information_cutoff_at + timedelta(minutes=2)
-    )
+    report = runner.reconcile(as_of=slot.information_cutoff_at + timedelta(minutes=2))
 
     assert analyst.calls == 1
     assert report.assignments == 1
@@ -475,10 +521,7 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
     assert report.conservative_sample_count == 1
     assert report.mean_brier_improvement is not None
     assert report.mean_brier_improvement > 0
-    assert (
-        report.conservative_mean_brier_improvement
-        == report.mean_brier_improvement
-    )
+    assert report.conservative_mean_brier_improvement == report.mean_brier_improvement
     assert not report.evidence_sufficient
 
 
@@ -581,5 +624,39 @@ def test_formal_no_estimate_enters_conservative_skill_bound() -> None:
     assert report.formal_no_estimate_count == 1
     assert report.settled_pairs == 0
     assert report.conservative_sample_count == 1
+    assert report.conservative_mean_brier_improvement == Decimal("-2")
+    assert not report.evidence_sufficient
+
+
+def test_report_counts_only_deterministic_non_overlapping_skill_samples() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, contract, binding, _slot, _formal, plan = _seed(
+        engine,
+        record_formal=False,
+    )
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    for hours in (1, 4, 8):
+        _record_no_estimate_case(
+            engine,
+            config=config,
+            contract=contract,
+            binding=binding,
+            slot_at=policy.activated_at + timedelta(hours=hours),
+            quote_ref=f"missing-{hours}",
+        )
+
+    report = SqlWorldModelAblationRepository(engine).report(
+        plan_id=plan.plan_id,
+        evaluation_version=config.outcome_evaluation.target_forecast_version,
+        minimum_sample_size=2,
+        formal_producer_behavior_id=binding.producer_behavior_id,
+        activated_at=policy.activated_at,
+        as_of=policy.activated_at + timedelta(hours=9),
+    )
+
+    assert report.formal_no_estimate_count == 3
+    assert report.conservative_sample_count == 2
     assert report.conservative_mean_brier_improvement == Decimal("-2")
     assert not report.evidence_sufficient

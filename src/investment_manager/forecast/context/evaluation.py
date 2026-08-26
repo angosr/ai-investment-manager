@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -260,31 +261,51 @@ def evaluate_forecast_evidence(
 
 
 def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastScoringCase, ...]:
-    interval_keys: set[tuple[datetime, datetime, ForecastSlotStratum]] = set()
-    for item in cases:
+    return select_non_overlapping_intervals(
+        cases,
+        identity=lambda item: item.forecast_id,
+        information_cutoff_at=lambda item: item.information_cutoff_at,
+        evaluation_at=lambda item: item.evaluation_at,
+        stratum=lambda item: item.source_stratum.value,
+    )
+
+
+def select_non_overlapping_intervals[T](
+    values: tuple[T, ...],
+    *,
+    identity: Callable[[T], str],
+    information_cutoff_at: Callable[[T], datetime],
+    evaluation_at: Callable[[T], datetime],
+    stratum: Callable[[T], str],
+) -> tuple[T, ...]:
+    """Greedily freeze one deterministic sample from overlapping outcome windows."""
+
+    interval_keys: set[tuple[datetime, datetime, str]] = set()
+    for item in values:
         interval_key = (
-            item.information_cutoff_at,
-            item.evaluation_at,
-            item.source_stratum,
+            information_cutoff_at(item),
+            evaluation_at(item),
+            stratum(item),
         )
         if interval_key in interval_keys:
             raise ValueError("同一 Forecast 来源层不能重复记录同一评价区间")
         interval_keys.add(interval_key)
 
-    selected: list[ForecastScoringCase] = []
+    selected: list[T] = []
     prior_evaluation_at: datetime | None = None
     for item in sorted(
-        cases,
+        values,
         key=lambda value: (
-            value.information_cutoff_at,
-            value.evaluation_at,
-            value.source_stratum.value,
+            information_cutoff_at(value),
+            evaluation_at(value),
+            stratum(value),
+            identity(value),
         ),
     ):
-        if prior_evaluation_at is not None and item.information_cutoff_at < prior_evaluation_at:
+        if prior_evaluation_at is not None and information_cutoff_at(item) < prior_evaluation_at:
             continue
         selected.append(item)
-        prior_evaluation_at = item.evaluation_at
+        prior_evaluation_at = evaluation_at(item)
     return tuple(selected)
 
 
