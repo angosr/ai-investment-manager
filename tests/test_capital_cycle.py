@@ -1714,8 +1714,27 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert activity.candidate_economics_recorded
     economics = activity.candidate_economics[0]
     assert economics.net_bps < economics.decision_threshold_bps
+    assert economics.candidate_id
+    assert economics.payoff_projection_id is None
+    assert economics.target_legs == (
+        ("BINANCE:SPOT:BTCUSDT", "BTCUSDT", "SPOT", "LONG"),
+    )
+    assert economics.estimated_cost_bps == (
+        economics.fee_bps
+        + economics.exit_spread_bps
+        + economics.depth_slippage_bps
+    )
     serialized = serialize_capital_activity((activity,))["actions"][0]
     assert serialized["candidate_economics"][0]["net_bps"] == str(economics.net_bps)
+    assert serialized["candidate_economics"][0]["candidate_id"] == economics.candidate_id
+    assert serialized["candidate_economics"][0]["target_legs"] == [
+        {
+            "instrument": "BINANCE:SPOT:BTCUSDT",
+            "symbol": "BTCUSDT",
+            "product": "SPOT",
+            "direction": "LONG",
+        }
+    ]
     assert serialized["candidate_economics_recorded"] is True
 
     assert result.trade_plan is not None

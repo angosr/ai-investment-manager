@@ -33,6 +33,7 @@ from investment_manager.forecast.product.evaluation import (
     ProductPayoffEvidence,
     evaluate_product_payoff_evidence,
 )
+from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
 )
@@ -49,6 +50,7 @@ from investment_manager.forecast.tables import (
     forecast_no_estimates,
     forecast_outcomes,
     forecast_slot_obligations,
+    product_payoff_projections,
 )
 from investment_manager.forecast.tables import forecasts as forecast_records
 from investment_manager.governance.evaluation.world_model_ablation import (
@@ -126,9 +128,14 @@ class CapitalPolicyStatus:
 
 @dataclass(frozen=True, slots=True)
 class CapitalCandidateEconomics:
+    candidate_id: str
     forecast_id: str
+    payoff_projection_id: str | None
     producer_id: str
     outcome_family_id: str
+    target_legs: tuple[tuple[str, str, str, str], ...]
+    edge_basis: str
+    forecast_current: bool
     information_cutoff_at: datetime
     available_at: datetime
     valid_until: datetime
@@ -138,6 +145,9 @@ class CapitalCandidateEconomics:
     evidence_refs: tuple[str, ...]
     analysis_input: dict | None
     gross_bps: Decimal
+    fee_bps: Decimal
+    exit_spread_bps: Decimal
+    depth_slippage_bps: Decimal
     estimated_cost_bps: Decimal
     net_bps: Decimal
     decision_threshold_bps: Decimal
@@ -822,6 +832,36 @@ class CapitalDashboardReader:
                 if target_ids
                 else {}
             )
+            projection_ids = tuple(
+                sorted(
+                    {
+                        evaluation.payoff_projection_id
+                        for target in targets.values()
+                        if target.candidate_evaluations is not None
+                        for evaluation in target.candidate_evaluations
+                        if evaluation.payoff_projection_id is not None
+                    }
+                )
+            )
+            projections = (
+                {
+                    item.projection_id: ProductPayoffProjection.model_validate(
+                        item.payload
+                    )
+                    for item in connection.execute(
+                        select(
+                            product_payoff_projections.c.projection_id,
+                            product_payoff_projections.c.payload,
+                        ).where(
+                            product_payoff_projections.c.projection_id.in_(
+                                projection_ids
+                            )
+                        )
+                    )
+                }
+                if projection_ids
+                else {}
+            )
             risks = (
                 {
                     item.target_id: PortfolioRiskDecision.model_validate(item.payload)
@@ -908,6 +948,7 @@ class CapitalDashboardReader:
                 groups_by_plan=groups_by_plan,
                 order_counts=order_counts,
                 forecasts=loaded_forecasts,
+                projections=projections,
             )
             for record in records
         )
@@ -922,10 +963,12 @@ class CapitalDashboardReader:
         groups_by_plan: dict[str, list[ExecutionGroup]],
         order_counts: dict[str, int],
         forecasts: dict[str, BaseForecast | CalibratedForecast],
+        projections: dict[str, ProductPayoffProjection],
     ) -> CapitalActivity:
         candidate_economics = self._candidate_economics(
             target=target,
             forecasts=forecasts,
+            projections=projections,
         )
         candidate_economics_recorded = (
             target is not None and target.candidate_evaluations is not None
@@ -1066,6 +1109,7 @@ class CapitalDashboardReader:
         *,
         target: PortfolioTarget | None,
         forecasts: dict[str, BaseForecast | CalibratedForecast],
+        projections: dict[str, ProductPayoffProjection],
     ) -> tuple[CapitalCandidateEconomics, ...]:
         if target is None:
             return ()
@@ -1076,11 +1120,34 @@ class CapitalDashboardReader:
             forecast = forecasts.get(evaluation.forecast_id)
             if forecast is None:
                 raise ValueError("PortfolioTarget candidate 缺少不可变 Forecast 引用")
+            projection = (
+                None
+                if evaluation.payoff_projection_id is None
+                else projections.get(evaluation.payoff_projection_id)
+            )
+            if evaluation.payoff_projection_id is not None and projection is None:
+                raise ValueError("PortfolioTarget candidate 缺少不可变 product projection")
+            candidate_target = (
+                forecast.target if projection is None else projection.target
+            )
             candidates.append(
                 CapitalCandidateEconomics(
+                    candidate_id=evaluation.sleeve_id,
                     forecast_id=forecast.forecast_id,
+                    payoff_projection_id=evaluation.payoff_projection_id,
                     producer_id=forecast.producer_id,
                     outcome_family_id=forecast.outcome_family_id,
+                    target_legs=tuple(
+                        (
+                            leg.instrument.key,
+                            leg.instrument.symbol,
+                            leg.instrument.product.value,
+                            leg.direction.value,
+                        )
+                        for leg in candidate_target.legs
+                    ),
+                    edge_basis=evaluation.edge_basis.value,
+                    forecast_current=evaluation.forecast_current,
                     information_cutoff_at=forecast.information_cutoff_at,
                     available_at=forecast.available_at,
                     valid_until=forecast.valid_until,
@@ -1109,6 +1176,9 @@ class CapitalDashboardReader:
                         else None
                     ),
                     gross_bps=evaluation.decision_gross_bps,
+                    fee_bps=evaluation.cost.fee_bps,
+                    exit_spread_bps=evaluation.cost.exit_spread_bps,
+                    depth_slippage_bps=evaluation.cost.depth_slippage_bps,
                     estimated_cost_bps=evaluation.cost.total_bps,
                     net_bps=evaluation.decision_net_bps,
                     decision_threshold_bps=evaluation.minimum_net_bps,
@@ -1399,9 +1469,22 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "candidate_economics_recorded": item.candidate_economics_recorded,
                 "candidate_economics": [
                     {
+                        "candidate_id": candidate.candidate_id,
                         "forecast_id": candidate.forecast_id,
+                        "payoff_projection_id": candidate.payoff_projection_id,
                         "producer_id": candidate.producer_id,
                         "outcome_family_id": candidate.outcome_family_id,
+                        "target_legs": [
+                            {
+                                "instrument": instrument,
+                                "symbol": symbol,
+                                "product": product,
+                                "direction": direction,
+                            }
+                            for instrument, symbol, product, direction in candidate.target_legs
+                        ],
+                        "edge_basis": candidate.edge_basis,
+                        "forecast_current": candidate.forecast_current,
                         "information_cutoff_at": _iso(candidate.information_cutoff_at),
                         "available_at": _iso(candidate.available_at),
                         "valid_until": _iso(candidate.valid_until),
@@ -1421,6 +1504,9 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                         "evidence_refs": list(candidate.evidence_refs),
                         "analysis_input": candidate.analysis_input,
                         "gross_bps": str(candidate.gross_bps),
+                        "fee_bps": str(candidate.fee_bps),
+                        "exit_spread_bps": str(candidate.exit_spread_bps),
+                        "depth_slippage_bps": str(candidate.depth_slippage_bps),
                         "estimated_cost_bps": str(candidate.estimated_cost_bps),
                         "net_bps": str(candidate.net_bps),
                         "decision_threshold_bps": str(candidate.decision_threshold_bps),

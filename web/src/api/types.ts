@@ -103,9 +103,19 @@ export interface CapitalAction {
   order_count: number;
   candidate_economics_recorded: boolean;
   candidate_economics: {
+    candidate_id: string;
     forecast_id: string;
+    payoff_projection_id: string | null;
     producer_id: string;
     outcome_family_id: string;
+    target_legs: {
+      instrument: string;
+      symbol: string;
+      product: "SPOT" | "USD_M_PERPETUAL" | "TRADFI_PERPETUAL";
+      direction: "LONG" | "SHORT";
+    }[];
+    edge_basis: "CALIBRATED_CONSERVATIVE" | "EXPERIMENTAL_HYPOTHESIS";
+    forecast_current: boolean;
     information_cutoff_at: string;
     available_at: string;
     valid_until: string;
@@ -119,6 +129,9 @@ export interface CapitalAction {
     evidence_refs: string[];
     analysis_input: Record<string, unknown> | null;
     gross_bps: string;
+    fee_bps: string;
+    exit_spread_bps: string;
+    depth_slippage_bps: string;
     estimated_cost_bps: string;
     net_bps: string;
     decision_threshold_bps: string;

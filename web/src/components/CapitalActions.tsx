@@ -103,7 +103,11 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
   );
   const repeated = group.actions.length > 1;
   const candidates = action.candidate_economics;
-  const candidate = candidates[0];
+  const selected = candidates.filter((item) => Number(item.desired_gross_notional) > 0);
+  const best = selected[0] ?? [...candidates].sort(
+    (left, right) => Number(right.net_bps) - Number(left.net_bps),
+  )[0];
+  const forecasts = [...new Map(candidates.map((item) => [item.forecast_id, item])).values()];
   const zeroImpact = new Set([
     "NO_OPPORTUNITY",
     "CASH",
@@ -124,8 +128,10 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             {repeated ? <em>{group.actions.length} 次相同检查已归并</em> : null}
           </span>
           <span className={styles.summary}>
-            {candidate && zeroImpact && !candidate.validity_reason_codes?.length
-              ? `费用后预期 ${formatBps(candidate.net_bps)} bp，本次决策至少需要 ${formatBps(candidate.decision_threshold_bps)} bp`
+            {best && zeroImpact && !best.validity_reason_codes?.length
+              ? selected.length
+                ? `目标 ${candidateLabel(best)} ${formatUsdt(best.desired_gross_notional)} USDT；费用后预期 ${formatBps(best.net_bps)} bp`
+                : `比较 ${candidates.length} 个产品表达后保持现金；最佳费用后预期 ${formatBps(best.net_bps)} bp`
               : reasons[0] ?? action.summary}
           </span>
         </span>
@@ -142,19 +148,26 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dt>判断依据</dt>
             <dd>{reasons.join("；") || action.summary}</dd>
             {candidates.map((item) => (
-              <Fragment key={item.forecast_id}>
-                <dt>候选经济性</dt>
+              <Fragment key={item.candidate_id}>
+                <dt>{candidateLabel(item)}</dt>
                 <dd>
-                  剩余毛收益 {formatBps(item.gross_bps)} bp − 当时估计成本 {formatBps(item.estimated_cost_bps)} bp
-                  = 费用后 {formatBps(item.net_bps)} bp；本次门槛 {formatBps(item.decision_threshold_bps)} bp
+                  {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
+                  预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
+                  = 费用后 {formatBps(item.net_bps)} bp；要求不低于 {formatBps(item.decision_threshold_bps)} bp
                 </dd>
-                <dt>资金比较</dt>
+                <dt>金额与成本</dt>
                 <dd>
                   当时持仓 {formatUsdt(item.current_gross_notional)} USDT；按 {formatUsdt(item.evaluation_gross_notional)} USDT 评估；
-                  目标 {formatUsdt(item.desired_gross_notional)} USDT
+                  目标 {formatUsdt(item.desired_gross_notional)} USDT；手续费 {formatBps(item.fee_bps)} bp，
+                  退出点差 {formatBps(item.exit_spread_bps)} bp，深度滑点 {formatBps(item.depth_slippage_bps)} bp
                 </dd>
+              </Fragment>
+            ))}
+            {forecasts.map((item, index) => (
+              <Fragment key={item.forecast_id}>
                 <dt>概率预测</dt>
                 <dd>
+                  {forecastLabel(item.outcome_family_id)}　
                   {item.outcome_probabilities.map((bucket) => (
                     <span key={bucket.bucket_id}>
                       {bucket.bucket_id} {formatPercent(bucket.probability)}　
@@ -193,7 +206,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                     ? ` · 有效性证据 ${item.validity_evidence_refs.join(" / ")}`
                     : ""}
                 </dd>
-                {item.analysis_input ? (
+                {index === 0 && item.analysis_input ? (
                   <>
                     <dt>AI 输入</dt>
                     <dd>
@@ -249,6 +262,19 @@ function formatPercent(value: string): string {
 function formatUsdt(value: string): string {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
+}
+
+function candidateLabel(candidate: CapitalAction["candidate_economics"][number]): string {
+  return candidate.target_legs.map((leg) => {
+    const product = leg.product === "SPOT" ? "现货" : "永续";
+    const direction = leg.direction === "LONG" ? "做多" : "做空";
+    return `${leg.symbol} ${product}${direction}`;
+  }).join(" + ");
+}
+
+function forecastLabel(outcomeFamilyId: string): string {
+  const asset = outcomeFamilyId.split("-", 1)[0]?.toUpperCase();
+  return asset ? `${asset} · 4 小时` : "4 小时";
 }
 
 function effectLabel(effect: string): string {
