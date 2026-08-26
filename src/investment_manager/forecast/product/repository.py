@@ -149,6 +149,46 @@ class SqlProductPayoffProjectionStore:
             ).scalar_one_or_none()
         return None if payload is None else ProductPayoffOutcome.model_validate(payload)
 
+    def projection_outcomes(
+        self,
+        *,
+        projection_ids: tuple[str, ...],
+        evaluation_version: str,
+    ) -> tuple[tuple[ProductPayoffProjection, ProductPayoffOutcome], ...]:
+        """Load existing terminal outcomes for an exact candidate projection set."""
+
+        if not projection_ids:
+            return ()
+        if tuple(sorted(set(projection_ids))) != projection_ids:
+            raise ValueError("Product payoff outcome 查询 projection 必须唯一且排序")
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    product_payoff_projections.c.payload,
+                    product_payoff_outcomes.c.payload,
+                )
+                .select_from(
+                    product_payoff_projections.join(
+                        product_payoff_outcomes,
+                        and_(
+                            product_payoff_outcomes.c.projection_id
+                            == product_payoff_projections.c.projection_id,
+                            product_payoff_outcomes.c.evaluation_version
+                            == evaluation_version,
+                        ),
+                    )
+                )
+                .where(product_payoff_projections.c.projection_id.in_(projection_ids))
+                .order_by(product_payoff_projections.c.projection_id)
+            ).all()
+        return tuple(
+            (
+                ProductPayoffProjection.model_validate(row[0]),
+                ProductPayoffOutcome.model_validate(row[1]),
+            )
+            for row in rows
+        )
+
     def outcome_cases(
         self,
         *,

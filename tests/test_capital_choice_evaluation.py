@@ -1,0 +1,142 @@
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+
+from investment_manager.forecast.models import ExposureDirection
+from investment_manager.portfolio.evaluation import (
+    CAPITAL_CHOICE_EVALUATION_VERSION,
+    CapitalChoiceCase,
+    evaluate_capital_choice,
+)
+
+NOW = datetime(2026, 8, 26, 19, tzinfo=UTC)
+
+
+def _case(
+    projection_id: str,
+    exposure: str,
+    instrument: str,
+    direction: ExposureDirection,
+    *,
+    selected: bool = False,
+    predicted: str = "-5",
+    cost: str = "10",
+    realized: str = "0",
+) -> CapitalChoiceCase:
+    return CapitalChoiceCase(
+        decision_id="target-1",
+        decision_at=NOW,
+        evaluation_at=NOW + timedelta(hours=4),
+        economic_exposure_id=exposure,
+        projection_id=projection_id,
+        instrument_key=instrument,
+        direction=direction,
+        selected=selected,
+        predicted_net_bps=Decimal(predicted),
+        decision_cost_bps=Decimal(cost),
+        realized_gross_bps=Decimal(realized),
+    )
+
+
+def test_capital_choice_identifies_missed_exposure_after_decision_time_costs() -> None:
+    evidence = evaluate_capital_choice(
+        (
+            _case(
+                "btc-perp-long",
+                "CRYPTO_NETWORK:BTC:USDT",
+                "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+                ExposureDirection.LONG,
+                predicted="-9",
+                realized="25",
+            ),
+            _case(
+                "btc-perp-short",
+                "CRYPTO_NETWORK:BTC:USDT",
+                "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+                ExposureDirection.SHORT,
+                predicted="-19",
+                realized="-25",
+            ),
+            _case(
+                "btc-spot-long",
+                "CRYPTO_NETWORK:BTC:USDT",
+                "BINANCE:SPOT:BTCUSDT",
+                ExposureDirection.LONG,
+                predicted="-20",
+                cost="20",
+                realized="24",
+            ),
+        )
+    )
+
+    assert evidence.evaluation_version == CAPITAL_CHOICE_EVALUATION_VERSION
+    assert evidence.candidate_count == 3
+    assert evidence.missed_profitable_exposure_count == 1
+    exposure = evidence.exposures[0]
+    assert exposure.selected is None
+    assert exposure.best_realized.projection_id == "btc-perp-long"
+    assert exposure.best_realized.realized_net_bps == Decimal("15")
+    assert exposure.opportunity_gap_bps == Decimal("15")
+    assert exposure.missed_profitable_exposure
+    assert not exposure.selected_unprofitable_exposure
+
+
+def test_capital_choice_separates_selected_loss_from_product_choice_gap() -> None:
+    evidence = evaluate_capital_choice(
+        (
+            _case(
+                "paxg-long",
+                "INFLATION_SENSITIVE:PAXG:USDT",
+                "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
+                ExposureDirection.LONG,
+                selected=True,
+                predicted="8",
+                realized="-12",
+            ),
+            _case(
+                "paxg-short",
+                "INFLATION_SENSITIVE:PAXG:USDT",
+                "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
+                ExposureDirection.SHORT,
+                predicted="-18",
+                realized="12",
+            ),
+        )
+    )
+
+    exposure = evidence.exposures[0]
+    assert exposure.selected is not None
+    assert exposure.selected.realized_net_bps == Decimal("-22")
+    assert exposure.best_realized.projection_id == "paxg-short"
+    assert exposure.best_realized.realized_net_bps == Decimal("2")
+    assert exposure.opportunity_gap_bps == Decimal("24")
+    assert not exposure.missed_profitable_exposure
+    assert exposure.selected_unprofitable_exposure
+    assert evidence.selected_unprofitable_exposure_count == 1
+
+
+def test_capital_choice_rejects_duplicate_or_multiple_selected_products() -> None:
+    case = _case(
+        "btc-long",
+        "CRYPTO_NETWORK:BTC:USDT",
+        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+        ExposureDirection.LONG,
+        selected=True,
+    )
+    with pytest.raises(ValueError, match="projection 不得重复"):
+        evaluate_capital_choice((case, case))
+
+    with pytest.raises(ValueError, match="不得选择多个产品"):
+        evaluate_capital_choice(
+            (
+                case,
+                _case(
+                    "btc-short",
+                    "CRYPTO_NETWORK:BTC:USDT",
+                    "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+                    ExposureDirection.SHORT,
+                    selected=True,
+                ),
+            )
+        )

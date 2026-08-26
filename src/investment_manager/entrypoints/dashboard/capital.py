@@ -65,6 +65,11 @@ from investment_manager.market.models import (
     ValuationQuoteQuality,
 )
 from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.portfolio.evaluation import (
+    CapitalChoiceCase,
+    CapitalChoiceEvidence,
+    evaluate_capital_choice,
+)
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
@@ -478,6 +483,85 @@ class CapitalDashboardReader:
                 evaluation.product_payoff_minimum_sample_size
             ),
         )
+
+    def capital_choice_evidence(self) -> CapitalChoiceEvidence | None:
+        """Evaluate the newest decision whose complete candidate set has settled."""
+
+        if not self._config.capital.enabled:
+            return None
+        store = SqlProductPayoffProjectionStore(self._engine)
+        outcome_version = self._config.outcome_evaluation.product_payoff_version
+        with self._engine.connect() as connection:
+            payloads = connection.execute(
+                select(portfolio_targets.c.payload)
+                .where(
+                    portfolio_targets.c.portfolio_id
+                    == self._config.capital.decision.portfolio_id
+                )
+                .order_by(portfolio_targets.c.as_of.desc(), portfolio_targets.c.target_id.desc())
+                .execution_options(stream_results=True)
+            ).scalars()
+            for payload in payloads:
+                target = PortfolioTarget.model_validate(payload)
+                candidates = target.candidate_evaluations
+                if not candidates or any(
+                    item.payoff_projection_id is None for item in candidates
+                ):
+                    continue
+                projection_ids = tuple(
+                    sorted(
+                        item.payoff_projection_id
+                        for item in candidates
+                        if item.payoff_projection_id is not None
+                    )
+                )
+                resolved = store.projection_outcomes(
+                    projection_ids=projection_ids,
+                    evaluation_version=outcome_version,
+                )
+                if len(resolved) != len(projection_ids):
+                    continue
+                if any(
+                    outcome.status != ForecastOutcomeStatus.SETTLED
+                    or outcome.realized_gross_bps is None
+                    for _projection, outcome in resolved
+                ):
+                    continue
+                by_projection = {
+                    projection.projection_id: (projection, outcome)
+                    for projection, outcome in resolved
+                }
+                cases = []
+                for candidate in candidates:
+                    projection_id = candidate.payoff_projection_id
+                    assert projection_id is not None
+                    projection, outcome = by_projection[projection_id]
+                    if (
+                        projection.source_forecast_id != candidate.forecast_id
+                        or outcome.projection_id != projection_id
+                        or outcome.source_forecast_id != candidate.forecast_id
+                        or outcome.evaluation_at != projection.evaluation_at
+                    ):
+                        raise ValueError("Capital choice 候选、产品投影与结果身份不一致")
+                    leg = projection.target.legs[0]
+                    assert outcome.realized_gross_bps is not None
+                    cases.append(
+                        CapitalChoiceCase(
+                            decision_id=target.target_id,
+                            decision_at=target.as_of,
+                            evaluation_at=projection.evaluation_at,
+                            economic_exposure_id=projection.economic_exposure_id,
+                            projection_id=projection_id,
+                            instrument_key=leg.instrument.key,
+                            direction=leg.direction,
+                            selected=candidate.desired_gross_notional > 0,
+                            predicted_net_bps=candidate.decision_net_bps,
+                            decision_cost_bps=candidate.cost.total_bps,
+                            realized_gross_bps=outcome.realized_gross_bps,
+                        )
+                    )
+                return evaluate_capital_choice(tuple(cases))
+        return None
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
         policy = self._config.capital.context_forecast
@@ -1407,6 +1491,53 @@ def serialize_product_payoff_evidence(
         value = getattr(evidence, field_name)
         payload[field_name] = None if value is None else str(value)
     return {"product_payoff_evidence": payload}
+
+
+def serialize_capital_choice_evidence(
+    evidence: CapitalChoiceEvidence | None,
+) -> dict:
+    if evidence is None:
+        return {"capital_choice_evidence": None}
+
+    def candidate(item):
+        if item is None:
+            return None
+        return {
+            "projection_id": item.projection_id,
+            "instrument_key": item.instrument_key,
+            "direction": item.direction.value,
+            "predicted_net_bps": str(item.predicted_net_bps),
+            "realized_net_bps": str(item.realized_net_bps),
+        }
+
+    return {
+        "capital_choice_evidence": {
+            "evaluation_version": evidence.evaluation_version,
+            "decision_id": evidence.decision_id,
+            "decision_at": _iso(evidence.decision_at),
+            "evaluation_at": _iso(evidence.evaluation_at),
+            "candidate_count": evidence.candidate_count,
+            "missed_profitable_exposure_count": (
+                evidence.missed_profitable_exposure_count
+            ),
+            "selected_unprofitable_exposure_count": (
+                evidence.selected_unprofitable_exposure_count
+            ),
+            "exposures": [
+                {
+                    "economic_exposure_id": item.economic_exposure_id,
+                    "selected": candidate(item.selected),
+                    "best_realized": candidate(item.best_realized),
+                    "opportunity_gap_bps": str(item.opportunity_gap_bps),
+                    "missed_profitable_exposure": item.missed_profitable_exposure,
+                    "selected_unprofitable_exposure": (
+                        item.selected_unprofitable_exposure
+                    ),
+                }
+                for item in evidence.exposures
+            ],
+        }
+    }
 
 
 def serialize_world_model_ablation_evidence(

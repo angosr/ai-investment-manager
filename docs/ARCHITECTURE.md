@@ -226,11 +226,13 @@ Reference 候选还必须在增长、通胀、通缩、流动性紧缩和相关�
 
 每项实验在结果发生前冻结输入、行为身份、成本、基线、评价方法、样本边界和停止条件。评价读取所有预登记样本，包括无预测、未交易和失败样本。结果只能改变未来 Release 或权限，不能选择性改写历史。
 
+评价必须把四个互不替代的问题分开。Forecast proper score 判断概率分布是否优于同合同的简单基线；Product residual 判断从规范标的到具体 Spot/Perpetual 的 basis、funding 与规则映射是否准确；Capital choice 使用当时已冻结的全部合法候选、目标金额和完整未来成本，在共同终点按经济暴露比较“当时选择的产品或现金”与“事后最佳合法产品”的单位净收益，只诊断捕获、错误入场或错过的方向；Execution/Account 才评价实际订单、成交、持仓和费用后的资金结果。Capital choice 的事后最佳产品不是可投资基准、交易策略或授权依据，不能据此追涨、回填订单或降低未来门槛；它只负责让“没有下单”也能区分正确持币与错过成本后机会。四层都读取不可变点时事实，任何一层不得用另一层的好结果掩盖自身失败。
+
 WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模型、State、合同、共同截止时间和输出 Schema 下，评价“读取 WorldModel”与“不读取 WorldModel”的 Forecast。正式行为一次联合预测多个资产时，对照必须保留同一整组目标，只删除共享 WorldModel，并用一次调用返回逐目标概率；逐资产配对结算，但联合调用只形成一个独立时间区间，不能缩成首个资产、复制多次调用或把资产数冒充独立样本数。配对分配在任一侧运行前持久化，两侧拥有真实可完成的共同期限；不能在正式 Forecast 成功后才用剩余时间补跑对照。对照结果只进入 Evaluation，不进入 Portfolio。Forecast 相对基线的均值改善只是点估计；资本权限还必须读取与样本依赖和完整搜索历史相符的保守下界、校准、覆盖率和多个市场环境表现。静态无技巧分布不能替代滚动无条件分布、简单市场模型和可投资资本基线。
 
 Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；每个固定时点都必须保留独立的仅定时槽。材料来源回答“满足冻结条件时是否及时重估”，不能消费、提前履行或改写 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也无法构造仅定时资本反事实。每个终态按仅定时或仅材料来源分层计算覆盖率、评分和不确定性；共同 Outcome 和重叠时域按预登记时间簇处理，不能把相关事件当成多个独立成功。
 
-不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、WorldModel 消融和资本结果分别由唯一领域 evaluator 定义最小类型化合同与结果；治理查询只从这些事实派生共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
+不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、WorldModel 消融、Product residual、Capital choice 和账户结果分别由唯一领域 evaluator 定义最小类型化合同与结果；治理查询只从这些事实派生共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
 
 任何实验资本资格必须引用对应问题的不可变类型化计划；任何正式权限必须继续引用适用的类型化结果、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
 

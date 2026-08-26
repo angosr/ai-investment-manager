@@ -453,6 +453,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert forecast_evidence.json() == {
         "forecast_evidence": None,
         "product_payoff_evidence": None,
+        "capital_choice_evidence": None,
         "world_model_ablation": None,
     }
     assert bad_assessment_detail.json()["synthesis"] == bad_assessment.synthesis

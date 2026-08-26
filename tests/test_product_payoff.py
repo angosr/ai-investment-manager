@@ -935,6 +935,19 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
     assert outcome.realized_gross_bps == (
         outcome.leg.price_return_bps + outcome.leg.funding_return_bps
     )
+    assert store.projection_outcomes(
+        projection_ids=(projection.projection_id,),
+        evaluation_version="product-payoff-outcome-v1",
+    ) == ((projection, outcome),)
+    assert store.projection_outcomes(
+        projection_ids=(projection.projection_id,),
+        evaluation_version="different-version",
+    ) == ()
+    with pytest.raises(ValueError, match="必须唯一且排序"):
+        store.projection_outcomes(
+            projection_ids=(projection.projection_id, projection.projection_id),
+            evaluation_version="product-payoff-outcome-v1",
+        )
     assert store.outcome_cases(
         product_outcome_version="product-payoff-outcome-v1",
         forecast_outcome_version="forecast-target-outcome-v1",

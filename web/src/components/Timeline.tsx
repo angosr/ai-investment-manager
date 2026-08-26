@@ -73,6 +73,9 @@ function CapitalTimeline({
           {forecastEvaluation?.world_model_ablation ? (
             <WorldModelEvidenceLine evidence={forecastEvaluation.world_model_ablation} />
           ) : null}
+          {forecastEvaluation?.capital_choice_evidence ? (
+            <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
+          ) : null}
           {forecastEvaluation?.forecast_evidence ? (
             <ForecastEvidenceLine evidence={forecastEvaluation.forecast_evidence} />
           ) : null}
@@ -99,6 +102,61 @@ function CapitalTimeline({
       )}
     </section>
   );
+}
+
+function CapitalChoiceEvidenceLine({
+  evidence,
+}: {
+  evidence: NonNullable<ForecastEvaluationEvidence["capital_choice_evidence"]>;
+}) {
+  const missed = evidence.exposures.filter((item) => item.missed_profitable_exposure);
+  const selectedLosses = evidence.exposures.filter(
+    (item) => item.selected_unprofitable_exposure && item.selected !== null,
+  );
+  const headline = missed.length > 0 && selectedLosses.length > 0
+    ? "资金判断既有错过，也有错误入场"
+    : missed.length > 0
+      ? "资金判断错过了成本后机会"
+      : selectedLosses.length > 0
+        ? "资金判断选中的方向结算为亏损"
+        : "最近结算的资金判断与成本后方向一致";
+  const period = `${hhmm(evidence.decision_at)} → ${hhmm(evidence.evaluation_at)}`;
+  const missedDetail = missed.map((item) => (
+    `${capitalCandidateLabel(item.best_realized.instrument_key, item.best_realized.direction)}`
+    + `当时预测 ${signedBps(item.best_realized.predicted_net_bps)}`
+    + `，实际扣除当时成本后 ${signedBps(item.best_realized.realized_net_bps)}`
+  ));
+  const selectedLossDetail = selectedLosses.map((item) => (
+    `${capitalCandidateLabel(item.selected!.instrument_key, item.selected!.direction)}`
+    + `当时预测 ${signedBps(item.selected!.predicted_net_bps)}`
+    + `，实际扣除当时成本后 ${signedBps(item.selected!.realized_net_bps)}`
+  ));
+  const mistakes = [
+    ...(missedDetail.length > 0 ? [`未配置的机会：${missedDetail.join("；")}`] : []),
+    ...(selectedLossDetail.length > 0
+      ? [`错误入场：${selectedLossDetail.join("；")}`]
+      : []),
+  ];
+  const detail = mistakes.length > 0
+    ? `${period}，${mistakes.join("。")}`
+    : `${period}，所选产品或现金与事后成本后方向一致`;
+  return (
+    <div className={styles.forecastEvidence}>
+      <b>{headline}</b>
+      <span>{detail}。这是事后诊断，不是追涨或反向下单信号。</span>
+    </div>
+  );
+}
+
+function capitalCandidateLabel(instrumentKey: string, direction: "LONG" | "SHORT"): string {
+  const [, product, symbol] = instrumentKey.split(":");
+  const productLabel = product === "SPOT" ? "现货" : "永续";
+  return `${symbol} ${productLabel}${direction === "LONG" ? "做多" : "做空"}`;
+}
+
+function signedBps(value: string): string {
+  const parsed = Number(value);
+  return `${parsed >= 0 ? "+" : ""}${parsed.toFixed(2)} bp`;
 }
 
 function ForecastEvidenceLine({

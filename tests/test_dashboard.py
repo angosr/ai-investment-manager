@@ -16,6 +16,7 @@ import pytest
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalOverview,
+    serialize_capital_choice_evidence,
     serialize_forecast_evidence,
     serialize_world_model_ablation_evidence,
 )
@@ -29,6 +30,12 @@ from investment_manager.entrypoints.dashboard.read_models import (
 )
 from investment_manager.entrypoints.dashboard.resources import sample_host_resources
 from investment_manager.forecast.context.evaluation import evaluate_forecast_evidence
+from investment_manager.forecast.models import ExposureDirection
+from investment_manager.portfolio.evaluation import (
+    CapitalChoiceCandidateOutcome,
+    CapitalChoiceEvidence,
+    CapitalChoiceExposureOutcome,
+)
 
 
 def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
@@ -68,6 +75,62 @@ def test_forecast_evidence_has_an_explicit_audit_projection() -> None:
             "mean_expected_gross_bps": None,
             "mean_realized_gross_bps": None,
             "result_coverage": "1",
+        }
+    }
+
+
+def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
+    decision_at = datetime(2026, 8, 26, 19, tzinfo=UTC)
+    best = CapitalChoiceCandidateOutcome(
+        projection_id="btc-perp-long",
+        instrument_key="BINANCE:USD_M_PERPETUAL:BTCUSDT",
+        direction=ExposureDirection.LONG,
+        predicted_net_bps=Decimal("-9.04"),
+        realized_net_bps=Decimal("14.65"),
+    )
+    evidence = CapitalChoiceEvidence(
+        evaluation_version="capital-choice-outcome-v1",
+        decision_id="target-1",
+        decision_at=decision_at,
+        evaluation_at=decision_at + timedelta(hours=4),
+        candidate_count=3,
+        exposures=(
+            CapitalChoiceExposureOutcome(
+                economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+                selected=None,
+                best_realized=best,
+                opportunity_gap_bps=Decimal("14.65"),
+                missed_profitable_exposure=True,
+                selected_unprofitable_exposure=False,
+            ),
+        ),
+    )
+
+    assert serialize_capital_choice_evidence(evidence) == {
+        "capital_choice_evidence": {
+            "evaluation_version": "capital-choice-outcome-v1",
+            "decision_id": "target-1",
+            "decision_at": decision_at.isoformat(),
+            "evaluation_at": (decision_at + timedelta(hours=4)).isoformat(),
+            "candidate_count": 3,
+            "missed_profitable_exposure_count": 1,
+            "selected_unprofitable_exposure_count": 0,
+            "exposures": [
+                {
+                    "economic_exposure_id": "CRYPTO_NETWORK:BTC:USDT",
+                    "selected": None,
+                    "best_realized": {
+                        "projection_id": "btc-perp-long",
+                        "instrument_key": "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+                        "direction": "LONG",
+                        "predicted_net_bps": "-9.04",
+                        "realized_net_bps": "14.65",
+                    },
+                    "opportunity_gap_bps": "14.65",
+                    "missed_profitable_exposure": True,
+                    "selected_unprofitable_exposure": False,
+                }
+            ],
         }
     }
 

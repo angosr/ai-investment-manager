@@ -190,6 +190,23 @@ export interface ForecastEvaluationEvidence {
     mapping_conservative_coverage: string | null;
     mapping_residual_sign_accuracy: string | null;
   } | null;
+  capital_choice_evidence: {
+    evaluation_version: string;
+    decision_id: string;
+    decision_at: string;
+    evaluation_at: string;
+    candidate_count: number;
+    missed_profitable_exposure_count: number;
+    selected_unprofitable_exposure_count: number;
+    exposures: {
+      economic_exposure_id: string;
+      selected: CapitalChoiceCandidateOutcome | null;
+      best_realized: CapitalChoiceCandidateOutcome;
+      opportunity_gap_bps: string;
+      missed_profitable_exposure: boolean;
+      selected_unprofitable_exposure: boolean;
+    }[];
+  } | null;
   world_model_ablation: {
     plan_id: string;
     as_of: string;
@@ -206,6 +223,14 @@ export interface ForecastEvaluationEvidence {
     minimum_sample_size: number;
     evidence_sufficient: boolean;
   } | null;
+}
+
+export interface CapitalChoiceCandidateOutcome {
+  projection_id: string;
+  instrument_key: string;
+  direction: "LONG" | "SHORT";
+  predicted_net_bps: string;
+  realized_net_bps: string;
 }
 
 export interface ForecastEvidenceSummary {

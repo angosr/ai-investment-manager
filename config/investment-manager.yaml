@@ -362,7 +362,7 @@ capital:
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v38
+  version: typed-outcome-settlement-v39
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
