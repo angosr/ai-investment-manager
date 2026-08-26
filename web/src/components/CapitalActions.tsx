@@ -33,7 +33,6 @@ const REASON_LABELS: Record<string, string> = {
   CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整成本后没有达到入场门槛，选择现金",
   CASH_SELECTED_FORECAST_INVALID: "预测已不再允许新增风险，保持现金",
   POSITIVE_NET_EDGE_SELECTED: "预测扣除完整成本后达到入场门槛",
-  REBALANCE_BELOW_MINIMUM: "仓位变化太小，不足以覆盖交易成本",
   EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",
   FORECAST_TIME_WINDOW_INVALID: "预测已经超过允许使用的时间窗口",
   FORECAST_WORLD_MODEL_UNAVAILABLE: "预测依赖的世界认知已无法确认",

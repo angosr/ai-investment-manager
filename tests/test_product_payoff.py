@@ -703,7 +703,7 @@ def test_product_switch_closes_the_old_expression_before_opening_the_new_one() -
     assert open_target.sleeves[0].desired_gross_notional > 0
 
 
-def test_product_switch_below_rebalance_minimum_keeps_current_expression() -> None:
+def test_product_switch_uses_product_costs_without_a_portfolio_notional_gate() -> None:
     forecast, projections, sleeves, quotes, specs = _decision_projection_inputs()
     spot = next(item for item in sleeves if item.target == projections[0].target)
 
@@ -724,14 +724,9 @@ def test_product_switch_below_rebalance_minimum_keeps_current_expression() -> No
     assert target is not None
     assert len(target.sleeves) == 1
     assert target.sleeves[0].sleeve_id == spot.sleeve_id
-    assert target.sleeves[0].desired_gross_notional == Decimal("10")
-    assert "REBALANCE_BELOW_MINIMUM" in target.reason_codes
-    assert "PRODUCT_SWITCH_EXIT_FIRST" not in target.reason_codes
-    assert "CASH_SELECTED_FOR_PRODUCT_TRANSITION" not in target.reason_codes
-    assert all(
-        "POSITIVE_NET_EDGE_SELECTED" not in item.reason_codes
-        for item in target.candidate_evaluations or ()
-    )
+    assert target.sleeves[0].desired_gross_notional == 0
+    assert "PRODUCT_SWITCH_EXIT_FIRST" in target.reason_codes
+    assert "CASH_SELECTED_FOR_PRODUCT_TRANSITION" in target.reason_codes
 
 
 def test_fresh_product_projection_after_source_entry_window_cannot_add_exposure() -> None:

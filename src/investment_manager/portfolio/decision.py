@@ -11,7 +11,7 @@ from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.results import BaseForecast, CalibratedForecast, Forecast
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.kernel.types import FrozenModel, Money, UnitInterval
+from investment_manager.kernel.types import FrozenModel, UnitInterval
 from investment_manager.market.models import ExecutableQuote
 from investment_manager.portfolio.models import (
     CandidateCapitalAuthorization,
@@ -32,7 +32,6 @@ class PortfolioDecisionPolicy(FrozenModel):
     minimum_conservative_net_bps: Decimal = Field(default=Decimal("5"), ge=0)
     maximum_total_exposure_fraction: UnitInterval = Decimal("0.50")
     maximum_single_sleeve_fraction: UnitInterval = Decimal("0.30")
-    minimum_rebalance_notional: Money = Decimal("25")
     target_validity_minutes: int = Field(default=30, ge=1, le=1_440)
     cost_model_version: str = Field(default="executable-state-transition-v1", min_length=1)
     exit_spread_multiplier: Decimal = Field(default=Decimal("1"), ge=1)
@@ -490,79 +489,44 @@ class PortfolioDecisionEngine:
             for item in sleeves
             if item.sleeve_id in eligible_ids or current_by_sleeve[item.sleeve_id] > 0
         )
-        desired_frozen = {item.sleeve_id: item.desired_gross_notional for item in targets}
-        turnover = sum(
-            abs(
-                desired_frozen.get(item.sleeve_id, Decimal("0")) - current_by_sleeve[item.sleeve_id]
+        final_desired = {item.sleeve_id: item.desired_gross_notional for item in targets}
+        frozen_candidate_evaluations = tuple(
+            self._freeze_allocation_result(
+                candidate_evaluations[item.sleeve_id],
+                desired_notional=final_desired.get(item.sleeve_id, Decimal("0")),
+                capacity_selected=item.sleeve_id in eligible_ids,
+                alternative_product_not_selected=(
+                    item.sleeve_id in duplicate_expression_ids
+                ),
+                product_switch_exit=(item.sleeve_id in switch_exit_ids),
             )
-            for item in sleeves
+            for item in sorted(sleeves, key=lambda value: value.sleeve_id)
         )
+
         invalid_holding_exit = any(
             current_by_sleeve[item.sleeve_id] > 0
             and not candidate_evaluations[item.sleeve_id].forecast_current
             for item in sleeves
         )
-        below_rebalance_minimum = (
-            not invalid_holding_exit
-            and Decimal("0") < turnover < self._policy.minimum_rebalance_notional
-        )
-        if below_rebalance_minimum:
-            targets = tuple(
-                self._target(
-                    item,
-                    current_notional=current_by_sleeve[item.sleeve_id],
-                    desired_notional=current_by_sleeve[item.sleeve_id],
-                    evaluation_notional=current_by_sleeve[item.sleeve_id],
-                    quote_by_instrument=quote_by_instrument,
-                    spec_by_instrument=spec_by_instrument,
-                    as_of=as_of,
-                    allocation_reason="REBALANCE_BELOW_MINIMUM_CURRENT_TARGET",
-                )
-                for item in sleeves
-                if current_by_sleeve[item.sleeve_id] > 0
-            )
-
-        final_desired = {item.sleeve_id: item.desired_gross_notional for item in targets}
-        capacity_selected_ids = set() if below_rebalance_minimum else eligible_ids
-        frozen_candidate_evaluations = tuple(
-            self._freeze_allocation_result(
-                candidate_evaluations[item.sleeve_id],
-                desired_notional=final_desired.get(item.sleeve_id, Decimal("0")),
-                capacity_selected=item.sleeve_id in capacity_selected_ids,
-                alternative_product_not_selected=(
-                    item.sleeve_id in duplicate_expression_ids
-                ),
-                product_switch_exit=(item.sleeve_id in switch_exit_ids),
-                rebalance_preserved=(
-                    below_rebalance_minimum
-                    and current_by_sleeve[item.sleeve_id] > 0
-                ),
-            )
-            for item in sorted(sleeves, key=lambda value: value.sleeve_id)
-        )
-
         reason_codes: set[str] = set()
-        if below_rebalance_minimum:
-            reason_codes.add("REBALANCE_BELOW_MINIMUM")
-        else:
-            if eligible_ids:
-                reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
-            if not eligible_ids and duplicate_expression_ids:
-                reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
-            elif not eligible_ids:
-                reason_codes.add(
-                    "CASH_SELECTED_NO_POSITIVE_NET_EDGE"
-                    if any(
-                        candidate.forecast_current
-                        for candidate in candidate_evaluations.values()
-                    )
-                    else "CASH_SELECTED_FORECAST_INVALID"
+        if eligible_ids:
+            reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
+        if not eligible_ids and duplicate_expression_ids:
+            reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
+        elif not eligible_ids:
+            reason_codes.add(
+                "CASH_SELECTED_NO_POSITIVE_NET_EDGE"
+                if any(
+                    candidate.forecast_current
+                    for candidate in candidate_evaluations.values()
                 )
+                else "CASH_SELECTED_FORECAST_INVALID"
+            )
         if invalid_holding_exit:
             reason_codes.add("EXPIRED_FORECAST_EXIT")
         if duplicate_expression_ids:
             reason_codes.add("ALTERNATIVE_PRODUCT_EXPRESSION_REJECTED")
-        if switch_exit_ids and not below_rebalance_minimum:
+        if switch_exit_ids:
             reason_codes.add("PRODUCT_SWITCH_EXIT_FIRST")
 
         valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
@@ -688,11 +652,8 @@ class PortfolioDecisionEngine:
         capacity_selected: bool,
         alternative_product_not_selected: bool,
         product_switch_exit: bool,
-        rebalance_preserved: bool,
     ) -> PortfolioCandidateEvaluation:
-        if rebalance_preserved:
-            reason = "REBALANCE_BELOW_MINIMUM_CURRENT_TARGET"
-        elif capacity_selected:
+        if capacity_selected:
             reason = "POSITIVE_NET_EDGE_SELECTED"
         elif product_switch_exit:
             reason = "PRODUCT_SWITCH_EXIT_FIRST"

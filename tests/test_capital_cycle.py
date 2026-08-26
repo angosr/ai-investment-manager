@@ -1245,8 +1245,8 @@ def test_tradfi_candidate_uses_schedule_funding_and_one_product_account() -> Non
         trigger_types=("HEARTBEAT",),
     )
 
-    assert reviewed.trade_plan is not None
-    assert not reviewed.trade_plan.groups
+    assert isinstance(reviewed, TradePlanExecutionResult)
+    assert reviewed.groups
     account = SqlPortfolioStore(engine).latest_account(
         portfolio_id=configured.capital.decision.portfolio_id,
         as_of=later,
@@ -1254,7 +1254,7 @@ def test_tradfi_candidate_uses_schedule_funding_and_one_product_account() -> Non
     assert account is not None
     assert account.accounting is not None
     assert account.accounting.funding_pnl == Decimal("0.10023")
-    assert account.positions[0].quantity == Decimal("1.30")
+    assert account.positions[0].quantity == Decimal("1.29")
     assert account.reconciled
     assert configured.capital.reference_policy is None
 
@@ -1961,7 +1961,7 @@ def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:
     assert record.outcome == CapitalCycleOutcome.TARGET_DECIDED
     assert record.target_id is not None
     assert record.execution_authorization_id is None
-    assert "REBALANCE_BELOW_MINIMUM" in record.reason_codes
+    assert "POSITIVE_NET_EDGE_SELECTED" in record.reason_codes
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "NO_ORDER"
     assert activity[0].order_count == 0
