@@ -417,7 +417,6 @@ temporal:
   assessment_task_queue: investment-manager-assessment-v1
   lifecycle_task_queue: investment-manager-lifecycle-v1
   reconciliation_task_queue: investment-manager-reconciliation-v1
-  outcome_evaluation_task_queue: investment-manager-outcome-evaluation-v1
   governance_task_queue: investment-manager-governance-v1
   version_evaluation_task_queue: investment-manager-version-evaluation-v1
   release_task_queue: investment-manager-release-v1

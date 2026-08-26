@@ -721,10 +721,6 @@ async def _core_readiness_missing(
             group.process_ids[RuntimeService.ASSESSMENT],
         ),
         (config.temporal.trigger_task_queue, group.process_ids[RuntimeService.TRIGGER]),
-        (
-            config.temporal.outcome_evaluation_task_queue,
-            group.process_ids[RuntimeService.OUTCOME],
-        ),
     )
     for task_queue, pid in queue_pids:
         for queue_type in (

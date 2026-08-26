@@ -369,24 +369,18 @@ def outcome_evaluation_service(
         typer.Option("--release-manifest", exists=True, dir_okay=False),
     ] = Path("config/release-manifest.yaml"),
 ) -> None:
-    """在固定窗口和结算宽限期后聚合不可变的运行结果报告。"""
+    """结算当前 Release 启用的 Forecast、产品映射和配对认知结果。"""
 
     loaded, manifest = load_runtime_release(config, release_manifest)
     require_runtime_database(database_url)
 
     async def run() -> None:
-        client = await Client.connect(
-            loaded.temporal.address,
-            namespace=loaded.temporal.namespace,
-        )
-        worker, supervisor = assemble_outcome_evaluation(
+        supervisor = assemble_outcome_evaluation(
             loaded,
             database_url,
-            client,
             release=manifest,
         )
-        async with worker:
-            await supervisor.run(asyncio.Event())
+        await supervisor.run(asyncio.Event())
 
     asyncio.run(run())
 

@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, literal, select
@@ -150,6 +151,29 @@ class AccountStatus:
     observed_at: datetime | None
     leased: bool
     recent_failures: int
+
+
+@dataclass(frozen=True, slots=True)
+class TokenUsageDay:
+    date: date
+    total_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class AccountTokenUsage:
+    account_id: str
+    total_tokens: int
+    daily: tuple[TokenUsageDay, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TokenUsageWindow:
+    window_days: int
+    start_date: date
+    end_date: date
+    total_tokens: int
+    daily: tuple[TokenUsageDay, ...]
+    accounts: tuple[AccountTokenUsage, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -762,6 +786,83 @@ class DashboardReader:
         )
         with self._engine.connect() as connection:
             return int(connection.execute(query).scalar_one())
+
+    def ai_token_usage(self, *, now: datetime, window_days: int = 7) -> TokenUsageWindow:
+        """Aggregate reported Codex token usage by UTC day and configured account."""
+
+        if window_days < 1:
+            raise ValueError("AI token 用量窗口必须至少包含一天")
+        now = database_utc(now)
+        end_date = now.date()
+        start_date = end_date - timedelta(days=window_days - 1)
+        start_at = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+            days=window_days - 1
+        )
+        dates = tuple(start_date + timedelta(days=offset) for offset in range(window_days))
+        account_ids = tuple(account.account_id for account in self._config.codex_accounts.accounts)
+        by_account = {account_id: {day: 0 for day in dates} for account_id in account_ids}
+
+        if account_ids:
+            query = select(
+                codex_runs.c.account_id,
+                codex_runs.c.observed_at,
+                codex_runs.c.payload,
+            ).where(
+                codex_runs.c.account_id.in_(account_ids),
+                codex_runs.c.observed_at >= start_at,
+                codex_runs.c.observed_at <= now,
+            )
+            with self._engine.connect() as connection:
+                rows = connection.execute(query).all()
+            for account_id, observed_at, payload in rows:
+                if account_id is None:
+                    continue
+                day = database_utc(observed_at).date()
+                if day in by_account[account_id]:
+                    by_account[account_id][day] += self._reported_total_tokens(payload)
+
+        account_usage = tuple(
+            AccountTokenUsage(
+                account_id=account_id,
+                total_tokens=sum(by_account[account_id].values()),
+                daily=tuple(
+                    TokenUsageDay(date=day, total_tokens=by_account[account_id][day])
+                    for day in dates
+                ),
+            )
+            for account_id in account_ids
+        )
+        daily = tuple(
+            TokenUsageDay(
+                date=day,
+                total_tokens=sum(by_account[account_id][day] for account_id in account_ids),
+            )
+            for day in dates
+        )
+        return TokenUsageWindow(
+            window_days=window_days,
+            start_date=start_date,
+            end_date=end_date,
+            total_tokens=sum(item.total_tokens for item in daily),
+            daily=daily,
+            accounts=account_usage,
+        )
+
+    @staticmethod
+    def _reported_total_tokens(payload: object) -> int:
+        if not isinstance(payload, Mapping):
+            return 0
+        usage = payload.get("usage")
+        if not isinstance(usage, Mapping):
+            return 0
+        value = usage.get("total_tokens")
+        if isinstance(value, bool):
+            return 0
+        try:
+            tokens = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, tokens)
 
     def analysis_runtime_status(self, *, now: datetime) -> AnalysisRuntimeStatus:
         """读取当前 Pipeline 的最小控制面健康事实，不扫描历史正文。"""

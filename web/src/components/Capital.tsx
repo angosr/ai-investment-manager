@@ -48,7 +48,7 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
   ).length;
   return (
     <Card
-      title="当前持仓"
+      title="持仓与可操作品种"
       aside={
         instruments.length > 0
           ? `${holdingCount} 个持仓 · ${instruments.length} 个品种`
@@ -59,7 +59,13 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
       {instruments.length === 0 ? (
         <p className={styles.empty}>正在读取可操作品种和账户持仓。</p>
       ) : (
-        instruments.map((item) => {
+        <>
+          {holdingCount === 0 ? (
+            <p className={styles.holdingSummary}>
+              当前没有持仓；下方展示系统可操作品种及实时价格，不代表已经持有。
+            </p>
+          ) : null}
+          {instruments.map((item) => {
           const quantity = item.quantity === null ? null : Number(item.quantity);
           const direction =
             quantity === null
@@ -86,7 +92,9 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
           return (
             <div className={styles.position} key={item.instrument}>
               <div className={styles.positionHead}>
-                <b title={item.instrument}>{item.symbol}</b>
+                <b title={item.instrument}>
+                  {item.symbol} <small>· {product}</small>
+                </b>
                 <span data-direction={direction}>{direction}</span>
               </div>
               <div className={styles.positionDetail}>
@@ -116,12 +124,13 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
                 ) : null}
               </div>
               <div className={styles.quoteMeta} data-quality={item.quote_quality ?? "NONE"}>
-                {product} · {quoteState}
+                {quoteState}
                 {item.quote_observed_at ? ` · ${hhmm(item.quote_observed_at)} UTC` : ""}
               </div>
             </div>
           );
-        })
+          })}
+        </>
       )}
     </Card>
   );

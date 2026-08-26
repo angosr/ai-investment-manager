@@ -47,7 +47,7 @@ export function App() {
             只读投影 · {health.capital_enabled ? (
               <>资本状态以产品账户账本为准，前端不重算</>
             ) : (
-              <>指标口径以 <code>OutcomeWindowReport</code> 为准，前端不重算</>
+              <>预测、产品和资本结果由后端按冻结口径结算，前端不重算</>
             )} · 实时经 SSE 推送
           </footer>
         ) : null}

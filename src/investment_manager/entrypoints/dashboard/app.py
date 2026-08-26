@@ -356,9 +356,10 @@ def create_app(
 
     async def accounts(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
-        statuses, calls = await asyncio.gather(
+        statuses, calls, usage = await asyncio.gather(
             run_in_threadpool(reader.accounts, now=now),
             run_in_threadpool(reader.ai_calls_last_hour, now=now),
+            run_in_threadpool(reader.ai_token_usage, now=now),
         )
         return _json(
             {
@@ -367,6 +368,7 @@ def create_app(
                     "last_hour": calls,
                     "minimum_interval_seconds": config.trigger.minimum_call_interval_seconds,
                 },
+                "token_usage": ser.token_usage(usage),
             }
         )
 

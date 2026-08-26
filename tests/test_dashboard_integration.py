@@ -686,6 +686,68 @@ def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_pat
     assert [item["account_id"] for item in response.json()["accounts"]] == [
         ".codex-runtime"
     ]
+    usage = response.json()["token_usage"]
+    assert usage["window_days"] == 7
+    assert usage["total_tokens"] == 0
+    assert len(usage["daily"]) == 7
+    assert [item["account_id"] for item in usage["accounts"]] == [
+        ".codex-runtime"
+    ]
+
+
+def test_dashboard_token_usage_aggregates_each_account_and_total(app_config) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    now = datetime(2026, 8, 26, 12, tzinfo=UTC)
+    account_ids = tuple(account.account_id for account in app_config.codex_accounts.accounts)
+
+    rows = (
+        ("today", account_ids[0], now, 1_000_000),
+        ("yesterday", account_ids[0], now - timedelta(days=1), 250_000),
+        ("window-start", account_ids[1], now - timedelta(days=6), 500_000),
+        (
+            "before-window",
+            account_ids[1],
+            now.replace(hour=0) - timedelta(days=6, seconds=1),
+            9_000_000,
+        ),
+        ("future", account_ids[0], now + timedelta(seconds=1), 9_000_000),
+        ("retired", ".codex-retired", now, 9_000_000),
+    )
+    with engine.begin() as connection:
+        for run_id, account_id, observed_at, tokens in rows:
+            connection.execute(
+                insert(codex_runs).values(
+                    run_id=f"run-token-usage-{run_id}",
+                    cycle_id=f"cycle-token-usage-{run_id}",
+                    account_id=account_id,
+                    attempt=1,
+                    status="SUCCEEDED",
+                    error_class=None,
+                    observed_at=observed_at,
+                    payload={"usage": {"total_tokens": tokens}},
+                )
+            )
+
+    usage = DashboardReader(engine, app_config).ai_token_usage(now=now)
+    payload = ser.token_usage(usage)
+
+    assert payload["start_date"] == "2026-08-20"
+    assert payload["end_date"] == "2026-08-26"
+    assert payload["total_tokens"] == 1_750_000
+    assert [item["total_tokens"] for item in payload["daily"]] == [
+        500_000,
+        0,
+        0,
+        0,
+        0,
+        250_000,
+        1_000_000,
+    ]
+    by_account = {item["account_id"]: item for item in payload["accounts"]}
+    assert by_account[account_ids[0]]["total_tokens"] == 1_250_000
+    assert by_account[account_ids[1]]["total_tokens"] == 500_000
+    assert by_account[account_ids[2]]["total_tokens"] == 0
 
 
 def test_cycle_detail_and_snapshot_project_real_payloads(app_config, replay_input) -> None:

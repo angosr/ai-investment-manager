@@ -32,7 +32,6 @@ class TemporalPolicy(StrictConfig):
     assessment_task_queue: str = "investment-manager-assessment-v1"
     lifecycle_task_queue: str = "investment-manager-lifecycle-v1"
     reconciliation_task_queue: str = "investment-manager-reconciliation-v1"
-    outcome_evaluation_task_queue: str = "investment-manager-outcome-evaluation-v1"
     governance_task_queue: str = "investment-manager-governance-v1"
     version_evaluation_task_queue: str = "investment-manager-version-evaluation-v1"
     release_task_queue: str = "investment-manager-release-v1"
@@ -60,7 +59,6 @@ class TemporalPolicy(StrictConfig):
                 self.assessment_task_queue,
                 self.lifecycle_task_queue,
                 self.reconciliation_task_queue,
-                self.outcome_evaluation_task_queue,
                 self.governance_task_queue,
                 self.version_evaluation_task_queue,
                 self.release_task_queue,

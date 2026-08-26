@@ -16,6 +16,8 @@ from investment_manager.entrypoints.dashboard.read_models import (
     AssessmentRecord,
     CycleRow,
     EquityWindow,
+    TokenUsageDay,
+    TokenUsageWindow,
     WorldEvent,
 )
 from investment_manager.execution.ledger import CycleFacts
@@ -425,6 +427,30 @@ def account_status(status: AccountStatus) -> dict:
         "healthy": status.healthy,
         "observed_at": fmt.iso(status.observed_at),
         "recent_failures": status.recent_failures,
+    }
+
+
+def token_usage(window: TokenUsageWindow) -> dict:
+    def daily(points: tuple[TokenUsageDay, ...]) -> list[dict]:
+        return [
+            {"date": point.date.isoformat(), "total_tokens": point.total_tokens}
+            for point in points
+        ]
+
+    return {
+        "window_days": window.window_days,
+        "start_date": window.start_date.isoformat(),
+        "end_date": window.end_date.isoformat(),
+        "total_tokens": window.total_tokens,
+        "daily": daily(window.daily),
+        "accounts": [
+            {
+                "account_id": account.account_id,
+                "total_tokens": account.total_tokens,
+                "daily": daily(account.daily),
+            }
+            for account in window.accounts
+        ],
     }
 
 

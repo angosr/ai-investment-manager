@@ -571,9 +571,30 @@ export interface AccountStatus {
   recent_failures: number;
 }
 
+export interface TokenUsagePoint {
+  date: string;
+  total_tokens: number;
+}
+
+export interface AccountTokenUsage {
+  account_id: string;
+  total_tokens: number;
+  daily: TokenUsagePoint[];
+}
+
+export interface TokenUsage {
+  window_days: number;
+  start_date: string;
+  end_date: string;
+  total_tokens: number;
+  daily: TokenUsagePoint[];
+  accounts: AccountTokenUsage[];
+}
+
 export interface Accounts {
   accounts: AccountStatus[];
   call_activity: { last_hour: number; minimum_interval_seconds: number };
+  token_usage: TokenUsage;
 }
 
 export interface Resources {
