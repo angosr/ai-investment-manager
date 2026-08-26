@@ -10,8 +10,13 @@ from investment_manager.information.aggregated_flows import (
     AggregatedEtfFlowSnapshot,
 )
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
+from investment_manager.information.official.economic_actuals import (
+    EconomicReleaseActualRecord,
+    economic_calendar_event_id,
+)
 from investment_manager.information.official.economic_calendar import (
     EconomicReleaseEventRecord,
+    EconomicReleaseKind,
 )
 from investment_manager.information.official.metrics import (
     OfficialMetricSnapshot,
@@ -52,6 +57,18 @@ TREASURY_BUYBACK_OPERATION_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_SCHEDULE"
 TREASURY_BUYBACK_RESULT_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_RESULT"
 FEDERAL_REGISTER_RULEMAKING_FACT_TYPE = "US_DIGITAL_ASSET_RULEMAKING"
 ECONOMIC_RELEASE_EVENT_FACT_TYPE = "US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE"
+ECONOMIC_RELEASE_ACTUAL_FACT_TYPES = {
+    EconomicReleaseKind.US_CPI: "US_CPI_RELEASE_ACTUAL",
+    EconomicReleaseKind.US_EMPLOYMENT: "US_EMPLOYMENT_RELEASE_ACTUAL",
+    EconomicReleaseKind.US_GDP: "US_GDP_RELEASE_ACTUAL",
+    EconomicReleaseKind.US_PCE: "US_PCE_RELEASE_ACTUAL",
+}
+_ECONOMIC_RELEASE_RISK_FACTORS = {
+    EconomicReleaseKind.US_CPI: ("US_INFLATION",),
+    EconomicReleaseKind.US_EMPLOYMENT: ("US_EMPLOYMENT",),
+    EconomicReleaseKind.US_GDP: ("US_GROWTH",),
+    EconomicReleaseKind.US_PCE: ("US_INFLATION",),
+}
 
 
 class OfficialFactProjectionPolicy(FrozenModel):
@@ -104,9 +121,8 @@ class StateDeltaPolicy(FrozenModel):
 
     @model_validator(mode="after")
     def policy_must_be_unambiguous(self):
-        if (
-            tuple(sorted(set(self.horizons_minutes))) != self.horizons_minutes
-            or any(value <= 0 for value in self.horizons_minutes)
+        if tuple(sorted(set(self.horizons_minutes))) != self.horizons_minutes or any(
+            value <= 0 for value in self.horizons_minutes
         ):
             raise ValueError("horizons_minutes 必须为正数、唯一且排序")
         fact_types = tuple(rule.fact_type for rule in self.rules)
@@ -132,9 +148,7 @@ def project_fomc_calendar_fact(
         else FactRevisionStatus.CANCELLED
     )
     projection_label = (
-        "with projections"
-        if revision.has_projection_materials
-        else "without projections"
+        "with projections" if revision.has_projection_materials else "without projections"
     )
     claim = (
         f"FOMC meeting window {revision.event_start_at.isoformat()} to "
@@ -199,6 +213,83 @@ def project_economic_release_event_fact(
         risk_factors=revision.risk_factors,
         decision_materiality=FactDecisionMateriality.BACKGROUND,
         source_observation_ids=(observation.observation_id,),
+        previous=previous,
+    )
+
+
+def economic_release_actual_fact_id(event: EconomicReleaseEventRecord) -> str:
+    return stable_id(
+        "canonical_fact",
+        ECONOMIC_RELEASE_ACTUAL_FACT_TYPES[event.release_kind],
+        economic_calendar_event_id(event),
+    )
+
+
+def project_economic_release_actual_fact(
+    record: EconomicReleaseActualRecord,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    fact_type = ECONOMIC_RELEASE_ACTUAL_FACT_TYPES[record.release_kind]
+    metrics = "; ".join(
+        f"{item.name.value}={item.value} {item.unit.value}" for item in record.values
+    )
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            fact_type,
+            record.calendar_event_id,
+        ),
+        projection_version=policy.version,
+        fact_type=fact_type,
+        status=FactRevisionStatus.ACTIVE,
+        event_time=record.scheduled_at,
+        observed_at=record.observation.observed_at,
+        headline=f"U.S. official economic release actuals: {record.title}",
+        claim=(
+            f"release_kind={record.release_kind.value}; period={record.period}; "
+            f"vintage={record.vintage}; scheduled_at={record.scheduled_at.isoformat()}; "
+            f"{metrics}. These are first-party actual values; no market consensus or "
+            "surprise is implied."
+        ),
+        affected_assets=policy.affected_assets,
+        risk_factors=_ECONOMIC_RELEASE_RISK_FACTORS[record.release_kind],
+        decision_materiality=FactDecisionMateriality.CANDIDATE,
+        source_observation_ids=(record.observation.observation_id,),
+        previous=previous,
+    )
+
+
+def project_economic_release_unavailable_fact(
+    event: EconomicReleaseEventRecord,
+    *,
+    observed_at: datetime,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    observed_at = require_utc(observed_at)
+    if observed_at < event.scheduled_at:
+        raise ValueError("经济发布实际值不能在发布时间前标记不可用")
+    fact_type = ECONOMIC_RELEASE_ACTUAL_FACT_TYPES[event.release_kind]
+    return _build_fact_revision(
+        fact_id=economic_release_actual_fact_id(event),
+        projection_version=policy.version,
+        fact_type=fact_type,
+        status=FactRevisionStatus.UNAVAILABLE,
+        event_time=event.scheduled_at,
+        observed_at=observed_at,
+        headline=f"U.S. official economic release actuals unavailable: {event.title}",
+        claim=(
+            f"release_kind={event.release_kind.value}; "
+            f"scheduled_at={event.scheduled_at.isoformat()}; "
+            "the bounded official-source acquisition window ended without a "
+            "parseable actual value. This does not mean zero, unchanged, or neutral."
+        ),
+        affected_assets=policy.affected_assets,
+        risk_factors=_ECONOMIC_RELEASE_RISK_FACTORS[event.release_kind],
+        decision_materiality=FactDecisionMateriality.CANDIDATE,
+        source_observation_ids=(event.observation.observation_id,),
         previous=previous,
     )
 
@@ -404,9 +495,9 @@ def project_treasury_buyback_result_fact(
     utilization_pct = (
         record.accepted_usd_m / record.maximum_purchase_usd_m * Decimal("100")
     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
-    acceptance_pct = (
-        record.accepted_usd_m / record.offered_usd_m * Decimal("100")
-    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+    acceptance_pct = (record.accepted_usd_m / record.offered_usd_m * Decimal("100")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_EVEN
+    )
     return _build_fact_revision(
         fact_id=stable_id(
             "canonical_fact",
@@ -462,8 +553,7 @@ def project_official_metric_fact(
         FactDecisionMateriality.CANDIDATE
         if context is not None
         and context.sample_size >= policy.metric_minimum_history_observations
-        and context.absolute_change_percentile
-        >= policy.metric_candidate_absolute_percentile
+        and context.absolute_change_percentile >= policy.metric_candidate_absolute_percentile
         else FactDecisionMateriality.BACKGROUND
     )
     context_text = (
@@ -503,8 +593,7 @@ def project_aggregated_etf_flow_fact(
     decision_materiality = (
         FactDecisionMateriality.CANDIDATE
         if record.sample_size >= policy.metric_minimum_history_observations
-        and record.absolute_flow_percentile
-        >= policy.metric_candidate_absolute_percentile
+        and record.absolute_flow_percentile >= policy.metric_candidate_absolute_percentile
         else FactDecisionMateriality.BACKGROUND
     )
     direction = "net inflow" if record.net_inflow_usd_m >= 0 else "net outflow"
@@ -572,19 +661,13 @@ def build_state_snapshot(
         "analysis_scope": analysis_scope,
         "as_of": as_of.isoformat(),
         "fact_revision_ids": fact_revision_ids,
-        "market_snapshot_refs": _unique_sorted(
-            market_snapshot_refs, name="market_snapshot_refs"
-        ),
+        "market_snapshot_refs": _unique_sorted(market_snapshot_refs, name="market_snapshot_refs"),
         "feature_snapshot_refs": _unique_sorted(
             feature_snapshot_refs, name="feature_snapshot_refs"
         ),
         "account_snapshot_ref": account_snapshot_ref,
-        "data_quality_codes": _unique_sorted(
-            data_quality_codes, name="data_quality_codes"
-        ),
-        "coverage_gap_codes": _unique_sorted(
-            coverage_gap_codes, name="coverage_gap_codes"
-        ),
+        "data_quality_codes": _unique_sorted(data_quality_codes, name="data_quality_codes"),
+        "coverage_gap_codes": _unique_sorted(coverage_gap_codes, name="coverage_gap_codes"),
     }
     derivative_refs = _unique_sorted(
         derivative_snapshot_refs,
@@ -650,10 +733,7 @@ def build_state_material_delta(
     )
     if material_intelligence_event_refs is None:
         changed_event_refs = tuple(
-            sorted(
-                set(current.intelligence_event_refs)
-                - set(previous.intelligence_event_refs)
-            )
+            sorted(set(current.intelligence_event_refs) - set(previous.intelligence_event_refs))
         )
     else:
         changed_event_refs = _unique_sorted(
@@ -661,13 +741,9 @@ def build_state_material_delta(
             name="material_intelligence_event_refs",
         )
         if not set(changed_event_refs).issubset(current.intelligence_event_refs):
-            raise ValueError(
-                "material_intelligence_event_refs 必须属于 current StateSnapshot"
-            )
+            raise ValueError("material_intelligence_event_refs 必须属于 current StateSnapshot")
         changed_event_refs = tuple(
-            item
-            for item in changed_event_refs
-            if item not in previous.intelligence_event_refs
+            item for item in changed_event_refs if item not in previous.intelligence_event_refs
         )
     market_refs = _unique_sorted(market_feature_refs, name="market_feature_refs")
     if not set(market_refs).issubset(current.feature_snapshot_refs):
@@ -698,11 +774,7 @@ def build_state_material_delta(
     materiality = max(
         (
             *(rule.materiality for rule in rules),
-            *(
-                (policy.intelligence_materiality,)
-                if changed_event_refs
-                else ()
-            ),
+            *((policy.intelligence_materiality,) if changed_event_refs else ()),
             *((policy.market_materiality,) if changed_market_refs else ()),
         ),
         key=_materiality_rank,
@@ -754,11 +826,7 @@ def build_state_material_delta(
             sorted(
                 {
                     *(factor for item in changed_facts for factor in item.risk_factors),
-                    *(
-                        policy.intelligence_risk_factors
-                        if changed_event_refs
-                        else ()
-                    ),
+                    *(policy.intelligence_risk_factors if changed_event_refs else ()),
                     *(policy.market_risk_factors if changed_market_refs else ()),
                 }
             )
@@ -770,11 +838,7 @@ def build_state_material_delta(
             sorted(
                 {
                     *(rule.reason_code for rule in rules),
-                    *(
-                        (policy.intelligence_reason_code,)
-                        if changed_event_refs
-                        else ()
-                    ),
+                    *((policy.intelligence_reason_code,) if changed_event_refs else ()),
                     *((policy.market_reason_code,) if changed_market_refs else ()),
                 }
             )

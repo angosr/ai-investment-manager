@@ -10,6 +10,9 @@ from investment_manager.information.aggregated_flows import (
     AggregatedEtfFlowSnapshot,
     AggregatedRecordKind,
 )
+from investment_manager.information.official.economic_actuals import (
+    EconomicReleaseActualRecord,
+)
 from investment_manager.information.official.economic_calendar import (
     EconomicReleaseEventRecord,
     build_economic_release_calendar_revision,
@@ -72,6 +75,7 @@ from investment_manager.platform.locking import advisory_xact_lock
 StructuredRecord = (
     BaseOfficialRecord
     | AggregatedEtfFlowSnapshot
+    | EconomicReleaseActualRecord
     | EconomicReleaseEventRecord
     | FedChairPublicEventRecord
     | OfficialMetricSnapshot
@@ -286,8 +290,7 @@ class SqlStructuredInformationStore:
                 select(ranked.c.payload).where(ranked.c.revision_rank == 1)
             ).scalars()
             revisions = tuple(
-                MarketCalendarEventRevision.model_validate(payload)
-                for payload in payloads
+                MarketCalendarEventRevision.model_validate(payload) for payload in payloads
             )
         return tuple(
             sorted(
@@ -389,9 +392,7 @@ class SqlEconomicReleaseCalendarInformationIngestor:
             content=content,
         )
         self._raw.put(raw, content)
-        current = tuple(
-            record for record in snapshot.records if record.scheduled_at >= observed_at
-        )
+        current = tuple(record for record in snapshot.records if record.scheduled_at >= observed_at)
         current_ids = {item.observation.source_record_id for item in current}
         previous = tuple(
             record
@@ -416,9 +417,7 @@ class SqlEconomicReleaseCalendarInformationIngestor:
             )
             for record in previous
         )
-        return tuple(
-            self._records.put(record) for record in (*current, *cancellations)
-        )
+        return tuple(self._records.put(record) for record in (*current, *cancellations))
 
 
 class SqlFedOfficialInformationIngestor:
@@ -522,9 +521,7 @@ class SqlFedOfficialInformationIngestor:
             observed_at=observed_at,
             years=years,
         )
-        current = tuple(
-            record for record in snapshot.records if record.scheduled_at >= observed_at
-        )
+        current = tuple(record for record in snapshot.records if record.scheduled_at >= observed_at)
         current_ids = {record.observation.source_record_id for record in current}
         previous = tuple(
             record
@@ -549,9 +546,7 @@ class SqlFedOfficialInformationIngestor:
             )
             for record in previous
         )
-        return tuple(
-            self._records.put(record) for record in (*current, *cancellations)
-        )
+        return tuple(self._records.put(record) for record in (*current, *cancellations))
 
 
 class SqlTreasuryBuybackInformationIngestor:
@@ -605,9 +600,7 @@ class SqlTreasuryBuybackInformationIngestor:
             )
             for record in previous
         )
-        return tuple(
-            self._records.put(record) for record in (*current, *cancellations)
-        )
+        return tuple(self._records.put(record) for record in (*current, *cancellations))
 
     def ingest_result(
         self,
@@ -670,6 +663,8 @@ class SqlFederalRegisterInformationIngestor:
 
 def _record_from_payload(payload: dict) -> StructuredRecord:
     kind = payload.get("kind")
+    if kind == OfficialRecordKind.ECONOMIC_RELEASE_ACTUAL.value:
+        return EconomicReleaseActualRecord.model_validate(payload)
     if kind == OfficialRecordKind.ECONOMIC_RELEASE_EVENT.value:
         return EconomicReleaseEventRecord.model_validate(payload)
     if kind == OfficialRecordKind.FOMC_MEETING.value:

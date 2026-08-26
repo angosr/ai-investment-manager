@@ -1,23 +1,23 @@
-manifest_id: release-framework-forecast-baseline-v2
-created_at: 2026-08-23T17:00:00Z
+manifest_id: release-framework-forecast-baseline-v3
+created_at: 2026-08-26T14:20:00Z
 status: CHALLENGER
 code_version: cd0fb5c95c0e95c032bb05df63836813a4719d79
 constitution_version: constitution-v2
-parent_manifest_id: release-framework-forecast-baseline-v1
+parent_manifest_id: release-framework-forecast-baseline-v2
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
-  - [decision_state, portfolio-state-v44]
-  - [capital, total-portfolio-capital-v55]
-  - [outcome_evaluation, typed-outcome-settlement-v29]
-  - [trigger, analysis-trigger-v30]
+  - [decision_state, portfolio-state-v45]
+  - [capital, total-portfolio-capital-v56]
+  - [outcome_evaluation, typed-outcome-settlement-v30]
+  - [trigger, analysis-trigger-v31]
   - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v14]
   - [shadow, shadow-simulation-v2]
-  - [information, information-intake-v38]
+  - [information, information-intake-v39]
   - [pipeline, off-pipeline-v8]
   - [codex_runtime, codex-runtime-v9]
-  - [assessment, context-assessment-v48]
+  - [assessment, context-assessment-v49]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
   - [governance, governance-cycle-v2]

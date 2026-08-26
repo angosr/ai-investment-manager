@@ -172,6 +172,17 @@ class InformationPolicy(StrictConfig):
         ge=300,
         le=86_400,
     )
+    economic_release_actual_poll_seconds: int = Field(default=15, ge=5, le=300)
+    economic_release_actual_deadline_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=7_200,
+    )
+    economic_release_actual_recovery_lookback_seconds: int = Field(
+        default=7_200,
+        ge=900,
+        le=86_400,
+    )
     treasury_buyback_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
     treasury_buyback_result_lookback_seconds: int = Field(
         default=604_800,
@@ -212,6 +223,13 @@ class InformationPolicy(StrictConfig):
     def official_metric_cadence_must_be_ordered(self):
         if self.official_metric_slow_poll_seconds < self.official_metric_poll_seconds:
             raise ValueError("官方指标慢速轮询周期不能短于快速周期")
+        if (
+            self.economic_release_actual_deadline_seconds
+            < self.economic_release_actual_poll_seconds
+            or self.economic_release_actual_recovery_lookback_seconds
+            < self.economic_release_actual_deadline_seconds
+        ):
+            raise ValueError("经济发布实际值截止与恢复窗口必须覆盖轮询周期")
         return self
 
     @model_validator(mode="after")

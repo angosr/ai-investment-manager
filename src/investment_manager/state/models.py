@@ -16,6 +16,7 @@ class FactRevisionStatus(StrEnum):
     CANCELLED = "CANCELLED"
     RETRACTED = "RETRACTED"
     CONFLICTED = "CONFLICTED"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 class DeltaCategory(StrEnum):

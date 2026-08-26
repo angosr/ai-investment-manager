@@ -245,7 +245,7 @@ def test_removed_future_event_becomes_a_durable_cancellation() -> None:
     assert changed.new_fact_revisions[0].event_time == datetime(2026, 9, 4, 12, 30, tzinfo=UTC)
 
 
-def test_calendar_initial_sync_creates_wakeups_without_immediate_ai_fanout(
+def test_calendar_sync_keeps_obligations_without_premature_ai_wakeups(
     app_config,
 ) -> None:
     engine = _engine()
@@ -307,15 +307,4 @@ def test_calendar_initial_sync_creates_wakeups_without_immediate_ai_fanout(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
         )
-        assert len(plan.scheduled_wakeups) == 3
-        assert {item.wake_at for item in plan.scheduled_wakeups} == {
-            datetime(2026, 8, 26, 12, 30, tzinfo=UTC),
-            datetime(2026, 9, 4, 12, 30, tzinfo=UTC),
-            datetime(2026, 9, 11, 12, 30, tzinfo=UTC),
-        }
-        simultaneous = next(
-            item
-            for item in plan.scheduled_wakeups
-            if item.wake_at == datetime(2026, 8, 26, 12, 30, tzinfo=UTC)
-        )
-        assert len(simultaneous.evidence_ids) == 2
+        assert plan.scheduled_wakeups == ()

@@ -43,7 +43,11 @@ from investment_manager.information.coverage import (
     build_source_poll_record,
 )
 from investment_manager.information.models import CausalDomain, SourcePollStatus
+from investment_manager.information.official.economic_actual_source import (
+    HttpEconomicReleaseActualSource,
+)
 from investment_manager.information.official.publications import OfficialPublicationSource
+from investment_manager.information.official.repository import SqlStructuredInformationStore
 from investment_manager.information.official.source import (
     HttpEconomicReleaseCalendarSource,
     HttpFederalRegisterSource,
@@ -70,6 +74,10 @@ from investment_manager.scheduling.fact_triggers import CanonicalFactTriggerPubl
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import DecisionPacket
+from investment_manager.state.economic_releases import (
+    EconomicReleaseActualCollectorService,
+    SqlEconomicReleaseActualFactIngestor,
+)
 from investment_manager.state.metric_ingestion import (
     AggregatedEtfFlowCollectorService,
     OfficialMetricCollectorService,
@@ -470,9 +478,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         delta_policy=loaded.decision_state.delta_policy,
         pipeline_id=loaded.pipeline.version,
         trigger_expiry_seconds=loaded.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=(
-            loaded.decision_state.packet_policy.maximum_market_age_seconds
-        ),
+        required_freshness_seconds=(loaded.decision_state.packet_policy.maximum_market_age_seconds),
         analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
     )
     official_service = MacroOfficialCollectorService(
@@ -493,9 +499,22 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         publish_recent=fact_trigger_publisher.publish_recent,
         monetary_poll_seconds=policy.fed_monetary_poll_seconds,
         calendar_poll_seconds=policy.fed_calendar_poll_seconds,
-        economic_calendar_poll_seconds=(
-            policy.economic_release_calendar_poll_seconds
+        economic_calendar_poll_seconds=(policy.economic_release_calendar_poll_seconds),
+        poll_recorder=coverage_store,
+    )
+    economic_actual_service = EconomicReleaseActualCollectorService(
+        source=HttpEconomicReleaseActualSource(
+            timeout_seconds=policy.request_timeout_seconds,
         ),
+        ingestor=SqlEconomicReleaseActualFactIngestor(
+            engine,
+            policy=loaded.decision_state.official_fact_policy,
+        ),
+        records=SqlStructuredInformationStore(engine),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        poll_seconds=policy.economic_release_actual_poll_seconds,
+        deadline_seconds=policy.economic_release_actual_deadline_seconds,
+        recovery_lookback_seconds=(policy.economic_release_actual_recovery_lookback_seconds),
         poll_recorder=coverage_store,
     )
     metric_service = OfficialMetricCollectorService(
@@ -553,6 +572,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         services=(
             service,
             official_service,
+            economic_actual_service,
             metric_service,
             aggregate_flow_service,
             regulatory_service,

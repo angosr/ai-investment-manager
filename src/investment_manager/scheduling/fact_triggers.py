@@ -42,6 +42,9 @@ _SCHEDULED_FACT_TYPES = {
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
 }
+_AI_WAKEUP_SCHEDULED_FACT_TYPES = _SCHEDULED_FACT_TYPES - {
+    ECONOMIC_RELEASE_EVENT_FACT_TYPE,
+}
 
 
 class CanonicalFactTriggerPublisher:
@@ -175,7 +178,7 @@ class CanonicalFactTriggerPublisher:
             scheduled_by_time: dict[datetime, list[CanonicalFactRevision]] = {}
             for fact in facts:
                 if (
-                    fact.fact_type not in _SCHEDULED_FACT_TYPES
+                    fact.fact_type not in _AI_WAKEUP_SCHEDULED_FACT_TYPES
                     or fact.status != FactRevisionStatus.ACTIVE
                     or fact.event_time is None
                     or fact.event_time <= as_of

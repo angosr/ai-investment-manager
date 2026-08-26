@@ -4,17 +4,17 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v44
+  version: portfolio-state-v45
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v16
+    version: official-fact-v17
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v17
+    version: state-delta-v18
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -69,18 +69,30 @@ decision_state:
       - fact_type: USD_STABLECOIN_SUPPLY_SNAPSHOT
         materiality: HIGH
         reason_code: USD_STABLECOIN_SUPPLY_REVISION
+      - fact_type: US_CPI_RELEASE_ACTUAL
+        materiality: HIGH
+        reason_code: US_CPI_RELEASE_ACTUAL_REVISION
       - fact_type: US_DIGITAL_ASSET_RULEMAKING
         materiality: HIGH
         reason_code: US_DIGITAL_ASSET_RULEMAKING_REVISION
+      - fact_type: US_EMPLOYMENT_RELEASE_ACTUAL
+        materiality: HIGH
+        reason_code: US_EMPLOYMENT_RELEASE_ACTUAL_REVISION
       - fact_type: US_EQUITY_MARKET_SNAPSHOT
         materiality: HIGH
         reason_code: US_EQUITY_MARKET_REVISION
+      - fact_type: US_GDP_RELEASE_ACTUAL
+        materiality: HIGH
+        reason_code: US_GDP_RELEASE_ACTUAL_REVISION
       - fact_type: US_HIGH_YIELD_CREDIT_SNAPSHOT
         materiality: HIGH
         reason_code: US_HIGH_YIELD_CREDIT_REVISION
       - fact_type: US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE
         materiality: NORMAL
         reason_code: US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE_REVISION
+      - fact_type: US_PCE_RELEASE_ACTUAL
+        materiality: HIGH
+        reason_code: US_PCE_RELEASE_ACTUAL_REVISION
       - fact_type: US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_AUCTION_ABSORPTION_REVISION
@@ -94,7 +106,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v47
+    version: decision-packet-policy-v48
     schema_version: decision-packet-v19
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -115,7 +127,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v55
+  version: total-portfolio-capital-v56
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -227,10 +239,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v24
+    version: btc-context-forecast-v25
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "3c4eb4f28ccc1b85e28f57b47f80aae1f036e108ecc98f880924584cb80339a1"
+    producer_behavior_id: "7edcd21fd4e4c4dd0fdcea4b24d3c2b72fc7fea3e14ac035d7dbdd534b395894"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -280,7 +292,7 @@ capital:
         probability: "0.10"
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v29
+  version: typed-outcome-settlement-v30
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -291,9 +303,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v23
+    version: world-model-ablation-forward-v24
     enabled: false
-    plan_id: world-model-ablation-forward-v23
+    plan_id: world-model-ablation-forward-v24
     # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
     activated_at: 2026-08-26T16:00:00Z
     minimum_sample_size: 30
@@ -310,7 +322,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v30
+  version: analysis-trigger-v31
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
@@ -408,7 +420,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v38
+  version: information-intake-v39
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -420,8 +432,6 @@ information:
   request_timeout_seconds: 15
   collection_interval_seconds: 60
   official_event_feeds:
-    - stream_id: bea-economic-releases
-      url: https://apps.bea.gov/rss/rss.xml
     - stream_id: cftc-press-releases
       url: https://www.cftc.gov/RSS/RSSGP/rssgp.xml
     - stream_id: cftc-speeches-testimony
@@ -444,6 +454,10 @@ information:
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
   economic_release_calendar_poll_seconds: 21600
+  economic_release_actual_poll_seconds: 15
+  economic_release_actual_deadline_seconds: 900
+  # 覆盖发布后短时停机；窗口之外不追扫历史，也不制造补录触发风暴。
+  economic_release_actual_recovery_lookback_seconds: 14400
   treasury_buyback_poll_seconds: 21600
   treasury_buyback_result_lookback_seconds: 604800
   regulatory_poll_seconds: 300
@@ -528,7 +542,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v48
+  version: context-assessment-v49
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
