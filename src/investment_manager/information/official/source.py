@@ -28,6 +28,7 @@ from investment_manager.information.official.metrics import (
     STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
+    TREASURY_REAL_YIELD_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import FED_PUBLIC_CALENDAR_URL
@@ -285,6 +286,7 @@ class HttpOfficialMetricSource:
         STABLECOIN_SUPPLY_STREAM_ID,
         TGA_STREAM_ID,
         TREASURY_AUCTION_STREAM_ID,
+        TREASURY_REAL_YIELD_STREAM_ID,
         TREASURY_YIELD_STREAM_ID,
     )
 
@@ -370,11 +372,15 @@ class HttpOfficialMetricSource:
                 },
             )
             return str(url), "application/json"
-        if stream_id == TREASURY_YIELD_STREAM_ID:
+        treasury_curve_type = {
+            TREASURY_REAL_YIELD_STREAM_ID: "daily_treasury_real_yield_curve",
+            TREASURY_YIELD_STREAM_ID: "daily_treasury_yield_curve",
+        }.get(stream_id)
+        if treasury_curve_type is not None:
             url = httpx.URL(
                 _TREASURY_YIELD_URL,
                 params={
-                    "data": "daily_treasury_yield_curve",
+                    "data": treasury_curve_type,
                     "field_tdr_date_value": observed_at.strftime("%Y"),
                 },
             )

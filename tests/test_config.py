@@ -55,7 +55,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v57"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v58"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -65,7 +65,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v60"
+    assert config.capital.version == "total-portfolio-capital-v61"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -83,7 +83,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v13"
-    assert config.information.version == "information-intake-v39"
+    assert config.information.version == "information-intake-v40"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
@@ -93,10 +93,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.stream_id for item in config.information.official_event_feeds
     }
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v46"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v17"
-    assert config.decision_state.delta_policy.version == "state-delta-v18"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v49"
+    assert config.decision_state.version == "portfolio-state-v47"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v18"
+    assert config.decision_state.delta_policy.version == "state-delta-v19"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v50"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -119,17 +119,17 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert tuple(
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
-    assert config.assessment.version == "context-assessment-v50"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v33"
+    assert config.assessment.version == "context-assessment-v51"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v34"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v27"
+        == "world-model-ablation-forward-v28"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v31"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v11"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v12"
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -170,6 +170,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert fiscal_sources["treasury-auction-results"].capabilities == (
         "AUCTION_ABSORPTION",
         "DEBT_ISSUANCE",
+    )
+    cross_asset = next(
+        item
+        for item in config.information.coverage_requirements
+        if item.domain.value == "CROSS_ASSET_EXTERNAL"
+    )
+    cross_asset_sources = {source.stream_id: source for source in cross_asset.sources}
+    assert cross_asset_sources["treasury-real-yield-curve"].capabilities == (
+        "UST_REAL_YIELD_CURVE",
     )
     institutional = next(
         item
@@ -233,6 +242,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "US_FISCAL_LIQUIDITY",
         "US_MONETARY_LIQUIDITY",
         "US_INTEREST_RATES",
+        "US_REAL_INTEREST_RATES",
         "US_DOLLAR",
         "US_ENERGY_INFLATION",
         "US_HIGH_YIELD_CREDIT_RISK",

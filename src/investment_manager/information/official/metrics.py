@@ -37,6 +37,7 @@ DEFILLAMA_SOURCE_ID = "defillama"
 
 TGA_STREAM_ID = "treasury-tga-balance"
 TREASURY_AUCTION_STREAM_ID = "treasury-auction-results"
+TREASURY_REAL_YIELD_STREAM_ID = "treasury-real-yield-curve"
 TREASURY_YIELD_STREAM_ID = "treasury-yield-curve"
 FED_BROAD_DOLLAR_STREAM_ID = "fed-broad-dollar"
 NYFED_RRP_STREAM_ID = "nyfed-reverse-repo"
@@ -52,6 +53,7 @@ STABLECOIN_SUPPLY_STREAM_ID = "defillama-usd-stablecoin-supply"
 
 TGA_FACT_TYPE = "US_TREASURY_CASH_SNAPSHOT"
 TREASURY_AUCTION_FACT_TYPE = "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT"
+TREASURY_REAL_YIELD_FACT_TYPE = "US_TREASURY_REAL_YIELD_CURVE_SNAPSHOT"
 TREASURY_YIELD_FACT_TYPE = "US_TREASURY_YIELD_CURVE_SNAPSHOT"
 FED_BROAD_DOLLAR_FACT_TYPE = "FED_BROAD_DOLLAR_SNAPSHOT"
 NYFED_RRP_FACT_TYPE = "NYFED_REVERSE_REPO_SNAPSHOT"
@@ -70,6 +72,7 @@ OFFICIAL_METRIC_RISK_FACTORS_BY_TYPE = {
     TREASURY_AUCTION_FACT_TYPE: frozenset(
         {"US_FISCAL_LIQUIDITY", "US_INTEREST_RATES"}
     ),
+    TREASURY_REAL_YIELD_FACT_TYPE: frozenset({"US_REAL_INTEREST_RATES"}),
     TREASURY_YIELD_FACT_TYPE: frozenset({"US_INTEREST_RATES"}),
     FED_BROAD_DOLLAR_FACT_TYPE: frozenset({"US_DOLLAR"}),
     NYFED_RRP_FACT_TYPE: frozenset({"US_MONETARY_LIQUIDITY"}),
@@ -123,6 +126,10 @@ class OfficialMetricName(StrEnum):
     TREASURY_2S10S_BPS = "treasury_2s10s_bps"
     TREASURY_10Y_CHANGE_1D_BPS = "treasury_10y_change_1d_bps"
     TREASURY_30Y_CHANGE_1D_BPS = "treasury_30y_change_1d_bps"
+    TREASURY_REAL_5Y_PCT = "treasury_real_5y_pct"
+    TREASURY_REAL_10Y_PCT = "treasury_real_10y_pct"
+    TREASURY_REAL_30Y_PCT = "treasury_real_30y_pct"
+    TREASURY_REAL_10Y_CHANGE_1D_BPS = "treasury_real_10y_change_1d_bps"
     BROAD_DOLLAR_INDEX = "broad_dollar_index"
     BROAD_DOLLAR_CHANGE_1D_PCT = "broad_dollar_change_1d_pct"
     RRP_ACCEPTED_USD_M = "rrp_accepted_usd_m"
@@ -302,6 +309,7 @@ def parse_official_metric_document(
     parsers = {
         TGA_STREAM_ID: _parse_tga,
         TREASURY_AUCTION_STREAM_ID: _parse_treasury_auctions,
+        TREASURY_REAL_YIELD_STREAM_ID: _parse_treasury_real_yields,
         TREASURY_YIELD_STREAM_ID: _parse_treasury_yields,
         FED_BROAD_DOLLAR_STREAM_ID: _parse_broad_dollar,
         NYFED_RRP_STREAM_ID: _parse_rrp,
@@ -521,21 +529,10 @@ def _parse_tga(
 def _parse_treasury_yields(
     content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
 ) -> OfficialMetricSnapshot:
-    root = _xml(content, name="Treasury yield XML")
-    atom = "{http://www.w3.org/2005/Atom}"
-    metadata = "{http://schemas.microsoft.com/ado/2007/08/dataservices/metadata}"
-    entries: list[tuple[date, dict[str, str]]] = []
-    for entry in root.findall(f"{atom}entry"):
-        properties = entry.find(f".//{metadata}properties")
-        if properties is None:
-            continue
-        values = {item.tag.rsplit("}", 1)[-1]: (item.text or "").strip() for item in properties}
-        entries.append(
-            (_datetime(values.get("NEW_DATE"), name="Treasury yield date").date(), values)
-        )
-    entries.sort(key=lambda item: item[0])
-    if len(entries) < 2:
-        raise ValueError("Treasury yield XML 缺少至少两个交易日")
+    entries, published_at = _treasury_curve_entries(
+        content,
+        name="Treasury yield",
+    )
     latest_date, latest = entries[-1]
     previous = entries[-2][1]
     y2 = _decimal(latest.get("BC_2YEAR"), name="Treasury 2Y")
@@ -547,8 +544,6 @@ def _parse_treasury_yields(
         (record_date, _decimal(values.get("BC_10YEAR"), name="Treasury 10Y"))
         for record_date, values in entries
     )
-    updated = root.findtext(f"{atom}updated")
-    published_at = _datetime(updated, name="Treasury yield updated")
     return _snapshot(
         source_id=TREASURY_RATES_SOURCE_ID,
         stream_id=TREASURY_YIELD_STREAM_ID,
@@ -593,6 +588,100 @@ def _parse_treasury_yields(
         source_published_at=min(published_at, observed_at),
         payload_ref=payload_ref,
     )
+
+
+def _parse_treasury_real_yields(
+    content: bytes, *, source_url: str, observed_at: datetime, payload_ref: str
+) -> OfficialMetricSnapshot:
+    entries, published_at = _treasury_curve_entries(
+        content,
+        name="Treasury real yield",
+    )
+    latest_date, latest = entries[-1]
+    previous = entries[-2][1]
+    real_5y = _decimal(latest.get("TC_5YEAR"), name="Treasury real 5Y")
+    real_10y = _decimal(latest.get("TC_10YEAR"), name="Treasury real 10Y")
+    real_30y = _decimal(latest.get("TC_30YEAR"), name="Treasury real 30Y")
+    previous_real_10y = _decimal(
+        previous.get("TC_10YEAR"),
+        name="previous Treasury real 10Y",
+    )
+    ten_year_history = tuple(
+        (record_date, _decimal(values.get("TC_10YEAR"), name="Treasury real 10Y"))
+        for record_date, values in entries
+    )
+    return _snapshot(
+        source_id=TREASURY_RATES_SOURCE_ID,
+        stream_id=TREASURY_REAL_YIELD_STREAM_ID,
+        domain=CausalDomain.CROSS_ASSET_EXTERNAL,
+        fact_type=TREASURY_REAL_YIELD_FACT_TYPE,
+        effective_date=latest_date,
+        headline="U.S. Treasury real yield curve",
+        risk_factors=("US_REAL_INTEREST_RATES",),
+        metrics=(
+            _metric(
+                OfficialMetricName.TREASURY_REAL_5Y_PCT,
+                real_5y,
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_REAL_10Y_PCT,
+                real_10y,
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_REAL_30Y_PCT,
+                real_30y,
+                OfficialMetricUnit.PERCENT,
+            ),
+            _metric(
+                OfficialMetricName.TREASURY_REAL_10Y_CHANGE_1D_BPS,
+                (real_10y - previous_real_10y) * 100,
+                OfficialMetricUnit.BASIS_POINTS,
+            ),
+        ),
+        change_context=_most_unusual_change_context(
+            ten_year_history,
+            candidates=(
+                (
+                    OfficialMetricName.TREASURY_REAL_10Y_CHANGE_1D_BPS,
+                    1,
+                    OfficialMetricUnit.BASIS_POINTS,
+                    Decimal("100"),
+                ),
+            ),
+        ),
+        source_url=source_url,
+        observed_at=observed_at,
+        source_published_at=min(published_at, observed_at),
+        payload_ref=payload_ref,
+    )
+
+
+def _treasury_curve_entries(
+    content: bytes,
+    *,
+    name: str,
+) -> tuple[tuple[tuple[date, dict[str, str]], ...], datetime]:
+    root = _xml(content, name=f"{name} XML")
+    atom = "{http://www.w3.org/2005/Atom}"
+    metadata = "{http://schemas.microsoft.com/ado/2007/08/dataservices/metadata}"
+    entries: list[tuple[date, dict[str, str]]] = []
+    for entry in root.findall(f"{atom}entry"):
+        properties = entry.find(f".//{metadata}properties")
+        if properties is None:
+            continue
+        values = {
+            item.tag.rsplit("}", 1)[-1]: (item.text or "").strip()
+            for item in properties
+        }
+        entries.append(
+            (_datetime(values.get("NEW_DATE"), name=f"{name} date").date(), values)
+        )
+    entries.sort(key=lambda item: item[0])
+    if len(entries) < 2:
+        raise ValueError(f"{name} XML 缺少至少两个交易日")
+    return tuple(entries), _datetime(root.findtext(f"{atom}updated"), name=f"{name} updated")
 
 
 def _parse_broad_dollar(
@@ -1571,7 +1660,7 @@ def _stream_source_id(stream_id: str) -> str:
         return TREASURY_FISCAL_SOURCE_ID
     if stream_id == TREASURY_AUCTION_STREAM_ID:
         return TREASURY_DIRECT_SOURCE_ID
-    if stream_id == TREASURY_YIELD_STREAM_ID:
+    if stream_id in {TREASURY_REAL_YIELD_STREAM_ID, TREASURY_YIELD_STREAM_ID}:
         return TREASURY_RATES_SOURCE_ID
     if stream_id == FED_BROAD_DOLLAR_STREAM_ID:
         return FED_H10_SOURCE_ID

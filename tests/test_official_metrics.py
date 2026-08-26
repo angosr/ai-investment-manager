@@ -23,6 +23,7 @@ from investment_manager.information.official.metrics import (
     STABLECOIN_SUPPLY_STREAM_ID,
     TGA_STREAM_ID,
     TREASURY_AUCTION_STREAM_ID,
+    TREASURY_REAL_YIELD_STREAM_ID,
     TREASURY_YIELD_STREAM_ID,
     OfficialMetricName,
     parse_official_metric_document,
@@ -67,6 +68,17 @@ def _documents() -> dict[str, OfficialMetricDocument]:
       <entry><content><m:properties><d:NEW_DATE>2026-08-21T00:00:00</d:NEW_DATE>
         <d:BC_2YEAR>4.24</d:BC_2YEAR><d:BC_10YEAR>4.74</d:BC_10YEAR>
         <d:BC_30YEAR>5.27</d:BC_30YEAR></m:properties></content></entry>
+    </feed>"""
+    treasury_real_xml = b"""<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"
+      xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices">
+      <updated>2026-08-21T19:00:00Z</updated>
+      <entry><content><m:properties><d:NEW_DATE>2026-08-20T00:00:00</d:NEW_DATE>
+        <d:TC_5YEAR>2.05</d:TC_5YEAR><d:TC_10YEAR>2.35</d:TC_10YEAR>
+        <d:TC_30YEAR>2.95</d:TC_30YEAR></m:properties></content></entry>
+      <entry><content><m:properties><d:NEW_DATE>2026-08-21T00:00:00</d:NEW_DATE>
+        <d:TC_5YEAR>2.09</d:TC_5YEAR><d:TC_10YEAR>2.40</d:TC_10YEAR>
+        <d:TC_30YEAR>3.00</d:TC_30YEAR></m:properties></content></entry>
     </feed>"""
     dollar_xml = b"""<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
       xmlns:rss="http://purl.org/rss/1.0/"
@@ -176,6 +188,11 @@ def _documents() -> dict[str, OfficialMetricDocument]:
         TREASURY_YIELD_STREAM_ID: (
             "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml",
             treasury_xml,
+            "application/xml",
+        ),
+        TREASURY_REAL_YIELD_STREAM_ID: (
+            "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml",
+            treasury_real_xml,
             "application/xml",
         ),
         FED_BROAD_DOLLAR_STREAM_ID: (
@@ -367,7 +384,7 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
         assert len(serialized) < 2_000
         assert "E+" not in serialized
 
-    assert len({item.fact_type for item in snapshots}) == 14
+    assert len({item.fact_type for item in snapshots}) == 15
     assert {
         item.observation.source_tier
         for item in snapshots
@@ -388,6 +405,21 @@ def test_all_fixed_metric_documents_parse_to_compact_tiered_snapshots() -> None:
     assert auction_values["treasury_coupon_offering_14d_usd_m"] == 24_000
     assert auction_values["treasury_bill_offering_14d_usd_m"] == 110_000
     assert auction_values["treasury_coupon_bid_to_cover"] == Decimal("2.6267")
+    real_yields = next(
+        item for item in snapshots if item.stream_id == TREASURY_REAL_YIELD_STREAM_ID
+    )
+    real_yield_values = {item.name.value: item.value for item in real_yields.metrics}
+    assert real_yield_values == {
+        "treasury_real_10y_change_1d_bps": Decimal("5"),
+        "treasury_real_10y_pct": Decimal("2.4"),
+        "treasury_real_30y_pct": Decimal("3"),
+        "treasury_real_5y_pct": Decimal("2.09"),
+    }
+    assert real_yields.change_context is not None
+    assert (
+        real_yields.change_context.metric_name
+        == OfficialMetricName.TREASURY_REAL_10Y_CHANGE_1D_BPS
+    )
     ibit = next(item for item in snapshots if item.stream_id == IBIT_HOLDINGS_STREAM_ID)
     assert {item.name.value: item.value for item in ibit.metrics}["ibit_btc_holdings"] == Decimal(
         "762287.0365"

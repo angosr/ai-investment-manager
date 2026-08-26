@@ -12,6 +12,7 @@ from investment_manager.information.official.metrics import (
     FRED_SP500_STREAM_ID,
     FRED_WTI_STREAM_ID,
     STABLECOIN_SUPPLY_STREAM_ID,
+    TREASURY_REAL_YIELD_STREAM_ID,
 )
 from investment_manager.information.official.public_calendar import (
     build_fed_chair_calendar_revision,
@@ -208,6 +209,27 @@ def test_fred_aggregator_streams_use_bounded_single_series_csv(
     assert query["id"] == series_id
     assert query["cosd"] == "2025-08-15"
     assert query["coed"] == "2026-08-20"
+
+
+def test_treasury_real_yields_use_the_first_party_year_feed() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b"<feed/>")
+
+    source = HttpOfficialMetricSource(
+        timeout_seconds=5,
+        transport=httpx.MockTransport(handler),
+    )
+
+    document = source.fetch(TREASURY_REAL_YIELD_STREAM_ID, observed_at=OBSERVED_AT)
+
+    assert document is not None and document.media_type == "application/xml"
+    assert len(requests) == 1
+    assert requests[0].url.host == "home.treasury.gov"
+    assert requests[0].url.params["data"] == "daily_treasury_real_yield_curve"
+    assert requests[0].url.params["field_tdr_date_value"] == "2026"
 
 
 def test_stablecoin_supply_uses_one_pinned_aggregate_history_endpoint() -> None:
