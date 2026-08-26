@@ -1222,35 +1222,41 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
 
     facts = (
         background_fact(
+            revision_id="pce-actual",
+            fact_type="US_PCE_RELEASE_ACTUAL",
+            risk_factor="US_INFLATION",
+            minutes=1,
+        ),
+        background_fact(
             revision_id="fiscal-result",
             fact_type=TREASURY_BUYBACK_RESULT_FACT_TYPE,
             risk_factor="US_FISCAL_LIQUIDITY",
-            minutes=1,
+            minutes=2,
         ),
         background_fact(
             revision_id="fiscal-cash",
             fact_type="US_TREASURY_CASH_SNAPSHOT",
             risk_factor="US_FISCAL_LIQUIDITY",
-            minutes=2,
+            minutes=3,
         ),
         background_fact(
             revision_id="institutional-flow",
             fact_type=BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
             risk_factor="BTC_INSTITUTIONAL_FLOW",
-            minutes=3,
+            minutes=4,
             source_tier=SourceTier.AGGREGATOR,
         ),
         background_fact(
             revision_id="rates",
             fact_type="US_TREASURY_YIELD_CURVE_SNAPSHOT",
             risk_factor="US_INTEREST_RATES",
-            minutes=4,
+            minutes=5,
         ),
         background_fact(
             revision_id="dollar",
             fact_type="FED_BROAD_DOLLAR_SNAPSHOT",
             risk_factor="US_DOLLAR",
-            minutes=5,
+            minutes=6,
         ),
     )
     state = _state(
@@ -1279,6 +1285,7 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
                 ),
             ),
             required_risk_factors=(
+                "US_INFLATION",
                 "BTC_INSTITUTIONAL_FLOW",
                 "US_DOLLAR",
                 "US_FISCAL_LIQUIDITY",
@@ -1300,12 +1307,12 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
     )
 
     assert tuple(item.revision_id for item in packet.facts) == (
-        "fiscal-result",
+        "pce-actual",
         "institutional-flow",
         "dollar",
-        "rates",
+        "fiscal-result",
     )
-    assert packet.omitted_fact_revision_ids == ("fiscal-cash",)
+    assert packet.omitted_fact_revision_ids == ("fiscal-cash", "rates")
 
 
 def test_analysis_projection_exposes_partial_observation_boundary(

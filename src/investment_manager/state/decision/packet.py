@@ -1699,11 +1699,11 @@ class DecisionPacketBuilder:
             key=lambda item: (
                 item.fact.revision_id not in direct_fact_ids,
                 item.fact.decision_materiality != FactDecisionMateriality.CANDIDATE,
+                causal_channel_rank(item),
                 item.fact.fact_type not in _RESULT_CONTEXT_FACT_TYPES,
                 item.fact.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES,
                 not _is_durable_policy_state(item),
                 item.fact.fact_type not in _CALENDAR_CONTEXT_FACT_TYPES,
-                causal_channel_rank(item),
                 _SOURCE_RANK[item.highest_source_tier],
                 item.fact.status.value != "ACTIVE",
                 abs(((item.fact.event_time or item.fact.observed_at) - as_of).total_seconds()),
@@ -1731,11 +1731,12 @@ class DecisionPacketBuilder:
             if is_collapsible_context:
                 represented_context_types.add(item.fact.fact_type)
         eligible = deduplicated
-        # Preserve causal coverage inside each epistemic class. Required channels
-        # receive a slot before source tier ranks comparable evidence within a
-        # channel; otherwise a lower-tier but unique transmission intermediary can
-        # be starved by unrelated first-party background. Repeated facts from one
-        # channel remain available in later rounds.
+        # Preserve causal coverage inside each epistemic class. The mandate order
+        # ranks channels before fact-type conveniences; otherwise continuous
+        # downstream snapshots can evict a fresh official macro result even when
+        # the mandate explicitly needs that upstream channel. Fact type and source
+        # tier only rank comparable evidence within a channel. Repeated facts from
+        # one channel remain available in later rounds.
         diversified: list[VisibleFact] = []
 
         def epistemic_rank(item: VisibleFact) -> tuple[bool, bool]:
