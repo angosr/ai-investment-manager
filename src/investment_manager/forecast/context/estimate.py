@@ -182,7 +182,10 @@ def context_forecast_behavior_hash(
             "world_model_behavior_id": world_model_behavior_id,
             "policy": policy.model_dump(
                 mode="json",
-                exclude={"producer_behavior_id", "enabled"},
+                # Product payoff mapping is a deterministic downstream Forecast
+                # concern.  Changing legal execution products must not relabel
+                # an otherwise identical AI probability behavior or its samples.
+                exclude={"producer_behavior_id", "enabled", "product_payoffs"},
             ),
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,

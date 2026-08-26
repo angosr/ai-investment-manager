@@ -196,9 +196,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 97
+    assert len(contract) == 100
     assert content_hash(contract) == (
-        "4b8b1346391c2d3d40e6139fd9ac4c0d543e9e109e082b9be7679bebfec4bf36"
+        "fbc08c57f61b699a37cdb49e5f98f02a9586ba14a21d600be61d852d563a4f9b"
     )
 
 
@@ -333,7 +333,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
     }
     capabilities = {
         "execution": {"group", "lifecycle", "planning", "reconciliation", "venue"},
-        "forecast": {"codex", "context"},
+            "forecast": {"codex", "context", "product"},
         "governance": {"audit", "change", "evaluation", "release"},
         "information": {"official"},
         "market": {"perpetual"},
@@ -886,6 +886,8 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "forecast_outcomes",
         "forecasts",
         "historical_assessment_view_outcomes",
+        "product_payoff_outcomes",
+        "product_payoff_projections",
     }
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 

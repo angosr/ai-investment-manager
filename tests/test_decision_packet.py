@@ -747,6 +747,18 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
     assert refrozen.intelligence_events[0].directly_triggered
     assert refrozen.facts[0].directly_triggered
     assert len(refrozen.facts) < len(inherited.facts)
+    unique_baseline_size = len(
+        canonical_json(decision_packet_analysis_projection(refrozen))
+    )
+    with pytest.raises(
+        DecisionPacketCapacityError,
+        match="final verified projection exceeds",
+    ):
+        replace_packet_previous_context(
+            refrozen,
+            previous,
+            maximum_analysis_characters=unique_baseline_size - 1,
+        )
 
     with pytest.raises(
         DecisionPacketCapacityError,
@@ -1332,18 +1344,13 @@ def test_analysis_projection_exposes_partial_observation_boundary(
         packet.model_copy(update={"information_coverage": (current, partial, failed)})
     )
 
-    assert projected["capability_summary"] == (
-        {
-            "domain": "FISCAL_DEBT",
-            "status": "PARTIAL",
-            "missing_capabilities": ("DEBT_ISSUANCE",),
-        },
-        {
-            "domain": "MONETARY_INFLATION",
+    assert projected["capability_summary"] == {
+        "FISCAL_DEBT": {"missing": ("DEBT_ISSUANCE",)},
+        "MONETARY_INFLATION": {
             "status": "SOURCE_FAILED",
-            "missing_capabilities": ("INFLATION_SURPRISE",),
+            "missing": ("INFLATION_SURPRISE",),
         },
-    )
+    }
     assert "information_coverage" not in projected
     assert "coverage_gap_codes" not in projected
     assert "data_quality_codes" not in projected
@@ -1534,6 +1541,8 @@ def test_analysis_projection_compacts_prior_world_verification_without_losing_st
     mechanism = previous_projection["mechanisms"][0]
     test = mechanism["tests"][0]
 
+    assert "synthesis" not in previous_projection
+    assert "synthesis_horizon_hours" not in previous_projection
     assert "invalidation_conditions" not in mechanism
     assert test == 0
     assert previous_projection["test_catalog"][test] == (
@@ -1654,8 +1663,19 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     projected_event = decision_packet_analysis_projection(packet)[
         "intelligence_events"
     ][0]
-    assert projected_event["attention_priority"] == "0.8415"
-    assert "impact" not in projected_event
+    assert projected_event["body"] == event.body
+    for audit_only in (
+        "attention_priority",
+        "directly_triggered",
+        "impact",
+        "novelty",
+        "observed_at",
+        "relevance",
+        "source_reliability",
+        "symbols",
+        "url",
+    ):
+        assert audit_only not in projected_event
     assert packet_event.directional_support_eligible is False
     assert packet_event.evidence_ref in assessment_visible_evidence_ids(packet)
     assert packet_event.evidence_ref not in assessment_world_model_evidence_ids(packet)
@@ -1678,7 +1698,7 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     ]["enum"]
     for allowed_ids in (causal_ids, conflicting_ids, retirement_ids, event_ids):
         assert packet_event.evidence_ref not in allowed_ids
-    assert "attention_priority 只是" in build_assess_prompt(packet)
+    assert "入选本身不是现实影响大小" in build_assess_prompt(packet)
     assert "directional_support_eligible=false" in build_assess_prompt(packet)
 
 

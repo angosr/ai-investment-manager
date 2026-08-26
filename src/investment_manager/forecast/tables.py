@@ -398,6 +398,67 @@ Index(
     forecasts.c.available_at,
 )
 
+product_payoff_projections = Table(
+    "product_payoff_projections",
+    metadata,
+    Column("projection_id", String(128), primary_key=True),
+    Column(
+        "source_forecast_id",
+        ForeignKey("forecasts.forecast_id"),
+        nullable=False,
+    ),
+    Column("economic_exposure_id", String(128), nullable=False),
+    Column("target_id", String(128), nullable=False),
+    Column("projected_at", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_product_payoff_projections_exposure_time",
+    product_payoff_projections.c.economic_exposure_id,
+    product_payoff_projections.c.projected_at,
+)
+Index(
+    "ix_product_payoff_projections_source_target_time",
+    product_payoff_projections.c.source_forecast_id,
+    product_payoff_projections.c.target_id,
+    product_payoff_projections.c.projected_at,
+)
+
+product_payoff_outcomes = Table(
+    "product_payoff_outcomes",
+    metadata,
+    Column("outcome_id", String(128), primary_key=True),
+    Column(
+        "projection_id",
+        ForeignKey("product_payoff_projections.projection_id"),
+        nullable=False,
+    ),
+    Column(
+        "source_forecast_id",
+        ForeignKey("forecasts.forecast_id"),
+        nullable=False,
+    ),
+    Column("evaluation_version", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("evaluation_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=False),
+    Column("realized_gross_bps", Numeric(38, 18), nullable=True),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "projection_id",
+        "evaluation_version",
+        name="uq_product_payoff_outcome_identity",
+    ),
+)
+Index(
+    "ix_product_payoff_outcomes_cohort",
+    product_payoff_outcomes.c.evaluation_version,
+    product_payoff_outcomes.c.evaluation_at,
+    product_payoff_outcomes.c.projection_id,
+)
+
 forecast_outcomes = Table(
     "forecast_outcomes",
     metadata,

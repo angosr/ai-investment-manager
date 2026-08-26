@@ -39,6 +39,7 @@ from investment_manager.information.official.metrics import (
 )
 from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
+from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
 from investment_manager.portfolio.policy import (
     CapitalPolicy,
@@ -231,6 +232,35 @@ class AppConfig(StrictConfig):
                     or evidence.quote_asset != target.quote_asset
                 ):
                     raise ValueError("Context Forecast 证据产品必须与 target 同标的计价")
+            payoffs = context.product_payoffs
+            if payoffs is not None:
+                perpetual_market_keys = {
+                    item.key for item in self.market_data.perpetual_instruments
+                }
+                payoff_specs = {
+                    item.instrument.key: item.instrument
+                    for item in self.capital.execution_specs
+                    if item.instrument.key in payoffs.instrument_keys
+                }
+                missing_execution_specs = set(payoffs.instrument_keys) - set(
+                    payoff_specs
+                )
+                if missing_execution_specs:
+                    raise ValueError(
+                        "Product payoff products 必须全部属于 Capital execution_specs"
+                    )
+                if context.target_instrument_key not in payoff_specs:
+                    raise ValueError("Product payoff 必须包含 Forecast 规范参考产品")
+                missing_market_products = {
+                    key
+                    for key, instrument in payoff_specs.items()
+                    if instrument.product != InstrumentProduct.SPOT
+                    and key not in perpetual_market_keys
+                }
+                if missing_market_products:
+                    raise ValueError(
+                        "Product payoff 永续产品必须属于 MarketData universe"
+                    )
         permissions = self.capital.candidate_capital_authorizations
         if permissions and not self.capital.enabled:
             raise ValueError("禁用 Capital 时不得保留 candidate capital authorization")

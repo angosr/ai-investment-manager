@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import optional_utc, require_utc
 from investment_manager.kernel.types import FrozenModel, Money, PositiveDecimal
 from investment_manager.market.models import (
@@ -262,6 +262,91 @@ class PerpetualMarketState(FrozenModel):
     @property
     def premium_fraction(self) -> Decimal:
         return self.mark_price / self.index_price - Decimal("1")
+
+
+class PerpetualProductRules(FrozenModel):
+    """Observed exchange and funding rules required for payoff and execution."""
+
+    rules_id: str = Field(min_length=1)
+    instrument: InstrumentId
+    observed_at: datetime
+    upstream_updated_at: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    contract_type: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    margin_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
+    tick_size: PositiveDecimal
+    market_min_quantity: PositiveDecimal
+    market_max_quantity: PositiveDecimal
+    market_quantity_step: PositiveDecimal
+    minimum_notional: PositiveDecimal
+    funding_override_present: bool
+    funding_interval_hours: int | None = Field(default=None, gt=0, le=24)
+    adjusted_funding_rate_cap: Decimal | None = None
+    adjusted_funding_rate_floor: Decimal | None = None
+    source: str = Field(min_length=1)
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+    _utc_upstream_updated_at = field_validator("upstream_updated_at")(optional_utc)
+
+    @model_validator(mode="after")
+    def identity_and_rules_must_be_consistent(self):
+        if self.instrument.product == InstrumentProduct.SPOT:
+            raise ValueError("Perpetual product rules 不能引用 Spot Instrument")
+        if self.margin_asset != self.instrument.settlement_asset:
+            raise ValueError("Perpetual product rules 保证金资产与结算资产不一致")
+        expected_contract_type = (
+            "TRADIFI_PERPETUAL"
+            if self.instrument.product == InstrumentProduct.TRADFI_PERPETUAL
+            else "PERPETUAL"
+        )
+        if self.contract_type != expected_contract_type:
+            raise ValueError("Perpetual product rules 合约类型与 Instrument 不一致")
+        if self.market_max_quantity < self.market_min_quantity:
+            raise ValueError("Perpetual product rules 最大数量小于最小数量")
+        if (
+            self.upstream_updated_at is not None
+            and self.upstream_updated_at > self.observed_at
+        ):
+            raise ValueError("Perpetual product rules 上游更新时间不能晚于观察时间")
+        funding_override_values = (
+            self.funding_interval_hours,
+            self.adjusted_funding_rate_cap,
+            self.adjusted_funding_rate_floor,
+        )
+        if self.funding_override_present:
+            if not all(item is not None for item in funding_override_values):
+                raise ValueError("Perpetual product rules funding override 必须完整")
+        elif any(item is not None for item in funding_override_values):
+            raise ValueError("Perpetual product rules 缺省 override 时不能携带调整值")
+        if (
+            self.adjusted_funding_rate_floor is not None
+            and self.adjusted_funding_rate_cap is not None
+            and self.adjusted_funding_rate_floor >= self.adjusted_funding_rate_cap
+        ):
+            raise ValueError("Perpetual product rules funding 上下限非法")
+        expected_id = stable_id(
+            "perpetual_product_rules",
+            self.instrument.key,
+            self.observed_at.isoformat(),
+            perpetual_product_rule_content_hash(self),
+        )
+        if self.rules_id != expected_id:
+            raise ValueError("Perpetual product rules ID 与冻结内容不一致")
+        return self
+
+
+def perpetual_product_rule_content_hash(rules: PerpetualProductRules) -> str:
+    """Hash effective rules while excluding local observation provenance."""
+
+    return content_hash(
+        rules.model_dump(
+            mode="json",
+            exclude={"rules_id", "observed_at", "source"},
+        )
+    )
 
 
 class FundingSettlement(FrozenModel):

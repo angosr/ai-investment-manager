@@ -51,22 +51,22 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         <= config.codex_runtime.maximum_prompt_characters
     )
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v50"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v51"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
     assert config.temporal.activity_schedule_to_close_seconds == 900
     assert config.shadow.analysis_deadline_seconds == 900
-    assert config.codex_runtime.version == "codex-runtime-v8"
+    assert config.codex_runtime.version == "codex-runtime-v9"
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v48"
+    assert config.capital.version == "total-portfolio-capital-v50"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v5"
+        "binance-shadow-investable-v6"
     )
     assert config.capital.reference_policy is None
     assert tuple(
@@ -75,23 +75,24 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:BTCUSDT",
         "BINANCE:SPOT:PAXGUSDT",
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
+        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
     )
-    assert config.capital.decision.version == "portfolio-net-edge-v10"
+    assert config.capital.decision.version == "portfolio-net-edge-v11"
     assert config.information.version == "information-intake-v38"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v42"
+    assert config.decision_state.version == "portfolio-state-v43"
     assert config.decision_state.official_fact_policy.version == "official-fact-v16"
     assert config.decision_state.delta_policy.version == "state-delta-v17"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v45"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v46"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v13"
+    assert config.market_data.version == "binance-public-shadow-v14"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
@@ -106,12 +107,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert tuple(
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
-    assert config.assessment.version == "context-assessment-v46"
-    assert config.outcome_evaluation.version == "outcome-window-v24"
+    assert config.assessment.version == "context-assessment-v47"
+    assert config.outcome_evaluation.version == "outcome-window-v26"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v19"
+        == "world-model-ablation-forward-v20"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v30"
@@ -310,7 +311,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         if item.key
         == config.capital.context_forecast.derivative_evidence_instrument_key
     )
-    assert evidence_instrument.key not in {
+    assert evidence_instrument.key in {
         item.instrument.key for item in config.capital.execution_specs
     }
     fee_bps_by_instrument = {
@@ -320,7 +321,17 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         "BINANCE:SPOT:BTCUSDT": Decimal("10"),
         "BINANCE:SPOT:PAXGUSDT": Decimal("10"),
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT": Decimal("50"),
+        "BINANCE:USD_M_PERPETUAL:BTCUSDT": Decimal("5"),
     }
+    assert config.capital.context_forecast.product_payoffs is not None
+    assert config.capital.context_forecast.product_payoffs.instrument_keys == (
+        "BINANCE:SPOT:BTCUSDT",
+        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+    )
+    assert (
+        config.capital.context_forecast.product_payoffs.maximum_rule_age_seconds
+        == 900
+    )
     contract = context_spot_forecast_contract(
         policy=config.capital.context_forecast,
         instrument=instrument,
@@ -368,6 +379,21 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         state_behavior,
         "0" * 64,
     ) != behavior_id
+    assert context_forecast_behavior_hash(
+        config.codex_runtime,
+        config.capital.context_forecast.model_copy(
+            update={
+                "product_payoffs": (
+                    config.capital.context_forecast.product_payoffs.model_copy(
+                        update={"version": "different-product-payoff-v2"}
+                    )
+                )
+            }
+        ),
+        contract,
+        state_behavior,
+        configured_assess_behavior_hash(config),
+    ) == behavior_id
 
 
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:

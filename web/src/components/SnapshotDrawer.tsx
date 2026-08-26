@@ -135,6 +135,7 @@ function AssessmentBody({
     ...(features?.financing_states ?? []),
     ...(features?.policy_states ?? []),
   ];
+  const capabilityGaps = normalizeCapabilityGaps(snapshot.capability_summary);
   return (
     <>
       <div className={styles.head}>
@@ -215,7 +216,7 @@ function AssessmentBody({
               title={`${event.source} · ${event.title}`}
               meta={`${hhmm(event.event_time)} UTC`}
             >
-              {event.body}
+              {event.body ?? "正文与标题相同，输入时已去重"}
             </Item>
           )) : <Empty>本次没有新闻或事件正文入选</Empty>}
         </Section>
@@ -247,7 +248,9 @@ function AssessmentBody({
 
         {snapshot.previous_context ? (
           <Section title="作为待复核解释输入的上一份世界认知">
-            <p className={styles.excerpt}>{snapshot.previous_context.synthesis}</p>
+            {snapshot.previous_context.synthesis ? (
+              <p className={styles.excerpt}>{snapshot.previous_context.synthesis}</p>
+            ) : null}
             {snapshot.previous_context.mechanisms.map((mechanism) => (
               <Item
                 key={mechanism.id}
@@ -261,9 +264,9 @@ function AssessmentBody({
         ) : null}
 
         <Section title="当前观察边界">
-          {snapshot.capability_summary.length ? snapshot.capability_summary.map((gap) => (
+          {capabilityGaps.length ? capabilityGaps.map((gap) => (
             <Item key={gap.domain} title={`${gap.domain} · ${coverageLabel(gap.status)}`}>
-              {gap.missing_capabilities.join("、")}
+              {gap.missing.join("、") || "当前来源没有近期有效发布"}
             </Item>
           )) : <Empty>本次输入的观察能力均为完整覆盖</Empty>}
         </Section>
@@ -275,6 +278,23 @@ function AssessmentBody({
       </div>
     </>
   );
+}
+
+function normalizeCapabilityGaps(
+  summary: AssessmentInputSnapshot["capability_summary"],
+): { domain: string; status: string; missing: string[] }[] {
+  if (Array.isArray(summary)) {
+    return summary.map((item) => ({
+      domain: item.domain,
+      status: item.status,
+      missing: item.missing_capabilities,
+    }));
+  }
+  return Object.entries(summary).map(([domain, value]) => ({
+    domain,
+    status: value.status ?? "PARTIAL",
+    missing: value.missing ?? [],
+  }));
 }
 
 function Item({
@@ -324,7 +344,7 @@ function stageLabel(value: string): string {
 }
 
 function coverageLabel(value: string): string {
-  return ({ NOT_CONFIGURED: "尚未接入", PARTIAL: "部分覆盖", SOURCE_STALE: "采集过期", SOURCE_FAILED: "采集失败" })[value] ?? value;
+  return ({ NOT_CONFIGURED: "尚未接入", PARTIAL: "部分覆盖", SOURCE_STALE: "采集过期", SOURCE_FAILED: "采集失败", NO_RECENT_PUBLICATION: "没有近期发布" })[value] ?? value;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

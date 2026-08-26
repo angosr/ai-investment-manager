@@ -214,6 +214,9 @@ def test_outcome_supervisor_settles_registered_forecast_cohorts_in_existing_loop
         target_forecast = Settler(
             SimpleNamespace(settled=9, outcome_unavailable=10, pending=11)
         )
+        product_payoff = Settler(
+            SimpleNamespace(settled=12, outcome_unavailable=13, pending=14)
+        )
         coordinator = Coordinator(stop)
         supervisor = OutcomeEvaluationSupervisor(
             coordinator=coordinator,
@@ -221,6 +224,7 @@ def test_outcome_supervisor_settles_registered_forecast_cohorts_in_existing_loop
             candidate_settler=candidate,
             forecast_settler=forecast,
             target_forecast_settler=target_forecast,
+            product_payoff_settler=product_payoff,
             clock=lambda: datetime(2026, 8, 20, 12, tzinfo=UTC),
         )
 
@@ -230,6 +234,7 @@ def test_outcome_supervisor_settles_registered_forecast_cohorts_in_existing_loop
             len(candidate.calls)
             == len(forecast.calls)
             == len(target_forecast.calls)
+            == len(product_payoff.calls)
             == 1
         )
         assert supervisor.health.candidate_settled == 1
@@ -240,6 +245,9 @@ def test_outcome_supervisor_settles_registered_forecast_cohorts_in_existing_loop
         assert supervisor.health.target_forecast_settled == 9
         assert supervisor.health.target_forecast_outcome_unavailable == 10
         assert supervisor.health.target_forecast_pending == 11
+        assert supervisor.health.product_payoff_settled == 12
+        assert supervisor.health.product_payoff_outcome_unavailable == 13
+        assert supervisor.health.product_payoff_pending == 14
         assert len(coordinator.requests) == 1
 
     asyncio.run(scenario())

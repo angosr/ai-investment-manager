@@ -52,8 +52,11 @@ from investment_manager.forecast.contracts import (
     ForecastProducerKind,
     ForecastSlotCause,
 )
+from investment_manager.forecast.product.context import ContextProductPayoffProjector
+from investment_manager.forecast.product.models import ProductPayoffProjection
+from investment_manager.forecast.product.repository import SqlProductPayoffProjectionStore
 from investment_manager.forecast.repository import SqlForecastStore
-from investment_manager.forecast.results import Forecast
+from investment_manager.forecast.results import BaseForecast, Forecast
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -75,6 +78,7 @@ from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
     CapitalCycleRecord,
     PortfolioAccountSnapshot,
+    SleevePosition,
     SleeveTarget,
 )
 from investment_manager.portfolio.policy import CapitalPolicy, SleeveRiskTemplate
@@ -120,6 +124,22 @@ class CapitalForecastProducer(Protocol):
     ) -> tuple[ForecastNoEstimate, ...]: ...
 
 
+class CapitalProductPayoffProjector(Protocol):
+    """Deterministic product expressions owned by the Forecast domain."""
+
+    @property
+    def candidate_instruments(self) -> tuple[InstrumentId, ...]: ...
+
+    def project(
+        self,
+        forecast: BaseForecast,
+        *,
+        as_of: datetime,
+    ) -> tuple[ProductPayoffProjection, ...]: ...
+
+    def for_source(self, source_forecast_id: str) -> tuple[ProductPayoffProjection, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CapitalForecastSource:
     """One contract-bound producer and its risk/permission envelope."""
@@ -129,6 +149,7 @@ class CapitalForecastSource:
     producer: CapitalForecastProducer
     risk_template: SleeveRiskTemplate
     capital_authorization: CandidateCapitalAuthorization
+    product_payoffs: CapitalProductPayoffProjector | None = None
 
     def __post_init__(self) -> None:
         if self.binding.contract_id != self.contract.contract_id:
@@ -533,11 +554,7 @@ class CapitalCycleService:
         )
         execution_instruments = self._merge_instruments(
             execution_instruments,
-            tuple(
-                leg.instrument
-                for forecast in generated_forecasts
-                for leg in forecast.target.legs
-            ),
+            self._candidate_instruments(generated_forecasts),
         )
         valuation_quotes, executable_quotes = self._quote_views(
             as_of=decision_at,
@@ -867,39 +884,106 @@ class CapitalCycleService:
             source = self._source_by_family.get(forecast.outcome_family_id)
             if source is None:
                 raise ValueError("Capital Forecast family 未绑定合格 source")
-            sleeve_id = SleeveTarget.identity_for(
-                portfolio_id=self._policy.decision.portfolio_id,
-                forecast_family=forecast.outcome_family_id,
-                forecast_target_id=forecast.target.target_id,
-            )
-            candidate = PortfolioSleeveInput(
-                sleeve_id=sleeve_id,
+            for candidate in self._forecast_sleeve_inputs(
+                source=source,
                 forecast=forecast,
-                capital_authorization=source.capital_authorization,
-            )
-            existing = by_sleeve.get(sleeve_id)
-            if existing is not None and existing != candidate:
-                raise ValueError("同一 Capital Sleeve 收到多个不同 Forecast")
-            by_sleeve[sleeve_id] = candidate
+                as_of=as_of,
+            ):
+                existing = by_sleeve.get(candidate.sleeve_id)
+                if existing is not None and existing != candidate:
+                    raise ValueError("同一 Capital Sleeve 收到多个不同 Forecast")
+                by_sleeve[candidate.sleeve_id] = candidate
         for position in account.sleeves:
             if position.sleeve_id in by_sleeve:
                 continue
-            source = self._source_by_family.get(position.forecast_family)
-            if source is None:
-                raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
-            forecast = self._latest_forecast(
-                source=source,
-                target_id=position.target.target_id,
+            by_sleeve[position.sleeve_id] = self._position_sleeve_input(
+                position=position,
                 as_of=as_of,
             )
-            if forecast is None:
-                raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
-            by_sleeve[position.sleeve_id] = PortfolioSleeveInput(
-                sleeve_id=position.sleeve_id,
+        return tuple(by_sleeve[item] for item in sorted(by_sleeve))
+
+    def _forecast_sleeve_inputs(
+        self,
+        *,
+        source: CapitalForecastSource,
+        forecast: Forecast,
+        as_of: datetime,
+    ) -> tuple[PortfolioSleeveInput, ...]:
+        projector = source.product_payoffs
+        if projector is None:
+            projections: tuple[ProductPayoffProjection | None, ...] = (None,)
+        else:
+            if not isinstance(forecast, BaseForecast):
+                raise ValueError("Product payoff 当前只允许 BaseForecast")
+            projected = projector.project(forecast, as_of=as_of)
+            if not projected:
+                raise PointInTimeInputUnavailable("Forecast 没有可执行产品收益投影")
+            projections = projected
+        return tuple(
+            PortfolioSleeveInput(
+                sleeve_id=SleeveTarget.identity_for(
+                    portfolio_id=self._policy.decision.portfolio_id,
+                    forecast_family=forecast.outcome_family_id,
+                    forecast_target_id=(
+                        forecast.target.target_id
+                        if projection is None
+                        else projection.target.target_id
+                    ),
+                ),
                 forecast=forecast,
+                payoff_projection=projection,
                 capital_authorization=source.capital_authorization,
             )
-        return tuple(by_sleeve[item] for item in sorted(by_sleeve))
+            for projection in projections
+        )
+
+    def _position_sleeve_input(
+        self,
+        *,
+        position: SleevePosition,
+        as_of: datetime,
+    ) -> PortfolioSleeveInput:
+        source = self._source_by_family.get(position.forecast_family)
+        if source is None:
+            raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
+        target_id = (
+            source.contract.target.target_id
+            if source.product_payoffs is not None
+            else position.target.target_id
+        )
+        forecast = self._latest_forecast(
+            source=source,
+            target_id=target_id,
+            as_of=as_of,
+        )
+        if forecast is None:
+            raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
+        projection = None
+        if source.product_payoffs is not None:
+            if not isinstance(forecast, BaseForecast):
+                raise ValueError("Product payoff 当前只允许 BaseForecast")
+            available = (
+                source.product_payoffs.project(forecast, as_of=as_of)
+                if as_of < forecast.economic_horizon_end
+                else source.product_payoffs.for_source(forecast.forecast_id)
+            )
+            projection = next(
+                (
+                    item
+                    for item in reversed(available)
+                    if item.target == position.target
+                    and item.projected_at <= as_of
+                ),
+                None,
+            )
+            if projection is None and position.target != forecast.target:
+                raise ValueError("当前 Capital Sleeve 缺少原始产品收益投影")
+        return PortfolioSleeveInput(
+            sleeve_id=position.sleeve_id,
+            forecast=forecast,
+            payoff_projection=projection,
+            capital_authorization=source.capital_authorization,
+        )
 
     @staticmethod
     def _risk_profile(
@@ -991,20 +1075,7 @@ class CapitalCycleService:
             source = self._source_by_family.get(position.forecast_family)
             if source is None:
                 raise ValueError("当前 Capital Sleeve 缺少合格 Forecast source")
-            forecast = self._latest_forecast(
-                source=source,
-                target_id=position.target.target_id,
-                as_of=as_of,
-            )
-            if forecast is None:
-                raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
-            sleeves.append(
-                PortfolioSleeveInput(
-                    sleeve_id=position.sleeve_id,
-                    forecast=forecast,
-                    capital_authorization=source.capital_authorization,
-                )
-            )
+            sleeves.append(self._position_sleeve_input(position=position, as_of=as_of))
             profiles.append(self._risk_profile(position.sleeve_id, source))
         decision_quotes = self._quotes_for_sleeves(
             sleeves=tuple(sleeves),
@@ -1211,6 +1282,22 @@ class CapitalCycleService:
                 by_key[item.key] = item
         return tuple(by_key[key] for key in sorted(by_key))
 
+    def _candidate_instruments(
+        self,
+        forecasts: tuple[Forecast, ...],
+    ) -> tuple[InstrumentId, ...]:
+        candidates: list[InstrumentId] = []
+        for forecast in forecasts:
+            source = self._source_by_family.get(forecast.outcome_family_id)
+            if source is None:
+                raise ValueError("Capital Forecast family 未绑定合格 source")
+            candidates.extend(
+                source.product_payoffs.candidate_instruments
+                if source.product_payoffs is not None
+                else (leg.instrument for leg in forecast.target.legs)
+            )
+        return self._merge_instruments(tuple(candidates))
+
     @staticmethod
     def _quotes_for_sleeves(
         *,
@@ -1220,7 +1307,7 @@ class CapitalCycleService:
         required = {
             leg.instrument.key
             for sleeve in sleeves
-            for leg in sleeve.forecast.target.legs
+            for leg in sleeve.target.legs
         }
         selected = tuple(
             item for item in quotes if item.instrument.key in required
@@ -1340,6 +1427,45 @@ def assemble_capital_cycle(
                 activated_at=producer_activation_at,
             )
             context_activation_at = contracts.binding_activation_at(binding.binding_id)
+            target_states = MarketContextTargetStateProvider(
+                market=market,
+                feature_policy=target_state_behavior.feature_policy,
+                spot=target_state_behavior.spot_instrument,
+                perpetual=target_state_behavior.derivative_evidence_instrument,
+                interval=target_state_behavior.interval,
+                bar_window=target_state_behavior.bar_window,
+                funding_lookback_hours=target_state_behavior.funding_lookback_hours,
+                maximum_quote_skew_seconds=(
+                    target_state_behavior.maximum_quote_skew_seconds
+                ),
+                cross_venue_spot_venues=(
+                    target_state_behavior.cross_venue_spot_venues
+                ),
+                maximum_cross_venue_spot_age_seconds=(
+                    target_state_behavior.maximum_cross_venue_spot_age_seconds
+                ),
+            )
+            product_payoffs = None
+            if context.product_payoffs is not None:
+                spec_by_key = {
+                    item.instrument.key: item
+                    for item in config.capital.execution_specs
+                }
+                payoff_specs = tuple(
+                    spec_by_key[key]
+                    for key in context.product_payoffs.instrument_keys
+                )
+                product_payoffs = ContextProductPayoffProjector(
+                    policy=context.product_payoffs,
+                    contract=contract,
+                    market=market,
+                    target_states=target_states,
+                    instruments=tuple(item.instrument for item in payoff_specs),
+                    execution_specs=payoff_specs,
+                    risk=config.capital.sleeve_risk,
+                    maximum_quote_age_seconds=context.maximum_quote_age_seconds,
+                    store=SqlProductPayoffProjectionStore(engine),
+                )
             configured_sources.append(
                 CapitalForecastSource(
                     contract=contract,
@@ -1353,28 +1479,7 @@ def assemble_capital_cycle(
                         contracts=contracts,
                         forecasts=forecasts,
                         instrument=instrument,
-                        target_states=MarketContextTargetStateProvider(
-                            market=market,
-                            feature_policy=target_state_behavior.feature_policy,
-                            spot=target_state_behavior.spot_instrument,
-                            perpetual=(
-                                target_state_behavior.derivative_evidence_instrument
-                            ),
-                            interval=target_state_behavior.interval,
-                            bar_window=target_state_behavior.bar_window,
-                            funding_lookback_hours=(
-                                target_state_behavior.funding_lookback_hours
-                            ),
-                            maximum_quote_skew_seconds=(
-                                target_state_behavior.maximum_quote_skew_seconds
-                            ),
-                            cross_venue_spot_venues=(
-                                target_state_behavior.cross_venue_spot_venues
-                            ),
-                            maximum_cross_venue_spot_age_seconds=(
-                                target_state_behavior.maximum_cross_venue_spot_age_seconds
-                            ),
-                        ),
+                        target_states=target_states,
                         analysis_scope=config.assessment.mandate.analysis_scope,
                         activated_at=context_activation_at,
                         preflight=(
@@ -1394,6 +1499,7 @@ def assemble_capital_cycle(
                     ),
                     risk_template=config.capital.sleeve_risk,
                     capital_authorization=authorization,
+                    product_payoffs=product_payoffs,
                 )
             )
         forecast_sources = tuple(configured_sources)

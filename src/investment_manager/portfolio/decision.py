@@ -6,7 +6,8 @@ from decimal import Decimal
 from pydantic import Field, model_validator
 
 from investment_manager.execution.planning.planner import InstrumentExecutionSpec
-from investment_manager.forecast.models import ExposureDirection
+from investment_manager.forecast.models import ExposureDirection, ForecastTarget
+from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.results import BaseForecast, CalibratedForecast, Forecast
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -47,6 +48,7 @@ class PortfolioDecisionPolicy(FrozenModel):
 class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast: Forecast
+    payoff_projection: ProductPayoffProjection | None = None
     capital_authorization: CandidateCapitalAuthorization | None = None
 
     @model_validator(mode="after")
@@ -61,12 +63,66 @@ class PortfolioSleeveInput(FrozenModel):
                 raise ValueError("BaseForecast 必须精确绑定 candidate capital authorization")
         elif self.capital_authorization is not None:
             raise ValueError("CalibratedForecast 不得使用 candidate capital authorization")
+        projection = self.payoff_projection
+        if projection is not None and (
+            not isinstance(self.forecast, BaseForecast)
+            or projection.source_forecast_id != self.forecast.forecast_id
+            or projection.source_contract_id != self.forecast.contract_id
+            or projection.projected_at < self.forecast.available_at
+            or projection.source_entry_valid_until != self.forecast.valid_until
+            or projection.evaluation_at != self.forecast.economic_horizon_end
+        ):
+            raise ValueError("Product payoff projection 与源 Forecast 不一致")
         return self
+
+    @property
+    def target(self) -> ForecastTarget:
+        return (
+            self.payoff_projection.target
+            if self.payoff_projection is not None
+            else self.forecast.target
+        )
+
+    @property
+    def available_at(self) -> datetime:
+        return (
+            self.payoff_projection.projected_at
+            if self.payoff_projection is not None
+            else self.forecast.available_at
+        )
+
+    @property
+    def valid_until(self) -> datetime:
+        return (
+            self.payoff_projection.valid_until
+            if self.payoff_projection is not None
+            else self.forecast.economic_horizon_end
+        )
+
+    @property
+    def new_exposure_valid_until(self) -> datetime:
+        return (
+            min(
+                self.payoff_projection.valid_until,
+                self.payoff_projection.source_entry_valid_until,
+            )
+            if self.payoff_projection is not None
+            else self.forecast.valid_until
+        )
+
+    @property
+    def economic_exposure_key(self) -> str:
+        return (
+            self.payoff_projection.economic_exposure_id
+            if self.payoff_projection is not None
+            else self.sleeve_id
+        )
 
 
 def remaining_target_gross_bps(
     forecast: Forecast,
     *,
+    payoff_projection: ProductPayoffProjection | None = None,
     current_gross_notional: Decimal,
     evaluation_gross_notional: Decimal,
     quote_by_instrument: dict[str, ExecutableQuote],
@@ -78,17 +134,24 @@ def remaining_target_gross_bps(
     if current_gross_notional < 0 or evaluation_gross_notional <= 0:
         raise ValueError("Forecast 重估金额必须为正且当前金额不能为负")
     forecast_gross_bps = (
-        forecast.expected_gross_bps
+        payoff_projection.conservative_gross_bps
+        if payoff_projection is not None
+        else forecast.expected_gross_bps
         if isinstance(forecast, BaseForecast)
         else forecast.conservative_gross_bps
     )
-    cutoff = {item.instrument_id: item.price for item in forecast.cutoff_prices}
+    target = payoff_projection.target if payoff_projection is not None else forecast.target
+    cutoff = (
+        {payoff_projection.entry_anchor.instrument_id: payoff_projection.entry_anchor.price}
+        if payoff_projection is not None
+        else {item.instrument_id: item.price for item in forecast.cutoff_prices}
+    )
     realized_to_entry_bps = Decimal("0")
     retained_fraction = min(current_gross_notional, evaluation_gross_notional) / (
         evaluation_gross_notional
     )
     added_fraction = Decimal("1") - retained_fraction
-    for leg in forecast.target.legs:
+    for leg in target.legs:
         quote = quote_by_instrument[leg.instrument.key]
         new_entry_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
         retained_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
@@ -109,6 +172,7 @@ def estimate_state_transition_cost(
     *,
     policy: PortfolioDecisionPolicy,
     forecast: Forecast,
+    payoff_projection: ProductPayoffProjection | None = None,
     current_gross_notional: Decimal,
     target_gross_notional: Decimal,
     evaluation_gross_notional: Decimal,
@@ -128,7 +192,8 @@ def estimate_state_transition_cost(
     refs = []
     added_notional = max(target_gross_notional - current_gross_notional, Decimal("0"))
     reduced_notional = max(current_gross_notional - target_gross_notional, Decimal("0"))
-    for leg in forecast.target.legs:
+    target = payoff_projection.target if payoff_projection is not None else forecast.target
+    for leg in target.legs:
         quote = quote_by_instrument[leg.instrument.key]
         spec = spec_by_instrument[leg.instrument.key]
         refs.append(quote.source_quote_id)
@@ -243,7 +308,7 @@ class PortfolioDecisionEngine:
         if set(account_by_sleeve) - {item.sleeve_id for item in sleeves}:
             raise ValueError("Portfolio 输入必须显式覆盖全部当前 Sleeve")
         required_quote_keys = {
-            leg.instrument.key for item in sleeves for leg in item.forecast.target.legs
+            leg.instrument.key for item in sleeves for leg in item.target.legs
         }
         if set(quote_by_instrument) != required_quote_keys:
             raise ValueError("ExecutableQuote 必须精确覆盖 Portfolio Sleeve Instruments")
@@ -261,7 +326,7 @@ class PortfolioDecisionEngine:
             expected_id = SleeveTarget.identity_for(
                 portfolio_id=self._policy.portfolio_id,
                 forecast_family=item.forecast.outcome_family_id,
-                forecast_target_id=item.forecast.target.target_id,
+                forecast_target_id=item.target.target_id,
             )
             if item.sleeve_id != expected_id:
                 raise ValueError("PortfolioSleeveInput sleeve_id 与 Forecast 不一致")
@@ -304,9 +369,71 @@ class PortfolioDecisionEngine:
                 ),
             )
         )
+        item_by_sleeve = {item.sleeve_id: item for item in sleeves}
+        current_expression_by_exposure: dict[str, str] = {}
+        for item in sleeves:
+            if current_by_sleeve[item.sleeve_id] <= 0:
+                continue
+            existing = current_expression_by_exposure.get(item.economic_exposure_key)
+            if existing is not None and existing != item.sleeve_id:
+                raise ValueError("同一经济暴露同时存在多个产品持仓")
+            current_expression_by_exposure[item.economic_exposure_key] = item.sleeve_id
+        selected_expression_ids: set[str] = set()
+        duplicate_expression_ids: set[str] = set()
+        switch_exit_ids: set[str] = set()
+        eligible_by_exposure: dict[str, list[PortfolioSleeveInput]] = {}
+        for item in eligible:
+            eligible_by_exposure.setdefault(item.economic_exposure_key, []).append(item)
+        for exposure in sorted({item.economic_exposure_key for item in sleeves}):
+            candidates = eligible_by_exposure.get(exposure, [])
+            current_id = current_expression_by_exposure.get(exposure)
+            if current_id is None:
+                if candidates:
+                    selected_expression_ids.add(candidates[0].sleeve_id)
+                    duplicate_expression_ids.update(
+                        item.sleeve_id for item in candidates[1:]
+                    )
+                continue
+            current = item_by_sleeve[current_id]
+            current_evaluation = candidate_evaluations[current_id]
+            if not current_evaluation.eligible:
+                duplicate_expression_ids.update(item.sleeve_id for item in candidates)
+                continue
+            best = candidates[0]
+            if best.sleeve_id == current_id:
+                selected_expression_ids.add(current_id)
+                duplicate_expression_ids.update(
+                    item.sleeve_id for item in candidates[1:]
+                )
+                continue
+            immediate_exit = self._cost(
+                current,
+                current_notional=current_by_sleeve[current_id],
+                target_notional=Decimal("0"),
+                evaluation_notional=current_by_sleeve[current_id],
+                quote_by_instrument=quote_by_instrument,
+                spec_by_instrument=spec_by_instrument,
+            )
+            if (
+                candidate_evaluations[best.sleeve_id].decision_net_bps
+                - immediate_exit.total_bps
+                > current_evaluation.decision_net_bps
+            ):
+                switch_exit_ids.add(current_id)
+                duplicate_expression_ids.update(item.sleeve_id for item in candidates)
+            else:
+                selected_expression_ids.add(current_id)
+                duplicate_expression_ids.update(
+                    item.sleeve_id
+                    for item in candidates
+                    if item.sleeve_id != current_id
+                )
+        capacity_candidates = [
+            item for item in eligible if item.sleeve_id in selected_expression_ids
+        ]
         desired_by_sleeve: dict[str, Decimal] = {}
         remaining_capacity = account.equity * self._policy.maximum_total_exposure_fraction
-        for item in eligible:
+        for item in capacity_candidates:
             desired = min(candidate_notional[item.sleeve_id], remaining_capacity)
             if desired <= 0:
                 break
@@ -330,10 +457,15 @@ class PortfolioDecisionEngine:
                 allocation_reason=(
                     "POSITIVE_NET_EDGE_SELECTED"
                     if item.sleeve_id in eligible_ids
+                    else "PRODUCT_SWITCH_EXIT_FIRST"
+                    if item.sleeve_id in switch_exit_ids
                     else "FORECAST_INVALID_CASH"
                     if not candidate_evaluations[item.sleeve_id].forecast_current
                     else "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
                     if candidate_evaluations[item.sleeve_id].eligible
+                    and item.sleeve_id not in duplicate_expression_ids
+                    else "ALTERNATIVE_PRODUCT_NOT_SELECTED"
+                    if item.sleeve_id in duplicate_expression_ids
                     else "NON_POSITIVE_NET_EDGE_CASH"
                 ),
             )
@@ -373,11 +505,16 @@ class PortfolioDecisionEngine:
             )
 
         final_desired = {item.sleeve_id: item.desired_gross_notional for item in targets}
+        capacity_selected_ids = set() if below_rebalance_minimum else eligible_ids
         frozen_candidate_evaluations = tuple(
             self._freeze_allocation_result(
                 candidate_evaluations[item.sleeve_id],
                 desired_notional=final_desired.get(item.sleeve_id, Decimal("0")),
-                capacity_selected=item.sleeve_id in eligible_ids,
+                capacity_selected=item.sleeve_id in capacity_selected_ids,
+                alternative_product_not_selected=(
+                    item.sleeve_id in duplicate_expression_ids
+                ),
+                product_switch_exit=(item.sleeve_id in switch_exit_ids),
                 rebalance_preserved=(
                     below_rebalance_minimum
                     and current_by_sleeve[item.sleeve_id] > 0
@@ -387,14 +524,21 @@ class PortfolioDecisionEngine:
         )
 
         reason_codes: set[str] = set()
-        if eligible_ids:
-            reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
-        if not eligible_ids:
-            reason_codes.add("CASH_SELECTED_NO_POSITIVE_NET_EDGE")
-        if invalid_holding_exit:
-            reason_codes.add("EXPIRED_FORECAST_EXIT")
         if below_rebalance_minimum:
             reason_codes.add("REBALANCE_BELOW_MINIMUM")
+        else:
+            if eligible_ids:
+                reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
+            if not eligible_ids and duplicate_expression_ids:
+                reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
+            elif not eligible_ids:
+                reason_codes.add("CASH_SELECTED_NO_POSITIVE_NET_EDGE")
+        if invalid_holding_exit:
+            reason_codes.add("EXPIRED_FORECAST_EXIT")
+        if duplicate_expression_ids:
+            reason_codes.add("ALTERNATIVE_PRODUCT_EXPRESSION_REJECTED")
+        if switch_exit_ids and not below_rebalance_minimum:
+            reason_codes.add("PRODUCT_SWITCH_EXIT_FIRST")
 
         valid_until = as_of + timedelta(minutes=self._policy.target_validity_minutes)
         if decision_valid_until is not None:
@@ -421,7 +565,9 @@ class PortfolioDecisionEngine:
             "reference_equity": account.equity,
             "account_snapshot_id": account.snapshot_id,
             "account_snapshot_hash": content_hash(account),
-            "considered_forecast_ids": tuple(sorted(item.forecast.forecast_id for item in sleeves)),
+            "considered_forecast_ids": tuple(
+                sorted({item.forecast.forecast_id for item in sleeves})
+            ),
             "candidate_evaluations": [
                 item.model_dump(mode="json") for item in frozen_candidate_evaluations
             ],
@@ -454,6 +600,7 @@ class PortfolioDecisionEngine:
         )
         gross = remaining_target_gross_bps(
             item.forecast,
+            payoff_projection=item.payoff_projection,
             current_gross_notional=current_notional,
             evaluation_gross_notional=evaluation_notional,
             quote_by_instrument=quote_by_instrument,
@@ -484,6 +631,11 @@ class PortfolioDecisionEngine:
         return PortfolioCandidateEvaluation(
             sleeve_id=item.sleeve_id,
             forecast_id=item.forecast.forecast_id,
+            payoff_projection_id=(
+                item.payoff_projection.projection_id
+                if item.payoff_projection is not None
+                else None
+            ),
             edge_basis=edge_basis,
             current_gross_notional=current_notional,
             evaluation_gross_notional=evaluation_notional,
@@ -511,12 +663,18 @@ class PortfolioDecisionEngine:
         *,
         desired_notional: Decimal,
         capacity_selected: bool,
+        alternative_product_not_selected: bool,
+        product_switch_exit: bool,
         rebalance_preserved: bool,
     ) -> PortfolioCandidateEvaluation:
         if rebalance_preserved:
             reason = "REBALANCE_BELOW_MINIMUM_CURRENT_TARGET"
         elif capacity_selected:
             reason = "POSITIVE_NET_EDGE_SELECTED"
+        elif product_switch_exit:
+            reason = "PRODUCT_SWITCH_EXIT_FIRST"
+        elif alternative_product_not_selected:
+            reason = "ALTERNATIVE_PRODUCT_NOT_SELECTED"
         elif candidate.eligible:
             reason = "EXPOSURE_CAPACITY_EXHAUSTED_CASH"
         elif not candidate.forecast_current:
@@ -543,11 +701,9 @@ class PortfolioDecisionEngine:
             current_notional > 0 and evaluation_notional <= current_notional
         )
         support_until = (
-            item.forecast.economic_horizon_end
-            if retaining_only
-            else item.forecast.valid_until
+            item.valid_until if retaining_only else item.new_exposure_valid_until
         )
-        if not (item.forecast.available_at <= as_of < support_until):
+        if not (item.available_at <= as_of < support_until):
             return False, ("FORECAST_TIME_WINDOW_INVALID",), ()
         return True, (), ()
 
@@ -559,7 +715,7 @@ class PortfolioDecisionEngine:
         current_notional: Decimal,
         as_of: datetime,
     ) -> Decimal:
-        if current_notional > 0 and as_of >= item.forecast.valid_until:
+        if current_notional > 0 and as_of >= item.new_exposure_valid_until:
             return min(allocation_limit, current_notional)
         return allocation_limit
 
@@ -571,8 +727,8 @@ class PortfolioDecisionEngine:
         desired_notional: Decimal,
     ) -> datetime:
         if current_notional > 0 and desired_notional <= current_notional:
-            return item.forecast.economic_horizon_end
-        return item.forecast.valid_until
+            return item.valid_until
+        return item.new_exposure_valid_until
 
     def _target(
         self,
@@ -589,6 +745,7 @@ class PortfolioDecisionEngine:
         gross = (
             remaining_target_gross_bps(
                 item.forecast,
+                payoff_projection=item.payoff_projection,
                 current_gross_notional=current_notional,
                 evaluation_gross_notional=evaluation_notional,
                 quote_by_instrument=quote_by_instrument,
@@ -608,9 +765,14 @@ class PortfolioDecisionEngine:
         return SleeveTarget(
             sleeve_id=item.sleeve_id,
             forecast_family=item.forecast.outcome_family_id,
-            forecast_target=item.forecast.target,
+            forecast_target=item.target,
             desired_gross_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
+            payoff_projection_id=(
+                item.payoff_projection.projection_id
+                if item.payoff_projection is not None
+                else None
+            ),
             edge_basis=(
                 PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
                 if isinstance(item.forecast, BaseForecast)
@@ -623,6 +785,11 @@ class PortfolioDecisionEngine:
                 sorted(
                     (
                         f"FORECAST_PRODUCER:{item.forecast.producer_id}",
+                        *(
+                            (f"PAYOFF_PROJECTION:{item.payoff_projection.projection_id}",)
+                            if item.payoff_projection is not None
+                            else ()
+                        ),
                         allocation_reason,
                     )
                 )
@@ -642,6 +809,7 @@ class PortfolioDecisionEngine:
         return estimate_state_transition_cost(
             policy=self._policy,
             forecast=item.forecast,
+            payoff_projection=item.payoff_projection,
             current_gross_notional=current_notional,
             target_gross_notional=target_notional,
             evaluation_gross_notional=evaluation_notional,

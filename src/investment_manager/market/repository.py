@@ -24,8 +24,10 @@ from investment_manager.market.models import (
 from investment_manager.market.perpetual.models import (
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualProductRules,
     PerpetualQuote,
     TradingScheduleSnapshot,
+    perpetual_product_rule_content_hash,
 )
 from investment_manager.market.tables import (
     cross_venue_spot_quotes,
@@ -35,6 +37,7 @@ from investment_manager.market.tables import (
     market_tables,
     market_trades,
     perpetual_market_states,
+    perpetual_product_rules,
     perpetual_quotes,
     tradfi_trading_schedules,
 )
@@ -55,6 +58,8 @@ class MarketDataStore(Protocol):
     def put_perpetual_state(self, state: PerpetualMarketState) -> bool: ...
 
     def put_perpetual_quote(self, quote: PerpetualQuote) -> bool: ...
+
+    def put_perpetual_product_rules(self, rules: PerpetualProductRules) -> bool: ...
 
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool: ...
 
@@ -87,6 +92,10 @@ class MarketDataStore(Protocol):
         evaluation_at: datetime,
         visible_at: datetime,
     ) -> PerpetualQuote | None: ...
+
+    def latest_perpetual_product_rules(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualProductRules | None: ...
 
     def funding_settlements(
         self,
@@ -228,6 +237,9 @@ class InMemoryMarketDataStore:
     _bars: dict[tuple[str, str, datetime], ClosedMarketBar] = field(default_factory=dict)
     _perpetual_states: dict[str, PerpetualMarketState] = field(default_factory=dict)
     _perpetual_quotes: dict[str, PerpetualQuote] = field(default_factory=dict)
+    _perpetual_product_rules: dict[str, PerpetualProductRules] = field(
+        default_factory=dict
+    )
     _funding_settlements: dict[str, FundingSettlement] = field(default_factory=dict)
     _trading_schedules: dict[str, TradingScheduleSnapshot] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -302,6 +314,16 @@ class InMemoryMarketDataStore:
                     raise ValueError("quote_id 冲突且永续报价事实不一致")
                 return False
             self._perpetual_quotes[quote.quote_id] = quote
+            return True
+
+    def put_perpetual_product_rules(self, rules: PerpetualProductRules) -> bool:
+        with self._lock:
+            existing = self._perpetual_product_rules.get(rules.rules_id)
+            if existing is not None:
+                if existing != rules:
+                    raise ValueError("rules_id 冲突且永续产品规则事实不一致")
+                return False
+            self._perpetual_product_rules[rules.rules_id] = rules
             return True
 
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
@@ -420,6 +442,22 @@ class InMemoryMarketDataStore:
         return max(
             visible,
             key=lambda item: (item.exchange_time, item.observed_at, item.quote_id),
+            default=None,
+        )
+
+    def latest_perpetual_product_rules(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualProductRules | None:
+        visible_at = require_utc(as_of)
+        with self._lock:
+            visible = tuple(
+                item
+                for item in self._perpetual_product_rules.values()
+                if item.instrument == instrument and item.observed_at <= visible_at
+            )
+        return max(
+            visible,
+            key=lambda item: (item.observed_at, item.rules_id),
             default=None,
         )
 
@@ -718,6 +756,33 @@ class SqlMarketDataStore:
                 raise ValueError("quote_id 冲突且永续报价事实不一致") from None
             return False
 
+    def put_perpetual_product_rules(self, rules: PerpetualProductRules) -> bool:
+        payload = rules.model_dump(mode="json")
+        try:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    insert(perpetual_product_rules).values(
+                        rules_id=rules.rules_id,
+                        instrument_id=rules.instrument.key,
+                        observed_at=rules.observed_at,
+                        content_hash=perpetual_product_rule_content_hash(rules),
+                        payload=payload,
+                    )
+                )
+            return True
+        except IntegrityError:
+            with self._engine.connect() as connection:
+                existing = connection.execute(
+                    select(perpetual_product_rules.c.payload).where(
+                        perpetual_product_rules.c.rules_id == rules.rules_id
+                    )
+                ).scalar_one()
+            if PerpetualProductRules.model_validate(existing) != rules:
+                raise ValueError(
+                    "rules_id 冲突且永续产品规则事实不一致"
+                ) from None
+            return False
+
     def put_funding_settlement(self, settlement: FundingSettlement) -> bool:
         payload = settlement.model_dump(mode="json")
         try:
@@ -881,6 +946,29 @@ class SqlMarketDataStore:
                 .limit(1)
             ).scalar_one_or_none()
         return PerpetualQuote.model_validate(payload) if payload is not None else None
+
+    def latest_perpetual_product_rules(
+        self, *, instrument: InstrumentId, as_of: datetime
+    ) -> PerpetualProductRules | None:
+        visible_at = require_utc(as_of)
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(perpetual_product_rules.c.payload)
+                .where(
+                    perpetual_product_rules.c.instrument_id == instrument.key,
+                    perpetual_product_rules.c.observed_at <= visible_at,
+                )
+                .order_by(
+                    perpetual_product_rules.c.observed_at.desc(),
+                    perpetual_product_rules.c.rules_id.desc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return (
+            PerpetualProductRules.model_validate(payload)
+            if payload is not None
+            else None
+        )
 
     def funding_settlements(
         self,

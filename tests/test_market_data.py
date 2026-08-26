@@ -31,10 +31,12 @@ from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualProductRules,
     PerpetualQuote,
     TradingScheduleSnapshot,
     TradingSession,
     TradingSessionType,
+    perpetual_product_rule_content_hash,
 )
 from investment_manager.market.perpetual.service import BinancePerpetualMarketService
 from investment_manager.market.policy import CrossVenueSpotPolicy, CrossVenueSpotProduct
@@ -267,6 +269,51 @@ def _perpetual_quote(
         ask_quantity="3",
         update_id=update_id,
         source="test",
+    )
+
+
+def _perpetual_product_rules(
+    *,
+    observed_at: datetime = NOW,
+    instrument: InstrumentId | None = None,
+    upstream_updated_at: datetime | None = None,
+) -> PerpetualProductRules:
+    instrument = instrument or _perpetual_instrument()
+    values = {
+        "instrument": instrument,
+        "observed_at": observed_at,
+        "upstream_updated_at": (
+            upstream_updated_at
+            if upstream_updated_at is not None
+            else observed_at - timedelta(seconds=1)
+        ),
+        "contract_type": (
+            "TRADIFI_PERPETUAL"
+            if instrument.product == InstrumentProduct.TRADFI_PERPETUAL
+            else "PERPETUAL"
+        ),
+        "status": "TRADING",
+        "margin_asset": instrument.settlement_asset,
+        "tick_size": Decimal("0.1"),
+        "market_min_quantity": Decimal("0.001"),
+        "market_max_quantity": Decimal("120"),
+        "market_quantity_step": Decimal("0.001"),
+        "minimum_notional": Decimal("50"),
+        "funding_override_present": True,
+        "funding_interval_hours": 8,
+        "adjusted_funding_rate_cap": Decimal("0.003"),
+        "adjusted_funding_rate_floor": Decimal("-0.003"),
+        "source": "test",
+    }
+    pending = PerpetualProductRules.model_construct(rules_id="pending", **values)
+    return PerpetualProductRules(
+        rules_id=stable_id(
+            "perpetual_product_rules",
+            instrument.key,
+            observed_at.isoformat(),
+            perpetual_product_rule_content_hash(pending),
+        ),
+        **values,
     )
 
 
@@ -957,10 +1004,51 @@ def test_http_transport_reuses_and_closes_one_connection_pool(monkeypatch) -> No
 
 
 class FakePerpetualTransport:
-    def __init__(self, *, reverse_funding: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        reverse_funding: bool = False,
+        funding_override: bool = True,
+    ) -> None:
         self.reverse_funding = reverse_funding
+        self.funding_override = funding_override
 
     async def get(self, path, params):
+        if path.endswith("exchangeInfo"):
+            assert params == {}
+            return {
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "contractType": "PERPETUAL",
+                        "status": "TRADING",
+                        "marginAsset": "USDT",
+                        "filters": [
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                            {
+                                "filterType": "MARKET_LOT_SIZE",
+                                "minQty": "0.001",
+                                "maxQty": "120",
+                                "stepSize": "0.001",
+                            },
+                            {"filterType": "MIN_NOTIONAL", "notional": "50"},
+                        ],
+                    }
+                ]
+            }
+        if path.endswith("fundingInfo"):
+            assert params == {}
+            if not self.funding_override:
+                return []
+            return [
+                {
+                    "symbol": "BTCUSDT",
+                    "adjustedFundingRateCap": "0.003",
+                    "adjustedFundingRateFloor": "-0.003",
+                    "fundingIntervalHours": 8,
+                    "updateTime": _millis(NOW - timedelta(seconds=1)),
+                }
+            ]
         if path.endswith("tradingSchedule"):
             assert params == {}
             return {
@@ -1052,6 +1140,7 @@ class FakePerpetualTransport:
 def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
     async def scenario():
         client = BinanceUsdmRestClient(FakePerpetualTransport(), clock=lambda: NOW)
+        rules = await client.fetch_product_rules((_perpetual_instrument(),))
         schedule = await client.fetch_trading_schedule()
         quote = await client.fetch_quote(_perpetual_instrument())
         state = await client.fetch_market_state(_perpetual_instrument())
@@ -1060,9 +1149,14 @@ def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
             start=NOW - timedelta(hours=12),
             end=NOW,
         )
-        return schedule, quote, state, settlements
+        return rules, schedule, quote, state, settlements
 
-    schedule, quote, state, settlements = asyncio.run(scenario())
+    rules, schedule, quote, state, settlements = asyncio.run(scenario())
+    assert len(rules) == 1
+    assert rules[0].market_quantity_step == Decimal("0.001")
+    assert rules[0].minimum_notional == Decimal("50")
+    assert rules[0].funding_override_present
+    assert rules[0].funding_interval_hours == 8
     assert schedule.model_dump(exclude={"source"}) == _trading_schedule().model_dump(
         exclude={"source"}
     )
@@ -1089,6 +1183,22 @@ def test_usdm_rest_client_preserves_exchange_and_observation_time() -> None:
         NOW - timedelta(hours=4),
     ]
     assert all(item.rate_type == FundingRateType.REGULAR for item in settlements)
+
+
+def test_usdm_rest_client_treats_funding_info_as_sparse_override() -> None:
+    rules = asyncio.run(
+        BinanceUsdmRestClient(
+            FakePerpetualTransport(funding_override=False),
+            clock=lambda: NOW,
+        ).fetch_product_rules((_perpetual_instrument(),))
+    )
+
+    assert len(rules) == 1
+    assert rules[0].status == "TRADING"
+    assert not rules[0].funding_override_present
+    assert rules[0].funding_interval_hours is None
+    assert rules[0].adjusted_funding_rate_cap is None
+    assert rules[0].adjusted_funding_rate_floor is None
 
 
 def test_usdm_rest_client_rejects_noncanonical_funding_history() -> None:
@@ -1555,11 +1665,14 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
     quote = _perpetual_quote()
     settlement = _funding_settlement()
     schedule = _trading_schedule()
+    rules = _perpetual_product_rules()
 
     assert store.put_perpetual_state(state)
     assert store.put_perpetual_quote(quote)
     assert store.put_funding_settlement(settlement)
     assert store.put_trading_schedule(schedule)
+    assert store.put_perpetual_product_rules(rules)
+    assert not store.put_perpetual_product_rules(rules)
     assert not store.put_perpetual_state(
         state.model_copy(
             update={
@@ -1612,6 +1725,10 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
                 }
             )
         )
+    with pytest.raises(ValueError, match="事实不一致"):
+        store.put_perpetual_product_rules(
+            rules.model_copy(update={"funding_interval_hours": 4})
+        )
 
     assert (
         store.latest_perpetual_state(
@@ -1621,6 +1738,17 @@ def test_perpetual_store_is_immutable_and_point_in_time(backend) -> None:
         is None
     )
     assert store.latest_perpetual_state(instrument=instrument, as_of=NOW) == state
+    assert (
+        store.latest_perpetual_product_rules(
+            instrument=instrument,
+            as_of=NOW - timedelta(seconds=1),
+        )
+        is None
+    )
+    assert (
+        store.latest_perpetual_product_rules(instrument=instrument, as_of=NOW)
+        == rules
+    )
     assert (
         store.latest_perpetual_quote(
             instrument=instrument,
@@ -1672,6 +1800,10 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
             assert instrument == _perpetual_instrument()
             return _perpetual_quote()
 
+        async def fetch_product_rules(self, instruments):
+            assert instruments == (_perpetual_instrument(),)
+            return (_perpetual_product_rules(),)
+
         async def fetch_funding_settlements(self, instrument, *, start, end):
             assert instrument == _perpetual_instrument()
             assert start == NOW - timedelta(hours=720)
@@ -1706,9 +1838,9 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
     assert service.health.quote_count == 1
     assert service.health.settlement_count == 1
     assert refreshes[0].succeeded
-    assert refreshes[0].observation_count == 2
-    assert refreshes[0].changed_count == 2
-    assert refreshes[1].observation_count == 1
+    assert refreshes[0].observation_count == 3
+    assert refreshes[0].changed_count == 3
+    assert refreshes[1].observation_count == 2
     assert refreshes[1].changed_count == 0
     assert (
         store.latest_perpetual_state(
@@ -1727,6 +1859,68 @@ def test_perpetual_service_only_refreshes_history_when_settlement_is_due(
     )
 
 
+def test_product_rule_success_refreshes_freshness_and_failure_does_not_fake_it(
+    app_config,
+) -> None:
+    clock = [NOW]
+
+    class FakeClient:
+        rule_calls = 0
+
+        async def fetch_market_state(self, instrument):
+            assert instrument == _perpetual_instrument()
+            return _perpetual_state()
+
+        async def fetch_product_rules(self, instruments):
+            assert instruments == (_perpetual_instrument(),)
+            self.rule_calls += 1
+            if self.rule_calls == 3:
+                raise TimeoutError("product rules unavailable")
+            return (
+                _perpetual_product_rules(
+                    observed_at=clock[0],
+                    upstream_updated_at=NOW - timedelta(seconds=1),
+                ),
+            )
+
+        async def fetch_funding_settlements(self, instrument, *, start, end):
+            assert instrument == _perpetual_instrument()
+            return (_funding_settlement(),)
+
+    async def scenario():
+        store = InMemoryMarketDataStore()
+        refreshes = []
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (_perpetual_instrument(),)}
+        )
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=FakeClient(),  # type: ignore[arg-type]
+            store=store,
+            refresh_observer=refreshes.append,
+            clock=lambda: clock[0],
+        )
+        await service.refresh()
+        clock[0] = NOW + timedelta(minutes=5)
+        await service.refresh()
+        clock[0] = NOW + timedelta(minutes=20)
+        await service.refresh()
+        return service, store, refreshes
+
+    service, store, refreshes = asyncio.run(scenario())
+    latest = store.latest_perpetual_product_rules(
+        instrument=_perpetual_instrument(),
+        as_of=NOW + timedelta(minutes=20),
+    )
+
+    assert latest is not None
+    assert latest.observed_at == NOW + timedelta(minutes=5)
+    assert service.health.product_rule_count == 2
+    assert service.health.product_rule_error_class == "TimeoutError"
+    assert refreshes[1].changed_count == 0
+    assert refreshes[2].succeeded
+
+
 def test_tradfi_refresh_persists_the_official_schedule_before_market_state(
     app_config,
 ) -> None:
@@ -1739,6 +1933,10 @@ def test_tradfi_refresh_persists_the_official_schedule_before_market_state(
         async def fetch_market_state(self, requested):
             assert requested == instrument
             return _perpetual_state(instrument=instrument)
+
+        async def fetch_product_rules(self, instruments):
+            assert instruments == (instrument,)
+            return (_perpetual_product_rules(instrument=instrument),)
 
         async def fetch_funding_settlements(self, requested, *, start, end):
             assert requested == instrument
@@ -1765,14 +1963,62 @@ def test_tradfi_refresh_persists_the_official_schedule_before_market_state(
     service, store, refreshes = asyncio.run(scenario())
     assert service.health.schedule_count == 1
     assert store.latest_trading_schedule(as_of=NOW) == _trading_schedule()
-    assert refreshes[0].observation_count == 3
-    assert refreshes[0].changed_count == 3
+    assert refreshes[0].observation_count == 4
+    assert refreshes[0].changed_count == 4
+
+
+def test_product_rule_failure_does_not_blind_market_state_or_funding(
+    app_config,
+) -> None:
+    instrument = _perpetual_instrument()
+
+    class RuleFailingClient:
+        async def fetch_product_rules(self, instruments):
+            assert instruments == (instrument,)
+            raise TimeoutError("product rules unavailable")
+
+        async def fetch_market_state(self, requested):
+            assert requested == instrument
+            return _perpetual_state()
+
+        async def fetch_funding_settlements(self, requested, *, start, end):
+            assert requested == instrument
+            assert start == NOW - timedelta(hours=720)
+            assert end == NOW
+            return (_funding_settlement(),)
+
+    async def scenario():
+        store = InMemoryMarketDataStore()
+        refreshes = []
+        policy = app_config.market_data.model_copy(
+            update={"perpetual_instruments": (instrument,)}
+        )
+        service = BinancePerpetualMarketService(
+            policy=policy,
+            client=RuleFailingClient(),  # type: ignore[arg-type]
+            store=store,
+            refresh_observer=refreshes.append,
+            clock=lambda: NOW,
+        )
+        await service.refresh()
+        return service, store, refreshes
+
+    service, store, refreshes = asyncio.run(scenario())
+
+    assert refreshes[0].succeeded
+    assert refreshes[0].observation_count == 2
+    assert service.health.product_rule_error_class == "TimeoutError"
+    assert store.latest_perpetual_state(instrument=instrument, as_of=NOW) is not None
+    assert store.latest_perpetual_product_rules(instrument=instrument, as_of=NOW) is None
 
 
 def test_perpetual_service_reports_failed_refresh_without_false_success(
     app_config,
 ) -> None:
     class FailingClient:
+        async def fetch_product_rules(self, instruments):
+            return (_perpetual_product_rules(),)
+
         async def fetch_market_state(self, instrument):
             raise TimeoutError("upstream timeout")
 
@@ -1808,6 +2054,9 @@ def test_perpetual_quote_refresh_is_independent_from_slow_state_refresh(
     app_config,
 ) -> None:
     class StateFailingClient:
+        async def fetch_product_rules(self, instruments):
+            return (_perpetual_product_rules(),)
+
         async def fetch_market_state(self, instrument):
             raise TimeoutError("slow state unavailable")
 

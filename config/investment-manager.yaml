@@ -13,7 +13,7 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v42
+  version: portfolio-state-v43
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v16
@@ -103,7 +103,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v45
+    version: decision-packet-policy-v46
     schema_version: decision-packet-v19
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -139,7 +139,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v48
+  version: total-portfolio-capital-v50
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -161,7 +161,7 @@ capital:
       - NOMINAL_RATES
       - US_EQUITY
   investable_universe:
-    version: binance-shadow-investable-v5
+    version: binance-shadow-investable-v6
     mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
@@ -173,10 +173,13 @@ capital:
       - instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
         economic_exposure: US_EQUITY
         reference_candidate: true
+      - instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+        economic_exposure: CRYPTO_NETWORK
+        reference_candidate: false
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
-    version: portfolio-net-edge-v10
+    version: portfolio-net-edge-v11
     portfolio_id: primary
     enabled: true
     minimum_conservative_net_bps: "5"
@@ -186,8 +189,8 @@ capital:
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
-    version: multi-product-portfolio-risk-v6
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
+    version: multi-product-portfolio-risk-v7
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
@@ -204,8 +207,8 @@ capital:
     reduction_authorization_seconds: 300
     kill_switch: false
   planner:
-    version: multi-product-trade-planner-v4
-    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
+    version: multi-product-trade-planner-v5
+    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
   execution_specs:
     - instrument:
         venue: BINANCE
@@ -244,6 +247,18 @@ capital:
       minimum_order_notional: "5"
       # TradFi Perps 沿用 USDⓈ-M 普通账户非促销 taker 费率；不继承临时优惠。
       fee_bps: "50"
+    - instrument:
+        venue: BINANCE
+        product: USD_M_PERPETUAL
+        symbol: BTCUSDT
+        base_asset: BTC
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.001"
+      minimum_order_notional: "50"
+      # Mock 使用 USDⓈ-M 普通账户非促销 taker 费率；实盘需由账户 commission 事实覆盖。
+      fee_bps: "5"
   sleeve_risk:
     version: spot-position-risk-v2
     basis_stress_bps: "100"
@@ -251,14 +266,19 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v22
+    version: btc-context-forecast-v23
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "162f73f2a39ceebcfca5b150bd8c3232f88d2502857c1c6758d98a06cdfe3ed5"
+    producer_behavior_id: "b9dfb6266433f80e3c0536923e33831993735902e9558ab9deae6e20a6e19db1"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
     derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+    product_payoffs:
+      version: btc-linear-product-payoff-v2
+      economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
+      instrument_keys: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+      maximum_rule_age_seconds: 900
     horizon_minutes: 240
     cadence_minutes: 240
     material_event_slots_enabled: true
@@ -344,18 +364,20 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v24
+  version: outcome-window-v26
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
+  product_payoff_version: product-payoff-outcome-v1
+  product_payoff_minimum_sample_size: 30
   maximum_funding_gap_hours: 12
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v19
+    version: world-model-ablation-forward-v20
     enabled: false
-    plan_id: world-model-ablation-forward-v19
-    # 只接收官方经济日历合同激活后的新槽；旧行为继续独立结算。
+    plan_id: world-model-ablation-forward-v20
+    # 只接收当前因果基线不能被事件输入淘汰后的新槽；旧行为继续独立结算。
     activated_at: 2026-08-26T06:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
@@ -409,7 +431,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v13
+  version: binance-public-shadow-v14
   symbols: [BTCUSDT, ETHUSDT, PAXGUSDT]
   interval: 5m
   bar_window: 64
@@ -599,12 +621,12 @@ proposal:
 # 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
 # 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v8
+  version: codex-runtime-v9
   enabled: false
   isolation_verified: false
   binary: /usr/lib/node_modules/@openai/codex/bin/codex.js
   bundle_root: /home/aiuser/work/ttt/market-intel/.runtime/codex-runs
-  expected_cli_version: codex-cli 0.149.0
+  expected_cli_version: codex-cli 0.149.1
   expected_binary_sha256: 134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
   model: gpt-5.6-sol
   reasoning_effort: high
@@ -619,7 +641,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v46
+  version: context-assessment-v47
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:

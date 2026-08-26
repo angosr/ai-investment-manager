@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.perpetual.client import BinanceUsdmRestClient
+from investment_manager.market.perpetual.models import perpetual_product_rule_content_hash
 from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.market.repository import MarketDataStore
 
@@ -24,9 +25,11 @@ class PerpetualMarketHealth:
     quote_count: int = 0
     settlement_count: int = 0
     schedule_count: int = 0
+    product_rule_count: int = 0
     last_refresh_at: datetime | None = None
     last_quote_refresh_at: datetime | None = None
     last_error_class: str | None = None
+    product_rule_error_class: str | None = None
     last_quote_error_class: str | None = None
 
 
@@ -122,13 +125,33 @@ class BinancePerpetualMarketService:
     async def refresh(self) -> None:
         started_at = require_utc(self._clock())
         try:
-            schedule = await self._refresh_schedule_if_required()
-            results = await asyncio.gather(
+            gathered = await asyncio.gather(
+                self._refresh_schedule_if_required(),
+                self._refresh_product_rules(),
                 *(
                     self._refresh_state_instrument(item)
                     for item in self._policy.perpetual_instruments
-                )
+                ),
+                return_exceptions=True,
             )
+            schedule_result, rule_result, *state_results = gathered
+            for result in (schedule_result, *state_results):
+                if isinstance(result, BaseException):
+                    raise result
+            schedule = schedule_result
+            results = state_results
+            if isinstance(rule_result, BaseException):
+                if not isinstance(rule_result, Exception):
+                    raise rule_result
+                self.health.product_rule_error_class = type(rule_result).__name__
+                logger.warning(
+                    "perpetual product rules unavailable; product candidates fail closed",
+                    exc_info=rule_result,
+                )
+                rules = None
+            else:
+                rules = rule_result
+                self.health.product_rule_error_class = None
         except Exception as exc:
             if self._refresh_observer is not None:
                 self._refresh_observer(
@@ -149,13 +172,16 @@ class BinancePerpetualMarketService:
                 (
                     *(item[0] for item in results),
                     *(schedule[:1] if schedule is not None else ()),
+                    *((rules[0],) if rules is not None else ()),
                 ),
                 default=None,
             ),
             observation_count=sum(item[1] for item in results)
-            + (1 if schedule is not None else 0),
+            + (1 if schedule is not None else 0)
+            + (rules[1] if rules is not None else 0),
             changed_count=sum(item[2] for item in results)
-            + (int(schedule[1]) if schedule is not None else 0),
+            + (int(schedule[1]) if schedule is not None else 0)
+            + (rules[2] if rules is not None else 0),
         )
         if self._refresh_observer is not None:
             self._refresh_observer(refresh)
@@ -173,6 +199,31 @@ class BinancePerpetualMarketService:
         if inserted:
             self.health.schedule_count += 1
         return schedule.observed_at, inserted
+
+    async def _refresh_product_rules(self) -> tuple[datetime, int, int]:
+        rules = await self._client.fetch_product_rules(
+            self._policy.perpetual_instruments
+        )
+        if len(rules) != len(self._policy.perpetual_instruments):
+            raise ValueError("Binance USD-M 产品规则没有完整覆盖配置 Instrument")
+        changed = 0
+        for item in rules:
+            previous = self._store.latest_perpetual_product_rules(
+                instrument=item.instrument,
+                as_of=item.observed_at,
+            )
+            content_changed = previous is None or (
+                perpetual_product_rule_content_hash(previous)
+                != perpetual_product_rule_content_hash(item)
+            )
+            if self._store.put_perpetual_product_rules(item):
+                self.health.product_rule_count += 1
+            changed += int(content_changed)
+        return (
+            max(item.observed_at for item in rules),
+            len(rules),
+            changed,
+        )
 
     async def _refresh_state_instrument(
         self,

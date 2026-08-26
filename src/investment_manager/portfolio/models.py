@@ -355,6 +355,7 @@ class SleeveTarget(FrozenModel):
     forecast_target: ForecastTarget
     desired_gross_notional: Money
     forecast_ids: tuple[str, ...] = Field(min_length=1)
+    payoff_projection_id: str | None = Field(default=None, min_length=1)
     edge_basis: PortfolioEdgeBasis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
     decision_gross_bps: Decimal
     cost: PortfolioCostEstimate
@@ -392,6 +393,7 @@ class PortfolioCandidateEvaluation(FrozenModel):
 
     sleeve_id: str = Field(min_length=1)
     forecast_id: str = Field(min_length=1)
+    payoff_projection_id: str | None = Field(default=None, min_length=1)
     edge_basis: PortfolioEdgeBasis
     current_gross_notional: Money
     evaluation_gross_notional: Money
@@ -474,10 +476,10 @@ class PortfolioTarget(FrozenModel):
             )
             if tuple(sorted(set(candidate_sleeve_ids))) != candidate_sleeve_ids:
                 raise ValueError("Portfolio candidate evaluations 必须按 Sleeve 唯一且排序")
-            candidate_forecast_ids = tuple(
-                sorted(item.forecast_id for item in self.candidate_evaluations)
-            )
-            if candidate_forecast_ids != self.considered_forecast_ids:
+            candidate_forecast_ids = {
+                item.forecast_id for item in self.candidate_evaluations
+            }
+            if candidate_forecast_ids != set(self.considered_forecast_ids):
                 raise ValueError("Portfolio candidate evaluations 必须完整覆盖 Forecast 考虑集")
         referenced_forecasts = {
             forecast_id for sleeve in self.sleeves for forecast_id in sleeve.forecast_ids

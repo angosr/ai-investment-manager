@@ -31,8 +31,166 @@ class ForecastSettlementResult:
     pending: int = 0
 
 
-class _MarketFactsIncomplete(Exception):
+class MarketFactsIncomplete(Exception):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastPayoffResolver:
+    """Resolve one product leg from point-in-time executable market facts."""
+
+    market: MarketDataStore
+    maximum_spot_age_seconds: int
+    maximum_perpetual_age_seconds: int
+    maximum_funding_gap_hours: int
+
+    def leg_outcome(
+        self,
+        *,
+        leg: ForecastLeg,
+        reference_price: Decimal,
+        outcome_start_at: datetime,
+        evaluation_at: datetime,
+        settled_at: datetime,
+    ) -> ForecastLegOutcome:
+        exit_price = self.executable_exit_price(
+            leg=leg,
+            evaluation_at=evaluation_at,
+            visible_at=settled_at,
+        )
+        sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
+        price_return = (
+            sign
+            * leg.gross_weight
+            * (exit_price / reference_price - Decimal("1"))
+            * _BPS
+        )
+        funding_return = Decimal("0")
+        funding_ids: tuple[str, ...] = ()
+        if leg.instrument.product != InstrumentProduct.SPOT:
+            settlements = self.market.funding_settlements(
+                instrument=leg.instrument,
+                start=outcome_start_at,
+                end=evaluation_at,
+                visible_at=settled_at,
+            )
+            self.require_complete_funding(
+                start=outcome_start_at,
+                end=evaluation_at,
+                settlement_times=tuple(item.funding_time for item in settlements),
+            )
+            funding_return = sum(
+                (
+                    -sign
+                    * leg.gross_weight
+                    * item.funding_rate
+                    * (item.mark_price / reference_price)
+                    * _BPS
+                    for item in settlements
+                ),
+                Decimal("0"),
+            )
+            funding_ids = tuple(item.settlement_id for item in settlements)
+        return ForecastLegOutcome(
+            instrument_id=leg.instrument.key,
+            direction=leg.direction,
+            gross_weight=leg.gross_weight,
+            reference_price=reference_price,
+            exit_price=exit_price,
+            price_return_bps=price_return,
+            funding_return_bps=funding_return,
+            funding_settlement_ids=funding_ids,
+        )
+
+    def executable_reference_price(
+        self,
+        *,
+        leg: ForecastLeg,
+        outcome_start_at: datetime,
+        visible_at: datetime,
+    ) -> Decimal:
+        if leg.instrument.product == InstrumentProduct.SPOT:
+            quote = self.market.latest_spot_quote(
+                instrument=leg.instrument,
+                evaluation_at=outcome_start_at,
+                visible_at=visible_at,
+            )
+            if quote is None or not self.fresh(
+                observed_at=quote.observed_at,
+                expected_at=outcome_start_at,
+                maximum_age_seconds=self.maximum_spot_age_seconds,
+            ):
+                raise MarketFactsIncomplete
+            return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+        quote = self.market.latest_perpetual_quote(
+            instrument=leg.instrument,
+            evaluation_at=outcome_start_at,
+            visible_at=visible_at,
+        )
+        if quote is None or not self.fresh(
+            observed_at=quote.exchange_time,
+            expected_at=outcome_start_at,
+            maximum_age_seconds=self.maximum_perpetual_age_seconds,
+        ):
+            raise MarketFactsIncomplete
+        return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
+
+    def executable_exit_price(
+        self,
+        *,
+        leg: ForecastLeg,
+        evaluation_at: datetime,
+        visible_at: datetime,
+    ) -> Decimal:
+        if leg.instrument.product == InstrumentProduct.SPOT:
+            quote = self.market.latest_spot_quote(
+                instrument=leg.instrument,
+                evaluation_at=evaluation_at,
+                visible_at=visible_at,
+            )
+            if quote is None or not self.fresh(
+                observed_at=quote.observed_at,
+                expected_at=evaluation_at,
+                maximum_age_seconds=self.maximum_spot_age_seconds,
+            ):
+                raise MarketFactsIncomplete
+            return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+        quote = self.market.latest_perpetual_quote(
+            instrument=leg.instrument,
+            evaluation_at=evaluation_at,
+            visible_at=visible_at,
+        )
+        if quote is None or not self.fresh(
+            observed_at=quote.exchange_time,
+            expected_at=evaluation_at,
+            maximum_age_seconds=self.maximum_perpetual_age_seconds,
+        ):
+            raise MarketFactsIncomplete
+        return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
+
+    @staticmethod
+    def fresh(
+        *,
+        observed_at: datetime,
+        expected_at: datetime,
+        maximum_age_seconds: int,
+    ) -> bool:
+        age = expected_at - observed_at
+        return timedelta(0) <= age <= timedelta(seconds=maximum_age_seconds)
+
+    def require_complete_funding(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        settlement_times: tuple[datetime, ...],
+    ) -> None:
+        maximum_gap = timedelta(hours=self.maximum_funding_gap_hours)
+        if end - start < maximum_gap and not settlement_times:
+            return
+        points = (start, *settlement_times, end)
+        if any(right - left > maximum_gap for left, right in pairwise(points)):
+            raise MarketFactsIncomplete
 
 
 @dataclass(slots=True)
@@ -60,7 +218,7 @@ class ForecastOutcomeSettler:
                     slot=slot,
                     settled_at=now,
                 )
-            except _MarketFactsIncomplete:
+            except MarketFactsIncomplete:
                 if now - slot.evaluation_at < timedelta(minutes=self.settlement_grace_minutes):
                     pending += 1
                     continue
@@ -131,50 +289,12 @@ class ForecastOutcomeSettler:
         evaluation_at: datetime,
         settled_at: datetime,
     ) -> ForecastLegOutcome:
-        exit_price = self._executable_exit_price(
+        return self._resolver().leg_outcome(
             leg=leg,
-            evaluation_at=evaluation_at,
-            visible_at=settled_at,
-        )
-        sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
-        price_return = (
-            sign * leg.gross_weight * (exit_price / reference_price - Decimal("1")) * _BPS
-        )
-        funding_return = Decimal("0")
-        funding_ids: tuple[str, ...] = ()
-        if leg.instrument.product != InstrumentProduct.SPOT:
-            settlements = self.market.funding_settlements(
-                instrument=leg.instrument,
-                start=outcome_start_at,
-                end=evaluation_at,
-                visible_at=settled_at,
-            )
-            self._require_complete_funding(
-                start=outcome_start_at,
-                end=evaluation_at,
-                settlement_times=tuple(item.funding_time for item in settlements),
-            )
-            funding_return = sum(
-                (
-                    -sign
-                    * leg.gross_weight
-                    * item.funding_rate
-                    * (item.mark_price / reference_price)
-                    * _BPS
-                    for item in settlements
-                ),
-                Decimal("0"),
-            )
-            funding_ids = tuple(item.settlement_id for item in settlements)
-        return ForecastLegOutcome(
-            instrument_id=leg.instrument.key,
-            direction=leg.direction,
-            gross_weight=leg.gross_weight,
             reference_price=reference_price,
-            exit_price=exit_price,
-            price_return_bps=price_return,
-            funding_return_bps=funding_return,
-            funding_settlement_ids=funding_ids,
+            outcome_start_at=outcome_start_at,
+            evaluation_at=evaluation_at,
+            settled_at=settled_at,
         )
 
     def _executable_reference_price(
@@ -184,88 +304,19 @@ class ForecastOutcomeSettler:
         outcome_start_at: datetime,
         visible_at: datetime,
     ) -> Decimal:
-        if leg.instrument.product == InstrumentProduct.SPOT:
-            quote = self.market.latest_spot_quote(
-                instrument=leg.instrument,
-                evaluation_at=outcome_start_at,
-                visible_at=visible_at,
-            )
-            if quote is None or not self._fresh(
-                observed_at=quote.observed_at,
-                expected_at=outcome_start_at,
-                maximum_age_seconds=self.maximum_spot_age_seconds,
-            ):
-                raise _MarketFactsIncomplete
-            return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
-        quote = self.market.latest_perpetual_quote(
-            instrument=leg.instrument,
-            evaluation_at=outcome_start_at,
+        return self._resolver().executable_reference_price(
+            leg=leg,
+            outcome_start_at=outcome_start_at,
             visible_at=visible_at,
         )
-        if quote is None or not self._fresh(
-            observed_at=quote.exchange_time,
-            expected_at=outcome_start_at,
-            maximum_age_seconds=self.maximum_perpetual_age_seconds,
-        ):
-            raise _MarketFactsIncomplete
-        return quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
 
-    def _executable_exit_price(
-        self,
-        *,
-        leg: ForecastLeg,
-        evaluation_at: datetime,
-        visible_at: datetime,
-    ) -> Decimal:
-        if leg.instrument.product == InstrumentProduct.SPOT:
-            quote = self.market.latest_spot_quote(
-                instrument=leg.instrument,
-                evaluation_at=evaluation_at,
-                visible_at=visible_at,
-            )
-            if quote is None or not self._fresh(
-                observed_at=quote.observed_at,
-                expected_at=evaluation_at,
-                maximum_age_seconds=self.maximum_spot_age_seconds,
-            ):
-                raise _MarketFactsIncomplete
-            return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
-        quote = self.market.latest_perpetual_quote(
-            instrument=leg.instrument,
-            evaluation_at=evaluation_at,
-            visible_at=visible_at,
+    def _resolver(self) -> ForecastPayoffResolver:
+        return ForecastPayoffResolver(
+            market=self.market,
+            maximum_spot_age_seconds=self.maximum_spot_age_seconds,
+            maximum_perpetual_age_seconds=self.maximum_perpetual_age_seconds,
+            maximum_funding_gap_hours=self.maximum_funding_gap_hours,
         )
-        if quote is None or not self._fresh(
-            observed_at=quote.exchange_time,
-            expected_at=evaluation_at,
-            maximum_age_seconds=self.maximum_perpetual_age_seconds,
-        ):
-            raise _MarketFactsIncomplete
-        return quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
-
-    @staticmethod
-    def _fresh(
-        *,
-        observed_at: datetime,
-        expected_at: datetime,
-        maximum_age_seconds: int,
-    ) -> bool:
-        age = expected_at - observed_at
-        return timedelta(0) <= age <= timedelta(seconds=maximum_age_seconds)
-
-    def _require_complete_funding(
-        self,
-        *,
-        start: datetime,
-        end: datetime,
-        settlement_times: tuple[datetime, ...],
-    ) -> None:
-        maximum_gap = timedelta(hours=self.maximum_funding_gap_hours)
-        if end - start < maximum_gap and not settlement_times:
-            return
-        points = (start, *settlement_times, end)
-        if any(right - left > maximum_gap for left, right in pairwise(points)):
-            raise _MarketFactsIncomplete
 
     def _unavailable(
         self,

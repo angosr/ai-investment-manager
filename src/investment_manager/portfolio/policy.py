@@ -145,6 +145,21 @@ class ReferencePortfolioPolicy(StrictConfig):
         return self
 
 
+class ProductPayoffPolicy(StrictConfig):
+    """One economic Forecast's allowed deterministic product expressions."""
+
+    version: str = Field(min_length=1)
+    economic_exposure_id: str = Field(min_length=1)
+    instrument_keys: tuple[str, ...] = Field(min_length=1)
+    maximum_rule_age_seconds: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def instruments_must_be_unique_and_sorted(self):
+        if tuple(sorted(set(self.instrument_keys))) != self.instrument_keys:
+            raise ValueError("Product payoff instruments 必须唯一且排序")
+        return self
+
+
 class ContextForecastPolicy(StrictConfig):
     """One pre-registered Context forecast question; no portfolio discretion."""
 
@@ -168,6 +183,7 @@ class ContextForecastPolicy(StrictConfig):
     required_feature_keys: tuple[str, ...] = ()
     outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
     forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
+    product_payoffs: ProductPayoffPolicy | None = None
 
     @model_validator(mode="after")
     def feature_keys_are_canonical(self):
@@ -292,4 +308,18 @@ class CapitalPolicy(StrictConfig):
             )
             if len(matching) != 1:
                 raise ValueError("启用 Context Forecast 必须绑定唯一资本授权")
+            payoffs = context.product_payoffs
+            if payoffs is not None:
+                if context.target_instrument_key not in payoffs.instrument_keys:
+                    raise ValueError("Product payoff 必须保留规范参考产品")
+                if not set(payoffs.instrument_keys).issubset(spec_keys):
+                    raise ValueError("Product payoff instruments 必须属于 execution specs")
+                exposure_by_key = {
+                    item.instrument_key: item.economic_exposure
+                    for item in self.investable_universe.instruments
+                }
+                if len(
+                    {exposure_by_key[key] for key in payoffs.instrument_keys}
+                ) != 1:
+                    raise ValueError("Product payoff products 必须表达同一经济暴露")
         return self

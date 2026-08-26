@@ -129,28 +129,23 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
 
 
 def _analysis_intelligence_event(item: PacketIntelligenceEvent) -> dict[str, object]:
-    """Keep decision evidence; omit transport and normalization audit metadata."""
+    """Keep inference-bearing event evidence, not selector/audit metadata.
+
+    ``impact``, novelty and relevance rank an unverified lead before selection.
+    Once selected they do not become evidence about the real-world event.  The
+    immutable packet retains them for audit.  The analyst only needs the event,
+    its source, its epistemic eligibility and the time at which it happened.
+    """
 
     projected: dict[str, object] = {
         "evidence_ref": item.evidence_ref,
         "source": item.source,
         "event_time": item.event_time.isoformat(),
-        "observed_at": item.observed_at.isoformat(),
         "title": item.title,
-        "body": item.body,
-        "symbols": item.symbols,
-        # The upstream value ranks which unverified headline deserves attention;
-        # feed position and coarse mandate relevance do not measure real-world impact.
-        "attention_priority": _analysis_decimal(item.impact),
-        "source_reliability": _analysis_decimal(item.source_reliability),
-        "novelty": _analysis_decimal(item.novelty),
-        "directly_triggered": item.directly_triggered,
         "directional_support_eligible": item.directional_support_eligible,
     }
-    if item.url is not None:
-        projected["url"] = item.url
-    if item.relevance != item.impact:
-        projected["relevance"] = _analysis_decimal(item.relevance)
+    if item.body.strip() != item.title.strip():
+        projected["body"] = item.body
     return projected
 
 
@@ -478,8 +473,6 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         payload["previous_context"] = {
             "assessment_id": previous["assessment_id"],
             "as_of": previous["as_of"],
-            "synthesis": previous["synthesis"],
-            "synthesis_horizon_hours": previous["synthesis_horizon_hours"],
             "test_catalog": tuple(test_catalog),
             "mechanisms": tuple(
                 {
@@ -511,15 +504,22 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         }
     if not packet.review_requests:
         payload.pop("review_requests", None)
-    payload["capability_summary"] = tuple(
-        {
-            "domain": item.domain.value,
-            "status": item.status.value,
-            "missing_capabilities": item.missing_capabilities,
+    payload["capability_summary"] = {
+        item.domain.value: {
+            **(
+                {"status": item.status.value}
+                if item.status != CoverageStatus.PARTIAL
+                else {}
+            ),
+            **(
+                {"missing": item.missing_capabilities}
+                if item.missing_capabilities
+                else {}
+            ),
         }
         for item in packet.information_coverage
         if item.status != CoverageStatus.CURRENT
-    )
+    }
     payload.pop("information_coverage", None)
     return payload
 
@@ -1140,7 +1140,6 @@ def _trim_one_packet_input_for_capacity(
     selected_intelligence: list[PacketIntelligenceEvent],
     omitted_facts: set[str],
     omitted_intelligence: set[str],
-    has_previous_context: bool,
 ) -> bool:
     """Remove the lowest-value non-direct input using one canonical order."""
 
@@ -1183,25 +1182,12 @@ def _trim_one_packet_input_for_capacity(
         removed = selected_facts.pop(removable_redundant_state)
         omitted_facts.add(removed.revision_id)
         return True
-    if not has_previous_context:
-        return False
-    removable_inherited_state = next(
-        (
-            index
-            for index in range(len(selected_facts) - 1, -1, -1)
-            if not selected_facts[index].directly_triggered
-            and (
-                selected_facts[index].fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
-                or _is_durable_policy_state(selected_facts[index])
-            )
-        ),
-        None,
-    )
-    if removable_inherited_state is None:
-        return False
-    removed = selected_facts.pop(removable_inherited_state)
-    omitted_facts.add(removed.revision_id)
-    return True
+    # A previous WorldModel is a derived hypothesis, not a current observation.
+    # Never evict the last representative of a causal channel merely because a
+    # previous model exists.  If the minimum current baseline cannot fit after
+    # redundant state and non-direct background have been removed, the Release
+    # capacity contract is invalid and must fail deterministically.
+    return False
 
 
 def replace_packet_previous_context(
@@ -1256,7 +1242,6 @@ def replace_packet_previous_context(
             selected_intelligence=selected_intelligence,
             omitted_facts=omitted_facts,
             omitted_intelligence=omitted_intelligence,
-            has_previous_context=True,
         ):
             continue
         raise DecisionPacketCapacityError(
@@ -1433,7 +1418,6 @@ class DecisionPacketBuilder:
                 selected_intelligence=selected_intelligence,
                 omitted_facts=omitted_facts,
                 omitted_intelligence=omitted_intelligence,
-                has_previous_context=previous_context is not None,
             ):
                 continue
             raise DecisionPacketCapacityError(

@@ -89,6 +89,21 @@ Index(
     perpetual_quotes.c.observed_at,
 )
 
+perpetual_product_rules = Table(
+    "perpetual_product_rules",
+    metadata,
+    Column("rules_id", String(128), primary_key=True),
+    Column("instrument_id", String(128), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_perpetual_product_rules_instrument_time",
+    perpetual_product_rules.c.instrument_id,
+    perpetual_product_rules.c.observed_at,
+)
+
 funding_settlements = Table(
     "funding_settlements",
     metadata,
@@ -128,6 +143,7 @@ market_tables = (
     market_bars,
     perpetual_market_states,
     perpetual_quotes,
+    perpetual_product_rules,
     funding_settlements,
     tradfi_trading_schedules,
 )

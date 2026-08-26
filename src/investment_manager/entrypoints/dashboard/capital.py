@@ -29,6 +29,13 @@ from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
     ForecastSlotStratum,
 )
+from investment_manager.forecast.product.evaluation import (
+    ProductPayoffEvidence,
+    evaluate_product_payoff_evidence,
+)
+from investment_manager.forecast.product.repository import (
+    SqlProductPayoffProjectionStore,
+)
 from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
@@ -412,6 +419,26 @@ class CapitalDashboardReader:
             formal_producer_behavior_id=context.producer_behavior_id,
             activated_at=policy.activated_at,
             as_of=now,
+        )
+
+    def product_payoff_evidence(self) -> ProductPayoffEvidence | None:
+        context = self._config.capital.context_forecast
+        if (
+            context is None
+            or not context.enabled
+            or context.product_payoffs is None
+        ):
+            return None
+        evaluation = self._config.outcome_evaluation
+        cases = SqlProductPayoffProjectionStore(self._engine).outcome_cases(
+            evaluation_version=evaluation.product_payoff_version
+        )
+        return evaluate_product_payoff_evidence(
+            cases,
+            evaluation_version=evaluation.product_payoff_version,
+            required_independent_source_forecasts=(
+                evaluation.product_payoff_minimum_sample_size
+            ),
         )
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
@@ -1223,6 +1250,25 @@ def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
     if evidence is None:
         return {"forecast_evidence": None}
     return {"forecast_evidence": _serialize_forecast_evidence_payload(evidence)}
+
+
+def serialize_product_payoff_evidence(
+    evidence: ProductPayoffEvidence | None,
+) -> dict:
+    if evidence is None:
+        return {"product_payoff_evidence": None}
+    payload = asdict(evidence)
+    payload["status"] = evidence.status.value
+    for field_name in (
+        "mean_absolute_prediction_error_bps",
+        "conservative_coverage",
+        "payoff_sign_accuracy",
+        "product_ranking_accuracy",
+        "mean_product_selection_regret_bps",
+    ):
+        value = getattr(evidence, field_name)
+        payload[field_name] = None if value is None else str(value)
+    return {"product_payoff_evidence": payload}
 
 
 def serialize_world_model_ablation_evidence(

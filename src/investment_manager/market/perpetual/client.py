@@ -14,10 +14,12 @@ from investment_manager.market.perpetual.models import (
     FundingRateType,
     FundingSettlement,
     PerpetualMarketState,
+    PerpetualProductRules,
     PerpetualQuote,
     TradingScheduleSnapshot,
     TradingSession,
     TradingSessionType,
+    perpetual_product_rule_content_hash,
 )
 
 
@@ -100,6 +102,94 @@ class BinanceUsdmRestClient:
             update_id=update_id,
             source="binance-usdm-book-ticker-rest",
         )
+
+    async def fetch_product_rules(
+        self,
+        instruments: tuple[InstrumentId, ...],
+    ) -> tuple[PerpetualProductRules, ...]:
+        if not instruments or len({item.key for item in instruments}) != len(instruments):
+            raise ValueError("Binance product rules instruments 必须非空且唯一")
+        exchange_info, funding_info = await asyncio.gather(
+            self.transport.get("/fapi/v1/exchangeInfo", {}),
+            self.transport.get("/fapi/v1/fundingInfo", {}),
+        )
+        observed_at = require_utc(self.clock())
+        if (
+            not isinstance(exchange_info, dict)
+            or not isinstance(exchange_info.get("symbols"), list)
+            or not isinstance(funding_info, list)
+        ):
+            raise ValueError("Binance USD-M product rules REST 响应非法")
+        exchange_by_symbol = _unique_symbol_rows(
+            exchange_info["symbols"],
+            name="exchangeInfo",
+        )
+        funding_by_symbol = _unique_symbol_rows(
+            funding_info,
+            name="fundingInfo",
+        )
+        values = []
+        for instrument in sorted(instruments, key=lambda item: item.key):
+            exchange = exchange_by_symbol.get(instrument.symbol)
+            funding = funding_by_symbol.get(instrument.symbol)
+            if exchange is None:
+                raise ValueError(f"Binance USD-M 缺少 {instrument.symbol} 产品规则")
+            filters = _unique_filter_rows(exchange.get("filters"))
+            price = filters.get("PRICE_FILTER")
+            market_lot = filters.get("MARKET_LOT_SIZE")
+            minimum_notional = filters.get("MIN_NOTIONAL")
+            if price is None or market_lot is None or minimum_notional is None:
+                raise ValueError("Binance USD-M exchangeInfo 缺少必需交易规则")
+            updated_raw = None if funding is None else funding.get("updateTime")
+            upstream_updated_at = (
+                _from_milliseconds(int(updated_raw))
+                if updated_raw is not None
+                else None
+            )
+            rule_values = {
+                "instrument": instrument,
+                "observed_at": observed_at,
+                "upstream_updated_at": upstream_updated_at,
+                "contract_type": str(exchange["contractType"]),
+                "status": str(exchange["status"]),
+                "margin_asset": str(exchange["marginAsset"]),
+                "tick_size": Decimal(str(price["tickSize"])),
+                "market_min_quantity": Decimal(str(market_lot["minQty"])),
+                "market_max_quantity": Decimal(str(market_lot["maxQty"])),
+                "market_quantity_step": Decimal(str(market_lot["stepSize"])),
+                "minimum_notional": Decimal(str(minimum_notional["notional"])),
+                "funding_override_present": funding is not None,
+                "funding_interval_hours": (
+                    None if funding is None else int(funding["fundingIntervalHours"])
+                ),
+                "adjusted_funding_rate_cap": (
+                    None
+                    if funding is None
+                    else Decimal(str(funding["adjustedFundingRateCap"]))
+                ),
+                "adjusted_funding_rate_floor": (
+                    None
+                    if funding is None
+                    else Decimal(str(funding["adjustedFundingRateFloor"]))
+                ),
+                "source": "binance-usdm-exchange-and-funding-info-rest",
+            }
+            pending = PerpetualProductRules.model_construct(
+                rules_id="pending",
+                **rule_values,
+            )
+            values.append(
+                PerpetualProductRules(
+                    rules_id=stable_id(
+                        "perpetual_product_rules",
+                        instrument.key,
+                        observed_at.isoformat(),
+                        perpetual_product_rule_content_hash(pending),
+                    ),
+                    **rule_values,
+                )
+            )
+        return tuple(values)
 
     async def fetch_market_state(self, instrument: InstrumentId) -> PerpetualMarketState:
         raw, open_interest, account_ratio, taker_ratio = await asyncio.gather(
@@ -203,6 +293,30 @@ class BinanceUsdmRestClient:
         if tuple(sorted(set(ordering))) != ordering:
             raise ValueError("Binance fundingRate REST 结算必须唯一且升序")
         return tuple(values)
+
+
+def _unique_symbol_rows(raw: Any, *, name: str) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise ValueError(f"Binance {name} REST 条目非法")
+    rows: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        symbol = str(item.get("symbol", ""))
+        if not symbol or symbol in rows:
+            raise ValueError(f"Binance {name} REST symbol 缺失或重复")
+        rows[symbol] = item
+    return rows
+
+
+def _unique_filter_rows(raw: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise ValueError("Binance exchangeInfo filters 非法")
+    rows: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        filter_type = str(item.get("filterType", ""))
+        if not filter_type or filter_type in rows:
+            raise ValueError("Binance exchangeInfo filterType 缺失或重复")
+        rows[filter_type] = item
+    return rows
 
 
 def _positioning_summary(

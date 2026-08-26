@@ -164,6 +164,22 @@ export interface AssessmentFeed {
 
 export interface ForecastEvaluationEvidence {
   forecast_evidence: ForecastEvidenceSummary | null;
+  product_payoff_evidence: {
+    evaluation_version: string;
+    status: "NO_SETTLED_SAMPLES" | "COLLECTING" | "SUFFICIENT";
+    terminal_product_count: number;
+    settled_product_count: number;
+    unavailable_product_count: number;
+    source_forecast_count: number;
+    independent_source_forecast_count: number;
+    required_independent_source_forecasts: number;
+    comparable_source_forecast_count: number;
+    mean_absolute_prediction_error_bps: string | null;
+    conservative_coverage: string | null;
+    payoff_sign_accuracy: string | null;
+    product_ranking_accuracy: string | null;
+    mean_product_selection_regret_bps: string | null;
+  } | null;
   world_model_ablation: {
     plan_id: string;
     as_of: string;
@@ -341,17 +357,18 @@ export interface AssessmentInputSnapshot {
     evidence_ref: string;
     source: string;
     title: string;
-    body: string;
+    body?: string;
     event_time: string;
-    observed_at: string;
-    symbols: string[];
-    directly_triggered: boolean;
+    observed_at?: string;
+    symbols?: string[];
+    directly_triggered?: boolean;
+    directional_support_eligible?: boolean;
   }[];
   previous_context?: {
     assessment_id: string;
     as_of: string;
-    synthesis: string;
-    synthesis_horizon_hours: number;
+    synthesis?: string;
+    synthesis_horizon_hours?: number;
     event_references: {
       evidence_id: string;
       source: string;
@@ -371,11 +388,13 @@ export interface AssessmentInputSnapshot {
       review_at: string;
     }[];
   };
-  capability_summary: {
-    domain: string;
-    status: string;
-    missing_capabilities: string[];
-  }[];
+  capability_summary:
+    | Record<string, { status?: string; missing?: string[] }>
+    | {
+        domain: string;
+        status: string;
+        missing_capabilities: string[];
+      }[];
   state_features?: {
     algorithm_version: string;
     regime_states: AssessmentStateFeature[];
