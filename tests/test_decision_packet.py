@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
+from investment_manager.decision_cycle.trigger import _previous_context
 from investment_manager.forecast.codex.bundle import verify_bundle
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.analyst import (
@@ -31,6 +32,10 @@ from investment_manager.forecast.context.contract import (
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.verification import packet_feature_values
 from investment_manager.forecast.models import (
+    MAX_ACTIVE_WORLD_MECHANISMS,
+    MAX_WORLD_CAUSAL_NODES,
+    MAX_WORLD_INVALIDATION_CONDITIONS,
+    MAX_WORLD_VERIFICATION_TESTS,
     ContextCausalNode,
     ContextMechanismRelationship,
     ContextMechanismRetirement,
@@ -1582,8 +1587,23 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     replay_input,
 ) -> None:
     _, packet = _packet(app_config, replay_input)
-    schema = canonical_json(assess_output_schema(packet))
+    output_schema = assess_output_schema(packet)
+    schema = canonical_json(output_schema)
     prompt = build_assess_prompt(packet)
+
+    definitions = WorldModelStructuredOutput.model_json_schema()["$defs"]
+    draft_properties = definitions["WorldModelDraft"]["properties"]
+    mechanism_properties = definitions["ContextMechanismDraft"]["properties"]
+    assert draft_properties["mechanisms"]["maxItems"] == MAX_ACTIVE_WORLD_MECHANISMS
+    assert mechanism_properties["causal_chain"]["maxItems"] == MAX_WORLD_CAUSAL_NODES
+    assert (
+        mechanism_properties["verification_tests"]["maxItems"]
+        == MAX_WORLD_VERIFICATION_TESTS
+    )
+    assert (
+        mechanism_properties["invalidation_conditions"]["maxItems"]
+        == MAX_WORLD_INVALIDATION_CONDITIONS
+    )
 
     for forbidden in (
         "suggested_action",
@@ -1605,6 +1625,7 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     assert "联合因果解释" in prompt
     assert "结构化字段中的资产代码、数值和枚举必须遵守 Schema" in prompt
     assert "不得把 GTE、LTE、BETWEEN、SUPPORTS 等结构枚举当作中文叙述" in prompt
+    assert "有界假设状态" in prompt
     assert "decision_packet_json=" in prompt
 
 
@@ -1721,6 +1742,51 @@ def test_finalize_assessment_writes_only_current_world_model_schema(
     assert assessment.synthesis is not None
     assert len(assessment.mechanisms) == 1
     assert assessment.mechanisms[0].relationship == ContextMechanismRelationship.SUPPORTS
+
+
+def test_previous_world_model_projection_bounds_historical_test_inventory(
+    app_config,
+    replay_input,
+) -> None:
+    _, packet = _packet(app_config, replay_input)
+    assessment = finalize_world_model(
+        output=_world_model_output(),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+    base = assessment.mechanisms[0].verification_tests[0]
+    tests = tuple(
+        base.model_copy(update={"feature_selector": selector})
+        for selector in (
+            "fact_state:US_TREASURY_CASH_SNAPSHOT.tga_change_5d_usd_m",
+            "derivative_state:BTC.open_interest_change_fraction",
+            "asset_state:BTC.return_fraction",
+            "fact_state:FED_BROAD_DOLLAR_SNAPSHOT.broad_dollar_change_1d_pct",
+            "derivative_state:BTC.spot_taker_buy_sell_ratio",
+        )
+    )
+    oversized = assessment.model_copy(
+        update={
+            "mechanisms": (
+                assessment.mechanisms[0].model_copy(
+                    update={
+                        "claim": "因果假设" * 300,
+                        "verification_tests": tests,
+                    }
+                ),
+            )
+        }
+    )
+
+    previous = _previous_context(oversized)
+
+    assert previous is not None
+    mechanism = previous.mechanisms[0]
+    assert len(mechanism.claim) == 600
+    assert tuple(item.feature_selector for item in mechanism.verification_tests) == tuple(
+        item.feature_selector for item in tests[:3]
+    )
 
 
 def test_world_model_continuous_cause_requires_connected_fact_test(

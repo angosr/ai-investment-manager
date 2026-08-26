@@ -5,6 +5,12 @@ from datetime import datetime
 from pydantic import Field
 
 from investment_manager.forecast.models import (
+    MAX_ACTIVE_WORLD_MECHANISMS,
+    MAX_WORLD_CAUSAL_NODES,
+    MAX_WORLD_CONFLICTING_EVIDENCE,
+    MAX_WORLD_INVALIDATION_CONDITIONS,
+    MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
+    MAX_WORLD_VERIFICATION_TESTS,
     ContextAssessment,
     ContextCausalNode,
     ContextEventImpactState,
@@ -51,20 +57,38 @@ class ContextVerificationTestDraft(FrozenModel):
 class ContextMechanismDraft(FrozenModel):
     continuity_ref: str | None = Field(default=None, min_length=1)
     relationship: ContextMechanismRelationship
-    claim: str = Field(min_length=1, max_length=1_200)
+    claim: str = Field(
+        min_length=1,
+        max_length=MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
+    )
     horizon_hours: int = Field(gt=0, le=17_520)
-    causal_chain: tuple[ContextCausalNode, ...] = Field(min_length=2)
+    causal_chain: tuple[ContextCausalNode, ...] = Field(
+        min_length=2,
+        max_length=MAX_WORLD_CAUSAL_NODES,
+    )
     transmission_stage: ContextTransmissionStage
-    conflicting_evidence_ids: tuple[str, ...] = ()
-    verification_tests: tuple[ContextVerificationTestDraft, ...] = Field(min_length=1)
-    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+    conflicting_evidence_ids: tuple[str, ...] = Field(
+        default=(),
+        max_length=MAX_WORLD_CONFLICTING_EVIDENCE,
+    )
+    verification_tests: tuple[ContextVerificationTestDraft, ...] = Field(
+        min_length=1,
+        max_length=MAX_WORLD_VERIFICATION_TESTS,
+    )
+    invalidation_conditions: tuple[str, ...] = Field(
+        min_length=1,
+        max_length=MAX_WORLD_INVALIDATION_CONDITIONS,
+    )
     next_review_at: datetime
 
 
 class WorldModelDraft(FrozenModel):
     synthesis: str = Field(min_length=1, max_length=2_000)
     synthesis_horizon_hours: int = Field(gt=0, le=17_520)
-    mechanisms: tuple[ContextMechanismDraft, ...] = Field(min_length=1)
+    mechanisms: tuple[ContextMechanismDraft, ...] = Field(
+        min_length=1,
+        max_length=MAX_ACTIVE_WORLD_MECHANISMS,
+    )
     retired_mechanisms: tuple[ContextMechanismRetirement, ...] = ()
     event_relevance_updates: tuple[ContextEventReferenceUpdate, ...] = ()
 
@@ -86,6 +110,9 @@ ASSESS_INSTRUCTIONS = (
     "同时成立的反向力量用 OFFSETS，反转风险用 THREATENS，"
     "只有解释同一观测的竞争原因才用 ALTERNATIVE。"
     "不得为凑数量加入背景知识或同义机制。claim 必须可被后续观测支持或反驳。",
+    "WorldModel 是有界假设状态，不是指标清单：最多保留六股具有独立边际含义的机制；"
+    "每条机制最多五个必要因果节点、三个分别覆盖关键驱动/中介/市场响应的决定性验证测试，"
+    "以及三个不重复失效条件。合并同义指标，不得拆分同一力量来规避边界。",
     "每条 causal_chain 按原因、关键中介、资金或市场响应、组合含义的实际证据边界书写；"
     "每个节点只能陈述所引 evidence_ids 支持的事实或推断。"
     "价格、资金费率、持仓和相关性通常是市场响应或放大器，不能凭自身冒充外生原因。比较事件时间、市场预期差、"

@@ -85,10 +85,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v43"
+    assert config.decision_state.version == "portfolio-state-v44"
     assert config.decision_state.official_fact_policy.version == "official-fact-v16"
     assert config.decision_state.delta_policy.version == "state-delta-v17"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v46"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v47"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000

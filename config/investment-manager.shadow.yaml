@@ -7,7 +7,7 @@ capital:
   candidate_capital_authorizations:
     - version: btc-context-candidate-v20
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "b9dfb6266433f80e3c0536923e33831993735902e9558ab9deae6e20a6e19db1"
+      producer_behavior_id: "42c678acada595d4afeb05cf9fa1247f6e368a43b2bd254a4d9a7841956a7c66"
       outcome_family_id: btc-spot-directional-4h
       hypothesis_fingerprint: "3c21e7600c2da7c48181b985dbecd137d99757987447b8b1030494d2f59fec4b"
       maximum_allocation_fraction: "0.10"

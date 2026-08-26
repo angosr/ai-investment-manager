@@ -18,7 +18,10 @@ from investment_manager.forecast.context.workflow import (
     AssessmentWorkflowRequest,
 )
 from investment_manager.forecast.models import (
+    MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
+    MAX_WORLD_VERIFICATION_TESTS,
     ContextAssessment,
+    ContextMechanism,
     ContextMechanismObservation,
 )
 from investment_manager.governance.policy import DeploymentStage
@@ -317,7 +320,10 @@ def _previous_context(
                 mechanism_id=item.mechanism_id,
                 continuity_ref=item.continuity_ref,
                 relationship=item.relationship.value,
-                claim=sanitize_external_text(item.claim, maximum_length=1_200)[0],
+                claim=sanitize_external_text(
+                    item.claim,
+                    maximum_length=MAX_WORLD_MECHANISM_CLAIM_CHARACTERS,
+                )[0],
                 horizon_hours=item.horizon_hours,
                 causal_chain=tuple(
                     PacketPreviousCausalNode(
@@ -331,40 +337,10 @@ def _previous_context(
                 ),
                 transmission_stage=item.transmission_stage.value,
                 conflicting_evidence_ids=item.conflicting_evidence_ids,
-                verification_tests=tuple(
-                    PacketPreviousVerificationTest(
-                        feature_selector=test.feature_selector,
-                        evaluation_window_minutes=test.evaluation_window_minutes,
-                        supports_predicate=PacketPreviousVerificationPredicate(
-                            **test.supports_predicate.model_dump()
-                        ),
-                        contradicts_predicate=PacketPreviousVerificationPredicate(
-                            **test.contradicts_predicate.model_dump()
-                        ),
-                        latest_observation=(
-                            PacketPreviousVerificationObservation(
-                                observed_at=observation.observed_at,
-                                value=observation.value,
-                                match=observation.match.value,
-                                support_streak=observation.support_streak,
-                                contradiction_streak=observation.contradiction_streak,
-                                resolution=observation.resolution.value,
-                            )
-                            if (
-                                observation := latest_observation_by_test.get(
-                                    verification_test_id(
-                                        assessment_id=assessment.assessment_id,
-                                        mechanism_id=item.mechanism_id,
-                                        test_index=index,
-                                        test=test,
-                                    )
-                                )
-                            )
-                            is not None
-                            else None
-                        ),
-                    )
-                    for index, test in enumerate(item.verification_tests)
+                verification_tests=_previous_verification_tests(
+                    assessment_id=assessment.assessment_id,
+                    mechanism=item,
+                    latest_observation_by_test=latest_observation_by_test,
                 ),
                 invalidation_conditions=tuple(
                     sanitize_external_text(
@@ -378,6 +354,94 @@ def _previous_context(
             for item in assessment.mechanisms
         ),
     )
+
+
+def _previous_verification_tests(
+    *,
+    assessment_id: str,
+    mechanism: ContextMechanism,
+    latest_observation_by_test: dict[str, ContextMechanismObservation],
+) -> tuple[PacketPreviousVerificationTest, ...]:
+    """Carry a decision-dense subset while retaining the full historical contract."""
+
+    candidates = []
+    for index, test in enumerate(mechanism.verification_tests):
+        observation = latest_observation_by_test.get(
+            verification_test_id(
+                assessment_id=assessment_id,
+                mechanism_id=mechanism.mechanism_id,
+                test_index=index,
+                test=test,
+            )
+        )
+        candidates.append((index, test, observation))
+    ordered = sorted(
+        candidates,
+        key=lambda item: (_verification_observation_rank(item[2]), item[0]),
+    )
+    selected = []
+    represented_families: set[str] = set()
+    for candidate in ordered:
+        family = candidate[1].feature_selector.partition(":")[0]
+        if family in represented_families:
+            continue
+        selected.append(candidate)
+        represented_families.add(family)
+        if len(selected) == MAX_WORLD_VERIFICATION_TESTS:
+            break
+    if len(selected) < MAX_WORLD_VERIFICATION_TESTS:
+        selected_indices = {item[0] for item in selected}
+        selected.extend(
+            item
+            for item in ordered
+            if item[0] not in selected_indices
+        )
+    selected = sorted(selected[:MAX_WORLD_VERIFICATION_TESTS], key=lambda item: item[0])
+    return tuple(
+        PacketPreviousVerificationTest(
+            feature_selector=test.feature_selector,
+            evaluation_window_minutes=test.evaluation_window_minutes,
+            supports_predicate=PacketPreviousVerificationPredicate(
+                **test.supports_predicate.model_dump()
+            ),
+            contradicts_predicate=PacketPreviousVerificationPredicate(
+                **test.contradicts_predicate.model_dump()
+            ),
+            latest_observation=(
+                PacketPreviousVerificationObservation(
+                    observed_at=observation.observed_at,
+                    value=observation.value,
+                    match=observation.match.value,
+                    support_streak=observation.support_streak,
+                    contradiction_streak=observation.contradiction_streak,
+                    resolution=observation.resolution.value,
+                )
+                if observation is not None
+                else None
+            ),
+        )
+        for _index, test, observation in selected
+    )
+
+
+def _verification_observation_rank(
+    observation: ContextMechanismObservation | None,
+) -> int:
+    if observation is None:
+        return 7
+    resolution_rank = {
+        "CONTRADICTED": 0,
+        "AMBIGUOUS": 1,
+        "SUPPORTED": 2,
+    }.get(observation.resolution.value)
+    if resolution_rank is not None:
+        return resolution_rank
+    return {
+        "CONTRADICTS": 3,
+        "SUPPORTS": 4,
+        "AMBIGUOUS": 5,
+        "NEITHER": 6,
+    }[observation.match.value]
 
 
 @dataclass(slots=True)

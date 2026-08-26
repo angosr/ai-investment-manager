@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v43
+  version: portfolio-state-v44
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v16
@@ -94,7 +94,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v46
+    version: decision-packet-policy-v47
     schema_version: decision-packet-v19
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -230,7 +230,7 @@ capital:
     version: btc-context-forecast-v23
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "b9dfb6266433f80e3c0536923e33831993735902e9558ab9deae6e20a6e19db1"
+    producer_behavior_id: "42c678acada595d4afeb05cf9fa1247f6e368a43b2bd254a4d9a7841956a7c66"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT

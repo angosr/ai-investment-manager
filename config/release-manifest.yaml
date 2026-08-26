@@ -7,7 +7,7 @@ parent_manifest_id: release-framework-forecast-baseline-v1
 complexity_score: 1
 component_versions:
   - [feature, feature-v1]
-  - [decision_state, portfolio-state-v43]
+  - [decision_state, portfolio-state-v44]
   - [capital, total-portfolio-capital-v54]
   - [outcome_evaluation, typed-outcome-settlement-v28]
   - [trigger, analysis-trigger-v30]
