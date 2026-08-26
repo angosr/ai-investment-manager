@@ -22,7 +22,7 @@ from investment_manager.portfolio.policy import (
     FrequencyPolicy,
     MandateStatus,
 )
-from investment_manager.settings import load_config
+from investment_manager.settings import AppConfig, load_config
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
 from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
 
@@ -104,10 +104,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v14"
+    assert config.market_data.version == "binance-public-shadow-v15"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
+    assert config.market_data.perpetual_poll_seconds == 120
     assert (
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
@@ -269,6 +270,21 @@ def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
         match="永续报价轮询间隔不得超过跨市场报价偏差上限",
     ):
         MarketDataPolicy.model_validate(payload)
+
+
+def test_perpetual_state_cadence_preserves_capital_freshness_recovery() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["market_data"]["perpetual_poll_seconds"] = min(
+        config.capital.context_forecast.maximum_quote_age_seconds,
+        config.capital.risk.maximum_quote_age_seconds,
+    ) // 2
+
+    with pytest.raises(
+        ValidationError,
+        match="永续状态轮询必须在资本新鲜度窗口内保留失败恢复余量",
+    ):
+        AppConfig.model_validate(payload)
 
 
 def test_market_observation_domain_may_exceed_assessment_mandate() -> None:

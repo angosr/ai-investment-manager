@@ -426,7 +426,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v14
+  version: binance-public-shadow-v15
   symbols: [BTCUSDT, ETHUSDT, PAXGUSDT]
   interval: 5m
   bar_window: 64
@@ -472,7 +472,8 @@ market_data:
       contract_multiplier: "1"
   perpetual_rest_base_url: https://fapi.binance.com
   perpetual_quote_poll_seconds: 5
-  perpetual_poll_seconds: 300
+  # 必须显著短于 Capital/Forecast 新鲜度窗口；容忍一次失败轮询后仍有恢复余量。
+  perpetual_poll_seconds: 120
   funding_history_lookback_hours: 720
   cross_venue_spot:
     version: cross-venue-spot-v1

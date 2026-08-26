@@ -176,6 +176,17 @@ class AppConfig(StrictConfig):
                 != self.market_data.maximum_cross_market_quote_skew_seconds
             ):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
+            if (
+                context_forecast is not None
+                and context_forecast.enabled
+                and self.market_data.perpetual_instruments
+                and self.market_data.perpetual_poll_seconds * 2
+                >= min(
+                    context_forecast.maximum_quote_age_seconds,
+                    self.capital.risk.maximum_quote_age_seconds,
+                )
+            ):
+                raise ValueError("永续状态轮询必须在资本新鲜度窗口内保留失败恢复余量")
         context = self.capital.context_forecast
         if context is not None and context.enabled:
             execution_by_key = {
