@@ -143,7 +143,6 @@ class CapitalCandidateEconomics:
     outcome_probabilities: tuple[tuple[str, Decimal], ...]
     mechanism_contributions: tuple[tuple[str, str, str], ...]
     evidence_refs: tuple[str, ...]
-    analysis_input: dict | None
     gross_bps: Decimal
     fee_bps: Decimal
     exit_spread_bps: Decimal
@@ -173,6 +172,7 @@ class CapitalActivity:
     order_count: int = 0
     candidate_economics_recorded: bool = False
     candidate_economics: tuple[CapitalCandidateEconomics, ...] = ()
+    analysis_input: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -973,6 +973,10 @@ class CapitalDashboardReader:
         candidate_economics_recorded = (
             target is not None and target.candidate_evaluations is not None
         )
+        analysis_input = self._decision_analysis_input(
+            target=target,
+            forecasts=forecasts,
+        )
         if record.outcome in {CapitalCycleOutcome.CASH, CapitalCycleOutcome.HOLD}:
             return CapitalActivity(
                 activity_id=record.record_id,
@@ -1035,6 +1039,7 @@ class CapitalDashboardReader:
                 reason_codes=target.reason_codes,
                 candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
+                analysis_input=analysis_input,
             )
         if risk.approved_target is None:
             return CapitalActivity(
@@ -1048,6 +1053,7 @@ class CapitalDashboardReader:
                 risk_outcome=risk.outcome.value,
                 candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
+                analysis_input=analysis_input,
             )
         if record.outcome in {
             CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
@@ -1064,6 +1070,7 @@ class CapitalDashboardReader:
                 risk_outcome=risk.outcome.value,
                 candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
+                analysis_input=analysis_input,
             )
         plan = plans.get(risk.approved_target.approved_target_id)
         if plan is None:
@@ -1078,6 +1085,7 @@ class CapitalDashboardReader:
                 risk_outcome=risk.outcome.value,
                 candidate_economics_recorded=candidate_economics_recorded,
                 candidate_economics=candidate_economics,
+                analysis_input=analysis_input,
             )
         groups = tuple(groups_by_plan.get(plan.plan_id, ()))
         order_count = order_counts.get(plan.plan_id, 0)
@@ -1102,7 +1110,28 @@ class CapitalDashboardReader:
             order_count=order_count,
             candidate_economics_recorded=candidate_economics_recorded,
             candidate_economics=candidate_economics,
+            analysis_input=analysis_input,
         )
+
+    @staticmethod
+    def _decision_analysis_input(
+        *,
+        target: PortfolioTarget | None,
+        forecasts: dict[str, BaseForecast | CalibratedForecast],
+    ) -> dict | None:
+        if target is None or target.candidate_evaluations is None:
+            return None
+        snapshots = {
+            forecast.analysis_input_json
+            for evaluation in target.candidate_evaluations
+            if isinstance((forecast := forecasts.get(evaluation.forecast_id)), BaseForecast)
+            and forecast.analysis_input_json is not None
+        }
+        if not snapshots:
+            return None
+        if len(snapshots) != 1:
+            raise ValueError("同一资本决策引用了多个不同的 AI 输入快照")
+        return json.loads(snapshots.pop())
 
     def _candidate_economics(
         self,
@@ -1168,12 +1197,6 @@ class CapitalDashboardReader:
                     ),
                     evidence_refs=(
                         forecast.evidence_refs if isinstance(forecast, BaseForecast) else ()
-                    ),
-                    analysis_input=(
-                        json.loads(forecast.analysis_input_json)
-                        if isinstance(forecast, BaseForecast)
-                        and forecast.analysis_input_json is not None
-                        else None
                     ),
                     gross_bps=evaluation.decision_gross_bps,
                     fee_bps=evaluation.cost.fee_bps,
@@ -1467,6 +1490,7 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "risk_outcome": item.risk_outcome,
                 "order_count": item.order_count,
                 "candidate_economics_recorded": item.candidate_economics_recorded,
+                "analysis_input": item.analysis_input,
                 "candidate_economics": [
                     {
                         "candidate_id": candidate.candidate_id,
@@ -1502,7 +1526,6 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                             for mechanism_id, effect, rationale in candidate.mechanism_contributions
                         ],
                         "evidence_refs": list(candidate.evidence_refs),
-                        "analysis_input": candidate.analysis_input,
                         "gross_bps": str(candidate.gross_bps),
                         "fee_bps": str(candidate.fee_bps),
                         "exit_spread_bps": str(candidate.exit_spread_bps),

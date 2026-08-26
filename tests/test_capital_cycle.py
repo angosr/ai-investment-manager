@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -1736,6 +1736,13 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         }
     ]
     assert serialized["candidate_economics_recorded"] is True
+    assert serialized["analysis_input"] is None
+    assert "analysis_input" not in serialized["candidate_economics"][0]
+    with_input = serialize_capital_activity(
+        (replace(activity, analysis_input={"purpose": "FORECAST_ESTIMATE"}),)
+    )["actions"][0]
+    assert with_input["analysis_input"] == {"purpose": "FORECAST_ESTIMATE"}
+    assert "analysis_input" not in with_input["candidate_economics"][0]
 
     assert result.trade_plan is not None
     target = SqlPortfolioStore(engine).target_for_cycle(result.trade_plan.cycle_id)

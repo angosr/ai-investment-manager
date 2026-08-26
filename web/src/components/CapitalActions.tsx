@@ -162,7 +162,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 </dd>
               </Fragment>
             ))}
-            {forecasts.map((item, index) => (
+            {forecasts.map((item) => (
               <Fragment key={item.forecast_id}>
                 <dt>概率预测</dt>
                 <dd>
@@ -205,19 +205,19 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                     ? ` · 有效性证据 ${item.validity_evidence_refs.join(" / ")}`
                     : ""}
                 </dd>
-                {index === 0 && item.analysis_input ? (
-                  <>
-                    <dt>AI 输入</dt>
-                    <dd>
-                      <details className={styles.snapshot}>
-                        <summary>查看这次 AI 看到的信息快照</summary>
-                        <pre>{JSON.stringify(item.analysis_input, null, 2)}</pre>
-                      </details>
-                    </dd>
-                  </>
-                ) : null}
               </Fragment>
             ))}
+            {action.analysis_input ? (
+              <>
+                <dt>AI 输入</dt>
+                <dd>
+                  <details className={styles.snapshot}>
+                    <summary>查看这次 AI 看到的信息快照</summary>
+                    <pre>{JSON.stringify(action.analysis_input, null, 2)}</pre>
+                  </details>
+                </dd>
+              </>
+            ) : null}
             {!action.candidate_economics_recorded ? (
               <>
                 <dt>候选经济性</dt>

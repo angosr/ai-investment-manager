@@ -102,6 +102,7 @@ export interface CapitalAction {
   risk_outcome: string | null;
   order_count: number;
   candidate_economics_recorded: boolean;
+  analysis_input: Record<string, unknown> | null;
   candidate_economics: {
     candidate_id: string;
     forecast_id: string;
@@ -127,7 +128,6 @@ export interface CapitalAction {
       rationale: string;
     }[];
     evidence_refs: string[];
-    analysis_input: Record<string, unknown> | null;
     gross_bps: string;
     fee_bps: string;
     exit_spread_bps: string;
