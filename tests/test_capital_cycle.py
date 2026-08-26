@@ -114,10 +114,10 @@ def _test_spot_target() -> ForecastTarget:
         (
             ForecastLeg(
                 instrument=InstrumentId.binance_spot(
-            symbol="BTCUSDT",
-            base_asset="BTC",
-            quote_asset="USDT",
-        ),
+                    symbol="BTCUSDT",
+                    base_asset="BTC",
+                    quote_asset="USDT",
+                ),
                 direction=ExposureDirection.LONG,
                 gross_weight=Decimal("1"),
             ),
@@ -169,6 +169,17 @@ class _FixedMockForecastProducer:
     binding: ForecastProducerBinding
     raw_score: Decimal
     available_delay_seconds: int = 0
+
+    def existing_result(self, *, as_of: datetime, cause=None):
+        slot_id = ForecastDecisionSlot.identity_for(
+            self.contract.contract_id,
+            as_of,
+            cause=cause or ForecastSlotCause.cadence(self.contract),
+        )
+        return self.store.result_for_behavior(
+            decision_slot_id=slot_id,
+            producer_behavior_id=self.binding.producer_behavior_id,
+        )
 
     def produce(
         self,
@@ -262,6 +273,20 @@ class _NoForecastProducer:
         self.contracts = contracts
         self.contract = contract
         self.binding = binding
+
+    def existing_result(self, *, as_of: datetime, cause=None):
+        slot_id = ForecastDecisionSlot.identity_for(
+            self.contract.contract_id,
+            as_of,
+            cause=cause or ForecastSlotCause.cadence(self.contract),
+        )
+        return self.contracts.no_estimate(
+            stable_id(
+                "forecast_no_estimate",
+                slot_id,
+                self.binding.producer_behavior_id,
+            )
+        )
 
     def produce(self, *, as_of: datetime) -> ForecastNoEstimate:
         self.contracts.record_contract(self.contract)
@@ -518,7 +543,6 @@ def _put_spy_funding(
     )
 
 
-
 def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
     batch_id = f"capital-test-batch-{sequence}"
     with engine.begin() as connection:
@@ -543,9 +567,10 @@ def _put_trigger_batch(engine, config, *, at: datetime, sequence: int) -> None:
 class _TriggerCapitalStub:
     portfolio_id = "primary"
 
-    def __init__(self, *, completed: bool = False) -> None:
+    def __init__(self, *, completed: bool = False, outputs_complete: bool = False) -> None:
         self.calls: list[tuple[str, datetime]] = []
         self.completed = completed
+        self.outputs_complete = outputs_complete
         self.completed_causes: set[str] = set()
         self.causes: list[ForecastSlotCause | None] = []
         self.produced_trigger_types: list[tuple[str, ...]] = []
@@ -565,6 +590,10 @@ class _TriggerCapitalStub:
 
     def cause_completed(self, cause_id):
         return self.completed or cause_id in self.completed_causes
+
+    def forecast_outputs_complete(self, **kwargs):
+        del kwargs
+        return self.outputs_complete
 
     def produce(self, *, as_of, **kwargs):
         cause_id = kwargs["cause_id"]
@@ -615,11 +644,7 @@ def _runtime_mixed_forecast_batch(
         AnalysisTriggerType.FORECAST_EVENT_DUE,
         AnalysisTriggerType.FORECAST_SLOT_DUE,
     ):
-        occurred_at = (
-            material_at
-            if trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE
-            else at
-        )
+        occurred_at = material_at if trigger_type == AnalysisTriggerType.FORECAST_EVENT_DUE else at
         triggers.append(
             build_trigger_event(
                 trigger_type=trigger_type,
@@ -724,9 +749,7 @@ def test_mixed_batch_runs_earlier_material_slot_before_cadence_slot() -> None:
         owner_symbol="BTCUSDT",
     )
 
-    consumer.consume(
-        _runtime_mixed_forecast_batch(at=cadence_at, material_at=event_at)
-    )
+    consumer.consume(_runtime_mixed_forecast_batch(at=cadence_at, material_at=event_at))
 
     assert capital.calls == [
         ("produce", event_at),
@@ -811,30 +834,22 @@ def test_material_cycle_uses_economic_cause_and_recovers_only_missing_receipt() 
         durable_counts = (
             connection.scalar(select(func.count()).select_from(forecasts)),
             connection.scalar(select(func.count()).select_from(portfolio_targets)),
-            connection.scalar(
-                select(func.count()).select_from(portfolio_account_snapshots)
-            ),
+            connection.scalar(select(func.count()).select_from(portfolio_account_snapshots)),
         )
         connection.execute(delete(capital_cycle_records))
 
     consumer.consume(batch)
 
     with engine.connect() as connection:
-        assert connection.scalar(
-            select(func.count()).select_from(capital_cycle_records)
-        ) == 1
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
         assert (
             connection.scalar(select(func.count()).select_from(forecasts)),
             connection.scalar(select(func.count()).select_from(portfolio_targets)),
-            connection.scalar(
-                select(func.count()).select_from(portfolio_account_snapshots)
-            ),
+            connection.scalar(select(func.count()).select_from(portfolio_account_snapshots)),
         ) == durable_counts
     consumer.consume(batch)
     with engine.connect() as connection:
-        assert connection.scalar(
-            select(func.count()).select_from(capital_cycle_records)
-        ) == 1
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
 
 def test_mixed_cycle_persists_two_causes_and_shared_batch_provenance() -> None:
@@ -899,12 +914,8 @@ def test_material_slot_before_cadence_preserves_second_forecast_call() -> None:
         owner_symbol="BTCUSDT",
     )
 
-    consumer.consume(
-        _runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=event_at)
-    )
-    consumer.consume(
-        _runtime_batch(AnalysisTriggerType.FORECAST_SLOT_DUE, at=cadence_at)
-    )
+    consumer.consume(_runtime_batch(AnalysisTriggerType.FORECAST_EVENT_DUE, at=event_at))
+    consumer.consume(_runtime_batch(AnalysisTriggerType.FORECAST_SLOT_DUE, at=cadence_at))
 
     assert capital.calls == [
         ("produce", event_at),
@@ -971,6 +982,22 @@ def test_late_cadence_is_a_no_estimate_then_current_risk_review() -> None:
         ("missed", slot),
         ("review", at),
     ]
+
+
+def test_late_cadence_resumes_an_existing_forecast_instead_of_marking_it_missed() -> None:
+    at = NOW.replace(hour=4, minute=30)
+    slot = at.replace(minute=0)
+    capital = _TriggerCapitalStub(outputs_complete=True)
+    consumer = CapitalTriggerConsumer(
+        capital=capital,
+        context_cadence_minutes=240,
+        context_completion_deadline_seconds=1500,
+        owner_symbol="BTCUSDT",
+    )
+
+    consumer.consume(_runtime_batch(AnalysisTriggerType.HEARTBEAT, at=at))
+
+    assert capital.calls == [("recover", slot), ("produce", slot)]
 
 
 def test_late_heartbeat_reviews_completed_cadence_without_marking_it_missed() -> None:
@@ -1081,9 +1108,7 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     evidence = CapitalDashboardReader(engine, config).forecast_evidence(now=NOW)
 
     assert evidence is not None
-    assert tuple(item.stratum for item in evidence.source_evidence) == tuple(
-        ForecastSlotStratum
-    )
+    assert tuple(item.stratum for item in evidence.source_evidence) == tuple(ForecastSlotStratum)
     assert all(item.evidence.due_slot_count == 0 for item in evidence.source_evidence)
 
 
@@ -1154,11 +1179,7 @@ def test_tradfi_candidate_uses_schedule_funding_and_one_product_account() -> Non
         for item in config.capital.execution_specs
     )
     config = config.model_copy(
-        update={
-            "capital": config.capital.model_copy(
-                update={"execution_specs": execution_specs}
-            )
-        }
+        update={"capital": config.capital.model_copy(update={"execution_specs": execution_specs})}
     )
     configured, service = _candidate_service(
         config,
@@ -1315,9 +1336,7 @@ def test_context_forecast_reuses_the_qualified_perpetual_as_market_evidence(
     evidence = behavior.derivative_evidence_instrument
     assert evidence is not None
     assert evidence.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
-    assert evidence.key in {
-        item.instrument.key for item in config.capital.execution_specs
-    }
+    assert evidence.key in {item.instrument.key for item in config.capital.execution_specs}
     assert {item.instrument.product for item in config.capital.execution_specs} == {
         InstrumentProduct.SPOT,
         InstrumentProduct.TRADFI_PERPETUAL,
@@ -1340,9 +1359,7 @@ def test_dashboard_hides_retired_no_opportunity_receipts() -> None:
     )
     assert CapitalDashboardReader(engine, config).activity() == ()
     with engine.begin() as connection:
-        connection.execute(
-            update(capital_cycle_records).values(outcome="NO_OPPORTUNITY")
-        )
+        connection.execute(update(capital_cycle_records).values(outcome="NO_OPPORTUNITY"))
         assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
     assert CapitalDashboardReader(engine, config).activity() == ()
@@ -1374,10 +1391,7 @@ def test_recovered_old_cadence_never_backdates_the_account_ledger() -> None:
     )
 
     with engine.connect() as connection:
-        assert (
-            connection.scalar(select(func.count()).select_from(portfolio_account_snapshots))
-            == 1
-        )
+        assert connection.scalar(select(func.count()).select_from(portfolio_account_snapshots)) == 1
         assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
 
 
@@ -1449,7 +1463,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-            "universe_version": "binance-shadow-investable-v6",
+        "universe_version": "binance-shadow-investable-v6",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
@@ -1508,6 +1522,33 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     )
     assert len(first_page) == len(second_page) == 1
     assert first_page[0].activity_id != second_page[0].activity_id
+
+
+def test_recovered_forecast_uses_current_capital_time_without_backdating() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    resumed_at = NOW + timedelta(minutes=10)
+    _put_market(market, config, at=NOW, sequence=70)
+    _put_market(market, config, at=resumed_at, sequence=71)
+    _configured, service = _candidate_service(config, engine)
+
+    result = service.produce(
+        as_of=NOW,
+        decision_at=resumed_at,
+        cause_id="recovered-capital-cause",
+        trigger_batch_id="recovered-capital-batch",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    assert isinstance(result, TradePlanExecutionResult)
+    assert result.account.as_of == resumed_at
+    target = load_portfolio_target(
+        engine.connect().execute(select(portfolio_targets.c.payload)).scalar_one()
+    )
+    assert target.as_of == resumed_at
 
 
 def test_explicit_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
@@ -1596,10 +1637,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     )
     historical = CapitalDashboardReader(engine, changed_config).activity()[0]
     assert historical.candidate_economics[0].net_bps == frozen.decision_net_bps
-    assert (
-        historical.candidate_economics[0].decision_threshold_bps
-        == frozen.minimum_net_bps
-    )
+    assert historical.candidate_economics[0].decision_threshold_bps == frozen.minimum_net_bps
 
 
 def test_late_slot_accepts_an_existing_forecast_after_pipeline_change() -> None:
@@ -1729,8 +1767,7 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
         assert (
-            connection.scalar(select(func.count()).select_from(risk_execution_authorizations))
-            == 2
+            connection.scalar(select(func.count()).select_from(risk_execution_authorizations)) == 2
         )
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
     activity = CapitalDashboardReader(engine, config).activity()

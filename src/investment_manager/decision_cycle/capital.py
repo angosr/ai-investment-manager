@@ -101,6 +101,13 @@ logger = logging.getLogger(__name__)
 
 
 class CapitalForecastProducer(Protocol):
+    def existing_result(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult | None: ...
+
     def produce(
         self,
         *,
@@ -218,10 +225,7 @@ class CapitalTriggerConsumer:
             assert self.material_event_slot_policy_version is not None
             assert self.context_completion_deadline_seconds is not None
             slot_at = max(item.occurred_at for item in material_triggers)
-            if (
-                self.context_activation_at is not None
-                and slot_at < self.context_activation_at
-            ):
+            if self.context_activation_at is not None and slot_at < self.context_activation_at:
                 return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
             trigger_refs = tuple(
                 sorted(
@@ -239,7 +243,19 @@ class CapitalTriggerConsumer:
                 policy_version=self.material_event_slot_policy_version,
                 trigger_refs=trigger_refs,
             )
-            if batch.created_at > slot_at + timedelta(
+            event_cause_id = stable_id(
+                "context_forecast_material_event",
+                self.capital.portfolio_id,
+                cause.policy_version,
+                *cause.trigger_refs,
+            )
+            if self.capital.cause_completed(event_cause_id):
+                return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
+            outputs_complete = self.capital.forecast_outputs_complete(
+                as_of=slot_at,
+                cause=cause,
+            )
+            if not outputs_complete and batch.created_at > slot_at + timedelta(
                 seconds=self.context_completion_deadline_seconds
             ):
                 self.capital.record_missed_forecast(
@@ -248,20 +264,12 @@ class CapitalTriggerConsumer:
                     cause=cause,
                 )
                 return self._consume_cadence(batch) if cadence_due else self.capital.review(batch)
-            event_cause_id = stable_id(
-                "context_forecast_material_event",
-                self.capital.portfolio_id,
-                cause.policy_version,
-                *cause.trigger_refs,
-            )
             cadence_first = cadence_due and self._cadence_slot_at(batch.created_at) <= slot_at
-            cadence_result = self._consume_cadence(batch) if cadence_first else None
-            if self.capital.cause_completed(event_cause_id):
-                if cadence_due and not cadence_first:
-                    cadence_result = self._consume_cadence(batch)
-                return cadence_result if cadence_due else self.capital.review(batch)
+            if cadence_first:
+                self._consume_cadence(batch)
             result = self.capital.produce(
                 as_of=slot_at,
+                decision_at=batch.created_at if outputs_complete else None,
                 cause_id=event_cause_id,
                 trigger_batch_id=batch.batch_id,
                 symbol=batch.symbol,
@@ -299,10 +307,7 @@ class CapitalTriggerConsumer:
         assert self.context_cadence_minutes is not None
         assert self.context_completion_deadline_seconds is not None
         slot_at = self._cadence_slot_at(batch.created_at)
-        if (
-            self.context_activation_at is not None
-            and slot_at < self.context_activation_at
-        ):
+        if self.context_activation_at is not None and slot_at < self.context_activation_at:
             return self.capital.review(batch)
         cadence_cause_id = self._cadence_cause_id(slot_at)
         self.capital.recover_missed_forecasts(
@@ -311,9 +316,16 @@ class CapitalTriggerConsumer:
         )
         if self.capital.cause_completed(cadence_cause_id):
             return self.capital.review(batch)
-        if batch.created_at > slot_at + timedelta(
-            seconds=self.context_completion_deadline_seconds
-        ):
+        if self.capital.forecast_outputs_complete(as_of=slot_at):
+            return self.capital.produce(
+                as_of=slot_at,
+                decision_at=batch.created_at,
+                cause_id=cadence_cause_id,
+                trigger_batch_id=batch.batch_id,
+                symbol=batch.symbol,
+                trigger_types=("FORECAST_CADENCE",),
+            )
+        if batch.created_at > slot_at + timedelta(seconds=self.context_completion_deadline_seconds):
             self.capital.record_missed_forecast(
                 slot_at=slot_at,
                 completed_at=batch.created_at,
@@ -371,9 +383,7 @@ class CapitalCycleService:
         self._execution = execution
         self._cycle_records = cycle_records
         self.context_activation_at = (
-            require_utc(context_activation_at)
-            if context_activation_at is not None
-            else None
+            require_utc(context_activation_at) if context_activation_at is not None else None
         )
 
     @property
@@ -393,6 +403,19 @@ class CapitalCycleService:
                 )
             )
             is not None
+        )
+
+    def forecast_outputs_complete(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> bool:
+        """Whether every configured producer already wrote a terminal slot output."""
+
+        return bool(self._forecast_sources) and all(
+            source.producer.existing_result(as_of=as_of, cause=cause) is not None
+            for source in self._forecast_sources
         )
 
     def consume(self, batch: TriggerBatch) -> PortfolioPipelineResult | TradePlanExecutionResult:
@@ -457,6 +480,7 @@ class CapitalCycleService:
         self,
         *,
         as_of: datetime,
+        decision_at: datetime | None = None,
         cause_id: str | None = None,
         trigger_batch_id: str | None = None,
         symbol: str = "SYSTEM",
@@ -464,6 +488,9 @@ class CapitalCycleService:
         cause: ForecastSlotCause | None = None,
     ) -> PortfolioPipelineResult | TradePlanExecutionResult:
         requested_at = require_utc(as_of)
+        resume_at = require_utc(decision_at) if decision_at is not None else requested_at
+        if resume_at < requested_at:
+            raise ValueError("Capital decision_at 不能早于 Forecast slot")
         evaluation_cause_id = cause_id or stable_id(
             "capital_manual_evaluation",
             self._policy.decision.portfolio_id,
@@ -499,9 +526,7 @@ class CapitalCycleService:
             item for item in production_results if isinstance(item, ForecastNoEstimate)
         )
         if not generated_forecasts:
-            completed_at = max(
-                (requested_at, *(item.completed_at for item in no_estimates))
-            )
+            completed_at = max((requested_at, *(item.completed_at for item in no_estimates)))
             account_head = self._portfolio.head_account(
                 portfolio_id=self._policy.decision.portfolio_id
             )
@@ -524,6 +549,7 @@ class CapitalCycleService:
             )
         decision_at = max(
             requested_at,
+            resume_at,
             *(item.available_at for item in generated_forecasts),
         )
         if any(item.valid_until <= decision_at for item in generated_forecasts):
@@ -712,9 +738,7 @@ class CapitalCycleService:
                 raise ValueError("Capital execution result 缺少权威 TradePlan")
             target = self._portfolio.target_for_cycle(plan.cycle_id)
             if target is None:
-                loaded_authorization = self._risks.execution_authorization(
-                    plan.approved_target_id
-                )
+                loaded_authorization = self._risks.execution_authorization(plan.approved_target_id)
                 if not isinstance(loaded_authorization, RiskReductionAuthorization):
                     raise ValueError("无 PortfolioTarget 的执行结果缺少只减险授权")
                 reduction_authorization = loaded_authorization
@@ -738,10 +762,7 @@ class CapitalCycleService:
             target_id = None
             execution_authorization_id = reduction_authorization.authorization_id
         elif target is not None:
-            if (
-                expected_forecast_cycle is not None
-                and target.cycle_id != expected_forecast_cycle
-            ):
+            if expected_forecast_cycle is not None and target.cycle_id != expected_forecast_cycle:
                 raise ValueError("Capital Target 与本轮 Forecast cycle 不一致")
             outcome = (
                 CapitalCycleOutcome.FORECAST_ALREADY_DECIDED
@@ -754,9 +775,7 @@ class CapitalCycleService:
             target_id = target.target_id
             execution_authorization_id = None
         else:
-            outcome = (
-                CapitalCycleOutcome.HOLD if account.sleeves else CapitalCycleOutcome.CASH
-            )
+            outcome = CapitalCycleOutcome.HOLD if account.sleeves else CapitalCycleOutcome.CASH
             reason_codes = tuple(
                 sorted(
                     {
@@ -892,8 +911,7 @@ class CapitalCycleService:
                 )
             except PointInTimeInputUnavailable:
                 if not any(
-                    item.forecast_family == forecast.outcome_family_id
-                    for item in account.sleeves
+                    item.forecast_family == forecast.outcome_family_id for item in account.sleeves
                 ):
                     raise
                 candidates = ()
@@ -983,8 +1001,7 @@ class CapitalCycleService:
                 (
                     item
                     for item in reversed(available)
-                    if item.target == position.target
-                    and item.projected_at <= as_of
+                    if item.target == position.target and item.projected_at <= as_of
                 ),
                 None,
             )
@@ -995,8 +1012,7 @@ class CapitalCycleService:
                         for item in reversed(
                             source.product_payoffs.for_source(forecast.forecast_id)
                         )
-                        if item.target == position.target
-                        and item.projected_at <= as_of
+                        if item.target == position.target and item.projected_at <= as_of
                     ),
                     None,
                 )
@@ -1207,10 +1223,7 @@ class CapitalCycleService:
         )
         schedule = (
             self._market.latest_trading_schedule(as_of=as_of)
-            if any(
-                item.product == InstrumentProduct.TRADFI_PERPETUAL
-                for item in instruments
-            )
+            if any(item.product == InstrumentProduct.TRADFI_PERPETUAL for item in instruments)
             else None
         )
         valuations: list[ValuationQuote] = []
@@ -1231,8 +1244,7 @@ class CapitalCycleService:
             if observed is None:
                 requirement = (
                     "估值与可执行"
-                    if instrument.key in valuation_keys
-                    and instrument.key in execution_keys
+                    if instrument.key in valuation_keys and instrument.key in execution_keys
                     else "估值"
                     if instrument.key in valuation_keys
                     else "可执行"
@@ -1244,13 +1256,9 @@ class CapitalCycleService:
                 instrument=instrument,
                 quote=observed,
                 as_of=as_of,
-                maximum_live_age_seconds=(
-                    self._policy.risk.maximum_quote_age_seconds
-                ),
+                maximum_live_age_seconds=(self._policy.risk.maximum_quote_age_seconds),
                 trading_schedule=(
-                    schedule
-                    if instrument.product == InstrumentProduct.TRADFI_PERPETUAL
-                    else None
+                    schedule if instrument.product == InstrumentProduct.TRADFI_PERPETUAL else None
                 ),
             )
             if instrument.key in valuation_keys:
@@ -1258,9 +1266,11 @@ class CapitalCycleService:
             if instrument.key in execution_keys and executable is not None:
                 executables.append(executable)
         observed_times = tuple(item.observed_at for item in executables)
-        if observed_times and (
-            max(observed_times) - min(observed_times)
-        ).total_seconds() > self._policy.risk.maximum_quote_skew_seconds:
+        if (
+            observed_times
+            and (max(observed_times) - min(observed_times)).total_seconds()
+            > self._policy.risk.maximum_quote_skew_seconds
+        ):
             raise PointInTimeInputUnavailable("Capital 多产品可成交报价时间偏差过大")
         return (
             tuple(sorted(valuations, key=lambda item: item.instrument.key)),
@@ -1330,14 +1340,8 @@ class CapitalCycleService:
         sleeves: tuple[PortfolioSleeveInput, ...],
         quotes: tuple[ExecutableQuote, ...],
     ) -> tuple[ExecutableQuote, ...]:
-        required = {
-            leg.instrument.key
-            for sleeve in sleeves
-            for leg in sleeve.target.legs
-        }
-        selected = tuple(
-            item for item in quotes if item.instrument.key in required
-        )
+        required = {leg.instrument.key for sleeve in sleeves for leg in sleeve.target.legs}
+        selected = tuple(item for item in quotes if item.instrument.key in required)
         missing = required - {item.instrument.key for item in selected}
         if missing:
             raise PointInTimeInputUnavailable(
@@ -1461,25 +1465,17 @@ def assemble_capital_cycle(
                 interval=target_state_behavior.interval,
                 bar_window=target_state_behavior.bar_window,
                 funding_lookback_hours=target_state_behavior.funding_lookback_hours,
-                maximum_quote_skew_seconds=(
-                    target_state_behavior.maximum_quote_skew_seconds
-                ),
-                cross_venue_spot_venues=(
-                    target_state_behavior.cross_venue_spot_venues
-                ),
+                maximum_quote_skew_seconds=(target_state_behavior.maximum_quote_skew_seconds),
+                cross_venue_spot_venues=(target_state_behavior.cross_venue_spot_venues),
                 maximum_cross_venue_spot_age_seconds=(
                     target_state_behavior.maximum_cross_venue_spot_age_seconds
                 ),
             )
             product_payoffs = None
             if context.product_payoffs is not None:
-                spec_by_key = {
-                    item.instrument.key: item
-                    for item in config.capital.execution_specs
-                }
+                spec_by_key = {item.instrument.key: item for item in config.capital.execution_specs}
                 payoff_specs = tuple(
-                    spec_by_key[key]
-                    for key in context.product_payoffs.instrument_keys
+                    spec_by_key[key] for key in context.product_payoffs.instrument_keys
                 )
                 product_payoffs = ContextProductPayoffProjector(
                     policy=context.product_payoffs,

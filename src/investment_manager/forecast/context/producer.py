@@ -130,9 +130,7 @@ class MarketContextTargetStateProvider:
                 visible_at=at,
             )
             if (state is None) != (quote is None):
-                raise PointInTimeInputUnavailable(
-                    "Context Forecast 衍生品状态与报价必须同时可用"
-                )
+                raise PointInTimeInputUnavailable("Context Forecast 衍生品状态与报价必须同时可用")
             if state is not None and quote is not None:
                 aligned_spot = self.market.latest_spot_quote(
                     instrument=self.spot,
@@ -163,9 +161,7 @@ class MarketContextTargetStateProvider:
                     funding_window_hours=self.funding_lookback_hours,
                     maximum_quote_skew_seconds=self.maximum_quote_skew_seconds,
                     cross_venue_quotes=self._cross_venue_quotes(as_of=at),
-                    maximum_cross_venue_age_seconds=(
-                        self.maximum_cross_venue_spot_age_seconds
-                    ),
+                    maximum_cross_venue_age_seconds=(self.maximum_cross_venue_spot_age_seconds),
                 )
                 derivative_states = (self._derivative_state(derivative),)
                 refs.update(derivative.input_refs)
@@ -186,8 +182,7 @@ class MarketContextTargetStateProvider:
             as_of=as_of,
         )
         if len(quotes) != len(self.cross_venue_spot_venues) or any(
-            (as_of - item.observed_at).total_seconds()
-            > self.maximum_cross_venue_spot_age_seconds
+            (as_of - item.observed_at).total_seconds() > self.maximum_cross_venue_spot_age_seconds
             for item in quotes
         ):
             return ()
@@ -237,9 +232,7 @@ def context_spot_forecast_contract(
         entry_anchor_rule="latest-visible-executable-quote-at-completion-v1",
         cost_semantics_version=cost_semantics_version,
         validity_minutes=policy.validity_minutes,
-        validity_conditions=(
-            "EXECUTABLE_QUOTES_REMAIN_VALID",
-        ),
+        validity_conditions=("EXECUTABLE_QUOTES_REMAIN_VALID",),
         settlement_rule="completion-deadline-to-horizon-executable-spot-return-v2",
         outcome_start_delay_seconds=0,
         forecast_benchmark=policy.forecast_benchmark,
@@ -274,16 +267,16 @@ class ContextForecastProducer:
         if self.contract.target.legs[0].instrument != self.instrument:
             raise ValueError("Context Forecast Instrument 与 Contract Target 不一致")
 
-    def produce(
+    def existing_result(
         self,
         *,
         as_of: datetime,
         cause: ForecastSlotCause | None = None,
-    ) -> ForecastProductionResult:
+    ) -> ForecastProductionResult | None:
+        """Return the immutable terminal output for one slot without producing it."""
+
         slot_as_of = require_utc(as_of)
         slot_cause = cause or ForecastSlotCause.cadence(self.contract)
-        self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
         slot_id = ForecastDecisionSlot.identity_for(
             self.contract.contract_id,
             slot_as_of,
@@ -295,14 +288,32 @@ class ContextForecastProducer:
         )
         if existing is not None:
             return existing
-        absence_id = stable_id(
-            "forecast_no_estimate",
-            slot_id,
-            self.binding.producer_behavior_id,
+        return self.contracts.no_estimate(
+            stable_id(
+                "forecast_no_estimate",
+                slot_id,
+                self.binding.producer_behavior_id,
+            )
         )
-        existing_absence = self.contracts.no_estimate(absence_id)
-        if existing_absence is not None:
-            return existing_absence
+
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult:
+        slot_as_of = require_utc(as_of)
+        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
+        self.contracts.record_contract(self.contract)
+        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
+        existing = self.existing_result(as_of=slot_as_of, cause=slot_cause)
+        if existing is not None:
+            return existing
+        slot_id = ForecastDecisionSlot.identity_for(
+            self.contract.contract_id,
+            slot_as_of,
+            cause=slot_cause,
+        )
 
         assessment = self.contexts.latest_before(
             analysis_scope=self.analysis_scope,
@@ -514,20 +525,9 @@ class ContextForecastProducer:
             slot_as_of,
             cause=slot_cause,
         )
-        existing = self.forecasts.result_for_behavior(
-            decision_slot_id=slot_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
-        )
+        existing = self.existing_result(as_of=slot_as_of, cause=slot_cause)
         if existing is not None:
             return existing
-        absence_id = stable_id(
-            "forecast_no_estimate",
-            slot_id,
-            self.binding.producer_behavior_id,
-        )
-        existing_absence = self.contracts.no_estimate(absence_id)
-        if existing_absence is not None:
-            return existing_absence
         cutoff_quote = self.market.latest_spot_quote(
             instrument=self.instrument,
             evaluation_at=slot_as_of,
@@ -579,9 +579,7 @@ class ContextForecastProducer:
         cursor = latest + timedelta(minutes=self.policy.cadence_minutes)
         recovered: list[ForecastNoEstimate] = []
         while cursor < before:
-            if completed <= cursor + timedelta(
-                seconds=self.contract.completion_deadline_seconds
-            ):
+            if completed <= cursor + timedelta(seconds=self.contract.completion_deadline_seconds):
                 break
             result = self.record_deadline_missed(
                 as_of=cursor,

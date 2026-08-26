@@ -106,6 +106,10 @@ class RecordingCapital:
     def cause_completed(self, cause_id):
         return any(item["cause_id"] == cause_id for item in self.produce_calls)
 
+    def forecast_outputs_complete(self, **kwargs):
+        del kwargs
+        return False
+
     def produce(self, **kwargs):
         self.produce_calls.append(kwargs)
 
