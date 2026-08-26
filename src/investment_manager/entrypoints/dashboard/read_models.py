@@ -57,7 +57,6 @@ from investment_manager.legacy.repository import (
     analysis_proposals,
     decision_outcomes,
     market_snapshots,
-    panel_snapshots,
     trade_intents,
 )
 from investment_manager.market.tables import (
@@ -79,8 +78,9 @@ from investment_manager.state.decision.packet import DecisionPacket
 from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.tables import decision_packets
 
-# 世界事件→周期反向关联的面板扫描上界：linkage 只是尽力而为的标注，加上界避免退化为全表扫描。
-_EVIDENCE_PANEL_SCAN_LIMIT = 500
+# 世界事件→AI 输入反向关联的 Packet 扫描上界：linkage 只是尽力而为的标注，
+# 加上界避免从一条从未入选的新闻退化为全表扫描。
+_EVIDENCE_PACKET_SCAN_LIMIT = 500
 _ASSESSMENT_QUALITY_SCAN_LIMIT = 500
 _ASSESSMENT_QUALITY_WINDOW_HOURS = 24
 
@@ -513,31 +513,39 @@ class DashboardReader:
     def _evidence_to_cycle(
         self, events: tuple[IntelligenceEvent, ...]
     ) -> dict[str, tuple[str, datetime]]:
-        """证据 evidence_id → 选入它的周期。一条新闻若进入某周期面板，即喂给了那次分析。"""
+        """证据 evidence_id → 最早选入它的冻结 AI Packet。
+
+        当前 WorldModel 的唯一真实输入是 ``DecisionPacket``。旧
+        ``panel_snapshots`` 属于已经退役的投资链，继续扫描它会把历史面板误写成
+        当前 AI 血缘，或漏掉所有现役分析引用。
+        """
 
         if not events:
             return {}
         wanted = {event.evidence_id for event in events}
         first_visible_at = min(event.observed_at for event in events)
-        # 一条新闻通常被它出现后的最早那个面板选中，因此从 first_visible_at 起「由近及远」正序
-        # 扫描最先命中，配合 wanted 集满即停。加 LIMIT 兜底：多数新闻从不入选任何面板，若无上界
-        # 集合永远集不满，会一路扫到最新——本应轻量的 /api/events 会退化成近全表扫描。
+        # 一条新闻通常被它出现后的最早 Packet 选中，因此从 first_visible_at 起正序
+        # 扫描并在 wanted 集满时停止。多数新闻不会入选，必须保留有界查询。
         query = (
-            select(panel_snapshots.c.cycle_id, panel_snapshots.c.as_of, panel_snapshots.c.payload)
-            .where(panel_snapshots.c.as_of >= first_visible_at)
-            .order_by(panel_snapshots.c.as_of.asc())
-            .limit(_EVIDENCE_PANEL_SCAN_LIMIT)
+            select(
+                decision_packets.c.packet_id,
+                decision_packets.c.as_of,
+                decision_packets.c.payload,
+            )
+            .where(decision_packets.c.as_of >= first_visible_at)
+            .order_by(decision_packets.c.as_of.asc(), decision_packets.c.packet_id.asc())
+            .limit(_EVIDENCE_PACKET_SCAN_LIMIT)
         )
         with self._engine.connect() as connection:
             rows = connection.execute(query).all()
         mapping: dict[str, tuple[str, datetime]] = {}
-        for cycle_id, as_of, payload in rows:
+        for packet_id, as_of, payload in rows:
             if not isinstance(payload, dict):
                 continue
-            for item in payload.get("evidence", ()):
+            for item in payload.get("intelligence_events", ()):
                 evidence_id = item.get("evidence_id") if isinstance(item, dict) else None
                 if evidence_id in wanted and evidence_id not in mapping:
-                    mapping[evidence_id] = (cycle_id, as_of)
+                    mapping[evidence_id] = (packet_id, database_utc(as_of))
             if len(mapping) == len(wanted):
                 break
         return mapping

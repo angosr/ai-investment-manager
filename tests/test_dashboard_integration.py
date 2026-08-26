@@ -981,14 +981,27 @@ def test_open_position_is_read_and_serialized(app_config, replay_input) -> None:
     assert dto["status"] in {"PROTECTION_PENDING", "PROTECTED", "PROTECTION_FAILED"}
 
 
-def test_news_fed_into_a_cycle_links_back_to_it(app_config, replay_input) -> None:
-    engine, result = _seed_cycle(app_config, replay_input)
-    facts = SqlFactLedger(engine).get(result.cycle_id)
-    assert facts is not None and facts.panel.evidence  # 回放面板选入了证据
-    evidence_id = facts.panel.evidence[0].evidence_id
+def test_news_fed_into_current_ai_packet_links_back_to_it(app_config, replay_input) -> None:
+    engine, _ = _seed_cycle(app_config, replay_input)
+    now = replay_input.market.as_of
+    packet = _dashboard_assessment_packet(
+        as_of=now,
+        analysis_scope=app_config.assessment.mandate.analysis_scope,
+    )
+    evidence_id = packet.intelligence_events[0].evidence_id
+    with engine.begin() as connection:
+        connection.execute(
+            insert(decision_packets).values(
+                packet_id=packet.packet_id,
+                analysis_scope=packet.analysis_scope,
+                as_of=packet.as_of,
+                policy_version=packet.policy_version,
+                content_hash=packet.content_hash,
+                payload=packet.model_dump(mode="json"),
+            )
+        )
 
-    # 补一条与该证据同 id 的采集事件，模拟这条新闻确实被喂进了那次分析
-    now = facts.panel.as_of
+    # 补一条与 Packet 中证据同 id 的采集事件，模拟它确实进入了冻结 AI 输入。
     SqlEventStore(engine, pipeline_id=app_config.pipeline.version).put(
         IntelligenceEvent(
             evidence_id=evidence_id,
@@ -1008,7 +1021,7 @@ def test_news_fed_into_a_cycle_links_back_to_it(app_config, replay_input) -> Non
     reader = DashboardReader(engine, app_config)
     events = [ser.world_event(event) for event in reader.list_events(cursor=None, limit=20)]
     fed = next(event for event in events if event["kind"] == "NEWS")
-    assert fed["fed_cycle_id"] == result.cycle_id
+    assert fed["fed_cycle_id"] == packet.packet_id
     assert fed["fed_cycle_at"] is not None
 
 
