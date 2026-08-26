@@ -650,7 +650,7 @@ def test_report_counts_only_deterministic_non_overlapping_skill_samples() -> Non
     report = SqlWorldModelAblationRepository(engine).report(
         plan_id=plan.plan_id,
         evaluation_version=config.outcome_evaluation.target_forecast_version,
-        minimum_sample_size=2,
+        minimum_sample_size=policy.minimum_sample_size,
         formal_producer_behavior_id=binding.producer_behavior_id,
         activated_at=policy.activated_at,
         as_of=policy.activated_at + timedelta(hours=9),
@@ -660,3 +660,31 @@ def test_report_counts_only_deterministic_non_overlapping_skill_samples() -> Non
     assert report.conservative_sample_count == 2
     assert report.conservative_mean_brier_improvement == Decimal("-2")
     assert not report.evidence_sufficient
+
+
+def test_report_rejects_runtime_scope_drift_from_preregistered_plan() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config, _contract, binding, _slot, _formal, plan = _seed(
+        engine,
+        record_formal=False,
+    )
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    common = {
+        "plan_id": plan.plan_id,
+        "evaluation_version": config.outcome_evaluation.target_forecast_version,
+        "minimum_sample_size": policy.minimum_sample_size,
+        "formal_producer_behavior_id": binding.producer_behavior_id,
+        "activated_at": policy.activated_at,
+        "as_of": policy.activated_at,
+    }
+    repository = SqlWorldModelAblationRepository(engine)
+
+    for override in (
+        {"evaluation_version": "different-outcome-version"},
+        {"minimum_sample_size": policy.minimum_sample_size + 1},
+        {"activated_at": policy.activated_at + timedelta(minutes=1)},
+    ):
+        with pytest.raises(ValueError, match="预登记评价语义不一致"):
+            repository.report(**(common | override))

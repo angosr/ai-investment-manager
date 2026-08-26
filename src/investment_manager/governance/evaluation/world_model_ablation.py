@@ -614,10 +614,22 @@ class SqlWorldModelAblationRepository:
         formal_contract_id = spec.get("formal_contract_id")
         if not isinstance(formal_contract_id, str) or not formal_contract_id:
             raise ValueError("WorldModel control plan 缺少冻结正式合同")
+        activated_at_raw = spec.get("activated_at")
+        if not isinstance(activated_at_raw, str):
+            raise ValueError("WorldModel control plan 缺少冻结激活时间")
+        try:
+            plan_activated_at = require_utc(
+                datetime.fromisoformat(activated_at_raw.replace("Z", "+00:00"))
+            )
+        except ValueError as exc:
+            raise ValueError("WorldModel control plan 激活时间非法") from exc
         if (
             spec.get("formal_producer_behavior_id") != formal_producer_behavior_id
             or spec.get("sample_selection") != SAMPLE_SELECTION_RULE
             or spec.get("uncertainty_method") != UNCERTAINTY_METHOD
+            or spec.get("outcome_join") != evaluation_version
+            or spec.get("minimum_sample_size") != minimum_sample_size
+            or plan_activated_at != require_utc(activated_at)
         ):
             raise ValueError("WorldModel control report 与预登记评价语义不一致")
         outcome_join = and_(
