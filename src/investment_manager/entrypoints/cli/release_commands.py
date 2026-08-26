@@ -454,12 +454,10 @@ def _preflight_release(
                     code_version=manifest.code_version,
                     manifest_id=manifest.manifest_id,
                 )
-                asyncio.run(
-                    _assemble_temporal_services(
-                        config=config,
-                        database_url=assembly_url,
-                        manifest=manifest,
-                    )
+                assemble_outcome_evaluation(
+                    config,
+                    assembly_url,
+                    release=manifest,
                 )
                 create_app(
                     config,
@@ -476,11 +474,6 @@ def _preflight_release(
                 assembly_engine.dispose()
     finally:
         production_engine.dispose()
-
-
-async def _assemble_temporal_services(*, config, database_url: str, manifest) -> None:
-    client = await Client.connect(config.temporal.address, namespace=config.temporal.namespace)
-    assemble_outcome_evaluation(config, database_url, client, release=manifest)
 
 
 def _seed_pre_registered_plan(*, config, production, assembly) -> None:
