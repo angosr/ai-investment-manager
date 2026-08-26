@@ -265,7 +265,7 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 |---|---|
 | 账户 | 10,000 USDT Mock，账户和收益永久对账 |
 | 规范结果 | Binance BTC Spot 4h 可成交收益，作为不随产品选择漂移的经济暴露结算基准 |
-| 产品表达 | BTC Spot 多头、BTC USD-M Perpetual 多头或空头；同一时点只选择一种表达，也可以保持现金 |
+| 产品表达 | 当前资本只允许 BTC Spot 多头或现金；BTC USD-M Perpetual 只提供 basis、funding、OI 与清算状态证据，不进入持仓、产品选择或订单 |
 | 预测 | 现役 4h BTC 经济暴露收益分布；定时槽与冻结材料状态事件槽均每槽至多一次 |
 | 成本 | 各产品当时可成交 bid/ask、手续费、滑点、basis 与 horizon 内 funding |
 | 基线 | 无技巧概率、现金和被动 BTC Spot 暴露 |
@@ -274,7 +274,7 @@ Portfolio 在独立逻辑账户中比较真实选择与现金、当前持有和�
 
 WorldModel 结构变化不能旁路撤销旧 Forecast；负 Forecast 选择现金也是完整的单产品判断，它可能通过避开下跌创造价值。没有订单、尚无 Outcome 或短期现金状态都不是放宽该实验门槛或篡改合同的理由。
 
-当前 cohort 的既有结果只按其原合同解释。WorldModel 配对消融以独立、预登记的前瞻评价子集补充：它复用正式槽和规范 Spot Outcome，但不改变正式 Forecast、Portfolio 或资本权限；在配对事实形成前，不得把正式 Forecast 相对静态基线的改善归因于 WorldModel。产品投影另以当时可见的 basis、funding、映射误差和实际产品结果评价，不能把选中 Perpetual 后的损益反向写进概率预测评分，也不能把产品选择价值归给 WorldModel。
+当前 cohort 的既有结果只按其原合同解释。WorldModel 配对消融以独立、预登记的前瞻评价子集补充：它复用正式槽和规范 Spot Outcome，但不改变正式 Forecast、Portfolio 或资本权限；在配对事实形成前，不得把正式 Forecast 相对静态基线的改善归因于 WorldModel。USD-M 状态可以修正 BTC 经济 Forecast，却不因被观察而自动获得产品表达资格；只有独立产品实验证明费用、basis、funding、保证金、执行和恢复后的边际价值，未来版本才可将 Perpetual 加回资本域。
 
 现役槽必须由合同调度或冻结材料触发政策直接唤醒，并在任意 heartbeat 相位、普通 Release 和进程恢复下保持身份不变。若调度在截止后才恢复，只能记录 `NO_ESTIMATE`；不得调短 heartbeat、人工补触发、移动槽位或把事件槽改写成定时槽来修饰覆盖率。
 

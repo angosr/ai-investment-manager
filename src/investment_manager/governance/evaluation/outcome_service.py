@@ -144,19 +144,16 @@ def assemble_outcome_evaluation(
         engine=engine,
         release=release,
     )
-    context = config.capital.context_forecast
-    product_payoff_settler = (
-        ProductPayoffOutcomeSettler(
-            market=SqlMarketDataStore(engine),
-            store=SqlProductPayoffProjectionStore(engine),
-            evaluation_version=config.outcome_evaluation.product_payoff_version,
-            maximum_spot_age_seconds=config.capital.risk.maximum_quote_age_seconds,
-            maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
-            maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
-            settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
-        )
-        if context is not None and context.enabled and context.product_payoffs is not None
-        else None
+    # Outcome owns already-recorded obligations across Release changes.  Whether the
+    # current Capital policy can create new projections must not orphan old ones.
+    product_payoff_settler = ProductPayoffOutcomeSettler(
+        market=SqlMarketDataStore(engine),
+        store=SqlProductPayoffProjectionStore(engine),
+        evaluation_version=config.outcome_evaluation.product_payoff_version,
+        maximum_spot_age_seconds=config.capital.risk.maximum_quote_age_seconds,
+        maximum_perpetual_age_seconds=(config.market_data.perpetual_poll_seconds * 3),
+        maximum_funding_gap_hours=(config.outcome_evaluation.maximum_funding_gap_hours),
+        settlement_grace_minutes=(config.outcome_evaluation.settlement_grace_minutes),
     )
     return OutcomeEvaluationSupervisor(
         config=config,

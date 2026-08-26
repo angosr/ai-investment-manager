@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from investment_manager.governance.evaluation.outcome_service import (
     OutcomeEvaluationSupervisor,
     _seconds_until_next_poll,
+    assemble_outcome_evaluation,
 )
 
 
@@ -16,6 +17,32 @@ def test_outcome_evaluation_poll_uses_absolute_utc_buckets() -> None:
 
     assert _seconds_until_next_poll(almost_boundary, poll_seconds=300) == 0.25
     assert _seconds_until_next_poll(after_slow_run, poll_seconds=300) == 293
+
+
+def test_outcome_service_keeps_settling_recorded_product_obligations(app_config) -> None:
+    context = app_config.capital.context_forecast
+    assert context is not None
+    config = app_config.model_copy(
+        update={
+            "capital": app_config.capital.model_copy(
+                update={
+                    "context_forecast": context.model_copy(
+                        update={"product_payoffs": None}
+                    )
+                }
+            ),
+            "outcome_evaluation": app_config.outcome_evaluation.model_copy(
+                update={"world_model_ablation": None}
+            ),
+        }
+    )
+
+    supervisor = assemble_outcome_evaluation(
+        config,
+        "sqlite+pysqlite:///:memory:",
+    )
+
+    assert supervisor.product_payoff_settler is not None
 
 
 def test_outcome_supervisor_only_settles_current_release_cohorts(app_config) -> None:

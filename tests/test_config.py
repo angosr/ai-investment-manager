@@ -61,12 +61,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v51"
+    assert config.capital.version == "total-portfolio-capital-v52"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v6"
+        "binance-shadow-investable-v7"
     )
     assert config.capital.reference_policy is None
     assert tuple(
@@ -75,7 +75,6 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:BTCUSDT",
         "BINANCE:SPOT:PAXGUSDT",
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
-        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v12"
     assert config.information.version == "information-intake-v38"
@@ -317,7 +316,7 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         if item.key
         == config.capital.context_forecast.derivative_evidence_instrument_key
     )
-    assert evidence_instrument.key in {
+    assert evidence_instrument.key not in {
         item.instrument.key for item in config.capital.execution_specs
     }
     fee_bps_by_instrument = {
@@ -327,17 +326,8 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         "BINANCE:SPOT:BTCUSDT": Decimal("10"),
         "BINANCE:SPOT:PAXGUSDT": Decimal("10"),
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT": Decimal("50"),
-        "BINANCE:USD_M_PERPETUAL:BTCUSDT": Decimal("5"),
     }
-    assert config.capital.context_forecast.product_payoffs is not None
-    assert config.capital.context_forecast.product_payoffs.instrument_keys == (
-        "BINANCE:SPOT:BTCUSDT",
-        "BINANCE:USD_M_PERPETUAL:BTCUSDT",
-    )
-    assert (
-        config.capital.context_forecast.product_payoffs.maximum_rule_age_seconds
-        == 900
-    )
+    assert config.capital.context_forecast.product_payoffs is None
     contract = context_spot_forecast_contract(
         policy=config.capital.context_forecast,
         instrument=instrument,
@@ -385,21 +375,6 @@ def test_shadow_has_one_explicit_context_candidate() -> None:
         state_behavior,
         "0" * 64,
     ) != behavior_id
-    assert context_forecast_behavior_hash(
-        config.codex_runtime,
-        config.capital.context_forecast.model_copy(
-            update={
-                "product_payoffs": (
-                    config.capital.context_forecast.product_payoffs.model_copy(
-                        update={"version": "different-product-payoff-v2"}
-                    )
-                )
-            }
-        ),
-        contract,
-        state_behavior,
-        configured_assess_behavior_hash(config),
-    ) == behavior_id
 
 
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:

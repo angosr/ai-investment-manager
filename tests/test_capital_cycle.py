@@ -1080,7 +1080,6 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
         "BTCUSDT",
         "PAXGUSDT",
         "SPYUSDT",
-        "BTCUSDT",
     ]
     assert {item["quantity"] for item in dto["instruments"]} == {"0"}
     assert dto["instruments"][0]["price"] == "99995"
@@ -1308,7 +1307,7 @@ def test_pending_group_requires_quotes_without_a_prior_account_position() -> Non
     assert tuple(item.symbol for item in execution) == ("PAXGUSDT",)
 
 
-def test_context_forecast_reuses_the_qualified_perpetual_as_market_evidence(
+def test_context_forecast_uses_observation_only_perpetual_market_evidence(
     monkeypatch,
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -1336,11 +1335,12 @@ def test_context_forecast_reuses_the_qualified_perpetual_as_market_evidence(
     evidence = behavior.derivative_evidence_instrument
     assert evidence is not None
     assert evidence.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
-    assert evidence.key in {item.instrument.key for item in config.capital.execution_specs}
+    assert evidence.key not in {
+        item.instrument.key for item in config.capital.execution_specs
+    }
     assert {item.instrument.product for item in config.capital.execution_specs} == {
         InstrumentProduct.SPOT,
         InstrumentProduct.TRADFI_PERPETUAL,
-        InstrumentProduct.USD_M_PERPETUAL,
     }
 
 
@@ -1463,7 +1463,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v6",
+        "universe_version": "binance-shadow-investable-v7",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
