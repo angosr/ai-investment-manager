@@ -67,7 +67,6 @@ class InvestmentMandatePolicy(StrictConfig):
     base_currency: str = Field(pattern=r"^[A-Z0-9._-]+$")
     objective: str = Field(pattern=r"^REAL_CAPITAL_GROWTH$")
     horizon_years: int = Field(ge=3, le=100)
-    minimum_liquidity_fraction: UnitInterval
     maximum_drawdown_fraction: UnitInterval
     maximum_stress_loss_fraction: UnitInterval
     maximum_gross_exposure_fraction: Decimal = Field(gt=0, le=2)

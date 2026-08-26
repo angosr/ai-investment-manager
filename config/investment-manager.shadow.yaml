@@ -48,7 +48,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v64
+  version: world-forecast-product-capital-shadow-v65
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

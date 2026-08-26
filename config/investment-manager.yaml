@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v65
+  version: total-portfolio-capital-v66
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -140,7 +140,6 @@ capital:
     base_currency: USDT
     objective: REAL_CAPITAL_GROWTH
     horizon_years: 5
-    minimum_liquidity_fraction: "0.20"
     maximum_drawdown_fraction: "0.10"
     maximum_stress_loss_fraction: "0.10"
     maximum_gross_exposure_fraction: "1.00"
