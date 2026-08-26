@@ -41,7 +41,7 @@ Evidence、State、WorldModel、Forecast、PortfolioTarget、RiskDecision、订�
 | 领域评价结果 | 由唯一 evaluator 回答一个问题 | 候选自报结论与通用指标袋 |
 | `Authorization` | 把适用结果转换为有限、可撤销的运行或资本权限 | Alpha 计算与账户状态 |
 | `ReleaseManifest` | 冻结实际部署内容并支持恢复 | 投资行为成绩 |
-| `GovernanceSnapshot` | 从现役事实派生供 Agent 使用的点时引用集 | 指标重算、自由文本经验库 |
+| Agent 证据视图 | 按任务从现役事实派生的点时内容引用 | 持久状态、指标重算、自由文本经验库 |
 
 可检索评价目录由各领域合同和结果确定性派生，只投影评价类型、稳定 ID、内容哈希、作用域、评价家族、状态和废止引用，不接受独立写入。Dashboard、Agent 和 Authorization 引用同一领域结果，不能各自筛样本或产生另一份结论。
 
@@ -126,7 +126,7 @@ Cadence 必须持续产生 Forecast 或明确的 `NO_ESTIMATE`，并结算现金
 
 ## 8. Agent 的最小闭环
 
-`GovernanceSnapshot` 只提供当前 Mandate、Reference、行为、评价合同与结果、家族搜索摘要、权限和运行异常的内容引用。它不读取 `legacy`，不复制指标，不让 Agent 抓页面或自行拼 SQL 重算赢家。完整家族历史由确定性 Gate 在数据库侧校验，不靠把所有记录塞进 Prompt。
+主 Agent 每次从现役领域事实按任务派生最小证据视图，只提供当前 Mandate、Reference、行为、评价合同与结果、家族搜索摘要、权限和运行异常的内容引用。该视图不持久化、不读取 `legacy`、不复制指标，也不通过常驻 Governor Worker 自动提案；完整家族历史由确定性 Gate 在数据库侧校验，不靠把所有记录塞进 Prompt。
 
 Agent 每次只做以下工作：
 

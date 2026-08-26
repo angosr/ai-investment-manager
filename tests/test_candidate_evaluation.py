@@ -14,18 +14,20 @@ from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.models import CandidateOutcome, CandidateOutcomeStatus
 from investment_manager.legacy.repository import (
     SqlFactLedger,
+)
+from investment_manager.legacy.tables import (
     candidate_outcomes,
     signal_candidates,
 )
 from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 def _seed_candidate(app_config, replay_input):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     create_market_schema(engine)
     result = AnalysisCycle.with_adapters(
         app_config,

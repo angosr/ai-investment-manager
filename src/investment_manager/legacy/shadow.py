@@ -14,11 +14,11 @@ from investment_manager.execution.models import AccountSnapshot
 from investment_manager.execution.reconciliation.repository import (
     SqlReconciliationReportStore,
 )
-from investment_manager.execution.tables import orders
 from investment_manager.kernel.time import require_utc
-from investment_manager.legacy.repository import (
+from investment_manager.legacy.tables import (
     analysis_cycles,
     market_snapshots,
+    orders,
 )
 
 

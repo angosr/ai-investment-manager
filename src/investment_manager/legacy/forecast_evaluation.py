@@ -24,7 +24,7 @@ from investment_manager.legacy.models import (
     AnalysisProposal,
     DirectionalForecast,
 )
-from investment_manager.legacy.repository import (
+from investment_manager.legacy.tables import (
     analysis_cycles,
     analysis_forecast_outcomes,
     analysis_proposals,

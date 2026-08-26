@@ -11,7 +11,7 @@ component_versions:
   - [capital, total-portfolio-capital-v54]
   - [outcome_evaluation, typed-outcome-settlement-v29]
   - [trigger, analysis-trigger-v30]
-  - [temporal, temporal-analysis-v4]
+  - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v14]
   - [shadow, shadow-simulation-v2]
   - [information, information-intake-v38]

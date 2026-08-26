@@ -20,7 +20,7 @@ from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.repository import SqlFactLedger
 from investment_manager.legacy.shadow import SqlShadowStateReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 def _sources(engine, app_config):
@@ -42,7 +42,7 @@ def _sql_cycle(engine, app_config):
 
 def test_reconciliation_matches_independent_mock_exchange_journal(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     result = _sql_cycle(engine, app_config).run(replay_input)
     assert result.order is not None
     local, remote = _sources(engine, app_config)
@@ -67,7 +67,7 @@ def test_reconciliation_does_not_compare_local_portfolio_protection_state(
     app_config, replay_input
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     _sql_cycle(engine, app_config).run(replay_input)
     local, remote = _sources(engine, app_config)
     as_of = replay_input.market.as_of
@@ -96,7 +96,7 @@ def test_reconciliation_does_not_compare_local_portfolio_protection_state(
 
 def test_remote_order_without_local_commit_freezes_new_risk(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     cycle = _sql_cycle(engine, app_config)
     prepared = cycle.prepare(replay_input)
     assert prepared.execution_request is not None
@@ -122,7 +122,7 @@ def test_remote_order_without_local_commit_freezes_new_risk(app_config, replay_i
 
 def test_shadow_account_fails_closed_without_fresh_matched_report(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     _sql_cycle(engine, app_config).run(replay_input)
     reader = SqlShadowStateReader(
         engine,

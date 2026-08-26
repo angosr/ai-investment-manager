@@ -15,8 +15,6 @@ from sqlalchemy import func, select, text
 
 from investment_manager.execution.lifecycle.manager import PositionLifecycleManager
 from investment_manager.execution.reconciliation.engine import MockReconciler
-from investment_manager.execution.tables import account_snapshots, orders
-from investment_manager.governance.change.context import GovernanceSnapshotAssembler
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.official.records import (
@@ -43,9 +41,13 @@ from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
     SqlOpenLifecycleRepository,
+)
+from investment_manager.legacy.tables import (
+    account_snapshots,
     candidate_outcomes,
     decision_outcomes,
     metric_observations,
+    orders,
 )
 from investment_manager.market.models import MarketSnapshot, MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore
@@ -66,7 +68,7 @@ from investment_manager.scheduling.repository import (
     PostgresTriggerLeadership,
     SqlTriggerRepository,
 )
-from investment_manager.schema import compose_metadata
+from investment_manager.schema import compose_offline_metadata
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaRule,
@@ -102,7 +104,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
     request.addfinalizer(engine.dispose)
     if engine.dialect.name != "postgresql":
         raise RuntimeError("该契约测试必须使用 PostgreSQL")
-    compose_metadata().drop_all(engine)
+    compose_offline_metadata().drop_all(engine)
     with engine.begin() as connection:
         connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     migration_config = Config(str(ROOT / "alembic.ini"))
@@ -555,27 +557,6 @@ def test_postgres_cycle_transaction_and_risk_budget(
         settlement_grace_minutes=app_config.outcome_evaluation.settlement_grace_minutes,
     ).settle(as_of=candidate_evaluation_at)
     assert candidate_settlement.settled == 1
-    governance_metrics = dict(
-        GovernanceSnapshotAssembler(engine, app_config, project_root=ROOT)
-        .build(as_of=candidate_evaluation_at)
-        .metric_summaries
-    )
-    evidence_prefix = ":".join(
-        (
-            "candidate_evidence",
-            candidate.producer_id,
-            candidate.producer_version,
-            candidate.symbol,
-            candidate.side.value,
-            str(candidate.horizon_minutes),
-            candidate.calibration_ref,
-            app_config.outcome_evaluation.version,
-            app_config.execution.version,
-            app_config.frequency.version,
-        )
-    )
-    assert governance_metrics[f"{evidence_prefix}:SETTLED:count"] == "1"
-    assert governance_metrics[f"{evidence_prefix}:non_overlapping_settled"] == "1"
     open_repository = SqlOpenLifecycleRepository(engine)
     assert [item.lifecycle.position_id for item in open_repository.list_open()] == [
         first.position_lifecycle.position_id

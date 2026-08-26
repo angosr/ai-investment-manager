@@ -18,7 +18,7 @@ from investment_manager.scheduling.models import (
     build_trigger_batch,
     build_trigger_event,
 )
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.application import (
     DecisionPacketPreparationResult,
@@ -598,7 +598,7 @@ def test_sql_shadow_account_is_projected_from_latest_business_fact(
     app_config, replay_input
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     cycle = AnalysisCycle.with_adapters(
         app_config,
         ledger=SqlFactLedger(engine),

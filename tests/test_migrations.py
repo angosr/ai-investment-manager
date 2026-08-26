@@ -8,12 +8,12 @@ from alembic.config import Config
 from sqlalchemy import create_engine, insert, inspect, select, text
 
 from investment_manager.forecast.tables import forecast_contracts, forecast_decision_slots
-from investment_manager.legacy.repository import analysis_cycles
+from investment_manager.legacy.tables import analysis_cycles
 from investment_manager.market.tables import market_quotes
 from investment_manager.platform.database import require_current_schema
 from investment_manager.risk.budget import portfolio_risk_budgets, risk_reservations
 from investment_manager.risk.protection import portfolio_protection_states
-from investment_manager.schema import compose_metadata
+from investment_manager.schema import compose_metadata, compose_offline_metadata
 
 
 def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
@@ -52,14 +52,24 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
         require_current_schema(engine)
 
 
-def test_all_physical_database_tables_share_one_metadata_registry() -> None:
-    registry = compose_metadata()
+def test_managed_schema_excludes_retired_tables_but_offline_schema_can_read_them() -> None:
+    managed = compose_metadata()
+    offline = compose_offline_metadata()
 
-    assert analysis_cycles.metadata is registry
-    assert market_quotes.metadata is registry
-    assert portfolio_protection_states.metadata is registry
-    assert portfolio_risk_budgets.metadata is registry
-    assert risk_reservations.metadata is registry
+    assert set(managed.tables) < set(offline.tables)
+    assert market_quotes.name in managed.tables
+    assert {
+        analysis_cycles.name,
+        portfolio_protection_states.name,
+        portfolio_risk_budgets.name,
+        risk_reservations.name,
+    } <= set(offline.tables)
+    assert {
+        analysis_cycles.name,
+        portfolio_protection_states.name,
+        portfolio_risk_budgets.name,
+        risk_reservations.name,
+    }.isdisjoint(managed.tables)
 
 
 def test_unified_store_migration_archives_retired_role_facts(tmp_path) -> None:

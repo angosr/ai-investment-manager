@@ -6,28 +6,16 @@ from sqlalchemy.exc import IntegrityError
 
 from investment_manager.governance.models import (
     BlindEvaluationClaim,
-    ChangeProposal,
     EvaluationPlan,
-    EvaluationResult,
     EvaluationStage,
-    EvaluationTarget,
     FailedExperiment,
-    GovernanceSnapshot,
-    ReleaseApprovalDecision,
     ReleaseManifest,
-    SystemConstitution,
 )
 from investment_manager.governance.tables import (
     blind_evaluation_claims,
-    change_proposals,
     evaluation_plans,
-    evaluation_results,
     failed_experiment_records,
-    governance_decisions,
-    governance_snapshots,
-    release_approval_requests,
     release_manifests,
-    system_constitutions,
 )
 from investment_manager.kernel.identity import content_hash
 
@@ -37,17 +25,6 @@ class SqlGovernanceRepository:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
-
-    def record_constitution(self, constitution: SystemConstitution) -> None:
-        self._record(
-            system_constitutions,
-            system_constitutions.c.version,
-            constitution.version,
-            {
-                "version": constitution.version,
-                "payload": constitution.model_dump(mode="json"),
-            },
-        )
 
     def record_release(self, release: ReleaseManifest) -> None:
         self._record(
@@ -76,29 +53,6 @@ class SqlGovernanceRepository:
         if len(payloads) != 1:
             raise ValueError("治理事实库中必须恰好存在一个 CHAMPION")
         return ReleaseManifest.model_validate(payloads[0])
-
-    def record_snapshot(self, snapshot: GovernanceSnapshot) -> None:
-        self._record(
-            governance_snapshots,
-            governance_snapshots.c.snapshot_id,
-            snapshot.snapshot_id,
-            {
-                "snapshot_id": snapshot.snapshot_id,
-                "as_of": snapshot.as_of,
-                "champion_manifest_id": snapshot.champion.manifest_id,
-                "content_hash": snapshot.content_hash,
-                "payload": snapshot.model_dump(mode="json"),
-            },
-        )
-
-    def get_snapshot(self, snapshot_id: str) -> GovernanceSnapshot | None:
-        with self._engine.connect() as connection:
-            payload = connection.execute(
-                select(governance_snapshots.c.payload).where(
-                    governance_snapshots.c.snapshot_id == snapshot_id
-                )
-            ).scalar_one_or_none()
-        return GovernanceSnapshot.model_validate(payload) if payload else None
 
     def register_plan(self, plan: EvaluationPlan) -> None:
         self._record(
@@ -254,142 +208,6 @@ class SqlGovernanceRepository:
                 )
             )
         return completed
-
-    def register_proposal(self, proposal: ChangeProposal) -> None:
-        self._record(
-            change_proposals,
-            change_proposals.c.proposal_id,
-            proposal.proposal_id,
-            {
-                "proposal_id": proposal.proposal_id,
-                "base_version": proposal.base_manifest_id,
-                "change_type": proposal.change_type.value,
-                "status": "PROPOSED",
-                "payload": proposal.model_dump(mode="json"),
-            },
-        )
-
-    def record_evaluation(self, result: EvaluationResult) -> None:
-        self._record(
-            evaluation_results,
-            evaluation_results.c.evaluation_id,
-            result.evaluation_id,
-            {
-                "evaluation_id": result.evaluation_id,
-                "proposal_id": result.proposal_id,
-                "plan_id": result.plan_id,
-                "candidate_manifest_id": result.candidate_manifest_id,
-                "completed_at": result.completed_at,
-                "payload": result.model_dump(mode="json"),
-            },
-        )
-
-    def require_registered_evaluation_target(
-        self,
-        target: EvaluationTarget,
-        *,
-        require_current_base: bool = True,
-    ) -> None:
-        """拒绝由调用方临时拼出的提案、计划或候选版本。"""
-        with self._engine.connect() as connection:
-            plan_payload = connection.execute(
-                select(evaluation_plans.c.payload).where(
-                    evaluation_plans.c.plan_id == target.plan.plan_id
-                )
-            ).scalar_one_or_none()
-            proposal_row = connection.execute(
-                select(
-                    change_proposals.c.status,
-                    change_proposals.c.payload,
-                    governance_decisions.c.status,
-                    governance_decisions.c.payload,
-                )
-                .join(
-                    governance_decisions,
-                    governance_decisions.c.decision_id == change_proposals.c.proposal_id,
-                )
-                .where(change_proposals.c.proposal_id == target.proposal.proposal_id)
-            ).one_or_none()
-            candidate_row = connection.execute(
-                select(release_manifests.c.status, release_manifests.c.payload).where(
-                    release_manifests.c.manifest_id == target.candidate.manifest_id
-                )
-            ).one_or_none()
-            champion_row = connection.execute(
-                select(release_manifests.c.status).where(
-                    release_manifests.c.manifest_id == target.plan.base_manifest_id
-                )
-            ).one_or_none()
-        if plan_payload != target.plan.model_dump(mode="json"):
-            raise ValueError("EvaluationPlan 未登记或登记内容不一致")
-        expected_proposal = target.proposal.model_dump(mode="json")
-        if (
-            proposal_row is None
-            or proposal_row[0] != "PROPOSED"
-            or proposal_row[1] != expected_proposal
-            or proposal_row[2] != "PROPOSED"
-            or proposal_row[3] != expected_proposal
-        ):
-            raise ValueError("ChangeProposal 没有通过治理门禁并登记")
-        if (
-            candidate_row is None
-            or candidate_row[0] != "CHALLENGER"
-            or candidate_row[1] != target.candidate.model_dump(mode="json")
-        ):
-            raise ValueError("候选 ReleaseManifest 未登记或内容不一致")
-        allowed_base_statuses = (
-            {"CHAMPION"} if require_current_base else {"CHAMPION", "PREVIOUS_STABLE"}
-        )
-        if champion_row is None or champion_row[0] not in allowed_base_statuses:
-            raise ValueError("评估计划的基线不是已登记稳定版本")
-
-    def require_registered_release_inputs(
-        self,
-        *,
-        target: EvaluationTarget,
-        evaluation: EvaluationResult,
-        current_champion: ReleaseManifest,
-    ) -> None:
-        self.require_registered_evaluation_target(target, require_current_base=False)
-        with self._engine.connect() as connection:
-            evaluation_payload = connection.execute(
-                select(evaluation_results.c.payload).where(
-                    evaluation_results.c.evaluation_id == evaluation.evaluation_id
-                )
-            ).scalar_one_or_none()
-            champion_payloads = tuple(
-                connection.execute(
-                    select(release_manifests.c.payload).where(
-                        release_manifests.c.status == "CHAMPION"
-                    )
-                ).scalars()
-            )
-        if evaluation_payload != evaluation.model_dump(mode="json"):
-            raise ValueError("EvaluationResult 未登记或登记内容不一致")
-        if champion_payloads != (current_champion.model_dump(mode="json"),):
-            raise ValueError("ReleaseWorkflow 指定的当前 CHAMPION 不权威")
-
-    def record_release_approval(self, decision: ReleaseApprovalDecision) -> None:
-        values = {
-            "decision_id": decision.decision_id,
-            "evaluation_id": decision.evaluation_id,
-            "candidate_manifest_id": decision.candidate_manifest_id,
-            "status": decision.status.value,
-            "created_at": decision.created_at,
-            "payload": decision.model_dump(mode="json"),
-        }
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(insert(release_approval_requests).values(**values))
-        except IntegrityError:
-            with self._engine.connect() as connection:
-                existing = connection.execute(
-                    select(release_approval_requests.c.payload).where(
-                        release_approval_requests.c.evaluation_id == decision.evaluation_id
-                    )
-                ).scalar_one_or_none()
-            if existing != values["payload"]:
-                raise ValueError("同一 EvaluationResult 已存在不同的 Release 决策") from None
 
     def record_failed_experiment(self, failed: FailedExperiment) -> None:
         values = {

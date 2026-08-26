@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -215,10 +218,55 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 100
+    assert len(contract) == 69
     assert content_hash(contract) == (
-        "fbc08c57f61b699a37cdb49e5f98f02a9586ba14a21d600be61d852d563a4f9b"
+        "b7969b3f6679a25ce59932fc4b88e88b68ff48a84126efeaf922570dab44eed8"
     )
+
+
+def test_managed_schema_runtime_does_not_import_or_register_retired_chain() -> None:
+    probe = """
+import json
+import sys
+
+import investment_manager.entrypoints.cli
+from investment_manager.schema import compose_metadata
+
+tables = set(compose_metadata().tables)
+forbidden_modules = sorted(
+    name for name in sys.modules if name.startswith("investment_manager.legacy")
+)
+retired_tables = sorted(
+    tables.intersection(
+        {
+            "account_snapshots",
+            "analysis_cycles",
+            "execution_requests",
+            "orders",
+            "portfolio_protection_states",
+            "reconciliation_reports",
+            "risk_reservations",
+            "trade_intents",
+        }
+    )
+)
+if forbidden_modules or retired_tables:
+    raise SystemExit(
+        json.dumps(
+            {"forbidden_modules": forbidden_modules, "retired_tables": retired_tables}
+        )
+    )
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_cli_subcommand_parameter_contract_is_frozen() -> None:
@@ -380,22 +428,22 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "policy.py",
             "tables.py",
         },
-            "forecast": {
-                "contract_repository.py",
-                "contracts.py",
-                "models.py",
-                "policy.py",
-                "repository.py",
-                "results.py",
-                "settlement.py",
-                "tables.py",
+        "forecast": {
+            "contract_repository.py",
+            "contracts.py",
+            "models.py",
+            "policy.py",
+            "repository.py",
+            "results.py",
+            "settlement.py",
+            "tables.py",
         },
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
     capabilities = {
         "execution": {"group", "lifecycle", "planning", "reconciliation", "venue"},
-            "forecast": {"codex", "context", "product"},
-        "governance": {"audit", "change", "evaluation", "release"},
+        "forecast": {"codex", "context", "product"},
+        "governance": {"audit", "evaluation", "release"},
         "information": {"official"},
         "market": {"perpetual"},
         "state": {"decision"},
@@ -1118,7 +1166,7 @@ def test_risk_models_and_modules_have_one_domain_owner() -> None:
     assert owners == [PACKAGE_ROOT / "risk" / "tables.py"]
 
 
-def test_execution_models_tables_and_modules_have_one_owner() -> None:
+def test_active_and_retired_execution_tables_have_distinct_single_owners() -> None:
     moved_models = {
         "AccountSnapshot",
         "ExitReason",
@@ -1133,20 +1181,23 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
         "SUPPORTED_OPEN_SIDES",
         "Side",
     }
-    owned_tables = {
+    active_tables = {
+        "execution_groups",
+        "mock_product_orders",
+        "product_order_observations",
+        "trade_plans",
+    }
+    retired_tables = {
         "account_snapshots",
         "execution_requests",
-        "execution_groups",
         "fills",
         "mock_exchange_orders",
         "mock_exchange_protections",
-        "mock_product_orders",
         "orders",
         "position_lifecycles",
-        "product_order_observations",
         "reconciliation_reports",
-        "trade_plans",
     }
+    owned_tables = active_tables | retired_tables
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
@@ -1175,8 +1226,12 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
             ):
                 owners[target.id].append(path)
 
-    expected = PACKAGE_ROOT / "execution" / "tables.py"
-    assert owners == {name: [expected] for name in owned_tables}
+    active_owner = PACKAGE_ROOT / "execution" / "tables.py"
+    retired_owner = PACKAGE_ROOT / "legacy" / "tables.py"
+    assert owners == {
+        **{name: [active_owner] for name in active_tables},
+        **{name: [retired_owner] for name in retired_tables},
+    }
     for filename in (
         "binance_testnet.py",
         "execution.py",
@@ -1197,23 +1252,26 @@ def test_execution_models_tables_and_modules_have_one_owner() -> None:
 
 
 def test_governance_tables_and_entry_modules_have_one_owner() -> None:
-    owned_tables = {
-        "architecture_decisions",
+    active_tables = {
         "blind_evaluation_claims",
-        "change_proposals",
         "evaluation_plans",
-        "evaluation_results",
         "failed_experiment_records",
+        "release_manifests",
+        "world_model_ablation_assignments",
+        "world_model_ablation_results",
+    }
+    retired_tables = {
+        "architecture_decisions",
+        "change_proposals",
+        "evaluation_results",
         "governance_decisions",
         "governance_snapshots",
         "outcome_window_reports",
         "release_approval_requests",
-        "release_manifests",
         "replay_evaluation_reports",
         "system_constitutions",
-        "world_model_ablation_assignments",
-        "world_model_ablation_results",
     }
+    owned_tables = active_tables | retired_tables
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 
     for path in PACKAGE_ROOT.rglob("*.py"):
@@ -1230,8 +1288,12 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
             ):
                 owners[target.id].append(path)
 
-    expected = PACKAGE_ROOT / "governance" / "tables.py"
-    assert owners == {name: [expected] for name in owned_tables}
+    active_owner = PACKAGE_ROOT / "governance" / "tables.py"
+    retired_owner = PACKAGE_ROOT / "legacy" / "tables.py"
+    assert owners == {
+        **{name: [active_owner] for name in active_tables},
+        **{name: [retired_owner] for name in retired_tables},
+    }
     assert not (PACKAGE_ROOT / "persistence.py").exists()
     governance_classes = {
         node.name
@@ -1241,14 +1303,6 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
         if isinstance(node, ast.ClassDef)
     }
     assert governance_classes == {"SqlGovernanceRepository"}
-    evaluation_repository_classes = {
-        node.name
-        for node in ast.parse(
-            (PACKAGE_ROOT / "governance" / "evaluation" / "repository.py").read_text()
-        ).body
-        if isinstance(node, ast.ClassDef)
-    }
-    assert evaluation_repository_classes == {"SqlEvaluationRepository"}
     for filename in (
         "acceptance.py",
         "deployment.py",

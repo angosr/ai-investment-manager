@@ -1126,7 +1126,7 @@ def replay_event_triggers_command(
 
     from sqlalchemy import select
 
-    from investment_manager.legacy.repository import analysis_cycles, market_snapshots
+    from investment_manager.legacy.tables import analysis_cycles, market_snapshots
     from investment_manager.research.dataset import HistoricalEventDatasetCatalog
     from investment_manager.research.trigger_replay import (
         ExternalTriggerReplaySpec,

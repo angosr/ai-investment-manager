@@ -19,14 +19,14 @@ from investment_manager.execution.reconciliation.engine import (
     ReconciliationReport,
     TradingStateSnapshot,
 )
-from investment_manager.execution.tables import (
+from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.tables import (
+    analysis_cycles,
     mock_exchange_orders,
     orders,
     reconciliation_reports,
 )
-from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.kernel.time import require_utc
-from investment_manager.legacy.repository import analysis_cycles
 
 
 class SqlLocalTradingStateSource:

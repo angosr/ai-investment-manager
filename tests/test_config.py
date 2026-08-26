@@ -57,7 +57,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     )
     assert config.pipeline.version == "world-forecast-product-capital-shadow-v51"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
-    assert config.temporal.version == "temporal-analysis-v4"
+    assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
     assert config.temporal.activity_schedule_to_close_seconds == 900
     assert config.shadow.analysis_deadline_seconds == 900

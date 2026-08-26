@@ -32,6 +32,8 @@ from investment_manager.legacy.models import (
 )
 from investment_manager.legacy.repository import (
     SqlFactLedger,
+)
+from investment_manager.legacy.tables import (
     analysis_cycles,
     analysis_forecast_outcomes,
 )
@@ -39,7 +41,7 @@ from investment_manager.market.models import MarketTrade
 from investment_manager.market.repository import SqlMarketDataStore, create_market_schema
 from investment_manager.research.decision_tape import SqlForecastDecisionTapeReader
 from investment_manager.risk.budget import SqlRiskBudgetStore
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 class StaticAnalyst:
@@ -60,7 +62,7 @@ class StaticAnalyst:
 
 def _seed(app_config, replay_input, view: DirectionalView):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     create_market_schema(engine)
     config = app_config.model_copy(
         update={
@@ -558,7 +560,7 @@ def test_forward_forecast_evaluation_fails_when_registered_scope_is_missing(
 
 def test_forward_forecast_store_selects_exact_signal_times(replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     store = SqlAnalysisForecastOutcomeStore(engine)
     start = replay_input.market.as_of
     spec = _forward_spec(start)
@@ -679,7 +681,7 @@ def test_forecast_report_aggregates_behavior_equivalent_runtime_generations(
 
 def test_forecast_store_selects_exactly_one_evidence_scope(replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     store = SqlAnalysisForecastOutcomeStore(engine)
     start = replay_input.market.as_of
     behavior_hash = "d" * 64

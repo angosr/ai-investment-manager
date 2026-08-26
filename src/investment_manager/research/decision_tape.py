@@ -27,7 +27,7 @@ from investment_manager.legacy.models import (
     DirectionalForecast,
     SignalCandidate,
 )
-from investment_manager.legacy.repository import (
+from investment_manager.legacy.tables import (
     analysis_cycles,
     analysis_proposals,
     market_snapshots,

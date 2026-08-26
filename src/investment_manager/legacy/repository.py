@@ -4,22 +4,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import (
-    JSON,
-    Column,
-    DateTime,
-    ForeignKey,
-    Index,
-    Integer,
-    Numeric,
-    String,
-    Table,
-    UniqueConstraint,
-    func,
-    insert,
-    select,
-    update,
-)
+from sqlalchemy import Table, func, insert, select, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -35,13 +20,6 @@ from investment_manager.execution.models import (
     Order,
     PositionLifecycle,
 )
-from investment_manager.execution.tables import (
-    account_snapshots,
-    execution_requests,
-    fills,
-    orders,
-    position_lifecycles,
-)
 from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
@@ -51,7 +29,22 @@ from investment_manager.legacy.models import (
     SignalCandidate,
     TradeIntent,
 )
-from investment_manager.platform.database import metadata
+from investment_manager.legacy.tables import (
+    account_snapshots,
+    analysis_cycles,
+    analysis_proposals,
+    decision_outcomes,
+    execution_requests,
+    fills,
+    market_snapshots,
+    metric_observations,
+    orders,
+    panel_snapshots,
+    position_lifecycles,
+    risk_decisions,
+    signal_candidates,
+    trade_intents,
+)
 from investment_manager.risk.budget import (
     portfolio_risk_budgets,
     risk_reservations,
@@ -59,172 +52,6 @@ from investment_manager.risk.budget import (
 from investment_manager.risk.models import RiskDecision
 from investment_manager.state.panel import PanelSnapshot
 
-analysis_cycles = Table(
-    "analysis_cycles",
-    metadata,
-    Column("cycle_id", String(128), primary_key=True),
-    Column("as_of", DateTime(timezone=True), nullable=False),
-    Column("pipeline_version", String(128), nullable=False),
-    Column("outcome", String(32), nullable=False),
-    Column("reason_code", String(128), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-)
-Index("ix_analysis_cycles_as_of", analysis_cycles.c.as_of)
-Index(
-    "ix_analysis_cycles_pipeline_as_of",
-    analysis_cycles.c.pipeline_version,
-    analysis_cycles.c.as_of,
-)
-
-market_snapshots = Table(
-    "market_snapshots",
-    metadata,
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), primary_key=True),
-    Column("symbol", String(32), nullable=False),
-    Column("as_of", DateTime(timezone=True), nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_market_snapshots_symbol_as_of", market_snapshots.c.symbol, market_snapshots.c.as_of)
-
-panel_snapshots = Table(
-    "panel_snapshots",
-    metadata,
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), primary_key=True),
-    Column("as_of", DateTime(timezone=True), nullable=False),
-    Column("schema_version", String(64), nullable=False),
-    Column("policy_version", String(128), nullable=False),
-    Column("content_hash", String(64), nullable=False, unique=True),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_panel_snapshots_as_of", panel_snapshots.c.as_of)
-
-analysis_proposals = Table(
-    "analysis_proposals",
-    metadata,
-    Column("proposal_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False, unique=True),
-    Column("proposal_type", String(32), nullable=False),
-    Column("suggested_action", String(32), nullable=False),
-    Column("forecast_count", Integer, nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-signal_candidates = Table(
-    "signal_candidates",
-    metadata,
-    Column("candidate_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
-    Column("sequence", Integer, nullable=False),
-    Column("producer_id", String(128), nullable=False),
-    Column("producer_version", String(128), nullable=False),
-    Column("symbol", String(32), nullable=False),
-    Column("valid_until", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint("cycle_id", "sequence", name="uq_signal_candidate_cycle_sequence"),
-)
-Index("ix_signal_candidates_cycle", signal_candidates.c.cycle_id)
-
-trade_intents = Table(
-    "trade_intents",
-    metadata,
-    Column("intent_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False, unique=True),
-    Column("pipeline_version", String(128), nullable=False),
-    Column("symbol", String(32), nullable=False),
-    Column("valid_until", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-risk_decisions = Table(
-    "risk_decisions",
-    metadata,
-    Column("decision_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False, unique=True),
-    Column("intent_id", ForeignKey("trade_intents.intent_id"), nullable=False, unique=True),
-    Column("outcome", String(32), nullable=False),
-    Column("policy_version", String(128), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-decision_outcomes = Table(
-    "decision_outcomes",
-    metadata,
-    Column("outcome_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False, unique=True),
-    Column("intent_id", ForeignKey("trade_intents.intent_id"), nullable=False, unique=True),
-    Column("position_id", ForeignKey("position_lifecycles.position_id"), nullable=False),
-    Column("net_pnl", Numeric(38, 18), nullable=False),
-    Column("payload", JSON, nullable=False),
-)
-
-candidate_outcomes = Table(
-    "candidate_outcomes",
-    metadata,
-    Column("outcome_id", String(128), primary_key=True),
-    Column(
-        "candidate_id",
-        ForeignKey("signal_candidates.candidate_id"),
-        nullable=False,
-        unique=True,
-    ),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("evaluation_at", DateTime(timezone=True), nullable=False),
-    Column("settled_at", DateTime(timezone=True), nullable=False),
-    Column("net_return_bps", Numeric(38, 18), nullable=True),
-    Column("payload", JSON, nullable=False),
-)
-Index("ix_candidate_outcomes_evaluation_at", candidate_outcomes.c.evaluation_at)
-
-analysis_forecast_outcomes = Table(
-    "analysis_forecast_outcomes",
-    metadata,
-    Column("outcome_id", String(128), primary_key=True),
-    Column(
-        "proposal_id",
-        ForeignKey("analysis_proposals.proposal_id"),
-        nullable=False,
-    ),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
-    Column("pipeline_version", String(128), nullable=False),
-    Column("analysis_behavior_hash", String(64), nullable=True),
-    Column("view_horizon_minutes", Integer, nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("evaluation_at", DateTime(timezone=True), nullable=False),
-    Column("settled_at", DateTime(timezone=True), nullable=False),
-    Column("directional_return_bps", Numeric(38, 18), nullable=True),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "proposal_id",
-        "view_horizon_minutes",
-        name="uq_analysis_forecast_outcomes_proposal_horizon",
-    ),
-)
-Index(
-    "ix_analysis_forecast_outcomes_pipeline_evaluation",
-    analysis_forecast_outcomes.c.pipeline_version,
-    analysis_forecast_outcomes.c.evaluation_at,
-)
-Index(
-    "ix_analysis_forecast_outcomes_behavior_evaluation",
-    analysis_forecast_outcomes.c.analysis_behavior_hash,
-    analysis_forecast_outcomes.c.evaluation_at,
-)
-
-metric_observations = Table(
-    "metric_observations",
-    metadata,
-    Column("metric_id", String(128), primary_key=True),
-    Column("cycle_id", ForeignKey("analysis_cycles.cycle_id"), nullable=False),
-    Column("phase", String(32), nullable=False),
-    Column("sequence", Integer, nullable=False),
-    Column("metric_version", String(128), nullable=False),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
-    Column("payload", JSON, nullable=False),
-    UniqueConstraint("cycle_id", "phase", "sequence", name="uq_metric_cycle_phase_sequence"),
-)
-Index("ix_metric_observations_cycle", metric_observations.c.cycle_id)
 
 class SqlLifecycleLedger:
     """持久化独立于分析周期运行的持仓退出和结果归因。"""

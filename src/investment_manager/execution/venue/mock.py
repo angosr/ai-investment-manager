@@ -11,10 +11,6 @@ from investment_manager.execution.models import (
     PositionLifecycle,
 )
 from investment_manager.execution.policy import ExecutionPolicy
-from investment_manager.execution.tables import (
-    mock_exchange_orders,
-    mock_exchange_protections,
-)
 from investment_manager.kernel.identity import stable_id
 from investment_manager.legacy.exchange import (
     MockExchange,
@@ -22,6 +18,10 @@ from investment_manager.legacy.exchange import (
     exit_client_order_id,
 )
 from investment_manager.legacy.models import TradeIntent
+from investment_manager.legacy.tables import (
+    mock_exchange_orders,
+    mock_exchange_protections,
+)
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.models import RiskDecision
 

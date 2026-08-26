@@ -10,7 +10,7 @@ from investment_manager.execution.models import (
     Position,
 )
 from investment_manager.risk.protection import SqlPortfolioProtectionStore
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 NOW = datetime(2026, 8, 18, 17, tzinfo=UTC)
 
@@ -28,7 +28,7 @@ def _account(*, quote: str, daily_pnl: str = "0", as_of: datetime = NOW):
 
 def _store(app_config):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     return SqlPortfolioProtectionStore(
         engine,
         policy=app_config.risk,

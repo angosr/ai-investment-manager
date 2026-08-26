@@ -7,10 +7,6 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from investment_manager.execution.tables import (
-    fills,
-    orders,
-)
 from investment_manager.forecast.codex.capacity import (
     CapacityBucket,
     CapacitySnapshot,
@@ -27,21 +23,25 @@ from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.legacy.exchange import MockExchange
 from investment_manager.legacy.repository import (
     SqlFactLedger,
+)
+from investment_manager.legacy.tables import (
     analysis_cycles,
+    fills,
     metric_observations,
+    orders,
 )
 from investment_manager.risk.budget import (
     SqlRiskBudgetStore,
     portfolio_risk_budgets,
     risk_reservations,
 )
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 @pytest.fixture
 def sql_cycle(app_config):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     ledger = SqlFactLedger(engine)
     cycle = AnalysisCycle.with_adapters(
         app_config,
@@ -72,7 +72,7 @@ def test_sql_ledger_persists_and_reconstructs_complete_cycle(sql_cycle, replay_i
 
 def test_sql_ledger_records_actual_cycle_commit_time(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     committed_at = replay_input.market.as_of + timedelta(seconds=7)
     ledger = SqlFactLedger(engine, clock=lambda: committed_at)
     cycle = AnalysisCycle.with_adapters(
@@ -104,7 +104,7 @@ def test_same_cycle_id_with_different_snapshot_is_rejected(sql_cycle, replay_inp
 
 def test_sql_codex_lease_is_exclusive_and_reusable_after_release() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     store = SqlAccountLeaseStore(engine)
     now = datetime.now(tz=UTC)
 
@@ -124,7 +124,7 @@ def test_sql_codex_lease_is_exclusive_and_reusable_after_release() -> None:
 
 def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     store = SqlCodexAuditStore(engine)
     now = datetime.now(tz=UTC)
     snapshot = CapacitySnapshot(

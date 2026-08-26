@@ -21,12 +21,12 @@ from investment_manager.risk.models import (
     GuardState,
     RiskOutcome,
 )
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 def _fresh_cycle(app_config):
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     ledger = SqlFactLedger(engine)
     cycle = AnalysisCycle.with_adapters(
         app_config,

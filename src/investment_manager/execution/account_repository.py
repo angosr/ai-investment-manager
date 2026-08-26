@@ -12,8 +12,8 @@ from investment_manager.execution.reconciliation.engine import (
     ReconciliationReport,
     ReconciliationStatus,
 )
-from investment_manager.execution.tables import account_snapshots
 from investment_manager.kernel.time import require_utc
+from investment_manager.legacy.tables import account_snapshots
 
 
 class ReconciliationReportReader(Protocol):

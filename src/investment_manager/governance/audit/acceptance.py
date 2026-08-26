@@ -265,22 +265,40 @@ class PhaseAAuditor:
         )
 
     def _temporal_is_single_workflow_owner(self) -> AuditCheck:
-        tables = compose_metadata().tables
+        tables = set(compose_metadata().tables)
+        required_capital_facts = {
+            "capital_cycle_records",
+            "execution_groups",
+            "forecasts",
+            "portfolio_account_snapshots",
+            "portfolio_performance_intervals",
+            "portfolio_risk_decisions",
+            "portfolio_targets",
+            "product_order_observations",
+            "risk_execution_authorizations",
+            "trade_plans",
+        }
+        retired_single_symbol_facts = {
+            "account_snapshots",
+            "analysis_cycles",
+            "execution_requests",
+            "orders",
+            "position_lifecycles",
+            "reconciliation_reports",
+            "risk_reservations",
+            "trade_intents",
+        }
         safe = (
             "analysis_workflow_runs" not in tables
-            and "execution_requests" in tables
-            and "reconciliation_reports" in tables
-            and "outcome_window_reports" in tables
-            and "governance_decisions" in tables
-            and "evaluation_results" in tables
-            and "release_approval_requests" in tables
+            and required_capital_facts <= tables
+            and not retired_single_symbol_facts.intersection(tables)
         )
         return AuditCheck(
             check_id="TEMPORAL_SINGLE_WORKFLOW_OWNER",
             status=CheckStatus.PASS if safe else CheckStatus.FAIL,
             detail=(
-                "业务库不复制 Analysis Workflow 状态机，只保存执行交接、对账、"
-                "结果评价与治理发布事实；未接线域不以类名存在冒充运行就绪。"
+                "业务库不复制 Workflow 状态机，只保存现行组合决策、风险授权、"
+                "产品执行和收益事实；退役单品链不属于托管运行 Schema。"
             ),
         )
 

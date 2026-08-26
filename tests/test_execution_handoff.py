@@ -13,12 +13,6 @@ from investment_manager.execution.models import (
     OrderStatus,
 )
 from investment_manager.execution.reconciliation.engine import MockReconciler
-from investment_manager.execution.tables import (
-    execution_requests,
-    mock_exchange_orders,
-    orders,
-    position_lifecycles,
-)
 from investment_manager.execution.venue.mock import SqlMockExchange
 from investment_manager.kernel.identity import stable_id
 from investment_manager.legacy.cycle import AnalysisCycle
@@ -27,7 +21,13 @@ from investment_manager.legacy.models import CycleOutcome
 from investment_manager.legacy.repository import (
     SqlFactLedger,
     SqlLifecycleLedger,
+)
+from investment_manager.legacy.tables import (
     decision_outcomes,
+    execution_requests,
+    mock_exchange_orders,
+    orders,
+    position_lifecycles,
 )
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.risk.budget import (
@@ -35,7 +35,7 @@ from investment_manager.risk.budget import (
     portfolio_risk_budgets,
     risk_reservations,
 )
-from investment_manager.schema import create_schema
+from investment_manager.schema import create_offline_schema
 
 
 class RejectingExchange(MockExchange):
@@ -138,7 +138,7 @@ def test_expired_execution_never_submits_and_releases_reserved_risk(
 
 def test_sql_pending_request_recovers_after_process_restart(app_config, replay_input) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     first = AnalysisCycle.with_adapters(
         app_config,
         ledger=SqlFactLedger(engine),
@@ -194,7 +194,7 @@ def test_budget_rejection_commits_terminal_decision_without_request(
     app_config, replay_input
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     strict_risk = app_config.risk.model_copy(
         update={"maximum_total_risk_fraction": Decimal("0.000001")}
     )
@@ -222,7 +222,7 @@ def test_lifecycle_close_rolls_back_risk_release_when_fact_commit_crashes(
     app_config, replay_input
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_schema(engine)
+    create_offline_schema(engine)
     cycle = AnalysisCycle.with_adapters(
         app_config,
         ledger=SqlFactLedger(engine),

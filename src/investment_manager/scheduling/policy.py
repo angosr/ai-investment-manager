@@ -30,11 +30,6 @@ class TemporalPolicy(StrictConfig):
     namespace: str = "default"
     task_queue: str = "investment-manager-analysis-v1"
     assessment_task_queue: str = "investment-manager-assessment-v1"
-    lifecycle_task_queue: str = "investment-manager-lifecycle-v1"
-    reconciliation_task_queue: str = "investment-manager-reconciliation-v1"
-    governance_task_queue: str = "investment-manager-governance-v1"
-    version_evaluation_task_queue: str = "investment-manager-version-evaluation-v1"
-    release_task_queue: str = "investment-manager-release-v1"
     trigger_task_queue: str = "investment-manager-trigger-v1"
     activity_start_to_close_seconds: int = Field(default=240, ge=10, le=900)
     activity_schedule_to_close_seconds: int = Field(default=600, ge=10, le=1800)
@@ -57,11 +52,6 @@ class TemporalPolicy(StrictConfig):
                 self.namespace,
                 self.task_queue,
                 self.assessment_task_queue,
-                self.lifecycle_task_queue,
-                self.reconciliation_task_queue,
-                self.governance_task_queue,
-                self.version_evaluation_task_queue,
-                self.release_task_queue,
                 self.trigger_task_queue,
             )
         ):
