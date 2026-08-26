@@ -623,6 +623,46 @@ def test_router_chooses_most_headroom_without_discovering_fourth_directory(
     assert "codex_unapproved_fourth" not in router.account_states
 
 
+def test_router_uses_next_highest_headroom_when_best_account_is_leased(
+    app_config, replay_input, tmp_path
+) -> None:
+    registry = _account_registry(tmp_path)
+    now = datetime(2026, 8, 18, tzinfo=UTC)
+    leases = InMemoryAccountLeaseStore()
+    held = leases.try_acquire(
+        "codex_a",
+        "concurrent-cycle",
+        "concurrent-attempt",
+        now + timedelta(minutes=5),
+    )
+    assert held is not None
+    executor = FakeExecutor(
+        {
+            item.account_id: [InvocationResult(True, output=_proposal(replay_input))]
+            for item in registry.accounts
+        }
+    )
+    router = CodexAccountRouter(
+        registry,
+        _runtime(app_config),
+        FakeProbe(
+            {
+                "codex_a": _snapshot("codex_a", now, "0"),
+                "codex_b": _snapshot("codex_b", now, "10"),
+                "codex_c": _snapshot("codex_c", now, "20"),
+            }
+        ),
+        executor,
+        leases=leases,
+    )
+
+    result = router.run(RunBundle("cycle", tmp_path, "hash", "prompt"), now=now)
+
+    assert result.success
+    assert result.account_id == "codex_b"
+    assert [item[0] for item in executor.calls] == ["codex_b"]
+
+
 def test_router_reuses_capacity_snapshot_within_ttl(app_config, replay_input, tmp_path) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
