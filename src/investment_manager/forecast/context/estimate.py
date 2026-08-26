@@ -185,6 +185,15 @@ CONTEXT_FORECAST_INSTRUCTIONS = (
 )
 
 
+def context_forecast_runtime(
+    runtime: CodexRuntimePolicy,
+    policy: ContextForecastPolicy,
+) -> CodexRuntimePolicy:
+    """Use the role's frozen effort without weakening the WorldModel analyst."""
+
+    return runtime.model_copy(update={"reasoning_effort": policy.reasoning_effort})
+
+
 def context_forecast_behavior_hash(
     runtime: CodexRuntimePolicy,
     policy: ContextForecastPolicy,
@@ -192,6 +201,7 @@ def context_forecast_behavior_hash(
     target_state_behaviors: tuple[ContextForecastTargetStateBehavior, ...],
     world_model_behavior_id: str,
 ) -> str:
+    runtime = context_forecast_runtime(runtime, policy)
     return content_hash(
         {
             "input_version": CONTEXT_FORECAST_INPUT_VERSION,
@@ -211,6 +221,7 @@ def context_forecast_behavior_hash(
                 exclude={
                     "producer_behavior_id": True,
                     "enabled": True,
+                    "reasoning_effort": True,
                     "targets": {"__all__": {"product_payoffs"}},
                 },
             ),
@@ -604,8 +615,9 @@ def assemble_codex_context_forecast_analyst(
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
 ) -> CodexContextForecastAnalyst:
+    runtime = context_forecast_runtime(config.codex_runtime, policy)
     expected = context_forecast_behavior_hash(
-        config.codex_runtime,
+        runtime,
         policy,
         contracts,
         target_state_behaviors,
@@ -618,11 +630,12 @@ def assemble_codex_context_forecast_analyst(
         leases=leases,
         audit=audit,
         output_adapter=TypeAdapter(ContextForecastStructuredOutput),
+        runtime_policy=runtime,
     )
     return CodexContextForecastAnalyst(
         config.codex_runtime.bundle_root,
         ContextForecastRunBundleBuilder(
-            config.codex_runtime,
+            runtime,
             policy,
             contracts,
             target_state_behaviors,

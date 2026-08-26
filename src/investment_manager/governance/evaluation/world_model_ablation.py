@@ -33,6 +33,7 @@ from investment_manager.forecast.codex.router import (
 )
 from investment_manager.forecast.context.estimate import (
     ContextForecastProbabilityDraft,
+    context_forecast_runtime,
 )
 from investment_manager.forecast.context.evaluation import (
     multiclass_brier_score,
@@ -264,6 +265,7 @@ def world_model_ablation_behavior_hash(
     context = config.capital.context_forecast
     if context is None:
         raise ValueError("WorldModel control 缺少正式 Context Forecast")
+    runtime = context_forecast_runtime(config.codex_runtime, context)
     return content_hash(
         {
             "input_version": CONTROL_INPUT_VERSION,
@@ -275,12 +277,12 @@ def world_model_ablation_behavior_hash(
             "formal_contract": contract,
             "formal_producer_behavior_id": context.producer_behavior_id,
             "execution_contract": codex_execution_contract(),
-            "runtime_policy_version": config.codex_runtime.version,
-            "expected_cli_version": config.codex_runtime.expected_cli_version,
-            "expected_binary_sha256": config.codex_runtime.expected_binary_sha256,
-            "model": config.codex_runtime.model,
-            "reasoning_effort": config.codex_runtime.reasoning_effort,
-            "maximum_schema_attempts": 1 + config.codex_runtime.max_account_switches,
+            "runtime_policy_version": runtime.version,
+            "expected_cli_version": runtime.expected_cli_version,
+            "expected_binary_sha256": runtime.expected_binary_sha256,
+            "model": runtime.model,
+            "reasoning_effort": runtime.reasoning_effort,
+            "maximum_schema_attempts": 1 + runtime.max_account_switches,
             "call_order": CONTROL_CALL_ORDER,
         }
     )
@@ -1016,15 +1018,20 @@ def assemble_world_model_ablation_analyst(
     *,
     engine: Engine,
 ) -> CodexWorldModelControlAnalyst:
+    context = config.capital.context_forecast
+    if context is None:
+        raise ValueError("WorldModel control 缺少正式 Context Forecast")
+    runtime = context_forecast_runtime(config.codex_runtime, context)
     router = assemble_codex_router(
         config,
         leases=SqlAccountLeaseStore(engine),
         audit=SqlCodexAuditStore(engine),
         output_adapter=TypeAdapter(WorldModelControlStructuredOutput),
+        runtime_policy=runtime,
     )
     return CodexWorldModelControlAnalyst(
-        bundle_root=config.codex_runtime.bundle_root,
-        maximum_prompt_characters=config.codex_runtime.maximum_prompt_characters,
+        bundle_root=runtime.bundle_root,
+        maximum_prompt_characters=runtime.maximum_prompt_characters,
         router=router,
     )
 

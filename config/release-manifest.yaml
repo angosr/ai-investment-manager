@@ -8,8 +8,8 @@ complexity_score: 1
 component_versions:
   - [feature, feature-v1]
   - [decision_state, portfolio-state-v47]
-  - [capital, total-portfolio-capital-v62]
-  - [outcome_evaluation, typed-outcome-settlement-v34]
+  - [capital, total-portfolio-capital-v63]
+  - [outcome_evaluation, typed-outcome-settlement-v35]
   - [trigger, analysis-trigger-v31]
   - [temporal, temporal-analysis-v5]
   - [market_data, binance-public-shadow-v14]

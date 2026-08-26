@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v62
+  version: total-portfolio-capital-v63
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -272,11 +272,13 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: portfolio-context-forecast-v29
+    version: portfolio-context-forecast-v30
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "b4b6cb6e934ab9b5de3348a1982fcfe917d7c56ee7e7ae1cbfc090796ca138da"
+    producer_behavior_id: "c33c513f239bbd3dc90d589ca8a4d416fcbdc5807d9263e172cf6eea4c181604"
+    # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
+    reasoning_effort: medium
     horizon_minutes: 240
     cadence_minutes: 240
     material_event_slots_enabled: true
@@ -360,7 +362,7 @@ capital:
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v34
+  version: typed-outcome-settlement-v35
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -371,11 +373,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v28
+    version: world-model-ablation-forward-v29
     enabled: false
-    plan_id: world-model-ablation-forward-v28
+    plan_id: world-model-ablation-forward-v29
     # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T00:00:00Z
+    activated_at: 2026-08-26T20:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 

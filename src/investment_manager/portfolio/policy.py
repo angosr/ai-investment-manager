@@ -190,6 +190,10 @@ class ContextForecastPolicy(StrictConfig):
     enabled: bool = False
     producer_id: str = Field(min_length=1)
     producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reasoning_effort: str = Field(
+        default="medium",
+        pattern=r"^(low|medium|high|xhigh|max|ultra)$",
+    )
     horizon_minutes: int = Field(gt=0, le=43_200)
     cadence_minutes: int = Field(gt=0, le=43_200)
     material_event_slots_enabled: bool = False

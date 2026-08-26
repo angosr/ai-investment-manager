@@ -429,10 +429,11 @@ def assemble_codex_router(
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
     output_adapter: TypeAdapter,
+    runtime_policy: CodexRuntimePolicy | None = None,
 ) -> CodexAccountRouter:
     """所有 Codex 角色共享同一白名单、额度、租约与失败切换实现。"""
 
-    runtime = config.codex_runtime
+    runtime = runtime_policy or config.codex_runtime
     if not runtime.enabled or not runtime.isolation_verified:
         raise ValueError("Codex 真实运行未启用或隔离门禁未通过")
     if runtime.expected_binary_sha256 is None or runtime.binary.is_symlink():
