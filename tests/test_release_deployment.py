@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from investment_manager.entrypoints.cli import release_commands
 from investment_manager.entrypoints.cli.release_commands import (
     _initialize_assembly_database,
     _recover_ready_failure,
+    _require_trigger_coordinators_idle,
     _required_release_artifacts,
     _start_candidate_or_rollback,
     _wait_for_service_exit,
@@ -31,6 +33,7 @@ from investment_manager.governance.release.deployment import (
     service_command,
 )
 from investment_manager.platform.database import build_engine, require_current_schema
+from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.settings import load_config
 
 
@@ -163,6 +166,43 @@ def test_runtime_lock_rejects_a_second_cutover(tmp_path: Path) -> None:
         exclusive_runtime_lock(path, blocking=False),
     ):
         pass
+
+
+def test_release_cutover_requires_every_trigger_coordinator_to_be_idle(
+    monkeypatch,
+) -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    active_workflow_id = coordinator_workflow_id(
+        config.analysis_symbols[0],
+        config.pipeline.version,
+    )
+
+    class Handle:
+        def __init__(self, workflow_id: str) -> None:
+            self.workflow_id = workflow_id
+
+        async def query(self, _name: str):
+            return {
+                "active_batch_id": (
+                    "batch-active" if self.workflow_id == active_workflow_id else None
+                )
+            }
+
+    class ClientStub:
+        def get_workflow_handle(self, workflow_id: str):
+            return Handle(workflow_id)
+
+    async def connect(*_args, **_kwargs):
+        return ClientStub()
+
+    monkeypatch.setattr(release_commands.Client, "connect", connect)
+
+    with pytest.raises(ValueError, match="活动 TriggerBatch"):
+        asyncio.run(
+            _require_trigger_coordinators_idle(
+                Path("config/investment-manager.shadow.yaml")
+            )
+        )
 
 
 def test_process_group_starts_and_stops_the_exact_release_set(tmp_path: Path) -> None:

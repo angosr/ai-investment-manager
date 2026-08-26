@@ -68,6 +68,7 @@ from investment_manager.platform.database import (
     require_current_schema,
 )
 from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.schema import compose_metadata
 from investment_manager.settings import AppConfig, load_config
 
@@ -528,6 +529,37 @@ def _require_safe_cutover(
     response = httpx.get(url, timeout=5)
     response.raise_for_status()
     _require_health_checks(response.json(), required=_SAFETY_HEALTH_KEYS)
+    asyncio.run(_require_trigger_coordinators_idle(previous.unit.config_path))
+
+
+async def _require_trigger_coordinators_idle(config_path: Path) -> None:
+    """Do not strand a version-bound child workflow during a release switch."""
+
+    config = load_config(config_path)
+    client = await Client.connect(
+        config.temporal.address,
+        namespace=config.temporal.namespace,
+    )
+
+    async def status(symbol: str) -> tuple[str, dict]:
+        workflow_id = coordinator_workflow_id(symbol, config.pipeline.version)
+        payload = await asyncio.wait_for(
+            client.get_workflow_handle(workflow_id).query("status"),
+            timeout=3,
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(f"TriggerCoordinator {symbol} 状态格式无效")
+        return symbol, payload
+
+    try:
+        statuses = await asyncio.gather(*(status(symbol) for symbol in config.analysis_symbols))
+    except Exception as exc:
+        raise ValueError("切流前无法确认 TriggerCoordinator 空闲") from exc
+    active = tuple(
+        sorted(symbol for symbol, payload in statuses if payload.get("active_batch_id") is not None)
+    )
+    if active:
+        raise ValueError("切流前仍有活动 TriggerBatch：" + ", ".join(active))
 
 
 def _stop_previous(previous: ReleaseRuntimeState, *, timeout_seconds: int) -> None:
