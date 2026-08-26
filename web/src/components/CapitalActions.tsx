@@ -124,7 +124,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             {repeated ? <em>{group.actions.length} 次相同检查已归并</em> : null}
           </span>
           <span className={styles.summary}>
-            {candidate && zeroImpact
+            {candidate && zeroImpact && !candidate.validity_reason_codes?.length
               ? `费用后预期 ${formatBps(candidate.net_bps)} bp，本次决策至少需要 ${formatBps(candidate.decision_threshold_bps)} bp`
               : reasons[0] ?? action.summary}
           </span>
