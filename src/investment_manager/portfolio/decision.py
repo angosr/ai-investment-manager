@@ -535,7 +535,14 @@ class PortfolioDecisionEngine:
             if not eligible_ids and duplicate_expression_ids:
                 reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
             elif not eligible_ids:
-                reason_codes.add("CASH_SELECTED_NO_POSITIVE_NET_EDGE")
+                reason_codes.add(
+                    "CASH_SELECTED_NO_POSITIVE_NET_EDGE"
+                    if any(
+                        candidate.forecast_current
+                        for candidate in candidate_evaluations.values()
+                    )
+                    else "CASH_SELECTED_FORECAST_INVALID"
+                )
         if invalid_holding_exit:
             reason_codes.add("EXPIRED_FORECAST_EXIT")
         if duplicate_expression_ids:

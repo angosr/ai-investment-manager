@@ -168,6 +168,8 @@ Execution 只接受获授权目标或只减险指令。它拥有交易场所账�
 
 TradePlan 的短期有效期只约束“这次订单计划是否仍可执行”。Forecast 已有的入场有效窗和经济时域承担两项不同职责：`valid_until` 只决定是否还能新建或增加敞口，`economic_horizon_end` 决定这份 payoff 最晚何时仍可支持既有敞口。入场窗结束后，Portfolio 只能按当前可成交价重估并保持或减少原敞口，不得借旧 Forecast 加仓；到经济时域结束仍无更新 Forecast 时必须收敛到现金。PortfolioTarget 的短期有效期只要求重新计算目标，不等同于清仓时点。三者直接复用 Forecast、Target 和 TradePlan 的既有时间事实，不增加入场/持仓状态机。新资本决策按账户 revision 串行化；迟到分析永久保存和结算，但不能覆盖已由更新信息形成的目标。
 
+Forecast 已经形成而资本阶段中断时，恢复仍必须在当前时点形成唯一的 PortfolioTarget 与 CapitalCycleRecord：入场窗内按当前可成交事实重算，入场窗外由 Portfolio 的同一时效语义禁止新增风险并明确选择现金、保持或减仓。禁止在编排层因 `valid_until` 过期直接抛弃整个资本处置；否则既会掩盖系统造成的错失机会，也会让资本覆盖率和后续评价缺少终态。该恢复不补跑历史 AI、不回写 Forecast，也不建立额外失败状态机。
+
 每个获准进入资本链的稳定 `cause_id + capital_behavior_id`，只要已经产生至少一份可资本化终态 Forecast，就必须让该 cause 的 Forecast 集合最终得到且仅得到一份资本处置回执。Forecast、单个 product projection、PortfolioTarget 或 Risk/Execution 中间事实都不等于这项义务已经完成；任一层失败后复用原身份和已冻结事实幂等补齐。恢复时入场窗、账户 revision 或事实新鲜度已经不再允许原决策，就只保存明确的 `DECISION_UNAVAILABLE` 处置及首个失败层、输入引用和原因，不能补做回看交易，也不能把它写成主动选择现金或持有。无需为此建立第二套状态机：开放义务由“该 cause 已存在可资本化 Forecast 且对应资本行为尚无 CapitalCycleRecord”直接派生，健康状态报告最老开放义务和最近失败，后续无关批次成功不能将其清除。部分 projection 可继续用于各自实现诊断，但没有完整 PortfolioTarget 的批次不得进入产品选择或总资本效果评价。
 
 ### 4.5 评价与权限

@@ -139,7 +139,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v52
+  version: total-portfolio-capital-v53
   enabled: false
   settlement_asset: USDT
   mandate:

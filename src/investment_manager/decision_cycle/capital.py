@@ -552,8 +552,6 @@ class CapitalCycleService:
             resume_at,
             *(item.available_at for item in generated_forecasts),
         )
-        if any(item.valid_until <= decision_at for item in generated_forecasts):
-            raise ValueError("Capital Forecast 在其入场有效期后才可用于决策")
         cycle_id = self._forecast_cycle_id(generated_forecasts)
         completed = self._completed_decision(
             cycle_id=cycle_id,

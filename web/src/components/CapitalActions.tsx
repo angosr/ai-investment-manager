@@ -31,6 +31,7 @@ const REASON_LABELS: Record<string, string> = {
   "FORECAST_NO_ESTIMATE:STALE_BEFORE_AVAILABLE": "分析期间市场已发生重大移动，原预测不可交易",
   "FORECAST_NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON": "分析完成时剩余交易窗口不足",
   CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整成本后没有达到入场门槛，选择现金",
+  CASH_SELECTED_FORECAST_INVALID: "预测已不再允许新增风险，保持现金",
   POSITIVE_NET_EDGE_SELECTED: "预测扣除完整成本后达到入场门槛",
   REBALANCE_BELOW_MINIMUM: "仓位变化太小，不足以覆盖交易成本",
   EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",

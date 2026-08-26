@@ -1551,6 +1551,49 @@ def test_recovered_forecast_uses_current_capital_time_without_backdating() -> No
     assert target.as_of == resumed_at
 
 
+def test_recovered_forecast_after_entry_window_records_cash_without_hindsight_trade() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    resumed_at = NOW + timedelta(minutes=31)
+    _put_market(market, config, at=NOW, sequence=72)
+    _put_market(market, config, at=resumed_at, sequence=73)
+    _configured, service = _candidate_service(config, engine)
+
+    result = service.produce(
+        as_of=NOW,
+        decision_at=resumed_at,
+        cause_id="recovered-expired-capital-cause",
+        trigger_batch_id="recovered-expired-capital-batch",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    assert result.outcome.value == "PLANNED"
+    assert result.trade_plan is not None
+    assert result.trade_plan.groups == ()
+    target = load_portfolio_target(
+        engine.connect().execute(select(portfolio_targets.c.payload)).scalar_one()
+    )
+    assert target.as_of == resumed_at
+    assert target.sleeves == ()
+    assert target.reason_codes == ("CASH_SELECTED_FORECAST_INVALID",)
+    assert target.candidate_evaluations is not None
+    assert target.candidate_evaluations[0].validity_reason_codes == (
+        "FORECAST_TIME_WINDOW_INVALID",
+    )
+    record = CapitalCycleRecord.model_validate(
+        engine.connect().execute(select(capital_cycle_records.c.payload)).scalar_one()
+    )
+    assert record.forecast_ids == (target.candidate_evaluations[0].forecast_id,)
+    assert record.target_id == target.target_id
+    order_count = engine.connect().execute(
+        select(func.count()).select_from(mock_product_orders)
+    ).scalar_one()
+    assert order_count == 0
+
+
 def test_explicit_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)

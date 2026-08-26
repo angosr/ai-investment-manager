@@ -450,8 +450,12 @@ def test_expired_entry_window_cannot_create_a_new_sleeve() -> None:
 
     assert target is not None
     assert target.sleeves == ()
+    assert target.reason_codes == ("CASH_SELECTED_FORECAST_INVALID",)
     assert target.candidate_evaluations is not None
     assert not target.candidate_evaluations[0].forecast_current
+    assert target.candidate_evaluations[0].validity_reason_codes == (
+        "FORECAST_TIME_WINDOW_INVALID",
+    )
 
 
 def test_economic_horizon_end_forces_an_existing_sleeve_to_cash() -> None:
