@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v64
+  version: total-portfolio-capital-v65
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -173,11 +173,10 @@ capital:
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
-    version: portfolio-net-edge-v14
+    version: portfolio-net-edge-v15
     portfolio_id: primary
     enabled: true
-    # Conservative payoff 已包含模型/映射不确定性；实验候选只需在完整成本后为正。
-    minimum_conservative_net_bps: "0"
+    # Conservative payoff 已包含模型/映射不确定性；完整成本后为正就是唯一经济资格。
     # 以下两项是账户 gross 与单经济暴露集中度上限，不是每个候选的固定目标仓位。
     # 实际比例由费用后 Edge / 下行二阶矩连续得到，超出总上限时同比缩放。
     maximum_total_exposure_fraction: "1.00"

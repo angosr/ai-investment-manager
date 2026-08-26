@@ -299,7 +299,7 @@ def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> 
     assert target.candidate_evaluations is not None
     candidate = target.candidate_evaluations[0]
     assert candidate.decision_net_bps == Decimal("20.00")
-    assert candidate.minimum_net_bps == Decimal("5")
+    assert candidate.minimum_net_bps == Decimal("0")
     assert candidate.eligible
     assert candidate.desired_gross_notional == Decimal("1000")
     assert candidate.reason_codes == ("POSITIVE_NET_EDGE_SELECTED",)
@@ -344,13 +344,12 @@ def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
     assert candidate.reason_codes == ("NON_POSITIVE_NET_EDGE_CASH",)
 
 
-def test_zero_net_edge_never_receives_capital_when_threshold_is_zero() -> None:
+def test_zero_net_edge_never_receives_capital() -> None:
     engine = PortfolioDecisionEngine(
         PortfolioDecisionPolicy(
-            version="zero-threshold-v1",
+            version="break-even-v1",
             portfolio_id="primary",
             enabled=True,
-            minimum_conservative_net_bps=Decimal("0"),
         )
     )
     target = engine.decide(

@@ -152,7 +152,10 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 <dd>
                   {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
                   预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
-                  = 费用后 {formatBps(item.net_bps)} bp；要求不低于 {formatBps(item.decision_threshold_bps)} bp
+                  = 费用后 {formatBps(item.net_bps)} bp
+                  {Number(item.decision_threshold_bps) > 0
+                    ? `；当时额外门槛 ${formatBps(item.decision_threshold_bps)} bp`
+                    : ""}
                 </dd>
                 <dt>金额与成本</dt>
                 <dd>

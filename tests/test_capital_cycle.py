@@ -1757,7 +1757,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
             "capital": config.capital.model_copy(
                 update={
                     "decision": config.capital.decision.model_copy(
-                        update={"minimum_conservative_net_bps": Decimal("999")}
+                        update={"cost_model_version": "changed-current-policy"}
                     ),
                     "execution_specs": changed_specs,
                 }

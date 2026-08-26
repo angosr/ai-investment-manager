@@ -29,7 +29,6 @@ class PortfolioDecisionPolicy(FrozenModel):
     version: str = Field(min_length=1)
     portfolio_id: str = Field(min_length=1)
     enabled: bool = False
-    minimum_conservative_net_bps: Decimal = Field(default=Decimal("5"), ge=0)
     maximum_total_exposure_fraction: UnitInterval = Decimal("0.50")
     maximum_single_sleeve_fraction: UnitInterval = Decimal("0.30")
     target_validity_minutes: int = Field(default=30, ge=1, le=1_440)
@@ -604,17 +603,16 @@ class PortfolioDecisionEngine:
             spec_by_instrument=spec_by_instrument,
         )
         if isinstance(item.forecast, CalibratedForecast):
-            threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
         else:
-            # Candidate authorization is research eligibility, not a second
-            # sizing/threshold policy.  Every simulated candidate competes on
-            # the same conservative, full-cost portfolio boundary.
+            # Candidate authorization is research identity, not a second
+            # sizing or admission policy.
             assert item.capital_authorization is not None
-            threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
-        eligible = forecast_current and net > 0 and net >= threshold
+        # Break-even is an economic identity, not a configurable experiment gate.
+        threshold = Decimal("0")
+        eligible = forecast_current and net > threshold
         return PortfolioCandidateEvaluation(
             sleeve_id=item.sleeve_id,
             forecast_id=item.forecast.forecast_id,
