@@ -10,12 +10,13 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
+from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.results import (
     BaseForecast,
     CalibratedForecast,
     ForecastResultKind,
 )
-from investment_manager.forecast.tables import forecasts
+from investment_manager.forecast.tables import forecasts, product_payoff_projections
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.platform.locking import advisory_xact_lock
@@ -286,20 +287,78 @@ class SqlPortfolioStore:
         }
         if set(loaded) != set(forecast_ids):
             raise ValueError("PortfolioTarget 引用了不存在的 Forecast")
-        required_quote_keys = {
-            leg.instrument.key for forecast in loaded.values() for leg in forecast.target.legs
+        candidate_by_sleeve = {
+            item.sleeve_id: item for item in (target.candidate_evaluations or ())
         }
+        projection_ids = {
+            item.payoff_projection_id
+            for item in candidate_by_sleeve.values()
+            if item.payoff_projection_id is not None
+        }
+        projection_rows = connection.execute(
+            select(
+                product_payoff_projections.c.projection_id,
+                product_payoff_projections.c.payload,
+            ).where(product_payoff_projections.c.projection_id.in_(projection_ids))
+        ).all()
+        projections = {
+            row.projection_id: ProductPayoffProjection.model_validate(row.payload)
+            for row in projection_rows
+        }
+        if set(projections) != projection_ids:
+            raise ValueError("PortfolioTarget 引用了不存在的 ProductPayoffProjection")
+
+        candidate_targets = {}
+        for sleeve_id, candidate in candidate_by_sleeve.items():
+            forecast = loaded[candidate.forecast_id]
+            projection = (
+                projections[candidate.payoff_projection_id]
+                if candidate.payoff_projection_id is not None
+                else None
+            )
+            if projection is not None and projection.source_forecast_id != candidate.forecast_id:
+                raise ValueError("PortfolioTarget ProductPayoffProjection 与源 Forecast 不一致")
+            candidate_targets[sleeve_id] = (
+                projection.target if projection is not None else forecast.target
+            )
+
+        required_quote_keys = {
+            leg.instrument.key
+            for candidate_target in candidate_targets.values()
+            for leg in candidate_target.legs
+        }
+        if not candidate_targets:
+            required_quote_keys = {
+                leg.instrument.key for forecast in loaded.values() for leg in forecast.target.legs
+            }
         if {item.instrument.key for item in target.quotes} != required_quote_keys:
             raise ValueError("PortfolioTarget quotes 必须精确覆盖考虑集 Instruments")
         for sleeve in target.sleeves:
-            if any(
-                (
-                    isinstance(loaded[forecast_id], BaseForecast)
-                    != sleeve.edge_basis.uncalibrated_candidate
+            candidate = candidate_by_sleeve.get(sleeve.sleeve_id)
+            if (
+                any(
+                    (
+                        isinstance(loaded[forecast_id], BaseForecast)
+                        != sleeve.edge_basis.uncalibrated_candidate
+                    )
+                    or loaded[forecast_id].outcome_family_id != sleeve.forecast_family
+                    for forecast_id in sleeve.forecast_ids
                 )
-                or loaded[forecast_id].target != sleeve.forecast_target
-                or loaded[forecast_id].outcome_family_id != sleeve.forecast_family
-                for forecast_id in sleeve.forecast_ids
+                or (
+                    candidate is not None
+                    and (
+                        candidate.forecast_id not in sleeve.forecast_ids
+                        or candidate.payoff_projection_id != sleeve.payoff_projection_id
+                        or candidate_targets[sleeve.sleeve_id] != sleeve.forecast_target
+                    )
+                )
+                or (
+                    candidate is None
+                    and any(
+                        loaded[forecast_id].target != sleeve.forecast_target
+                        for forecast_id in sleeve.forecast_ids
+                    )
+                )
             ):
                 raise ValueError("PortfolioTarget Sleeve 与 Forecast edge basis/身份不一致")
 
