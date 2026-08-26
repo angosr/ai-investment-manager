@@ -12,6 +12,13 @@ from sqlalchemy.engine import Engine
 
 from investment_manager.information.coverage import build_source_poll_record
 from investment_manager.information.models import CausalDomain, SourcePollRecord, SourcePollStatus
+from investment_manager.information.official.economic_calendar import (
+    BEA_CALENDAR_STREAM_ID,
+    BEA_CALENDAR_URL,
+    BLS_CALENDAR_STREAM_ID,
+    BLS_CALENDAR_URL,
+    EconomicReleaseEventRecord,
+)
 from investment_manager.information.official.public_calendar import (
     FedChairPublicEventRecord,
 )
@@ -26,6 +33,7 @@ from investment_manager.information.official.regulation import (
     FederalRegisterRulemakingRecord,
 )
 from investment_manager.information.official.repository import (
+    SqlEconomicReleaseCalendarInformationIngestor,
     SqlFederalRegisterInformationIngestor,
     SqlFedOfficialInformationIngestor,
     SqlTreasuryBuybackInformationIngestor,
@@ -33,6 +41,7 @@ from investment_manager.information.official.repository import (
 )
 from investment_manager.information.official.source import (
     FedPolicyDocument,
+    OfficialCalendarDocument,
     OfficialRegulatoryDocument,
 )
 from investment_manager.information.official.treasury_buybacks import (
@@ -43,6 +52,7 @@ from investment_manager.information.official.treasury_buybacks import (
 from investment_manager.kernel.time import require_utc
 from investment_manager.state.facts import (
     OfficialFactProjectionPolicy,
+    project_economic_release_event_fact,
     project_fed_chair_public_event_fact,
     project_fed_monetary_release_fact,
     project_federal_register_rulemaking_fact,
@@ -64,6 +74,12 @@ class FedOfficialSource(Protocol):
     def fetch_monetary_rss(self) -> str | None: ...
 
     def fetch_monetary_document(self, url: str) -> FedPolicyDocument | None: ...
+
+
+class EconomicReleaseCalendarSource(Protocol):
+    stream_ids: tuple[str, ...]
+
+    def fetch(self, stream_id: str) -> OfficialCalendarDocument | None: ...
 
 
 class TreasuryBuybackSource(Protocol):
@@ -249,6 +265,236 @@ class SqlFedFactIngestor:
         raise TypeError(f"不支持的 Fed 官方记录类型: {type(record).__name__}")
 
 
+class SqlEconomicReleaseCalendarFactIngestor:
+    """Project only the next release of each kind; retain the complete raw calendar."""
+
+    def __init__(self, engine: Engine, policy: OfficialFactProjectionPolicy) -> None:
+        self._official = SqlEconomicReleaseCalendarInformationIngestor(engine)
+        self._facts = SqlFactStateStore(engine)
+        self._policy = policy
+
+    def ingest(
+        self,
+        document: OfficialCalendarDocument,
+        *,
+        observed_at: datetime,
+    ) -> OfficialFactIngestionResult:
+        observed_at = require_utc(observed_at)
+        expected_url = {
+            BEA_CALENDAR_STREAM_ID: BEA_CALENDAR_URL,
+            BLS_CALENDAR_STREAM_ID: BLS_CALENDAR_URL,
+        }.get(document.stream_id)
+        if expected_url is None or document.source_url != expected_url:
+            raise ValueError("经济发布日历 stream 与固定来源 URL 不一致")
+        writes = self._official.ingest(
+            document.content,
+            source_url=document.source_url,
+            observed_at=observed_at,
+        )
+        nearest: dict[str, StructuredRecordWrite] = {}
+        for write in writes:
+            record = write.record
+            if not isinstance(record, EconomicReleaseEventRecord):
+                raise TypeError("经济发布日历 ingestor 收到错误记录类型")
+            if record.status != CalendarEventStatus.SCHEDULED:
+                continue
+            current = nearest.get(record.release_kind.value)
+            if current is None or record.scheduled_at < current.record.scheduled_at:
+                nearest[record.release_kind.value] = write
+
+        selected = tuple(write for _, write in sorted(nearest.items()))
+        cancellations = tuple(
+            write
+            for write in writes
+            if isinstance(write.record, EconomicReleaseEventRecord)
+            and write.record.status == CalendarEventStatus.CANCELLED
+        )
+        projected: list[CanonicalFactRevision] = []
+        for write in (*selected, *cancellations):
+            record = write.record
+            if not isinstance(record, EconomicReleaseEventRecord):
+                raise TypeError("经济发布日历投影收到错误记录类型")
+            revision = write.calendar_revision
+            if revision is None:
+                raise ValueError("经济发布记录缺少日历修订")
+            candidate = project_economic_release_event_fact(
+                record,
+                revision,
+                policy=self._policy,
+            )
+            previous = self._facts.latest_fact(candidate.fact_id)
+            if previous is not None and not write.inserted:
+                continue
+            if record.status == CalendarEventStatus.CANCELLED and previous is None:
+                # A later event that was retained only for future promotion does
+                # not need a tombstone in the compact canonical state.
+                continue
+            fact = (
+                candidate
+                if previous is None
+                else project_economic_release_event_fact(
+                    record,
+                    revision,
+                    policy=self._policy,
+                    previous=previous,
+                )
+            )
+            stored = self._facts.put_fact(fact)
+            if previous is None or stored.revision_id != previous.revision_id:
+                projected.append(stored)
+        return OfficialFactIngestionResult(
+            records=writes,
+            new_fact_revisions=tuple(projected),
+        )
+
+
+@dataclass(slots=True)
+class EconomicReleaseCalendarCollectorHealth:
+    poll_count: int = 0
+    new_fact_revision_count: int = 0
+    publication_count: int = 0
+    last_success_at: datetime | None = None
+    error_class: str | None = None
+    publication_error_class: str | None = None
+
+
+class EconomicReleaseCalendarCollectorService:
+    """Maintain a compact schedule state from the two official macro calendars."""
+
+    def __init__(
+        self,
+        *,
+        source: EconomicReleaseCalendarSource,
+        ingestor: SqlEconomicReleaseCalendarFactIngestor,
+        publish_recent: Callable[[datetime], None],
+        poll_seconds: int,
+        poll_recorder: SourcePollRecorder | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if poll_seconds < 1:
+            raise ValueError("经济发布日历轮询周期必须为正数")
+        if tuple(source.stream_ids) != (
+            BEA_CALENDAR_STREAM_ID,
+            BLS_CALENDAR_STREAM_ID,
+        ):
+            raise ValueError("经济发布日历 source 集合非法")
+        self._source = source
+        self._ingestor = ingestor
+        self._publish_recent = publish_recent
+        self._poll_seconds = poll_seconds
+        self._poll_recorder = poll_recorder
+        self._clock = clock
+        self._valid_until_by_stream: dict[str, datetime] = {}
+        self.health = EconomicReleaseCalendarCollectorHealth()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await self._poll()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
+
+    async def _poll(self) -> None:
+        latest_completion: datetime | None = None
+        for stream_id in self._source.stream_ids:
+            started_at = require_utc(self._clock())
+            self.health.poll_count += 1
+            try:
+                document = await asyncio.to_thread(self._source.fetch, stream_id)
+                result = (
+                    OfficialFactIngestionResult(records=(), new_fact_revisions=())
+                    if document is None
+                    else await asyncio.to_thread(
+                        self._ingestor.ingest,
+                        document,
+                        observed_at=require_utc(self._clock()),
+                    )
+                )
+                completed_at = max(require_utc(self._clock()), started_at)
+                latest_completion = completed_at
+                future_times = tuple(
+                    item.record.scheduled_at
+                    for item in result.records
+                    if isinstance(item.record, EconomicReleaseEventRecord)
+                    and item.record.status == CalendarEventStatus.SCHEDULED
+                    and item.record.scheduled_at >= completed_at
+                )
+                if future_times:
+                    self._valid_until_by_stream[stream_id] = max(future_times)
+                self._record_poll(
+                    stream_id=stream_id,
+                    status=(
+                        SourcePollStatus.CHANGED
+                        if any(item.inserted for item in result.records)
+                        else SourcePollStatus.UNCHANGED
+                    ),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    result=result,
+                )
+                self.health.new_fact_revision_count += len(result.new_fact_revisions)
+                self.health.last_success_at = completed_at
+                self.health.error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.error_class != type(exc).__name__:
+                    logger.exception("economic release calendar collector failed")
+                self.health.error_class = type(exc).__name__
+                if isinstance(exc, SourcePollAuditError):
+                    raise
+                completed_at = max(require_utc(self._clock()), started_at)
+                self._record_poll(
+                    stream_id=stream_id,
+                    status=SourcePollStatus.FAILED,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    error_class=type(exc).__name__,
+                )
+        if latest_completion is None:
+            return
+        try:
+            await asyncio.to_thread(self._publish_recent, latest_completion)
+            self.health.publication_count += 1
+            self.health.publication_error_class = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.health.publication_error_class != type(exc).__name__:
+                logger.exception("economic release calendar publication failed")
+            self.health.publication_error_class = type(exc).__name__
+
+    def _record_poll(
+        self,
+        *,
+        stream_id: str,
+        status: SourcePollStatus,
+        started_at: datetime,
+        completed_at: datetime,
+        result: OfficialFactIngestionResult | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        if self._poll_recorder is None:
+            return
+        poll = build_source_poll_record(
+            source_stream_id=stream_id,
+            domain=CausalDomain.MONETARY_INFLATION,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            poll_interval_seconds=self._poll_seconds,
+            valid_until=self._valid_until_by_stream.get(stream_id),
+            observation_count=0 if result is None else len(result.records),
+            new_fact_count=(
+                0 if result is None else len(result.new_fact_revisions)
+            ),
+            error_class=error_class,
+        )
+        try:
+            self._poll_recorder.put(poll)
+        except Exception as exc:
+            raise SourcePollAuditError("经济发布日历来源轮询事实无法持久化") from exc
+
+
 class SqlFederalRegisterFactIngestor:
     """Project relevant official rulemaking into the canonical fact ledger."""
 
@@ -428,9 +674,7 @@ class RegulatoryOfficialCollectorService:
                 default=None,
             ),
             observation_count=len(records),
-            new_fact_count=(
-                0 if result is None else len(result.new_fact_revisions)
-            ),
+            new_fact_count=(0 if result is None else len(result.new_fact_revisions)),
             error_class=error_class,
         )
         try:

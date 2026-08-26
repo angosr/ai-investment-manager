@@ -13,17 +13,17 @@ panel:
   maximum_evidence_age_seconds: 86400
 
 decision_state:
-  version: portfolio-state-v41
+  version: portfolio-state-v42
   analysis_scope: primary-portfolio
   official_fact_policy:
-    version: official-fact-v15
+    version: official-fact-v16
     affected_assets: [BTC, ETH]
     release_risk_factors: [US_MONETARY_POLICY]
     # 连续指标先用同源点时历史做量级归一化；阈值是可回放政策，不是散落在解析器中的常量。
     metric_minimum_history_observations: 30
     metric_candidate_absolute_percentile: "0.95"
   delta_policy:
-    version: state-delta-v16
+    version: state-delta-v17
     validity_seconds: 3600
     horizons_minutes: [60, 240]
     intelligence_materiality: NORMAL
@@ -87,6 +87,9 @@ decision_state:
       - fact_type: US_HIGH_YIELD_CREDIT_SNAPSHOT
         materiality: HIGH
         reason_code: US_HIGH_YIELD_CREDIT_REVISION
+      - fact_type: US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE
+        materiality: NORMAL
+        reason_code: US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE_REVISION
       - fact_type: US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT
         materiality: HIGH
         reason_code: US_TREASURY_AUCTION_ABSORPTION_REVISION
@@ -136,7 +139,7 @@ calibration:
   artifacts: []
 
 capital:
-  version: total-portfolio-capital-v47
+  version: total-portfolio-capital-v48
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -248,10 +251,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v21
+    version: btc-context-forecast-v22
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "0698fff9b65b09579bf7b303d438dba05eda08fa3f20772a570a57dbacb592c5"
+    producer_behavior_id: "9875d35c8eb2a195d16241424d516008a7330c2d69c51340f3b18dd6ee58ad84"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -341,7 +344,7 @@ reconciliation:
   position_quantity_tolerance: "0.00000001"
 
 outcome_evaluation:
-  version: outcome-window-v23
+  version: outcome-window-v24
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   maximum_funding_gap_hours: 12
@@ -349,11 +352,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v17
+    version: world-model-ablation-forward-v18
     enabled: false
-    plan_id: world-model-ablation-forward-v17
-    # 只接收最终输入容量合同修复版激活后的新槽。
-    activated_at: 2026-08-26T02:00:00Z
+    plan_id: world-model-ablation-forward-v18
+    # 只接收官方经济日历合同激活后的新槽；旧行为继续独立结算。
+    activated_at: 2026-08-26T06:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -368,7 +371,7 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v29
+  version: analysis-trigger-v30
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
@@ -472,7 +475,7 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v37
+  version: information-intake-v38
   normalizer_version: trendradar-collector-v9
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
@@ -507,6 +510,7 @@ information:
       maximum_entries: 10
   fed_monetary_poll_seconds: 15
   fed_calendar_poll_seconds: 21600
+  economic_release_calendar_poll_seconds: 21600
   treasury_buyback_poll_seconds: 21600
   treasury_buyback_result_lookback_seconds: 604800
   regulatory_poll_seconds: 300
@@ -525,9 +529,11 @@ information:
         treasury-tga-balance: [TREASURY_CASH]
       maximum_publication_age_seconds: 172800
     - domain: MONETARY_INFLATION
-      source_stream_ids: [fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
-      required_capabilities: [EMPLOYMENT_SURPRISE, INFLATION_SURPRISE, POLICY_DECISIONS, POLICY_IMPLEMENTATION]
+      source_stream_ids: [bea-economic-release-calendar, bls-economic-release-calendar, fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
+      required_capabilities: [EMPLOYMENT_SURPRISE, INFLATION_SURPRISE, OFFICIAL_EVENT_CALENDAR, POLICY_DECISIONS, POLICY_IMPLEMENTATION]
       source_capabilities:
+        bea-economic-release-calendar: [OFFICIAL_EVENT_CALENDAR]
+        bls-economic-release-calendar: [OFFICIAL_EVENT_CALENDAR]
         fed-monetary-releases: [POLICY_DECISIONS]
         nyfed-reference-rates: [POLICY_IMPLEMENTATION]
         nyfed-reverse-repo: [POLICY_IMPLEMENTATION]
@@ -578,7 +584,7 @@ information:
       maximum_publication_age_seconds: 864000
 
 pipeline:
-  version: off-pipeline-v7
+  version: off-pipeline-v8
   ai_mode: "OFF"
 
 proposal:

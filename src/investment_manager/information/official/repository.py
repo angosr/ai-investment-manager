@@ -10,6 +10,12 @@ from investment_manager.information.aggregated_flows import (
     AggregatedEtfFlowSnapshot,
     AggregatedRecordKind,
 )
+from investment_manager.information.official.economic_calendar import (
+    EconomicReleaseEventRecord,
+    build_economic_release_calendar_revision,
+    build_economic_release_cancellation,
+    parse_economic_release_calendar,
+)
 from investment_manager.information.official.metrics import OfficialMetricSnapshot
 from investment_manager.information.official.public_calendar import (
     FED_PUBLIC_CALENDAR_URL,
@@ -66,6 +72,7 @@ from investment_manager.platform.locking import advisory_xact_lock
 StructuredRecord = (
     BaseOfficialRecord
     | AggregatedEtfFlowSnapshot
+    | EconomicReleaseEventRecord
     | FedChairPublicEventRecord
     | OfficialMetricSnapshot
     | FederalRegisterRulemakingRecord
@@ -73,7 +80,10 @@ StructuredRecord = (
     | TreasuryBuybackResultRecord
 )
 CalendarOfficialRecord = (
-    FomcMeetingRecord | FedChairPublicEventRecord | TreasuryBuybackOperationRecord
+    EconomicReleaseEventRecord
+    | FomcMeetingRecord
+    | FedChairPublicEventRecord
+    | TreasuryBuybackOperationRecord
 )
 
 
@@ -317,7 +327,12 @@ class SqlStructuredInformationStore:
             if previous_payload is not None
             else None
         )
-        if isinstance(record, FomcMeetingRecord):
+        if isinstance(record, EconomicReleaseEventRecord):
+            revision = build_economic_release_calendar_revision(
+                record,
+                previous=previous,
+            )
+        elif isinstance(record, FomcMeetingRecord):
             revision = build_fomc_calendar_revision(record, previous=previous)
         elif isinstance(record, FedChairPublicEventRecord):
             revision = build_fed_chair_calendar_revision(record, previous=previous)
@@ -344,6 +359,66 @@ class SqlStructuredInformationStore:
             )
         )
         return revision
+
+
+class SqlEconomicReleaseCalendarInformationIngestor:
+    """Persist first-party release schedules and explicit future removals."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._raw = SqlRawSourcePayloadStore(engine)
+        self._records = SqlStructuredInformationStore(engine)
+
+    def ingest(
+        self,
+        content: bytes,
+        *,
+        source_url: str,
+        observed_at: datetime,
+    ) -> tuple[StructuredRecordWrite, ...]:
+        observed_at = require_utc(observed_at)
+        snapshot = parse_economic_release_calendar(
+            content,
+            source_url=source_url,
+            observed_at=observed_at,
+        )
+        raw = build_raw_source_payload(
+            source_id=snapshot.source_id,
+            source_url=source_url,
+            media_type="text/calendar",
+            observed_at=observed_at,
+            content=content,
+        )
+        self._raw.put(raw, content)
+        current = tuple(
+            record for record in snapshot.records if record.scheduled_at >= observed_at
+        )
+        current_ids = {item.observation.source_record_id for item in current}
+        previous = tuple(
+            record
+            for record in self._records.records_as_of(
+                as_of=observed_at,
+                source_id=snapshot.source_id,
+            )
+            if (
+                isinstance(record, EconomicReleaseEventRecord)
+                and record.status == CalendarEventStatus.SCHEDULED
+                and record.scheduled_at > observed_at
+                and record.observation.observed_at < observed_at
+                and record.scheduled_at.year in snapshot.covered_years
+                and record.observation.source_record_id not in current_ids
+            )
+        )
+        cancellations = tuple(
+            build_economic_release_cancellation(
+                record,
+                observed_at=observed_at,
+                payload_ref=raw.payload_id,
+            )
+            for record in previous
+        )
+        return tuple(
+            self._records.put(record) for record in (*current, *cancellations)
+        )
 
 
 class SqlFedOfficialInformationIngestor:
@@ -595,6 +670,8 @@ class SqlFederalRegisterInformationIngestor:
 
 def _record_from_payload(payload: dict) -> StructuredRecord:
     kind = payload.get("kind")
+    if kind == OfficialRecordKind.ECONOMIC_RELEASE_EVENT.value:
+        return EconomicReleaseEventRecord.model_validate(payload)
     if kind == OfficialRecordKind.FOMC_MEETING.value:
         return FomcMeetingRecord.model_validate(payload)
     if kind == AggregatedRecordKind.ETF_FLOW_SNAPSHOT.value:

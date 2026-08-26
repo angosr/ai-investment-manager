@@ -47,6 +47,7 @@ from investment_manager.information.coverage import (
 from investment_manager.information.models import CausalDomain, SourcePollStatus
 from investment_manager.information.official.publications import OfficialPublicationSource
 from investment_manager.information.official.source import (
+    HttpEconomicReleaseCalendarSource,
     HttpFederalRegisterSource,
     HttpFedOfficialSource,
     HttpOfficialMetricSource,
@@ -78,8 +79,10 @@ from investment_manager.state.metric_ingestion import (
     SqlOfficialMetricFactIngestor,
 )
 from investment_manager.state.official_ingestion import (
+    EconomicReleaseCalendarCollectorService,
     FedOfficialCollectorService,
     RegulatoryOfficialCollectorService,
+    SqlEconomicReleaseCalendarFactIngestor,
     SqlFederalRegisterFactIngestor,
     SqlFedFactIngestor,
     SqlTreasuryBuybackFactIngestor,
@@ -528,6 +531,18 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         calendar_poll_seconds=policy.fed_calendar_poll_seconds,
         poll_recorder=coverage_store,
     )
+    economic_calendar_service = EconomicReleaseCalendarCollectorService(
+        source=HttpEconomicReleaseCalendarSource(
+            timeout_seconds=policy.request_timeout_seconds,
+        ),
+        ingestor=SqlEconomicReleaseCalendarFactIngestor(
+            engine,
+            loaded.decision_state.official_fact_policy,
+        ),
+        publish_recent=fact_trigger_publisher.publish_recent,
+        poll_seconds=policy.economic_release_calendar_poll_seconds,
+        poll_recorder=coverage_store,
+    )
     metric_service = OfficialMetricCollectorService(
         source=HttpOfficialMetricSource(
             timeout_seconds=policy.request_timeout_seconds,
@@ -583,6 +598,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         services=(
             service,
             official_service,
+            economic_calendar_service,
             metric_service,
             aggregate_flow_service,
             regulatory_service,

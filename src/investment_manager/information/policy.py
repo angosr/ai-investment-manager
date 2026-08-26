@@ -163,6 +163,11 @@ class InformationPolicy(StrictConfig):
     official_publication_feeds: tuple[OfficialPublicationFeed, ...] = ()
     fed_monetary_poll_seconds: int = Field(default=15, ge=10, le=300)
     fed_calendar_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
+    economic_release_calendar_poll_seconds: int = Field(
+        default=21_600,
+        ge=300,
+        le=86_400,
+    )
     treasury_buyback_poll_seconds: int = Field(default=21_600, ge=300, le=86_400)
     treasury_buyback_result_lookback_seconds: int = Field(
         default=604_800,

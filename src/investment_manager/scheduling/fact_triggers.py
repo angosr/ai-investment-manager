@@ -16,6 +16,7 @@ from investment_manager.scheduling.models import (
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.state.decision.packet import AnalysisMandate
 from investment_manager.state.facts import (
+    ECONOMIC_RELEASE_EVENT_FACT_TYPE,
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
@@ -36,6 +37,7 @@ _PRIORITY = {
     Materiality.CRITICAL: 100,
 }
 _SCHEDULED_FACT_TYPES = {
+    ECONOMIC_RELEASE_EVENT_FACT_TYPE,
     FED_CHAIR_PUBLIC_EVENT_FACT_TYPE,
     FOMC_MEETING_FACT_TYPE,
     TREASURY_BUYBACK_OPERATION_FACT_TYPE,
@@ -110,10 +112,10 @@ class CanonicalFactTriggerPublisher:
                 # explicit review still sees the latest background values.
                 self._published_revision_ids.add(fact.revision_id)
                 continue
-            if fact.fact_type == TREASURY_BUYBACK_OPERATION_FACT_TYPE:
-                # A Treasury calendar can contain many future operation rows.
-                # Keep them in State and wake at each operation rather than
-                # spending one immediate AI call per row on initial sync.
+            if fact.fact_type in _SCHEDULED_FACT_TYPES:
+                # A calendar is durable future state.  Synchronize its wakeup
+                # below; initial discovery and rescheduling do not justify a
+                # separate AI call before the normal portfolio review.
                 self._published_revision_ids.add(fact.revision_id)
                 continue
             unknown_assets = tuple(
@@ -170,18 +172,22 @@ class CanonicalFactTriggerPublisher:
                 )
             except KeyError:
                 continue
+            scheduled_by_time: dict[datetime, list[CanonicalFactRevision]] = {}
+            for fact in facts:
+                if (
+                    fact.fact_type not in _SCHEDULED_FACT_TYPES
+                    or fact.status != FactRevisionStatus.ACTIVE
+                    or fact.event_time is None
+                    or fact.event_time <= as_of
+                    or self._assets_by_symbol[symbol] not in fact.affected_assets
+                ):
+                    continue
+                scheduled_by_time.setdefault(fact.event_time, []).append(fact)
             desired = {
                 wakeup.wakeup_id: wakeup
                 for wakeup in (
-                    self._calendar_wakeup(fact, symbol=symbol)
-                    for fact in facts
-                    if (
-                        fact.fact_type in _SCHEDULED_FACT_TYPES
-                        and fact.status == FactRevisionStatus.ACTIVE
-                        and fact.event_time is not None
-                        and fact.event_time > as_of
-                        and self._assets_by_symbol[symbol] in fact.affected_assets
-                    )
+                    self._calendar_wakeup(tuple(group), symbol=symbol)
+                    for _, group in sorted(scheduled_by_time.items())
                 )
             }
             existing = {
@@ -224,18 +230,27 @@ class CanonicalFactTriggerPublisher:
 
     def _calendar_wakeup(
         self,
-        fact: CanonicalFactRevision,
+        facts: tuple[CanonicalFactRevision, ...],
         *,
         symbol: str,
     ) -> ScheduledWakeup:
-        assert fact.event_time is not None
+        if not facts or any(item.event_time != facts[0].event_time for item in facts):
+            raise ValueError("日历唤醒只能合并同一时点的事实")
+        event_time = facts[0].event_time
+        assert event_time is not None
+        evidence_ids = tuple(sorted(item.revision_id for item in facts))
+        fact_types = ",".join(sorted({item.fact_type for item in facts}))
         return ScheduledWakeup(
-            wakeup_id=stable_id("canonical_fact_wakeup", fact.fact_id, symbol),
-            wake_at=fact.event_time,
-            expires_at=fact.event_time
+            wakeup_id=stable_id(
+                "canonical_fact_wakeup",
+                symbol,
+                event_time.isoformat(),
+            ),
+            wake_at=event_time,
+            expires_at=event_time
             + timedelta(seconds=self._trigger_expiry_seconds),
-            reason=f"Official {fact.fact_type} scheduled release",
-            evidence_ids=(fact.revision_id,),
+            reason=f"Official scheduled release: {fact_types}",
+            evidence_ids=evidence_ids,
             hypothesis="Reassess the portfolio after the official release becomes observable.",
             required_freshness_seconds=self._required_freshness_seconds,
         )

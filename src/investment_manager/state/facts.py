@@ -10,6 +10,9 @@ from investment_manager.information.aggregated_flows import (
     AggregatedEtfFlowSnapshot,
 )
 from investment_manager.information.models import DomainCoverageSnapshot, IntelligenceEvent
+from investment_manager.information.official.economic_calendar import (
+    EconomicReleaseEventRecord,
+)
 from investment_manager.information.official.metrics import (
     OfficialMetricSnapshot,
 )
@@ -48,6 +51,7 @@ FED_MONETARY_RELEASE_FACT_TYPE = "FED_MONETARY_RELEASE"
 TREASURY_BUYBACK_OPERATION_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_SCHEDULE"
 TREASURY_BUYBACK_RESULT_FACT_TYPE = "TREASURY_BUYBACK_OPERATION_RESULT"
 FEDERAL_REGISTER_RULEMAKING_FACT_TYPE = "US_DIGITAL_ASSET_RULEMAKING"
+ECONOMIC_RELEASE_EVENT_FACT_TYPE = "US_OFFICIAL_ECONOMIC_RELEASE_SCHEDULE"
 
 
 class OfficialFactProjectionPolicy(FrozenModel):
@@ -151,6 +155,50 @@ def project_fomc_calendar_fact(
         risk_factors=revision.risk_factors,
         decision_materiality=FactDecisionMateriality.BACKGROUND,
         source_observation_ids=(revision.source_observation_id,),
+        previous=previous,
+    )
+
+
+def project_economic_release_event_fact(
+    record: EconomicReleaseEventRecord,
+    revision: MarketCalendarEventRevision,
+    *,
+    policy: OfficialFactProjectionPolicy,
+    previous: CanonicalFactRevision | None = None,
+) -> CanonicalFactRevision:
+    observation = record.observation
+    if (
+        revision.event_type != OfficialRecordKind.ECONOMIC_RELEASE_EVENT
+        or revision.source_observation_id != observation.observation_id
+        or revision.source_record_id != observation.source_record_id
+    ):
+        raise ValueError("经济发布事实投影记录与日历修订不一致")
+    status = (
+        FactRevisionStatus.ACTIVE
+        if record.status == CalendarEventStatus.SCHEDULED
+        else FactRevisionStatus.CANCELLED
+    )
+    return _build_fact_revision(
+        fact_id=stable_id(
+            "canonical_fact",
+            ECONOMIC_RELEASE_EVENT_FACT_TYPE,
+            revision.event_id,
+        ),
+        projection_version=policy.version,
+        fact_type=ECONOMIC_RELEASE_EVENT_FACT_TYPE,
+        status=status,
+        event_time=record.scheduled_at,
+        observed_at=observation.observed_at,
+        headline=f"U.S. official economic release schedule: {record.title}",
+        claim=(
+            f"{record.release_kind.value}; scheduled_at={record.scheduled_at.isoformat()}; "
+            f"status={record.status.value}. This calendar fixes release timing only; "
+            "it contains neither market consensus nor the released value."
+        ),
+        affected_assets=policy.affected_assets,
+        risk_factors=revision.risk_factors,
+        decision_materiality=FactDecisionMateriality.BACKGROUND,
+        source_observation_ids=(observation.observation_id,),
         previous=previous,
     )
 

@@ -66,6 +66,7 @@ _MONTH_ALIASES = {
 
 
 class OfficialRecordKind(StrEnum):
+    ECONOMIC_RELEASE_EVENT = "ECONOMIC_RELEASE_EVENT"
     FOMC_MEETING = "FOMC_MEETING"
     FED_CHAIR_PUBLIC_EVENT = "FED_CHAIR_PUBLIC_EVENT"
     FED_MONETARY_RELEASE = "FED_MONETARY_RELEASE"
@@ -210,6 +211,7 @@ class MarketCalendarEventRevision(FrozenModel):
     revision_id: str
     previous_revision_id: str | None = None
     event_type: Literal[
+        OfficialRecordKind.ECONOMIC_RELEASE_EVENT,
         OfficialRecordKind.FOMC_MEETING,
         OfficialRecordKind.FED_CHAIR_PUBLIC_EVENT,
         OfficialRecordKind.TREASURY_BUYBACK_OPERATION,

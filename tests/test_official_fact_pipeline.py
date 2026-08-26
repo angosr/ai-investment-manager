@@ -378,7 +378,9 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
                 .select_from(analysis_trigger_events)
                 .where(analysis_trigger_events.c.trigger_type == "CANONICAL_FACT_REVISED")
             )
-            == 6
+            # Calendar facts own future wakeups; only the newly published
+            # policy release spends an immediate event-driven review.
+            == 2
         )
         assert (
             connection.scalar(
@@ -386,7 +388,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
                 .select_from(trigger_outbox)
                 .where(trigger_outbox.c.message_kind == "TRIGGER_CREATED")
             )
-            == 6
+            == 2
         )
     for symbol in app_config.analysis_symbols:
         plan = triggers.plan_for_scope(

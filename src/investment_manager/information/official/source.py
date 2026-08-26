@@ -3,10 +3,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import ClassVar
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from investment_manager.information.official.economic_calendar import (
+    BEA_CALENDAR_STREAM_ID,
+    BEA_CALENDAR_URL,
+    BLS_CALENDAR_STREAM_ID,
+    BLS_CALENDAR_URL,
+)
 from investment_manager.information.official.metrics import (
     ARKB_HOLDINGS_STREAM_ID,
     BITB_HOLDINGS_STREAM_ID,
@@ -84,6 +91,13 @@ class OfficialMetricDocument:
 
 @dataclass(frozen=True, slots=True)
 class OfficialRegulatoryDocument:
+    stream_id: str
+    source_url: str
+    content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class OfficialCalendarDocument:
     stream_id: str
     source_url: str
     content: bytes
@@ -177,6 +191,78 @@ class HttpFederalRegisterSource:
         self._validators_by_url = {url: validators}
         return OfficialRegulatoryDocument(
             stream_id=FEDERAL_REGISTER_RULEMAKING_STREAM_ID,
+            source_url=url,
+            content=content,
+        )
+
+
+class HttpEconomicReleaseCalendarSource:
+    """Fetch the bounded BLS/BEA first-party release calendars."""
+
+    stream_ids = (BEA_CALENDAR_STREAM_ID, BLS_CALENDAR_STREAM_ID)
+    _url_by_stream: ClassVar[dict[str, str]] = {
+        BEA_CALENDAR_STREAM_ID: BEA_CALENDAR_URL,
+        BLS_CALENDAR_STREAM_ID: BLS_CALENDAR_URL,
+    }
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int,
+        maximum_bytes: int = 500_000,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if timeout_seconds < 1 or maximum_bytes < 1:
+            raise ValueError("经济发布日历 source 配置非法")
+        self._timeout_seconds = timeout_seconds
+        self._maximum_bytes = maximum_bytes
+        self._transport = transport
+        self._validators_by_url: dict[str, dict[str, str]] = {}
+        self._cached_by_url: dict[str, bytes] = {}
+
+    def fetch(self, stream_id: str) -> OfficialCalendarDocument | None:
+        try:
+            url = self._url_by_stream[stream_id]
+        except KeyError as exc:
+            raise ValueError(f"未知经济发布日历 stream: {stream_id}") from exc
+        headers = {
+            "Accept": "text/calendar",
+            # BLS rejects anonymous-looking agents.  This identifies the local
+            # service without embedding a person's address or a secret.
+            "User-Agent": "market-intel/1.0 (+https://localhost/)",
+            **self._validators_by_url.get(url, {}),
+        }
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            response = client.get(url, headers=headers)
+        if response.status_code == 304:
+            try:
+                content = self._cached_by_url[url]
+            except KeyError as exc:
+                raise ValueError("经济发布日历 304 缺少进程内缓存") from exc
+            return OfficialCalendarDocument(
+                stream_id=stream_id,
+                source_url=url,
+                content=content,
+            )
+        response.raise_for_status()
+        if str(response.url) != url:
+            raise ValueError("经济发布日历响应 URL 与固定请求不一致")
+        content = response.content
+        if not content or len(content) > self._maximum_bytes:
+            raise ValueError("经济发布日历响应为空或超过大小上限")
+        validators: dict[str, str] = {}
+        if etag := response.headers.get("etag"):
+            validators["If-None-Match"] = etag
+        if modified := response.headers.get("last-modified"):
+            validators["If-Modified-Since"] = modified
+        self._validators_by_url[url] = validators
+        self._cached_by_url[url] = content
+        return OfficialCalendarDocument(
+            stream_id=stream_id,
             source_url=url,
             content=content,
         )
