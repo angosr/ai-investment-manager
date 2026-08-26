@@ -196,11 +196,21 @@ def test_release_cutover_requires_every_trigger_coordinator_to_be_idle(
         return ClientStub()
 
     monkeypatch.setattr(release_commands.Client, "connect", connect)
+    monkeypatch.setattr(
+        release_commands,
+        "_current_release_trigger_plans",
+        lambda _database_url, *, manifest_id: tuple(
+            type("Plan", (), {"symbol": symbol, "pipeline_id": config.pipeline.version})()
+            for symbol in config.analysis_symbols
+        ),
+    )
 
     with pytest.raises(ValueError, match="活动 TriggerBatch"):
         asyncio.run(
             _require_trigger_coordinators_idle(
-                Path("config/investment-manager.shadow.yaml")
+                config=config,
+                database_url="unused",
+                manifest_id="release-current",
             )
         )
 

@@ -67,7 +67,9 @@ from investment_manager.platform.database import (
     build_engine,
     require_current_schema,
 )
+from investment_manager.scheduling.models import AnalysisTriggerPlan
 from investment_manager.scheduling.repository import SqlTriggerRepository
+from investment_manager.scheduling.tables import analysis_trigger_plans
 from investment_manager.scheduling.workflows import coordinator_workflow_id
 from investment_manager.schema import compose_metadata
 from investment_manager.settings import AppConfig, load_config
@@ -198,7 +200,12 @@ def operate_release(
         rollback_unit = None
         rollback_fallback = None
         if current is not None and current.status == RuntimeStateStatus.READY:
-            _require_safe_cutover(current, runtime_directory=runtime_root)
+            _require_safe_cutover(
+                current,
+                runtime_directory=runtime_root,
+                config=loaded,
+                database_url=database_url,
+            )
             _stop_previous(current, timeout_seconds=30)
             rollback_unit = current.unit
             rollback_fallback = current.rollback_unit
@@ -509,6 +516,8 @@ def _require_safe_cutover(
     previous: ReleaseRuntimeState,
     *,
     runtime_directory: Path,
+    config: AppConfig,
+    database_url: str,
 ) -> None:
     if previous.status != RuntimeStateStatus.READY:
         raise ValueError("当前受管 Release 不是 READY，必须先恢复运行状态")
@@ -529,30 +538,43 @@ def _require_safe_cutover(
     response = httpx.get(url, timeout=5)
     response.raise_for_status()
     _require_health_checks(response.json(), required=_SAFETY_HEALTH_KEYS)
-    asyncio.run(_require_trigger_coordinators_idle(previous.unit.config_path))
+    asyncio.run(
+        _require_trigger_coordinators_idle(
+            config=config,
+            database_url=database_url,
+            manifest_id=previous.unit.manifest_id,
+        )
+    )
 
 
-async def _require_trigger_coordinators_idle(config_path: Path) -> None:
-    """Do not strand a version-bound child workflow during a release switch."""
+async def _require_trigger_coordinators_idle(
+    *,
+    config: AppConfig,
+    database_url: str,
+    manifest_id: str,
+) -> None:
+    """Use current TriggerPlan facts, not a previous release's config schema."""
 
-    config = load_config(config_path)
+    plans = _current_release_trigger_plans(database_url, manifest_id=manifest_id)
+    if not plans:
+        raise ValueError("切流前找不到当前 Release 的 TriggerPlan")
     client = await Client.connect(
         config.temporal.address,
         namespace=config.temporal.namespace,
     )
 
-    async def status(symbol: str) -> tuple[str, dict]:
-        workflow_id = coordinator_workflow_id(symbol, config.pipeline.version)
+    async def status(plan: AnalysisTriggerPlan) -> tuple[str, dict]:
+        workflow_id = coordinator_workflow_id(plan.symbol, plan.pipeline_id)
         payload = await asyncio.wait_for(
             client.get_workflow_handle(workflow_id).query("status"),
             timeout=3,
         )
         if not isinstance(payload, dict):
-            raise ValueError(f"TriggerCoordinator {symbol} 状态格式无效")
-        return symbol, payload
+            raise ValueError(f"TriggerCoordinator {plan.symbol} 状态格式无效")
+        return plan.symbol, payload
 
     try:
-        statuses = await asyncio.gather(*(status(symbol) for symbol in config.analysis_symbols))
+        statuses = await asyncio.gather(*(status(plan) for plan in plans))
     except Exception as exc:
         raise ValueError("切流前无法确认 TriggerCoordinator 空闲") from exc
     active = tuple(
@@ -560,6 +582,30 @@ async def _require_trigger_coordinators_idle(config_path: Path) -> None:
     )
     if active:
         raise ValueError("切流前仍有活动 TriggerBatch：" + ", ".join(active))
+
+
+def _current_release_trigger_plans(
+    database_url: str,
+    *,
+    manifest_id: str,
+) -> tuple[AnalysisTriggerPlan, ...]:
+    engine = build_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            payloads = connection.execute(
+                select(analysis_trigger_plans.c.payload)
+                .where(
+                    analysis_trigger_plans.c.manifest_id == manifest_id,
+                    analysis_trigger_plans.c.is_current.is_(True),
+                )
+                .order_by(
+                    analysis_trigger_plans.c.symbol,
+                    analysis_trigger_plans.c.pipeline_id,
+                )
+            ).scalars()
+            return tuple(AnalysisTriggerPlan.model_validate(item) for item in payloads)
+    finally:
+        engine.dispose()
 
 
 def _stop_previous(previous: ReleaseRuntimeState, *, timeout_seconds: int) -> None:
