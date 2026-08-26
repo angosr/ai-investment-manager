@@ -21,6 +21,7 @@ from investment_manager.forecast.context.contract import (
     assessment_input_projection,
 )
 from investment_manager.forecast.context.estimate import (
+    CONTEXT_FORECAST_INSTRUCTIONS,
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
 )
@@ -532,6 +533,7 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     analysis_input = json.loads(first.analysis_input_json)
     assert set(analysis_input) == {
         "purpose",
+        "coverage_gap_codes",
         "forecast_targets",
         "world_model",
     }
@@ -539,19 +541,9 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert datetime.fromisoformat(
         analysis_input["forecast_targets"][0]["decision_slot"]["information_cutoff_at"]
     ) == assessment.available_at
-    assert analysis_input["forecast_targets"][0]["decision_slot"]["cause"] == {
-        "origin": "MATERIAL_STATE" if material_event else "CADENCE",
-        "policy_version": (
-            "material-world-model-slot-v1"
-            if material_event
-            else producer.target.contract.decision_slot_rule
-        ),
-        "trigger_refs": (
-            sorted([assessment.assessment_id, packet.packet_id, packet.state_id])
-            if material_event
-            else []
-        ),
-    }
+    assert analysis_input["forecast_targets"][0]["decision_slot"]["cause_origin"] == (
+        "MATERIAL_STATE" if material_event else "CADENCE"
+    )
     assert datetime.fromisoformat(
         analysis_input["forecast_targets"][0]["target_state"]["as_of"]
     ) == (
@@ -563,6 +555,8 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert "verification_tests" not in analysis_input["world_model"]["mechanisms"][0]
     assert "next_review_at" not in analysis_input["world_model"]["mechanisms"][0]
     assert "continuity_ref" not in analysis_input["world_model"]["mechanisms"][0]
+    assert "causal_chain" not in analysis_input["world_model"]["mechanisms"][0]
+    assert "invalidation_conditions" not in analysis_input["world_model"]["mechanisms"][0]
     serialized_input = json.dumps(analysis_input, ensure_ascii=False).lower()
     assert all(
         token not in serialized_input
@@ -636,6 +630,16 @@ def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets()
         assert forecast.analysis_input_json is not None
         frozen = json.loads(forecast.analysis_input_json)
         assert len(frozen["forecast_targets"]) == 3
+        prompt = "\n".join(
+            (
+                *CONTEXT_FORECAST_INSTRUCTIONS,
+                "context_forecast_input_json=",
+                canonical_json(frozen),
+            )
+        )
+        assert len(prompt) < (
+            config.codex_runtime.maximum_prompt_characters - 2_000
+        )
 
 
 def test_context_forecast_records_stale_world_model_without_calling_codex() -> None:

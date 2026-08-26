@@ -55,7 +55,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v54"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v55"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -65,7 +65,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v57"
+    assert config.capital.version == "total-portfolio-capital-v58"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -120,12 +120,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
     assert config.assessment.version == "context-assessment-v49"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v31"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v32"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v25"
+        == "world-model-ablation-forward-v26"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v31"

@@ -411,10 +411,18 @@ def build_world_model_ablation_assignment(
         raise ValueError("WorldModel control 正式输入结构不完整")
     if decision_slot.get("decision_slot_id") != slot.slot_id:
         raise ValueError("WorldModel control 正式输入绑定了错误 slot")
-    parsed_contract = ForecastContract.model_validate(forecast_contract)
-    if parsed_contract.contract_id != slot.contract_id:
+    if forecast_contract.get("contract_id") != slot.contract_id:
         raise ValueError("WorldModel control 输入合同与 slot 不一致")
-    bucket_ids = tuple(item.bucket_id for item in parsed_contract.outcome_buckets)
+    raw_buckets = forecast_contract.get("outcome_buckets")
+    if not isinstance(raw_buckets, list) or not raw_buckets:
+        raise ValueError("WorldModel control 输入合同缺少结果桶")
+    bucket_ids = tuple(
+        item.get("bucket_id")
+        for item in raw_buckets
+        if isinstance(item, dict) and isinstance(item.get("bucket_id"), str)
+    )
+    if len(bucket_ids) != len(raw_buckets) or len(set(bucket_ids)) != len(bucket_ids):
+        raise ValueError("WorldModel control 输入合同结果桶非法")
     schema = world_model_control_output_schema_for_ids(
         decision_slot_id=slot.slot_id,
         bucket_ids=bucket_ids,
@@ -1063,6 +1071,12 @@ def _validate_world_model_reference_ids(
         if not isinstance(raw, dict) or not isinstance(raw.get("mechanism_id"), str):
             raise ValueError("WorldModel mechanism_id 非法")
         mechanism_ids.append(raw["mechanism_id"])
+        compact_ids = raw.get("evidence_ids", [])
+        if not isinstance(compact_ids, list) or not all(
+            isinstance(item, str) for item in compact_ids
+        ):
+            raise ValueError("WorldModel mechanism evidence_ids 非法")
+        evidence_ids.update(compact_ids)
         for evidence_id in raw.get("conflicting_evidence_ids", []):
             if isinstance(evidence_id, str):
                 evidence_ids.add(evidence_id)

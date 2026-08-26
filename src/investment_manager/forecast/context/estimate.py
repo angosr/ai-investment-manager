@@ -40,7 +40,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v9"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v10"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -235,6 +235,7 @@ def context_forecast_input_projection(
 
     return {
         "purpose": "FORECAST_ESTIMATE",
+        "coverage_gap_codes": packet.coverage_gap_codes,
         "forecast_targets": tuple(
             {
                 "decision_slot": {
@@ -242,18 +243,45 @@ def context_forecast_input_projection(
                     "information_cutoff_at": item.slot.information_cutoff_at,
                     "completion_deadline_at": item.slot.completion_deadline_at,
                     "evaluation_at": item.slot.evaluation_at,
-                    "cause": (
-                        None
-                        if item.slot.cause is None
-                        else item.slot.cause.identity_payload()
+                    "cause_origin": (
+                        None if item.slot.cause is None else item.slot.cause.origin.value
                     ),
                 },
-                "forecast_contract": item.contract,
+                "forecast_contract": {
+                    "contract_id": item.contract.contract_id,
+                    "outcome_family_id": item.contract.outcome_family_id,
+                    "horizon_minutes": item.contract.horizon_minutes,
+                    "reference_instrument": {
+                        "symbol": item.contract.target.legs[0].instrument.symbol,
+                        "product": item.contract.target.legs[0].instrument.product.value,
+                    },
+                    "outcome_buckets": tuple(
+                        {
+                            "bucket_id": bucket.bucket_id,
+                            "lower_bps": bucket.lower_bps,
+                            "upper_bps": bucket.upper_bps,
+                            "representative_bps": bucket.representative_bps,
+                        }
+                        for bucket in item.contract.outcome_buckets
+                    ),
+                    "forecast_benchmark": tuple(
+                        {
+                            "bucket_id": bucket.bucket_id,
+                            "probability": bucket.probability,
+                        }
+                        for bucket in item.contract.forecast_benchmark
+                    ),
+                },
                 "target_state": {
                     "as_of": item.target_state.as_of,
-                    "asset_states": item.target_state.asset_states,
-                    "derivative_states": item.target_state.derivative_states,
-                    "coverage_gap_codes": packet.coverage_gap_codes,
+                    "asset_states": tuple(
+                        _compact_asset_state(state)
+                        for state in item.target_state.asset_states
+                    ),
+                    "derivative_states": tuple(
+                        _compact_derivative_state(state)
+                        for state in item.target_state.derivative_states
+                    ),
                 },
             }
             for item in targets
@@ -280,7 +308,6 @@ def context_forecast_world_model_projection(
                 "title": item.title,
                 "event_time": item.event_time,
                 "impact_state": item.impact_state,
-                "rationale": item.rationale,
             }
             for item in assessment.event_references
         ),
@@ -290,13 +317,55 @@ def context_forecast_world_model_projection(
                 "relationship": item.relationship,
                 "claim": item.claim,
                 "horizon_hours": item.horizon_hours,
-                "causal_chain": item.causal_chain,
                 "transmission_stage": item.transmission_stage,
+                "evidence_ids": tuple(
+                    sorted(
+                        {
+                            evidence_id
+                            for node in item.causal_chain
+                            for evidence_id in node.evidence_ids
+                        }
+                    )
+                ),
                 "conflicting_evidence_ids": item.conflicting_evidence_ids,
-                "invalidation_conditions": item.invalidation_conditions,
             }
             for item in assessment.mechanisms
         ),
+    }
+
+
+def _compact_asset_state(state: PacketAssetState) -> dict[str, object]:
+    return {
+        "asset": state.asset,
+        "observed_at": state.observed_at,
+        "return_fraction": state.return_fraction,
+        "realized_volatility": state.realized_volatility,
+        "regime": state.regime,
+        "spread_bps": state.spread_bps,
+        "volume_ratio": state.volume_ratio,
+    }
+
+
+def _compact_derivative_state(state: PacketDerivativeState) -> dict[str, object]:
+    fields = (
+        "asset",
+        "observed_at",
+        "mark_index_premium_bps",
+        "executable_short_basis_bps",
+        "perpetual_spread_bps",
+        "last_funding_rate_bps",
+        "trailing_funding_rate_mean_bps",
+        "trailing_funding_rate_stddev_bps",
+        "open_interest_change_fraction",
+        "global_long_account_fraction",
+        "taker_buy_sell_ratio",
+        "spot_taker_buy_sell_ratio",
+        "reference_spot_mid_deviation_bps",
+    )
+    return {
+        name: value
+        for name in fields
+        if (value := getattr(state, name)) is not None
     }
 
 
