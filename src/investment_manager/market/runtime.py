@@ -543,7 +543,22 @@ class KrakenSpotClient:
             tz=UTC,
         )
         observed_at = max(require_utc(self.clock()), exchange_time)
-        marker = exchange_time.isoformat()
+        # Kraken does not expose an order-book sequence.  A price level's
+        # second-resolution timestamp can stay unchanged while its quantity or
+        # the opposite side changes, so timestamp-only identity aliases two
+        # distinct L1 facts.  Use the complete provider fact as the stable
+        # revision marker: retries of the same book stay idempotent, while a
+        # changed book at the same timestamp receives a new immutable identity.
+        marker = content_hash(
+            {
+                "provider_symbol": str(provider_symbol),
+                "exchange_time": exchange_time.isoformat(),
+                "bid": str(bids[0][0]),
+                "bid_quantity": str(bids[0][1]),
+                "ask": str(asks[0][0]),
+                "ask_quantity": str(asks[0][1]),
+            }
+        )
         return CrossVenueSpotQuote(
             quote_id=stable_id(
                 "cross_venue_spot_quote",
@@ -560,6 +575,7 @@ class KrakenSpotClient:
             bid_quantity=Decimal(str(bids[0][1])),
             ask=Decimal(str(asks[0][0])),
             ask_quantity=Decimal(str(asks[0][1])),
+            source_sequence=marker,
             source="kraken-spot-rest",
         )
 

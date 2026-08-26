@@ -865,6 +865,7 @@ def test_cross_venue_clients_parse_first_party_l1_books_and_store_point_in_time(
     assert coinbase.source_sequence == "123"
     assert kraken.venue == SpotVenue.KRAKEN
     assert kraken.exchange_time == NOW - timedelta(milliseconds=1)
+    assert kraken.source_sequence is not None
 
     store = InMemoryMarketDataStore()
     assert store.put_cross_venue_spot_quote(coinbase)
@@ -874,6 +875,49 @@ def test_cross_venue_clients_parse_first_party_l1_books_and_store_point_in_time(
         venues=(SpotVenue.COINBASE, SpotVenue.KRAKEN),
         as_of=NOW,
     ) == (coinbase, kraken)
+
+
+def test_kraken_l1_identity_distinguishes_book_changes_at_the_same_timestamp() -> None:
+    product = CrossVenueSpotProduct(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        coinbase_product_id="BTC-USDT",
+        kraken_pair="BTC/USDT",
+    )
+    exchange_seconds = str((NOW - timedelta(seconds=1)).timestamp())
+
+    class KrakenTransport:
+        quantity = "4"
+
+        async def get(self, path, params):
+            return {
+                "error": [],
+                "result": {
+                    "BTC/USDT": {
+                        "bids": [["99.8", self.quantity, exchange_seconds]],
+                        "asks": [["100.2", "5", exchange_seconds]],
+                    }
+                },
+            }
+
+    transport = KrakenTransport()
+    client = KrakenSpotClient(transport, clock=lambda: NOW)
+    first = asyncio.run(client.fetch(product))
+    repeated = asyncio.run(client.fetch(product))
+    transport.quantity = "6"
+    changed = asyncio.run(client.fetch(product))
+
+    assert repeated.quote_id == first.quote_id
+    assert repeated.source_sequence == first.source_sequence
+    assert changed.exchange_time == first.exchange_time
+    assert changed.quote_id != first.quote_id
+    assert changed.source_sequence != first.source_sequence
+
+    store = InMemoryMarketDataStore()
+    assert store.put_cross_venue_spot_quote(first)
+    assert not store.put_cross_venue_spot_quote(repeated)
+    assert store.put_cross_venue_spot_quote(changed)
 
 
 def test_cross_venue_service_refreshes_each_source_independently_without_ai_trigger() -> None:
