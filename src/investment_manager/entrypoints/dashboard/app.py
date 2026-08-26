@@ -325,27 +325,6 @@ def create_app(
             }
         )
 
-    async def positions(_request: Request) -> JSONResponse:
-        records = await run_in_threadpool(reader.open_positions)
-        marks, sides = await asyncio.gather(
-            run_in_threadpool(reader.latest_prices),
-            run_in_threadpool(
-                reader.entry_sides, [record.lifecycle.cycle_id for record in records]
-            ),
-        )
-        return _json(
-            {
-                "positions": [
-                    ser.position(
-                        record,
-                        mark=marks.get(record.lifecycle.symbol),
-                        side=sides.get(record.lifecycle.cycle_id),
-                    )
-                    for record in records
-                ]
-            }
-        )
-
     async def equity(request: Request) -> JSONResponse:
         requested = request.query_params.get("window", "24h")
         window_key = requested if requested in _EQUITY_WINDOWS else "24h"
@@ -396,7 +375,6 @@ def create_app(
         Route("/api/cycles", cycles),
         Route("/api/cycles/{cycle_id}", cycle_detail),
         Route("/api/events", events),
-        Route("/api/positions", positions),
         Route("/api/equity", equity),
         Route("/api/accounts", accounts),
         Route("/api/resources", resources),

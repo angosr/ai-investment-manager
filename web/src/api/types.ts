@@ -547,20 +547,6 @@ export interface Equity {
   summary: OutcomeSummary | null;
 }
 
-export interface Position {
-  position_id: string;
-  symbol: string;
-  direction: string | null;
-  quantity: string | null;
-  entry_price: string | null;
-  stop_price: string | null;
-  mark_price: string | null;
-  unrealized_estimate: string | null;
-  status: string;
-  opened_at: string;
-  max_exit_at: string;
-}
-
 export interface AccountStatus {
   account_id: string;
   enabled: boolean;

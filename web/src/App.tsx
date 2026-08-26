@@ -7,7 +7,6 @@ import { CapitalEquityHero } from "./components/CapitalEquityHero";
 import { EquityHero } from "./components/EquityHero";
 import { LatestAssessment } from "./components/LatestAssessment";
 import { Masthead } from "./components/Masthead";
-import { Positions } from "./components/Positions";
 import { Resources } from "./components/Resources";
 import { SnapshotDrawer } from "./components/SnapshotDrawer";
 import { Timeline } from "./components/Timeline";
@@ -35,7 +34,6 @@ export function App() {
                 <Timeline onOpenSnapshot={setSnapshot} />
               </main>
               <aside className={styles.side}>
-                <Positions />
                 <Accounts />
                 <Resources />
               </aside>

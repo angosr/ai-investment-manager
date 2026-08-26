@@ -13,7 +13,6 @@ import type {
   ForecastEvaluationEvidence,
   Health,
   Page,
-  Position,
   Resources,
   WorldEvent,
 } from "./types";
@@ -99,7 +98,6 @@ export const api = {
     );
     return { items: result.events, nextCursor: result.next_cursor };
   },
-  positions: () => getJson<{ positions: Position[] }>("/api/positions"),
   equity: (window: string) => getJson<Equity>(`/api/equity?window=${encodeURIComponent(window)}`),
   accounts: () => getJson<Accounts>("/api/accounts"),
   resources: () => getJson<Resources>("/api/resources"),

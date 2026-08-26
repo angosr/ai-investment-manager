@@ -8,7 +8,6 @@ export type RefreshTopic =
   | "capital"
   | "cycles"
   | "events"
-  | "positions"
   | "equity"
   | "accounts"
   | "resources";
@@ -85,7 +84,7 @@ function parseTopics(data: string): RefreshTopic[] {
 function isRefreshTopic(value: unknown): value is RefreshTopic {
   return (
     typeof value === "string" &&
-    ["health", "capital", "cycles", "events", "positions", "equity", "accounts", "resources"].includes(
+    ["health", "capital", "cycles", "events", "equity", "accounts", "resources"].includes(
       value,
     )
   );

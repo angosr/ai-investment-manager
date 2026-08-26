@@ -961,26 +961,6 @@ def test_dashboard_call_activity_reads_actual_codex_attempts(app_config, replay_
     assert DashboardReader(engine, app_config).ai_calls_last_hour(now=now) == 2
 
 
-def test_open_position_is_read_and_serialized(app_config, replay_input) -> None:
-    engine, _result = _seed_cycle(app_config, replay_input)
-    reader = DashboardReader(engine, app_config)
-
-    records = reader.open_positions()
-    assert len(records) == 1  # 回放为 EXECUTED，留下一个未平仓生命周期
-    marks = reader.latest_prices()
-    sides = reader.entry_sides([records[0].lifecycle.cycle_id])
-    dto = ser.position(
-        records[0],
-        mark=marks.get(records[0].lifecycle.symbol),
-        side=sides.get(records[0].lifecycle.cycle_id),
-    )
-    assert dto["symbol"]
-    assert dto["direction"] == "多"  # 建仓订单方向 BUY → 多头
-    assert dto["entry_price"] is not None
-    assert dto["stop_price"] is not None
-    assert dto["status"] in {"PROTECTION_PENDING", "PROTECTED", "PROTECTION_FAILED"}
-
-
 def test_news_fed_into_current_ai_packet_links_back_to_it(app_config, replay_input) -> None:
     engine, _ = _seed_cycle(app_config, replay_input)
     now = replay_input.market.as_of

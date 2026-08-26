@@ -9,17 +9,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 
 from sqlalchemy import func, literal, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
 from investment_manager.execution.ledger import CycleFacts
-from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
 from investment_manager.execution.reconciliation.repository import SqlReconciliationReportStore
-from investment_manager.execution.tables import orders
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.executor import (
     AssessmentExecution,
@@ -51,7 +48,6 @@ from investment_manager.legacy.models import (
 )
 from investment_manager.legacy.repository import (
     SqlFactLedger,
-    SqlOpenLifecycleRepository,
     analysis_cycles,
     analysis_forecast_outcomes,
     analysis_proposals,
@@ -210,7 +206,6 @@ class DashboardReader:
         self._engine = engine
         self._config = config
         self._ledger = SqlFactLedger(engine)
-        self._lifecycles = SqlOpenLifecycleRepository(engine)
         self._reconciliation = SqlReconciliationReportStore(engine)
 
     # --- 决策时间线 -------------------------------------------------------
@@ -626,47 +621,7 @@ class DashboardReader:
             )
         return events
 
-    # --- 持仓 / 对账 ------------------------------------------------------
-    def open_positions(self) -> tuple[OpenLifecycleRecord, ...]:
-        return self._lifecycles.list_open()
-
-    def entry_sides(self, cycle_ids: list[str]) -> dict[str, str]:
-        """持仓方向取自各自周期的建仓订单（PositionLifecycle 本身不存 side）。"""
-
-        if not cycle_ids:
-            return {}
-        with self._engine.connect() as connection:
-            rows = connection.execute(
-                select(orders.c.cycle_id, orders.c.payload).where(
-                    orders.c.role == "ENTRY", orders.c.cycle_id.in_(cycle_ids)
-                )
-            ).all()
-        return {
-            cycle_id: payload["side"]
-            for cycle_id, payload in rows
-            if isinstance(payload, dict) and payload.get("side")
-        }
-
-    def latest_prices(self) -> dict[str, Decimal]:
-        """每个品种最近一次记录的最新价，用于持仓浮盈的盯市估算（非结算口径）。
-
-        品种数由配置限制在 20 以内。逐品种命中 ``(symbol, as_of)`` 索引的点查，
-        比窗口函数对全部历史行情分组排序更适合长期运行。
-        """
-
-        prices: dict[str, Decimal] = {}
-        with self._engine.connect() as connection:
-            for symbol in self._config.market_data.symbols:
-                payload = connection.execute(
-                    select(market_snapshots.c.payload)
-                    .where(market_snapshots.c.symbol == symbol)
-                    .order_by(market_snapshots.c.as_of.desc())
-                    .limit(1)
-                ).scalar_one_or_none()
-                if isinstance(payload, dict) and payload.get("last") is not None:
-                    prices[symbol] = Decimal(str(payload["last"]))
-        return prices
-
+    # --- 对账 -------------------------------------------------------------
     def latest_reconciliation(self, *, now: datetime) -> ReconciliationReport | None:
         return self._reconciliation.latest(as_of=now)
 

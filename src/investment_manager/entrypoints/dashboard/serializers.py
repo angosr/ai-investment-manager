@@ -21,7 +21,6 @@ from investment_manager.entrypoints.dashboard.read_models import (
     WorldEvent,
 )
 from investment_manager.execution.ledger import CycleFacts
-from investment_manager.execution.lifecycle.manager import OpenLifecycleRecord
 from investment_manager.execution.models import Order
 from investment_manager.execution.reconciliation.engine import ReconciliationReport
 from investment_manager.forecast.context.contract import assessment_input_projection
@@ -368,24 +367,6 @@ def snapshot(panel: PanelSnapshot) -> dict:
     }
 
 
-def position(record: OpenLifecycleRecord, *, mark: Decimal | None, side: str | None) -> dict:
-    lifecycle = record.lifecycle
-    unrealized = _unrealized(lifecycle, mark, side)
-    return {
-        "position_id": lifecycle.position_id,
-        "symbol": lifecycle.symbol,
-        "direction": _direction(side),
-        "quantity": fmt.money(lifecycle.quantity),
-        "entry_price": fmt.money(lifecycle.entry_price),
-        "stop_price": fmt.money(lifecycle.stop_price),
-        "mark_price": fmt.money(mark),
-        "unrealized_estimate": fmt.money(unrealized),
-        "status": lifecycle.status,
-        "opened_at": fmt.iso(lifecycle.opened_at),
-        "max_exit_at": fmt.iso(lifecycle.max_exit_at),
-    }
-
-
 def world_event(event: WorldEvent) -> dict:
     return {
         "event_id": event.event_id,
@@ -643,23 +624,6 @@ def _outcome_summary(window: EquityWindow) -> dict:
         "maximum_drawdown": fmt.money(report.maximum_drawdown),
         "closed_trade_count": report.closed_trade_count,
     }
-
-
-def _unrealized(lifecycle, mark: Decimal | None, side: str | None) -> Decimal | None:
-    if mark is None:
-        return None
-    move = mark - lifecycle.entry_price
-    if side == "SELL":  # 空头方向相反；未知方向按多头估算（当前 MVP 只做多）
-        move = -move
-    return move * lifecycle.quantity
-
-
-def _direction(side: str | None) -> str | None:
-    if side == "BUY":
-        return "多"
-    if side == "SELL":
-        return "空"
-    return None
 
 
 def _filled_quantity(order: Order | None) -> str | None:
