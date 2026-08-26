@@ -511,17 +511,9 @@ class PortfolioContextForecastProducer:
             assessment=assessment,
             packet=packet,
         )
-        primary_target = next(
-            (
-                item
-                for item in frozen_targets
-                if item.contract.contract_id == self.targets[0].contract.contract_id
-            ),
-            None,
-        )
-        if self.preflight is not None and primary_target is not None:
+        if self.preflight is not None:
             self.preflight.before_estimate(
-                slot=primary_target.slot,
+                slot=frozen_targets[0].slot,
                 formal_producer_behavior_id=self.policy.producer_behavior_id,
                 formal_analysis_input=analysis_input,
             )

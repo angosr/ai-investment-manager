@@ -1360,7 +1360,7 @@ def assemble_capital_cycle(
     code_version: str | None = None,
     producer_activation_at: datetime | None = None,
     context_forecast_preflight_factory: (
-        Callable[[ForecastContract], ContextForecastPreflight] | None
+        Callable[[tuple[ForecastContract, ...]], ContextForecastPreflight] | None
     ) = None,
 ) -> CapitalCycleService:
     if not config.capital.enabled:
@@ -1504,7 +1504,7 @@ def assemble_capital_cycle(
                 preflight=(
                     None
                     if context_forecast_preflight_factory is None
-                    else context_forecast_preflight_factory(frozen_contracts[0])
+                    else context_forecast_preflight_factory(frozen_contracts)
                 ),
                 analyst=assemble_codex_context_forecast_analyst(
                     config,

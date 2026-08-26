@@ -204,12 +204,12 @@ def _assemble_capital_consumer(
     execution = assemble_product_execution_runtime(config, engine)
     ablation_policy = config.outcome_evaluation.world_model_ablation
 
-    def paired_preflight(contract):
+    def paired_preflight(contracts):
         preflight = assemble_world_model_ablation_preallocator(
             config,
             engine=engine,
             release=manifest,
-            contract=contract,
+            contracts=contracts,
             clock=lambda: datetime.now(UTC),
         )
         if preflight is None:

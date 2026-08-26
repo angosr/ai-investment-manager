@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy import create_engine, func, select
 
 from investment_manager.forecast.codex.router import AnalystResult
-from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
@@ -30,9 +29,9 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
-from investment_manager.forecast.tables import forecasts
+from investment_manager.forecast.tables import forecast_decision_slots, forecasts
 from investment_manager.governance.evaluation.outcome_service import (
-    configured_world_model_ablation_contract,
+    configured_world_model_ablation_contracts,
     preregister_world_model_ablation_plan,
 )
 from investment_manager.governance.evaluation.world_model_ablation import (
@@ -61,16 +60,19 @@ class _FixedControlAnalyst:
             success=True,
             output=WorldModelControlStructuredOutput.model_validate(
                 {
-                    "forecast": {
-                        "decision_slot_id": assignment.decision_slot_id,
-                        "outcome_probabilities": [
-                            {"bucket_id": "LARGE_LOSS", "probability": "0.10"},
-                            {"bucket_id": "LOSS", "probability": "0.20"},
-                            {"bucket_id": "FLAT", "probability": "0.40"},
-                            {"bucket_id": "GAIN", "probability": "0.20"},
-                            {"bucket_id": "LARGE_GAIN", "probability": "0.10"},
-                        ],
-                    }
+                    "forecasts": [
+                        {
+                            "decision_slot_id": target.decision_slot_id,
+                            "outcome_probabilities": [
+                                {"bucket_id": "LARGE_LOSS", "probability": "0.10"},
+                                {"bucket_id": "LOSS", "probability": "0.20"},
+                                {"bucket_id": "FLAT", "probability": "0.40"},
+                                {"bucket_id": "GAIN", "probability": "0.20"},
+                                {"bucket_id": "LARGE_GAIN", "probability": "0.10"},
+                            ],
+                        }
+                        for target in assignment.targets
+                    ]
                 }
             ),
             reason_code="CODEX_ANALYSIS_SUCCEEDED",
@@ -103,17 +105,9 @@ def _seed(engine, *, record_formal: bool = True):
     context = config.capital.context_forecast
     assert context is not None
     target_policy = context.targets[0]
-    instrument = next(
-        item.instrument
-        for item in config.capital.execution_specs
-        if item.instrument.key == target_policy.reference_instrument_key
-    )
-    contract = context_forecast_contract(
-        policy=context,
-        target_policy=target_policy,
-        instrument=instrument,
-        cost_semantics_version=config.capital.decision.cost_model_version,
-    )
+    contracts = configured_world_model_ablation_contracts(config)
+    contract = contracts[0]
+    instrument = contract.target.legs[0].instrument
     binding = ForecastProducerBinding.create(
         contract_id=contract.contract_id,
         producer_kind=ForecastProducerKind.CONTEXT,
@@ -134,20 +128,65 @@ def _seed(engine, *, record_formal: bool = True):
         slot_as_of=activation,
         cutoff_prices=(cutoff,),
     )
-    contracts = SqlForecastContractStore(engine)
-    contracts.record_contract(contract)
-    contracts.record_binding(binding, activated_at=activation)
-    contracts.record_slot(slot, binding=binding)
+    contract_store = SqlForecastContractStore(engine)
+    contract_store.record_contract(contract)
+    contract_store.record_binding(binding, activated_at=activation)
+    contract_store.record_slot(slot, binding=binding)
+    slots = [slot]
+    for extra_contract, extra_policy in zip(
+        contracts[1:], context.targets[1:], strict=True
+    ):
+        extra_binding = ForecastProducerBinding.create(
+            contract_id=extra_contract.contract_id,
+            producer_kind=ForecastProducerKind.CONTEXT,
+            producer_id=context.producer_id,
+            producer_behavior_id=context.producer_behavior_id,
+            permission=ForecastPermission.CAPITAL_CANDIDATE,
+            required_feature_keys=extra_policy.required_feature_keys,
+        )
+        extra_instrument = extra_contract.target.legs[0].instrument
+        extra_cutoff = ForecastPriceAnchor(
+            instrument_id=extra_instrument.key,
+            price=Decimal("100"),
+            observed_at=activation,
+            available_at=activation,
+            quote_ref=f"cutoff-{extra_instrument.symbol}",
+        )
+        extra_slot = ForecastDecisionSlot.create(
+            extra_contract,
+            slot_as_of=activation,
+            cutoff_prices=(extra_cutoff,),
+        )
+        contract_store.record_contract(extra_contract)
+        contract_store.record_binding(extra_binding, activated_at=activation)
+        contract_store.record_slot(extra_slot, binding=extra_binding)
+        slots.append(extra_slot)
     formal_available = activation + timedelta(minutes=5)
     formal_input = {
         "purpose": "FORECAST_ESTIMATE",
-        "decision_slot": {
-            "decision_slot_id": slot.slot_id,
-            "information_cutoff_at": slot.information_cutoff_at,
-            "completion_deadline_at": slot.completion_deadline_at,
-            "evaluation_at": slot.evaluation_at,
-        },
-        "forecast_contract": contract,
+        "coverage_gap_codes": [],
+        "forecast_targets": [
+            {
+                "decision_slot": {
+                    "decision_slot_id": target_slot.slot_id,
+                    "information_cutoff_at": target_slot.information_cutoff_at,
+                    "completion_deadline_at": target_slot.completion_deadline_at,
+                    "evaluation_at": target_slot.evaluation_at,
+                },
+                "forecast_contract": target_contract,
+                "target_state": {
+                    "as_of": activation,
+                    "asset_states": [
+                        {
+                            "asset": target_contract.target.legs[0].instrument.base_asset,
+                            "return_fraction": "0.01",
+                        }
+                    ],
+                    "derivative_states": [],
+                },
+            }
+            for target_contract, target_slot in zip(contracts, slots, strict=True)
+        ],
         "world_model": {
             "assessment_id": "world-model-1",
             "event_references": [
@@ -164,12 +203,6 @@ def _seed(engine, *, record_formal: bool = True):
                     "conflicting_evidence_ids": [],
                 }
             ],
-        },
-        "target_state": {
-            "as_of": activation,
-            "asset_states": [{"asset": "BTC", "return_fraction": "0.01"}],
-            "derivative_states": [],
-            "coverage_gap_codes": [],
         },
     }
     probabilities = tuple(
@@ -231,7 +264,7 @@ def _seed(engine, *, record_formal: bool = True):
     plan = ensure_world_model_ablation_plan(
         governance=governance,
         config=config,
-        contract=contract,
+        contracts=contracts,
         release=_release("release-ablation-v1", activation=activation),
         registered_at=activation - timedelta(hours=1),
     )
@@ -287,6 +320,64 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
     )
 
 
+def _record_remaining_joint_targets(engine, *, config, formal, assignment) -> None:
+    contracts = {
+        item.contract_id: item for item in configured_world_model_ablation_contracts(config)
+    }
+    with engine.connect() as connection:
+        slot_payloads = connection.execute(
+            select(forecast_decision_slots.c.payload).where(
+                forecast_decision_slots.c.slot_id.in_(
+                    tuple(item.decision_slot_id for item in assignment.targets[1:])
+                )
+            )
+        ).scalars()
+        slots = {
+            item.slot_id: item
+            for payload in slot_payloads
+            for item in (ForecastDecisionSlot.model_validate(payload),)
+        }
+    store = SqlForecastStore(engine)
+    for target in assignment.targets[1:]:
+        contract = contracts[target.contract_id]
+        slot = slots[target.decision_slot_id]
+        instrument = contract.target.legs[0].instrument
+        expected_gross_bps = sum(
+            (
+                probability.probability * bucket.representative_bps
+                for probability, bucket in zip(
+                    formal.outcome_probabilities,
+                    contract.outcome_buckets,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        )
+        extra = BaseForecast.model_validate(
+            {
+                **formal.model_dump(mode="python"),
+                "forecast_id": target.formal_forecast_id,
+                "contract_id": target.contract_id,
+                "decision_slot_id": target.decision_slot_id,
+                "outcome_family_id": contract.outcome_family_id,
+                "target": contract.target,
+                "cutoff_prices": slot.cutoff_prices,
+                "entry_prices": (
+                    ForecastPriceAnchor(
+                        instrument_id=instrument.key,
+                        price=Decimal("100.1"),
+                        observed_at=formal.available_at,
+                        available_at=formal.available_at,
+                        quote_ref=f"entry-{instrument.symbol}",
+                    ),
+                ),
+                "expected_gross_bps": expected_gross_bps,
+            }
+        )
+        store.record(extra)
+        store.record_outcome(_gain_outcome(config, contract, slot))
+
+
 def _record_no_estimate_case(
     engine,
     *,
@@ -332,7 +423,7 @@ def _record_no_estimate_case(
     return slot
 
 
-def test_preregistration_and_runtime_share_one_formal_contract() -> None:
+def test_preregistration_and_runtime_share_joint_formal_contracts() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -346,9 +437,11 @@ def test_preregistration_and_runtime_share_one_formal_contract() -> None:
         release=release,
         registered_at=policy.activated_at - timedelta(hours=1),
     )
-    contract = configured_world_model_ablation_contract(config)
+    contracts = configured_world_model_ablation_contracts(config)
 
-    assert plan.candidate_spec_snapshot["formal_contract_id"] == contract.contract_id
+    assert plan.candidate_spec_snapshot["formal_contract_ids"] == [
+        contract.contract_id for contract in contracts
+    ]
     assert plan.candidate_spec_snapshot["sample_selection"] == (
         "GREEDY_NON_OVERLAPPING_INFORMATION_CUTOFF_TO_EVALUATION_V1"
     )
@@ -386,8 +479,10 @@ def test_control_assignment_removes_world_model_and_freezes_shared_contract() ->
     formal_input = json.loads(formal.analysis_input_json)
 
     assert "world_model" not in control_input
-    assert control_input["forecast_contract"] == formal_input["forecast_contract"]
-    assert control_input["target_state"] == formal_input["target_state"]
+    assert control_input == {
+        key: value for key, value in formal_input.items() if key != "world_model"
+    }
+    assert len(assignment.targets) == 3
     assert assignment.formal_analysis_input_hash == formal.analysis_input_hash
     assert assignment.formal_available_at is None
     assert assignment.call_order == "PREASSIGNED_INDEPENDENT_WORKERS"
@@ -450,7 +545,9 @@ def test_preassignment_retry_rejects_input_drift() -> None:
         clock=lambda: slot.information_cutoff_at + timedelta(minutes=2),
     )
     changed_input = json.loads(formal.analysis_input_json)
-    changed_input["target_state"]["asset_states"][0]["return_fraction"] = "0.02"
+    changed_input["forecast_targets"][0]["target_state"]["asset_states"][0][
+        "return_fraction"
+    ] = "0.02"
 
     with pytest.raises(ValueError, match="重试绑定了不同输入"):
         preallocator.before_estimate(
@@ -463,14 +560,14 @@ def test_preassignment_retry_rejects_input_drift() -> None:
 def test_plan_is_prospective_and_survives_unrelated_release_changes() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    config, contract, _binding, _slot, _formal, first = _seed(engine)
+    config, _contract, _binding, _slot, _formal, first = _seed(engine)
     policy = config.outcome_evaluation.world_model_ablation
     assert policy is not None
 
     repeated = ensure_world_model_ablation_plan(
         governance=SqlGovernanceRepository(engine),
         config=config,
-        contract=contract,
+        contracts=configured_world_model_ablation_contracts(config),
         release=_release("release-ablation-v2", activation=policy.activated_at),
         registered_at=policy.activated_at - timedelta(minutes=30),
     )
@@ -496,6 +593,13 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
         analyst=analyst,
     )
     _preassign(repository, config, plan, slot, formal)
+    assignment = repository.pending_assignments(plan_id=plan.plan_id)[0]
+    _record_remaining_joint_targets(
+        engine,
+        config=config,
+        formal=formal,
+        assignment=assignment,
+    )
 
     first = runner.reconcile(as_of=formal.available_at + timedelta(minutes=1))
     replay = runner.reconcile(as_of=formal.available_at + timedelta(minutes=2))
@@ -503,7 +607,7 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
     assert first.assignments == replay.assignments == 1
     assert analyst.calls == 1
     with engine.connect() as connection:
-        assert connection.execute(select(func.count()).select_from(forecasts)).scalar_one() == 1
+        assert connection.execute(select(func.count()).select_from(forecasts)).scalar_one() == 3
 
     outcome = _gain_outcome(config, contract, slot)
     SqlForecastStore(engine).record_outcome(outcome)
@@ -516,8 +620,8 @@ def test_runner_is_idempotent_and_scores_same_slot_without_capital_output() -> N
         as_of=outcome.settled_at,
     )
 
-    assert report.settled_pairs == 1
-    assert report.formal_forecast_count == 1
+    assert report.settled_pairs == 3
+    assert report.formal_forecast_count == 3
     assert report.formal_no_estimate_count == 0
     assert report.successful_controls == 1
     assert report.conservative_sample_count == 1
@@ -570,7 +674,7 @@ def test_late_control_is_counted_as_failure_without_post_outcome_retry() -> None
     assert not report.evidence_sufficient
 
 
-def test_formal_no_estimate_enters_conservative_skill_bound() -> None:
+def test_unpaired_target_state_failure_does_not_enter_world_model_ablation() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     config, contract, binding, _slot, formal, plan = _seed(engine)
@@ -625,8 +729,8 @@ def test_formal_no_estimate_enters_conservative_skill_bound() -> None:
 
     assert report.formal_no_estimate_count == 1
     assert report.settled_pairs == 0
-    assert report.conservative_sample_count == 1
-    assert report.conservative_mean_brier_improvement == Decimal("-2")
+    assert report.conservative_sample_count == 0
+    assert report.conservative_mean_brier_improvement is None
     assert not report.evidence_sufficient
 
 
@@ -659,8 +763,8 @@ def test_report_counts_only_deterministic_non_overlapping_skill_samples() -> Non
     )
 
     assert report.formal_no_estimate_count == 3
-    assert report.conservative_sample_count == 2
-    assert report.conservative_mean_brier_improvement == Decimal("-2")
+    assert report.conservative_sample_count == 0
+    assert report.conservative_mean_brier_improvement is None
     assert not report.evidence_sufficient
 
 

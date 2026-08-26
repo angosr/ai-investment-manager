@@ -15,7 +15,6 @@ class WorldModelAblationPolicy(StrictConfig):
     plan_id: str = Field(min_length=1)
     activated_at: datetime
     minimum_sample_size: int = Field(default=30, ge=2)
-    maximum_batch_size: int = Field(default=2, ge=1, le=8)
 
     _utc_activated_at = field_validator("activated_at")(require_utc)
 

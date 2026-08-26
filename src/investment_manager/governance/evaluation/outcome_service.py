@@ -181,13 +181,13 @@ def _assemble_world_model_ablation(
         return None
     if release is None:
         raise ValueError("启用 WorldModel control 必须绑定 ReleaseManifest")
-    contract = configured_world_model_ablation_contract(config)
+    contracts = configured_world_model_ablation_contracts(config)
     context = config.capital.context_forecast
     assert context is not None
     plan = ensure_world_model_ablation_plan(
         governance=SqlGovernanceRepository(engine),
         config=config,
-        contract=contract,
+        contracts=contracts,
         release=release,
         registered_at=datetime.now(UTC),
     )
@@ -201,29 +201,31 @@ def _assemble_world_model_ablation(
     )
 
 
-def configured_world_model_ablation_contract(config: AppConfig) -> ForecastContract:
-    """Build the preregistered reference contract for the world-model ablation."""
+def configured_world_model_ablation_contracts(
+    config: AppConfig,
+) -> tuple[ForecastContract, ...]:
+    """Build the exact joint contract set seen by the formal forecast call."""
 
     context = config.capital.context_forecast
     if context is None or not context.enabled:
         raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
-    target_policy = context.targets[0]
-    instrument = next(
-        (
-            item.instrument
-            for item in config.capital.execution_specs
-            if item.instrument.key == target_policy.reference_instrument_key
-        ),
-        None,
-    )
-    if instrument is None:
-        raise ValueError("WorldModel control 参考合同品种不在 Capital 范围")
-    return context_forecast_contract(
-        policy=context,
-        target_policy=target_policy,
-        instrument=instrument,
-        cost_semantics_version=config.capital.decision.cost_model_version,
-    )
+    instruments = {
+        item.instrument.key: item.instrument for item in config.capital.execution_specs
+    }
+    try:
+        return tuple(
+            context_forecast_contract(
+                policy=context,
+                target_policy=target_policy,
+                instrument=instruments[target_policy.reference_instrument_key],
+                cost_semantics_version=config.capital.decision.cost_model_version,
+            )
+            for target_policy in context.targets
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "WorldModel control 参考合同品种不在 Capital 范围"
+        ) from exc
 
 
 def preregister_world_model_ablation_plan(
@@ -238,7 +240,7 @@ def preregister_world_model_ablation_plan(
     return ensure_world_model_ablation_plan(
         governance=SqlGovernanceRepository(engine),
         config=config,
-        contract=configured_world_model_ablation_contract(config),
+        contracts=configured_world_model_ablation_contracts(config),
         release=release,
         registered_at=registered_at,
     )
