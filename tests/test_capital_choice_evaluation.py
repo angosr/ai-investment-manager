@@ -22,8 +22,17 @@ def _case(
     selected: bool = False,
     predicted: str = "-5",
     cost: str = "10",
+    decision_gross: str | None = None,
+    projection_gross: str | None = None,
     realized: str = "0",
 ) -> CapitalChoiceCase:
+    predicted_value = Decimal(predicted)
+    cost_value = Decimal(cost)
+    decision_gross_value = (
+        Decimal(decision_gross)
+        if decision_gross is not None
+        else predicted_value + cost_value
+    )
     return CapitalChoiceCase(
         decision_id="target-1",
         decision_at=NOW,
@@ -33,9 +42,15 @@ def _case(
         instrument_key=instrument,
         direction=direction,
         selected=selected,
-        predicted_net_bps=Decimal(predicted),
-        decision_cost_bps=Decimal(cost),
-        realized_gross_bps=Decimal(realized),
+        predicted_net_bps=predicted_value,
+        decision_gross_bps=decision_gross_value,
+        projection_gross_bps=(
+            Decimal(projection_gross)
+            if projection_gross is not None
+            else decision_gross_value
+        ),
+        decision_cost_bps=cost_value,
+        realized_product_gross_bps=Decimal(realized),
     )
 
 
@@ -114,6 +129,50 @@ def test_capital_choice_separates_selected_loss_from_product_choice_gap() -> Non
     assert not exposure.missed_profitable_exposure
     assert exposure.selected_unprofitable_exposure
     assert evidence.selected_unprofitable_exposure_count == 1
+
+
+def test_capital_choice_reanchors_product_outcome_to_the_actual_decision_time() -> None:
+    evidence = evaluate_capital_choice(
+        (
+            _case(
+                "btc-long",
+                "CRYPTO_NETWORK:BTC:USDT",
+                "BINANCE:USD_M_PERPETUAL:BTCUSDT",
+                ExposureDirection.LONG,
+                predicted="-5",
+                cost="10",
+                decision_gross="5",
+                projection_gross="20",
+                realized="30",
+            ),
+        )
+    )
+
+    # Product outcome is +30 bp from the original anchor, but +15 bp had
+    # already happened before this decision.  Only the remaining +15 bp is
+    # attributable to this choice, leaving +5 bp after its frozen future cost.
+    outcome = evidence.exposures[0].best_realized
+    assert outcome.realized_net_bps == Decimal("5")
+    assert evidence.exposures[0].opportunity_gap_bps == Decimal("5")
+
+
+def test_capital_choice_rejects_inconsistent_predicted_net_economics() -> None:
+    with pytest.raises(ValueError, match="预测净收益"):
+        CapitalChoiceCase(
+            decision_id="target-1",
+            decision_at=NOW,
+            evaluation_at=NOW + timedelta(hours=4),
+            economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+            projection_id="btc-long",
+            instrument_key="BINANCE:USD_M_PERPETUAL:BTCUSDT",
+            direction=ExposureDirection.LONG,
+            selected=False,
+            predicted_net_bps=Decimal("1"),
+            decision_gross_bps=Decimal("5"),
+            projection_gross_bps=Decimal("5"),
+            decision_cost_bps=Decimal("10"),
+            realized_product_gross_bps=Decimal("20"),
+        )
 
 
 def test_capital_choice_rejects_duplicate_or_multiple_selected_products() -> None:

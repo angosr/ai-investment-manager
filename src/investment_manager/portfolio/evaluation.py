@@ -10,7 +10,7 @@ from decimal import Decimal
 from investment_manager.forecast.models import ExposureDirection
 from investment_manager.kernel.time import require_utc
 
-CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v1"
+CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +26,10 @@ class CapitalChoiceCase:
     direction: ExposureDirection
     selected: bool
     predicted_net_bps: Decimal
+    decision_gross_bps: Decimal
+    projection_gross_bps: Decimal
     decision_cost_bps: Decimal
-    realized_gross_bps: Decimal
+    realized_product_gross_bps: Decimal
 
     def __post_init__(self) -> None:
         require_utc(self.decision_at)
@@ -44,10 +46,22 @@ class CapitalChoiceCase:
                 raise ValueError(f"Capital choice {label} 不能为空")
         if self.decision_cost_bps < 0:
             raise ValueError("Capital choice 决策成本不能为负数")
+        if self.predicted_net_bps != self.decision_gross_bps - self.decision_cost_bps:
+            raise ValueError("Capital choice 预测净收益必须等于决策毛收益减冻结成本")
+
+    @property
+    def realized_remaining_gross_bps(self) -> Decimal:
+        """Re-anchor the product outcome from its entry anchor to decision time."""
+
+        return (
+            self.realized_product_gross_bps
+            + self.decision_gross_bps
+            - self.projection_gross_bps
+        )
 
     @property
     def realized_net_bps(self) -> Decimal:
-        return self.realized_gross_bps - self.decision_cost_bps
+        return self.realized_remaining_gross_bps - self.decision_cost_bps
 
 
 @dataclass(frozen=True, slots=True)

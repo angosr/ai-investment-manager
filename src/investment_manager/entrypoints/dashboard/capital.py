@@ -556,8 +556,10 @@ class CapitalDashboardReader:
                             direction=leg.direction,
                             selected=candidate.desired_gross_notional > 0,
                             predicted_net_bps=candidate.decision_net_bps,
+                            decision_gross_bps=candidate.decision_gross_bps,
+                            projection_gross_bps=projection.conservative_gross_bps,
                             decision_cost_bps=candidate.cost.total_bps,
-                            realized_gross_bps=outcome.realized_gross_bps,
+                            realized_product_gross_bps=outcome.realized_gross_bps,
                         )
                     )
                 return evaluate_capital_choice(tuple(cases))
