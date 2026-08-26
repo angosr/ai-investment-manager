@@ -329,6 +329,7 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
     assert context.reasoning_effort == "medium"
     assert context.horizon_minutes == 240
     assert context.cadence_minutes == context.validity_minutes == 60
+    assert config.capital.decision.minimum_conservative_net_bps == 0
     assert len(context.targets) == 3
     assert {
         item.outcome_family_id for item in config.capital.candidate_capital_authorizations
