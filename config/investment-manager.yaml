@@ -543,67 +543,53 @@ information:
   # 每个因果领域都必须显式声明；空来源表示已知未覆盖，而不是默认为“没有事件”。
   coverage_requirements:
     - domain: FISCAL_DEBT
-      source_stream_ids: [treasury-auction-results, treasury-buyback-schedule, treasury-tga-balance]
       required_capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE, DEBT_REPURCHASE, FISCAL_CALENDAR, TREASURY_CASH]
-      source_capabilities:
-        treasury-auction-results: [AUCTION_ABSORPTION, DEBT_ISSUANCE]
-        treasury-buyback-schedule: [DEBT_REPURCHASE, FISCAL_CALENDAR]
-        treasury-tga-balance: [TREASURY_CASH]
-      maximum_publication_age_seconds: 172800
+      sources:
+        - {stream_id: treasury-auction-results, capabilities: [AUCTION_ABSORPTION, DEBT_ISSUANCE], maximum_publication_age_seconds: 172800}
+        - {stream_id: treasury-buyback-schedule, capabilities: [DEBT_REPURCHASE, FISCAL_CALENDAR], maximum_publication_age_seconds: 172800}
+        - {stream_id: treasury-tga-balance, capabilities: [TREASURY_CASH], maximum_publication_age_seconds: 172800}
     - domain: MONETARY_INFLATION
-      source_stream_ids: [bea-economic-release-calendar, bls-economic-release-calendar, fed-monetary-releases, nyfed-reference-rates, nyfed-reverse-repo, nyfed-soma-holdings]
       required_capabilities: [EMPLOYMENT_SURPRISE, INFLATION_SURPRISE, OFFICIAL_EVENT_CALENDAR, POLICY_DECISIONS, POLICY_IMPLEMENTATION]
-      source_capabilities:
-        bea-economic-release-calendar: [OFFICIAL_EVENT_CALENDAR]
-        bls-economic-release-calendar: [OFFICIAL_EVENT_CALENDAR]
-        fed-monetary-releases: [POLICY_DECISIONS]
-        nyfed-reference-rates: [POLICY_IMPLEMENTATION]
-        nyfed-reverse-repo: [POLICY_IMPLEMENTATION]
-        nyfed-soma-holdings: [POLICY_IMPLEMENTATION]
-      maximum_publication_age_seconds: 864000
+      sources:
+        - {stream_id: bea-economic-release-calendar, capabilities: [OFFICIAL_EVENT_CALENDAR], maximum_publication_age_seconds: 864000}
+        - {stream_id: bls-economic-release-calendar, capabilities: [OFFICIAL_EVENT_CALENDAR], maximum_publication_age_seconds: 864000}
+        - {stream_id: fed-monetary-releases, capabilities: [POLICY_DECISIONS], maximum_publication_age_seconds: 864000}
+        - {stream_id: nyfed-reference-rates, capabilities: [POLICY_IMPLEMENTATION], maximum_publication_age_seconds: 864000}
+        - {stream_id: nyfed-reverse-repo, capabilities: [POLICY_IMPLEMENTATION], maximum_publication_age_seconds: 864000}
+        - {stream_id: nyfed-soma-holdings, capabilities: [POLICY_IMPLEMENTATION], maximum_publication_age_seconds: 864000}
     - domain: REGULATION_LEGISLATION
-      source_stream_ids: [federal-register-digital-assets, ofac-recent-actions, treasury-press-releases]
       required_capabilities: [AGENCY_RULEMAKING, EXECUTIVE_POLICY_ACTIONS, LEGISLATION_STATUS, OFFICIAL_EVENT_CALENDAR, SANCTIONS_ACTIONS]
-      source_capabilities:
-        federal-register-digital-assets: [AGENCY_RULEMAKING]
-        ofac-recent-actions: [SANCTIONS_ACTIONS]
-        treasury-press-releases: [EXECUTIVE_POLICY_ACTIONS]
-      maximum_publication_age_seconds: 604800
+      sources:
+        - {stream_id: federal-register-digital-assets, capabilities: [AGENCY_RULEMAKING], maximum_publication_age_seconds: 604800}
+        - {stream_id: ofac-recent-actions, capabilities: [SANCTIONS_ACTIONS], maximum_publication_age_seconds: 604800}
+        - {stream_id: treasury-press-releases, capabilities: [EXECUTIVE_POLICY_ACTIONS], maximum_publication_age_seconds: 604800}
     - domain: INSTITUTIONAL_FLOWS
       # 发行人持仓与聚合净流量保持不同证据等级，不能互相冒充。
-      source_stream_ids: [ark-arkb-holdings, bitwise-bitb-holdings, bykaranteli-etf-aggregate-flows, ishares-ibit-holdings]
       required_capabilities: [BTC_ETF_AGGREGATE_FLOW, BTC_ETF_ARKB_HOLDINGS, BTC_ETF_BITB_HOLDINGS, BTC_ETF_IBIT_HOLDINGS, ETH_ETF_AGGREGATE_FLOW]
-      source_capabilities:
-        ark-arkb-holdings: [BTC_ETF_ARKB_HOLDINGS]
-        bitwise-bitb-holdings: [BTC_ETF_BITB_HOLDINGS]
-        bykaranteli-etf-aggregate-flows: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW]
-        ishares-ibit-holdings: [BTC_ETF_IBIT_HOLDINGS]
-      maximum_publication_age_seconds: 345600
+      sources:
+        - {stream_id: ark-arkb-holdings, capabilities: [BTC_ETF_ARKB_HOLDINGS], maximum_publication_age_seconds: 345600}
+        - {stream_id: bitwise-bitb-holdings, capabilities: [BTC_ETF_BITB_HOLDINGS], maximum_publication_age_seconds: 345600}
+        - {stream_id: bykaranteli-etf-aggregate-flows, capabilities: [BTC_ETF_AGGREGATE_FLOW, ETH_ETF_AGGREGATE_FLOW], maximum_publication_age_seconds: 345600}
+        - {stream_id: ishares-ibit-holdings, capabilities: [BTC_ETF_IBIT_HOLDINGS], maximum_publication_age_seconds: 345600}
     - domain: SPOT_DERIVATIVES
-      source_stream_ids: [binance-usdm-market, coinbase-spot-market, kraken-spot-market]
       required_capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT, MULTI_VENUE_SPOT, OPTIONS_POSITIONING]
-      source_capabilities:
-        binance-usdm-market: [BINANCE_PERPETUAL, BINANCE_SPOT]
-        coinbase-spot-market: [MULTI_VENUE_SPOT]
-        kraken-spot-market: [MULTI_VENUE_SPOT]
-      maximum_publication_age_seconds: 900
+      sources:
+        - {stream_id: binance-usdm-market, capabilities: [BINANCE_PERPETUAL, BINANCE_SPOT], maximum_publication_age_seconds: 900}
+        - {stream_id: coinbase-spot-market, capabilities: [MULTI_VENUE_SPOT], maximum_publication_age_seconds: 900}
+        - {stream_id: kraken-spot-market, capabilities: [MULTI_VENUE_SPOT], maximum_publication_age_seconds: 900}
     - domain: ONCHAIN_SUPPLY
-      source_stream_ids: [defillama-usd-stablecoin-supply]
       required_capabilities: [EXCHANGE_BALANCES, REALIZED_SUPPLY, STABLECOIN_SUPPLY]
-      source_capabilities:
-        defillama-usd-stablecoin-supply: [STABLECOIN_SUPPLY]
-      maximum_publication_age_seconds: 172800
+      sources:
+        - {stream_id: defillama-usd-stablecoin-supply, capabilities: [STABLECOIN_SUPPLY], maximum_publication_age_seconds: 172800}
     - domain: CROSS_ASSET_EXTERNAL
       # FRED 三项是明确标注的日频聚合证据，只用于宏观传导验证，不冒充一手或盘中行情。
-      source_stream_ids: [fed-broad-dollar, fred-sp500, fred-us-high-yield-oas, fred-wti, treasury-yield-curve]
       required_capabilities: [CREDIT, ENERGY, EQUITIES, GOLD, USD, UST_YIELD_CURVE]
-      source_capabilities:
-        fed-broad-dollar: [USD]
-        fred-sp500: [EQUITIES]
-        fred-us-high-yield-oas: [CREDIT]
-        fred-wti: [ENERGY]
-        treasury-yield-curve: [UST_YIELD_CURVE]
-      maximum_publication_age_seconds: 864000
+      sources:
+        - {stream_id: fed-broad-dollar, capabilities: [USD], maximum_publication_age_seconds: 864000}
+        - {stream_id: fred-sp500, capabilities: [EQUITIES], maximum_publication_age_seconds: 864000}
+        - {stream_id: fred-us-high-yield-oas, capabilities: [CREDIT], maximum_publication_age_seconds: 864000}
+        - {stream_id: fred-wti, capabilities: [ENERGY], maximum_publication_age_seconds: 864000}
+        - {stream_id: treasury-yield-curve, capabilities: [UST_YIELD_CURVE], maximum_publication_age_seconds: 864000}
 
 pipeline:
   version: off-pipeline-v8

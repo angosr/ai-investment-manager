@@ -81,64 +81,69 @@ class OfficialPublicationFeed(StrictConfig):
         return value
 
 
-class CoverageRequirement(StrictConfig):
-    domain: CausalDomain
-    source_stream_ids: tuple[str, ...] = ()
-    required_capabilities: tuple[str, ...] = ()
-    source_capabilities: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+class CoverageSourceContract(StrictConfig):
+    stream_id: str
+    capabilities: tuple[str, ...] = ()
     maximum_publication_age_seconds: int | None = Field(
         default=None,
         ge=10,
         le=2_592_000,
     )
 
-    @field_validator("source_stream_ids")
+    @field_validator("stream_id")
     @classmethod
-    def streams_must_be_unique_and_sorted(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if tuple(sorted(set(values))) != values:
-            raise ValueError("coverage source stream 必须唯一且排序")
-        if any(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", item) is None for item in values):
+    def stream_id_must_be_safe(cls, value: str) -> str:
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", value) is None:
             raise ValueError("coverage source stream id 非法")
-        return values
+        return value
 
-    @field_validator("required_capabilities")
+    @field_validator("capabilities")
     @classmethod
     def capabilities_must_be_unique_and_sorted(
         cls, values: tuple[str, ...]
     ) -> tuple[str, ...]:
         if tuple(sorted(set(values))) != values:
-            raise ValueError("coverage required capability 必须唯一且排序")
+            raise ValueError("coverage source capability 必须唯一且排序")
         if any(re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None for item in values):
+            raise ValueError("coverage source capability id 非法")
+        return values
+
+
+class CoverageRequirement(StrictConfig):
+    domain: CausalDomain
+    sources: tuple[CoverageSourceContract, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
+
+    @field_validator("sources")
+    @classmethod
+    def sources_must_be_unique_and_sorted(
+        cls, values: tuple[CoverageSourceContract, ...]
+    ) -> tuple[CoverageSourceContract, ...]:
+        identities = tuple(item.stream_id for item in values)
+        if tuple(sorted(set(identities))) != identities:
+            raise ValueError("coverage source contract 必须按 stream_id 唯一排序")
+        return values
+
+    @field_validator("required_capabilities")
+    @classmethod
+    def required_capabilities_must_be_unique_and_sorted(
+        cls, values: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if tuple(sorted(set(values))) != values:
+            raise ValueError("coverage required capability 必须唯一且排序")
+        if any(
+            re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None
+            for item in values
+        ):
             raise ValueError("coverage required capability id 非法")
         return values
 
-    @field_validator("source_capabilities")
-    @classmethod
-    def source_capabilities_must_be_well_formed(
-        cls, values: dict[str, tuple[str, ...]]
-    ) -> dict[str, tuple[str, ...]]:
-        for stream, capabilities in values.items():
-            if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", stream) is None:
-                raise ValueError("coverage source capability stream id 非法")
-            if tuple(sorted(set(capabilities))) != capabilities:
-                raise ValueError("coverage source capability 必须唯一且排序")
-            if any(
-                re.fullmatch(r"[A-Z0-9][A-Z0-9_]{0,127}", item) is None
-                for item in capabilities
-            ):
-                raise ValueError("coverage source capability id 非法")
-        return values
-
     @model_validator(mode="after")
-    def capability_contract_must_match_streams(self):
-        if (
-            self.required_capabilities or self.source_capabilities
-        ) and set(self.source_capabilities) != set(self.source_stream_ids):
-            raise ValueError("coverage source capability 必须逐一对应配置的数据流")
+    def capability_contract_must_match_domain(self):
         provided = {
             capability
-            for capabilities in self.source_capabilities.values()
-            for capability in capabilities
+            for source in self.sources
+            for capability in source.capabilities
         }
         unknown = tuple(sorted(provided - set(self.required_capabilities)))
         if unknown:
@@ -146,7 +151,6 @@ class CoverageRequirement(StrictConfig):
                 "coverage source capability 不属于领域需求: " + ", ".join(unknown)
             )
         return self
-
 
 class InformationPolicy(StrictConfig):
     version: str

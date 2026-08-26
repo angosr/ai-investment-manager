@@ -102,9 +102,9 @@ class SqlInformationCoverageStore:
         stream_ids = tuple(
             sorted(
                 {
-                    stream
+                    source.stream_id
                     for requirement in requirements
-                    for stream in requirement.source_stream_ids
+                    for source in requirement.sources
                 }
             )
         )
@@ -182,13 +182,13 @@ class SqlInformationCoverageStore:
         latest_publication_by_stream: dict[str, SourcePollRecord],
         latest_validity_by_stream: dict[str, SourcePollRecord],
     ) -> DomainCoverageSnapshot:
-        streams = requirement.source_stream_ids
+        streams = tuple(source.stream_id for source in requirement.sources)
         covered_capabilities = tuple(
             sorted(
                 {
                     capability
-                    for stream in streams
-                    for capability in requirement.source_capabilities.get(stream, ())
+                    for source in requirement.sources
+                    for capability in source.capabilities
                 }
             )
         )
@@ -241,17 +241,18 @@ class SqlInformationCoverageStore:
             for item in successes
         ):
             status = CoverageStatus.SOURCE_STALE
-        elif requirement.maximum_publication_age_seconds is not None and any(
-            not _stream_has_current_publication_or_validity(
-                stream_id=stream_id,
+        elif any(
+            source.maximum_publication_age_seconds is not None
+            and not _stream_has_current_publication_or_validity(
+                stream_id=source.stream_id,
                 as_of=as_of,
                 maximum_publication_age_seconds=(
-                    requirement.maximum_publication_age_seconds
+                    source.maximum_publication_age_seconds
                 ),
                 latest_publication_by_stream=latest_publication_by_stream,
                 latest_validity_by_stream=latest_validity_by_stream,
             )
-            for stream_id in streams
+            for source in requirement.sources
         ):
             status = CoverageStatus.NO_RECENT_PUBLICATION
         else:

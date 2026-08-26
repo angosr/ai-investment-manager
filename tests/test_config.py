@@ -122,12 +122,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "REGULATION_LEGISLATION"
     )
-    assert regulation.source_stream_ids == (
+    assert tuple(source.stream_id for source in regulation.sources) == (
         "federal-register-digital-assets",
         "ofac-recent-actions",
         "treasury-press-releases",
     )
-    assert regulation.source_capabilities == {
+    assert {source.stream_id: source.capabilities for source in regulation.sources} == {
         "federal-register-digital-assets": ("AGENCY_RULEMAKING",),
         "ofac-recent-actions": ("SANCTIONS_ACTIONS",),
         "treasury-press-releases": ("EXECUTIVE_POLICY_ACTIONS",),
@@ -137,14 +137,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "MONETARY_INFLATION"
     )
-    assert monetary.source_stream_ids[:2] == (
+    assert tuple(source.stream_id for source in monetary.sources[:2]) == (
         "bea-economic-release-calendar",
         "bls-economic-release-calendar",
     )
-    assert monetary.source_capabilities["bea-economic-release-calendar"] == (
+    monetary_sources = {source.stream_id: source for source in monetary.sources}
+    assert monetary_sources["bea-economic-release-calendar"].capabilities == (
         "OFFICIAL_EVENT_CALENDAR",
     )
-    assert monetary.source_capabilities["bls-economic-release-calendar"] == (
+    assert monetary_sources["bls-economic-release-calendar"].capabilities == (
         "OFFICIAL_EVENT_CALENDAR",
     )
     fiscal = next(
@@ -152,7 +153,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "FISCAL_DEBT"
     )
-    assert fiscal.source_capabilities["treasury-auction-results"] == (
+    fiscal_sources = {source.stream_id: source for source in fiscal.sources}
+    assert fiscal_sources["treasury-auction-results"].capabilities == (
         "AUCTION_ABSORPTION",
         "DEBT_ISSUANCE",
     )
@@ -161,7 +163,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "INSTITUTIONAL_FLOWS"
     )
-    assert institutional.source_capabilities == {
+    assert {source.stream_id: source.capabilities for source in institutional.sources} == {
         "ark-arkb-holdings": ("BTC_ETF_ARKB_HOLDINGS",),
         "bitwise-bitb-holdings": ("BTC_ETF_BITB_HOLDINGS",),
         "bykaranteli-etf-aggregate-flows": (
@@ -175,12 +177,14 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "SPOT_DERIVATIVES"
     )
-    assert spot_derivatives.source_stream_ids == (
+    assert tuple(source.stream_id for source in spot_derivatives.sources) == (
         "binance-usdm-market",
         "coinbase-spot-market",
         "kraken-spot-market",
     )
-    assert spot_derivatives.source_capabilities == {
+    assert {
+        source.stream_id: source.capabilities for source in spot_derivatives.sources
+    } == {
         "binance-usdm-market": ("BINANCE_PERPETUAL", "BINANCE_SPOT"),
         "coinbase-spot-market": ("MULTI_VENUE_SPOT",),
         "kraken-spot-market": ("MULTI_VENUE_SPOT",),
@@ -196,8 +200,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         for item in config.information.coverage_requirements
         if item.domain.value == "ONCHAIN_SUPPLY"
     )
-    assert onchain.source_stream_ids == ("defillama-usd-stablecoin-supply",)
-    assert onchain.source_capabilities == {
+    assert tuple(source.stream_id for source in onchain.sources) == (
+        "defillama-usd-stablecoin-supply",
+    )
+    assert {source.stream_id: source.capabilities for source in onchain.sources} == {
         "defillama-usd-stablecoin-supply": ("STABLECOIN_SUPPLY",),
     }
     assert config.decision_state.packet_policy.maximum_background_fact_distance_seconds == 172_800

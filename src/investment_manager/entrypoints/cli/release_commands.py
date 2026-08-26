@@ -690,10 +690,10 @@ async def _core_readiness_missing(
         information_streams = tuple(
             sorted(
                 {
-                    stream
+                    source.stream_id
                     for requirement in config.information.coverage_requirements
-                    for stream in requirement.source_stream_ids
-                    if stream not in market_coverage_streams
+                    for source in requirement.sources
+                    if source.stream_id not in market_coverage_streams
                 }
             )
         )

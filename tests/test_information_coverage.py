@@ -13,7 +13,10 @@ from investment_manager.information.models import (
     SourcePollRecord,
     SourcePollStatus,
 )
-from investment_manager.information.policy import CoverageRequirement
+from investment_manager.information.policy import (
+    CoverageRequirement,
+    CoverageSourceContract,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.schema import create_schema
 
@@ -97,8 +100,13 @@ def _requirement(
 ) -> CoverageRequirement:
     return CoverageRequirement(
         domain=domain,
-        source_stream_ids=streams,
-        maximum_publication_age_seconds=publication_age,
+        sources=tuple(
+            CoverageSourceContract(
+                stream_id=stream,
+                maximum_publication_age_seconds=publication_age,
+            )
+            for stream in streams
+        ),
     )
 
 
@@ -219,6 +227,75 @@ def test_calendar_validity_prevents_false_stale_publication() -> None:
     )[0]
 
     assert snapshot.status == CoverageStatus.CURRENT
+
+
+def test_publication_freshness_uses_each_source_contract() -> None:
+    store = _store()
+    store.put(
+        build_source_poll_record(
+            source_stream_id="intraday-state",
+            domain=CausalDomain.FISCAL_DEBT,
+            status=SourcePollStatus.UNCHANGED,
+            started_at=AS_OF - timedelta(seconds=21),
+            completed_at=AS_OF - timedelta(seconds=20),
+            poll_interval_seconds=60,
+            latest_publication_at=AS_OF - timedelta(hours=2),
+        )
+    )
+    store.put(
+        build_source_poll_record(
+            source_stream_id="scheduled-state",
+            domain=CausalDomain.FISCAL_DEBT,
+            status=SourcePollStatus.UNCHANGED,
+            started_at=AS_OF - timedelta(seconds=21),
+            completed_at=AS_OF - timedelta(seconds=20),
+            poll_interval_seconds=60,
+            latest_publication_at=AS_OF - timedelta(days=2),
+        )
+    )
+    requirement = CoverageRequirement(
+        domain=CausalDomain.FISCAL_DEBT,
+        sources=(
+            CoverageSourceContract(
+                stream_id="intraday-state",
+                maximum_publication_age_seconds=3 * 60 * 60,
+            ),
+            CoverageSourceContract(
+                stream_id="scheduled-state",
+                maximum_publication_age_seconds=3 * 24 * 60 * 60,
+            ),
+        ),
+    )
+
+    snapshot = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
+    stale_intraday = requirement.model_copy(
+        update={
+            "sources": (
+                requirement.sources[0].model_copy(
+                    update={"maximum_publication_age_seconds": 60 * 60}
+                ),
+                requirement.sources[1],
+            )
+        }
+    )
+    stale_scheduled = requirement.model_copy(
+        update={
+            "sources": (
+                requirement.sources[0],
+                requirement.sources[1].model_copy(
+                    update={"maximum_publication_age_seconds": 24 * 60 * 60}
+                ),
+            )
+        }
+    )
+
+    assert snapshot.status == CoverageStatus.CURRENT
+    assert store.snapshot(as_of=AS_OF, requirements=(stale_intraday,))[0].status == (
+        CoverageStatus.NO_RECENT_PUBLICATION
+    )
+    assert store.snapshot(as_of=AS_OF, requirements=(stale_scheduled,))[0].status == (
+        CoverageStatus.NO_RECENT_PUBLICATION
+    )
 
 
 def test_coverage_is_point_in_time_and_ignores_future_recovery() -> None:
@@ -353,12 +430,14 @@ def test_fresh_sources_are_partial_when_decision_capabilities_are_missing() -> N
     store.put(poll)
     requirement = CoverageRequirement(
         domain=CausalDomain.CROSS_ASSET_EXTERNAL,
-        source_stream_ids=("treasury-yield-curve",),
         required_capabilities=("EQUITIES", "USD", "UST_YIELD_CURVE"),
-        source_capabilities={
-            "treasury-yield-curve": ("UST_YIELD_CURVE",),
-        },
-        maximum_publication_age_seconds=3_600,
+        sources=(
+            CoverageSourceContract(
+                stream_id="treasury-yield-curve",
+                capabilities=("UST_YIELD_CURVE",),
+                maximum_publication_age_seconds=3_600,
+            ),
+        ),
     )
 
     snapshot = store.snapshot(as_of=AS_OF, requirements=(requirement,))[0]
