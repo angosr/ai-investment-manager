@@ -363,7 +363,7 @@ capital:
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v37
+  version: typed-outcome-settlement-v38
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -374,9 +374,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v31
+    version: world-model-ablation-forward-v32
     enabled: false
-    plan_id: world-model-ablation-forward-v31
+    plan_id: world-model-ablation-forward-v32
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
     activated_at: 2026-08-26T23:00:00Z
     minimum_sample_size: 30

@@ -348,12 +348,15 @@ def ensure_world_model_ablation_plan(
         "formal_contract_ids": [item.contract_id for item in contracts],
         "formal_producer_behavior_id": context.producer_behavior_id,
         "control_behavior_hash": behavior_hash,
-        "assignment_rule": "ALL_INPUT_READY_SLOTS_BEFORE_FORMAL_CALL_AT_OR_AFTER_ACTIVATION",
-        "formal_missing_rule": "COUNT_AUTHORITATIVE_FORECAST_NO_ESTIMATE_TERMINALS",
+        "assignment_rule": "ONE_ASSIGNMENT_FOR_EXACT_FORMAL_TARGET_SET_BEFORE_BOTH_CALLS",
+        "formal_missing_rule": (
+            "COUNT_PREASSIGNED_TARGET_TERMINALS_ONLY;"
+            "UNPAIRED_STATE_FAILURES_ARE_DIAGNOSTIC_ONLY"
+        ),
         "missing_score_rule": (
             "LOWER_BOUND_MISSING_CONTROL_AS_PERFECT_AND_FORMAL_NO_ESTIMATE_AS_WORST"
         ),
-        "permission_rule": "ALL_SETTLED_TERMINALS_ENTER_CONSERVATIVE_SKILL_BOUND",
+        "permission_rule": "ALL_SETTLED_PREASSIGNED_TARGETS_ENTER_CONSERVATIVE_BOUND",
         "sample_selection": SAMPLE_SELECTION_RULE,
         "uncertainty_method": UNCERTAINTY_METHOD,
         "call_order": CONTROL_CALL_ORDER,
