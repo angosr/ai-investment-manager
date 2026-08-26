@@ -25,7 +25,6 @@ from investment_manager.forecast.context.contract import (
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
     assessment_current_evidence_ids,
-    assessment_persistable_event_ids,
     assessment_previous_mechanism_ids,
     assessment_world_model_evidence_ids,
     build_assess_prompt,
@@ -37,7 +36,7 @@ from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
 
 ASSESS_INPUT_VERSION = "world-model-input-v6"
-ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v7"
+ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION = "world-model-output-v8"
 
 
 class AssessPromptCapacityError(ValueError):
@@ -71,13 +70,6 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     verification["properties"]["feature_selector"]["enum"] = list(
         assessment_available_feature_selectors(packet)
     )
-    event_reference = definitions["ContextEventReferenceUpdate"]
-    persistable_event_ids = assessment_persistable_event_ids(packet)
-    event_reference["properties"]["evidence_id"]["enum"] = list(
-        persistable_event_ids
-    )
-    event_reference_updates = draft["properties"]["event_relevance_updates"]
-    event_reference_updates["maxItems"] = len(persistable_event_ids)
     return schema
 
 

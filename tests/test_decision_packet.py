@@ -23,7 +23,6 @@ from investment_manager.forecast.context.contract import (
     WorldModelStructuredOutput,
     assessment_available_feature_selectors,
     assessment_current_evidence_ids,
-    assessment_persistable_event_ids,
     assessment_visible_evidence_ids,
     assessment_world_model_evidence_ids,
     build_assess_prompt,
@@ -65,6 +64,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
     PacketPreviousCausalNode,
     PacketPreviousContext,
+    PacketPreviousEventReference,
     PacketPreviousMechanism,
     PacketPreviousVerificationObservation,
     PacketPreviousVerificationPredicate,
@@ -1701,7 +1701,6 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     assert packet_event.evidence_ref in assessment_visible_evidence_ids(packet)
     assert packet_event.evidence_ref not in assessment_world_model_evidence_ids(packet)
     assert packet_event.evidence_ref not in assessment_current_evidence_ids(packet)
-    assert packet_event.evidence_ref not in assessment_persistable_event_ids(packet)
 
     schema = assess_output_schema(packet)
     definitions = schema["$defs"]
@@ -1714,13 +1713,60 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
     retirement_ids = definitions["ContextMechanismRetirement"]["properties"][
         "evidence_ids"
     ]["items"]["enum"]
-    event_ids = definitions["ContextEventReferenceUpdate"]["properties"][
-        "evidence_id"
-    ]["enum"]
-    for allowed_ids in (causal_ids, conflicting_ids, retirement_ids, event_ids):
+    for allowed_ids in (causal_ids, conflicting_ids, retirement_ids):
         assert packet_event.evidence_ref not in allowed_ids
+    assert "event_relevance_updates" not in definitions["WorldModelDraft"]["properties"]
     assert "入选本身不是现实影响大小" in build_assess_prompt(packet)
     assert "directional_support_eligible=false" in build_assess_prompt(packet)
+
+
+def test_event_lifecycle_is_derived_from_current_mechanism_references(
+    app_config,
+    replay_input,
+) -> None:
+    event_id = "e" * 64
+    previous = _previous_world_model(
+        replay_input.market.as_of,
+        assessment_id="assessment-prior-event",
+    ).model_copy(
+        update={
+            "event_references": (
+                PacketPreviousEventReference(
+                    evidence_id=event_id,
+                    source="official-source",
+                    title="上一轮仍参与解释的正式事件",
+                    event_time=replay_input.market.as_of - timedelta(hours=2),
+                    impact_state="ACTIVE",
+                    rationale="该事件上一轮仍在影响风险溢价。",
+                ),
+            )
+        }
+    )
+    _, packet = _packet(app_config, replay_input, previous_context=previous)
+    base = _world_model_output()
+    retirement = ContextMechanismRetirement(
+        previous_mechanism_id=previous.mechanisms[0].mechanism_id,
+        rationale="当前事实支持新的解释，上一轮机制不再具有决策价值。",
+        evidence_ids=("revision-1",),
+    )
+
+    assessment = finalize_world_model(
+        output=base.model_copy(
+            update={
+                "world_model": base.world_model.model_copy(
+                    update={"retired_mechanisms": (retirement,)}
+                )
+            }
+        ),
+        packet=packet,
+        analysis_behavior_hash=HASH,
+        available_at=packet.as_of + timedelta(seconds=20),
+    )
+
+    assert len(assessment.event_references) == 1
+    assert assessment.event_references[0].evidence_id == event_id
+    assert assessment.event_references[0].impact_state.value == "STALE"
+    assert assessment.event_references[0].stale_at == packet.as_of
 
 
 def test_finalize_assessment_writes_only_current_world_model_schema(

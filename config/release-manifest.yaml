@@ -8,7 +8,7 @@ complexity_score: 1
 component_versions:
   - [feature, feature-v1]
   - [decision_state, portfolio-state-v44]
-  - [capital, total-portfolio-capital-v54]
+  - [capital, total-portfolio-capital-v55]
   - [outcome_evaluation, typed-outcome-settlement-v29]
   - [trigger, analysis-trigger-v30]
   - [temporal, temporal-analysis-v5]
@@ -17,7 +17,7 @@ component_versions:
   - [information, information-intake-v38]
   - [pipeline, off-pipeline-v8]
   - [codex_runtime, codex-runtime-v9]
-  - [assessment, context-assessment-v47]
+  - [assessment, context-assessment-v48]
   - [codex_accounts, local-directory-account-registry-v2]
   - [binance_testnet, binance-spot-testnet-v1]
   - [governance, governance-cycle-v2]

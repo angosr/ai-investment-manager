@@ -226,7 +226,6 @@ def _world_output_payload(claim: str) -> dict:
                     "next_review_at": (NOW + timedelta(hours=1)).isoformat(),
                 }
             ],
-            "event_relevance_updates": [],
         }
     }
 

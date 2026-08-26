@@ -115,7 +115,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v54
+  version: total-portfolio-capital-v55
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -227,10 +227,10 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v23
+    version: btc-context-forecast-v24
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "42c678acada595d4afeb05cf9fa1247f6e368a43b2bd254a4d9a7841956a7c66"
+    producer_behavior_id: "3c4eb4f28ccc1b85e28f57b47f80aae1f036e108ecc98f880924584cb80339a1"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -291,9 +291,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v22
+    version: world-model-ablation-forward-v23
     enabled: false
-    plan_id: world-model-ablation-forward-v22
+    plan_id: world-model-ablation-forward-v23
     # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
     activated_at: 2026-08-26T16:00:00Z
     minimum_sample_size: 30
@@ -528,7 +528,7 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v47
+  version: context-assessment-v48
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
