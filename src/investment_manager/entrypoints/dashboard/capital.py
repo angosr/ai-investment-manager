@@ -599,7 +599,7 @@ class CapitalDashboardReader:
                         for slot_id in no_estimate_slot_ids
                     ),
                     required_non_overlapping_samples=(
-                        self._config.calibration.minimum_non_overlapping_samples
+                        self._config.outcome_evaluation.target_forecast_minimum_sample_size
                     ),
                     permission_evidence_eligible=contract.permission_evidence_eligible,
                 ),
@@ -612,7 +612,7 @@ class CapitalDashboardReader:
             forecast_count=forecast_count,
             no_estimate_count=no_estimate_count,
             required_non_overlapping_samples=(
-                self._config.calibration.minimum_non_overlapping_samples
+                self._config.outcome_evaluation.target_forecast_minimum_sample_size
             ),
             permission_evidence_eligible=(
                 contract.permission_evidence_eligible and len(observed_strata) <= 1

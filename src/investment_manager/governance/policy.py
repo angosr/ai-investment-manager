@@ -24,6 +24,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     version: str
     forecast_version: str = "analysis-forecast-v3"
     target_forecast_version: str = "forecast-target-outcome-v1"
+    target_forecast_minimum_sample_size: int = Field(default=30, ge=1)
     product_payoff_version: str = "product-payoff-outcome-v1"
     product_payoff_minimum_sample_size: int = Field(default=30, ge=1)
     maximum_funding_gap_hours: int = Field(default=12, ge=1, le=24)

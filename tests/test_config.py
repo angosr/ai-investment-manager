@@ -107,7 +107,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
     assert config.assessment.version == "context-assessment-v47"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v27"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v28"
+    assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
