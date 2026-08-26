@@ -254,7 +254,7 @@ capital:
     version: btc-context-forecast-v22
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "9875d35c8eb2a195d16241424d516008a7330c2d69c51340f3b18dd6ee58ad84"
+    producer_behavior_id: "162f73f2a39ceebcfca5b150bd8c3232f88d2502857c1c6758d98a06cdfe3ed5"
     outcome_family_id: btc-spot-directional-4h
     contract_version: btc-spot-directional-4h-v10
     target_instrument_key: BINANCE:SPOT:BTCUSDT
@@ -352,9 +352,9 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v18
+    version: world-model-ablation-forward-v19
     enabled: false
-    plan_id: world-model-ablation-forward-v18
+    plan_id: world-model-ablation-forward-v19
     # 只接收官方经济日历合同激活后的新槽；旧行为继续独立结算。
     activated_at: 2026-08-26T06:00:00Z
     minimum_sample_size: 30
