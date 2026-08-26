@@ -6,6 +6,10 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
+from investment_manager.information.official.economic_calendar import (
+    BEA_CALENDAR_STREAM_ID,
+    BLS_CALENDAR_STREAM_ID,
+)
 from investment_manager.information.official.repository import SqlFedOfficialInformationIngestor
 from investment_manager.information.official.source import FedPolicyDocument
 from investment_manager.information.tables import (
@@ -19,8 +23,9 @@ from investment_manager.scheduling.tables import analysis_trigger_events, trigge
 from investment_manager.schema import create_schema
 from investment_manager.state.facts import OfficialFactProjectionPolicy
 from investment_manager.state.official_ingestion import (
-    FedOfficialCollectorService,
+    MacroOfficialCollectorService,
     SourcePollAuditError,
+    SqlEconomicReleaseCalendarFactIngestor,
     SqlFedFactIngestor,
 )
 from investment_manager.state.repository import SqlFactStateStore
@@ -31,6 +36,14 @@ POLICY = OfficialFactProjectionPolicy(
     version="fed-fact-v1",
     affected_assets=("BTC", "ETH"),
 )
+
+
+class EmptyEconomicCalendarSource:
+    stream_ids = (BEA_CALENDAR_STREAM_ID, BLS_CALENDAR_STREAM_ID)
+
+    def fetch(self, stream_id):
+        assert stream_id in self.stream_ids
+        return None
 
 
 def _calendar(date_text: str) -> str:
@@ -262,12 +275,18 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
         published_at.append(as_of)
         stop.set()
 
-    service = FedOfficialCollectorService(
+    service = MacroOfficialCollectorService(
         source=Source(),
         ingestor=SqlFedFactIngestor(engine, POLICY),
+        economic_calendar_source=EmptyEconomicCalendarSource(),
+        economic_calendar_ingestor=SqlEconomicReleaseCalendarFactIngestor(
+            engine,
+            POLICY,
+        ),
         publish_recent=publish_recent,
         monetary_poll_seconds=15,
         calendar_poll_seconds=21_600,
+        economic_calendar_poll_seconds=21_600,
         clock=lambda: OBSERVED_AT,
     )
 
@@ -275,6 +294,7 @@ def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None
 
     assert service.health.calendar_poll_count == 1
     assert service.health.public_calendar_poll_count == 1
+    assert service.health.economic_calendar_poll_count == 2
     assert service.health.monetary_poll_count == 1
     assert service.health.new_fact_revision_count == 3
     assert service.health.publication_count == 1
@@ -298,12 +318,18 @@ def test_official_collector_fails_closed_when_poll_fact_is_not_durable() -> None
         def put(self, poll):
             raise OSError("coverage ledger unavailable")
 
-    service = FedOfficialCollectorService(
+    service = MacroOfficialCollectorService(
         source=Source(),
         ingestor=SqlFedFactIngestor(engine, POLICY),
+        economic_calendar_source=EmptyEconomicCalendarSource(),
+        economic_calendar_ingestor=SqlEconomicReleaseCalendarFactIngestor(
+            engine,
+            POLICY,
+        ),
         publish_recent=lambda as_of: None,
         monetary_poll_seconds=15,
         calendar_poll_seconds=21_600,
+        economic_calendar_poll_seconds=21_600,
         poll_recorder=BrokenRecorder(),
         clock=lambda: OBSERVED_AT,
     )

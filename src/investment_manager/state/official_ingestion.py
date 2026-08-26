@@ -348,153 +348,6 @@ class SqlEconomicReleaseCalendarFactIngestor:
         )
 
 
-@dataclass(slots=True)
-class EconomicReleaseCalendarCollectorHealth:
-    poll_count: int = 0
-    new_fact_revision_count: int = 0
-    publication_count: int = 0
-    last_success_at: datetime | None = None
-    error_class: str | None = None
-    publication_error_class: str | None = None
-
-
-class EconomicReleaseCalendarCollectorService:
-    """Maintain a compact schedule state from the two official macro calendars."""
-
-    def __init__(
-        self,
-        *,
-        source: EconomicReleaseCalendarSource,
-        ingestor: SqlEconomicReleaseCalendarFactIngestor,
-        publish_recent: Callable[[datetime], None],
-        poll_seconds: int,
-        poll_recorder: SourcePollRecorder | None = None,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> None:
-        if poll_seconds < 1:
-            raise ValueError("经济发布日历轮询周期必须为正数")
-        if tuple(source.stream_ids) != (
-            BEA_CALENDAR_STREAM_ID,
-            BLS_CALENDAR_STREAM_ID,
-        ):
-            raise ValueError("经济发布日历 source 集合非法")
-        self._source = source
-        self._ingestor = ingestor
-        self._publish_recent = publish_recent
-        self._poll_seconds = poll_seconds
-        self._poll_recorder = poll_recorder
-        self._clock = clock
-        self._valid_until_by_stream: dict[str, datetime] = {}
-        self.health = EconomicReleaseCalendarCollectorHealth()
-
-    async def run(self, stop: asyncio.Event) -> None:
-        while not stop.is_set():
-            await self._poll()
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=self._poll_seconds)
-
-    async def _poll(self) -> None:
-        latest_completion: datetime | None = None
-        for stream_id in self._source.stream_ids:
-            started_at = require_utc(self._clock())
-            self.health.poll_count += 1
-            try:
-                document = await asyncio.to_thread(self._source.fetch, stream_id)
-                result = (
-                    OfficialFactIngestionResult(records=(), new_fact_revisions=())
-                    if document is None
-                    else await asyncio.to_thread(
-                        self._ingestor.ingest,
-                        document,
-                        observed_at=require_utc(self._clock()),
-                    )
-                )
-                completed_at = max(require_utc(self._clock()), started_at)
-                latest_completion = completed_at
-                future_times = tuple(
-                    item.record.scheduled_at
-                    for item in result.records
-                    if isinstance(item.record, EconomicReleaseEventRecord)
-                    and item.record.status == CalendarEventStatus.SCHEDULED
-                    and item.record.scheduled_at >= completed_at
-                )
-                if future_times:
-                    self._valid_until_by_stream[stream_id] = max(future_times)
-                self._record_poll(
-                    stream_id=stream_id,
-                    status=(
-                        SourcePollStatus.CHANGED
-                        if any(item.inserted for item in result.records)
-                        else SourcePollStatus.UNCHANGED
-                    ),
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    result=result,
-                )
-                self.health.new_fact_revision_count += len(result.new_fact_revisions)
-                self.health.last_success_at = completed_at
-                self.health.error_class = None
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if self.health.error_class != type(exc).__name__:
-                    logger.exception("economic release calendar collector failed")
-                self.health.error_class = type(exc).__name__
-                if isinstance(exc, SourcePollAuditError):
-                    raise
-                completed_at = max(require_utc(self._clock()), started_at)
-                self._record_poll(
-                    stream_id=stream_id,
-                    status=SourcePollStatus.FAILED,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    error_class=type(exc).__name__,
-                )
-        if latest_completion is None:
-            return
-        try:
-            await asyncio.to_thread(self._publish_recent, latest_completion)
-            self.health.publication_count += 1
-            self.health.publication_error_class = None
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if self.health.publication_error_class != type(exc).__name__:
-                logger.exception("economic release calendar publication failed")
-            self.health.publication_error_class = type(exc).__name__
-
-    def _record_poll(
-        self,
-        *,
-        stream_id: str,
-        status: SourcePollStatus,
-        started_at: datetime,
-        completed_at: datetime,
-        result: OfficialFactIngestionResult | None = None,
-        error_class: str | None = None,
-    ) -> None:
-        if self._poll_recorder is None:
-            return
-        poll = build_source_poll_record(
-            source_stream_id=stream_id,
-            domain=CausalDomain.MONETARY_INFLATION,
-            status=status,
-            started_at=started_at,
-            completed_at=completed_at,
-            poll_interval_seconds=self._poll_seconds,
-            valid_until=self._valid_until_by_stream.get(stream_id),
-            observation_count=0 if result is None else len(result.records),
-            new_fact_count=(
-                0 if result is None else len(result.new_fact_revisions)
-            ),
-            error_class=error_class,
-        )
-        try:
-            self._poll_recorder.put(poll)
-        except Exception as exc:
-            raise SourcePollAuditError("经济发布日历来源轮询事实无法持久化") from exc
-
-
 class SqlFederalRegisterFactIngestor:
     """Project relevant official rulemaking into the canonical fact ledger."""
 
@@ -686,49 +539,69 @@ class RegulatoryOfficialCollectorService:
 
 
 @dataclass(slots=True)
-class FedOfficialCollectorHealth:
+class MacroOfficialCollectorHealth:
     calendar_poll_count: int = 0
+    economic_calendar_poll_count: int = 0
     public_calendar_poll_count: int = 0
     monetary_poll_count: int = 0
     new_fact_revision_count: int = 0
     publication_count: int = 0
     last_calendar_success_at: datetime | None = None
+    last_economic_calendar_success_at: datetime | None = None
     last_public_calendar_success_at: datetime | None = None
     last_monetary_success_at: datetime | None = None
     calendar_error_class: str | None = None
+    economic_calendar_error_class: str | None = None
     public_calendar_error_class: str | None = None
     monetary_error_class: str | None = None
     publication_error_class: str | None = None
 
 
-class FedOfficialCollectorService:
-    """Poll pinned first-party feeds and project them into canonical facts."""
+class MacroOfficialCollectorService:
+    """Own the monetary-policy and scheduled U.S. macro official feeds."""
 
     def __init__(
         self,
         *,
         source: FedOfficialSource,
         ingestor: SqlFedFactIngestor,
+        economic_calendar_source: EconomicReleaseCalendarSource,
+        economic_calendar_ingestor: SqlEconomicReleaseCalendarFactIngestor,
         publish_recent: Callable[[datetime], None],
         monetary_poll_seconds: int,
         calendar_poll_seconds: int,
+        economic_calendar_poll_seconds: int,
         poll_recorder: SourcePollRecorder | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        if monetary_poll_seconds < 1 or calendar_poll_seconds < 1:
-            raise ValueError("Fed official polling interval 必须为正数")
+        if (
+            monetary_poll_seconds < 1
+            or calendar_poll_seconds < 1
+            or economic_calendar_poll_seconds < 1
+        ):
+            raise ValueError("宏观官方来源轮询周期必须为正数")
+        if tuple(economic_calendar_source.stream_ids) != (
+            BEA_CALENDAR_STREAM_ID,
+            BLS_CALENDAR_STREAM_ID,
+        ):
+            raise ValueError("经济发布日历 source 集合非法")
         self._source = source
         self._ingestor = ingestor
+        self._economic_calendar_source = economic_calendar_source
+        self._economic_calendar_ingestor = economic_calendar_ingestor
         self._publish_recent = publish_recent
         self._monetary_poll_seconds = monetary_poll_seconds
         self._calendar_poll_seconds = calendar_poll_seconds
+        self._economic_calendar_poll_seconds = economic_calendar_poll_seconds
         self._poll_recorder = poll_recorder
         self._clock = clock
         self._monetary_records: tuple[FedMonetaryReleaseRecord, ...] = ()
-        self.health = FedOfficialCollectorHealth()
+        self._economic_valid_until_by_stream: dict[str, datetime] = {}
+        self.health = MacroOfficialCollectorHealth()
 
     async def run(self, stop: asyncio.Event) -> None:
         next_calendar_at: datetime | None = None
+        next_economic_calendar_at: datetime | None = None
         next_monetary_at: datetime | None = None
         while not stop.is_set():
             now = require_utc(self._clock())
@@ -736,6 +609,24 @@ class FedOfficialCollectorService:
                 next_calendar_at = now + timedelta(seconds=self._calendar_poll_seconds)
                 await self._poll("calendar")
                 await self._poll("public_calendar")
+            if (
+                next_economic_calendar_at is None
+                or now >= next_economic_calendar_at
+            ):
+                next_economic_calendar_at = now + timedelta(
+                    seconds=self._economic_calendar_poll_seconds
+                )
+                results = tuple(
+                    [
+                        await self._poll_economic_calendar(stream_id)
+                        for stream_id in self._economic_calendar_source.stream_ids
+                    ]
+                )
+                if all(results):
+                    self.health.economic_calendar_error_class = None
+                    self.health.last_economic_calendar_success_at = require_utc(
+                        self._clock()
+                    )
             if next_monetary_at is None or now >= next_monetary_at:
                 next_monetary_at = now + timedelta(seconds=self._monetary_poll_seconds)
                 await self._poll("monetary")
@@ -755,11 +646,100 @@ class FedOfficialCollectorService:
                 0.1,
                 min(
                     (next_calendar_at - now).total_seconds(),
+                    (next_economic_calendar_at - now).total_seconds(),
                     (next_monetary_at - now).total_seconds(),
                 ),
             )
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=delay)
+
+    async def _poll_economic_calendar(self, stream_id: str) -> bool:
+        started_at = require_utc(self._clock())
+        self.health.economic_calendar_poll_count += 1
+        try:
+            document = await asyncio.to_thread(
+                self._economic_calendar_source.fetch,
+                stream_id,
+            )
+            result = (
+                OfficialFactIngestionResult(records=(), new_fact_revisions=())
+                if document is None
+                else await asyncio.to_thread(
+                    self._economic_calendar_ingestor.ingest,
+                    document,
+                    observed_at=require_utc(self._clock()),
+                )
+            )
+            completed_at = max(require_utc(self._clock()), started_at)
+            future_times = tuple(
+                item.record.scheduled_at
+                for item in result.records
+                if isinstance(item.record, EconomicReleaseEventRecord)
+                and item.record.status == CalendarEventStatus.SCHEDULED
+                and item.record.scheduled_at >= completed_at
+            )
+            if future_times:
+                self._economic_valid_until_by_stream[stream_id] = max(future_times)
+            self._record_economic_calendar_poll(
+                stream_id=stream_id,
+                status=(
+                    SourcePollStatus.CHANGED
+                    if any(item.inserted for item in result.records)
+                    else SourcePollStatus.UNCHANGED
+                ),
+                started_at=started_at,
+                completed_at=completed_at,
+                result=result,
+            )
+            self.health.new_fact_revision_count += len(result.new_fact_revisions)
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._record_error(exc, "economic_calendar")
+            if isinstance(exc, SourcePollAuditError):
+                raise
+            self._record_economic_calendar_poll(
+                stream_id=stream_id,
+                status=SourcePollStatus.FAILED,
+                started_at=started_at,
+                completed_at=max(require_utc(self._clock()), started_at),
+                error_class=type(exc).__name__,
+            )
+            return False
+
+    def _record_economic_calendar_poll(
+        self,
+        *,
+        stream_id: str,
+        status: SourcePollStatus,
+        started_at: datetime,
+        completed_at: datetime,
+        result: OfficialFactIngestionResult | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        if self._poll_recorder is None:
+            return
+        poll = build_source_poll_record(
+            source_stream_id=stream_id,
+            domain=CausalDomain.MONETARY_INFLATION,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            poll_interval_seconds=self._economic_calendar_poll_seconds,
+            valid_until=self._economic_valid_until_by_stream.get(stream_id),
+            observation_count=0 if result is None else len(result.records),
+            new_fact_count=(
+                0 if result is None else len(result.new_fact_revisions)
+            ),
+            error_class=error_class,
+        )
+        try:
+            self._poll_recorder.put(poll)
+        except Exception as exc:
+            raise SourcePollAuditError(
+                "经济发布日历来源轮询事实无法持久化"
+            ) from exc
 
     async def _poll(self, kind: str) -> None:
         counter_field = {

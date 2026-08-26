@@ -79,8 +79,7 @@ from investment_manager.state.metric_ingestion import (
     SqlOfficialMetricFactIngestor,
 )
 from investment_manager.state.official_ingestion import (
-    EconomicReleaseCalendarCollectorService,
-    FedOfficialCollectorService,
+    MacroOfficialCollectorService,
     RegulatoryOfficialCollectorService,
     SqlEconomicReleaseCalendarFactIngestor,
     SqlFederalRegisterFactIngestor,
@@ -518,7 +517,7 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         required_freshness_seconds=loaded.risk.maximum_market_age_seconds,
         analysis_owner_symbol=loaded.assessment.review_trigger_symbol,
     )
-    official_service = FedOfficialCollectorService(
+    official_service = MacroOfficialCollectorService(
         source=HttpFedOfficialSource(
             timeout_seconds=policy.request_timeout_seconds,
         ),
@@ -526,21 +525,19 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
             engine,
             loaded.decision_state.official_fact_policy,
         ),
-        publish_recent=fact_trigger_publisher.publish_recent,
-        monetary_poll_seconds=policy.fed_monetary_poll_seconds,
-        calendar_poll_seconds=policy.fed_calendar_poll_seconds,
-        poll_recorder=coverage_store,
-    )
-    economic_calendar_service = EconomicReleaseCalendarCollectorService(
-        source=HttpEconomicReleaseCalendarSource(
+        economic_calendar_source=HttpEconomicReleaseCalendarSource(
             timeout_seconds=policy.request_timeout_seconds,
         ),
-        ingestor=SqlEconomicReleaseCalendarFactIngestor(
+        economic_calendar_ingestor=SqlEconomicReleaseCalendarFactIngestor(
             engine,
             loaded.decision_state.official_fact_policy,
         ),
         publish_recent=fact_trigger_publisher.publish_recent,
-        poll_seconds=policy.economic_release_calendar_poll_seconds,
+        monetary_poll_seconds=policy.fed_monetary_poll_seconds,
+        calendar_poll_seconds=policy.fed_calendar_poll_seconds,
+        economic_calendar_poll_seconds=(
+            policy.economic_release_calendar_poll_seconds
+        ),
         poll_recorder=coverage_store,
     )
     metric_service = OfficialMetricCollectorService(
@@ -598,7 +595,6 @@ def assemble_information_service(loaded, engine) -> InformationServiceAssembly:
         services=(
             service,
             official_service,
-            economic_calendar_service,
             metric_service,
             aggregate_flow_service,
             regulatory_service,
