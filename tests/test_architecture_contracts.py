@@ -56,6 +56,9 @@ CLI_CONTRACT = {
         "project_root,config,release_manifest,database_url,runtime_directory,command_path,"
         "readiness_timeout_seconds,dashboard_host,dashboard_port"
     ),
+    "preregister-world-model-ablation": (
+        "project_root,config,release_manifest,database_url"
+    ),
     "perpetual-trend-walk-forward": (
         "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
     ),
@@ -238,6 +241,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         },
         "entrypoints/cli/release_commands.py": {
             "operate-release",
+            "preregister-world-model-ablation",
         },
         "entrypoints/cli/research_commands.py": {
             "record-reference-rejection",

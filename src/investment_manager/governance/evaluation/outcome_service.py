@@ -10,12 +10,14 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import Field, ValidationError, field_validator, model_validator
+from sqlalchemy.engine import Engine
 from temporalio import activity
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
 from investment_manager.forecast.context.producer import context_spot_forecast_contract
+from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
 from investment_manager.governance.evaluation.outcome_store import SqlOutcomeWindowRepository
@@ -33,7 +35,7 @@ from investment_manager.governance.evaluation.world_model_ablation import (
     assemble_world_model_ablation_analyst,
     ensure_world_model_ablation_plan,
 )
-from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.models import EvaluationPlan, ReleaseManifest
 from investment_manager.governance.policy import OutcomeEvaluationPolicy
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
@@ -428,25 +430,9 @@ def _assemble_world_model_ablation(
         return None
     if release is None:
         raise ValueError("启用 WorldModel control 必须绑定 ReleaseManifest")
+    contract = configured_world_model_ablation_contract(config)
     context = config.capital.context_forecast
-    if context is None or not context.enabled:
-        raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
-    instrument = next(
-        (
-            item.instrument
-            for item in config.capital.execution_specs
-            if item.instrument.key == context.target_instrument_key
-            and item.instrument.product == InstrumentProduct.SPOT
-        ),
-        None,
-    )
-    if instrument is None:
-        raise ValueError("WorldModel control 合同品种不在 Capital Spot 范围")
-    contract = context_spot_forecast_contract(
-        policy=context,
-        instrument=instrument,
-        cost_semantics_version=config.capital.decision.cost_model_version,
-    )
+    assert context is not None
     plan = ensure_world_model_ablation_plan(
         governance=SqlGovernanceRepository(engine),
         config=config,
@@ -461,4 +447,46 @@ def _assemble_world_model_ablation(
         evaluation_version=config.outcome_evaluation.target_forecast_version,
         repository=SqlWorldModelAblationRepository(engine),
         analyst=assemble_world_model_ablation_analyst(config, engine=engine),
+    )
+
+
+def configured_world_model_ablation_contract(config: AppConfig) -> ForecastContract:
+    """Build the one formal contract shared by registration and runtime assembly."""
+
+    context = config.capital.context_forecast
+    if context is None or not context.enabled:
+        raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
+    instrument = next(
+        (
+            item.instrument
+            for item in config.capital.execution_specs
+            if item.instrument.key == context.target_instrument_key
+            and item.instrument.product == InstrumentProduct.SPOT
+        ),
+        None,
+    )
+    if instrument is None:
+        raise ValueError("WorldModel control 合同品种不在 Capital Spot 范围")
+    return context_spot_forecast_contract(
+        policy=context,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+
+
+def preregister_world_model_ablation_plan(
+    *,
+    config: AppConfig,
+    engine: Engine,
+    release: ReleaseManifest,
+    registered_at: datetime,
+) -> EvaluationPlan:
+    """Persist the candidate plan before release preflight or either model call."""
+
+    return ensure_world_model_ablation_plan(
+        governance=SqlGovernanceRepository(engine),
+        config=config,
+        contract=configured_world_model_ablation_contract(config),
+        release=release,
+        registered_at=registered_at,
     )

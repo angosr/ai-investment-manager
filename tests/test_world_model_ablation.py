@@ -31,6 +31,10 @@ from investment_manager.forecast.results import (
     ForecastOutcomeStatus,
 )
 from investment_manager.forecast.tables import forecasts
+from investment_manager.governance.evaluation.outcome_service import (
+    configured_world_model_ablation_contract,
+    preregister_world_model_ablation_plan,
+)
 from investment_manager.governance.evaluation.world_model_ablation import (
     SqlWorldModelAblationRepository,
     WorldModelAblationPreallocator,
@@ -278,6 +282,34 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
         gross_target_return_bps=Decimal("100"),
         realized_bucket_id="GAIN",
         reason_code="SETTLED",
+    )
+
+
+def test_preregistration_and_runtime_share_one_formal_contract() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    policy = config.outcome_evaluation.world_model_ablation
+    assert policy is not None
+    release = _release("release-preregister-v1", activation=policy.activated_at)
+
+    plan = preregister_world_model_ablation_plan(
+        config=config,
+        engine=engine,
+        release=release,
+        registered_at=policy.activated_at - timedelta(hours=1),
+    )
+    contract = configured_world_model_ablation_contract(config)
+
+    assert plan.candidate_spec_snapshot["formal_contract_id"] == contract.contract_id
+    assert (
+        preregister_world_model_ablation_plan(
+            config=config,
+            engine=engine,
+            release=release,
+            registered_at=policy.activated_at - timedelta(minutes=30),
+        )
+        == plan
     )
 
 

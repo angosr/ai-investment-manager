@@ -29,6 +29,19 @@
 6. 执行 `alembic upgrade head`；
 7. 从该 checkout 启动全部进程。
 
+候选启用了新的 WorldModel 前瞻配对计划时，必须在其首个前向时点前从同一冻结 checkout 显式预登记。该命令只写入不可变治理计划，不启动服务、不调用 AI，也不修改现役 TriggerPlan：
+
+```bash
+PYTHONPATH='<candidate-checkout>/src' \
+INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
+  .venv/bin/investment-manager preregister-world-model-ablation \
+  --project-root '<candidate-checkout>' \
+  --config '<candidate-checkout>/config/investment-manager.shadow.yaml' \
+  --release-manifest '<release-catalog>/release-manifest.yaml'
+```
+
+发布预检保持只读；计划未登记、登记内容与候选不一致或已经到达激活时点时都拒绝发布，禁止用临时 SQL 或内联脚本补写。
+
 运行入口会拒绝以下情况：分支工作树、HEAD 不匹配、运行路径有未提交变化、配置哈希不一致、组件版本不一致、缺少 `web-dist`、制品内容变化或数据库不是迁移 head。Dashboard 只能托管 Manifest 指定的前端目录，不能自动寻找开发目录中的构建结果。
 
 新 Release 启动后先保持 warming。只有当前 Manifest 已接管 TriggerPlan、Worker 正常，且行情、信息与账户事实满足新鲜度，才允许切换只读入口；不能单纯以进程在线宣称 ready。若 Pipeline 与 ProducerBehavior 均未改变，发布应重绑定现有 TriggerPlan 并延续其节拍与 cohort，不得为制造“新版本行动”重算既有事实。
