@@ -200,7 +200,7 @@ WorldModel 的投资价值必须用前瞻配对消融识别：在同一槽、模
 
 Forecast 的采样政策也是行为的一部分。Cadence 是不依赖市场状态的覆盖义务；每个固定时点都必须保留独立的仅定时槽。材料来源回答“满足冻结条件时是否及时重估”，不能消费、提前履行或改写 cadence 义务；否则重大事件附近的固定样本会被选择性删除，既污染一般预测能力，也无法构造仅定时资本反事实。每个终态按仅定时或仅材料来源分层计算覆盖率、评分和不确定性；共同 Outcome 和重叠时域按预登记时间簇处理，不能把相关事件当成多个独立成功。
 
-不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、WorldModel 消融和资本结果分别由唯一领域 evaluator 定义最小类型化合同与结果；Governance 只登记共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
+不存在覆盖所有问题的通用 `EvaluationPlan` 或 `EvaluationReport`。Release 验收、Reference 资格、Forecast 评分、WorldModel 消融和资本结果分别由唯一领域 evaluator 定义最小类型化合同与结果；治理查询只从这些事实派生共同身份与引用，Dashboard、Agent 和权限不重算结论。跨 evaluator 的稳定评价家族、完整搜索历史、独立裁决和权限规则由 [`SELF_EVOLUTION_DESIGN.md`](SELF_EVOLUTION_DESIGN.md) 唯一规定，本文不再复制第二套学习协议。
 
 任何实验资本资格必须引用对应问题的不可变类型化计划；任何正式权限必须继续引用适用的类型化结果、producer behavior、ForecastContract、mandate、Reference Policy 和 Release，并冻结作用域、资本包络、最大累计损失、有效期、退化条件与撤销动作。样本不足、计划到期或行为身份变化不得默认续权。安全硬约束可以直接减少风险，但不能借安全名义获得 Alpha 权限。
 
