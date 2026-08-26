@@ -51,7 +51,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         <= config.codex_runtime.maximum_prompt_characters
     )
     assert config.pipeline.ai_mode.value == "OFF"
-    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v47"
+    assert config.pipeline.version == "world-forecast-spot-capital-shadow-v48"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v3"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -61,7 +61,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v46"
+    assert config.capital.version == "total-portfolio-capital-v47"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -80,10 +80,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.information.version == "information-intake-v37"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v40"
+    assert config.decision_state.version == "portfolio-state-v41"
     assert config.decision_state.official_fact_policy.version == "official-fact-v15"
     assert config.decision_state.delta_policy.version == "state-delta-v16"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v44"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v45"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -105,15 +105,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert tuple(
         item.symbol for item in config.market_data.cross_venue_spot.products
     ) == ("BTCUSDT", "ETHUSDT")
-    assert config.assessment.version == "context-assessment-v45"
-    assert config.outcome_evaluation.version == "outcome-window-v22"
+    assert config.assessment.version == "context-assessment-v46"
+    assert config.outcome_evaluation.version == "outcome-window-v23"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v16"
+        == "world-model-ablation-forward-v17"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v28"
+    assert config.trigger.version == "analysis-trigger-v29"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v10"
     regulation = next(
         item

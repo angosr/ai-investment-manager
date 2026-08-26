@@ -1132,9 +1132,81 @@ class DecisionPacket(FrozenModel):
         return self
 
 
+def _trim_one_packet_input_for_capacity(
+    *,
+    selected_facts: list[PacketFact],
+    selected_intelligence: list[PacketIntelligenceEvent],
+    omitted_facts: set[str],
+    omitted_intelligence: set[str],
+    has_previous_context: bool,
+) -> bool:
+    """Remove the lowest-value non-direct input using one canonical order."""
+
+    removable_fact = next(
+        (
+            index
+            for index in range(len(selected_facts) - 1, -1, -1)
+            if not selected_facts[index].directly_triggered
+            and selected_facts[index].fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES
+            and not _is_durable_policy_state(selected_facts[index])
+        ),
+        None,
+    )
+    if removable_fact is not None:
+        removed = selected_facts.pop(removable_fact)
+        omitted_facts.add(removed.revision_id)
+        return True
+    removable_event = next(
+        (
+            index
+            for index in range(len(selected_intelligence) - 1, -1, -1)
+            if not selected_intelligence[index].directly_triggered
+        ),
+        None,
+    )
+    if removable_event is not None:
+        removed = selected_intelligence.pop(removable_event)
+        omitted_intelligence.add(removed.evidence_ref)
+        return True
+    removable_redundant_state = next(
+        (
+            index
+            for index in range(len(selected_facts) - 1, -1, -1)
+            if not selected_facts[index].directly_triggered
+            and _continuous_fact_is_redundant(index, selected_facts)
+        ),
+        None,
+    )
+    if removable_redundant_state is not None:
+        removed = selected_facts.pop(removable_redundant_state)
+        omitted_facts.add(removed.revision_id)
+        return True
+    if not has_previous_context:
+        return False
+    removable_inherited_state = next(
+        (
+            index
+            for index in range(len(selected_facts) - 1, -1, -1)
+            if not selected_facts[index].directly_triggered
+            and (
+                selected_facts[index].fact_type in CONTINUOUS_CONTEXT_FACT_TYPES
+                or _is_durable_policy_state(selected_facts[index])
+            )
+        ),
+        None,
+    )
+    if removable_inherited_state is None:
+        return False
+    removed = selected_facts.pop(removable_inherited_state)
+    omitted_facts.add(removed.revision_id)
+    return True
+
+
 def replace_packet_previous_context(
     packet: DecisionPacket,
     previous_context: PacketPreviousContext,
+    *,
+    maximum_analysis_characters: int,
 ) -> DecisionPacket:
     """Re-freeze a prepared packet after deterministic context verification.
 
@@ -1143,15 +1215,51 @@ def replace_packet_previous_context(
     input and the audited packet identical after those observations are added.
     """
 
+    if maximum_analysis_characters <= 0:
+        raise ValueError("DecisionPacket 最终分析容量必须为正")
     content = {
         name: getattr(packet, name)
         for name in DecisionPacket.model_fields
-        if name not in {"packet_id", "content_hash", "previous_context"}
+        if name
+        not in {
+            "packet_id",
+            "content_hash",
+            "previous_context",
+            "facts",
+            "intelligence_events",
+            "omitted_fact_revision_ids",
+            "omitted_intelligence_event_refs",
+        }
     }
-    return DecisionPacket.create(
-        **content,
-        previous_context=previous_context,
-    )
+    selected_facts = list(packet.facts)
+    selected_intelligence = list(packet.intelligence_events)
+    omitted_facts = set(packet.omitted_fact_revision_ids)
+    omitted_intelligence = set(packet.omitted_intelligence_event_refs)
+    while True:
+        candidate = DecisionPacket.create(
+            **content,
+            facts=tuple(selected_facts),
+            intelligence_events=tuple(selected_intelligence),
+            omitted_fact_revision_ids=tuple(sorted(omitted_facts)),
+            omitted_intelligence_event_refs=tuple(sorted(omitted_intelligence)),
+            previous_context=previous_context,
+        )
+        if (
+            len(canonical_json(decision_packet_analysis_projection(candidate)))
+            <= maximum_analysis_characters
+        ):
+            return candidate
+        if _trim_one_packet_input_for_capacity(
+            selected_facts=selected_facts,
+            selected_intelligence=selected_intelligence,
+            omitted_facts=omitted_facts,
+            omitted_intelligence=omitted_intelligence,
+            has_previous_context=True,
+        ):
+            continue
+        raise DecisionPacketCapacityError(
+            "DecisionPacket final verified projection exceeds maximum_packet_characters"
+        )
 
 
 def _decision_packet_content_hash(packet: DecisionPacket) -> str:
@@ -1315,49 +1423,16 @@ class DecisionPacketBuilder:
                 <= self._policy.maximum_packet_characters
             ):
                 return packet
-            # Continuous state and the current policy stance are the causal
-            # baseline that lets the model interpret an event. Dropping that
-            # baseline while keeping optional prose creates a valid-looking but
-            # structurally blind WorldModel.
-            removable_fact = next(
-                (
-                    index
-                    for index in range(len(selected_facts) - 1, -1, -1)
-                    if not selected_facts[index].directly_triggered
-                    and selected_facts[index].fact_type
-                    not in CONTINUOUS_CONTEXT_FACT_TYPES
-                    and not _is_durable_policy_state(selected_facts[index])
-                ),
-                None,
-            )
-            if removable_fact is not None:
-                removed = selected_facts.pop(removable_fact)
-                omitted_facts.add(removed.revision_id)
-                continue
-            removable_event = next(
-                (
-                    index
-                    for index in range(len(selected_intelligence) - 1, -1, -1)
-                    if not selected_intelligence[index].directly_triggered
-                ),
-                None,
-            )
-            if removable_event is not None:
-                removed = selected_intelligence.pop(removable_event)
-                omitted_intelligence.add(removed.evidence_ref)
-                continue
-            removable_redundant_state = next(
-                (
-                    index
-                    for index in range(len(selected_facts) - 1, -1, -1)
-                    if not selected_facts[index].directly_triggered
-                    and _continuous_fact_is_redundant(index, selected_facts)
-                ),
-                None,
-            )
-            if removable_redundant_state is not None:
-                removed = selected_facts.pop(removable_redundant_state)
-                omitted_facts.add(removed.revision_id)
+            # The selector protects directly triggered evidence and preserves a
+            # causal baseline. A previous WorldModel can carry unchanged typed
+            # state; an initial baseline cannot.
+            if _trim_one_packet_input_for_capacity(
+                selected_facts=selected_facts,
+                selected_intelligence=selected_intelligence,
+                omitted_facts=omitted_facts,
+                omitted_intelligence=omitted_intelligence,
+                has_previous_context=previous_context is not None,
+            ):
                 continue
             raise DecisionPacketCapacityError(
                 "DecisionPacket causal baseline and directly triggered content "
@@ -1512,6 +1587,10 @@ class DecisionPacketBuilder:
                 len(selected) >= self._policy.maximum_intelligence_events
                 or used_characters + character_cost > self._policy.maximum_intelligence_characters
             ):
+                if evidence_ref in direct_event_refs:
+                    raise DecisionPacketCapacityError(
+                        "direct intelligence events exceed intelligence capacity"
+                    )
                 omitted.append(evidence_ref)
                 continue
             selected.append(

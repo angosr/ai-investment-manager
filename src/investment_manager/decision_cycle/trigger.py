@@ -233,6 +233,9 @@ class TriggerDispatchBuilder:
                         packet = replace_packet_previous_context(
                             packet,
                             current_context,
+                            maximum_analysis_characters=(
+                                self._config.decision_state.packet_policy.maximum_packet_characters
+                            ),
                         )
                 command = AssessmentCommand.create(
                     packet=packet,

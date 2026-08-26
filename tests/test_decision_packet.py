@@ -670,7 +670,12 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
         update={"intelligence_event_refs": (event_ref,)}
     )
 
-    def build(maximum_packet_characters: int) -> DecisionPacket:
+    def build(
+        maximum_packet_characters: int,
+        *,
+        previous_context: PacketPreviousContext | None = None,
+        maximum_intelligence_characters: int = 3_000,
+    ) -> DecisionPacket:
         return DecisionPacketBuilder(
             DecisionPacketPolicy(
                 version="packet-policy-v1",
@@ -678,6 +683,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
                 maximum_fact_characters=10_000,
                 maximum_characters_per_fact=1_200,
                 maximum_packet_characters=maximum_packet_characters,
+                maximum_intelligence_characters=maximum_intelligence_characters,
             )
         ).build(
             mandate=AnalysisMandate(
@@ -700,6 +706,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
             account=replay_input.account,
             markets=(market,),
             features=features,
+            previous_context=previous_context,
         )
 
     full = build(16_000)
@@ -718,6 +725,34 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
     }
     assert len(continuous_facts) == 2
     assert len(constrained.omitted_fact_revision_ids) == 1
+
+    previous = _previous_world_model(
+        market.as_of,
+        assessment_id="assessment-capacity-refreeze",
+    )
+    inherited = build(16_000, previous_context=previous)
+    inherited_size = len(
+        canonical_json(decision_packet_analysis_projection(inherited))
+    )
+    refrozen = replace_packet_previous_context(
+        inherited,
+        previous,
+        maximum_analysis_characters=inherited_size - 1,
+    )
+
+    assert (
+        len(canonical_json(decision_packet_analysis_projection(refrozen)))
+        <= inherited_size - 1
+    )
+    assert refrozen.intelligence_events[0].directly_triggered
+    assert refrozen.facts[0].directly_triggered
+    assert len(refrozen.facts) < len(inherited.facts)
+
+    with pytest.raises(
+        DecisionPacketCapacityError,
+        match="direct intelligence events exceed intelligence capacity",
+    ):
+        build(16_000, maximum_intelligence_characters=100)
 
 
 def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
@@ -944,7 +979,7 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
                     "treasury_coupon_indirect_share_pct=68.6; "
                     "treasury_coupon_primary_dealer_share_pct=10.3; "
                     "treasury_coupon_soma_addon_14d_usd_m=34703"
-            ),
+                ),
             "ref": "revision-auction",
         },
     )
@@ -1520,7 +1555,11 @@ def test_replacing_previous_context_refreezes_packet_identity(
     )
     _, packet = _packet(app_config, replay_input)
 
-    refrozen = replace_packet_previous_context(packet, previous)
+    refrozen = replace_packet_previous_context(
+        packet,
+        previous,
+        maximum_analysis_characters=16_000,
+    )
 
     assert refrozen.previous_context == previous
     assert refrozen.packet_id != packet.packet_id
