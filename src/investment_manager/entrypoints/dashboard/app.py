@@ -49,9 +49,6 @@ from investment_manager.settings import AppConfig
 
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100
-_EQUITY_WINDOWS = {"6h": 6, "24h": 24, "7d": 168, "30d": 720}
-
-
 class _DashboardStaticFiles(StaticFiles):
     """Always revalidate the shell while caching content-addressed build assets."""
 
@@ -208,34 +205,6 @@ def create_app(
             }
         )
 
-    async def assessment_cycles(request: Request) -> JSONResponse:
-        limit = _parse_limit(request)
-        rows = await run_in_threadpool(
-            reader.list_cycles,
-            cursor=_parse_cursor(request),
-            limit=limit + 1,
-        )
-        page = page_slice(
-            rows,
-            limit=limit,
-            cursor_for=lambda item: PageCursor(item.as_of, item.cycle_id),
-        )
-        return _json(
-            {
-                "cycles": [ser.cycle_row(row) for row in page.items],
-                "next_cursor": page.next_cursor,
-            }
-        )
-
-    async def assessment_cycle_detail(request: Request) -> JSONResponse:
-        facts = await run_in_threadpool(
-            reader.get_cycle,
-            request.path_params["cycle_id"],
-        )
-        if facts is None:
-            return _json({"detail": "cycle not found"}, status_code=404)
-        return _json(ser.cycle_detail(facts))
-
     async def assessment_records(request: Request) -> JSONResponse:
         limit = _parse_limit(request)
         rows, quality = await asyncio.gather(
@@ -278,33 +247,6 @@ def create_app(
         )
         return _json(ser.assessment_detail(record, observations=observations))
 
-    async def cycles(request: Request) -> JSONResponse:
-        cursor = _parse_cursor(request)
-        limit = _parse_limit(request)
-        rows = await run_in_threadpool(
-            reader.list_cycles,
-            cursor=cursor,
-            limit=limit + 1,
-        )
-        page = page_slice(
-            rows,
-            limit=limit,
-            cursor_for=lambda item: PageCursor(item.as_of, item.cycle_id),
-        )
-        return _json(
-            {
-                "cycles": [ser.cycle_row(row) for row in page.items],
-                "next_cursor": page.next_cursor,
-            }
-        )
-
-    async def cycle_detail(request: Request) -> JSONResponse:
-        cycle_id = request.path_params["cycle_id"]
-        facts = await run_in_threadpool(reader.get_cycle, cycle_id)
-        if facts is None:
-            return _json({"error": "周期不存在"}, status_code=404)
-        return _json(ser.cycle_detail(facts))
-
     async def events(request: Request) -> JSONResponse:
         cursor = _parse_cursor(request)
         limit = _parse_limit(request)
@@ -324,14 +266,6 @@ def create_app(
                 "next_cursor": page.next_cursor,
             }
         )
-
-    async def equity(request: Request) -> JSONResponse:
-        requested = request.query_params.get("window", "24h")
-        window_key = requested if requested in _EQUITY_WINDOWS else "24h"
-        hours = _EQUITY_WINDOWS[window_key]
-        now = datetime.now(UTC)
-        window = await run_in_threadpool(reader.equity_window, now=now, hours=hours)
-        return _json({"window": window_key, **ser.equity(window)})
 
     async def accounts(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
@@ -367,21 +301,13 @@ def create_app(
 
     routes = [
         Route("/api/health", health),
-        Route("/api/cycles", cycles),
-        Route("/api/cycles/{cycle_id}", cycle_detail),
         Route("/api/events", events),
-        Route("/api/equity", equity),
         Route("/api/accounts", accounts),
         Route("/api/resources", resources),
         Route("/api/capital", capital),
         Route("/api/capital/equity", capital_equity),
         Route("/api/capital/activity", capital_activity),
         Route("/api/evaluation/forecast", forecast_evidence),
-        Route("/api/assessment/cycles", assessment_cycles),
-        Route(
-            "/api/assessment/cycles/{cycle_id}",
-            assessment_cycle_detail,
-        ),
         Route("/api/assessment/records", assessment_records),
         Route(
             "/api/assessment/records/{assessment_id}",

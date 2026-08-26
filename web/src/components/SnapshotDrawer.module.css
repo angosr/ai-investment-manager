@@ -112,20 +112,6 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 8px 18px;
 }
-.r {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--line-soft);
-  padding-bottom: 6px;
-}
-.r span {
-  color: var(--muted);
-}
-.r b {
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
 .ev {
   padding: 11px 0;
   border-bottom: 1px solid var(--line-soft);
@@ -144,11 +130,6 @@
   font-size: 11px;
   color: var(--faint);
 }
-.evScore {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--accent);
-}
 .evTitle {
   font-size: 13px;
   font-weight: 500;
@@ -159,33 +140,6 @@
   color: var(--muted);
   margin-top: 4px;
   line-height: 1.6;
-}
-.evInj {
-  display: inline-block;
-  font-size: 10px;
-  color: var(--neg);
-  border: 1px solid var(--neg);
-  border-radius: 2px;
-  padding: 0 6px;
-  margin-top: 6px;
-}
-.rules {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.rules li {
-  font-size: 12px;
-  color: var(--muted);
-  padding: 6px 0 6px 16px;
-  position: relative;
-}
-.rules li::before {
-  content: "·";
-  position: absolute;
-  left: 4px;
-  color: var(--accent-line);
-  font-weight: 700;
 }
 .rawDetails {
   margin-top: 22px;

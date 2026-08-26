@@ -1214,9 +1214,15 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
         ).body
         if isinstance(node, ast.ClassDef)
     }
-    assert {"SqlEvaluationRepository", "SqlGovernanceRepository"}.issubset(
-        governance_classes
-    )
+    assert governance_classes == {"SqlGovernanceRepository"}
+    evaluation_repository_classes = {
+        node.name
+        for node in ast.parse(
+            (PACKAGE_ROOT / "governance" / "evaluation" / "repository.py").read_text()
+        ).body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert evaluation_repository_classes == {"SqlEvaluationRepository"}
     for filename in (
         "acceptance.py",
         "deployment.py",
@@ -1292,7 +1298,6 @@ def test_capital_decision_language_is_venue_neutral() -> None:
         PACKAGE_ROOT / "entrypoints" / "dashboard" / "capital.py",
         ROOT / "web" / "src" / "components" / "CapitalActions.tsx",
         ROOT / "web" / "src" / "components" / "CapitalEquityHero.tsx",
-        ROOT / "web" / "src" / "components" / "EquityHero.tsx",
     )
     forbidden = (
         "mock_authorization",
@@ -1357,6 +1362,24 @@ def test_capital_application_does_not_select_deployment_adapter() -> None:
         token not in service_source
         for token in ("deployment", "shadow", "testnet", "simulation", "模拟", "仿真")
     )
+
+
+def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
+    dashboard_root = PACKAGE_ROOT / "entrypoints" / "dashboard"
+    backend = "\n".join(
+        path.read_text(encoding="utf-8") for path in dashboard_root.glob("*.py")
+    )
+
+    assert "investment_manager.legacy" not in backend
+    for route in ("/api/cycles", "/api/assessment/cycles", "/api/equity"):
+        assert route not in backend
+    for retired in (
+        "CycleRow.tsx",
+        "CycleRail.tsx",
+        "CycleRail.module.css",
+        "EquityHero.tsx",
+    ):
+        assert not (ROOT / "web" / "src" / "components" / retired).exists()
 
 
 def test_package_root_contains_only_composition_entries() -> None:

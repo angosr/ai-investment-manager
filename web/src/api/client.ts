@@ -7,9 +7,6 @@ import type {
   CapitalAction,
   CapitalEquityPoint,
   CapitalOverview,
-  CycleDetail,
-  CycleRow,
-  Equity,
   ForecastEvaluationEvidence,
   Health,
   Page,
@@ -67,14 +64,6 @@ export const api = {
     );
     return { items: result.actions, nextCursor: result.next_cursor };
   },
-  assessmentCycles: async (cursor?: string, limit = 30): Promise<Page<CycleRow>> => {
-    const result = await getJson<{ cycles: CycleRow[]; next_cursor: string | null }>(
-      pagePath("/api/assessment/cycles", cursor, limit),
-    );
-    return { items: result.cycles, nextCursor: result.next_cursor };
-  },
-  assessmentCycle: (id: string) =>
-    getJson<CycleDetail>(`/api/assessment/cycles/${encodeURIComponent(id)}`),
   assessmentRecords: (cursor?: string, limit = 30) =>
     getJson<AssessmentFeed>(pagePath("/api/assessment/records", cursor, limit)),
   latestAssessment: () =>
@@ -85,20 +74,12 @@ export const api = {
     getJson<AssessmentRecordDetail>(
       `/api/assessment/records/${encodeURIComponent(id)}`,
     ),
-  cycles: async (cursor?: string, limit = 30): Promise<Page<CycleRow>> => {
-    const result = await getJson<{ cycles: CycleRow[]; next_cursor: string | null }>(
-      pagePath("/api/cycles", cursor, limit),
-    );
-    return { items: result.cycles, nextCursor: result.next_cursor };
-  },
-  cycle: (id: string) => getJson<CycleDetail>(`/api/cycles/${encodeURIComponent(id)}`),
   events: async (cursor?: string, limit = 30): Promise<Page<WorldEvent>> => {
     const result = await getJson<{ events: WorldEvent[]; next_cursor: string | null }>(
       pagePath("/api/events", cursor, limit),
     );
     return { items: result.events, nextCursor: result.next_cursor };
   },
-  equity: (window: string) => getJson<Equity>(`/api/equity?window=${encodeURIComponent(window)}`),
   accounts: () => getJson<Accounts>("/api/accounts"),
   resources: () => getJson<Resources>("/api/resources"),
 };

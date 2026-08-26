@@ -11,7 +11,7 @@ from investment_manager.governance.evaluation.performance import (
     ReplayEvaluator,
     without_information_events,
 )
-from investment_manager.governance.repository import SqlEvaluationRepository
+from investment_manager.governance.evaluation.repository import SqlEvaluationRepository
 from investment_manager.legacy.cycle import AnalysisCycle
 from investment_manager.market.models import MarketSnapshot
 from investment_manager.schema import create_schema

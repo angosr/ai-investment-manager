@@ -17,7 +17,6 @@ from sqlalchemy import create_engine, insert
 from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.app import create_app
 from investment_manager.entrypoints.dashboard.read_models import AssessmentRecord, DashboardReader
-from investment_manager.execution.models import ExitReason
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.executor import (
     AssessmentExecution,
@@ -39,16 +38,6 @@ from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistr
 from investment_manager.forecast.tables import codex_runs, context_assessments
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.repository import SqlEventStore
-from investment_manager.legacy.cycle import AnalysisCycle
-from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.models import DecisionOutcome
-from investment_manager.legacy.repository import (
-    SqlFactLedger,
-    analysis_cycles,
-    decision_outcomes,
-    market_snapshots,
-)
-from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import AnalysisTriggerType, build_trigger_event
 from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.schema import create_schema
@@ -63,18 +52,10 @@ from investment_manager.state.decision.packet import (
 from investment_manager.state.tables import decision_packets
 
 
-def _seed_cycle(app_config, replay_input, *, database_url: str | None = None):
+def _empty_engine(database_url: str | None = None):
     engine = create_engine(database_url or "sqlite+pysqlite:///:memory:")
     create_schema(engine)
-    ledger = SqlFactLedger(engine)
-    cycle = AnalysisCycle.with_adapters(
-        app_config,
-        ledger=ledger,
-        exchange=MockExchange(app_config.execution),
-        risk_budget=SqlRiskBudgetStore(engine),
-    )
-    result = cycle.run(replay_input)
-    return engine, result
+    return engine
 
 
 def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> DecisionPacket:
@@ -275,15 +256,10 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
 
 def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     app_config,
-    replay_input,
     tmp_path,
 ) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'unified.db'}"
-    engine, result = _seed_cycle(
-        app_config,
-        replay_input,
-        database_url=database_url,
-    )
+    engine = _empty_engine(database_url)
     as_of = datetime.now(UTC) - timedelta(minutes=1)
     packet = _dashboard_assessment_packet(
         as_of=as_of,
@@ -412,8 +388,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             base_url="http://dashboard.test",
         ) as client:
             return await asyncio.gather(
-                client.get("/api/assessment/cycles"),
-                client.get(f"/api/assessment/cycles/{result.cycle_id}"),
                 client.get("/api/assessment/records"),
                 client.get(f"/api/assessment/records/{assessment.assessment_id}"),
                 client.get(
@@ -426,8 +400,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             )
 
     (
-        rows,
-        detail,
         assessment_rows,
         assessment_detail,
         bad_assessment_detail,
@@ -437,10 +409,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         events,
     ) = asyncio.run(read_endpoints())
 
-    assert rows.status_code == 200
-    assert [item["cycle_id"] for item in rows.json()["cycles"]] == [result.cycle_id]
-    assert detail.status_code == 200
-    assert detail.json()["cycle_id"] == result.cycle_id
     assert assessment_rows.status_code == 200
     assert [
         item["assessment_id"]
@@ -517,83 +485,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert second_assessment_page.json()["assessments"][0]["assessment_id"] == (
         assessment.assessment_id
     )
-
-
-def test_reader_and_serializer_render_a_real_persisted_cycle(app_config, replay_input) -> None:
-    engine, result = _seed_cycle(app_config, replay_input)
-    reader = DashboardReader(engine, app_config)
-
-    rows = reader.list_cycles(cursor=None, limit=10)
-    assert len(rows) == 1
-    row_dto = ser.cycle_row(rows[0])
-    assert row_dto["cycle_id"] == result.cycle_id
-    assert row_dto["symbol"]  # market_snapshots join filled the symbol
-    assert row_dto["summary"]  # 一句人话摘要非空
-    assert row_dto["category"] in {"exec", "pending", "rejected", "no-trade", "no-action"}
-
-
-def test_cycle_api_composite_cursor_has_no_gap_during_concurrent_insert(
-    app_config,
-    tmp_path,
-) -> None:
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'cursor-cycles.db'}"
-    engine = create_engine(database_url)
-    create_schema(engine)
-    at = datetime(2026, 8, 22, 3, tzinfo=UTC)
-
-    def insert_cycle(cycle_id: str) -> None:
-        with engine.begin() as connection:
-            connection.execute(
-                insert(analysis_cycles).values(
-                    cycle_id=cycle_id,
-                    as_of=at,
-                    pipeline_version=app_config.pipeline.version,
-                    outcome="NO_ACTION",
-                    reason_code="NO_ACTION",
-                    created_at=at,
-                )
-            )
-            connection.execute(
-                insert(market_snapshots).values(
-                    cycle_id=cycle_id,
-                    symbol="BTCUSDT",
-                    as_of=at,
-                    content_hash=cycle_id.removeprefix("cycle-").ljust(64, "0")[:64],
-                    payload={},
-                )
-            )
-
-    for suffix in ("a", "b", "c"):
-        insert_cycle(f"cycle-{suffix}")
-    application = create_app(app_config, database_url)
-
-    async def read_pages():
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application),
-            base_url="http://dashboard.test",
-        ) as client:
-            first = await client.get("/api/cycles?limit=2")
-            assert first.status_code == 200, first.text
-            assert "next_cursor" in first.json(), first.text
-            insert_cycle("cycle-d")
-            cursor = first.json()["next_cursor"]
-            second = await client.get("/api/cycles", params={"limit": 2, "cursor": cursor})
-            fresh = await client.get("/api/cycles?limit=2")
-            invalid = await client.get("/api/cycles?cursor=not-a-valid-cursor")
-            return first, second, fresh, invalid
-
-    first, second, fresh, invalid = asyncio.run(read_pages())
-    assert [item["cycle_id"] for item in first.json()["cycles"]] == [
-        "cycle-c",
-        "cycle-b",
-    ]
-    assert [item["cycle_id"] for item in second.json()["cycles"]] == ["cycle-a"]
-    assert second.json()["next_cursor"] is None
-    assert [item["cycle_id"] for item in fresh.json()["cycles"]] == [
-        "cycle-d",
-        "cycle-c",
-    ]
-    assert invalid.status_code == 400
 
 
 def test_event_api_cursor_pages_one_fact_store_without_gap(
@@ -750,61 +641,10 @@ def test_dashboard_token_usage_aggregates_each_account_and_total(app_config) -> 
     assert by_account[account_ids[2]]["total_tokens"] == 0
 
 
-def test_cycle_detail_and_snapshot_project_real_payloads(app_config, replay_input) -> None:
-    engine, result = _seed_cycle(app_config, replay_input)
-    reader = DashboardReader(engine, app_config)
-
-    facts = reader.get_cycle(result.cycle_id)
-    assert facts is not None
-    detail = ser.cycle_detail(facts)
-
-    # 周期轨语义由后端一次性给出，前端不再重复推断。
-    gates = detail["rail"]["gates"]
-    assert len(gates) == 9
-    assert gates[0] == {
-        "key": "panel",
-        "label": "面板就绪",
-        "state": "pass",
-        "note": "",
-    }
-
-    # 信息快照：必读层三块都要有真实字段
-    snapshot = detail["snapshot"]
-    assert snapshot["symbol"]
-    assert snapshot["market"]["last"] is not None
-    assert snapshot["features"]["regime"] in {
-        "TRENDING_UP",
-        "TRENDING_DOWN",
-        "RANGING",
-        "UNKNOWN",
-    }
-    assert "reconciled" in snapshot["account"]
-    assert isinstance(snapshot["evidence"], list)
-    assert len(snapshot["rules"]) >= 1  # 固定规则一定被注入
-
-
-def test_cycle_rail_stops_at_uncalibrated_candidate_gate(base_app_config, replay_input) -> None:
-    engine, result = _seed_cycle(base_app_config, replay_input)
-    facts = DashboardReader(engine, base_app_config).get_cycle(result.cycle_id)
-    assert facts is not None
-
-    gates = ser.cycle_detail(facts)["rail"]["gates"]
-    states = {gate["key"]: gate["state"] for gate in gates}
-
-    assert states["candidate"] == "pass"
-    assert states["intent"] == "stop"
-    assert states["frequency"] == "skip"
-    assert states["risk"] == "skip"
-    assert states["execution"] == "skip"
-
-
-def test_equity_and_health_run_against_real_engine(app_config, replay_input) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
+def test_account_status_runs_against_real_engine(app_config) -> None:
+    engine = _empty_engine()
     reader = DashboardReader(engine, app_config)
     now = datetime.now(UTC) + timedelta(hours=1)
-
-    equity = ser.equity(reader.equity_window(now=now, hours=48))
-    assert equity["trade_count"] >= 0  # 回放未平仓则为 0，结构仍合法
 
     accounts = [ser.account_status(status) for status in reader.accounts(now=now)]
     assert len(accounts) == 3
@@ -882,63 +722,8 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
     assert {scope.latest_success_at for scope in status.scopes} == {completed_at}
 
 
-def test_equity_is_account_wide_and_uses_actual_close_time(app_config, replay_input) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
-    now = datetime(2026, 8, 19, 12, tzinfo=UTC)
-
-    def outcome(index: int, *, pipeline: str, closed_at: datetime) -> DecisionOutcome:
-        opened_at = closed_at - timedelta(hours=1)
-        return DecisionOutcome(
-            outcome_id=f"portfolio-outcome-{index}",
-            cycle_id=f"portfolio-cycle-{index}",
-            intent_id=f"portfolio-intent-{index}",
-            pipeline_version=pipeline,
-            position_id=f"portfolio-position-{index}",
-            symbol="BTCUSDT",
-            opened_at=opened_at,
-            closed_at=closed_at,
-            exit_reason=ExitReason.MAX_HOLDING_TIME,
-            quantity=Decimal("1"),
-            entry_price=Decimal("100"),
-            exit_price=Decimal("101"),
-            gross_pnl=Decimal("1"),
-            total_fees=Decimal("0.2"),
-            net_pnl=Decimal("0.8"),
-            maximum_favorable_excursion=Decimal("1"),
-            maximum_adverse_excursion=Decimal("-0.5"),
-        )
-
-    included = (
-        outcome(1, pipeline="retired-pipeline-v1", closed_at=now - timedelta(hours=2)),
-        outcome(2, pipeline=app_config.pipeline.version, closed_at=now - timedelta(hours=1)),
-    )
-    excluded = outcome(
-        3,
-        pipeline="retired-pipeline-v1",
-        closed_at=now - timedelta(hours=49),
-    )
-    with engine.begin() as connection:
-        for item in (*included, excluded):
-            connection.execute(
-                insert(decision_outcomes).values(
-                    outcome_id=item.outcome_id,
-                    cycle_id=item.cycle_id,
-                    intent_id=item.intent_id,
-                    position_id=item.position_id,
-                    net_pnl=item.net_pnl,
-                    payload=item.model_dump(mode="json"),
-                )
-            )
-
-    result = ser.equity(DashboardReader(engine, app_config).equity_window(now=now, hours=48))
-
-    assert result["trade_count"] == 2
-    assert result["summary"]["net_pnl"] == "1.6"
-    assert result["summary"]["total_fees"] == "0.4"
-
-
 def test_dashboard_call_activity_reads_actual_codex_attempts(app_config, replay_input) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
+    engine = _empty_engine()
     now = replay_input.market.as_of
     with engine.begin() as connection:
         for index, observed_at in enumerate(
@@ -962,7 +747,7 @@ def test_dashboard_call_activity_reads_actual_codex_attempts(app_config, replay_
 
 
 def test_news_fed_into_current_ai_packet_links_back_to_it(app_config, replay_input) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
+    engine = _empty_engine()
     now = replay_input.market.as_of
     packet = _dashboard_assessment_packet(
         as_of=now,
@@ -1006,7 +791,7 @@ def test_news_fed_into_current_ai_packet_links_back_to_it(app_config, replay_inp
 
 
 def test_agent_wakeup_is_attributed_to_main_agent(app_config, replay_input) -> None:
-    engine, _ = _seed_cycle(app_config, replay_input)
+    engine = _empty_engine()
     now = replay_input.market.as_of
     SqlTriggerRepository(engine, app_config.trigger).record_trigger(
         build_trigger_event(

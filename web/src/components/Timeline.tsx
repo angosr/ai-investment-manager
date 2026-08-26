@@ -5,7 +5,6 @@ import type { AssessmentQuality, ForecastEvaluationEvidence } from "../api/types
 import { useLive, usePagedLive } from "../hooks";
 import type { PagedLive } from "../hooks";
 import { hhmm } from "../lib/format";
-import { CycleRow } from "./CycleRow";
 import { CapitalDecisionFeed } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
@@ -21,55 +20,10 @@ const HINTS: Record<Tab, string> = {
 
 export function Timeline({
   onOpenSnapshot,
-  capitalMode = false,
 }: {
   onOpenSnapshot: (snapshot: SnapshotPayload) => void;
-  capitalMode?: boolean;
 }) {
-  if (capitalMode) {
-    return <CapitalTimeline onOpenSnapshot={onOpenSnapshot} />;
-  }
-  return <LegacyTimeline onOpenSnapshot={onOpenSnapshot} />;
-}
-
-function LegacyTimeline({ onOpenSnapshot }: { onOpenSnapshot: (snapshot: SnapshotPayload) => void }) {
-  const [tab, setTab] = useState<Tab>("actions");
-  const cycles = usePagedLive(
-    (cursor) => api.cycles(cursor),
-    "cycles",
-  );
-  const events = usePagedLive(
-    (cursor) => api.events(cursor),
-    "events",
-  );
-
-  return (
-    <section className={styles.card}>
-      <div className={styles.head}>
-        <div className={styles.tabs} role="tablist">
-          <Tab id="actions" active={tab} label="决策与行动" onPick={setTab} />
-          <Tab id="world" active={tab} label="世界事件" onPick={setTab} />
-        </div>
-        <span className={styles.hint}>{HINTS[tab]}</span>
-      </div>
-      {tab === "actions" ? (
-        <div>
-          {cycles.items.map((row) => (
-            <CycleRow key={row.cycle_id} row={row} onOpenSnapshot={onOpenSnapshot} />
-          ))}
-          {cycles.items.length === 0 ? (
-            <p className={styles.empty}>暂无决策记录。</p>
-          ) : null}
-          <Pager feed={cycles} />
-        </div>
-      ) : (
-        <div>
-          <WorldFeed events={events.items} />
-          <Pager feed={events} />
-        </div>
-      )}
-    </section>
-  );
+  return <CapitalTimeline onOpenSnapshot={onOpenSnapshot} />;
 }
 
 function CapitalTimeline({

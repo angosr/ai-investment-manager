@@ -8,7 +8,7 @@ import type {
   SnapshotPayload,
 } from "../api/types";
 import { hhmm } from "../lib/format";
-import styles from "./CycleRow.module.css";
+import styles from "./AssessmentRow.module.css";
 
 const RELATIONSHIP: Record<string, string> = {
   SUPPORTS: "强化",

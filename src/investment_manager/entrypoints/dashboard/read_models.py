@@ -14,7 +14,6 @@ from sqlalchemy import func, literal, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
-from investment_manager.execution.ledger import CycleFacts
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.executor import (
     AssessmentExecution,
@@ -32,10 +31,6 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
     forecasts,
 )
-from investment_manager.governance.evaluation.performance import (
-    OutcomeMetrics,
-    calculate_outcome_metrics,
-)
 from investment_manager.governance.models import (
     ReleaseManifest,
     validate_manifest_component_versions,
@@ -43,19 +38,6 @@ from investment_manager.governance.models import (
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
-from investment_manager.legacy.models import (
-    AnalysisProposal,
-    DecisionOutcome,
-    TradeIntent,
-)
-from investment_manager.legacy.repository import (
-    SqlFactLedger,
-    analysis_cycles,
-    analysis_proposals,
-    decision_outcomes,
-    market_snapshots,
-    trade_intents,
-)
 from investment_manager.market.tables import (
     market_quotes,
     market_trades,
@@ -83,19 +65,6 @@ _ASSESSMENT_QUALITY_WINDOW_HOURS = 24
 
 def _is_assessment_rejection(reason_code: str) -> bool:
     return reason_code == "CODEX_SCHEMA_INVALID" or reason_code.startswith("ASSESSMENT_")
-
-
-@dataclass(frozen=True, slots=True)
-class CycleRow:
-    """决策时间线一行所需的最小事实（不含整张周期图）。"""
-
-    cycle_id: str
-    as_of: datetime
-    symbol: str
-    outcome: str
-    reason_code: str
-    proposal: AnalysisProposal | None
-    intent: TradeIntent | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,14 +142,6 @@ class TokenUsageWindow:
 
 
 @dataclass(frozen=True, slots=True)
-class EquityWindow:
-    outcomes: tuple[DecisionOutcome, ...]
-    metrics: OutcomeMetrics
-    lookback_start: datetime
-    lookback_end: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class AnalysisScopeRuntimeStatus:
     symbol: str
     latest_success_at: datetime | None
@@ -205,64 +166,6 @@ class DashboardReader:
     def __init__(self, engine: Engine, config: AppConfig) -> None:
         self._engine = engine
         self._config = config
-        self._ledger = SqlFactLedger(engine)
-
-    # --- 决策时间线 -------------------------------------------------------
-    def list_cycles(self, *, cursor: PageCursor | None, limit: int) -> list[CycleRow]:
-        query = (
-            select(
-                analysis_cycles.c.cycle_id,
-                analysis_cycles.c.as_of,
-                analysis_cycles.c.outcome,
-                analysis_cycles.c.reason_code,
-                market_snapshots.c.symbol,
-                analysis_proposals.c.payload.label("proposal_payload"),
-                trade_intents.c.payload.label("intent_payload"),
-            )
-            .select_from(analysis_cycles)
-            .join(market_snapshots, market_snapshots.c.cycle_id == analysis_cycles.c.cycle_id)
-            .join(
-                analysis_proposals,
-                analysis_proposals.c.cycle_id == analysis_cycles.c.cycle_id,
-                isouter=True,
-            )
-            .join(
-                trade_intents,
-                trade_intents.c.cycle_id == analysis_cycles.c.cycle_id,
-                isouter=True,
-            )
-            .order_by(analysis_cycles.c.as_of.desc(), analysis_cycles.c.cycle_id.desc())
-            .limit(limit)
-        )
-        if cursor is not None:
-            query = query.where(
-                older_than(analysis_cycles.c.as_of, analysis_cycles.c.cycle_id, cursor)
-            )
-        with self._engine.connect() as connection:
-            rows = connection.execute(query).mappings().all()
-        return [
-            CycleRow(
-                cycle_id=row["cycle_id"],
-                as_of=database_utc(row["as_of"]),
-                symbol=row["symbol"],
-                outcome=row["outcome"],
-                reason_code=row["reason_code"],
-                proposal=(
-                    AnalysisProposal.model_validate(row["proposal_payload"])
-                    if row["proposal_payload"] is not None
-                    else None
-                ),
-                intent=(
-                    TradeIntent.model_validate(row["intent_payload"])
-                    if row["intent_payload"] is not None
-                    else None
-                ),
-            )
-            for row in rows
-        ]
-
-    def get_cycle(self, cycle_id: str) -> CycleFacts | None:
-        return self._ledger.get(cycle_id)
 
     def list_assessments(
         self,
@@ -619,28 +522,6 @@ class DashboardReader:
                 )
             )
         return events
-
-    # --- 权益 / 结果窗口 --------------------------------------------------
-    def equity_window(self, *, now: datetime, hours: int) -> EquityWindow:
-        start = now - timedelta(hours=hours)
-        with self._engine.connect() as connection:
-            payloads = tuple(connection.execute(select(decision_outcomes.c.payload)).scalars())
-        outcomes = tuple(
-            sorted(
-                (
-                    outcome
-                    for payload in payloads
-                    if start <= (outcome := DecisionOutcome.model_validate(payload)).closed_at < now
-                ),
-                key=lambda item: (item.closed_at, item.outcome_id),
-            )
-        )
-        return EquityWindow(
-            outcomes=outcomes,
-            metrics=calculate_outcome_metrics(outcomes),
-            lookback_start=start,
-            lookback_end=now,
-        )
 
     def latest_market_observed_at(self) -> datetime | None:
         """返回所有配置品种报价与成交中最旧的最新观测时间。
@@ -1003,41 +884,25 @@ class DashboardReader:
             )
 
     def _recent_failures(self, *, now: datetime) -> dict[str, int]:
-        if self._config.assessment.enabled:
-            behavior_hash = configured_assess_behavior_hash(self._config)
-            query = (
-                select(codex_runs.c.account_id, func.count())
-                .select_from(
-                    codex_runs.join(
-                        decision_packets,
-                        decision_packets.c.packet_id == codex_runs.c.cycle_id,
-                    )
+        if not self._config.assessment.enabled:
+            return {}
+        behavior_hash = configured_assess_behavior_hash(self._config)
+        query = (
+            select(codex_runs.c.account_id, func.count())
+            .select_from(
+                codex_runs.join(
+                    decision_packets,
+                    decision_packets.c.packet_id == codex_runs.c.cycle_id,
                 )
-                .where(
-                    decision_packets.c.as_of >= now - timedelta(hours=1),
-                    decision_packets.c.as_of <= now,
-                    codex_runs.c.payload["analysis_behavior_hash"].as_string() == behavior_hash,
-                    codex_runs.c.status != "SUCCEEDED",
-                    codex_runs.c.account_id.is_not(None),
-                )
-                .group_by(codex_runs.c.account_id)
             )
-        else:
-            query = (
-                select(codex_runs.c.account_id, func.count())
-                .select_from(
-                    codex_runs.join(
-                        analysis_cycles,
-                        analysis_cycles.c.cycle_id == codex_runs.c.cycle_id,
-                    )
-                )
-                .where(
-                    analysis_cycles.c.as_of >= now - timedelta(hours=1),
-                    analysis_cycles.c.as_of <= now,
-                    codex_runs.c.status != "SUCCEEDED",
-                    codex_runs.c.account_id.is_not(None),
-                )
-                .group_by(codex_runs.c.account_id)
+            .where(
+                decision_packets.c.as_of >= now - timedelta(hours=1),
+                decision_packets.c.as_of <= now,
+                codex_runs.c.payload["analysis_behavior_hash"].as_string() == behavior_hash,
+                codex_runs.c.status != "SUCCEEDED",
+                codex_runs.c.account_id.is_not(None),
             )
+            .group_by(codex_runs.c.account_id)
+        )
         with self._engine.connect() as connection:
             return {account_id: count for account_id, count in connection.execute(query).all()}

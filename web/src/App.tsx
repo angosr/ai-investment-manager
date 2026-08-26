@@ -4,7 +4,6 @@ import type { SnapshotPayload } from "./api/types";
 import { Accounts } from "./components/Accounts";
 import { Capital, CapitalPositions } from "./components/Capital";
 import { CapitalEquityHero } from "./components/CapitalEquityHero";
-import { EquityHero } from "./components/EquityHero";
 import { LatestAssessment } from "./components/LatestAssessment";
 import { Masthead } from "./components/Masthead";
 import { Resources } from "./components/Resources";
@@ -24,29 +23,10 @@ export function App() {
       <div className={styles.wrap}>
         {health === null ? (
           <div className={styles.loading}>正在读取运行状态…</div>
-        ) : (
-          health.capital_enabled ? (
-            <CapitalDashboard onOpenSnapshot={setSnapshot} />
-          ) : (
-            <div className={styles.grid}>
-              <main className={styles.main}>
-                <EquityHero />
-                <Timeline onOpenSnapshot={setSnapshot} />
-              </main>
-              <aside className={styles.side}>
-                <Accounts />
-                <Resources />
-              </aside>
-            </div>
-          )
-        )}
+        ) : <CapitalDashboard onOpenSnapshot={setSnapshot} />}
         {health ? (
           <footer className={styles.foot}>
-            只读投影 · {health.capital_enabled ? (
-              <>资本状态以产品账户账本为准，前端不重算</>
-            ) : (
-              <>预测、产品和资本结果由后端按冻结口径结算，前端不重算</>
-            )} · 实时经 SSE 推送
+            只读投影 · 资本状态以产品账户账本为准，前端不重算 · 实时经 SSE 推送
           </footer>
         ) : null}
       </div>
@@ -67,7 +47,7 @@ function CapitalDashboard({
       <main className={styles.main}>
         <CapitalEquityHero data={capital} points={equity ?? []} />
         <LatestAssessment />
-        <Timeline onOpenSnapshot={onOpenSnapshot} capitalMode />
+        <Timeline onOpenSnapshot={onOpenSnapshot} />
       </main>
       <aside className={styles.side}>
         <Capital data={capital} />
