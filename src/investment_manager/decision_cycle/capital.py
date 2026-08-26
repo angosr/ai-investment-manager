@@ -586,7 +586,6 @@ class CapitalCycleService:
             execution_instruments=execution_instruments,
         )
         account = self._account(
-            cycle_id=cycle_id,
             as_of=decision_at,
             quotes=valuation_quotes,
         )
@@ -1100,7 +1099,6 @@ class CapitalCycleService:
             execution_instruments=execution_instruments,
         )
         account = self._account(
-            cycle_id=cycle_id,
             as_of=as_of,
             quotes=valuation_quotes,
         )
@@ -1180,25 +1178,28 @@ class CapitalCycleService:
     def _account(
         self,
         *,
-        cycle_id: str,
         as_of: datetime,
         quotes: tuple[ValuationQuote, ...],
     ) -> PortfolioAccountSnapshot:
         portfolio_id = self._policy.decision.portfolio_id
+        projection_cycle_id = stable_id(
+            "portfolio_account_projection",
+            portfolio_id,
+            as_of.isoformat(),
+        )
         with self._portfolio.account_projection_lock(portfolio_id=portfolio_id):
-            account = self._portfolio.account_for_cycle(
-                cycle_id=cycle_id,
-                portfolio_id=portfolio_id,
-            )
+            head = self._portfolio.head_account(portfolio_id=portfolio_id)
+            if head is not None and head.as_of > as_of:
+                raise ValueError("Capital account 不允许倒序投影")
+            account = head if head is not None and head.as_of == as_of else None
             if account is None:
-                head = self._portfolio.head_account(portfolio_id=portfolio_id)
-                if head is not None and head.as_of > as_of:
-                    raise ValueError("Capital account 不允许倒序投影")
-                if head is not None and head.as_of == as_of:
-                    account = head
+                account = self._portfolio.account_for_cycle(
+                    cycle_id=projection_cycle_id,
+                    portfolio_id=portfolio_id,
+                )
             if account is None:
                 account = self._accounts.project(
-                    cycle_id=cycle_id,
+                    cycle_id=projection_cycle_id,
                     as_of=as_of,
                     quotes=quotes,
                 )

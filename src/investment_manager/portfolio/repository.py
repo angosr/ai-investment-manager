@@ -255,14 +255,12 @@ class SqlPortfolioStore:
         account_row = connection.execute(
             select(
                 portfolio_account_snapshots.c.snapshot_hash,
-                portfolio_account_snapshots.c.cycle_id,
                 portfolio_account_snapshots.c.portfolio_id,
                 portfolio_account_snapshots.c.payload,
             ).where(portfolio_account_snapshots.c.snapshot_id == target.account_snapshot_id)
         ).one_or_none()
         if account_row is None or (
             account_row.snapshot_hash != target.account_snapshot_hash
-            or account_row.cycle_id != target.cycle_id
             or account_row.portfolio_id != target.portfolio_id
             or PortfolioAccountSnapshot.model_validate(account_row.payload).as_of != target.as_of
         ):

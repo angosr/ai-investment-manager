@@ -873,8 +873,7 @@ class PortfolioDecisionEngine:
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
         if (
-            account.cycle_id != cycle_id
-            or account.as_of != as_of
+            account.as_of != as_of
             or account.portfolio_id != self._policy.portfolio_id
         ):
-            raise ValueError("Portfolio account 与 cycle/as_of/portfolio 不一致")
+            raise ValueError("Portfolio account 与 as_of/portfolio 不一致")

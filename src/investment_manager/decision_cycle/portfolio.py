@@ -227,8 +227,8 @@ class PortfolioDecisionPipeline:
         quotes: tuple[ExecutableQuote, ...],
         as_of: datetime,
     ) -> None:
-        if account.cycle_id != cycle_id or account.as_of != as_of:
-            raise ValueError("PortfolioPipeline 账户 cycle_id/as_of 不一致")
+        if account.as_of != as_of:
+            raise ValueError("PortfolioPipeline 账户 as_of 不一致")
         quote_keys = tuple(item.instrument.key for item in quotes)
         if tuple(sorted(set(quote_keys))) != quote_keys:
             raise ValueError("PortfolioPipeline ExecutableQuote 必须唯一且排序")

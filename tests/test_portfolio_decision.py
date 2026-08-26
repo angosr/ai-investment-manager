@@ -262,6 +262,23 @@ def test_engine_is_off_without_creating_a_target() -> None:
     )
 
 
+def test_account_projection_identity_is_independent_from_decision_cycle() -> None:
+    account = _account().model_copy(update={"cycle_id": "account-projection-1"})
+
+    target = _engine().decide(
+        cycle_id="decision-cycle-1",
+        as_of=NOW,
+        account=account,
+        sleeves=(_input(),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.cycle_id == "decision-cycle-1"
+    assert target.account_snapshot_id == account.snapshot_id
+
+
 def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> None:
     target = _engine().decide(
         cycle_id="cycle-1",

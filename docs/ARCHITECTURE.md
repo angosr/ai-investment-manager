@@ -170,7 +170,9 @@ TradePlan 的短期有效期只约束“这次订单计划是否仍可执行”�
 
 Forecast 已经形成而资本阶段中断时，恢复仍必须在当前时点形成唯一的 PortfolioTarget 与 CapitalCycleRecord：入场窗内按当前可成交事实重算，入场窗外由 Portfolio 的同一时效语义禁止新增风险并明确选择现金、保持或减仓。禁止在编排层因 `valid_until` 过期直接抛弃整个资本处置；否则既会掩盖系统造成的错失机会，也会让资本覆盖率和后续评价缺少终态。该恢复不补跑历史 AI、不回写 Forecast，也不建立额外失败状态机。
 
-每个获准进入资本链的稳定 `cause_id + capital_behavior_id`，只要已经产生至少一份可资本化终态 Forecast，就必须让该 cause 的 Forecast 集合最终得到且仅得到一份资本处置回执。Forecast、单个 product projection、PortfolioTarget 或 Risk/Execution 中间事实都不等于这项义务已经完成；任一层失败后复用原身份和已冻结事实幂等补齐。恢复时入场窗、账户 revision 或事实新鲜度已经不再允许原决策，就只保存明确的 `DECISION_UNAVAILABLE` 处置及首个失败层、输入引用和原因，不能补做回看交易，也不能把它写成主动选择现金或持有。无需为此建立第二套状态机：开放义务由“该 cause 已存在可资本化 Forecast 且对应资本行为尚无 CapitalCycleRecord”直接派生，健康状态报告最老开放义务和最近失败，后续无关批次成功不能将其清除。部分 projection 可继续用于各自实现诊断，但没有完整 PortfolioTarget 的批次不得进入产品选择或总资本效果评价。
+每个获准进入资本链的稳定 `cause_id + capital_behavior_id`，只要已经产生至少一份可资本化终态 Forecast，就必须让该 cause 的 Forecast 集合最终得到且仅得到一份资本处置回执。Forecast、单个 product projection、PortfolioTarget 或 Risk/Execution 中间事实都不等于这项义务已经完成；任一层失败后复用原身份和已冻结事实幂等补齐。恢复时只要当前 Mandate、行为合同、账户和点时产品事实仍足以完成同一 Portfolio 评价，就按当前时点形成现金、保持、减仓或仍合法的新风险目标；入场窗过期只禁止新增风险，不使整个资本决策不可用。只有权威依赖缺失、身份冲突或现役合同已无法重建完整评价时，才保存明确的 `DECISION_UNAVAILABLE` 处置及首个失败层、输入引用和原因，不能补做回看交易或伪装成主动资本选择。无需为此建立第二套状态机：开放义务由“该 cause 已存在可资本化 Forecast 且对应资本行为尚无 CapitalCycleRecord”直接派生，健康状态报告最老开放义务和最近失败，后续无关批次成功不能将其清除。部分 projection 可继续用于各自实现诊断，但没有完整 PortfolioTarget 的批次不得进入产品选择或总资本效果评价。
+
+账户快照是 Execution 从订单、成交、资金流水、持仓和点时估值投影出的组合事实，不是 Forecast 或 Portfolio 决策周期的所有物。`PortfolioTarget` 必须引用与自身 `portfolio_id`、`as_of` 一致的账户快照 ID 和内容哈希，但二者的 `cycle_id` 不得被强制相同：前者标识投资判断，后者只标识账户投影原因。没有新增账户因果事实时，同一组合、同一 `as_of` 复用最新快照；同一时间点发生执行或对账则以更高 revision 形成新快照，后续决策必须读取该账本头。恢复旧 Forecast 时按当前决策时点取得新的或既有账户事实，绝不改写旧快照、伪造重复 revision，也不因历史投影身份阻断当前 Portfolio 终态。
 
 ### 4.5 评价与权限
 

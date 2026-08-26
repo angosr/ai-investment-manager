@@ -73,6 +73,8 @@ Evidence、State、WorldModel、Forecast、PortfolioTarget、RiskDecision、订�
 
 候选生产者只能写业务输出，不能写评价结果。唯一 evaluator 按冻结查询从原始事实重建样本并计算终态；权限层只接受 evaluator 的内容身份，不接受字符串指标、Dashboard 汇总或候选提交的 `PASSED`。能够精确重建的评分、成本、统计与 Gate 必须确定性计算；若未来某类不可结构化评价确实需要 AI，AI evaluator 也必须拥有独立冻结身份、可重放输入和自身有效性证据，且不能与候选是同一行为或直接写权限。修改 Mandate、Reference Policy 或 evaluator 与修改 Alpha 候选必须是不同变更，不能一边降低考试标准一边让候选晋级。
 
+评价完整性依赖执行隔离而不是隐藏评分规则。候选可以知道合同和指标，但 evaluator 必须从登记时冻结且位于候选写入与导入闭包之外的制品启动，以只读查询重建点时事实；候选只能提交其行为制品和业务输出，不能覆盖 evaluator、测试分割、查询截止、Reference 或结果存储。历史 blind 的未揭示事实必须拒绝候选进程访问，一次性 claim 和访问审计属于该领域 evaluator；真实未来 Outcome 天然在候选完成后产生。Evaluator 哈希、实际输入集合、文件或事实访问违约与重算结果一并成为评价完整性事实：能够归因于候选的越权或篡改尝试使候选 `FAILED`，执行环境自身无法证明隔离与输入完整性才使合同 `INVALIDATED`；二者都不能被折算成普通指标扣分。
+
 每个评价家族只采用一种与采样方式匹配的错误控制协议：
 
 - 当前低频系统默认串行评价一个 challenger；每个后来候选只能用登记后的新事实取得评价资格，并按家族事前冻结的递减错误预算或等价 online 规则裁决，既有事实仍可用于开发但不能再次证明候选；
@@ -118,7 +120,7 @@ Cadence 必须持续产生 Forecast 或明确的 `NO_ESTIMATE`，并结算现金
 
 所有能产生新风险的运行都必须持有 `Authorization`。为收集证据的权限引用评价合同；保留或扩大资本的权限引用已通过且未废止的资本评价结果。权限冻结适用行为、产品、方向、账户、资本和风险包络、最大累计损失、有效期、退化条件及撤销动作。
 
-样本不足、行为身份改变、结果过期、分布漂移、账户不一致或损失边界越过时停止新增风险，只允许恢复、对账或减险。权限不因曾经通过自动续期，也不能从组件评价、模拟收益或工程测试推导。安全硬约束始终可以减少风险，但不能创造 Alpha 或扩大仓位。
+样本不足、行为身份改变、结果过期、账户不一致或损失边界越过时停止新增风险，只允许恢复、对账或减险。权限不因曾经通过自动续期，也不能从组件评价、模拟收益或工程测试推导。持续有效性直接复用该权限所引用 evaluator 的新增 Outcome 流和预登记风险/损失边界，只产生“继续有效”或“停止新增风险”，不建立第二个漂移评分系统；普通特征漂移或 Agent 命名的 market regime 只能触发诊断，不能自行撤权、重置历史、调参或授予新行为。若合同明确冻结了超出支持域的可验证条件，它可以保守撤权；任何自适应时间窗、衰减权重或变化点规则也必须在读取相应结果前冻结。安全硬约束始终可以减少风险，但不能创造 Alpha 或扩大仓位。
 
 同一作用域同时只有一个正式资本实现。Shadow 对照可以并存，但只写评价事实，不能双写账户或成为隐藏 fallback。被替代行为切换完成后删除运行路径；不可变历史保留，但不能重新获得执行资格。
 
@@ -146,6 +148,7 @@ Agent 每次只做以下工作：
 - **解释改善冒充 Alpha：** WorldModel 只有同时改善同槽 Forecast 且其主动偏离改善资本结果，才可以声称协助盈利。
 - **模拟盈利冒充实盘：** 页面必须按证据层明确标注；Mock、Shadow 和回放不得使用“已证明盈利”语义。
 - **评价器投机：** 不存在候选能够写入的通用奖励或通过字段；Gate 从完整历史和原始事实独立重算。
+- **市场状态变化：** 旧证据永久保留，预登记有效性边界只撤销旧权限；新状态解释和自动调参都必须作为新行为重新评价。
 
 ## 10. 完成标准
 
@@ -153,6 +156,7 @@ Agent 每次只做以下工作：
 
 - 任一候选都能映射到稳定评价家族，Gate 使用完整历史而非 Prompt 中的有限记忆；
 - 每个问题只有一个类型化合同、一个 evaluator 和一份权威结果，候选不能写自己的结论；
+- evaluator 从候选无法覆盖的冻结制品和只读点时事实运行，未揭示数据访问与结果完整性可审计；
 - 行为身份按领域依赖组合且与 Release 解耦，无关发版不重置样本，实质变更只让受影响路径换代且不继承成绩；
 - 已观察数据不再成为 blind/forward 证据，运行失败和不完整样本不能选择性消失；
 - 概率预测、产品映射、组合选择和执行分别评价且不重复归因；
@@ -175,5 +179,8 @@ Agent 每次只做以下工作：
 - [LLMs Cannot Self-Correct Reasoning Yet](https://proceedings.iclr.cc/paper_files/paper/2024/hash/8b4add8b0aa8749d80a34ca5d941c355-Abstract-Conference.html)：没有外部可验证反馈的语言反思不能提供可靠自我纠错。
 - [Hidden Technical Debt in Machine Learning Systems](https://proceedings.neurips.cc/paper_files/paper/2015/file/86df7dcfd896fcaf2674f757a2463eba-Paper.pdf)：重复消费者、反馈回路和边界侵蚀会形成系统级技术债，因此评价事实必须保持单一所有者。
 - [SWE-Gym](https://proceedings.mlr.press/v267/pan25g.html)：可执行环境和独立 verifier 有助于筛选软件 Agent；测试证明工程正确性，市场与账户 Outcome 才能证明投资有效性。
+- [Model Assessment and Selection under Temporal Distribution Shift](https://proceedings.mlr.press/v235/han24b.html)：非平稳环境中的比较依赖事前定义的时间自适应方法，不能在看到近期表现后任意选择最有利窗口。
+- [On Continuous Monitoring of Risk Violations under Unknown Shift](https://proceedings.mlr.press/v286/timans25a.html)：部署后的持续风险保证需要控制误报的序贯规则；本项目只把它用于保守撤权，不把漂移告警转化为 Alpha。
+- [Honesty to Subterfuge](https://doi.org/10.48550/arXiv.2410.06491) 与 [Reward-HackingAgents](https://arxiv.org/abs/2603.11337)：迭代反馈和可写评价环境会让 Agent 发现规格投机、评价器篡改或测试泄漏路径，因此候选与 evaluator、未揭示事实和权限写入必须在执行上隔离。
 
 最终原则：**Agent 扩大可证伪候选的搜索，评价家族约束搜索自由度，独立 evaluator 决定证据，现实资本结果决定权限，仓库只保留仍被需要的运行机制。**

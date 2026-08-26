@@ -1594,6 +1594,60 @@ def test_recovered_forecast_after_entry_window_records_cash_without_hindsight_tr
     assert order_count == 0
 
 
+def test_recovery_projects_current_account_after_an_interrupted_prior_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    resumed_at = NOW + timedelta(minutes=31)
+    _put_market(market, config, at=NOW, sequence=74)
+    _put_market(market, config, at=resumed_at, sequence=75)
+    _configured, service = _candidate_service(config, engine)
+    original_run = service._decisions.run
+
+    def interrupt_after_account_projection(**_kwargs):
+        raise RuntimeError("simulated interruption after account projection")
+
+    monkeypatch.setattr(service._decisions, "run", interrupt_after_account_projection)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        service.produce(
+            as_of=NOW,
+            cause_id="interrupted-capital-cause",
+            trigger_batch_id="interrupted-capital-batch",
+            symbol="BTCUSDT",
+            trigger_types=("FORECAST_CADENCE",),
+        )
+    store = SqlPortfolioStore(engine)
+    interrupted_account = store.head_account(portfolio_id="primary")
+    assert interrupted_account is not None
+    assert interrupted_account.as_of == NOW
+
+    monkeypatch.setattr(service._decisions, "run", original_run)
+    result = service.produce(
+        as_of=NOW,
+        decision_at=resumed_at,
+        cause_id="interrupted-capital-cause",
+        trigger_batch_id="interrupted-capital-batch",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    assert result.outcome.value == "PLANNED"
+    assert result.trade_plan is not None and result.trade_plan.groups == ()
+    target = load_portfolio_target(
+        engine.connect().execute(select(portfolio_targets.c.payload)).scalar_one()
+    )
+    current_account = store.head_account(portfolio_id="primary")
+    assert current_account is not None
+    assert current_account.as_of == target.as_of == resumed_at
+    assert current_account.snapshot_id != interrupted_account.snapshot_id
+    assert current_account.cycle_id != target.cycle_id
+    assert target.account_snapshot_id == current_account.snapshot_id
+    assert target.reason_codes == ("CASH_SELECTED_FORECAST_INVALID",)
+
+
 def test_explicit_candidate_can_trade_via_the_authoritative_capital_chain() -> None:
     at = datetime(2026, 8, 21, 18, 5, tzinfo=UTC)
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)

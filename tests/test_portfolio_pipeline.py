@@ -326,6 +326,19 @@ def test_pipeline_allocates_clamps_and_groups_one_carry_sleeve() -> None:
     assert len(result.trade_plan.groups[0].legs) == 2
 
 
+def test_pipeline_accepts_an_independently_identified_account_fact() -> None:
+    inputs = _inputs()
+    account = inputs["account"]
+    assert isinstance(account, PortfolioAccountSnapshot)
+    inputs["account"] = account.model_copy(update={"cycle_id": "account-projection-1"})
+
+    result = _pipeline(enabled=True).run(**inputs)
+
+    assert result.target is not None
+    assert result.target.cycle_id == "cycle-1"
+    assert result.target.account_snapshot_id == account.snapshot_id
+
+
 def test_pipeline_accepts_cash_target_after_an_uneconomic_forecast() -> None:
     inputs = _inputs()
     forecast = _forecast().model_copy(update={"conservative_gross_bps": Decimal("4")})
