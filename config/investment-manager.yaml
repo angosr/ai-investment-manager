@@ -280,7 +280,7 @@ capital:
         probability: "0.10"
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v28
+  version: typed-outcome-settlement-v29
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -291,11 +291,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v21
+    version: world-model-ablation-forward-v22
     enabled: false
-    plan_id: world-model-ablation-forward-v21
+    plan_id: world-model-ablation-forward-v22
     # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
-    activated_at: 2026-08-26T08:00:00Z
+    activated_at: 2026-08-26T16:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
