@@ -933,6 +933,14 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
     assert outcome.realized_gross_bps == (
         outcome.leg.price_return_bps + outcome.leg.funding_return_bps
     )
+    assert store.outcome_cases(
+        evaluation_version="product-payoff-outcome-v1",
+        producer_behavior_id=forecast.producer_behavior_id,
+    ) == ((projection, outcome),)
+    assert store.outcome_cases(
+        evaluation_version="product-payoff-outcome-v1",
+        producer_behavior_id="different-behavior",
+    ) == ()
     assert settler.settle(
         as_of=projection.evaluation_at + timedelta(minutes=2)
     ).settled == 0

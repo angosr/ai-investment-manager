@@ -147,6 +147,7 @@ class SqlProductPayoffProjectionStore:
         self,
         *,
         evaluation_version: str,
+        producer_behavior_id: str,
     ) -> tuple[tuple[ProductPayoffProjection, ProductPayoffOutcome], ...]:
         with self._engine.connect() as connection:
             rows = connection.execute(
@@ -159,11 +160,16 @@ class SqlProductPayoffProjectionStore:
                         product_payoff_projections,
                         product_payoff_projections.c.projection_id
                         == product_payoff_outcomes.c.projection_id,
+                    ).join(
+                        forecasts,
+                        forecasts.c.forecast_id
+                        == product_payoff_projections.c.source_forecast_id,
                     )
                 )
                 .where(
                     product_payoff_outcomes.c.evaluation_version
-                    == evaluation_version
+                    == evaluation_version,
+                    forecasts.c.producer_behavior_id == producer_behavior_id,
                 )
                 .order_by(
                     product_payoff_projections.c.evaluation_at,

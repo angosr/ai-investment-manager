@@ -466,7 +466,8 @@ class CapitalDashboardReader:
             return None
         evaluation = self._config.outcome_evaluation
         cases = SqlProductPayoffProjectionStore(self._engine).outcome_cases(
-            evaluation_version=evaluation.product_payoff_version
+            evaluation_version=evaluation.product_payoff_version,
+            producer_behavior_id=context.producer_behavior_id,
         )
         return evaluate_product_payoff_evidence(
             cases,
