@@ -18,11 +18,13 @@ from investment_manager.execution.models import (
 )
 from investment_manager.execution.reconciliation.engine import TradingStateSnapshot
 from investment_manager.execution.venue.binance import (
-    BinanceCredentials,
     BinanceManualIntervention,
-    BinanceTestnetClient,
     BinanceTestnetExchange,
     BinanceTradingStateSource,
+)
+from investment_manager.execution.venue.binance_client import (
+    BinanceCredentials,
+    BinanceTestnetClient,
     SymbolRules,
 )
 from investment_manager.kernel.identity import stable_id

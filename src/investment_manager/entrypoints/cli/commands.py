@@ -12,7 +12,7 @@ import typer
 
 from investment_manager.entrypoints.cli.root import app
 from investment_manager.entrypoints.cli.support import runtime_engine as _runtime_engine
-from investment_manager.execution.venue.binance import (
+from investment_manager.execution.venue.binance_client import (
     BinanceApiError,
     BinanceCredentials,
     BinanceTestnetClient,

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from temporalio.client import Client
 
 from investment_manager.decision_cycle.service import run_trigger_service
 from investment_manager.entrypoints.cli.root import app
@@ -25,7 +24,6 @@ from investment_manager.forecast.context.service import (
     run_assessment_worker_process,
 )
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
-from investment_manager.governance.change.service import assemble_governance
 from investment_manager.governance.evaluation.outcome_service import assemble_outcome_evaluation
 from investment_manager.governance.models import resolve_manifest_artifact
 from investment_manager.governance.policy import DeploymentStage
@@ -381,42 +379,6 @@ def outcome_evaluation_service(
             release=manifest,
         )
         await supervisor.run(asyncio.Event())
-
-    asyncio.run(run())
-
-
-@app.command("governance-service")
-def governance_service(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    release_manifest: Annotated[
-        Path,
-        typer.Option("--release-manifest", exists=True, dir_okay=False),
-    ] = Path("config/release-manifest.yaml"),
-    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
-) -> None:
-    """运行隔离的 Governor 周期；真实 Codex 与账号隔离门禁未通过时拒绝启动。"""
-
-    loaded, _ = load_runtime_release(config, release_manifest)
-    root = project_root.resolve()
-    require_runtime_database(database_url)
-
-    async def run() -> None:
-        client = await Client.connect(
-            loaded.temporal.address,
-            namespace=loaded.temporal.namespace,
-        )
-        worker, supervisor = assemble_governance(
-            loaded,
-            database_url,
-            client,
-            project_root=root,
-        )
-        async with worker:
-            await supervisor.run(asyncio.Event())
 
     asyncio.run(run())
 

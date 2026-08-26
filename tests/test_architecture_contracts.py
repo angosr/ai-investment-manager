@@ -48,7 +48,6 @@ CLI_CONTRACT = {
         "config,database_url,instrument_key,start,end,sampling_interval_seconds,catalog"
     ),
     "freeze-event-history": "database_url,start,end,catalog",
-    "governance-service": "config,database_url,release_manifest,project_root",
     "information-collector": "config,database_url,release_manifest",
     "invalidate-evaluation-plan": "database_url,plan_id,reason_code,evidence_id",
     "market-stream": "config,database_url,release_manifest",
@@ -270,7 +269,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "trigger-now",
             "set-trigger-heartbeat",
             "outcome-evaluation-service",
-            "governance-service",
             "information-collector",
             "dashboard-service",
         },
@@ -334,6 +332,34 @@ def test_current_internal_module_graph_has_no_cycles() -> None:
 
     for module in sorted(graph):
         visit(module, ())
+
+
+def test_managed_entrypoints_cannot_import_offline_or_legacy_modules() -> None:
+    graph = _internal_import_graph()
+    entrypoints = (
+        "investment_manager.entrypoints.cli",
+        "investment_manager.entrypoints.dashboard.app",
+    )
+    forbidden_prefixes = (
+        "investment_manager.legacy",
+        "investment_manager.research",
+    )
+
+    for entrypoint in entrypoints:
+        reachable: set[str] = set()
+        pending = [entrypoint]
+        while pending:
+            module = pending.pop()
+            if module in reachable:
+                continue
+            reachable.add(module)
+            pending.extend(graph.get(module, ()) - reachable)
+        forbidden = {
+            module
+            for module in reachable
+            if module.startswith(forbidden_prefixes)
+        }
+        assert forbidden == set(), f"{entrypoint} reaches offline modules: {forbidden}"
 
 
 def test_dense_domains_group_independent_capabilities_without_reexports() -> None:
