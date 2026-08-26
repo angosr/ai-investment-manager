@@ -186,12 +186,9 @@ export interface ForecastEvaluationEvidence {
     source_forecast_count: number;
     independent_source_forecast_count: number;
     required_independent_source_forecasts: number;
-    comparable_source_forecast_count: number;
-    mean_absolute_prediction_error_bps: string | null;
-    conservative_coverage: string | null;
-    payoff_sign_accuracy: string | null;
-    product_ranking_accuracy: string | null;
-    mean_product_selection_regret_bps: string | null;
+    mean_absolute_mapping_error_bps: string | null;
+    mapping_conservative_coverage: string | null;
+    mapping_residual_sign_accuracy: string | null;
   } | null;
   world_model_ablation: {
     plan_id: string;

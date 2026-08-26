@@ -29,6 +29,7 @@ from investment_manager.forecast.models import (
 )
 from investment_manager.forecast.product.context import ContextProductPayoffProjector
 from investment_manager.forecast.product.evaluation import (
+    ProductPayoffEvaluationCase,
     ProductPayoffEvidenceStatus,
     evaluate_product_payoff_evidence,
 )
@@ -44,6 +45,7 @@ from investment_manager.forecast.results import (
     BaseForecast,
     ForecastBucketProbability,
     ForecastLegOutcome,
+    ForecastOutcome,
     ForecastOutcomeStatus,
 )
 from investment_manager.kernel.identity import stable_id
@@ -934,11 +936,13 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
         outcome.leg.price_return_bps + outcome.leg.funding_return_bps
     )
     assert store.outcome_cases(
-        evaluation_version="product-payoff-outcome-v1",
+        product_outcome_version="product-payoff-outcome-v1",
+        forecast_outcome_version="forecast-target-outcome-v1",
         producer_behavior_id=forecast.producer_behavior_id,
-    ) == ((projection, outcome),)
+    ) == ()
     assert store.outcome_cases(
-        evaluation_version="product-payoff-outcome-v1",
+        product_outcome_version="product-payoff-outcome-v1",
+        forecast_outcome_version="forecast-target-outcome-v1",
         producer_behavior_id="different-behavior",
     ) == ()
     assert settler.settle(
@@ -992,7 +996,7 @@ def test_product_payoff_settlement_waits_for_grace_then_freezes_unavailable() ->
     assert outcome.status == ForecastOutcomeStatus.OUTCOME_UNAVAILABLE
 
 
-def test_product_payoff_evidence_measures_ranking_regret_by_source_forecast() -> None:
+def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
     contract = _contract()
     forecast = _forecast(contract)
     projections = tuple(
@@ -1001,7 +1005,7 @@ def test_product_payoff_evidence_measures_ranking_regret_by_source_forecast() ->
             forecast=forecast,
             state=_state(
                 instrument=instrument,
-                direction=ExposureDirection.LONG,
+                direction=direction,
                 entry=entry,
                 uncertainty=uncertainty,
                 margin=margin,
@@ -1009,30 +1013,28 @@ def test_product_payoff_evidence_measures_ranking_regret_by_source_forecast() ->
             economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
             projection_version="linear-product-payoff-v1",
         )
-        for instrument, entry, uncertainty, margin in (
-            (SPOT, "100", "0", "1"),
-            (PERPETUAL, "99.8", "1", "0.1"),
+        for instrument, direction, entry, uncertainty, margin in (
+            (SPOT, ExposureDirection.LONG, "100", "0", "1"),
+            (PERPETUAL, ExposureDirection.LONG, "99.8", "1", "0.1"),
+            (PERPETUAL, ExposureDirection.SHORT, "100.2", "1", "0.1"),
         )
     )
-    predicted = max(projections, key=lambda item: item.conservative_gross_bps)
-    alternative = next(item for item in projections if item != predicted)
+    first, second, short = projections
     later = project_product_payoff(
         contract=contract,
         forecast=forecast,
         state=_state(
-            instrument=predicted.target.legs[0].instrument,
-            direction=predicted.target.legs[0].direction,
+            instrument=first.target.legs[0].instrument,
+            direction=first.target.legs[0].direction,
             entry="102",
             uncertainty=(
                 "0"
-                if predicted.target.legs[0].instrument.product
-                == InstrumentProduct.SPOT
+                if first.target.legs[0].instrument.product == InstrumentProduct.SPOT
                 else "1"
             ),
             margin=(
                 "1"
-                if predicted.target.legs[0].instrument.product
-                == InstrumentProduct.SPOT
+                if first.target.legs[0].instrument.product == InstrumentProduct.SPOT
                 else "0.1"
             ),
             available_at=forecast.available_at + timedelta(minutes=5),
@@ -1073,23 +1075,109 @@ def test_product_payoff_evidence_measures_ranking_regret_by_source_forecast() ->
             reason_code="TEST",
         )
 
-    evidence = evaluate_product_payoff_evidence(
-        (
-            (predicted, outcome(predicted, Decimal("10"))),
-            (alternative, outcome(alternative, Decimal("40"))),
-            (later, outcome(later, Decimal("500"))),
+    forecast_outcome_version = "forecast-target-outcome-v1"
+    source_realized = Decimal("-50")
+    source_anchor = forecast.entry_prices[0]
+    source_outcome = ForecastOutcome(
+        outcome_id=stable_id(
+            "forecast_outcome",
+            forecast.decision_slot_id,
+            forecast_outcome_version,
         ),
-        evaluation_version="product-payoff-outcome-v1",
+        contract_id=forecast.contract_id,
+        decision_slot_id=forecast.decision_slot_id,
+        evaluation_version=forecast_outcome_version,
+        status=ForecastOutcomeStatus.SETTLED,
+        information_cutoff_at=forecast.information_cutoff_at,
+        outcome_start_at=forecast.available_at,
+        evaluation_at=forecast.economic_horizon_end,
+        settled_at=forecast.economic_horizon_end + timedelta(minutes=1),
+        legs=(
+            ForecastLegOutcome(
+                instrument_id=source_anchor.instrument_id,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+                reference_price=source_anchor.price,
+                exit_price=source_anchor.price
+                * (Decimal("1") + source_realized / Decimal("10000")),
+                price_return_bps=source_realized,
+            ),
+        ),
+        gross_target_return_bps=source_realized,
+        realized_bucket_id="LOSS",
+        reason_code="TEST",
+    )
+    realized_residuals = (Decimal("7"), Decimal("-2"), Decimal("3"))
+    product_realized = (
+        source_realized + realized_residuals[0],
+        source_realized + realized_residuals[1],
+        -source_realized + realized_residuals[2],
+    )
+    cases = (
+        *(
+            ProductPayoffEvaluationCase(
+                source_forecast=forecast,
+                source_outcome=source_outcome,
+                projection=projection,
+                product_outcome=outcome(projection, realized),
+            )
+            for projection, realized in zip(
+                (first, second, short), product_realized, strict=True
+            )
+        ),
+        ProductPayoffEvaluationCase(
+            source_forecast=forecast,
+            source_outcome=source_outcome,
+            projection=later,
+            product_outcome=outcome(later, Decimal("500")),
+        ),
+    )
+
+    evidence = evaluate_product_payoff_evidence(
+        cases,
+        product_outcome_version="product-payoff-outcome-v1",
+        forecast_outcome_version=forecast_outcome_version,
         required_independent_source_forecasts=30,
     )
 
     assert evidence.status == ProductPayoffEvidenceStatus.COLLECTING
+    assert evidence.evaluation_version == "product-payoff-residual-evidence-v1"
     assert evidence.source_forecast_count == 1
-    assert evidence.settled_product_count == 3
+    assert evidence.settled_product_count == 4
     assert evidence.independent_source_forecast_count == 1
-    assert evidence.comparable_source_forecast_count == 1
-    assert evidence.product_ranking_accuracy == 0
-    assert evidence.mean_product_selection_regret_bps == Decimal("30")
+    expected_residuals = (
+        first.expected_gross_bps - forecast.expected_gross_bps,
+        second.expected_gross_bps - forecast.expected_gross_bps,
+        short.expected_gross_bps + forecast.expected_gross_bps,
+    )
+    assert evidence.mean_absolute_mapping_error_bps == sum(
+        (
+            abs(realized - expected)
+            for realized, expected in zip(realized_residuals, expected_residuals, strict=True)
+        ),
+        Decimal("0"),
+    ) / 3
+    conservative_residuals = (
+        first.conservative_gross_bps - forecast.expected_gross_bps,
+        second.conservative_gross_bps - forecast.expected_gross_bps,
+        short.conservative_gross_bps + forecast.expected_gross_bps,
+    )
+    assert evidence.mapping_conservative_coverage == Decimal(
+        sum(
+            realized >= conservative
+            for realized, conservative in zip(
+                realized_residuals, conservative_residuals, strict=True
+            )
+        )
+    ) / 3
+    assert evidence.mapping_residual_sign_accuracy == Decimal(
+        sum(
+            (realized > 0) - (realized < 0) == (expected > 0) - (expected < 0)
+            for realized, expected in zip(
+                realized_residuals, expected_residuals, strict=True
+            )
+        )
+    ) / 3
 
 
 class _ProjectionStore:

@@ -466,12 +466,14 @@ class CapitalDashboardReader:
             return None
         evaluation = self._config.outcome_evaluation
         cases = SqlProductPayoffProjectionStore(self._engine).outcome_cases(
-            evaluation_version=evaluation.product_payoff_version,
+            product_outcome_version=evaluation.product_payoff_version,
+            forecast_outcome_version=evaluation.target_forecast_version,
             producer_behavior_id=context.producer_behavior_id,
         )
         return evaluate_product_payoff_evidence(
             cases,
-            evaluation_version=evaluation.product_payoff_version,
+            product_outcome_version=evaluation.product_payoff_version,
+            forecast_outcome_version=evaluation.target_forecast_version,
             required_independent_source_forecasts=(
                 evaluation.product_payoff_minimum_sample_size
             ),
@@ -1398,11 +1400,9 @@ def serialize_product_payoff_evidence(
     payload = asdict(evidence)
     payload["status"] = evidence.status.value
     for field_name in (
-        "mean_absolute_prediction_error_bps",
-        "conservative_coverage",
-        "payoff_sign_accuracy",
-        "product_ranking_accuracy",
-        "mean_product_selection_regret_bps",
+        "mean_absolute_mapping_error_bps",
+        "mapping_conservative_coverage",
+        "mapping_residual_sign_accuracy",
     ):
         value = getattr(evidence, field_name)
         payload[field_name] = None if value is None else str(value)

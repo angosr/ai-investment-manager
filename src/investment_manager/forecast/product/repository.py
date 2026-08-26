@@ -8,12 +8,18 @@ from sqlalchemy import and_, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
+from investment_manager.forecast.product.evaluation import ProductPayoffEvaluationCase
 from investment_manager.forecast.product.models import (
     ProductPayoffOutcome,
     ProductPayoffProjection,
 )
-from investment_manager.forecast.results import BaseForecast, ForecastResultKind
+from investment_manager.forecast.results import (
+    BaseForecast,
+    ForecastOutcome,
+    ForecastResultKind,
+)
 from investment_manager.forecast.tables import (
+    forecast_outcomes,
     forecasts,
     product_payoff_outcomes,
     product_payoff_projections,
@@ -146,12 +152,16 @@ class SqlProductPayoffProjectionStore:
     def outcome_cases(
         self,
         *,
-        evaluation_version: str,
+        product_outcome_version: str,
+        forecast_outcome_version: str,
         producer_behavior_id: str,
-    ) -> tuple[tuple[ProductPayoffProjection, ProductPayoffOutcome], ...]:
+    ) -> tuple[ProductPayoffEvaluationCase, ...]:
+        source_outcomes = forecast_outcomes.alias("source_outcomes")
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(
+                    forecasts.c.payload,
+                    source_outcomes.c.payload,
                     product_payoff_projections.c.payload,
                     product_payoff_outcomes.c.payload,
                 )
@@ -164,11 +174,19 @@ class SqlProductPayoffProjectionStore:
                         forecasts,
                         forecasts.c.forecast_id
                         == product_payoff_projections.c.source_forecast_id,
+                    ).join(
+                        source_outcomes,
+                        and_(
+                            source_outcomes.c.decision_slot_id
+                            == forecasts.c.decision_slot_id,
+                            source_outcomes.c.evaluation_version
+                            == forecast_outcome_version,
+                        ),
                     )
                 )
                 .where(
                     product_payoff_outcomes.c.evaluation_version
-                    == evaluation_version,
+                    == product_outcome_version,
                     forecasts.c.producer_behavior_id == producer_behavior_id,
                 )
                 .order_by(
@@ -178,9 +196,11 @@ class SqlProductPayoffProjectionStore:
                 )
             ).all()
         return tuple(
-            (
-                ProductPayoffProjection.model_validate(row[0]),
-                ProductPayoffOutcome.model_validate(row[1]),
+            ProductPayoffEvaluationCase(
+                source_forecast=BaseForecast.model_validate(row[0]),
+                source_outcome=ForecastOutcome.model_validate(row[1]),
+                projection=ProductPayoffProjection.model_validate(row[2]),
+                product_outcome=ProductPayoffOutcome.model_validate(row[3]),
             )
             for row in rows
         )

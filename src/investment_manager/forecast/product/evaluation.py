@@ -1,4 +1,4 @@
-"""Forward evidence for deterministic product mapping and ranking."""
+"""Forward evidence for deterministic product mapping residuals."""
 
 from __future__ import annotations
 
@@ -8,11 +8,18 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from investment_manager.forecast.models import ExposureDirection
 from investment_manager.forecast.product.models import (
     ProductPayoffOutcome,
     ProductPayoffProjection,
 )
-from investment_manager.forecast.results import ForecastOutcomeStatus
+from investment_manager.forecast.results import (
+    BaseForecast,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
+)
+
+PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v1"
 
 
 class ProductPayoffEvidenceStatus(StrEnum):
@@ -31,43 +38,61 @@ class ProductPayoffEvidence:
     source_forecast_count: int
     independent_source_forecast_count: int
     required_independent_source_forecasts: int
-    comparable_source_forecast_count: int
-    mean_absolute_prediction_error_bps: Decimal | None
-    conservative_coverage: Decimal | None
-    payoff_sign_accuracy: Decimal | None
-    product_ranking_accuracy: Decimal | None
-    mean_product_selection_regret_bps: Decimal | None
+    mean_absolute_mapping_error_bps: Decimal | None
+    mapping_conservative_coverage: Decimal | None
+    mapping_residual_sign_accuracy: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProductPayoffEvaluationCase:
+    source_forecast: BaseForecast
+    source_outcome: ForecastOutcome
+    projection: ProductPayoffProjection
+    product_outcome: ProductPayoffOutcome
 
 
 def evaluate_product_payoff_evidence(
-    cases: tuple[tuple[ProductPayoffProjection, ProductPayoffOutcome], ...],
+    cases: tuple[ProductPayoffEvaluationCase, ...],
     *,
-    evaluation_version: str,
+    product_outcome_version: str,
+    forecast_outcome_version: str,
     required_independent_source_forecasts: int,
 ) -> ProductPayoffEvidence:
-    """Evaluate product mapping separately from the one economic Forecast score."""
+    """Evaluate only product residuals after removing the realized economic return."""
 
     if required_independent_source_forecasts < 1:
         raise ValueError("Product payoff 最小独立样本数必须为正数")
-    for projection, outcome in cases:
+    for case in cases:
+        projection = case.projection
+        outcome = case.product_outcome
         if (
-            outcome.projection_id != projection.projection_id
+            case.source_forecast.forecast_id != projection.source_forecast_id
+            or outcome.projection_id != projection.projection_id
             or outcome.source_forecast_id != projection.source_forecast_id
-            or outcome.evaluation_version != evaluation_version
+            or outcome.evaluation_version != product_outcome_version
+            or case.source_outcome.decision_slot_id
+            != case.source_forecast.decision_slot_id
+            or case.source_outcome.contract_id != case.source_forecast.contract_id
+            or case.source_outcome.evaluation_at != projection.evaluation_at
+            or case.source_outcome.evaluation_version
+            != forecast_outcome_version
         ):
             raise ValueError("Product payoff 评价输入身份不一致")
     settled = tuple(
-        (projection, outcome)
-        for projection, outcome in cases
-        if outcome.status == ForecastOutcomeStatus.SETTLED
+        case
+        for case in cases
+        if case.product_outcome.status == ForecastOutcomeStatus.SETTLED
+        and case.source_outcome.status == ForecastOutcomeStatus.SETTLED
     )
     unavailable = len(cases) - len(settled)
     by_decision: defaultdict[
         tuple[str, datetime],
-        list[tuple[ProductPayoffProjection, ProductPayoffOutcome]],
+        list[ProductPayoffEvaluationCase],
     ] = defaultdict(list)
     for case in cases:
-        by_decision[(case[0].source_forecast_id, case[0].projected_at)].append(case)
+        by_decision[(case.projection.source_forecast_id, case.projection.projected_at)].append(
+            case
+        )
     first_decision_by_source = {}
     for (source_forecast_id, projected_at), group in by_decision.items():
         current = first_decision_by_source.get(source_forecast_id)
@@ -77,31 +102,31 @@ def evaluate_product_payoff_evidence(
         sorted(
             (item[1] for item in first_decision_by_source.values()),
             key=lambda group: (
-                group[0][0].evaluation_at,
-                group[0][0].projected_at,
-                group[0][0].source_forecast_id,
+                group[0].projection.evaluation_at,
+                group[0].projection.projected_at,
+                group[0].projection.source_forecast_id,
             ),
         )
     )
     source_groups = tuple(
         group
         for group in first_source_groups
-        if all(outcome.status == ForecastOutcomeStatus.SETTLED for _projection, outcome in group)
+        if all(case in settled for case in group)
     )
     independent = []
     previous_evaluation_at = None
     for group in source_groups:
-        projected_at = min(item[0].projected_at for item in group)
+        projected_at = min(item.projection.projected_at for item in group)
         if previous_evaluation_at is not None and projected_at < previous_evaluation_at:
             continue
         independent.append(group)
-        previous_evaluation_at = group[0][0].evaluation_at
+        previous_evaluation_at = group[0].projection.evaluation_at
 
     independent_cases = tuple(case for group in independent for case in group)
     independent_count = len(independent)
     if not independent_cases:
         return ProductPayoffEvidence(
-            evaluation_version=evaluation_version,
+            evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
             status=ProductPayoffEvidenceStatus.NO_SETTLED_SAMPLES,
             terminal_product_count=len(cases),
             settled_product_count=len(settled),
@@ -111,55 +136,23 @@ def evaluate_product_payoff_evidence(
             required_independent_source_forecasts=(
                 required_independent_source_forecasts
             ),
-            comparable_source_forecast_count=0,
-            mean_absolute_prediction_error_bps=None,
-            conservative_coverage=None,
-            payoff_sign_accuracy=None,
-            product_ranking_accuracy=None,
-            mean_product_selection_regret_bps=None,
+            mean_absolute_mapping_error_bps=None,
+            mapping_conservative_coverage=None,
+            mapping_residual_sign_accuracy=None,
         )
+    residuals = tuple(_mapping_residuals(case) for case in independent_cases)
     prediction_errors = tuple(
-        abs(outcome.realized_gross_bps - projection.expected_gross_bps)
-        for projection, outcome in independent_cases
-        if outcome.realized_gross_bps is not None
+        abs(realized - expected) for expected, _conservative, realized in residuals
     )
     conservative_hits = tuple(
-        outcome.realized_gross_bps >= projection.conservative_gross_bps
-        for projection, outcome in independent_cases
-        if outcome.realized_gross_bps is not None
+        realized >= conservative for _expected, conservative, realized in residuals
     )
     sign_hits = tuple(
-        _sign(outcome.realized_gross_bps) == _sign(projection.expected_gross_bps)
-        for projection, outcome in independent_cases
-        if outcome.realized_gross_bps is not None
+        _sign(realized) == _sign(expected) for expected, _conservative, realized in residuals
     )
-    comparable = tuple(group for group in independent if len(group) > 1)
-    ranking_hits = []
-    regrets = []
-    for group in comparable:
-        predicted = max(
-            group,
-            key=lambda item: (
-                item[0].conservative_gross_bps,
-                item[0].projection_id,
-            ),
-        )
-        realized = max(
-            group,
-            key=lambda item: (
-                item[1].realized_gross_bps,
-                item[0].projection_id,
-            ),
-        )
-        ranking_hits.append(predicted[0].projection_id == realized[0].projection_id)
-        assert predicted[1].realized_gross_bps is not None
-        assert realized[1].realized_gross_bps is not None
-        regrets.append(
-            realized[1].realized_gross_bps - predicted[1].realized_gross_bps
-        )
 
     return ProductPayoffEvidence(
-        evaluation_version=evaluation_version,
+        evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
         status=(
             ProductPayoffEvidenceStatus.SUFFICIENT
             if independent_count >= required_independent_source_forecasts
@@ -171,12 +164,24 @@ def evaluate_product_payoff_evidence(
         source_forecast_count=len(first_source_groups),
         independent_source_forecast_count=independent_count,
         required_independent_source_forecasts=required_independent_source_forecasts,
-        comparable_source_forecast_count=len(comparable),
-        mean_absolute_prediction_error_bps=_mean(prediction_errors),
-        conservative_coverage=_fraction(conservative_hits),
-        payoff_sign_accuracy=_fraction(sign_hits),
-        product_ranking_accuracy=_fraction(tuple(ranking_hits)),
-        mean_product_selection_regret_bps=_mean(tuple(regrets)),
+        mean_absolute_mapping_error_bps=_mean(prediction_errors),
+        mapping_conservative_coverage=_fraction(conservative_hits),
+        mapping_residual_sign_accuracy=_fraction(sign_hits),
+    )
+
+
+def _mapping_residuals(case: ProductPayoffEvaluationCase) -> tuple[Decimal, Decimal, Decimal]:
+    source_outcome = case.source_outcome
+    assert source_outcome.gross_target_return_bps is not None
+    assert case.product_outcome.realized_gross_bps is not None
+    direction = case.projection.target.legs[0].direction
+    sign = Decimal("1") if direction == ExposureDirection.LONG else Decimal("-1")
+    expected_reference = sign * case.source_forecast.expected_gross_bps
+    realized_reference = sign * source_outcome.gross_target_return_bps
+    return (
+        case.projection.expected_gross_bps - expected_reference,
+        case.projection.conservative_gross_bps - expected_reference,
+        case.product_outcome.realized_gross_bps - realized_reference,
     )
 
 
@@ -195,6 +200,8 @@ def _fraction(values: tuple[bool, ...]) -> Decimal | None:
 
 
 __all__ = [
+    "PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION",
+    "ProductPayoffEvaluationCase",
     "ProductPayoffEvidence",
     "ProductPayoffEvidenceStatus",
     "evaluate_product_payoff_evidence",
