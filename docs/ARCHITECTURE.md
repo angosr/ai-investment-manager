@@ -314,7 +314,7 @@ investment_manager/
 - 各问题的类型化评价计划、配对对照、动态简单基线、样本依赖和搜索历史；
 - 实验候选资本资格、未来正式资本准入、最大损失、有效期、退化与停止条件。
 
-当前 Spot 验证 cohort 是这套架构的一个标量 Forecast 组件实验，不是资产管理方案，也不定义长期基准、资产域、风险预算或实施顺序。其冻结参数和证据目标见 [`WORLD_COGNITION_DESIGN.md` 第 8 节](WORLD_COGNITION_DESIGN.md#8-当前证据计划)。同一 cohort 运行期间不得漂移，但它不构成研究和登记独立总组合实验的总闸门。
+当前 BTC 经济暴露验证 cohort 是这套架构的一个标量 Forecast 组件实验，不是资产管理方案，也不定义长期基准、资产域、风险预算或实施顺序。其规范结果由 BTC Spot 结算，合法产品表达可由同一 Forecast 领域另行投影并独立评价；冻结参数和证据目标见 [`WORLD_COGNITION_DESIGN.md` 第 8 节](WORLD_COGNITION_DESIGN.md#8-当前证据计划)。同一 cohort 运行期间不得漂移，但它不构成研究和登记独立总组合实验的总闸门。
 
 长期主实验必须以总组合为单位独立预登记：先冻结 mandate、经济暴露、可交易 Instrument、Reference Policy、共同 Forecast、组合目标、风险包络和完整成本，再用同一输入带并行推进 Reference-only、简单程序状态和 WorldModel 条件修正的反事实账户。正式模拟账户始终只有一个 PortfolioTarget，其他路径只评价不获得资本权限。增加产品、方向或主动来源必须回答它对总组合的边际价值，并单独通过数据、产品、执行和前瞻证据验收；不因 Spot 成败机械进入 Perpetual，也不为了展示“多资产”预建通用 Sleeve、模型工厂或大量小仓位。
 
