@@ -49,6 +49,7 @@ class PortfolioSleeveInput(FrozenModel):
     sleeve_id: str = Field(min_length=1)
     forecast: Forecast
     payoff_projection: ProductPayoffProjection | None = None
+    payoff_projection_current: bool = True
     capital_authorization: CandidateCapitalAuthorization | None = None
 
     @model_validator(mode="after")
@@ -64,6 +65,8 @@ class PortfolioSleeveInput(FrozenModel):
         elif self.capital_authorization is not None:
             raise ValueError("CalibratedForecast 不得使用 candidate capital authorization")
         projection = self.payoff_projection
+        if projection is None and not self.payoff_projection_current:
+            raise ValueError("缺少 Product payoff projection 时不能声明产品输入失效")
         if projection is not None and (
             not isinstance(self.forecast, BaseForecast)
             or projection.source_forecast_id != self.forecast.forecast_id
@@ -697,6 +700,14 @@ class PortfolioDecisionEngine:
         current_notional: Decimal,
         evaluation_notional: Decimal,
     ) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
+        if not item.payoff_projection_current:
+            projection = item.payoff_projection
+            assert projection is not None
+            return (
+                False,
+                ("PRODUCT_PAYOFF_INPUT_INVALID",),
+                (projection.projection_id,),
+            )
         retaining_only = (
             current_notional > 0 and evaluation_notional <= current_notional
         )

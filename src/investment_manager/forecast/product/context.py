@@ -21,6 +21,7 @@ from investment_manager.forecast.product.models import (
 )
 from investment_manager.forecast.product.repository import SqlProductPayoffProjectionStore
 from investment_manager.forecast.results import BaseForecast
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.models import InstrumentId, InstrumentProduct
@@ -136,7 +137,7 @@ class ContextProductPayoffProjector:
         if quote is None or self._age_seconds(quote.observed_at, as_of) >= (
             self.maximum_quote_age_seconds
         ):
-            raise ValueError("Product payoff 缺少新鲜 Spot 入场报价")
+            raise PointInTimeInputUnavailable("Product payoff 缺少新鲜 Spot 入场报价")
         valid_until = quote.observed_at + timedelta(
             seconds=self.maximum_quote_age_seconds
         )

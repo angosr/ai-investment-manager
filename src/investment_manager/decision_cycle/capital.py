@@ -884,11 +884,20 @@ class CapitalCycleService:
             source = self._source_by_family.get(forecast.outcome_family_id)
             if source is None:
                 raise ValueError("Capital Forecast family 未绑定合格 source")
-            for candidate in self._forecast_sleeve_inputs(
-                source=source,
-                forecast=forecast,
-                as_of=as_of,
-            ):
+            try:
+                candidates = self._forecast_sleeve_inputs(
+                    source=source,
+                    forecast=forecast,
+                    as_of=as_of,
+                )
+            except PointInTimeInputUnavailable:
+                if not any(
+                    item.forecast_family == forecast.outcome_family_id
+                    for item in account.sleeves
+                ):
+                    raise
+                candidates = ()
+            for candidate in candidates:
                 existing = by_sleeve.get(candidate.sleeve_id)
                 if existing is not None and existing != candidate:
                     raise ValueError("同一 Capital Sleeve 收到多个不同 Forecast")
@@ -959,14 +968,17 @@ class CapitalCycleService:
         if forecast is None:
             raise ValueError("当前 Capital Sleeve 缺少权威来源 Forecast")
         projection = None
+        projection_current = True
         if source.product_payoffs is not None:
             if not isinstance(forecast, BaseForecast):
                 raise ValueError("Product payoff 当前只允许 BaseForecast")
-            available = (
-                source.product_payoffs.project(forecast, as_of=as_of)
-                if as_of < forecast.economic_horizon_end
-                else source.product_payoffs.for_source(forecast.forecast_id)
-            )
+            if as_of < forecast.economic_horizon_end:
+                try:
+                    available = source.product_payoffs.project(forecast, as_of=as_of)
+                except PointInTimeInputUnavailable:
+                    available = ()
+            else:
+                available = ()
             projection = next(
                 (
                     item
@@ -976,12 +988,26 @@ class CapitalCycleService:
                 ),
                 None,
             )
-            if projection is None and position.target != forecast.target:
+            if projection is None:
+                projection = next(
+                    (
+                        item
+                        for item in reversed(
+                            source.product_payoffs.for_source(forecast.forecast_id)
+                        )
+                        if item.target == position.target
+                        and item.projected_at <= as_of
+                    ),
+                    None,
+                )
+                projection_current = False
+            if projection is None:
                 raise ValueError("当前 Capital Sleeve 缺少原始产品收益投影")
         return PortfolioSleeveInput(
             sleeve_id=position.sleeve_id,
             forecast=forecast,
             payoff_projection=projection,
+            payoff_projection_current=projection_current,
             capital_authorization=source.capital_authorization,
         )
 

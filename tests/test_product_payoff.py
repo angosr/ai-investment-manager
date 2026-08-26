@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine
 
-from investment_manager.execution.planning.planner import InstrumentExecutionSpec
+from investment_manager.decision_cycle.capital import CapitalCycleService
+from investment_manager.execution.planning.planner import (
+    InstrumentExecutionSpec,
+    TradePlanner,
+    TradePlannerPolicy,
+)
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -70,6 +75,12 @@ from investment_manager.portfolio.models import (
     SleeveTarget,
 )
 from investment_manager.portfolio.policy import ProductPayoffPolicy, SleeveRiskTemplate
+from investment_manager.risk.models import RiskOutcome
+from investment_manager.risk.portfolio import (
+    PortfolioRiskEngine,
+    PortfolioRiskPolicy,
+    SleeveRiskProfile,
+)
 from investment_manager.schema import create_schema
 
 NOW = datetime(2026, 8, 26, 3, tzinfo=UTC)
@@ -958,25 +969,35 @@ class _ProjectionStore:
         self.values.append(projection)
         return True
 
+    def for_source(self, source_forecast_id):
+        return tuple(
+            item
+            for item in self.values
+            if item.source_forecast_id == source_forecast_id
+        )
+
 
 class _TargetStates:
+    def __init__(self) -> None:
+        self.derivative_states = (
+            SimpleNamespace(
+                asset="BTC",
+                market_symbol="BTCUSDT",
+                evidence_ref="d" * 64,
+                mark_index_premium_bps=Decimal("2"),
+                perpetual_spread_bps=Decimal("1"),
+                last_funding_rate_bps=Decimal("1"),
+                trailing_funding_rate_mean_bps=Decimal("0.5"),
+                trailing_funding_rate_stddev_bps=Decimal("0.25"),
+                spot_mid_range_bps=Decimal("1"),
+                reference_spot_mid_deviation_bps=Decimal("0.25"),
+            ),
+        )
+
     def build(self, *, as_of):
         return SimpleNamespace(
             input_refs=("target-state",),
-            derivative_states=(
-                SimpleNamespace(
-                    asset="BTC",
-                    market_symbol="BTCUSDT",
-                    evidence_ref="d" * 64,
-                    mark_index_premium_bps=Decimal("2"),
-                    perpetual_spread_bps=Decimal("1"),
-                    last_funding_rate_bps=Decimal("1"),
-                    trailing_funding_rate_mean_bps=Decimal("0.5"),
-                    trailing_funding_rate_stddev_bps=Decimal("0.25"),
-                    spot_mid_range_bps=Decimal("1"),
-                    reference_spot_mid_deviation_bps=Decimal("0.25"),
-                ),
-            ),
+            derivative_states=self.derivative_states,
         )
 
 
@@ -1018,31 +1039,30 @@ def _product_rules(
     )
 
 
-def _context_projector_fixture(
+def _put_context_market(
+    market: InMemoryMarketDataStore,
     *,
-    rule_observed_at: datetime | None = None,
-    funding_override: bool = True,
-):
-    contract = _contract()
-    forecast = _forecast(contract)
-    at = forecast.available_at
-    market = InMemoryMarketDataStore()
-    market.put_quote(
-        MarketQuote(
-            quote_id="spot-product-entry",
-            symbol="BTCUSDT",
-            observed_at=at,
-            bid=Decimal("99.9"),
-            bid_quantity=Decimal("10"),
-            ask=Decimal("100"),
-            ask_quantity=Decimal("10"),
-            source="test",
+    at: datetime,
+    update_id: int,
+    include_spot: bool = True,
+) -> None:
+    if include_spot:
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"spot-product-{update_id}",
+                symbol="BTCUSDT",
+                observed_at=at,
+                bid=Decimal("99.9"),
+                bid_quantity=Decimal("10"),
+                ask=Decimal("100"),
+                ask_quantity=Decimal("10"),
+                source="test",
+            )
         )
-    )
     exchange_time = at - timedelta(seconds=1)
     market.put_perpetual_quote(
         PerpetualQuote(
-            quote_id=stable_id("perpetual_quote", PERPETUAL.key, 7),
+            quote_id=stable_id("perpetual_quote", PERPETUAL.key, update_id),
             instrument=PERPETUAL,
             exchange_time=exchange_time,
             observed_at=at,
@@ -1050,7 +1070,7 @@ def _context_projector_fixture(
             bid_quantity=Decimal("10"),
             ask=Decimal("100.1"),
             ask_quantity=Decimal("10"),
-            update_id=7,
+            update_id=update_id,
             source="test",
         )
     )
@@ -1072,6 +1092,18 @@ def _context_projector_fixture(
             source="test",
         )
     )
+
+
+def _context_projector_fixture(
+    *,
+    rule_observed_at: datetime | None = None,
+    funding_override: bool = True,
+):
+    contract = _contract()
+    forecast = _forecast(contract)
+    at = forecast.available_at
+    market = InMemoryMarketDataStore()
+    _put_context_market(market, at=at, update_id=7)
     rules = _product_rules(
         rule_observed_at or at,
         funding_override=funding_override,
@@ -1148,6 +1180,196 @@ def test_context_projector_rejects_derivative_after_rule_success_becomes_stale()
     assert len(projections) == 1
     assert projections[0].target.legs[0].instrument == SPOT
     assert len(store.values) == 1
+
+
+@pytest.mark.parametrize("invalid_input", ("mapping", "rules", "reference_quote"))
+def test_held_perpetual_exits_when_current_product_projection_is_unavailable(
+    invalid_input: str,
+) -> None:
+    forecast, market, _, _, projector = _context_projector_fixture()
+    projected = projector.project(forecast, as_of=forecast.available_at)
+    held_projection = next(
+        item
+        for item in projected
+        if item.target.legs[0].instrument == PERPETUAL
+        and item.target.legs[0].direction == ExposureDirection.LONG
+    )
+    if invalid_input == "mapping":
+        decision_at = forecast.available_at + timedelta(minutes=1)
+        projector.target_states.derivative_states = ()
+        assert decision_at < held_projection.valid_until
+    else:
+        decision_at = forecast.available_at + timedelta(
+            minutes=16 if invalid_input == "rules" else 6
+        )
+        _put_context_market(
+            market,
+            at=decision_at,
+            update_id=8,
+            include_spot=invalid_input == "rules",
+        )
+
+    authorization = CandidateCapitalAuthorization(
+        version="candidate-v1",
+        producer_id=forecast.producer_id,
+        producer_behavior_id=forecast.producer_behavior_id,
+        outcome_family_id=forecast.outcome_family_id,
+        hypothesis_fingerprint="a" * 64,
+        maximum_allocation_fraction=Decimal("0.10"),
+        minimum_entry_net_bps=Decimal("5"),
+        minimum_hold_net_bps=Decimal("0"),
+    )
+    source = SimpleNamespace(
+        contract=projector.contract,
+        product_payoffs=projector,
+        capital_authorization=authorization,
+    )
+    capital = CapitalCycleService.__new__(CapitalCycleService)
+    capital._source_by_family = {forecast.outcome_family_id: source}
+    capital._forecasts = SimpleNamespace(
+        latest_base_for_target=lambda **_: forecast,
+    )
+    sleeve_id = SleeveTarget.identity_for(
+        portfolio_id="primary",
+        forecast_family=forecast.outcome_family_id,
+        forecast_target_id=held_projection.target.target_id,
+    )
+    instrument_position = InstrumentPosition(
+        instrument=PERPETUAL,
+        quantity=Decimal("10"),
+        average_price=Decimal("100"),
+    )
+    position = SleevePosition(
+        sleeve_id=sleeve_id,
+        forecast_family=forecast.outcome_family_id,
+        target=held_projection.target,
+        legs=(instrument_position,),
+    )
+
+    sleeve = capital._position_sleeve_input(
+        position=position,
+        as_of=decision_at,
+    )
+
+    assert sleeve.payoff_projection == held_projection
+    assert not sleeve.payoff_projection_current
+    quote = ExecutableQuote(
+        source_quote_id="perpetual-exit",
+        instrument=PERPETUAL,
+        as_of=decision_at,
+        observed_at=decision_at,
+        bid=Decimal("99.9"),
+        bid_quantity=Decimal("100"),
+        ask=Decimal("100.1"),
+        ask_quantity=Decimal("100"),
+        source="test",
+    )
+    account = PortfolioAccountSnapshot(
+        snapshot_id="held-perpetual-account",
+        cycle_id="held-perpetual-exit",
+        portfolio_id="primary",
+        as_of=decision_at,
+        observed_at=decision_at,
+        settlement_asset="USDT",
+        cash_balance=Decimal("10000"),
+        equity=Decimal("10000"),
+        equity_high_water=Decimal("10000"),
+        positions=(instrument_position,),
+        sleeves=(position,),
+    )
+    if invalid_input == "reference_quote":
+        capital._policy = SimpleNamespace(
+            decision=SimpleNamespace(portfolio_id="primary")
+        )
+        decision_sleeves = capital._decision_sleeves(
+            forecasts=(forecast,),
+            account=account,
+            as_of=decision_at,
+        )
+        assert decision_sleeves == (sleeve,)
+    target = _decision_engine().decide(
+        cycle_id="held-perpetual-exit",
+        as_of=decision_at,
+        account=account,
+        sleeves=(sleeve,),
+        quotes=(quote,),
+        execution_specs=(
+            InstrumentExecutionSpec(
+                instrument=PERPETUAL,
+                quantity_step=Decimal("0.001"),
+                minimum_order_notional=Decimal("50"),
+                fee_bps=Decimal("0.5"),
+            ),
+        ),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == 0
+    assert "EXPIRED_FORECAST_EXIT" in target.reason_codes
+    assert target.candidate_evaluations is not None
+    assert target.candidate_evaluations[0].validity_reason_codes == (
+        "PRODUCT_PAYOFF_INPUT_INVALID",
+    )
+    risk = PortfolioRiskEngine(
+        PortfolioRiskPolicy(
+            version="held-product-exit-v1",
+            instrument_allowlist=(PERPETUAL.key,),
+            maximum_quote_age_seconds=180,
+            maximum_quote_skew_seconds=15,
+            maximum_account_age_seconds=60,
+            maximum_daily_loss=Decimal("200"),
+            maximum_drawdown_fraction=Decimal("0.10"),
+            maximum_gross_exposure_fraction=Decimal("0.50"),
+            maximum_net_delta_fraction=Decimal("0.50"),
+            maximum_instrument_fraction=Decimal("0.50"),
+            maximum_margin_fraction=Decimal("0.50"),
+            maximum_stress_loss_fraction=Decimal("0.10"),
+            maximum_spread_bps=Decimal("20"),
+            maximum_unhedged_fraction=Decimal("0.05"),
+            maximum_unhedged_seconds=10,
+            reduction_authorization_seconds=300,
+        )
+    ).evaluate(
+        target=target,
+        account=account,
+        quotes=(quote,),
+        risk_profiles=(
+            SleeveRiskProfile(
+                sleeve_id=sleeve_id,
+                version="held-product-risk-v1",
+                basis_stress_bps=Decimal("100"),
+                funding_stress_bps=Decimal("30"),
+                execution_stress_bps=Decimal("100"),
+                derivative_initial_margin_fraction=Decimal("0.1"),
+            ),
+        ),
+        as_of=decision_at,
+    )
+    assert risk.outcome == RiskOutcome.APPROVED
+    assert risk.approved_target is not None
+    plan = TradePlanner(
+        TradePlannerPolicy(
+            version="held-product-exit-v1",
+            managed_instruments=(PERPETUAL.key,),
+        )
+    ).plan(
+        approved=risk.approved_target,
+        account=account,
+        quotes=(quote,),
+        specs=(
+            InstrumentExecutionSpec(
+                instrument=PERPETUAL,
+                quantity_step=Decimal("0.001"),
+                minimum_order_notional=Decimal("50"),
+                fee_bps=Decimal("0.5"),
+            ),
+        ),
+        as_of=decision_at,
+    )
+    assert len(plan.groups) == 1
+    assert len(plan.groups[0].legs) == 1
+    assert plan.groups[0].legs[0].side.value == "SELL"
+    assert plan.groups[0].legs[0].reduce_only
 
 
 def test_context_projector_fails_closed_without_override_or_stable_history() -> None:
