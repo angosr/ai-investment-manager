@@ -59,8 +59,8 @@ from investment_manager.legacy.models import (
     DirectionalForecast,
     PriceCondition,
 )
+from investment_manager.research.configuration import ResearchConfig
 from investment_manager.scheduling.models import TriggerDecision, TriggerReason
-from investment_manager.settings import AppConfig
 
 
 def _account_registry(tmp_path: Path) -> CodexAccountRegistry:
@@ -215,10 +215,10 @@ def test_propose_worker_concurrency_cannot_exceed_enabled_accounts(base_app_conf
     raw["codex_accounts"] = {**raw["codex_accounts"], "accounts": accounts}
 
     with pytest.raises(ValueError, match="分析并发不得超过"):
-        AppConfig.model_validate(raw)
+        ResearchConfig.model_validate(raw)
 
     raw["temporal"] = {**raw["temporal"], "worker_threads": 1}
-    assert AppConfig.model_validate(raw).temporal.worker_threads == 1
+    assert ResearchConfig.model_validate(raw).temporal.worker_threads == 1
 
 
 def test_account_identity_matches_directory_and_registry_is_extensible(tmp_path) -> None:

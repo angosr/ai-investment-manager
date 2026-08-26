@@ -44,27 +44,8 @@ market_data:
       settlement_asset: USDT
       contract_multiplier: "1"
 
-frequency:
-  version: testnet-frequency-v3
-  maximum_orders_per_day: 2
-
-risk:
-  version: testnet-risk-v1
-  maximum_risk_fraction: "0.001"
-  maximum_total_risk_fraction: "0.005"
-  maximum_position_notional: "25"
-  maximum_daily_loss: "5"
-
-execution:
-  version: binance-spot-testnet-execution-v1
-
-reconciliation:
-  version: binance-spot-testnet-reconciliation-v1
-  poll_seconds: 30
-
 pipeline:
   version: testnet-programmatic-v6
-  ai_mode: "OFF"
 
 deployment:
   stage: TESTNET

@@ -37,7 +37,9 @@ def assemble_decision_packet_preparation(
         market_interval=config.market_data.interval,
         market_bar_window=config.market_data.bar_window,
         market_source=config.market_data.version,
-        maximum_market_age_seconds=config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         coverage_reader=SqlInformationCoverageStore(engine),
         coverage_requirements=config.information.coverage_requirements,
         perpetual_instruments=config.market_data.perpetual_instruments,

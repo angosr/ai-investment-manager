@@ -15,7 +15,6 @@ from investment_manager.entrypoints.dashboard.read_models import (
     AssessmentQualityStatus,
     DashboardReader,
 )
-from investment_manager.execution.reconciliation.engine import ReconciliationReport
 
 _SEVERITY = {"ok": 0, "unknown": 1, "warn": 2, "bad": 3}
 _DISK_WARN_PERCENT = 90
@@ -33,29 +32,16 @@ def assemble_health(
     coordinator_statuses: tuple[dict, ...] | None = None,
 ) -> dict:
     analysis = reader.analysis_runtime_status(now=now)
-    if getattr(getattr(config, "capital", None), "enabled", False):
-        checks = [
-            _capital_account_check(capital_overview, config),
-            _capital_freshness_check(reader, capital_overview, analysis, config, now),
-            _capital_decision_check(capital_overview, now),
-            _capital_execution_check(capital_overview, now),
-            _capital_performance_check(capital_overview),
-            _forecast_settlement_check(analysis, now),
-            _trigger_delivery_check(analysis, config, now),
-            _release_alignment_check(analysis),
-        ]
-    else:
-        report = reader.latest_reconciliation(now=now)  # 一次查询，供三项检查复用
-        checks = [
-            _reconciliation_check(report, config, now),
-            _freeze_check(report, config, now),
-            _freshness_check(reader, report, config, now),
-            _kill_switch_check(reader, config),
-            _analysis_check(analysis, config, now),
-            _forecast_settlement_check(analysis, now),
-            _trigger_delivery_check(analysis, config, now),
-            _release_alignment_check(analysis),
-        ]
+    checks = [
+        _capital_account_check(capital_overview, config),
+        _capital_freshness_check(reader, capital_overview, analysis, config, now),
+        _capital_decision_check(capital_overview, now),
+        _capital_execution_check(capital_overview, now),
+        _capital_performance_check(capital_overview),
+        _forecast_settlement_check(analysis, now),
+        _trigger_delivery_check(analysis, config, now),
+        _release_alignment_check(analysis),
+    ]
     if assessment_quality is not None:
         checks.append(_assessment_output_quality_check(assessment_quality))
     if coordinator_statuses is not None:
@@ -288,176 +274,6 @@ def _capital_performance_check(
     )
 
 
-def _reconciliation_check(report: ReconciliationReport | None, config, now: datetime) -> dict:
-    if report is None:
-        return _check("reconciliation", "对账", "unknown", "暂无对账报告")
-    age = _report_age_seconds(report, now)
-    if age is None:
-        return _check("reconciliation", "对账", "bad", "报告时间晚于当前时间")
-    if age > config.reconciliation.maximum_report_age_seconds:
-        return _check("reconciliation", "对账", "bad", f"报告已过期（{int(age)} 秒）")
-    state = "ok" if report.status == "MATCHED" else "bad"
-    return _check("reconciliation", "对账", state, _recon_label(report.status))
-
-
-def _freeze_check(report: ReconciliationReport | None, config, now: datetime) -> dict:
-    if report is None:
-        return _check("risk_budget", "风险预算", "unknown", "暂无对账报告")
-    age = _report_age_seconds(report, now)
-    if age is None or age > config.reconciliation.maximum_report_age_seconds:
-        return _check("risk_budget", "风险预算", "bad", "对账不可用，按冻结处理")
-    frozen = report.freeze_new_risk
-    return _check(
-        "risk_budget",
-        "风险预算",
-        "bad" if frozen else "ok",
-        "已冻结新增风险" if frozen else "未冻结",
-    )
-
-
-def _freshness_check(
-    reader: DashboardReader,
-    report: ReconciliationReport | None,
-    config,
-    now: datetime,
-) -> dict:
-    market_observed_at = reader.latest_market_observed_at()
-    if market_observed_at is None:
-        return _check("data_freshness", "数据新鲜度", "unknown", "实时行情尚未就绪")
-    if report is None:
-        return _check("data_freshness", "数据新鲜度", "unknown", "账户对账尚未就绪")
-    market_age = (now - market_observed_at).total_seconds()
-    account_age = (now - report.as_of).total_seconds()
-    market_policy = getattr(config, "market_data", None)
-    perpetual_enabled = bool(
-        getattr(market_policy, "perpetual_instruments", ())
-    )
-    perpetual_age = None
-    if perpetual_enabled:
-        perpetual_observed_at = reader.latest_perpetual_observed_at()
-        if perpetual_observed_at is None:
-            return _check(
-                "data_freshness",
-                "数据新鲜度",
-                "unknown",
-                "永续市场状态或可成交报价尚未就绪",
-            )
-        perpetual_age = (now - perpetual_observed_at).total_seconds()
-    if market_age < 0 or account_age < 0 or (
-        perpetual_age is not None and perpetual_age < 0
-    ):
-        return _check("data_freshness", "数据新鲜度", "bad", "观测时间晚于当前时间")
-    market_limit = config.risk.maximum_market_age_seconds
-    account_limit = config.risk.maximum_account_age_seconds
-    perpetual_limit = (
-        market_policy.perpetual_poll_seconds * 3 if perpetual_enabled else None
-    )
-    stale = (
-        market_age > market_limit
-        or account_age > account_limit
-        or (
-            perpetual_age is not None
-            and perpetual_limit is not None
-            and perpetual_age > perpetual_limit
-        )
-    )
-    detail = f"行情 {int(market_age)}/{market_limit} 秒"
-    if perpetual_age is not None and perpetual_limit is not None:
-        detail += f" · 永续 {int(perpetual_age)}/{perpetual_limit} 秒"
-    detail += f" · 账户 {int(account_age)}/{account_limit} 秒"
-    return _check(
-        "data_freshness",
-        "数据新鲜度",
-        "bad" if stale else "ok",
-        detail,
-    )
-
-
-def _kill_switch_check(reader: DashboardReader, config) -> dict:
-    persisted = reader.portfolio_protection_active()
-    tripped = config.risk.kill_switch or persisted is True
-    if tripped:
-        detail = "已触发"
-        state = "bad"
-    elif persisted is None:
-        detail = "持久保护状态不可用"
-        state = "unknown"
-    else:
-        detail = "待命"
-        state = "ok"
-    return _check(
-        "kill_switch",
-        "熔断 Kill Switch",
-        state,
-        detail,
-    )
-
-
-def _analysis_check(
-    status: AnalysisRuntimeStatus,
-    config,
-    now: datetime,
-) -> dict:
-    scope_states: list[
-        tuple[int, str, float | None, int | None, str, int | None, str | None]
-    ] = []
-    for scope in status.scopes:
-        if scope.latest_success_at is None or scope.heartbeat_seconds is None:
-            scope_states.append(
-                (
-                    1,
-                    "unknown",
-                    None,
-                    None,
-                    scope.symbol,
-                    scope.trigger_plan_revision,
-                    scope.trigger_plan_origin,
-                )
-            )
-            continue
-        age = (now - scope.latest_success_at).total_seconds()
-        expected = scope.heartbeat_seconds + config.shadow.analysis_deadline_seconds
-        if age < 0 or age > expected * 2:
-            severity = (3, "bad")
-        elif age > expected:
-            severity = (2, "warn")
-        else:
-            severity = (0, "ok")
-        scope_states.append(
-            (
-                *severity,
-                age,
-                expected,
-                scope.symbol,
-                scope.trigger_plan_revision,
-                scope.trigger_plan_origin,
-            )
-        )
-    if not scope_states:
-        return _check("ai_analysis", "AI 分析", "unknown", "当前版本缺少分析作用域")
-    worst = max(scope_states, key=lambda item: item[0])
-    _, state, age, expected, symbol, revision, origin = worst
-    if (
-        _SEVERITY[state] < _SEVERITY["warn"]
-        and status.recent_attempts >= 3
-        and status.recent_successes < status.recent_attempts
-    ):
-        state = "warn"
-    if age is None or expected is None:
-        detail = f"{symbol} 等待当前版本首次分析或 TriggerPlan"
-    elif age < 0:
-        detail = f"{symbol} 完成时间晚于当前时间"
-    else:
-        detail = f"最久 {symbol} {int(age)}/{expected} 秒"
-    detail += f" · TriggerPlan r{revision or '?'} {origin or 'UNKNOWN'}"
-    return _check(
-        "ai_analysis",
-        "AI 分析",
-        state,
-        f"{detail} · 近 1h {status.recent_successes}/{status.recent_attempts} 成功",
-    )
-
-
 def _trigger_delivery_check(
     status: AnalysisRuntimeStatus,
     config,
@@ -583,15 +399,6 @@ def _disk_check(host_resources: dict) -> dict:
     else:
         state = "ok"
     return _check("host_disk", "主机磁盘", state, f"已使用 {percent:.1f}%")
-
-
-def _report_age_seconds(report: ReconciliationReport, now: datetime) -> float | None:
-    age = (now - report.as_of).total_seconds()
-    return age if age >= 0 else None
-
-
-def _recon_label(status: str) -> str:
-    return {"MATCHED": "一致", "MISMATCH": "不一致", "UNKNOWN": "状态未知"}.get(status, status)
 
 
 def _check(key: str, name: str, state: str, detail: str) -> dict:

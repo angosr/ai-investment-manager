@@ -58,6 +58,11 @@ class AiMode(StrEnum):
 
 class PipelinePolicy(StrictConfig):
     version: str
+
+
+class ResearchPipelinePolicy(PipelinePolicy):
+    """Offline legacy replay mode; never part of a managed release config."""
+
     ai_mode: AiMode = AiMode.OFF
 
 

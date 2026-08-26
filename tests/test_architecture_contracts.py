@@ -79,7 +79,6 @@ CLI_CONTRACT = {
         "analysis_duration_seconds,admission_order,event_catalog,include_batches"
     ),
     "research-catalog": "evaluation_catalog,blind_evaluation_catalog",
-    "reset-portfolio-protection": "config,database_url,reason,acknowledge_risk",
     "screen-signals": (
         "config,dataset_id,signal_start,signal_end,candidate,event_dataset_id,catalog,"
         "event_catalog,spread_bps,minimum_non_overlapping_samples,"
@@ -252,7 +251,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
         "entrypoints/cli/commands.py": {
             "invalidate-evaluation-plan",
             "validate-config",
-            "reset-portfolio-protection",
             "phase-a-audit",
             "shadow-audit",
             "challenger-audit",
@@ -578,9 +576,9 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
             if isinstance(node, ast.ImportFrom) and node.module == (
                 "investment_manager.settings"
             ):
-                assert {alias.name for alias in node.names}.issubset(
-                    {"AppConfig", "load_config"}
-                ), path
+                    assert {alias.name for alias in node.names}.issubset(
+                        {"AppConfig", "load_config", "load_config_mapping"}
+                    ), path
 
     assert definitions == {name: [owner] for name, owner in owners.items()}
     assert not (PACKAGE_ROOT / "config.py").exists()

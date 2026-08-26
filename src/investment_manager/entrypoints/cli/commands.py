@@ -29,7 +29,6 @@ from investment_manager.governance.models import (
 from investment_manager.governance.policy import DeploymentStage
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
-from investment_manager.risk.protection import SqlPortfolioProtectionStore
 from investment_manager.settings import load_config
 
 
@@ -70,48 +69,9 @@ def validate_config(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
 ) -> None:
     loaded = load_config(config)
-    typer.echo(f"OK: pipeline={loaded.pipeline.version}, risk={loaded.risk.version}")
-
-
-@app.command("reset-portfolio-protection")
-def reset_portfolio_protection(
-    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    database_url: Annotated[
-        str,
-        typer.Option(envvar="INVESTMENT_MANAGER_DATABASE_URL", help="仅从受控环境注入数据库 URL"),
-    ],
-    reason: Annotated[str, typer.Option("--reason")],
-    acknowledge_risk: Annotated[
-        bool,
-        typer.Option(
-            "--acknowledge-risk",
-            help="确认已人工复核风险，并以当前权益重置高水位",
-        ),
-    ] = False,
-) -> None:
-    """人工解除持久熔断；不会覆盖配置中的静态 kill switch。"""
-
-    if not acknowledge_risk:
-        typer.echo("拒绝恢复：必须显式提供 --acknowledge-risk")
-        raise typer.Exit(code=2)
-    loaded = load_config(config)
-    store = SqlPortfolioProtectionStore(
-        _runtime_engine(database_url),
-        policy=loaded.risk,
-        initial_equity=loaded.shadow.initial_quote_balance,
-    )
-    state = store.reset(reset_at=datetime.now(UTC), reason=reason)
     typer.echo(
-        json.dumps(
-            {
-                "portfolio_id": state.portfolio_id,
-                "kill_switch_active": state.kill_switch_active,
-                "equity_baseline": str(state.high_water_equity),
-                "reset_at": state.last_reset_at.isoformat() if state.last_reset_at else None,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        f"OK: pipeline={loaded.pipeline.version}, "
+        f"capital-risk={loaded.capital.risk.version}"
     )
 
 

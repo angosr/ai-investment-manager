@@ -355,11 +355,6 @@ def create_app(
         data = await run_in_threadpool(sample_host_resources)
         return _json(data)
 
-    async def reconciliation(_request: Request) -> JSONResponse:
-        now = datetime.now(UTC)
-        report = await run_in_threadpool(reader.latest_reconciliation, now=now)
-        return _json({"reconciliation": ser.reconciliation(report)})
-
     async def stream(_request: Request) -> StreamingResponse:
         return StreamingResponse(
             refresh_events(
@@ -378,7 +373,6 @@ def create_app(
         Route("/api/equity", equity),
         Route("/api/accounts", accounts),
         Route("/api/resources", resources),
-        Route("/api/reconciliation", reconciliation),
         Route("/api/capital", capital),
         Route("/api/capital/equity", capital_equity),
         Route("/api/capital/activity", capital_activity),

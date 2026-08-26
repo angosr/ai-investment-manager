@@ -11,18 +11,18 @@ from investment_manager.execution.models import Side
 from investment_manager.forecast.models import EdgeCalibration
 from investment_manager.kernel.identity import content_hash
 from investment_manager.legacy.cycle import CycleInput
-from investment_manager.settings import AppConfig, load_config
+from investment_manager.research.configuration import ResearchConfig, load_research_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def base_app_config() -> AppConfig:
-    return load_config(ROOT / "config" / "investment-manager.yaml")
+def base_app_config() -> ResearchConfig:
+    return load_research_config(ROOT / "config" / "investment-manager.research.yaml")
 
 
 @pytest.fixture
-def app_config(base_app_config: AppConfig) -> AppConfig:
+def app_config(base_app_config: ResearchConfig) -> ResearchConfig:
     """可走完整成交链路的测试配置。
 
     生产基线没有发布校准制品，理应不交易。多数领域测试需要继续覆盖风控、执行和

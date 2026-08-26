@@ -22,7 +22,6 @@ from investment_manager.entrypoints.dashboard.read_models import (
 )
 from investment_manager.execution.ledger import CycleFacts
 from investment_manager.execution.models import Order
-from investment_manager.execution.reconciliation.engine import ReconciliationReport
 from investment_manager.forecast.context.contract import assessment_input_projection
 from investment_manager.governance.evaluation.metrics import MetricObservation
 from investment_manager.legacy.models import (
@@ -431,26 +430,6 @@ def token_usage(window: TokenUsageWindow) -> dict:
                 "daily": daily(account.daily),
             }
             for account in window.accounts
-        ],
-    }
-
-
-def reconciliation(report: ReconciliationReport | None) -> dict | None:
-    if report is None:
-        return None
-    return {
-        "status": report.status,
-        "freeze_new_risk": report.freeze_new_risk,
-        "as_of": fmt.iso(report.as_of),
-        "difference_count": len(report.differences),
-        "differences": [
-            {
-                "kind": diff.kind,
-                "key": diff.key,
-                "local": diff.local_value,
-                "remote": diff.remote_value,
-            }
-            for diff in report.differences
         ],
     }
 

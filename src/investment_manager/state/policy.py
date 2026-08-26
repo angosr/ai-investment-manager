@@ -51,6 +51,7 @@ class DecisionPacketPolicy(FrozenModel):
         le=1,
     )
     maximum_packet_characters: int = Field(default=12_000, ge=2_000, le=16_000)
+    maximum_market_age_seconds: int = Field(default=180, ge=1, le=3_600)
 
 
 class PanelPolicy(StrictConfig):

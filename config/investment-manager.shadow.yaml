@@ -1,9 +1,5 @@
 extends: investment-manager.yaml
 
-# 仅覆盖 Shadow 运行差异；研究基线仍可回放，未通过盲测的策略不进入前瞻运行。
-strategy:
-  enabled: false
-
 capital:
   enabled: true
   context_forecast:

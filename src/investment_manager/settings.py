@@ -6,22 +6,15 @@ from typing import Any
 import yaml
 from pydantic import model_validator
 
-from investment_manager.execution.models import SUPPORTED_OPEN_SIDES
 from investment_manager.execution.policy import (
     BinanceTestnetPolicy,
-    ExecutionPolicy,
-    ReconciliationPolicy,
     ShadowSimulationPolicy,
 )
 from investment_manager.forecast.policy import (
-    AiMode,
-    CalibrationPolicy,
     CodexAccountRegistry,
     CodexRuntimePolicy,
     ContextAssessmentPolicy,
     PipelinePolicy,
-    ProposalPolicy,
-    StrategyPolicy,
 )
 from investment_manager.governance.policy import (
     DeploymentPolicy,
@@ -41,28 +34,15 @@ from investment_manager.information.policy import InformationPolicy
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.policy import FeaturePolicy, MarketDataPolicy
-from investment_manager.portfolio.policy import (
-    CapitalPolicy,
-    CompositionPolicy,
-    FrequencyPolicy,
-)
-from investment_manager.risk.policy import RiskPolicy
+from investment_manager.portfolio.policy import CapitalPolicy
 from investment_manager.scheduling.policy import TemporalPolicy, TriggerPolicy
-from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
+from investment_manager.state.policy import DecisionStatePolicy
 
 
 class AppConfig(StrictConfig):
     feature: FeaturePolicy
-    panel: PanelPolicy
     decision_state: DecisionStatePolicy
-    strategy: StrategyPolicy
-    calibration: CalibrationPolicy
     capital: CapitalPolicy
-    composition: CompositionPolicy
-    frequency: FrequencyPolicy
-    risk: RiskPolicy
-    execution: ExecutionPolicy
-    reconciliation: ReconciliationPolicy
     outcome_evaluation: OutcomeEvaluationPolicy
     governance: GovernancePolicy
     trigger: TriggerPolicy
@@ -71,7 +51,6 @@ class AppConfig(StrictConfig):
     shadow: ShadowSimulationPolicy
     information: InformationPolicy
     pipeline: PipelinePolicy
-    proposal: ProposalPolicy
     codex_runtime: CodexRuntimePolicy
     assessment: ContextAssessmentPolicy
     codex_accounts: CodexAccountRegistry
@@ -174,8 +153,6 @@ class AppConfig(StrictConfig):
                 raise ValueError(
                     "ContextAssessment 分析截止时间必须覆盖 activity schedule-to-close"
                 )
-        if self.assessment.enabled and self.pipeline.ai_mode == AiMode.PROPOSE:
-            raise ValueError("旧 PROPOSE 与 ContextAssessment 不得同时调用 Codex")
         ablation = self.outcome_evaluation.world_model_ablation
         context_forecast = self.capital.context_forecast
         if ablation is not None and ablation.enabled and (
@@ -184,8 +161,6 @@ class AppConfig(StrictConfig):
             or not self.codex_runtime.enabled
         ):
             raise ValueError("WorldModel 成对评估必须绑定已启用的 Context Forecast 与 Codex")
-        if not set(self.analysis_symbols).issubset(self.risk.symbol_allowlist):
-            raise ValueError("分析 symbols 必须是风控允许品种的子集")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前实验候选资本权限只允许 SHADOW")
@@ -276,31 +251,6 @@ class AppConfig(StrictConfig):
             raise ValueError("TESTNET 必须使用 Binance Spot Testnet 行情")
         if self.deployment.stage != DeploymentStage.TESTNET and testnet_market_data:
             raise ValueError("非 TESTNET 阶段不得混用 Binance Spot Testnet 行情")
-        if self.pipeline.ai_mode == AiMode.PROPOSE:
-            enabled_accounts = sum(item.enabled for item in self.codex_accounts.accounts)
-            if self.temporal.worker_threads > enabled_accounts:
-                raise ValueError("PROPOSE 分析并发不得超过已启用 Codex 账号数")
-        active_producers = {
-            (self.strategy.strategy_id, self.strategy.version): self.strategy.horizon_minutes,
-        }
-        if self.pipeline.ai_mode == AiMode.PROPOSE:
-            active_producers[(self.proposal.producer_id, self.proposal.version)] = None
-        for artifact in self.calibration.artifacts:
-            producer = (artifact.producer_id, artifact.producer_version)
-            if producer not in active_producers:
-                raise ValueError("校准制品必须绑定当前管线实际装配的 Producer 版本")
-            expected_horizon = active_producers[producer]
-            if expected_horizon is not None and artifact.horizon_minutes != expected_horizon:
-                raise ValueError("程序策略校准周期必须与当前策略周期一致")
-            if (
-                expected_horizon is None
-                and artifact.horizon_minutes > self.proposal.maximum_horizon_minutes
-            ):
-                raise ValueError("AI 校准周期超过 ProposalPolicy 上限")
-            if artifact.symbol not in self.market_data.symbols:
-                raise ValueError("校准制品品种必须属于当前行情 universe")
-            if artifact.side not in SUPPORTED_OPEN_SIDES:
-                raise ValueError("校准制品方向必须属于当前允许建仓方向")
         return self
 
 
@@ -309,6 +259,12 @@ def load_config(path: str | Path) -> AppConfig:
 
     config_path = Path(path).resolve()
     return AppConfig.model_validate(_load_config_mapping(config_path, stack=()))
+
+
+def load_config_mapping(path: str | Path) -> dict[str, Any]:
+    """Load and merge a strict config source for another typed boundary."""
+
+    return _load_config_mapping(Path(path).resolve(), stack=())
 
 
 def _load_config_mapping(config_path: Path, *, stack: tuple[Path, ...]) -> dict[str, Any]:

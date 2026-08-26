@@ -28,8 +28,8 @@ from investment_manager.governance.models import (
 )
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.research.configuration import load_research_config
 from investment_manager.scheduling.repository import SqlTriggerRepository
-from investment_manager.settings import load_config
 
 
 @app.command("record-reference-rejection")
@@ -77,7 +77,7 @@ def record_reference_rejection_command(
     evaluated_at = datetime.now(UTC)
     if cutoff > evaluated_at.date():
         raise typer.BadParameter("information-cutoff 不能晚于当前 UTC 日期")
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     root = project_root.resolve()
     registered = load_reference_selection_plan(plan)
     registration_commit, registration_time = committed_file_revision(
@@ -181,7 +181,7 @@ def freeze_executable_quotes_command(
         freeze_executable_quotes,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     specs = tuple(
         item.instrument
         for item in loaded.capital.execution_specs
@@ -245,7 +245,7 @@ def fetch_economic_series_command(
         fetch_world_bank_gold_prices,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     fetchers = {
         "US_EQUITY_TOTAL_RETURN": fetch_fama_french_us_market_returns,
         "GOLD_USD_PRICE": fetch_world_bank_gold_prices,
@@ -301,7 +301,7 @@ def fetch_binance_history_command(
         fetch_binance_history,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_history(
@@ -348,7 +348,7 @@ def fetch_binance_usdm_history_command(
         fetch_binance_usdm_history,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_usdm_history(
@@ -397,7 +397,7 @@ def fetch_binance_funding_history_command(
         fetch_binance_funding_history,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     canonical_symbol = _parse_research_symbol(symbol)
     dataset = asyncio.run(
         fetch_binance_funding_history(
@@ -454,7 +454,7 @@ def fetch_binance_carry_history_command(
         HistoricalFundingDatasetCatalog,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     spot_dataset = HistoricalDatasetCatalog(spot_catalog).load(spot_dataset_id)
     funding_dataset = HistoricalFundingDatasetCatalog(funding_catalog).load(
         funding_dataset_id
@@ -632,7 +632,7 @@ def screen_signals_command(
         raise typer.BadParameter("快速筛选成本和门槛必须是十进制数") from exc
     if parsed_spread < 0:
         raise typer.BadParameter("spread-bps 不能为负", param_hint="spread-bps")
-    loaded_config = load_config(config)
+    loaded_config = load_research_config(config)
     try:
         effective_config, research_strategy = resolve_research_candidate(
             candidate,
@@ -751,7 +751,7 @@ def walk_forward_command(
     governance = SqlGovernanceRepository(_runtime_engine(database_url))
     if not register_only:
         _reject_invalidated_evaluation_plan(governance, plan_id)
-    loaded_config = load_config(config)
+    loaded_config = load_research_config(config)
     funding_dataset = (
         HistoricalFundingDatasetCatalog(funding_catalog).load(funding_dataset_id)
         if funding_dataset_id is not None
@@ -947,7 +947,7 @@ def blind_evaluate_command(
         if spec.funding_dataset_id is not None
         else None
     )
-    loaded_config = load_config(config)
+    loaded_config = load_research_config(config)
     try:
         effective_config, research_strategy = resolve_research_candidate(
             spec.candidate,
@@ -1135,7 +1135,7 @@ def replay_event_triggers_command(
     )
     from investment_manager.scheduling.tables import analysis_call_admissions
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     window_start = _parse_utc_option(replay_start, name="replay-start")
     window_end = _parse_utc_option(replay_end, name="replay-end")
     engine = _runtime_engine(database_url)
@@ -1315,7 +1315,7 @@ def paired_decision_tape_command(
         raise typer.BadParameter("权益必须为正、点差非负、置信度位于 [0,1]")
     end = _parse_utc_option(signal_end, name="signal-end")
     try:
-        loaded, strategy = resolve_research_candidate(candidate, load_config(config))
+        loaded, strategy = resolve_research_candidate(candidate, load_research_config(config))
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="candidate") from exc
     canonical_symbol = symbol.upper()

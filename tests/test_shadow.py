@@ -29,7 +29,11 @@ NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 
 
 def _shadow_config(app_config) -> AppConfig:
-    raw = app_config.model_dump(mode="python")
+    raw = {
+        name: getattr(app_config, name).model_dump(mode="python")
+        for name in AppConfig.model_fields
+    }
+    raw["pipeline"] = {"version": app_config.pipeline.version}
     raw["deployment"] = {
         "version": "deployment-shadow-test-v1",
         "stage": "SHADOW",
@@ -151,7 +155,7 @@ def test_trigger_builder_does_not_dispatch_retired_analysis_cycle(app_config) ->
         config=config,
     ).build(batch)
 
-    assert config.strategy.enabled
+    assert "strategy" not in type(config).model_fields
     assert dispatches == ()
 
 

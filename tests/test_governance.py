@@ -247,8 +247,17 @@ def test_runtime_release_binds_complete_configuration_content() -> None:
     )
     changed = config.model_copy(
         update={
-            "frequency": config.frequency.model_copy(
-                update={"minimum_net_edge_bps": config.frequency.minimum_net_edge_bps + 1}
+            "decision_state": config.decision_state.model_copy(
+                update={
+                    "packet_policy": config.decision_state.packet_policy.model_copy(
+                        update={
+                            "maximum_market_age_seconds": (
+                                config.decision_state.packet_policy.maximum_market_age_seconds
+                                + 1
+                            )
+                        }
+                    )
+                }
             )
         }
     )

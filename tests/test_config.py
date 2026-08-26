@@ -37,10 +37,15 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert not config.deployment.testnet_order_submission_enabled
     assert not config.deployment.live_order_submission_enabled
     assert config.deployment.credential_profile is None
-    assert not config.strategy.enabled
+    assert not hasattr(config, "strategy")
+    assert not hasattr(config, "calibration")
+    assert not hasattr(config, "frequency")
+    assert not hasattr(config, "risk")
+    assert not hasattr(config, "execution")
+    assert not hasattr(config, "reconciliation")
+    assert not hasattr(config, "proposal")
     assert config.codex_runtime.enabled
     assert config.codex_runtime.isolation_verified
-    assert config.panel.max_characters == 12_000
     assert config.codex_runtime.maximum_prompt_characters == 16_000
     assess_prompt_overhead = len(
         "\n".join((*ASSESS_INSTRUCTIONS, "decision_packet_json="))
@@ -50,7 +55,6 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.ai_mode.value == "OFF"
     assert config.pipeline.version == "world-forecast-product-capital-shadow-v51"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v4"
@@ -90,6 +94,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
+    assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.market_data.version == "binance-public-shadow-v14"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")

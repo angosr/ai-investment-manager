@@ -18,7 +18,7 @@ from investment_manager.legacy.calibration import (
     uncalibrated_ref,
 )
 from investment_manager.legacy.candidate_evaluation import SqlCandidateOutcomeStore
-from investment_manager.settings import load_config
+from investment_manager.research.configuration import load_research_config
 
 
 @app.command("build-edge-calibration")
@@ -45,7 +45,7 @@ def build_edge_calibration(
 ) -> None:
     """从点时可见的成熟 Shadow 标签生成制品；只输出，不发布或改库。"""
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     training_start_at = _parse_utc_option(training_start, name="training_start")
     training_end_at = _parse_utc_option(training_end, name="training_end")
     publication_time = _parse_utc_option(published_at, name="published_at")
@@ -111,7 +111,7 @@ def diagnose_legacy_analysis_forecasts(
         SqlAnalysisForecastOutcomeStore,
     )
 
-    loaded = load_config(config)
+    loaded = load_research_config(config)
     start = _parse_utc_option(window_start, name="window_start")
     end = _parse_utc_option(window_end, name="window_end")
     publication = _parse_utc_option(published_at, name="published_at")

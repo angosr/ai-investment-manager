@@ -189,68 +189,6 @@ def test_world_cognition_summary_is_the_highest_value_mechanism() -> None:
     assert summary not in assessment.synthesis
 
 
-def test_health_uses_authoritative_per_scope_heartbeat() -> None:
-    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    healthy_reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(
-            now,
-            scopes=(
-                AnalysisScopeRuntimeStatus(
-                    symbol="BTCUSDT",
-                    latest_success_at=now - timedelta(minutes=40),
-                    heartbeat_seconds=3600,
-                ),
-            ),
-        ),
-    )
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(
-            now,
-            latest_success_at=now - timedelta(minutes=40),
-            scopes=(
-                AnalysisScopeRuntimeStatus(
-                    symbol="BTCUSDT",
-                    latest_success_at=now - timedelta(minutes=40),
-                    heartbeat_seconds=3600,
-                ),
-                AnalysisScopeRuntimeStatus(
-                    symbol="ETHUSDT",
-                    latest_success_at=None,
-                    heartbeat_seconds=3600,
-                ),
-            ),
-        ),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
-
-    healthy = assemble_health(healthy_reader, config, now=now)
-    result = assemble_health(reader, config, now=now)
-    healthy_check = next(
-        item for item in healthy["checks"] if item["key"] == "ai_analysis"
-    )
-    check = next(item for item in result["checks"] if item["key"] == "ai_analysis")
-
-    assert healthy_check["state"] == "ok"
-    assert "2400/3900 秒" in healthy_check["detail"]
-    assert check["state"] == "unknown"
-    assert "ETHUSDT 等待当前版本首次分析" in check["detail"]
-
-
 def _health_policy_extras() -> dict:
     return {
         "trigger": SimpleNamespace(
@@ -261,24 +199,51 @@ def _health_policy_extras() -> dict:
     }
 
 
-def test_health_exposes_structural_output_failure_without_reclassifying_history() -> None:
-    now = datetime(2026, 8, 21, 14, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
+def _healthy_capital_health_context(
+    now: datetime,
+    *,
+    analysis: AnalysisRuntimeStatus | None = None,
+) -> tuple[CapitalOverview, SimpleNamespace, SimpleNamespace]:
+    overview = CapitalOverview(
+        enabled=True,
+        account=SimpleNamespace(
+            as_of=now,
+            equity=Decimal("10000"),
+            cash_balance=Decimal("10000"),
+            settlement_asset="USDT",
+            reconciled=True,
+            kill_switch_active=False,
+            drawdown_fraction=Decimal("0"),
+        ),
+    )
     reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
         latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
+        analysis_runtime_status=lambda *, now: analysis or _analysis_status(now),
     )
     config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
+        capital=SimpleNamespace(
+            execution_specs=(
+                SimpleNamespace(
+                    instrument=SimpleNamespace(
+                        symbol="BTCUSDT",
+                        product=SimpleNamespace(value="SPOT"),
+                    )
+                ),
+            ),
+            risk=SimpleNamespace(
+                kill_switch=False,
+                maximum_drawdown_fraction=Decimal("0.2"),
+                maximum_quote_age_seconds=60,
+            ),
         ),
         **_health_policy_extras(),
     )
+    return overview, reader, config
+
+
+def test_health_exposes_structural_output_failure_without_reclassifying_history() -> None:
+    now = datetime(2026, 8, 21, 14, tzinfo=UTC)
+    overview, reader, config = _healthy_capital_health_context(now)
     rejected = AssessmentQualityStatus(
         latest_attempt_at=now,
         latest_attempt_status="REJECTED",
@@ -292,6 +257,7 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         assessment_quality=rejected,
     )
     check = next(
@@ -314,6 +280,7 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         assessment_quality=clean,
     )
     clean_check = next(
@@ -332,6 +299,7 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         assessment_quality=recovered,
     )
     recovered_check = next(
@@ -463,41 +431,6 @@ def test_account_state_keeps_enabled_distinct_from_unprobed_health(
     assert ser.account_status(status)["state"] == expected
 
 
-def test_health_is_unknown_without_data_and_bad_on_mismatch():
-    now = datetime.now(UTC)
-    empty_reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: None,
-        latest_market_observed_at=lambda: None,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(
-            now, latest_success_at=None, release_aligned=None
-        ),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=30,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
-    result = assemble_health(empty_reader, config, now=now)
-    assert result["overall"] == "unknown"
-
-    mismatch = SimpleNamespace(status="MISMATCH", freeze_new_risk=True, as_of=now)
-    bad_reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: mismatch,
-        latest_market_observed_at=lambda: None,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    bad = assemble_health(bad_reader, config, now=now)
-    assert bad["overall"] == "bad"
-    reconciliation = next(c for c in bad["checks"] if c["key"] == "reconciliation")
-    assert reconciliation["state"] == "bad"
-
-
 def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> None:
     now = datetime(2026, 8, 21, 6, 30, tzinfo=UTC)
     overview = CapitalOverview(
@@ -582,101 +515,11 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
     assert broken_checks["capital_performance"]["state"] == "unknown"
 
 
-def test_health_ages_persisted_freshness_and_uses_real_kill_switch():
-    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    now = observed_at.replace(minute=2)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: observed_at,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=True,
-        ),
-        **_health_policy_extras(),
-    )
-
-    result = assemble_health(reader, config, now=now)
-
-    checks = {item["key"]: item for item in result["checks"]}
-    assert checks["data_freshness"]["state"] == "bad"
-    assert checks["kill_switch"]["state"] == "bad"
-    assert result["overall"] == "bad"
-
-
-def test_health_includes_perpetual_freshness_when_capability_is_enabled() -> None:
-    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        latest_perpetual_observed_at=lambda: now - timedelta(seconds=901),
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        market_data=SimpleNamespace(
-            perpetual_instruments=("BINANCE:USD_M_PERPETUAL:BTCUSDT",),
-            perpetual_poll_seconds=300,
-        ),
-        **_health_policy_extras(),
-    )
-
-    checks = {
-        item["key"]: item
-        for item in assemble_health(reader, config, now=now)["checks"]
-    }
-
-    assert checks["data_freshness"]["state"] == "bad"
-    assert "永续 901/900 秒" in checks["data_freshness"]["detail"]
-
-
-def test_health_reads_persisted_portfolio_kill_switch() -> None:
-    now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: True,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
-
-    result = assemble_health(reader, config, now=now)
-
-    checks = {item["key"]: item for item in result["checks"]}
-    assert checks["kill_switch"]["state"] == "bad"
-    assert result["overall"] == "bad"
-
-
 def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(
+    overview, reader, config = _healthy_capital_health_context(
+        now,
+        analysis=_analysis_status(
             now,
             pending_outbox_count=3,
             oldest_pending_outbox_at=now - timedelta(seconds=10),
@@ -685,17 +528,8 @@ def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
             oldest_overdue_analysis_at=now - timedelta(hours=5),
         ),
     )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
 
-    result = assemble_health(reader, config, now=now)
+    result = assemble_health(reader, config, now=now, capital_overview=overview)
 
     checks = {item["key"]: item for item in result["checks"]}
     assert checks["trigger_delivery"]["state"] == "bad"
@@ -706,27 +540,13 @@ def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
 
 def test_health_reads_temporal_coordinator_pending_state() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
+    overview, reader, config = _healthy_capital_health_context(now)
 
     result = assemble_health(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         coordinator_statuses=(
             {"symbol": "BTCUSDT", "pending_count": 0, "active_batch_id": None},
             {"symbol": "ETHUSDT", "pending_count": 4, "active_batch_id": None},
@@ -741,27 +561,13 @@ def test_health_reads_temporal_coordinator_pending_state() -> None:
 
 def test_health_treats_policy_deferred_triggers_as_healthy() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
+    overview, reader, config = _healthy_capital_health_context(now)
 
     result = assemble_health(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         coordinator_statuses=(
             {
                 "symbol": "BTCUSDT",
@@ -790,27 +596,13 @@ def test_health_treats_policy_deferred_triggers_as_healthy() -> None:
 
 def test_health_keeps_terminal_trigger_failure_visible_until_recovery() -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
+    overview, reader, config = _healthy_capital_health_context(now)
 
     result = assemble_health(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         coordinator_statuses=(
             {
                 "symbol": "BTCUSDT",
@@ -833,27 +625,13 @@ def test_health_keeps_terminal_trigger_failure_visible_until_recovery() -> None:
 )
 def test_health_surfaces_host_disk_pressure(percent, expected) -> None:
     now = datetime(2026, 8, 18, 12, tzinfo=UTC)
-    report = SimpleNamespace(status="MATCHED", freeze_new_risk=False, as_of=now)
-    reader = SimpleNamespace(
-        latest_reconciliation=lambda *, now: report,
-        latest_market_observed_at=lambda: now,
-        portfolio_protection_active=lambda: False,
-        analysis_runtime_status=lambda *, now: _analysis_status(now),
-    )
-    config = SimpleNamespace(
-        reconciliation=SimpleNamespace(maximum_report_age_seconds=180),
-        risk=SimpleNamespace(
-            maximum_market_age_seconds=60,
-            maximum_account_age_seconds=60,
-            kill_switch=False,
-        ),
-        **_health_policy_extras(),
-    )
+    overview, reader, config = _healthy_capital_health_context(now)
 
     result = assemble_health(
         reader,
         config,
         now=now,
+        capital_overview=overview,
         host_resources={"disk": {"percent": percent}},
     )
 

@@ -118,7 +118,7 @@ def test_history_command_overrides_production_symbol_and_interval(
 
     monkeypatch.setattr(dataset_module, "fetch_binance_history", fake_fetch)
     fetch_binance_history_command(
-        config=Path("config/investment-manager.yaml"),
+        config=Path("config/investment-manager.research.yaml"),
         symbol="bnbusdt",
         start="2026-01-01T00:00:00Z",
         end="2026-01-03T00:00:00Z",

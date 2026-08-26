@@ -1,0 +1,81 @@
+extends: investment-manager.yaml
+
+# 离线研究与退役回放的独立配置；受管 Release 禁止加载本文件。
+panel:
+  version: panel-policy-v10
+  schema_version: panel-v1
+  max_characters: 12000
+  max_evidence: 20
+  max_per_source: 5
+  max_market_age_seconds: 180
+  maximum_evidence_age_seconds: 86400
+
+strategy:
+  strategy_id: price-trend
+  version: price-trend-v4
+  family: price-trend
+  enabled: true
+  score_threshold: "0.55"
+  stop_atr_multiple: "1.5"
+  horizon_minutes: 60
+  expected_edge_half_life_seconds: 900
+
+calibration:
+  version: edge-calibration-v1
+  minimum_non_overlapping_samples: 30
+  method_version: mean-lower-bound-v1
+  lower_confidence_z: "1.96"
+  artifacts: []
+
+composition:
+  version: calibrated-net-edge-v1
+
+frequency:
+  version: frequency-v4
+  cooldown_minutes: 30
+  maximum_orders_per_day: 8
+  minimum_net_edge_bps: "4"
+  funding_bps: "0"
+  latency_bps: "0.5"
+  adverse_selection_bps: "0.75"
+  uncertainty_buffer_bps: "1.5"
+
+risk:
+  version: risk-v1
+  symbol_allowlist: [BTCUSDT, ETHUSDT]
+  maximum_market_age_seconds: 180
+  maximum_account_age_seconds: 60
+  maximum_risk_fraction: "0.005"
+  maximum_total_risk_fraction: "0.02"
+  maximum_position_notional: "2000"
+  maximum_daily_loss: "200"
+  maximum_drawdown_fraction: "0.05"
+  minimum_order_notional: "10"
+  quantity_step: "0.000001"
+  reservation_ttl_seconds: 120
+  kill_switch: false
+
+execution:
+  version: mock-execution-v1
+  fee_bps: "10"
+  market_slippage_bps: "2"
+  default_fill_fraction: "1"
+
+reconciliation:
+  version: reconciliation-v1
+  poll_seconds: 60
+  maximum_report_age_seconds: 180
+  balance_tolerance: "0.00000001"
+  position_quantity_tolerance: "0.00000001"
+
+proposal:
+  version: codex-proposal-v8
+  producer_id: codex-analyst
+  strategy_family: ai-contextual
+  minimum_confidence: "0.55"
+  maximum_horizon_minutes: 240
+  forecast_horizons_minutes: [60, 240]
+  expected_edge_half_life_seconds: 1800
+
+pipeline:
+  ai_mode: "OFF"
