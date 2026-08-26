@@ -30,9 +30,9 @@ const REASON_LABELS: Record<string, string> = {
   "FORECAST_NO_ESTIMATE:DEADLINE_MISSED": "概率预测超过合同完成期限",
   "FORECAST_NO_ESTIMATE:STALE_BEFORE_AVAILABLE": "分析期间市场已发生重大移动，原预测不可交易",
   "FORECAST_NO_ESTIMATE:INSUFFICIENT_REMAINING_HORIZON": "分析完成时剩余交易窗口不足",
-  CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整成本后没有达到入场门槛，选择现金",
+  CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整未来成本后净边际不为正，选择现金",
   CASH_SELECTED_FORECAST_INVALID: "预测已不再允许新增风险，保持现金",
-  POSITIVE_NET_EDGE_SELECTED: "预测扣除完整成本后达到入场门槛",
+  POSITIVE_NET_EDGE_SELECTED: "预测扣除完整未来成本后净边际为正，纳入组合",
   EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",
   FORECAST_TIME_WINDOW_INVALID: "预测已经超过允许使用的时间窗口",
   FORECAST_WORLD_MODEL_UNAVAILABLE: "预测依赖的世界认知已无法确认",
@@ -154,7 +154,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                   预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
                   = 费用后 {formatBps(item.net_bps)} bp
                   {Number(item.decision_threshold_bps) > 0
-                    ? `；当时额外门槛 ${formatBps(item.decision_threshold_bps)} bp`
+                    ? `；该历史行为另有 ${formatBps(item.decision_threshold_bps)} bp 附加门槛`
                     : ""}
                 </dd>
                 <dt>金额与成本</dt>
