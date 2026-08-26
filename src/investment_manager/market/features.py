@@ -123,33 +123,12 @@ def build_derivative_context_snapshot(
         (quote.observed_at - aligned_spot_quote.observed_at).total_seconds()
     ) > maximum_quote_skew_seconds:
         raise ValueError("Spot/Perpetual 报价时间偏差过大")
-    window_start = spot.as_of - timedelta(hours=funding_window_hours)
-    visible = tuple(
-        item
-        for item in settlements
-        if item.instrument == state.instrument
-        and window_start <= item.funding_time < spot.as_of
-        and item.observed_at <= spot.as_of
+    visible, funding = _funding_summary(
+        instrument=state.instrument,
+        as_of=spot.as_of,
+        settlements=settlements,
+        funding_window_hours=funding_window_hours,
     )
-    if len({item.settlement_id for item in visible}) != len(visible):
-        raise ValueError("Funding 汇总不能包含重复结算")
-    rates_bps = tuple(item.funding_rate * Decimal("10000") for item in visible)
-    rate_sum = sum(rates_bps, Decimal("0")) if rates_bps else None
-    rate_mean = rate_sum / Decimal(len(rates_bps)) if rate_sum is not None else None
-    if rate_mean is None:
-        rate_stddev = None
-        positive_fraction = None
-        rate_min = None
-    else:
-        variance = sum(
-            ((rate - rate_mean) ** 2 for rate in rates_bps),
-            Decimal("0"),
-        ) / Decimal(len(rates_bps))
-        rate_stddev = variance.sqrt()
-        positive_fraction = Decimal(
-            sum(1 for rate in rates_bps if rate > 0)
-        ) / Decimal(len(rates_bps))
-        rate_min = min(rates_bps)
     spot_flow = _spot_flow_summary(spot, window_minutes=60)
     cross_venue = _cross_venue_spot_summary(
         spot=spot,
@@ -177,12 +156,7 @@ def build_derivative_context_snapshot(
         / ((quote.ask + quote.bid) / Decimal("2"))
         * Decimal("10000"),
         last_funding_rate_bps=state.last_funding_rate * Decimal("10000"),
-        trailing_funding_rate_mean_bps=rate_mean,
-        trailing_funding_rate_sum_bps=rate_sum,
-        trailing_funding_rate_stddev_bps=rate_stddev,
-        trailing_funding_positive_fraction=positive_fraction,
-        trailing_funding_rate_min_bps=rate_min,
-        funding_settlement_count=len(rates_bps),
+        **funding,
         funding_window_hours=funding_window_hours,
         next_funding_time=state.next_funding_time,
         **spot_flow,
@@ -211,6 +185,119 @@ def build_derivative_context_snapshot(
             )
         ),
     )
+
+
+def build_perpetual_only_context_snapshot(
+    *,
+    cycle_id: str,
+    asset: str,
+    as_of: datetime,
+    state: PerpetualMarketState,
+    quote: PerpetualQuote,
+    settlements: tuple[FundingSettlement, ...],
+    funding_window_hours: int,
+) -> DerivativeContextSnapshot:
+    """Build a dense derivative state when the venue has no executable Spot leg.
+
+    TradFi perpetuals expose their own exchange index.  It is a point-in-time
+    reference for basis diagnostics, not a fabricated Spot instrument.
+    """
+
+    at = require_utc(as_of)
+    if state.instrument != quote.instrument:
+        raise ValueError("永续状态与报价必须属于同一产品")
+    if state.observed_at > at or quote.observed_at > at:
+        raise ValueError("永续决策状态不能使用 as_of 后才可见的数据")
+    visible, funding = _funding_summary(
+        instrument=state.instrument,
+        as_of=at,
+        settlements=settlements,
+        funding_window_hours=funding_window_hours,
+    )
+    return DerivativeContextSnapshot(
+        cycle_id=cycle_id,
+        asset=asset,
+        instrument=state.instrument,
+        as_of=at,
+        observed_at=max(state.observed_at, quote.observed_at),
+        mark_index_premium_bps=(state.mark_price / state.index_price - Decimal("1"))
+        * Decimal("10000"),
+        executable_short_basis_bps=(quote.bid / state.index_price - Decimal("1"))
+        * Decimal("10000"),
+        perpetual_spread_bps=(quote.ask - quote.bid)
+        / ((quote.ask + quote.bid) / Decimal("2"))
+        * Decimal("10000"),
+        last_funding_rate_bps=state.last_funding_rate * Decimal("10000"),
+        **funding,
+        funding_window_hours=funding_window_hours,
+        next_funding_time=state.next_funding_time,
+        positioning_observed_at=state.positioning_observed_at,
+        positioning_window_minutes=state.positioning_window_minutes,
+        open_interest=state.open_interest,
+        open_interest_value=state.open_interest_value,
+        open_interest_change_fraction=state.open_interest_change_fraction,
+        global_long_short_account_ratio=state.global_long_short_account_ratio,
+        global_long_account_fraction=state.global_long_account_fraction,
+        global_short_account_fraction=state.global_short_account_fraction,
+        taker_buy_sell_ratio=state.taker_buy_sell_ratio,
+        taker_buy_volume=state.taker_buy_volume,
+        taker_sell_volume=state.taker_sell_volume,
+        input_refs=tuple(
+            sorted(
+                {
+                    state.state_id,
+                    quote.quote_id,
+                    *(item.settlement_id for item in visible),
+                }
+            )
+        ),
+    )
+
+
+def _funding_summary(
+    *,
+    instrument: InstrumentId,
+    as_of: datetime,
+    settlements: tuple[FundingSettlement, ...],
+    funding_window_hours: int,
+) -> tuple[tuple[FundingSettlement, ...], dict[str, object]]:
+    if not 1 <= funding_window_hours <= 720:
+        raise ValueError("Funding 汇总窗口必须在 1..720 小时")
+    window_start = as_of - timedelta(hours=funding_window_hours)
+    visible = tuple(
+        item
+        for item in settlements
+        if item.instrument == instrument
+        and window_start <= item.funding_time < as_of
+        and item.observed_at <= as_of
+    )
+    if len({item.settlement_id for item in visible}) != len(visible):
+        raise ValueError("Funding 汇总不能包含重复结算")
+    rates = tuple(item.funding_rate * Decimal("10000") for item in visible)
+    rate_sum = sum(rates, Decimal("0")) if rates else None
+    rate_mean = rate_sum / Decimal(len(rates)) if rate_sum is not None else None
+    if rate_mean is None:
+        rate_stddev = None
+        positive_fraction = None
+        rate_min = None
+    else:
+        variance = sum(
+            ((rate - rate_mean) ** 2 for rate in rates),
+            Decimal("0"),
+        ) / Decimal(len(rates))
+        rate_stddev = variance.sqrt()
+        positive_fraction = Decimal(sum(1 for rate in rates if rate > 0)) / Decimal(
+            len(rates)
+        )
+        rate_min = min(rates)
+    return visible, {
+        "trailing_funding_rate_mean_bps": rate_mean,
+        "trailing_funding_rate_sum_bps": rate_sum,
+        "trailing_funding_rate_stddev_bps": rate_stddev,
+        "trailing_funding_positive_fraction": positive_fraction,
+        "trailing_funding_rate_min_bps": rate_min,
+        "funding_settlement_count": len(rates),
+    }
 
 
 def _cross_venue_spot_summary(

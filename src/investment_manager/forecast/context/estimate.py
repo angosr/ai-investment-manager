@@ -30,7 +30,7 @@ from investment_manager.forecast.results import ForecastMechanismEffect
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.models import InstrumentId, SpotVenue
+from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
 from investment_manager.market.policy import FeaturePolicy
 from investment_manager.portfolio.policy import ContextForecastPolicy
 from investment_manager.settings import AppConfig
@@ -64,14 +64,14 @@ class ContextForecastDraft(FrozenModel):
 
 
 class ContextForecastStructuredOutput(FrozenModel):
-    forecast: ContextForecastDraft
+    forecasts: tuple[ContextForecastDraft, ...] = Field(min_length=1)
 
 
 class ContextForecastTargetState(FrozenModel):
     """Fresh deterministic market state at one Forecast decision slot."""
 
     as_of: datetime
-    asset_states: tuple[PacketAssetState, ...] = Field(min_length=1)
+    asset_states: tuple[PacketAssetState, ...] = ()
     derivative_states: tuple[PacketDerivativeState, ...] = ()
     input_refs: tuple[str, ...] = Field(min_length=1)
 
@@ -79,6 +79,8 @@ class ContextForecastTargetState(FrozenModel):
 
     @model_validator(mode="after")
     def identity_and_time_are_canonical(self):
+        if not self.asset_states and not self.derivative_states:
+            raise ValueError("Context Forecast target state 不能同时缺少现货和衍生品状态")
         if tuple(sorted(set(self.input_refs))) != self.input_refs:
             raise ValueError("Context Forecast target state input_refs 必须唯一且排序")
         if any(item.observed_at > self.as_of for item in self.asset_states):
@@ -120,11 +122,25 @@ class ContextForecastTargetState(FrozenModel):
         return tuple(sorted(selectors))
 
 
+class ContextForecastAnalysisTarget(FrozenModel):
+    """One contract/slot/state member of a shared portfolio Forecast call."""
+
+    slot: ForecastDecisionSlot
+    contract: ForecastContract
+    target_state: ContextForecastTargetState
+
+    @model_validator(mode="after")
+    def slot_must_belong_to_contract(self):
+        if self.slot.contract_id != self.contract.contract_id:
+            raise ValueError("Context Forecast target 的 Slot/Contract 不一致")
+        return self
+
+
 class ContextForecastTargetStateBehavior(FrozenModel):
     """Immutable identity of the deterministic point-in-time state producer."""
 
     feature_policy: FeaturePolicy
-    spot_instrument: InstrumentId
+    reference_instrument: InstrumentId
     derivative_evidence_instrument: InstrumentId | None = None
     interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
     bar_window: int = Field(ge=8, le=1_000)
@@ -143,12 +159,19 @@ class ContextForecastTargetStateBehavior(FrozenModel):
             sorted(set(self.cross_venue_spot_venues), key=lambda item: item.value)
         ) != self.cross_venue_spot_venues:
             raise ValueError("Forecast 跨场所现货 venues 必须唯一排序")
+        if (
+            self.reference_instrument.product != InstrumentProduct.SPOT
+            and self.cross_venue_spot_venues
+        ):
+            raise ValueError("非 Spot 规范参考不得伪造跨场所现货证据")
         return self
 
 
 CONTEXT_FORECAST_INSTRUCTIONS = (
-    "你是概率预测员。输入只包含一个已持久化世界模型、目标相关点时状态和一份预登记预测合同。",
-    "你只回答合同定义的终点收益落入各 bucket 的概率；不得输出订单、仓位、杠杆、精确收益点数、止损、"
+    "你是组合概率预测员。输入只包含一个已持久化世界模型、多个目标相关点时状态和逐目标预登记预测合同。",
+    "你必须为每个可见 decision_slot_id 恰好输出一份 Forecast，并只回答对应合同定义的"
+    "终点收益落入各 bucket 的概率；"
+    "不得把一个资产的结论复制给另一个资产，不得输出订单、仓位、杠杆、精确收益点数、止损、"
     "风险预算或交易建议。不要重新写世界认知，也不要要求补建数据。",
     "outcome_probabilities 必须逐项使用输入合同给出的 bucket_id 和顺序，"
     "概率使用 0 到 1 的十进制字符串，"
@@ -165,8 +188,8 @@ CONTEXT_FORECAST_INSTRUCTIONS = (
 def context_forecast_behavior_hash(
     runtime: CodexRuntimePolicy,
     policy: ContextForecastPolicy,
-    contract: ForecastContract,
-    target_state_behavior: ContextForecastTargetStateBehavior,
+    contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[ContextForecastTargetStateBehavior, ...],
     world_model_behavior_id: str,
 ) -> str:
     return content_hash(
@@ -177,15 +200,19 @@ def context_forecast_behavior_hash(
             "output_schema": strict_output_schema(
                 ContextForecastStructuredOutput.model_json_schema()
             ),
-            "contract": contract,
-            "target_state_behavior": target_state_behavior,
+            "contracts": contracts,
+            "target_state_behaviors": target_state_behaviors,
             "world_model_behavior_id": world_model_behavior_id,
             "policy": policy.model_dump(
                 mode="json",
                 # Product payoff mapping is a deterministic downstream Forecast
                 # concern.  Changing legal execution products must not relabel
                 # an otherwise identical AI probability behavior or its samples.
-                exclude={"producer_behavior_id", "enabled", "product_payoffs"},
+                exclude={
+                    "producer_behavior_id": True,
+                    "enabled": True,
+                    "targets": {"__all__": {"product_payoffs"}},
+                },
             ),
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
@@ -200,33 +227,38 @@ def context_forecast_behavior_hash(
 
 def context_forecast_input_projection(
     *,
-    slot: ForecastDecisionSlot,
-    contract: ForecastContract,
+    targets: tuple[ContextForecastAnalysisTarget, ...],
     assessment: ContextAssessment,
     packet: DecisionPacket,
-    target_state: ContextForecastTargetState,
 ) -> dict[str, object]:
     """Exclude raw news and portfolio state from the second, target-only AI call."""
 
     return {
         "purpose": "FORECAST_ESTIMATE",
-        "decision_slot": {
-            "decision_slot_id": slot.slot_id,
-            "information_cutoff_at": slot.information_cutoff_at,
-            "completion_deadline_at": slot.completion_deadline_at,
-            "evaluation_at": slot.evaluation_at,
-            "cause": (
-                None if slot.cause is None else slot.cause.identity_payload()
-            ),
-        },
-        "forecast_contract": contract,
+        "forecast_targets": tuple(
+            {
+                "decision_slot": {
+                    "decision_slot_id": item.slot.slot_id,
+                    "information_cutoff_at": item.slot.information_cutoff_at,
+                    "completion_deadline_at": item.slot.completion_deadline_at,
+                    "evaluation_at": item.slot.evaluation_at,
+                    "cause": (
+                        None
+                        if item.slot.cause is None
+                        else item.slot.cause.identity_payload()
+                    ),
+                },
+                "forecast_contract": item.contract,
+                "target_state": {
+                    "as_of": item.target_state.as_of,
+                    "asset_states": item.target_state.asset_states,
+                    "derivative_states": item.target_state.derivative_states,
+                    "coverage_gap_codes": packet.coverage_gap_codes,
+                },
+            }
+            for item in targets
+        ),
         "world_model": context_forecast_world_model_projection(assessment),
-        "target_state": {
-            "as_of": target_state.as_of,
-            "asset_states": target_state.asset_states,
-            "derivative_states": target_state.derivative_states,
-            "coverage_gap_codes": packet.coverage_gap_codes,
-        },
     }
 
 
@@ -270,13 +302,20 @@ def context_forecast_world_model_projection(
 
 def context_forecast_output_schema(
     *,
-    slot: ForecastDecisionSlot,
-    contract: ForecastContract,
+    targets: tuple[ContextForecastAnalysisTarget, ...],
     assessment: ContextAssessment,
 ) -> dict[str, object]:
     return context_forecast_output_schema_for_ids(
-        decision_slot_id=slot.slot_id,
-        bucket_ids=tuple(item.bucket_id for item in contract.outcome_buckets),
+        decision_slot_ids=tuple(item.slot.slot_id for item in targets),
+        bucket_ids=tuple(
+            sorted(
+                {
+                    bucket.bucket_id
+                    for item in targets
+                    for bucket in item.contract.outcome_buckets
+                }
+            )
+        ),
         mechanism_ids=tuple(item.mechanism_id for item in assessment.mechanisms),
         evidence_ids=tuple(
             sorted(
@@ -301,21 +340,27 @@ def context_forecast_output_schema(
 
 def context_forecast_output_schema_for_ids(
     *,
-    decision_slot_id: str,
+    decision_slot_ids: tuple[str, ...],
     bucket_ids: tuple[str, ...],
     mechanism_ids: tuple[str, ...],
     evidence_ids: tuple[str, ...],
 ) -> dict[str, object]:
     """Build the shared schema without exposing WorldModel semantic content."""
 
-    if not bucket_ids or not mechanism_ids or not evidence_ids:
+    if not decision_slot_ids or not bucket_ids or not mechanism_ids or not evidence_ids:
         raise ValueError("Context Forecast 输出枚举不能为空")
-    if any(len(set(values)) != len(values) for values in (bucket_ids, mechanism_ids, evidence_ids)):
+    if any(
+        len(set(values)) != len(values)
+        for values in (decision_slot_ids, bucket_ids, mechanism_ids, evidence_ids)
+    ):
         raise ValueError("Context Forecast 输出枚举不能重复")
     schema = strict_output_schema(ContextForecastStructuredOutput.model_json_schema())
     definitions = schema["$defs"]
     draft = definitions["ContextForecastDraft"]
-    draft["properties"]["decision_slot_id"]["const"] = decision_slot_id
+    draft["properties"]["decision_slot_id"]["enum"] = list(decision_slot_ids)
+    forecasts = schema["properties"]["forecasts"]
+    forecasts["minItems"] = len(decision_slot_ids)
+    forecasts["maxItems"] = len(decision_slot_ids)
     probability = definitions["ContextForecastProbabilityDraft"]
     probability["properties"]["bucket_id"]["enum"] = list(bucket_ids)
     contribution = definitions["ContextForecastContributionDraft"]
@@ -329,8 +374,8 @@ class ContextForecastRunBundleBuilder:
         self,
         runtime: CodexRuntimePolicy,
         policy: ContextForecastPolicy,
-        contract: ForecastContract,
-        target_state_behavior: ContextForecastTargetStateBehavior,
+        contracts: tuple[ForecastContract, ...],
+        target_state_behaviors: tuple[ContextForecastTargetStateBehavior, ...],
         world_model_behavior_id: str,
         *,
         code_version: str,
@@ -338,8 +383,8 @@ class ContextForecastRunBundleBuilder:
     ) -> None:
         self._runtime = runtime
         self._policy = policy
-        self._contract = contract
-        self._target_state_behavior = target_state_behavior
+        self._contracts = contracts
+        self._target_state_behaviors = target_state_behaviors
         self._world_model_behavior_id = world_model_behavior_id
         self._code_version = code_version
         self._configuration_hash = configuration_hash
@@ -349,30 +394,27 @@ class ContextForecastRunBundleBuilder:
         return context_forecast_behavior_hash(
             self._runtime,
             self._policy,
-            self._contract,
-            self._target_state_behavior,
+            self._contracts,
+            self._target_state_behaviors,
             self._world_model_behavior_id,
         )
 
     @property
-    def contract_id(self) -> str:
-        return self._contract.contract_id
+    def contract_ids(self) -> tuple[str, ...]:
+        return tuple(item.contract_id for item in self._contracts)
 
     def build(
         self,
         *,
-        slot: ForecastDecisionSlot,
+        targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
-        target_state: ContextForecastTargetState,
         target: Path,
     ) -> RunBundle:
         projected = context_forecast_input_projection(
-            slot=slot,
-            contract=self._contract,
+            targets=targets,
             assessment=assessment,
             packet=packet,
-            target_state=target_state,
         )
         prompt = "\n".join(
             (
@@ -384,13 +426,14 @@ class ContextForecastRunBundleBuilder:
         if len(prompt) > self._runtime.maximum_prompt_characters:
             raise ValueError("FORECAST_ESTIMATE 输入超过 Codex 提示容量上限")
         output_schema = context_forecast_output_schema(
-            slot=slot,
-            contract=self._contract,
+            targets=targets,
             assessment=assessment,
         )
+        slot_ids = tuple(item.slot.slot_id for item in targets)
+        cycle_id = stable_id("context_forecast_set", *slot_ids)
         input_text = canonical_json(projected) + "\n"
         return write_run_bundle(
-            cycle_id=slot.slot_id,
+            cycle_id=cycle_id,
             target=target,
             prompt=prompt,
             files={
@@ -408,8 +451,8 @@ class ContextForecastRunBundleBuilder:
                 "analysis_mode": "FORECAST_ESTIMATE",
                 "input_version": CONTEXT_FORECAST_INPUT_VERSION,
                 "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
-                "decision_slot_id": slot.slot_id,
-                "contract_id": self._contract.contract_id,
+                "decision_slot_ids": slot_ids,
+                "contract_ids": self.contract_ids,
                 "world_model_id": assessment.assessment_id,
                 "decision_packet_hash": packet.content_hash,
                 "model": self._runtime.model,
@@ -439,35 +482,35 @@ class CodexContextForecastAnalyst:
     def estimate(
         self,
         *,
-        slot: ForecastDecisionSlot,
+        targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
-        target_state: ContextForecastTargetState,
     ) -> AnalystResult:
+        slot_ids = tuple(item.slot.slot_id for item in targets)
+        cycle_id = stable_id("context_forecast_set", *slot_ids)
         target = self._bundle_root / stable_id(
             "context_forecast_bundle",
-            slot.slot_id,
+            cycle_id,
             assessment.assessment_id,
             self._builder.behavior_hash,
         )
         try:
             bundle = load_existing_bundle(
-                cycle_id=slot.slot_id,
+                cycle_id=cycle_id,
                 target=target,
                 expected_manifest={
                     "analysis_mode": "FORECAST_ESTIMATE",
-                    "decision_slot_id": slot.slot_id,
-                    "contract_id": self._builder.contract_id,
+                    "decision_slot_ids": slot_ids,
+                    "contract_ids": self._builder.contract_ids,
                     "world_model_id": assessment.assessment_id,
                     "analysis_behavior_hash": self._builder.behavior_hash,
                 },
             )
             if bundle is None:
                 bundle = self._builder.build(
-                    slot=slot,
+                    targets=targets,
                     assessment=assessment,
                     packet=packet,
-                    target_state=target_state,
                     target=target,
                 )
         except ValueError as exc:
@@ -486,8 +529,8 @@ def assemble_codex_context_forecast_analyst(
     config: AppConfig,
     *,
     policy: ContextForecastPolicy,
-    contract: ForecastContract,
-    target_state_behavior: ContextForecastTargetStateBehavior,
+    contracts: tuple[ForecastContract, ...],
+    target_state_behaviors: tuple[ContextForecastTargetStateBehavior, ...],
     code_version: str,
     leases: AccountLeaseStore,
     audit: RouterAuditStore,
@@ -495,8 +538,8 @@ def assemble_codex_context_forecast_analyst(
     expected = context_forecast_behavior_hash(
         config.codex_runtime,
         policy,
-        contract,
-        target_state_behavior,
+        contracts,
+        target_state_behaviors,
         configured_assess_behavior_hash(config),
     )
     if policy.producer_behavior_id != expected:
@@ -512,8 +555,8 @@ def assemble_codex_context_forecast_analyst(
         ContextForecastRunBundleBuilder(
             config.codex_runtime,
             policy,
-            contract,
-            target_state_behavior,
+            contracts,
+            target_state_behaviors,
             configured_assess_behavior_hash(config),
             code_version=code_version,
             configuration_hash=content_hash(config),

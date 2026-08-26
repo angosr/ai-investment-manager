@@ -37,10 +37,11 @@ from investment_manager.forecast.context.estimate import (
 )
 from investment_manager.forecast.context.producer import (
     ContextForecastPreflight,
-    ContextForecastProducer,
+    ContextForecastRuntimeTarget,
     ForecastProductionResult,
     MarketContextTargetStateProvider,
-    context_spot_forecast_contract,
+    PortfolioContextForecastProducer,
+    context_forecast_contract,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
@@ -1379,150 +1380,179 @@ def assemble_capital_cycle(
                 raise ValueError("装配 Context Forecast 必须冻结 code_version")
             if producer_activation_at is None:
                 raise ValueError("装配 Context Forecast 必须冻结 producer activation")
-            instrument = next(
-                (
-                    item.instrument
-                    for item in config.capital.execution_specs
-                    if item.instrument.key == context.target_instrument_key
-                ),
-                None,
+            spec_by_key = {
+                item.instrument.key: item for item in config.capital.execution_specs
+            }
+            perpetual_by_key = {
+                item.key: item for item in config.market_data.perpetual_instruments
+            }
+            cross_venue_symbols = (
+                {
+                    item.symbol
+                    for item in config.market_data.cross_venue_spot.products
+                }
+                if config.market_data.cross_venue_spot is not None
+                else set()
             )
-            if instrument is None:
-                raise ValueError("Context Forecast target 不在 Capital execution_specs")
-            perpetual = next(
-                (
-                    item
-                    for item in config.market_data.perpetual_instruments
-                    if item.key == context.derivative_evidence_instrument_key
-                ),
-                None,
-            )
-            target_state_behavior = ContextForecastTargetStateBehavior(
-                feature_policy=config.feature,
-                spot_instrument=instrument,
-                derivative_evidence_instrument=perpetual,
-                interval=config.market_data.interval,
-                bar_window=config.market_data.bar_window,
-                funding_lookback_hours=config.market_data.funding_history_lookback_hours,
-                maximum_quote_skew_seconds=(
-                    config.market_data.maximum_cross_market_quote_skew_seconds
-                ),
-                cross_venue_spot_version=(
-                    config.market_data.cross_venue_spot.version
-                    if config.market_data.cross_venue_spot is not None
+            runtimes: list[ContextForecastRuntimeTarget] = []
+            behaviors: list[ContextForecastTargetStateBehavior] = []
+            activation_times: list[datetime] = []
+            for target_policy in context.targets:
+                spec = spec_by_key[target_policy.reference_instrument_key]
+                instrument = spec.instrument
+                perpetual = (
+                    perpetual_by_key.get(
+                        target_policy.derivative_evidence_instrument_key
+                    )
+                    if target_policy.derivative_evidence_instrument_key is not None
                     else None
-                ),
-                cross_venue_spot_venues=(
-                    tuple(sorted(SpotVenue, key=lambda item: item.value))
-                    if config.market_data.cross_venue_spot is not None
-                    else ()
-                ),
-                maximum_cross_venue_spot_age_seconds=(
-                    config.market_data.cross_venue_spot.maximum_age_seconds
-                    if config.market_data.cross_venue_spot is not None
-                    else 30
-                ),
-            )
-            contract = context_spot_forecast_contract(
-                policy=context,
-                instrument=instrument,
-                cost_semantics_version=config.capital.decision.cost_model_version,
-            )
-            binding = ForecastProducerBinding.create(
-                contract_id=contract.contract_id,
-                producer_kind=ForecastProducerKind.CONTEXT,
-                producer_id=context.producer_id,
-                producer_behavior_id=context.producer_behavior_id,
-                permission=ForecastPermission.CAPITAL_CANDIDATE,
-                required_feature_keys=context.required_feature_keys,
-            )
-            authorization = next(
-                item
-                for item in config.capital.candidate_capital_authorizations
-                if (
-                    item.producer_id,
-                    item.producer_behavior_id,
-                    item.outcome_family_id,
                 )
-                == (
-                    context.producer_id,
-                    context.producer_behavior_id,
-                    context.outcome_family_id,
+                cross_venue_enabled = instrument.symbol in cross_venue_symbols
+                behavior = ContextForecastTargetStateBehavior(
+                    feature_policy=config.feature,
+                    reference_instrument=instrument,
+                    derivative_evidence_instrument=perpetual,
+                    interval=config.market_data.interval,
+                    bar_window=config.market_data.bar_window,
+                    funding_lookback_hours=(
+                        config.market_data.funding_history_lookback_hours
+                    ),
+                    maximum_quote_skew_seconds=(
+                        config.market_data.maximum_cross_market_quote_skew_seconds
+                    ),
+                    cross_venue_spot_version=(
+                        config.market_data.cross_venue_spot.version
+                        if cross_venue_enabled
+                        else None
+                    ),
+                    cross_venue_spot_venues=(
+                        tuple(sorted(SpotVenue, key=lambda item: item.value))
+                        if cross_venue_enabled
+                        else ()
+                    ),
+                    maximum_cross_venue_spot_age_seconds=(
+                        config.market_data.cross_venue_spot.maximum_age_seconds
+                        if cross_venue_enabled
+                        and config.market_data.cross_venue_spot is not None
+                        else 30
+                    ),
                 )
-            )
-            contracts.record_contract(contract)
-            binding = contracts.resolve_binding(
-                binding,
-                activated_at=producer_activation_at,
-            )
-            context_activation_at = contracts.binding_activation_at(binding.binding_id)
-            target_states = MarketContextTargetStateProvider(
-                market=market,
-                feature_policy=target_state_behavior.feature_policy,
-                spot=target_state_behavior.spot_instrument,
-                perpetual=target_state_behavior.derivative_evidence_instrument,
-                interval=target_state_behavior.interval,
-                bar_window=target_state_behavior.bar_window,
-                funding_lookback_hours=target_state_behavior.funding_lookback_hours,
-                maximum_quote_skew_seconds=(target_state_behavior.maximum_quote_skew_seconds),
-                cross_venue_spot_venues=(target_state_behavior.cross_venue_spot_venues),
-                maximum_cross_venue_spot_age_seconds=(
-                    target_state_behavior.maximum_cross_venue_spot_age_seconds
-                ),
-            )
-            product_payoffs = None
-            if context.product_payoffs is not None:
-                spec_by_key = {item.instrument.key: item for item in config.capital.execution_specs}
-                payoff_specs = tuple(
-                    spec_by_key[key] for key in context.product_payoffs.instrument_keys
+                contract = context_forecast_contract(
+                    policy=context,
+                    target_policy=target_policy,
+                    instrument=instrument,
+                    cost_semantics_version=(
+                        config.capital.decision.cost_model_version
+                    ),
                 )
-                product_payoffs = ContextProductPayoffProjector(
-                    policy=context.product_payoffs,
-                    contract=contract,
+                binding = ForecastProducerBinding.create(
+                    contract_id=contract.contract_id,
+                    producer_kind=ForecastProducerKind.CONTEXT,
+                    producer_id=context.producer_id,
+                    producer_behavior_id=context.producer_behavior_id,
+                    permission=ForecastPermission.CAPITAL_CANDIDATE,
+                    required_feature_keys=target_policy.required_feature_keys,
+                )
+                contracts.record_contract(contract)
+                binding = contracts.resolve_binding(
+                    binding,
+                    activated_at=producer_activation_at,
+                )
+                activation_at = contracts.binding_activation_at(binding.binding_id)
+                if activation_at is None:
+                    raise ValueError("Context Forecast binding 缺少激活时点")
+                activation_times.append(activation_at)
+                target_states = MarketContextTargetStateProvider(
                     market=market,
-                    target_states=target_states,
-                    instruments=tuple(item.instrument for item in payoff_specs),
-                    execution_specs=payoff_specs,
-                    risk=config.capital.sleeve_risk,
-                    maximum_quote_age_seconds=context.maximum_quote_age_seconds,
-                    store=SqlProductPayoffProjectionStore(engine),
+                    feature_policy=behavior.feature_policy,
+                    reference=behavior.reference_instrument,
+                    perpetual=behavior.derivative_evidence_instrument,
+                    interval=behavior.interval,
+                    bar_window=behavior.bar_window,
+                    funding_lookback_hours=behavior.funding_lookback_hours,
+                    maximum_quote_skew_seconds=(
+                        behavior.maximum_quote_skew_seconds
+                    ),
+                    cross_venue_spot_venues=behavior.cross_venue_spot_venues,
+                    maximum_cross_venue_spot_age_seconds=(
+                        behavior.maximum_cross_venue_spot_age_seconds
+                    ),
                 )
-            configured_sources.append(
-                CapitalForecastSource(
-                    contract=contract,
-                    binding=binding,
-                    producer=ContextForecastProducer(
-                        policy=context,
+                runtimes.append(
+                    ContextForecastRuntimeTarget(
+                        policy=target_policy,
                         contract=contract,
                         binding=binding,
-                        market=market,
-                        contexts=world_models,
-                        contracts=contracts,
-                        forecasts=forecasts,
                         instrument=instrument,
                         target_states=target_states,
-                        analysis_scope=config.assessment.mandate.analysis_scope,
-                        activated_at=context_activation_at,
-                        preflight=(
-                            None
-                            if context_forecast_preflight_factory is None
-                            else context_forecast_preflight_factory(contract)
-                        ),
-                        analyst=assemble_codex_context_forecast_analyst(
-                            config,
-                            policy=context,
-                            contract=contract,
-                            target_state_behavior=target_state_behavior,
-                            code_version=code_version,
-                            leases=SqlAccountLeaseStore(engine),
-                            audit=SqlCodexAuditStore(engine),
-                        ),
-                    ),
-                    risk_template=config.capital.sleeve_risk,
-                    capital_authorization=authorization,
-                    product_payoffs=product_payoffs,
+                    )
                 )
+                behaviors.append(behavior)
+            context_activation_at = max(activation_times)
+            frozen_runtimes = tuple(runtimes)
+            frozen_behaviors = tuple(behaviors)
+            frozen_contracts = tuple(item.contract for item in frozen_runtimes)
+            program = PortfolioContextForecastProducer(
+                policy=context,
+                targets=frozen_runtimes,
+                market=market,
+                contexts=world_models,
+                contracts=contracts,
+                forecasts=forecasts,
+                analysis_scope=config.assessment.mandate.analysis_scope,
+                activated_at=context_activation_at,
+                preflight=(
+                    None
+                    if context_forecast_preflight_factory is None
+                    else context_forecast_preflight_factory(frozen_contracts[0])
+                ),
+                analyst=assemble_codex_context_forecast_analyst(
+                    config,
+                    policy=context,
+                    contracts=frozen_contracts,
+                    target_state_behaviors=frozen_behaviors,
+                    code_version=code_version,
+                    leases=SqlAccountLeaseStore(engine),
+                    audit=SqlCodexAuditStore(engine),
+                ),
             )
+            authorization_by_family = {
+                item.outcome_family_id: item
+                for item in config.capital.candidate_capital_authorizations
+            }
+            for runtime in frozen_runtimes:
+                payoff_policy = runtime.policy.product_payoffs
+                product_payoffs = None
+                if payoff_policy is not None:
+                    payoff_specs = tuple(
+                        spec_by_key[key] for key in payoff_policy.instrument_keys
+                    )
+                    product_payoffs = ContextProductPayoffProjector(
+                        policy=payoff_policy,
+                        contract=runtime.contract,
+                        market=market,
+                        target_states=runtime.target_states,
+                        instruments=tuple(
+                            item.instrument for item in payoff_specs
+                        ),
+                        execution_specs=payoff_specs,
+                        risk=config.capital.sleeve_risk,
+                        maximum_quote_age_seconds=(
+                            context.maximum_quote_age_seconds
+                        ),
+                        store=SqlProductPayoffProjectionStore(engine),
+                    )
+                family = runtime.contract.outcome_family_id
+                configured_sources.append(
+                    CapitalForecastSource(
+                        contract=runtime.contract,
+                        binding=runtime.binding,
+                        producer=program.view(family),
+                        risk_template=config.capital.sleeve_risk,
+                        capital_authorization=authorization_by_family[family],
+                        product_payoffs=product_payoffs,
+                    )
+                )
         forecast_sources = tuple(configured_sources)
     portfolio = SqlPortfolioStore(engine)
     performance = SqlPortfolioPerformanceStore(engine)

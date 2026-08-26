@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.engine import Engine
 
-from investment_manager.forecast.context.producer import context_spot_forecast_contract
+from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
@@ -26,7 +26,6 @@ from investment_manager.governance.evaluation.world_model_ablation import (
 from investment_manager.governance.models import EvaluationPlan, ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.models import InstrumentProduct
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.settings import AppConfig
@@ -203,24 +202,25 @@ def _assemble_world_model_ablation(
 
 
 def configured_world_model_ablation_contract(config: AppConfig) -> ForecastContract:
-    """Build the one formal contract shared by registration and runtime assembly."""
+    """Build the preregistered reference contract for the world-model ablation."""
 
     context = config.capital.context_forecast
     if context is None or not context.enabled:
         raise ValueError("启用 WorldModel control 必须绑定 Context Forecast")
+    target_policy = context.targets[0]
     instrument = next(
         (
             item.instrument
             for item in config.capital.execution_specs
-            if item.instrument.key == context.target_instrument_key
-            and item.instrument.product == InstrumentProduct.SPOT
+            if item.instrument.key == target_policy.reference_instrument_key
         ),
         None,
     )
     if instrument is None:
-        raise ValueError("WorldModel control 合同品种不在 Capital Spot 范围")
-    return context_spot_forecast_contract(
+        raise ValueError("WorldModel control 参考合同品种不在 Capital 范围")
+    return context_forecast_contract(
         policy=context,
+        target_policy=target_policy,
         instrument=instrument,
         cost_semantics_version=config.capital.decision.cost_model_version,
     )

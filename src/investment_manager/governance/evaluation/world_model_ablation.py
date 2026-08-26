@@ -386,9 +386,27 @@ def build_world_model_ablation_assignment(
     if not isinstance(world_model, dict):
         raise ValueError("WorldModel control 正式输入缺少 world_model")
     _validate_world_model_reference_ids(world_model)
-    forecast_contract = raw.get("forecast_contract")
-    decision_slot = raw.get("decision_slot")
-    target_state = raw.get("target_state")
+    forecast_targets = raw.get("forecast_targets")
+    if isinstance(forecast_targets, list):
+        selected = next(
+            (
+                item
+                for item in forecast_targets
+                if isinstance(item, dict)
+                and isinstance(item.get("decision_slot"), dict)
+                and item["decision_slot"].get("decision_slot_id") == slot.slot_id
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("WorldModel control 正式组合输入缺少参考 slot")
+        forecast_contract = selected.get("forecast_contract")
+        decision_slot = selected.get("decision_slot")
+        target_state = selected.get("target_state")
+    else:
+        forecast_contract = raw.get("forecast_contract")
+        decision_slot = raw.get("decision_slot")
+        target_state = raw.get("target_state")
     if not all(isinstance(item, dict) for item in (forecast_contract, decision_slot, target_state)):
         raise ValueError("WorldModel control 正式输入结构不完整")
     if decision_slot.get("decision_slot_id") != slot.slot_id:

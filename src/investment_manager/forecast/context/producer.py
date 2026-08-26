@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, cast
 
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import (
+    ContextForecastAnalysisTarget,
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
     context_forecast_input_projection,
@@ -37,11 +38,18 @@ from investment_manager.forecast.results import (
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
-from investment_manager.market.features import FeatureEngine, build_derivative_context_snapshot
+from investment_manager.market.features import (
+    FeatureEngine,
+    build_derivative_context_snapshot,
+    build_perpetual_only_context_snapshot,
+)
 from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
 from investment_manager.market.policy import FeaturePolicy
 from investment_manager.market.repository import MarketDataStore
-from investment_manager.portfolio.policy import ContextForecastPolicy
+from investment_manager.portfolio.policy import (
+    ContextForecastPolicy,
+    ContextForecastTargetPolicy,
+)
 from investment_manager.state.decision.packet import (
     DecisionPacket,
     PacketAssetState,
@@ -55,10 +63,9 @@ class ContextProbabilityAnalyst(Protocol):
     def estimate(
         self,
         *,
-        slot: ForecastDecisionSlot,
+        targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
-        target_state: ContextForecastTargetState,
     ) -> AnalystResult: ...
 
 
@@ -84,7 +91,7 @@ class MarketContextTargetStateProvider:
 
     market: MarketDataStore
     feature_policy: FeaturePolicy
-    spot: InstrumentId
+    reference: InstrumentId
     perpetual: InstrumentId | None
     interval: str
     bar_window: int
@@ -95,33 +102,41 @@ class MarketContextTargetStateProvider:
 
     def build(self, *, as_of: datetime) -> ContextForecastTargetState:
         at = require_utc(as_of)
-        cycle_id = stable_id("context_forecast_target_state", self.spot.key, at.isoformat())
-        snapshot = self.market.snapshot(
-            cycle_id=cycle_id,
-            symbol=self.spot.symbol,
-            interval=self.interval,
-            as_of=at,
-            bar_window=self.bar_window,
-            source="point-in-time-market-ledger",
+        cycle_id = stable_id(
+            "context_forecast_target_state", self.reference.key, at.isoformat()
         )
-        features = FeatureEngine(self.feature_policy).compute(snapshot)
-        asset_state = PacketAssetState(
-            asset=self.spot.base_asset,
-            market_symbol=self.spot.symbol,
-            observed_at=snapshot.observed_at,
-            bid=snapshot.bid,
-            ask=snapshot.ask,
-            last=snapshot.last,
-            return_fraction=features.return_fraction,
-            realized_volatility=features.realized_volatility,
-            atr=features.atr,
-            spread_bps=features.spread_bps,
-            volume_ratio=features.volume_ratio,
-            regime=features.regime,
-            market_age_seconds=features.market_age_seconds,
-        )
+        snapshot = None
+        asset_states: tuple[PacketAssetState, ...] = ()
+        refs: set[str] = set()
+        if self.reference.product == InstrumentProduct.SPOT:
+            snapshot = self.market.snapshot(
+                cycle_id=cycle_id,
+                symbol=self.reference.symbol,
+                interval=self.interval,
+                as_of=at,
+                bar_window=self.bar_window,
+                source="point-in-time-market-ledger",
+            )
+            features = FeatureEngine(self.feature_policy).compute(snapshot)
+            asset_states = (
+                PacketAssetState(
+                    asset=self.reference.base_asset,
+                    market_symbol=self.reference.symbol,
+                    observed_at=snapshot.observed_at,
+                    bid=snapshot.bid,
+                    ask=snapshot.ask,
+                    last=snapshot.last,
+                    return_fraction=features.return_fraction,
+                    realized_volatility=features.realized_volatility,
+                    atr=features.atr,
+                    spread_bps=features.spread_bps,
+                    volume_ratio=features.volume_ratio,
+                    regime=features.regime,
+                    market_age_seconds=features.market_age_seconds,
+                ),
+            )
+            refs.update((content_hash(snapshot), content_hash(features)))
         derivative_states: tuple[PacketDerivativeState, ...] = ()
-        refs = {content_hash(snapshot), content_hash(features)}
         if self.perpetual is not None:
             state = self.market.latest_perpetual_state(instrument=self.perpetual, as_of=at)
             quote = self.market.latest_perpetual_quote(
@@ -132,43 +147,59 @@ class MarketContextTargetStateProvider:
             if (state is None) != (quote is None):
                 raise PointInTimeInputUnavailable("Context Forecast 衍生品状态与报价必须同时可用")
             if state is not None and quote is not None:
-                aligned_spot = self.market.latest_spot_quote(
-                    instrument=self.spot,
-                    # Spot bookTicker has no exchange timestamp.  Align the two
-                    # feeds on their local visibility clock; using the perpetual
-                    # exchange timestamp can incorrectly skip a spot quote that
-                    # was observed milliseconds before the perpetual response.
-                    evaluation_at=quote.observed_at,
+                settlements = self.market.funding_settlements(
+                    instrument=self.perpetual,
+                    start=at - timedelta(hours=self.funding_lookback_hours),
+                    end=at,
                     visible_at=at,
                 )
-                if aligned_spot is None:
-                    raise PointInTimeInputUnavailable(
-                        "Context Forecast 缺少与衍生品对齐的 Spot quote"
+                if snapshot is None:
+                    if self.reference != self.perpetual:
+                        raise PointInTimeInputUnavailable(
+                            "非 Spot Context Forecast 必须以同一永续作为规范参考"
+                        )
+                    derivative = build_perpetual_only_context_snapshot(
+                        cycle_id=cycle_id,
+                        asset=self.reference.base_asset,
+                        as_of=at,
+                        state=state,
+                        quote=quote,
+                        settlements=settlements,
+                        funding_window_hours=self.funding_lookback_hours,
                     )
-                derivative = build_derivative_context_snapshot(
-                    cycle_id=cycle_id,
-                    asset=self.spot.base_asset,
-                    spot=snapshot,
-                    aligned_spot_quote=aligned_spot,
-                    state=state,
-                    quote=quote,
-                    settlements=self.market.funding_settlements(
-                        instrument=self.perpetual,
-                        start=at - timedelta(hours=self.funding_lookback_hours),
-                        end=at,
+                else:
+                    aligned_spot = self.market.latest_spot_quote(
+                        instrument=self.reference,
+                        # Spot bookTicker has no exchange timestamp. Align feeds
+                        # on the local visibility clock.
+                        evaluation_at=quote.observed_at,
                         visible_at=at,
-                    ),
-                    funding_window_hours=self.funding_lookback_hours,
-                    maximum_quote_skew_seconds=self.maximum_quote_skew_seconds,
-                    cross_venue_quotes=self._cross_venue_quotes(as_of=at),
-                    maximum_cross_venue_age_seconds=(self.maximum_cross_venue_spot_age_seconds),
-                )
+                    )
+                    if aligned_spot is None:
+                        raise PointInTimeInputUnavailable(
+                            "Context Forecast 缺少与衍生品对齐的 Spot quote"
+                        )
+                    derivative = build_derivative_context_snapshot(
+                        cycle_id=cycle_id,
+                        asset=self.reference.base_asset,
+                        spot=snapshot,
+                        aligned_spot_quote=aligned_spot,
+                        state=state,
+                        quote=quote,
+                        settlements=settlements,
+                        funding_window_hours=self.funding_lookback_hours,
+                        maximum_quote_skew_seconds=self.maximum_quote_skew_seconds,
+                        cross_venue_quotes=self._cross_venue_quotes(as_of=at),
+                        maximum_cross_venue_age_seconds=(
+                            self.maximum_cross_venue_spot_age_seconds
+                        ),
+                    )
                 derivative_states = (self._derivative_state(derivative),)
                 refs.update(derivative.input_refs)
                 refs.add(content_hash(derivative))
         return ContextForecastTargetState(
             as_of=at,
-            asset_states=(asset_state,),
+            asset_states=asset_states,
             derivative_states=derivative_states,
             input_refs=tuple(sorted(refs)),
         )
@@ -177,7 +208,7 @@ class MarketContextTargetStateProvider:
         if not self.cross_venue_spot_venues:
             return ()
         quotes = self.market.latest_cross_venue_spot_quotes(
-            symbol=self.spot.symbol,
+            symbol=self.reference.symbol,
             venues=self.cross_venue_spot_venues,
             as_of=as_of,
         )
@@ -201,20 +232,25 @@ class MarketContextTargetStateProvider:
         )
 
 
-def context_spot_forecast_contract(
+def context_forecast_contract(
     *,
     policy: ContextForecastPolicy,
+    target_policy: ContextForecastTargetPolicy,
     instrument: InstrumentId,
     cost_semantics_version: str,
 ) -> ForecastContract:
-    if instrument.product != InstrumentProduct.SPOT:
-        raise ValueError("Context Spot Forecast 合同必须使用 SPOT Instrument")
+    if instrument.product not in {
+        InstrumentProduct.SPOT,
+        InstrumentProduct.TRADFI_PERPETUAL,
+        InstrumentProduct.USD_M_PERPETUAL,
+    }:
+        raise ValueError("Context Forecast 规范参考必须是可结算线性产品")
     return ForecastContract.create(
-        contract_version=policy.contract_version,
-        outcome_family_id=policy.outcome_family_id,
+        contract_version=target_policy.contract_version,
+        outcome_family_id=target_policy.outcome_family_id,
         target=ForecastTarget.single_long(instrument),
         allowed_orientations=(ForecastOrientation.CANONICAL,),
-        outcome_buckets=policy.outcome_buckets,
+        outcome_buckets=target_policy.outcome_buckets,
         horizon_minutes=policy.horizon_minutes,
         decision_slot_rule=(
             "independent-cadence-and-portfolio-material-world-model-v4"
@@ -233,58 +269,98 @@ def context_spot_forecast_contract(
         cost_semantics_version=cost_semantics_version,
         validity_minutes=policy.validity_minutes,
         validity_conditions=("EXECUTABLE_QUOTES_REMAIN_VALID",),
-        settlement_rule="completion-deadline-to-horizon-executable-spot-return-v2",
+        settlement_rule=(
+            "completion-to-horizon-executable-spot-return-v3"
+            if instrument.product == InstrumentProduct.SPOT
+            else "completion-to-horizon-executable-perpetual-return-and-funding-v1"
+        ),
         outcome_start_delay_seconds=0,
-        forecast_benchmark=policy.forecast_benchmark,
-        decision_benchmark="cash-and-passive-spot-v1",
+        forecast_benchmark=target_policy.forecast_benchmark,
+        decision_benchmark="cash-and-legal-product-expressions-v1",
     )
 
 
 @dataclass(frozen=True, slots=True)
-class ContextForecastProducer:
-    policy: ContextForecastPolicy
+class ContextForecastRuntimeTarget:
+    """One independently settleable member of a shared Forecast invocation."""
+
+    policy: ContextForecastTargetPolicy
     contract: ForecastContract
     binding: ForecastProducerBinding
-    market: MarketDataStore
-    contexts: SqlContextAssessmentStore
-    contracts: SqlForecastContractStore
-    forecasts: SqlForecastStore
     instrument: InstrumentId
-    analyst: ContextProbabilityAnalyst
     target_states: ContextTargetStateProvider
-    analysis_scope: str
-    activated_at: datetime
-    preflight: ContextForecastPreflight | None = None
 
     def __post_init__(self) -> None:
-        require_utc(self.activated_at)
-        if self.instrument.product != InstrumentProduct.SPOT:
-            raise ValueError("首个 Context Forecast 合同只支持可直接持有的 Spot 多头")
         if self.binding.producer_kind != ForecastProducerKind.CONTEXT:
             raise ValueError("Context Forecast 必须绑定 CONTEXT Producer")
         if self.binding.contract_id != self.contract.contract_id:
             raise ValueError("Context Forecast Binding 与 Contract 不一致")
         if self.contract.target.legs[0].instrument != self.instrument:
             raise ValueError("Context Forecast Instrument 与 Contract Target 不一致")
+        if self.policy.outcome_family_id != self.contract.outcome_family_id:
+            raise ValueError("Context Forecast target policy 与 Contract family 不一致")
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioContextForecastProducer:
+    """Run one Codex call for every currently viable economic target."""
+
+    policy: ContextForecastPolicy
+    targets: tuple[ContextForecastRuntimeTarget, ...]
+    market: MarketDataStore
+    contexts: SqlContextAssessmentStore
+    contracts: SqlForecastContractStore
+    forecasts: SqlForecastStore
+    analyst: ContextProbabilityAnalyst
+    analysis_scope: str
+    activated_at: datetime
+    preflight: ContextForecastPreflight | None = None
+
+    def __post_init__(self) -> None:
+        require_utc(self.activated_at)
+        keys = tuple(item.instrument.key for item in self.targets)
+        families = tuple(item.contract.outcome_family_id for item in self.targets)
+        if not self.targets or tuple(sorted(set(keys))) != keys:
+            raise ValueError("Portfolio Context Forecast targets 必须唯一排序")
+        if len(set(families)) != len(families):
+            raise ValueError("Portfolio Context Forecast family 不得重复")
+        if any(
+            item.binding.producer_id != self.policy.producer_id
+            or item.binding.producer_behavior_id != self.policy.producer_behavior_id
+            for item in self.targets
+        ):
+            raise ValueError("Portfolio Context Forecast targets 必须共享生产行为")
+
+    def view(self, outcome_family_id: str) -> ContextForecastProducerView:
+        target = next(
+            (
+                item
+                for item in self.targets
+                if item.contract.outcome_family_id == outcome_family_id
+            ),
+            None,
+        )
+        if target is None:
+            raise ValueError("Context Forecast view 引用了未知 family")
+        return ContextForecastProducerView(program=self, target=target)
 
     def existing_result(
         self,
+        target: ContextForecastRuntimeTarget,
         *,
         as_of: datetime,
         cause: ForecastSlotCause | None = None,
     ) -> ForecastProductionResult | None:
-        """Return the immutable terminal output for one slot without producing it."""
-
-        slot_as_of = require_utc(as_of)
-        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
+        slot_at = require_utc(as_of)
+        slot_cause = cause or ForecastSlotCause.cadence(target.contract)
         slot_id = ForecastDecisionSlot.identity_for(
-            self.contract.contract_id,
-            slot_as_of,
+            target.contract.contract_id,
+            slot_at,
             cause=slot_cause,
         )
         existing = self.forecasts.result_for_behavior(
             decision_slot_id=slot_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
+            producer_behavior_id=target.binding.producer_behavior_id,
         )
         if existing is not None:
             return existing
@@ -292,286 +368,316 @@ class ContextForecastProducer:
             stable_id(
                 "forecast_no_estimate",
                 slot_id,
-                self.binding.producer_behavior_id,
+                target.binding.producer_behavior_id,
             )
         )
 
-    def produce(
+    def produce_all(
         self,
         *,
         as_of: datetime,
         cause: ForecastSlotCause | None = None,
-    ) -> ForecastProductionResult:
-        slot_as_of = require_utc(as_of)
-        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
-        self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
-        existing = self.existing_result(as_of=slot_as_of, cause=slot_cause)
-        if existing is not None:
-            return existing
-        slot_id = ForecastDecisionSlot.identity_for(
-            self.contract.contract_id,
-            slot_as_of,
-            cause=slot_cause,
-        )
+    ) -> tuple[ForecastProductionResult, ...]:
+        slot_at = require_utc(as_of)
+        for target in self.targets:
+            self.contracts.record_contract(target.contract)
+            self.contracts.record_binding(
+                target.binding,
+                activated_at=self.activated_at,
+            )
+        existing = {
+            target.contract.outcome_family_id: self.existing_result(
+                target,
+                as_of=slot_at,
+                cause=cause,
+            )
+            for target in self.targets
+        }
+        if all(item is not None for item in existing.values()):
+            return self._ordered(existing)
 
         assessment = self.contexts.latest_before(
             analysis_scope=self.analysis_scope,
-            as_of=slot_as_of,
+            as_of=slot_at,
         )
         packet = (
             self.contexts.packet_for_assessment(assessment.assessment_id)
             if assessment is not None
             else None
         )
-        information_cutoff = slot_as_of
-        cutoff_quote = self.market.latest_spot_quote(
-            instrument=self.instrument,
-            evaluation_at=information_cutoff,
-            visible_at=information_cutoff,
+        pending = tuple(
+            target
+            for target in self.targets
+            if existing[target.contract.outcome_family_id] is None
         )
-        cutoff_prices = self._anchors(
-            quote=cutoff_quote,
-            available_at=information_cutoff,
-        )
-        slot = self.contracts.slot(slot_id)
-        if slot is None:
-            slot = ForecastDecisionSlot.create(
-                self.contract,
-                slot_as_of=slot_as_of,
-                information_cutoff_at=information_cutoff,
-                cutoff_prices=cutoff_prices,
-                cause=slot_cause,
+        slots = {
+            target.contract.outcome_family_id: self._slot(
+                target,
+                as_of=slot_at,
+                cause=cause,
             )
-            self.contracts.record_slot(slot, binding=self.binding)
-        elif (
-            slot.information_cutoff_at != information_cutoff or slot.cutoff_prices != cutoff_prices
-        ):
-            raise ValueError("Context decision slot 已绑定不同点时输入")
-        else:
-            self.contracts.record_obligation(slot=slot, binding=self.binding)
-
+            for target in pending
+        }
         if assessment is None or packet is None:
-            return self._no_estimate(
-                slot=slot,
+            self._fill_no_estimates(
+                existing,
+                pending,
+                slots,
                 reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
-                completed_at=slot_as_of,
-                input_refs=tuple(item.quote_ref for item in cutoff_prices),
+                completed_at=slot_at,
             )
+            return self._ordered(existing)
         provenance = (assessment.assessment_id, packet.packet_id, packet.content_hash)
         if assessment.decision_packet_hash != packet.content_hash:
             raise ValueError("Context Forecast 的 WorldModel/Packet 身份不一致")
-        if any(item.next_review_at <= slot_as_of for item in assessment.mechanisms):
-            return self._no_estimate(
-                slot=slot,
+        if any(item.next_review_at <= slot_at for item in assessment.mechanisms):
+            self._fill_no_estimates(
+                existing,
+                pending,
+                slots,
                 reason=ForecastNoEstimateReason.WORLD_MODEL_STALE,
-                completed_at=slot_as_of,
-                input_refs=tuple(sorted(provenance)),
+                completed_at=slot_at,
+                input_refs=provenance,
                 detail="WORLD_MODEL_MECHANISM_REVIEW_DUE",
             )
-        try:
-            target_state = self.target_states.build(as_of=slot_as_of)
-        except ValueError as exc:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
-                completed_at=slot_as_of,
-                input_refs=tuple(sorted(provenance)),
-                detail=f"TARGET_STATE_UNAVAILABLE:{type(exc).__name__}",
+            return self._ordered(existing)
+
+        analysis_targets: list[ContextForecastAnalysisTarget] = []
+        input_refs: dict[str, tuple[str, ...]] = {}
+        cutoff_quotes: dict[str, object] = {}
+        for target in pending:
+            family = target.contract.outcome_family_id
+            slot = slots[family]
+            try:
+                target_state = target.target_states.build(as_of=slot_at)
+            except (PointInTimeInputUnavailable, ValueError) as exc:
+                existing[family] = self._no_estimate(
+                    target,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
+                    completed_at=slot_at,
+                    input_refs=provenance,
+                    detail=f"TARGET_STATE_UNAVAILABLE:{type(exc).__name__}",
+                )
+                continue
+            refs = tuple(sorted({*provenance, *target_state.input_refs}))
+            input_refs[family] = refs
+            missing = tuple(
+                sorted(
+                    set(target.binding.required_feature_keys)
+                    - set(target_state.feature_selectors)
+                )
             )
-        provenance = tuple(sorted({*provenance, *target_state.input_refs}))
-        available_features = set(target_state.feature_selectors)
-        missing_features = tuple(
-            sorted(set(self.binding.required_feature_keys) - available_features)
-        )
-        if missing_features:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
-                completed_at=slot_as_of,
-                input_refs=tuple(sorted(provenance)),
-                detail=f"MISSING_FEATURES:{','.join(missing_features)}",
-            )
-        if (
-            cutoff_quote is None
-            or self._quote_age_seconds(
-                cutoff_quote.observed_at,
-                information_cutoff,
-            )
-            > self.policy.maximum_quote_age_seconds
-        ):
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
-                completed_at=slot_as_of,
-                input_refs=tuple(sorted(provenance)),
-                detail="CUTOFF_QUOTE_MISSING_OR_STALE",
+            if missing:
+                existing[family] = self._no_estimate(
+                    target,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
+                    completed_at=slot_at,
+                    input_refs=refs,
+                    detail=f"MISSING_FEATURES:{','.join(missing)}",
+                )
+                continue
+            quote = self._quote(target.instrument, at=slot_at)
+            if quote is None or self._quote_age_seconds(
+                self._quote_observed_at(target.instrument, quote),
+                slot_at,
+            ) > (
+                self.policy.maximum_quote_age_seconds
+            ):
+                existing[family] = self._no_estimate(
+                    target,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.MARKET_INPUT_INVALID,
+                    completed_at=slot_at,
+                    input_refs=refs,
+                    detail="CUTOFF_QUOTE_MISSING_OR_STALE",
+                )
+                continue
+            cutoff_quotes[family] = quote
+            analysis_targets.append(
+                ContextForecastAnalysisTarget(
+                    slot=slot,
+                    contract=target.contract,
+                    target_state=target_state,
+                )
             )
 
+        if not analysis_targets:
+            return self._ordered(existing)
+        frozen_targets = tuple(analysis_targets)
         analysis_input = context_forecast_input_projection(
-            slot=slot,
-            contract=self.contract,
+            targets=frozen_targets,
             assessment=assessment,
             packet=packet,
-            target_state=target_state,
         )
-        if self.preflight is not None:
+        primary_target = next(
+            (
+                item
+                for item in frozen_targets
+                if item.contract.contract_id == self.targets[0].contract.contract_id
+            ),
+            None,
+        )
+        if self.preflight is not None and primary_target is not None:
             self.preflight.before_estimate(
-                slot=slot,
-                formal_producer_behavior_id=self.binding.producer_behavior_id,
+                slot=primary_target.slot,
+                formal_producer_behavior_id=self.policy.producer_behavior_id,
                 formal_analysis_input=analysis_input,
             )
         result = self.analyst.estimate(
-            slot=slot,
+            targets=frozen_targets,
             assessment=assessment,
             packet=packet,
-            target_state=target_state,
         )
-        completed_at = max(result.completed_at or slot_as_of, slot_as_of)
+        completed_at = max(result.completed_at or slot_at, slot_at)
         if not result.success or not isinstance(
             result.output,
             ContextForecastStructuredOutput,
         ):
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.PRODUCER_FAILED,
+            self._fail_analysis_targets(
+                existing,
+                frozen_targets,
                 completed_at=completed_at,
-                input_refs=tuple(sorted(provenance)),
+                input_refs=input_refs,
                 detail=result.reason_code,
             )
-        if completed_at > slot.completion_deadline_at:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.DEADLINE_MISSED,
+            return self._ordered(existing)
+        drafts = {item.decision_slot_id: item for item in result.output.forecasts}
+        expected_slot_ids = {item.slot.slot_id for item in frozen_targets}
+        if len(drafts) != len(result.output.forecasts) or set(drafts) != expected_slot_ids:
+            self._fail_analysis_targets(
+                existing,
+                frozen_targets,
                 completed_at=completed_at,
-                input_refs=tuple(sorted(provenance)),
-                detail="CONTEXT_FORECAST_COMPLETION_DEADLINE_EXCEEDED",
+                input_refs=input_refs,
+                detail="CONTEXT_FORECAST_TARGET_SET_INVALID",
             )
-        if slot.evaluation_at - completed_at < timedelta(
-            minutes=self.contract.minimum_remaining_horizon_minutes
-        ):
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.INSUFFICIENT_REMAINING_HORIZON,
-                completed_at=completed_at,
-                input_refs=tuple(sorted(provenance)),
-            )
-        entry_quote = self.market.latest_spot_quote(
-            instrument=self.instrument,
-            evaluation_at=completed_at,
-            visible_at=completed_at,
-        )
-        if (
-            entry_quote is None
-            or self._quote_age_seconds(
-                entry_quote.observed_at,
+            return self._ordered(existing)
+        runtime_by_family = {
+            item.contract.outcome_family_id: item for item in self.targets
+        }
+        for analysis_target in frozen_targets:
+            family = analysis_target.contract.outcome_family_id
+            runtime = runtime_by_family[family]
+            slot = analysis_target.slot
+            refs = input_refs[family]
+            if completed_at > slot.completion_deadline_at:
+                existing[family] = self._no_estimate(
+                    runtime,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.DEADLINE_MISSED,
+                    completed_at=completed_at,
+                    input_refs=refs,
+                    detail="CONTEXT_FORECAST_COMPLETION_DEADLINE_EXCEEDED",
+                )
+                continue
+            if slot.evaluation_at - completed_at < timedelta(
+                minutes=runtime.contract.minimum_remaining_horizon_minutes
+            ):
+                existing[family] = self._no_estimate(
+                    runtime,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.INSUFFICIENT_REMAINING_HORIZON,
+                    completed_at=completed_at,
+                    input_refs=refs,
+                )
+                continue
+            entry_quote = self._quote(runtime.instrument, at=completed_at)
+            if entry_quote is None or self._quote_age_seconds(
+                self._quote_observed_at(runtime.instrument, entry_quote),
                 completed_at,
+            ) > self.policy.maximum_quote_age_seconds:
+                existing[family] = self._no_estimate(
+                    runtime,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.STALE_BEFORE_AVAILABLE,
+                    completed_at=completed_at,
+                    input_refs=refs,
+                    detail="ENTRY_QUOTE_MISSING_OR_STALE",
+                )
+                continue
+            cutoff_quote = cutoff_quotes[family]
+            move_bps = abs(
+                (entry_quote.ask / cutoff_quote.ask - Decimal("1"))
+                * Decimal("10000")
             )
-            > self.policy.maximum_quote_age_seconds
-        ):
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.STALE_BEFORE_AVAILABLE,
-                completed_at=completed_at,
-                input_refs=tuple(sorted(provenance)),
-                detail="ENTRY_QUOTE_MISSING_OR_STALE",
-            )
-        move_bps = abs((entry_quote.ask / cutoff_quote.ask - Decimal("1")) * Decimal("10000"))
-        if move_bps > self.policy.maximum_reanchor_move_bps:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.STALE_BEFORE_AVAILABLE,
-                completed_at=completed_at,
-                input_refs=tuple(
-                    sorted({*provenance, cutoff_quote.quote_id, entry_quote.quote_id})
-                ),
-                detail=f"MATERIAL_MOVE_DURING_ANALYSIS:{move_bps}",
-            )
-        try:
-            return self._finalize(
-                slot=slot,
-                assessment=assessment,
-                packet=packet,
-                target_state=target_state,
-                output=result.output,
-                completed_at=completed_at,
-                entry_quote=entry_quote,
-            )
-        except ValueError:
-            return self._no_estimate(
-                slot=slot,
-                reason=ForecastNoEstimateReason.PRODUCER_FAILED,
-                completed_at=completed_at,
-                input_refs=tuple(sorted(provenance)),
-                detail="CONTEXT_FORECAST_CONTRACT_INVALID",
-            )
+            if move_bps > self.policy.maximum_reanchor_move_bps:
+                existing[family] = self._no_estimate(
+                    runtime,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.STALE_BEFORE_AVAILABLE,
+                    completed_at=completed_at,
+                    input_refs=tuple(
+                        sorted(
+                            {
+                                *refs,
+                                cutoff_quote.quote_id,
+                                entry_quote.quote_id,
+                            }
+                        )
+                    ),
+                    detail=f"MATERIAL_MOVE_DURING_ANALYSIS:{move_bps}",
+                )
+                continue
+            try:
+                existing[family] = self._finalize(
+                    runtime,
+                    target=analysis_target,
+                    assessment=assessment,
+                    packet=packet,
+                    draft=drafts[slot.slot_id],
+                    analysis_input=analysis_input,
+                    completed_at=completed_at,
+                    entry_quote=entry_quote,
+                )
+            except ValueError:
+                existing[family] = self._no_estimate(
+                    runtime,
+                    slot=slot,
+                    reason=ForecastNoEstimateReason.PRODUCER_FAILED,
+                    completed_at=completed_at,
+                    input_refs=refs,
+                    detail="CONTEXT_FORECAST_CONTRACT_INVALID",
+                )
+        return self._ordered(existing)
 
     def record_deadline_missed(
         self,
+        target: ContextForecastRuntimeTarget,
         *,
         as_of: datetime,
         completed_at: datetime,
         cause: ForecastSlotCause | None = None,
     ) -> ForecastProductionResult:
-        """Recover one scheduled obligation without running historical AI."""
-
-        slot_as_of = require_utc(as_of)
+        slot_at = require_utc(as_of)
         completed = require_utc(completed_at)
-        slot_cause = cause or ForecastSlotCause.cadence(self.contract)
-        self.contracts.record_contract(self.contract)
-        self.contracts.record_binding(self.binding, activated_at=self.activated_at)
-        slot_id = ForecastDecisionSlot.identity_for(
-            self.contract.contract_id,
-            slot_as_of,
-            cause=slot_cause,
-        )
-        existing = self.existing_result(as_of=slot_as_of, cause=slot_cause)
+        existing = self.existing_result(target, as_of=slot_at, cause=cause)
         if existing is not None:
             return existing
-        cutoff_quote = self.market.latest_spot_quote(
-            instrument=self.instrument,
-            evaluation_at=slot_as_of,
-            visible_at=slot_as_of,
-        )
-        cutoff_prices = self._anchors(
-            quote=cutoff_quote,
-            available_at=slot_as_of,
-        )
-        slot = self.contracts.slot(slot_id)
-        if slot is None:
-            slot = ForecastDecisionSlot.create(
-                self.contract,
-                slot_as_of=slot_as_of,
-                cutoff_prices=cutoff_prices,
-                cause=slot_cause,
-            )
-            self.contracts.record_slot(slot, binding=self.binding)
-        elif slot.cutoff_prices != cutoff_prices:
-            raise ValueError("错过的 Context slot 已绑定不同点时价格")
-        else:
-            self.contracts.record_obligation(slot=slot, binding=self.binding)
+        slot = self._slot(target, as_of=slot_at, cause=cause)
         if completed <= slot.completion_deadline_at:
             raise ValueError("只有超过完成期限的 slot 才能记录 DEADLINE_MISSED")
         return self._no_estimate(
+            target,
             slot=slot,
             reason=ForecastNoEstimateReason.DEADLINE_MISSED,
             completed_at=completed,
-            input_refs=tuple(item.quote_ref for item in cutoff_prices),
+            input_refs=tuple(item.quote_ref for item in slot.cutoff_prices),
             detail="SCHEDULED_SLOT_RECOVERED_AFTER_DEADLINE",
         )
 
     def recover_deadline_missed(
         self,
+        target: ContextForecastRuntimeTarget,
         *,
         before_as_of: datetime,
         completed_at: datetime,
     ) -> tuple[ForecastNoEstimate, ...]:
-        """Materialize every expired cadence obligation after the last known slot."""
-
         before = require_utc(before_as_of)
         completed = require_utc(completed_at)
         latest = self.contracts.latest_obligated_slot_at(
-            binding_id=self.binding.binding_id,
+            binding_id=target.binding.binding_id,
             origin=ForecastSlotOrigin.CADENCE,
         )
         if latest is None:
@@ -579,34 +685,68 @@ class ContextForecastProducer:
         cursor = latest + timedelta(minutes=self.policy.cadence_minutes)
         recovered: list[ForecastNoEstimate] = []
         while cursor < before:
-            if completed <= cursor + timedelta(seconds=self.contract.completion_deadline_seconds):
+            if completed <= cursor + timedelta(
+                seconds=target.contract.completion_deadline_seconds
+            ):
                 break
-            result = self.record_deadline_missed(
+            outcome = self.record_deadline_missed(
+                target,
                 as_of=cursor,
                 completed_at=completed,
-                cause=ForecastSlotCause.cadence(self.contract),
+                cause=ForecastSlotCause.cadence(target.contract),
             )
-            if isinstance(result, ForecastNoEstimate):
-                recovered.append(result)
+            if isinstance(outcome, ForecastNoEstimate):
+                recovered.append(outcome)
             cursor += timedelta(minutes=self.policy.cadence_minutes)
         return tuple(recovered)
 
+    def _slot(
+        self,
+        target: ContextForecastRuntimeTarget,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None,
+    ) -> ForecastDecisionSlot:
+        slot_cause = cause or ForecastSlotCause.cadence(target.contract)
+        quote = self._quote(target.instrument, at=as_of)
+        anchors = self._anchors(target.instrument, quote=quote, available_at=as_of)
+        slot_id = ForecastDecisionSlot.identity_for(
+            target.contract.contract_id,
+            as_of,
+            cause=slot_cause,
+        )
+        slot = self.contracts.slot(slot_id)
+        if slot is None:
+            slot = ForecastDecisionSlot.create(
+                target.contract,
+                slot_as_of=as_of,
+                information_cutoff_at=as_of,
+                cutoff_prices=anchors,
+                cause=slot_cause,
+            )
+            self.contracts.record_slot(slot, binding=target.binding)
+        elif slot.information_cutoff_at != as_of or slot.cutoff_prices != anchors:
+            raise ValueError("Context decision slot 已绑定不同点时输入")
+        else:
+            self.contracts.record_obligation(slot=slot, binding=target.binding)
+        return slot
+
     def _finalize(
         self,
+        runtime: ContextForecastRuntimeTarget,
         *,
-        slot: ForecastDecisionSlot,
+        target: ContextForecastAnalysisTarget,
         assessment: ContextAssessment,
         packet: DecisionPacket,
-        target_state: ContextForecastTargetState,
-        output: ContextForecastStructuredOutput,
+        draft,
+        analysis_input: dict[str, object],
         completed_at: datetime,
         entry_quote,
     ) -> BaseForecast:
-        draft = output.forecast
-        if draft.decision_slot_id != slot.slot_id:
-            raise ValueError("Context Forecast 输出绑定了错误 decision slot")
+        slot = target.slot
+        contract = target.contract
         bucket_ids = tuple(item.bucket_id for item in draft.outcome_probabilities)
-        expected_bucket_ids = tuple(item.bucket_id for item in self.contract.outcome_buckets)
+        expected_bucket_ids = tuple(item.bucket_id for item in contract.outcome_buckets)
         if bucket_ids != expected_bucket_ids:
             raise ValueError("Context Forecast 概率未按合同完整覆盖 bucket")
         probabilities = tuple(
@@ -618,8 +758,10 @@ class ContextForecastProducer:
         )
         if sum((item.probability for item in probabilities), Decimal("0")) != 1:
             raise ValueError("Context Forecast 概率之和必须精确为 1")
-        mechanisms = {item.mechanism_id: item for item in assessment.mechanisms}
-        contribution_ids = tuple(item.mechanism_id for item in draft.mechanism_contributions)
+        mechanisms = {item.mechanism_id for item in assessment.mechanisms}
+        contribution_ids = tuple(
+            item.mechanism_id for item in draft.mechanism_contributions
+        )
         if len(set(contribution_ids)) != len(contribution_ids) or not set(
             contribution_ids
         ).issubset(mechanisms):
@@ -645,40 +787,37 @@ class ContextForecastProducer:
                 probability.probability * bucket.representative_bps
                 for probability, bucket in zip(
                     probabilities,
-                    self.contract.outcome_buckets,
+                    contract.outcome_buckets,
                     strict=True,
                 )
             ),
             Decimal("0"),
         )
-        analysis_input = context_forecast_input_projection(
-            slot=slot,
-            contract=self.contract,
-            assessment=assessment,
-            packet=packet,
-            target_state=target_state,
-        )
         forecast = BaseForecast(
             forecast_id=stable_id(
                 "base_forecast",
                 slot.slot_id,
-                self.binding.producer_behavior_id,
+                runtime.binding.producer_behavior_id,
             ),
-            contract_id=self.contract.contract_id,
+            contract_id=contract.contract_id,
             decision_slot_id=slot.slot_id,
-            producer_id=self.binding.producer_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
-            outcome_family_id=self.contract.outcome_family_id,
-            target=self.contract.target,
-            horizon_minutes=self.contract.horizon_minutes,
+            producer_id=runtime.binding.producer_id,
+            producer_behavior_id=runtime.binding.producer_behavior_id,
+            outcome_family_id=contract.outcome_family_id,
+            target=contract.target,
+            horizon_minutes=contract.horizon_minutes,
             cutoff_prices=slot.cutoff_prices,
-            entry_prices=self._anchors(quote=entry_quote, available_at=completed_at),
+            entry_prices=self._anchors(
+                runtime.instrument,
+                quote=entry_quote,
+                available_at=completed_at,
+            ),
             information_cutoff_at=slot.information_cutoff_at,
-            input_observed_at=target_state.as_of,
+            input_observed_at=target.target_state.as_of,
             available_at=completed_at,
             valid_until=min(
                 slot.evaluation_at,
-                completed_at + timedelta(minutes=self.contract.validity_minutes),
+                completed_at + timedelta(minutes=contract.validity_minutes),
             ),
             outcome_probabilities=probabilities,
             expected_gross_bps=expected_gross_bps,
@@ -688,8 +827,8 @@ class ContextForecastProducer:
                         assessment.assessment_id,
                         packet.packet_id,
                         packet.content_hash,
-                        *target_state.input_refs,
-                        *(item.mechanism_id for item in draft.mechanism_contributions),
+                        *target.target_state.input_refs,
+                        *contribution_ids,
                         *draft.evidence_refs,
                         *(item.quote_ref for item in slot.cutoff_prices),
                     }
@@ -701,24 +840,111 @@ class ContextForecastProducer:
                 for item in draft.mechanism_contributions
             ),
             evidence_refs=tuple(sorted(set(draft.evidence_refs))),
-            invalidation_conditions=tuple(sorted(set(draft.invalidation_conditions))),
+            invalidation_conditions=tuple(
+                sorted(set(draft.invalidation_conditions))
+            ),
             analysis_input_json=canonical_json(analysis_input),
             analysis_input_hash=content_hash(analysis_input),
         )
         self.forecasts.record(forecast)
         return forecast
 
-    def _anchors(self, *, quote, available_at: datetime) -> tuple[ForecastPriceAnchor, ...]:
+    def _fill_no_estimates(
+        self,
+        results: dict[str, ForecastProductionResult | None],
+        targets: tuple[ContextForecastRuntimeTarget, ...],
+        slots: dict[str, ForecastDecisionSlot],
+        *,
+        reason: ForecastNoEstimateReason,
+        completed_at: datetime,
+        input_refs: tuple[str, ...] = (),
+        detail: str | None = None,
+    ) -> None:
+        for target in targets:
+            family = target.contract.outcome_family_id
+            results[family] = self._no_estimate(
+                target,
+                slot=slots[family],
+                reason=reason,
+                completed_at=completed_at,
+                input_refs=input_refs,
+                detail=detail,
+            )
+
+    def _fail_analysis_targets(
+        self,
+        results: dict[str, ForecastProductionResult | None],
+        targets: tuple[ContextForecastAnalysisTarget, ...],
+        *,
+        completed_at: datetime,
+        input_refs: dict[str, tuple[str, ...]],
+        detail: str,
+    ) -> None:
+        runtime_by_family = {
+            item.contract.outcome_family_id: item for item in self.targets
+        }
+        for item in targets:
+            family = item.contract.outcome_family_id
+            results[family] = self._no_estimate(
+                runtime_by_family[family],
+                slot=item.slot,
+                reason=ForecastNoEstimateReason.PRODUCER_FAILED,
+                completed_at=completed_at,
+                input_refs=input_refs[family],
+                detail=detail,
+            )
+
+    def _ordered(
+        self,
+        results: dict[str, ForecastProductionResult | None],
+    ) -> tuple[ForecastProductionResult, ...]:
+        ordered = tuple(results[item.contract.outcome_family_id] for item in self.targets)
+        if any(item is None for item in ordered):
+            raise RuntimeError("Context Forecast shared call 未形成完整终态")
+        return cast(tuple[ForecastProductionResult, ...], ordered)
+
+    def _quote(self, instrument: InstrumentId, *, at: datetime):
+        if instrument.product == InstrumentProduct.SPOT:
+            return self.market.latest_spot_quote(
+                instrument=instrument,
+                evaluation_at=at,
+                visible_at=at,
+            )
+        return self.market.latest_perpetual_quote(
+            instrument=instrument,
+            evaluation_at=at,
+            visible_at=at,
+        )
+
+    @staticmethod
+    def _anchors(
+        instrument: InstrumentId,
+        *,
+        quote,
+        available_at: datetime,
+    ) -> tuple[ForecastPriceAnchor, ...]:
         if quote is None:
             return ()
         return (
             ForecastPriceAnchor(
-                instrument_id=self.instrument.key,
+                instrument_id=instrument.key,
                 price=quote.ask,
-                observed_at=quote.observed_at,
+                observed_at=(
+                    quote.observed_at
+                    if instrument.product == InstrumentProduct.SPOT
+                    else quote.exchange_time
+                ),
                 available_at=available_at,
                 quote_ref=quote.quote_id,
             ),
+        )
+
+    @staticmethod
+    def _quote_observed_at(instrument: InstrumentId, quote) -> datetime:
+        return (
+            quote.observed_at
+            if instrument.product == InstrumentProduct.SPOT
+            else quote.exchange_time
         )
 
     @staticmethod
@@ -727,6 +953,7 @@ class ContextForecastProducer:
 
     def _no_estimate(
         self,
+        target: ContextForecastRuntimeTarget,
         *,
         slot: ForecastDecisionSlot,
         reason: ForecastNoEstimateReason,
@@ -738,13 +965,13 @@ class ContextForecastProducer:
             result_id=stable_id(
                 "forecast_no_estimate",
                 slot.slot_id,
-                self.binding.producer_behavior_id,
+                target.binding.producer_behavior_id,
             ),
             slot_id=slot.slot_id,
-            contract_id=self.contract.contract_id,
-            producer_kind=self.binding.producer_kind,
-            producer_id=self.binding.producer_id,
-            producer_behavior_id=self.binding.producer_behavior_id,
+            contract_id=target.contract.contract_id,
+            producer_kind=target.binding.producer_kind,
+            producer_id=target.binding.producer_id,
+            producer_behavior_id=target.binding.producer_behavior_id,
             reason=reason,
             information_cutoff_at=slot.information_cutoff_at,
             attempted_at=slot.slot_as_of,
@@ -754,3 +981,62 @@ class ContextForecastProducer:
         )
         self.contracts.record_no_estimate(result)
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class ContextForecastProducerView:
+    """Contract-shaped view over one shared portfolio Forecast producer."""
+
+    program: PortfolioContextForecastProducer
+    target: ContextForecastRuntimeTarget
+
+    def existing_result(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult | None:
+        return self.program.existing_result(
+            self.target,
+            as_of=as_of,
+            cause=cause,
+        )
+
+    def produce(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult:
+        results = self.program.produce_all(as_of=as_of, cause=cause)
+        return next(
+            item
+            for item in results
+            if item.contract_id == self.target.contract.contract_id
+        )
+
+    def record_deadline_missed(
+        self,
+        *,
+        as_of: datetime,
+        completed_at: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> ForecastProductionResult:
+        return self.program.record_deadline_missed(
+            self.target,
+            as_of=as_of,
+            completed_at=completed_at,
+            cause=cause,
+        )
+
+    def recover_deadline_missed(
+        self,
+        *,
+        before_as_of: datetime,
+        completed_at: datetime,
+    ) -> tuple[ForecastNoEstimate, ...]:
+        return self.program.recover_deadline_missed(
+            self.target,
+            before_as_of=before_as_of,
+            completed_at=completed_at,
+        )

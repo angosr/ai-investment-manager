@@ -200,8 +200,8 @@ class ContextProductPayoffProjector:
         if quote is None or market_state is None or rules is None or derivative is None:
             return ()
         if max(
-            self._age_seconds(quote.observed_at, as_of),
-            self._age_seconds(market_state.observed_at, as_of),
+            self._age_seconds(quote.exchange_time, as_of),
+            self._age_seconds(market_state.exchange_time, as_of),
         ) >= self.maximum_quote_age_seconds:
             return ()
         if self._age_seconds(rules.observed_at, as_of) >= (
@@ -268,8 +268,8 @@ class ContextProductPayoffProjector:
             + reference_scale,
         )
         valid_until = min(
-            quote.observed_at + timedelta(seconds=self.maximum_quote_age_seconds),
-            market_state.observed_at
+            quote.exchange_time + timedelta(seconds=self.maximum_quote_age_seconds),
+            market_state.exchange_time
             + timedelta(seconds=self.maximum_quote_age_seconds),
         )
         common = {
@@ -310,7 +310,7 @@ class ContextProductPayoffProjector:
                         if direction == ExposureDirection.LONG
                         else quote.bid
                     ),
-                    observed_at=quote.observed_at,
+                    observed_at=quote.exchange_time,
                     available_at=as_of,
                     quote_ref=quote.quote_id,
                 ),

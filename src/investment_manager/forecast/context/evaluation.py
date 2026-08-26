@@ -36,11 +36,14 @@ class ForecastScoringCase:
     realized_bucket_id: str
     expected_gross_bps: Decimal
     realized_gross_bps: Decimal
+    cohort_key: str = "default"
     market_state_key: str | None = None
     outcome_available_at: datetime | None = None
     source_stratum: ForecastSlotStratum = ForecastSlotStratum.CADENCE_ONLY
 
     def __post_init__(self) -> None:
+        if not self.cohort_key:
+            raise ValueError("Forecast 评分 cohort_key 不能为空")
         require_utc(self.information_cutoff_at)
         require_utc(self.evaluation_at)
         if self.outcome_available_at is not None:
@@ -261,12 +264,17 @@ def evaluate_forecast_evidence(
 
 
 def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastScoringCase, ...]:
-    return select_non_overlapping_intervals(
-        cases,
-        identity=lambda item: item.forecast_id,
-        information_cutoff_at=lambda item: item.information_cutoff_at,
-        evaluation_at=lambda item: item.evaluation_at,
-        stratum=lambda item: item.source_stratum.value,
+    cohorts = tuple(sorted({item.cohort_key for item in cases}))
+    return tuple(
+        item
+        for cohort in cohorts
+        for item in select_non_overlapping_intervals(
+            tuple(value for value in cases if value.cohort_key == cohort),
+            identity=lambda value: value.forecast_id,
+            information_cutoff_at=lambda value: value.information_cutoff_at,
+            evaluation_at=lambda value: value.evaluation_at,
+            stratum=lambda value: value.source_stratum.value,
+        )
     )
 
 
@@ -350,7 +358,8 @@ def _dynamic_benchmarks(
         visible = tuple(
             item
             for item in all_cases
-            if item.forecast_id != current.forecast_id
+            if item.cohort_key == current.cohort_key
+            and item.forecast_id != current.forecast_id
             and (item.outcome_available_at or item.evaluation_at) <= current.information_cutoff_at
         )
         matched = tuple(

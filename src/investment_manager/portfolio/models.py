@@ -309,24 +309,17 @@ class PortfolioEdgeBasis(StrEnum):
 
 
 class CandidateCapitalAuthorization(FrozenModel):
-    """Evidence-bound sizing and edge policy for one uncalibrated candidate."""
+    """Governance identity admitting one uncalibrated Forecast to capital research.
+
+    Sizing and the economic no-trade boundary belong to the one portfolio
+    policy. A local authorization cannot silently alter portfolio economics.
+    """
 
     version: str = Field(min_length=1)
     producer_id: str = Field(min_length=1)
     producer_behavior_id: str = Field(min_length=1)
     outcome_family_id: str = Field(min_length=1)
     hypothesis_fingerprint: str = Field(pattern=SHA256_PATTERN)
-    maximum_allocation_fraction: UnitInterval
-    minimum_entry_net_bps: Decimal
-    minimum_hold_net_bps: Decimal
-
-    @model_validator(mode="after")
-    def allocation_and_hysteresis_must_be_consistent(self):
-        if self.maximum_allocation_fraction <= 0:
-            raise ValueError("候选资本授权的 allocation 必须为正数")
-        if self.minimum_hold_net_bps > self.minimum_entry_net_bps:
-            raise ValueError("候选资本授权的持有门槛不能高于入场门槛")
-        return self
 
 
 class PortfolioCostEstimate(FrozenModel):

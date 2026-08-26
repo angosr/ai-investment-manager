@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -28,9 +29,10 @@ from investment_manager.forecast.context.executor import (
     ContextAssessmentExecutor,
 )
 from investment_manager.forecast.context.producer import (
-    ContextForecastProducer,
+    ContextForecastRuntimeTarget,
     MarketContextTargetStateProvider,
-    context_spot_forecast_contract,
+    PortfolioContextForecastProducer,
+    context_forecast_contract,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.context.service import (
@@ -304,14 +306,15 @@ class _FixedProbabilityAnalyst:
         self.completed_at = completed_at
         self.calls = 0
 
-    def estimate(self, *, slot, assessment, packet, target_state) -> AnalystResult:
+    def estimate(self, *, targets, assessment, packet) -> AnalystResult:
         self.calls += 1
+        target = targets[0]
         return AnalystResult(
             success=True,
             output=ContextForecastStructuredOutput.model_validate(
                 {
-                    "forecast": {
-                        "decision_slot_id": slot.slot_id,
+                    "forecasts": [{
+                        "decision_slot_id": target.slot.slot_id,
                         "outcome_probabilities": [
                             {"bucket_id": "LARGE_LOSS", "probability": "0.05"},
                             {"bucket_id": "LOSS", "probability": "0.10"},
@@ -328,7 +331,7 @@ class _FixedProbabilityAnalyst:
                         ],
                         "evidence_refs": ["delta-1"],
                         "invalidation_conditions": ["政策传导在目标窗口内被市场响应反驳"],
-                    }
+                    }]
                 }
             ),
             reason_code="CODEX_OK",
@@ -349,6 +352,71 @@ class _PacketTargetStateProvider:
         )
 
 
+class _SharedProbabilityAnalyst:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def estimate(self, *, targets, assessment, packet) -> AnalystResult:
+        del packet
+        self.calls += 1
+        forecasts = []
+        for target in targets:
+            forecasts.append(
+                {
+                    "decision_slot_id": target.slot.slot_id,
+                    "outcome_probabilities": [
+                        {
+                            "bucket_id": item.bucket_id,
+                            "probability": probability,
+                        }
+                        for item, probability in zip(
+                            target.contract.outcome_buckets,
+                            ("0.10", "0.20", "0.40", "0.20", "0.10"),
+                            strict=True,
+                        )
+                    ],
+                    "mechanism_contributions": [
+                        {
+                            "mechanism_id": assessment.mechanisms[0].mechanism_id,
+                            "effect": "UNCERTAINTY",
+                            "rationale": "当前传导机制对该资产方向尚无足够可辨识净贡献。",
+                        }
+                    ],
+                    "evidence_refs": ["delta-1"],
+                    "invalidation_conditions": ["该资产在合同窗口内出现可核验结构变化"],
+                }
+            )
+        return AnalystResult(
+            success=True,
+            output=ContextForecastStructuredOutput.model_validate(
+                {"forecasts": forecasts}
+            ),
+            reason_code="CODEX_OK",
+            completed_at=targets[0].slot.slot_as_of + timedelta(seconds=10),
+        )
+
+
+class _FreshQuoteMarket:
+    @staticmethod
+    def _quote(instrument, at):
+        return SimpleNamespace(
+            instrument=instrument,
+            observed_at=at,
+            exchange_time=at,
+            bid=Decimal("99.9"),
+            ask=Decimal("100.1"),
+            quote_id=stable_id("test_quote", instrument.key, at.isoformat()),
+        )
+
+    def latest_spot_quote(self, *, instrument, evaluation_at, visible_at):
+        assert evaluation_at == visible_at
+        return self._quote(instrument, evaluation_at)
+
+    def latest_perpetual_quote(self, *, instrument, evaluation_at, visible_at):
+        assert evaluation_at == visible_at
+        return self._quote(instrument, evaluation_at)
+
+
 class _RecordingForecastPreflight:
     def __init__(self, analyst) -> None:
         self.analyst = analyst
@@ -367,17 +435,19 @@ class _RecordingForecastPreflight:
         self.analysis_input = formal_analysis_input
 
 
-def _context_forecast_producer(engine, analyst, *, preflight=None) -> ContextForecastProducer:
+def _context_forecast_producer(engine, analyst, *, preflight=None):
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
+    target_policy = policy.targets[0]
     instrument = next(
         item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.key == policy.target_instrument_key
+        if item.instrument.key == target_policy.reference_instrument_key
     )
-    contract = context_spot_forecast_contract(
+    contract = context_forecast_contract(
         policy=policy,
+        target_policy=target_policy,
         instrument=instrument,
         cost_semantics_version=config.capital.decision.cost_model_version,
     )
@@ -387,24 +457,29 @@ def _context_forecast_producer(engine, analyst, *, preflight=None) -> ContextFor
         producer_id=policy.producer_id,
         producer_behavior_id=policy.producer_behavior_id,
         permission=ForecastPermission.CAPITAL_CANDIDATE,
-        required_feature_keys=policy.required_feature_keys,
+        required_feature_keys=target_policy.required_feature_keys,
     )
     packet = _packet()
-    return ContextForecastProducer(
-        policy=policy,
+    runtime = ContextForecastRuntimeTarget(
+        policy=target_policy,
         contract=contract,
         binding=binding,
+        instrument=instrument,
+        target_states=_PacketTargetStateProvider(packet),
+    )
+    program = PortfolioContextForecastProducer(
+        policy=policy,
+        targets=(runtime,),
         market=SqlMarketDataStore(engine),
         contexts=SqlContextAssessmentStore(engine),
         contracts=SqlForecastContractStore(engine),
         forecasts=SqlForecastStore(engine),
-        instrument=instrument,
         analyst=analyst,
-        target_states=_PacketTargetStateProvider(packet),
         analysis_scope="crypto-portfolio",
         activated_at=NOW,
         preflight=preflight,
     )
+    return program.view(contract.outcome_family_id)
 
 
 @pytest.mark.parametrize("material_event", (False, True))
@@ -450,28 +525,26 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert isinstance(first, BaseForecast)
     assert replayed == first
     assert first.world_model_id == assessment.assessment_id
-    assert first.expected_gross_bps == Decimal("87.5")
+    assert first.expected_gross_bps == Decimal("50.55")
     assert first.mechanism_contributions[0].mechanism_id == "mechanism-1"
     assert first.evidence_refs == ("delta-1",)
     assert first.analysis_input_json is not None
     analysis_input = json.loads(first.analysis_input_json)
     assert set(analysis_input) == {
         "purpose",
-        "decision_slot",
-        "forecast_contract",
+        "forecast_targets",
         "world_model",
-        "target_state",
     }
     assert analysis_input["purpose"] == "FORECAST_ESTIMATE"
     assert datetime.fromisoformat(
-        analysis_input["decision_slot"]["information_cutoff_at"]
+        analysis_input["forecast_targets"][0]["decision_slot"]["information_cutoff_at"]
     ) == assessment.available_at
-    assert analysis_input["decision_slot"]["cause"] == {
+    assert analysis_input["forecast_targets"][0]["decision_slot"]["cause"] == {
         "origin": "MATERIAL_STATE" if material_event else "CADENCE",
         "policy_version": (
             "material-world-model-slot-v1"
             if material_event
-            else producer.contract.decision_slot_rule
+            else producer.target.contract.decision_slot_rule
         ),
         "trigger_refs": (
             sorted([assessment.assessment_id, packet.packet_id, packet.state_id])
@@ -479,12 +552,14 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
             else []
         ),
     }
-    assert datetime.fromisoformat(analysis_input["target_state"]["as_of"]) == (
+    assert datetime.fromisoformat(
+        analysis_input["forecast_targets"][0]["target_state"]["as_of"]
+    ) == (
         assessment.available_at
     )
     assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
     assert "portfolio" not in assessment_input_projection(packet)
-    assert "data_quality_codes" not in analysis_input["target_state"]
+    assert "data_quality_codes" not in analysis_input["forecast_targets"][0]["target_state"]
     assert "verification_tests" not in analysis_input["world_model"]["mechanisms"][0]
     assert "next_review_at" not in analysis_input["world_model"]["mechanisms"][0]
     assert "continuity_ref" not in analysis_input["world_model"]["mechanisms"][0]
@@ -497,6 +572,70 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert preflight.calls == 1
     assert json.loads(canonical_json(preflight.analysis_input)) == analysis_input
     assert analyst.calls == 1
+
+
+def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    assessment = contexts.record_assessment(packet.packet_id, _assessment())
+    config = load_config("config/investment-manager.shadow.yaml")
+    policy = config.capital.context_forecast
+    assert policy is not None
+    instruments = {
+        item.instrument.key: item.instrument for item in config.capital.execution_specs
+    }
+    runtimes = []
+    for target_policy in policy.targets:
+        instrument = instruments[target_policy.reference_instrument_key]
+        contract = context_forecast_contract(
+            policy=policy,
+            target_policy=target_policy,
+            instrument=instrument,
+            cost_semantics_version=config.capital.decision.cost_model_version,
+        )
+        runtimes.append(
+            ContextForecastRuntimeTarget(
+                policy=target_policy,
+                contract=contract,
+                binding=ForecastProducerBinding.create(
+                    contract_id=contract.contract_id,
+                    producer_kind=ForecastProducerKind.CONTEXT,
+                    producer_id=policy.producer_id,
+                    producer_behavior_id=policy.producer_behavior_id,
+                    permission=ForecastPermission.CAPITAL_CANDIDATE,
+                ),
+                instrument=instrument,
+                target_states=_PacketTargetStateProvider(packet),
+            )
+        )
+    analyst = _SharedProbabilityAnalyst()
+    program = PortfolioContextForecastProducer(
+        policy=policy,
+        targets=tuple(runtimes),
+        market=_FreshQuoteMarket(),
+        contexts=contexts,
+        contracts=SqlForecastContractStore(engine),
+        forecasts=SqlForecastStore(engine),
+        analyst=analyst,
+        analysis_scope="crypto-portfolio",
+        activated_at=NOW,
+    )
+
+    first = program.produce_all(as_of=assessment.available_at)
+    replay = program.produce_all(as_of=assessment.available_at)
+
+    assert first == replay
+    assert analyst.calls == 1
+    assert len(first) == 3
+    assert all(isinstance(item, BaseForecast) for item in first)
+    assert len({item.contract_id for item in first}) == 3
+    assert len({item.decision_slot_id for item in first}) == 3
+    for forecast in first:
+        assert forecast.analysis_input_json is not None
+        frozen = json.loads(forecast.analysis_input_json)
+        assert len(frozen["forecast_targets"]) == 3
 
 
 def test_context_forecast_records_stale_world_model_without_calling_codex() -> None:
@@ -536,7 +675,7 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
     spot = next(
         item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.key == policy.target_instrument_key
+        if item.instrument.key == policy.targets[0].reference_instrument_key
     )
     market = InMemoryMarketDataStore()
     closes = (Decimal("70000"), Decimal("70100"), Decimal("70200"))
@@ -626,7 +765,7 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
     state = MarketContextTargetStateProvider(
         market=market,
         feature_policy=config.feature,
-        spot=spot,
+        reference=spot,
         perpetual=perpetual,
         interval="5m",
         bar_window=3,

@@ -322,9 +322,34 @@ class CapitalDashboardReader:
             item.instrument.key: item for item in (() if account is None else account.positions)
         }
         rows: list[CapitalInstrumentStatus] = []
+        specs_by_symbol: dict[str, list] = {}
         for spec in self._config.capital.execution_specs:
+            specs_by_symbol.setdefault(spec.instrument.symbol, []).append(spec)
+        for symbol in sorted(specs_by_symbol):
+            specs = specs_by_symbol[symbol]
+            positions = tuple(
+                position_by_key[item.instrument.key]
+                for item in specs
+                if item.instrument.key in position_by_key
+            )
+            position = max(positions, key=lambda item: abs(item.quantity), default=None)
+            spec = next(
+                (
+                    item
+                    for item in specs
+                    if position is not None
+                    and item.instrument.key == position.instrument.key
+                ),
+                next(
+                    (
+                        item
+                        for item in specs
+                        if item.instrument.product == InstrumentProduct.SPOT
+                    ),
+                    specs[0],
+                ),
+            )
             instrument = spec.instrument
-            position = position_by_key.get(instrument.key)
             if instrument.product == InstrumentProduct.SPOT:
                 observed = store.latest_spot_quote(
                     instrument=instrument,
@@ -426,7 +451,7 @@ class CapitalDashboardReader:
         if (
             context is None
             or not context.enabled
-            or context.product_payoffs is None
+            or not any(item.product_payoffs is not None for item in context.targets)
         ):
             return None
         evaluation = self._config.outcome_evaluation
@@ -445,15 +470,24 @@ class CapitalDashboardReader:
         policy = self._config.capital.context_forecast
         if policy is None or not policy.enabled:
             return None
-        contract_row = connection.execute(
+        target_versions = {
+            item.outcome_family_id: item.contract_version for item in policy.targets
+        }
+        contract_rows = connection.execute(
             select(forecast_contracts.c.contract_id, forecast_contracts.c.payload).where(
-                forecast_contracts.c.outcome_family_id == policy.outcome_family_id,
-                forecast_contracts.c.contract_version == policy.contract_version,
+                forecast_contracts.c.outcome_family_id.in_(tuple(target_versions))
             )
-        ).one_or_none()
-        if contract_row is None:
+        ).all()
+        contracts = tuple(
+            ForecastContract.model_validate(row.payload)
+            for row in contract_rows
+            if target_versions.get(row.payload["outcome_family_id"])
+            == row.payload["contract_version"]
+        )
+        if not contracts:
             return None
-        contract = ForecastContract.model_validate(contract_row.payload)
+        contract_by_id = {item.contract_id: item for item in contracts}
+        contract_ids = tuple(contract_by_id)
         due_rows = connection.execute(
             select(
                 forecast_decision_slots.c.slot_id,
@@ -467,7 +501,7 @@ class CapitalDashboardReader:
                 )
             )
             .where(
-                forecast_decision_slots.c.contract_id == contract.contract_id,
+                forecast_decision_slots.c.contract_id.in_(contract_ids),
                 forecast_slot_obligations.c.producer_id == policy.producer_id,
                 forecast_slot_obligations.c.producer_behavior_id
                 == policy.producer_behavior_id,
@@ -487,7 +521,7 @@ class CapitalDashboardReader:
                     == forecast_records.c.decision_slot_id,
                 )
                 .where(
-                    forecast_records.c.contract_id == contract.contract_id,
+                    forecast_records.c.contract_id.in_(contract_ids),
                     forecast_records.c.kind == ForecastResultKind.BASE.value,
                     forecast_records.c.producer_id == policy.producer_id,
                     forecast_records.c.producer_behavior_id
@@ -504,7 +538,7 @@ class CapitalDashboardReader:
                     forecast_decision_slots.c.slot_id == forecast_no_estimates.c.slot_id,
                 )
                 .where(
-                    forecast_no_estimates.c.contract_id == contract.contract_id,
+                    forecast_no_estimates.c.contract_id.in_(contract_ids),
                     forecast_no_estimates.c.producer_id == policy.producer_id,
                     forecast_no_estimates.c.producer_behavior_id
                     == policy.producer_behavior_id,
@@ -540,7 +574,7 @@ class CapitalDashboardReader:
                 )
             )
             .where(
-                forecast_records.c.contract_id == contract.contract_id,
+                forecast_records.c.contract_id.in_(contract_ids),
                 forecast_records.c.kind == ForecastResultKind.BASE.value,
                 forecast_records.c.producer_id == policy.producer_id,
                 forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
@@ -549,18 +583,21 @@ class CapitalDashboardReader:
             .order_by(forecast_records.c.available_at, forecast_records.c.forecast_id)
         ).all()
         cases = []
-        benchmark = tuple(
-            (item.bucket_id, item.probability) for item in contract.forecast_benchmark
-        )
         for row in rows:
             forecast = BaseForecast.model_validate(row[0])
             outcome = ForecastOutcome.model_validate(row[1])
             slot = ForecastDecisionSlot.model_validate(row[2])
+            contract = contract_by_id[forecast.contract_id]
+            benchmark = tuple(
+                (item.bucket_id, item.probability)
+                for item in contract.forecast_benchmark
+            )
             assert outcome.gross_target_return_bps is not None
             assert outcome.realized_bucket_id is not None
             cases.append(
                 ForecastScoringCase(
                     forecast_id=forecast.forecast_id,
+                    cohort_key=forecast.outcome_family_id,
                     information_cutoff_at=forecast.information_cutoff_at,
                     evaluation_at=outcome.evaluation_at,
                     probabilities=tuple(
@@ -576,12 +613,6 @@ class CapitalDashboardReader:
                     source_stratum=slot.stratum,
                 )
             )
-        observed_strata = tuple(
-            sorted(
-                {slot.stratum for slot in due_slots.values()},
-                key=lambda item: item.value,
-            )
-        )
         source_evidence = tuple(
             ForecastSourceEvidence(
                 stratum=stratum,
@@ -600,8 +631,9 @@ class CapitalDashboardReader:
                     ),
                     required_non_overlapping_samples=(
                         self._config.outcome_evaluation.target_forecast_minimum_sample_size
+                        * len(contracts)
                     ),
-                    permission_evidence_eligible=contract.permission_evidence_eligible,
+                    permission_evidence_eligible=False,
                 ),
             )
             for stratum in ForecastSlotStratum
@@ -613,10 +645,9 @@ class CapitalDashboardReader:
             no_estimate_count=no_estimate_count,
             required_non_overlapping_samples=(
                 self._config.outcome_evaluation.target_forecast_minimum_sample_size
+                * len(contracts)
             ),
-            permission_evidence_eligible=(
-                contract.permission_evidence_eligible and len(observed_strata) <= 1
-            ),
+            permission_evidence_eligible=False,
         )
         return replace(overall, source_evidence=source_evidence)
 
@@ -697,7 +728,20 @@ class CapitalDashboardReader:
             return None
         try:
             payload = json.loads(forecast.analysis_input_json)
-            assets = payload["target_state"]["asset_states"]
+            target_states = payload.get("forecast_targets")
+            if target_states is not None:
+                matching = next(
+                    (
+                        item["target_state"]
+                        for item in target_states
+                        if item.get("decision_slot", {}).get("decision_slot_id")
+                        == forecast.decision_slot_id
+                    ),
+                    None,
+                )
+                assets = () if matching is None else matching.get("asset_states", ())
+            else:
+                assets = payload["target_state"]["asset_states"]
             regime = assets[0]["regime"]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
             return None

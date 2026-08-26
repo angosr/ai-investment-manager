@@ -386,9 +386,9 @@ def test_projection_validates_the_forward_envelope_at_decimal_precision_boundary
     )
 
 
-def _decision_projection_inputs():
+def _decision_projection_inputs(forecast: BaseForecast | None = None):
     contract = _contract()
-    forecast = _forecast(contract)
+    forecast = forecast or _forecast(contract)
     projections = tuple(
         project_product_payoff(
             contract=contract,
@@ -415,9 +415,6 @@ def _decision_projection_inputs():
         producer_behavior_id=forecast.producer_behavior_id,
         outcome_family_id=forecast.outcome_family_id,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("0"),
     )
     sleeves = tuple(
         sorted(
@@ -564,6 +561,55 @@ def test_portfolio_selects_one_best_product_expression_for_one_forecast() -> Non
     assert "ALTERNATIVE_PRODUCT_EXPRESSION_REJECTED" in target.reason_codes
 
 
+def test_bearish_forecast_can_select_the_short_product_expression() -> None:
+    contract = _contract()
+    bullish = _forecast(contract)
+    forecast = bullish.model_copy(
+        update={
+            "outcome_probabilities": (
+                ForecastBucketProbability(
+                    bucket_id="LOSS",
+                    probability=Decimal("0.7"),
+                ),
+                ForecastBucketProbability(
+                    bucket_id="FLAT",
+                    probability=Decimal("0.2"),
+                ),
+                ForecastBucketProbability(
+                    bucket_id="GAIN",
+                    probability=Decimal("0.1"),
+                ),
+            ),
+            "expected_gross_bps": Decimal("-60"),
+        }
+    )
+    forecast, projections, sleeves, quotes, specs = _decision_projection_inputs(
+        forecast
+    )
+
+    target = _decision_engine().decide(
+        cycle_id="bearish-decision-cycle",
+        as_of=forecast.available_at,
+        account=_decision_account(
+            at=forecast.available_at,
+            cycle_id="bearish-decision-cycle",
+        ),
+        sleeves=sleeves,
+        quotes=quotes,
+        execution_specs=specs,
+    )
+
+    assert target is not None and len(target.sleeves) == 1
+    selected = target.sleeves[0]
+    assert selected.forecast_target.legs[0].direction == ExposureDirection.SHORT
+    short_projection = next(
+        item
+        for item in projections
+        if item.target.legs[0].direction == ExposureDirection.SHORT
+    )
+    assert selected.payoff_projection_id == short_projection.projection_id
+
+
 def test_product_switch_closes_the_old_expression_before_opening_the_new_one() -> None:
     forecast, projections, sleeves, quotes, specs = _decision_projection_inputs()
     spot = next(item for item in sleeves if item.target == projections[0].target)
@@ -657,9 +703,6 @@ def test_fresh_product_projection_after_source_entry_window_cannot_add_exposure(
         producer_behavior_id=forecast.producer_behavior_id,
         outcome_family_id=forecast.outcome_family_id,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("0"),
     )
     sleeve = PortfolioSleeveInput(
         sleeve_id=SleeveTarget.identity_for(
@@ -1247,9 +1290,6 @@ def test_held_perpetual_exits_when_current_product_projection_is_unavailable(
         producer_behavior_id=forecast.producer_behavior_id,
         outcome_family_id=forecast.outcome_family_id,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("0"),
     )
     source = SimpleNamespace(
         contract=projector.contract,

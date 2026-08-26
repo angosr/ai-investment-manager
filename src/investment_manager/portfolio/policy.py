@@ -160,26 +160,13 @@ class ProductPayoffPolicy(StrictConfig):
         return self
 
 
-class ContextForecastPolicy(StrictConfig):
-    """One pre-registered Context forecast question; no portfolio discretion."""
+class ContextForecastTargetPolicy(StrictConfig):
+    """One economic outcome contract inside a shared Context forecast call."""
 
-    version: str
-    enabled: bool = False
-    producer_id: str = Field(min_length=1)
-    producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     outcome_family_id: str = Field(min_length=1)
     contract_version: str = Field(min_length=1)
-    target_instrument_key: str = Field(min_length=1)
+    reference_instrument_key: str = Field(min_length=1)
     derivative_evidence_instrument_key: str | None = Field(default=None, min_length=1)
-    horizon_minutes: int = Field(gt=0, le=43_200)
-    cadence_minutes: int = Field(gt=0, le=43_200)
-    material_event_slots_enabled: bool = False
-    material_event_slot_policy_version: str | None = Field(default=None, min_length=1)
-    validity_minutes: int = Field(gt=0, le=1_440)
-    completion_deadline_seconds: int = Field(gt=0)
-    minimum_remaining_horizon_minutes: int = Field(gt=0)
-    maximum_quote_age_seconds: int = Field(gt=0)
-    maximum_reanchor_move_bps: Decimal = Field(gt=0)
     required_feature_keys: tuple[str, ...] = ()
     outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
     forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
@@ -189,12 +176,45 @@ class ContextForecastPolicy(StrictConfig):
     def feature_keys_are_canonical(self):
         if tuple(sorted(set(self.required_feature_keys))) != self.required_feature_keys:
             raise ValueError("Context Forecast 必需特征必须唯一且排序")
+        bucket_ids = tuple(item.bucket_id for item in self.outcome_buckets)
+        benchmark_ids = tuple(item.bucket_id for item in self.forecast_benchmark)
+        if bucket_ids != benchmark_ids:
+            raise ValueError("Context Forecast bucket 与 benchmark 必须完整同序")
+        return self
+
+
+class ContextForecastPolicy(StrictConfig):
+    """One shared AI call that returns independently settleable economic forecasts."""
+
+    version: str
+    enabled: bool = False
+    producer_id: str = Field(min_length=1)
+    producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    horizon_minutes: int = Field(gt=0, le=43_200)
+    cadence_minutes: int = Field(gt=0, le=43_200)
+    material_event_slots_enabled: bool = False
+    material_event_slot_policy_version: str | None = Field(default=None, min_length=1)
+    validity_minutes: int = Field(gt=0, le=1_440)
+    completion_deadline_seconds: int = Field(gt=0)
+    minimum_remaining_horizon_minutes: int = Field(gt=0)
+    maximum_quote_age_seconds: int = Field(gt=0)
+    maximum_reanchor_move_bps: Decimal = Field(gt=0)
+    targets: tuple[ContextForecastTargetPolicy, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def targets_and_sampling_are_canonical(self):
         if self.cadence_minutes > self.horizon_minutes:
             raise ValueError("Context Forecast cadence 不能长于预测周期")
         if self.material_event_slots_enabled != (
             self.material_event_slot_policy_version is not None
         ):
             raise ValueError("Context Forecast 事件槽启用状态与政策版本必须同时配置")
+        target_keys = tuple(item.reference_instrument_key for item in self.targets)
+        family_ids = tuple(item.outcome_family_id for item in self.targets)
+        if tuple(sorted(set(target_keys))) != target_keys:
+            raise ValueError("Context Forecast targets 必须按规范参考产品唯一排序")
+        if len(set(family_ids)) != len(family_ids):
+            raise ValueError("Context Forecast outcome family 不得重复")
         return self
 
 
@@ -286,40 +306,32 @@ class CapitalPolicy(StrictConfig):
             )
             for item in self.candidate_capital_authorizations
         )
-        if len(identities) > 1:
-            raise ValueError("Capital 同时只允许一个实验候选")
         if len(set(identities)) != len(identities):
             raise ValueError("Capital candidate authorization 不得重复")
         context = self.context_forecast
         if context is not None and context.enabled:
-            matching = tuple(
-                item
-                for item in self.candidate_capital_authorizations
-                if (
-                    item.producer_id,
-                    item.producer_behavior_id,
-                    item.outcome_family_id,
-                )
-                == (
+            expected = {
+                (
                     context.producer_id,
                     context.producer_behavior_id,
-                    context.outcome_family_id,
+                    target.outcome_family_id,
                 )
-            )
-            if len(matching) != 1:
-                raise ValueError("启用 Context Forecast 必须绑定唯一资本授权")
-            payoffs = context.product_payoffs
-            if payoffs is not None:
-                if context.target_instrument_key not in payoffs.instrument_keys:
+                for target in context.targets
+            }
+            if set(identities) != expected:
+                raise ValueError("启用 Context Forecast 必须逐目标绑定唯一资本授权")
+            exposure_by_key = {
+                item.instrument_key: item.economic_exposure
+                for item in self.investable_universe.instruments
+            }
+            for target in context.targets:
+                payoffs = target.product_payoffs
+                if payoffs is None:
+                    continue
+                if target.reference_instrument_key not in payoffs.instrument_keys:
                     raise ValueError("Product payoff 必须保留规范参考产品")
                 if not set(payoffs.instrument_keys).issubset(spec_keys):
                     raise ValueError("Product payoff instruments 必须属于 execution specs")
-                exposure_by_key = {
-                    item.instrument_key: item.economic_exposure
-                    for item in self.investable_universe.instruments
-                }
-                if len(
-                    {exposure_by_key[key] for key in payoffs.instrument_keys}
-                ) != 1:
+                if len({exposure_by_key[key] for key in payoffs.instrument_keys}) != 1:
                     raise ValueError("Product payoff products 必须表达同一经济暴露")
         return self

@@ -628,13 +628,11 @@ class PortfolioDecisionEngine:
             threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.CALIBRATED_CONSERVATIVE
         else:
-            permission = item.capital_authorization
-            assert permission is not None
-            threshold = (
-                permission.minimum_hold_net_bps
-                if current_notional > 0
-                else permission.minimum_entry_net_bps
-            )
+            # Candidate authorization is research eligibility, not a second
+            # sizing/threshold policy.  Every simulated candidate competes on
+            # the same conservative, full-cost portfolio boundary.
+            assert item.capital_authorization is not None
+            threshold = self._policy.minimum_conservative_net_bps
             edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
         eligible = forecast_current and net >= threshold
@@ -835,11 +833,9 @@ class PortfolioDecisionEngine:
             spec_by_instrument=spec_by_instrument,
         )
 
-    @staticmethod
-    def _allocation_limit(item: PortfolioSleeveInput, *, equity: Decimal) -> Decimal:
-        if item.capital_authorization is None:
-            return equity
-        return equity * item.capital_authorization.maximum_allocation_fraction
+    def _allocation_limit(self, item: PortfolioSleeveInput, *, equity: Decimal) -> Decimal:
+        del item
+        return equity * self._policy.maximum_single_sleeve_fraction
 
     @staticmethod
     def _quotes(

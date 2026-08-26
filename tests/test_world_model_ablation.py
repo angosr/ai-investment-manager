@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, func, select
 
 from investment_manager.forecast.codex.router import AnalystResult
-from investment_manager.forecast.context.producer import context_spot_forecast_contract
+from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
@@ -102,13 +102,15 @@ def _seed(engine, *, record_formal: bool = True):
     activation = policy.activated_at
     context = config.capital.context_forecast
     assert context is not None
+    target_policy = context.targets[0]
     instrument = next(
         item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.key == context.target_instrument_key
+        if item.instrument.key == target_policy.reference_instrument_key
     )
-    contract = context_spot_forecast_contract(
+    contract = context_forecast_contract(
         policy=context,
+        target_policy=target_policy,
         instrument=instrument,
         cost_semantics_version=config.capital.decision.cost_model_version,
     )
@@ -118,7 +120,7 @@ def _seed(engine, *, record_formal: bool = True):
         producer_id=context.producer_id,
         producer_behavior_id=context.producer_behavior_id,
         permission=ForecastPermission.CAPITAL_CANDIDATE,
-        required_feature_keys=context.required_feature_keys,
+        required_feature_keys=target_policy.required_feature_keys,
     )
     cutoff = ForecastPriceAnchor(
         instrument_id=instrument.key,
@@ -190,7 +192,7 @@ def _seed(engine, *, record_formal: bool = True):
         decision_slot_id=slot.slot_id,
         producer_id=context.producer_id,
         producer_behavior_id=context.producer_behavior_id,
-        outcome_family_id=context.outcome_family_id,
+        outcome_family_id=target_policy.outcome_family_id,
         target=contract.target,
         horizon_minutes=contract.horizon_minutes,
         cutoff_prices=(cutoff,),
@@ -208,7 +210,7 @@ def _seed(engine, *, record_formal: bool = True):
         available_at=formal_available,
         valid_until=formal_available + timedelta(minutes=60),
         outcome_probabilities=probabilities,
-        expected_gross_bps=Decimal("87.5"),
+        expected_gross_bps=Decimal("50.55"),
         input_refs=("evidence-1", "mechanism-1", "world-model-1"),
         world_model_id="world-model-1",
         mechanism_contributions=(
@@ -280,7 +282,7 @@ def _gain_outcome(config, contract, slot) -> ForecastOutcome:
             ),
         ),
         gross_target_return_bps=Decimal("100"),
-        realized_bucket_id="GAIN",
+        realized_bucket_id="LARGE_GAIN",
         reason_code="SETTLED",
     )
 

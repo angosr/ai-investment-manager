@@ -115,9 +115,6 @@ def _authorization(forecast: BaseForecast) -> CandidateCapitalAuthorization:
         producer_behavior_id=forecast.producer_behavior_id,
         outcome_family_id=forecast.outcome_family_id,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=Decimal("0.10"),
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
     )
 
 
@@ -238,12 +235,17 @@ def _account(*, holding: bool = False) -> PortfolioAccountSnapshot:
     )
 
 
-def _engine(*, enabled: bool = True) -> PortfolioDecisionEngine:
+def _engine(
+    *,
+    enabled: bool = True,
+    maximum_single_sleeve_fraction: Decimal = Decimal("0.30"),
+) -> PortfolioDecisionEngine:
     return PortfolioDecisionEngine(
         PortfolioDecisionPolicy(
             version="portfolio-v1",
             portfolio_id="primary",
             enabled=enabled,
+            maximum_single_sleeve_fraction=maximum_single_sleeve_fraction,
         )
     )
 
@@ -265,7 +267,7 @@ def test_engine_is_off_without_creating_a_target() -> None:
 def test_account_projection_identity_is_independent_from_decision_cycle() -> None:
     account = _account().model_copy(update={"cycle_id": "account-projection-1"})
 
-    target = _engine().decide(
+    target = _engine(maximum_single_sleeve_fraction=Decimal("0.10")).decide(
         cycle_id="decision-cycle-1",
         as_of=NOW,
         account=account,
@@ -280,7 +282,7 @@ def test_account_projection_identity_is_independent_from_decision_cycle() -> Non
 
 
 def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> None:
-    target = _engine().decide(
+    target = _engine(maximum_single_sleeve_fraction=Decimal("0.10")).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(),
@@ -304,11 +306,11 @@ def test_portfolio_uses_actual_fee_tier_and_selects_only_positive_net_edge() -> 
 
 
 def test_existing_holding_does_not_pay_its_entry_fee_again() -> None:
-    target = _engine().decide(
+    target = _engine(maximum_single_sleeve_fraction=Decimal("0.10")).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(holding=True),
-        sleeves=(_input(_forecast(expected_bps="14")),),
+        sleeves=(_input(_forecast(expected_bps="15")),),
         quotes=_quotes(),
         execution_specs=_specs(),
     )
@@ -318,7 +320,7 @@ def test_existing_holding_does_not_pay_its_entry_fee_again() -> None:
     assert target.sleeves[0].cost.fee_bps == Decimal("10.00")
     assert target.candidate_evaluations is not None
     candidate = target.candidate_evaluations[0]
-    assert candidate.decision_net_bps == Decimal("4.00")
+    assert candidate.decision_net_bps == Decimal("5.00")
     assert candidate.eligible
 
 
@@ -422,18 +424,9 @@ def test_expired_entry_window_can_only_retain_or_reduce_an_existing_sleeve(
         valid_until=NOW - timedelta(hours=1),
     )
     sleeve = _input(entry_expired)
-    sleeve = sleeve.model_copy(
-        update={
-            "capital_authorization": sleeve.capital_authorization.model_copy(
-                update={
-                    "maximum_allocation_fraction": Decimal(
-                        maximum_allocation_fraction
-                    )
-                }
-            )
-        }
-    )
-    target = _engine().decide(
+    target = _engine(
+        maximum_single_sleeve_fraction=Decimal(maximum_allocation_fraction)
+    ).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(holding=True),

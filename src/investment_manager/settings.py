@@ -178,37 +178,36 @@ class AppConfig(StrictConfig):
                 raise ValueError("Capital 风控与行情的跨产品报价偏差上限必须一致")
         context = self.capital.context_forecast
         if context is not None and context.enabled:
-            target = next(
-                (
-                    item.instrument
-                    for item in self.capital.execution_specs
-                    if item.instrument.key == context.target_instrument_key
-                ),
-                None,
-            )
-            if target is None:
-                raise ValueError("Context Forecast target 必须属于 Capital execution_specs")
-            evidence_key = context.derivative_evidence_instrument_key
-            if evidence_key is not None:
-                evidence = next(
-                    (
-                        item
-                        for item in self.market_data.perpetual_instruments
-                        if item.key == evidence_key
-                    ),
-                    None,
-                )
-                if evidence is None:
+            execution_by_key = {
+                item.instrument.key: item.instrument
+                for item in self.capital.execution_specs
+            }
+            perpetual_by_key = {
+                item.key: item for item in self.market_data.perpetual_instruments
+            }
+            for target_policy in context.targets:
+                target = execution_by_key.get(target_policy.reference_instrument_key)
+                if target is None:
                     raise ValueError(
-                        "Context Forecast 衍生品证据必须属于 MarketData 只读 universe"
+                        "Context Forecast target 必须属于 Capital execution_specs"
                     )
-                if (
-                    evidence.base_asset != target.base_asset
-                    or evidence.quote_asset != target.quote_asset
-                ):
-                    raise ValueError("Context Forecast 证据产品必须与 target 同标的计价")
-            payoffs = context.product_payoffs
-            if payoffs is not None:
+                evidence_key = target_policy.derivative_evidence_instrument_key
+                if evidence_key is not None:
+                    evidence = perpetual_by_key.get(evidence_key)
+                    if evidence is None:
+                        raise ValueError(
+                            "Context Forecast 衍生品证据必须属于 MarketData 只读 universe"
+                        )
+                    if (
+                        evidence.base_asset != target.base_asset
+                        or evidence.quote_asset != target.quote_asset
+                    ):
+                        raise ValueError(
+                            "Context Forecast 证据产品必须与 target 同标的计价"
+                        )
+                payoffs = target_policy.product_payoffs
+                if payoffs is None:
+                    continue
                 perpetual_market_keys = {
                     item.key for item in self.market_data.perpetual_instruments
                 }
@@ -224,7 +223,7 @@ class AppConfig(StrictConfig):
                     raise ValueError(
                         "Product payoff products 必须全部属于 Capital execution_specs"
                     )
-                if context.target_instrument_key not in payoff_specs:
+                if target_policy.reference_instrument_key not in payoff_specs:
                     raise ValueError("Product payoff 必须包含 Forecast 规范参考产品")
                 missing_market_products = {
                     key

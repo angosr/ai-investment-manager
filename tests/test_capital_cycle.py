@@ -20,7 +20,7 @@ from investment_manager.entrypoints.dashboard.capital import (
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
-from investment_manager.forecast.context.producer import context_spot_forecast_contract
+from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -390,14 +390,20 @@ def _candidate_service(
         producer_behavior_id=_TEST_PRODUCER_VERSION,
         outcome_family_id=_TEST_FORECAST_FAMILY,
         hypothesis_fingerprint="a" * 64,
-        maximum_allocation_fraction=maximum_allocation_fraction,
-        minimum_entry_net_bps=Decimal("5"),
-        minimum_hold_net_bps=Decimal("-5"),
     )
     configured = config.model_copy(
         update={
             "capital": config.capital.model_copy(
-                update={"candidate_capital_authorizations": (authorization,)}
+                update={
+                    "candidate_capital_authorizations": (authorization,),
+                    "decision": config.capital.decision.model_copy(
+                        update={
+                            "maximum_single_sleeve_fraction": (
+                                maximum_allocation_fraction
+                            )
+                        }
+                    ),
+                }
             )
         }
     )
@@ -1092,13 +1098,15 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
+    target_policy = policy.targets[0]
     instrument = next(
         item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.key == policy.target_instrument_key
+        if item.instrument.key == target_policy.reference_instrument_key
     )
-    contract = context_spot_forecast_contract(
+    contract = context_forecast_contract(
         policy=policy,
+        target_policy=target_policy,
         instrument=instrument,
         cost_semantics_version=config.capital.decision.cost_model_version,
     )
@@ -1331,16 +1339,15 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
         producer_activation_at=NOW,
     )
 
-    behavior = captured["target_state_behavior"]
-    evidence = behavior.derivative_evidence_instrument
+    behaviors = captured["target_state_behaviors"]
+    assert len(behaviors) == 3
+    evidence = behaviors[0].derivative_evidence_instrument
     assert evidence is not None
     assert evidence.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
-    assert evidence.key not in {
-        item.instrument.key for item in config.capital.execution_specs
-    }
     assert {item.instrument.product for item in config.capital.execution_specs} == {
         InstrumentProduct.SPOT,
         InstrumentProduct.TRADFI_PERPETUAL,
+        InstrumentProduct.USD_M_PERPETUAL,
     }
 
 
@@ -1433,12 +1440,12 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert first.groups[0].terminal
     assert first.groups[0].valid_until == NOW + timedelta(minutes=30)
     assert first.account.equity < Decimal("10000")
-    assert first.account.equity == Decimal("9998.350")
+    assert first.account.equity == Decimal("9996.70")
     assert first.account.revision == 1
     assert content_hash(first.account) == content_hash(
         first.account.model_copy(update={"revision": 0})
     )
-    assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.015")}
+    assert {abs(item.quantity) for item in first.account.positions} == {Decimal("0.03")}
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
         assert (
@@ -1463,7 +1470,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v7",
+        "universe_version": "binance-shadow-investable-v8",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
@@ -1472,7 +1479,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         ],
         "reference_policy_version": None,
     }
-    assert dto["account"]["equity"] == "9998.350"
+    assert dto["account"]["equity"] == "9996.70"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
         "active_group_count": 0,
@@ -1480,22 +1487,22 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "total_order_count": 1,
     }
     assert dto["performance"]["interval_count"] == 1
-    assert dto["performance"]["cumulative_net_pnl"] == "-1.650"
+    assert dto["performance"]["cumulative_net_pnl"] == "-3.30"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
-    assert dto["performance"]["latest"]["net_pnl"] == "-1.650"
+    assert dto["performance"]["latest"]["net_pnl"] == "-3.30"
     equity_points = CapitalDashboardReader(engine, config).equity_history()
     by_revision = sorted(equity_points, key=lambda item: item.revision)
     assert [item.revision for item in by_revision] == [0, 1]
-    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9998.350")]
+    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9996.70")]
     assert serialize_capital_equity(tuple(by_revision))["points"][-1] == {
         "snapshot_id": first.account.snapshot_id,
         "at": NOW.isoformat(),
         "revision": 1,
-        "equity": "9998.350",
-        "net_pnl": "-1.650",
-        "drawdown_fraction": "0.000165",
+        "equity": "9996.70",
+        "net_pnl": "-3.30",
+        "drawdown_fraction": "0.00033",
         "cash_benchmark_equity": "10000",
-        "increment_vs_cash": "-1.650",
+        "increment_vs_cash": "-3.30",
     }
     newest_equity_page = CapitalDashboardReader(engine, config).equity_history(limit=1)
     older_equity_page = CapitalDashboardReader(engine, config).equity_history(
@@ -1715,9 +1722,6 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     target = SqlPortfolioStore(engine).target_for_cycle(result.trade_plan.cycle_id)
     assert target is not None and target.candidate_evaluations is not None
     frozen = target.candidate_evaluations[0]
-    changed_authorization = config.capital.candidate_capital_authorizations[0].model_copy(
-        update={"minimum_entry_net_bps": Decimal("999")}
-    )
     changed_specs = tuple(
         item.model_copy(update={"fee_bps": Decimal("999")})
         for item in config.capital.execution_specs
@@ -1726,7 +1730,9 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         update={
             "capital": config.capital.model_copy(
                 update={
-                    "candidate_capital_authorizations": (changed_authorization,),
+                    "decision": config.capital.decision.model_copy(
+                        update={"minimum_conservative_net_bps": Decimal("999")}
+                    ),
                     "execution_specs": changed_specs,
                 }
             )
@@ -1838,7 +1844,7 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
 
-    missed = NOW + timedelta(hours=25)
+    missed = NOW + timedelta(days=8)
     _put_market(
         market,
         config,
@@ -1860,16 +1866,16 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     overview = CapitalDashboardReader(engine, config).overview()
     dto = serialize_capital_overview(overview)
     assert dto["decision"]["as_of"] == missed.isoformat()
-    assert "PROGRAMMATIC_RISK_EXIT" in dto["decision"]["reason_codes"]
+    assert "EXPIRED_FORECAST_EXIT" in dto["decision"]["reason_codes"]
     with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 2
         assert (
             connection.scalar(select(func.count()).select_from(risk_execution_authorizations)) == 2
         )
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 2
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
-    assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes
+    assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
 
 
 def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
@@ -1882,7 +1888,7 @@ def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
 
-    review_at = NOW + timedelta(hours=25)
+    review_at = NOW + timedelta(days=8)
     _put_market(market, config, at=review_at, sequence=72)
     config, restarted = _candidate_service(config, engine, emit=False)
     batch = _runtime_batch(AnalysisTriggerType.HEARTBEAT, at=review_at)
@@ -1895,11 +1901,11 @@ def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
         payloads = connection.execute(select(capital_cycle_records.c.payload)).scalars()
         records = tuple(CapitalCycleRecord.model_validate(item) for item in payloads)
     exit_record = next(item for item in records if item.cause_id == batch.batch_id)
-    assert exit_record.outcome == CapitalCycleOutcome.RISK_EXIT
-    assert "PROGRAMMATIC_RISK_EXIT" in exit_record.reason_codes
+    assert exit_record.outcome == CapitalCycleOutcome.TARGET_DECIDED
+    assert "EXPIRED_FORECAST_EXIT" in exit_record.reason_codes
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
-    assert "PROGRAMMATIC_RISK_EXIT" in activity[0].reason_codes
+    assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
 
 
 def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:

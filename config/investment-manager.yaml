@@ -127,7 +127,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v56
+  version: total-portfolio-capital-v57
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -149,7 +149,7 @@ capital:
       - NOMINAL_RATES
       - US_EQUITY
   investable_universe:
-    version: binance-shadow-investable-v7
+    version: binance-shadow-investable-v8
     mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
       - instrument_key: BINANCE:SPOT:BTCUSDT
@@ -161,31 +161,39 @@ capital:
       - instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
         economic_exposure: US_EQUITY
         reference_candidate: true
+      - instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+        economic_exposure: CRYPTO_NETWORK
+        reference_candidate: false
+      - instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
+        economic_exposure: INFLATION_SENSITIVE
+        reference_candidate: false
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
     version: portfolio-net-edge-v12
     portfolio_id: primary
     enabled: true
-    minimum_conservative_net_bps: "5"
-    maximum_total_exposure_fraction: "0.30"
-    maximum_single_sleeve_fraction: "0.30"
+    # Conservative payoff 已包含模型/映射不确定性；实验候选只需在完整成本后为正。
+    minimum_conservative_net_bps: "0"
+    # 模拟实验允许合格信号充分形成账户反馈；组合生存边界仍由 Risk 统一收缩。
+    maximum_total_exposure_fraction: "1.00"
+    maximum_single_sleeve_fraction: "0.50"
     minimum_rebalance_notional: "25"
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
     version: multi-product-portfolio-risk-v8
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
+    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
     maximum_daily_loss: "200"
     maximum_drawdown_fraction: "0.05"
-    maximum_gross_exposure_fraction: "0.30"
-    maximum_net_delta_fraction: "0.15"
-    maximum_instrument_fraction: "0.15"
-    maximum_margin_fraction: "0.30"
-    maximum_stress_loss_fraction: "0.01"
+    maximum_gross_exposure_fraction: "1.00"
+    maximum_net_delta_fraction: "1.00"
+    maximum_instrument_fraction: "0.50"
+    maximum_margin_fraction: "0.50"
+    maximum_stress_loss_fraction: "0.05"
     maximum_spread_bps: "20"
     maximum_unhedged_fraction: "0.05"
     maximum_unhedged_seconds: 10
@@ -193,7 +201,7 @@ capital:
     kill_switch: false
   planner:
     version: multi-product-trade-planner-v6
-    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT]
+    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
   execution_specs:
     - instrument:
         venue: BINANCE
@@ -231,23 +239,41 @@ capital:
       quantity_step: "0.01"
       minimum_order_notional: "5"
       # TradFi Perps 沿用 USDⓈ-M 普通账户非促销 taker 费率；不继承临时优惠。
-      fee_bps: "50"
+      fee_bps: "5"
+    - instrument:
+        venue: BINANCE
+        product: USD_M_PERPETUAL
+        symbol: BTCUSDT
+        base_asset: BTC
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.001"
+      minimum_order_notional: "50"
+      fee_bps: "5"
+    - instrument:
+        venue: BINANCE
+        product: USD_M_PERPETUAL
+        symbol: PAXGUSDT
+        base_asset: PAXG
+        quote_asset: USDT
+        settlement_asset: USDT
+        contract_multiplier: "1"
+      quantity_step: "0.001"
+      minimum_order_notional: "5"
+      fee_bps: "5"
   sleeve_risk:
-    version: spot-position-risk-v2
+    version: linear-product-position-risk-v3
     basis_stress_bps: "100"
     funding_stress_bps: "30"
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: btc-context-forecast-v25
+    version: portfolio-context-forecast-v26
     enabled: false
     producer_id: codex-world-model-forecast
-    producer_behavior_id: "7edcd21fd4e4c4dd0fdcea4b24d3c2b72fc7fea3e14ac035d7dbdd534b395894"
-    outcome_family_id: btc-spot-directional-4h
-    contract_version: btc-spot-directional-4h-v10
-    target_instrument_key: BINANCE:SPOT:BTCUSDT
-    # 永续只提供基差、funding、OI 等状态证据，不拥有资本或订单权限。
-    derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+    # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
+    producer_behavior_id: "0ff46820c3607caf6819de11a795381e48e4d80833e9e617c41fb5b1a131d92c"
     horizon_minutes: 240
     cadence_minutes: 240
     material_event_slots_enabled: true
@@ -257,42 +283,81 @@ capital:
     minimum_remaining_horizon_minutes: 210
     maximum_quote_age_seconds: 300
     maximum_reanchor_move_bps: "100"
-    required_feature_keys:
-      - asset_state:BTC.realized_volatility
-      - asset_state:BTC.return_fraction
-    outcome_buckets:
-      - bucket_id: LARGE_LOSS
-        upper_bps: "-150"
-        representative_bps: "-250"
-      - bucket_id: LOSS
-        lower_bps: "-150"
-        upper_bps: "-50"
-        representative_bps: "-100"
-      - bucket_id: FLAT
-        lower_bps: "-50"
-        upper_bps: "50"
-        representative_bps: "0"
-      - bucket_id: GAIN
-        lower_bps: "50"
-        upper_bps: "150"
-        representative_bps: "100"
-      - bucket_id: LARGE_GAIN
-        lower_bps: "150"
-        representative_bps: "250"
-    forecast_benchmark:
-      - bucket_id: LARGE_LOSS
-        probability: "0.10"
-      - bucket_id: LOSS
-        probability: "0.20"
-      - bucket_id: FLAT
-        probability: "0.40"
-      - bucket_id: GAIN
-        probability: "0.20"
-      - bucket_id: LARGE_GAIN
-        probability: "0.10"
+    targets:
+      - outcome_family_id: btc-price-directional-4h
+        contract_version: btc-price-directional-4h-v2
+        reference_instrument_key: BINANCE:SPOT:BTCUSDT
+        derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+        required_feature_keys: [asset_state:BTC.realized_volatility, asset_state:BTC.return_fraction]
+        product_payoffs:
+          version: btc-linear-product-payoff-v3
+          economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
+          instrument_keys: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+          maximum_rule_age_seconds: 900
+        # 2024-08-26..2026-08-26 Binance Spot 1h 收盘价滚动 4h 收益的
+        # 10/30/70/90 分位边界；代表值为桶内中位数。合同激活后不可追改。
+        outcome_buckets:
+          - {bucket_id: LARGE_LOSS, upper_bps: "-97", representative_bps: "-149"}
+          - {bucket_id: LOSS, lower_bps: "-97", upper_bps: "-29", representative_bps: "-53"}
+          - {bucket_id: FLAT, lower_bps: "-29", upper_bps: "32", representative_bps: "1"}
+          - {bucket_id: GAIN, lower_bps: "32", upper_bps: "98", representative_bps: "56"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "98", representative_bps: "145"}
+        forecast_benchmark:
+          - {bucket_id: LARGE_LOSS, probability: "0.10"}
+          - {bucket_id: LOSS, probability: "0.20"}
+          - {bucket_id: FLAT, probability: "0.40"}
+          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LARGE_GAIN, probability: "0.10"}
+      - outcome_family_id: paxg-price-directional-4h
+        contract_version: paxg-price-directional-4h-v2
+        reference_instrument_key: BINANCE:SPOT:PAXGUSDT
+        derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
+        required_feature_keys: [asset_state:PAXG.realized_volatility, asset_state:PAXG.return_fraction]
+        product_payoffs:
+          version: paxg-linear-product-payoff-v1
+          economic_exposure_id: INFLATION_SENSITIVE:PAXG:USDT
+          instrument_keys: [BINANCE:SPOT:PAXGUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
+          maximum_rule_age_seconds: 900
+        # 同一冻结方法和截止时点，使用 PAXG 自身分布，避免继承 BTC 波动尺度。
+        outcome_buckets:
+          - {bucket_id: LARGE_LOSS, upper_bps: "-42", representative_bps: "-68"}
+          - {bucket_id: LOSS, lower_bps: "-42", upper_bps: "-11", representative_bps: "-22"}
+          - {bucket_id: FLAT, lower_bps: "-11", upper_bps: "15", representative_bps: "1"}
+          - {bucket_id: GAIN, lower_bps: "15", upper_bps: "48", representative_bps: "26"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "48", representative_bps: "71"}
+        forecast_benchmark:
+          - {bucket_id: LARGE_LOSS, probability: "0.10"}
+          - {bucket_id: LOSS, probability: "0.20"}
+          - {bucket_id: FLAT, probability: "0.40"}
+          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LARGE_GAIN, probability: "0.10"}
+      - outcome_family_id: spy-price-directional-4h
+        contract_version: spy-price-directional-4h-v2
+        reference_instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+        derivative_evidence_instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
+        required_feature_keys: [derivative_state:SPY.mark_index_premium_bps]
+        product_payoffs:
+          version: spy-linear-product-payoff-v1
+          economic_exposure_id: US_EQUITY:SPY:USDT
+          instrument_keys: [BINANCE:TRADFI_PERPETUAL:SPYUSDT]
+          maximum_rule_age_seconds: 900
+        # Binance TradFi Perp 自 2026-04-06 起至冻结时点的 1h 数据，方法同上；
+        # 样本较短，因此只作为前瞻合同基线，不冒充已证明 Alpha。
+        outcome_buckets:
+          - {bucket_id: LARGE_LOSS, upper_bps: "-26", representative_bps: "-39"}
+          - {bucket_id: LOSS, lower_bps: "-26", upper_bps: "-7", representative_bps: "-14"}
+          - {bucket_id: FLAT, lower_bps: "-7", upper_bps: "11", representative_bps: "2"}
+          - {bucket_id: GAIN, lower_bps: "11", upper_bps: "30", representative_bps: "17"}
+          - {bucket_id: LARGE_GAIN, lower_bps: "30", representative_bps: "45"}
+        forecast_benchmark:
+          - {bucket_id: LARGE_LOSS, probability: "0.10"}
+          - {bucket_id: LOSS, probability: "0.20"}
+          - {bucket_id: FLAT, probability: "0.40"}
+          - {bucket_id: GAIN, probability: "0.20"}
+          - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v30
+  version: typed-outcome-settlement-v31
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -303,11 +368,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v24
+    version: world-model-ablation-forward-v25
     enabled: false
-    plan_id: world-model-ablation-forward-v24
+    plan_id: world-model-ablation-forward-v25
     # 仅从预登记后的首个合法 4h 槽计数；重叠结果窗只构成一个独立样本。
-    activated_at: 2026-08-26T16:00:00Z
+    activated_at: 2026-08-26T20:00:00Z
     minimum_sample_size: 30
     maximum_batch_size: 2
 
@@ -388,6 +453,13 @@ market_data:
       product: USD_M_PERPETUAL
       symbol: ETHUSDT
       base_asset: ETH
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+    - venue: BINANCE
+      product: USD_M_PERPETUAL
+      symbol: PAXGUSDT
+      base_asset: PAXG
       quote_asset: USDT
       settlement_asset: USDT
       contract_multiplier: "1"
