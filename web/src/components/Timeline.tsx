@@ -120,7 +120,7 @@ function CapitalTimeline({
             <WorldModelEvidenceLine evidence={forecastEvaluation.world_model_ablation} />
           ) : null}
           {forecastEvaluation?.forecast_evidence ? (
-            <ForecastSourceLine evidence={forecastEvaluation.forecast_evidence} />
+            <ForecastEvidenceLine evidence={forecastEvaluation.forecast_evidence} />
           ) : null}
           {assessmentStatus?.quality ? (
             <AssessmentQualityLine quality={assessmentStatus.quality} />
@@ -147,38 +147,30 @@ function CapitalTimeline({
   );
 }
 
-function ForecastSourceLine({
+function ForecastEvidenceLine({
   evidence,
 }: {
   evidence: NonNullable<ForecastEvaluationEvidence["forecast_evidence"]>;
 }) {
-  const labels = {
-    CADENCE_ONLY: "定时",
-    MATERIAL_STATE_ONLY: "材料事件",
-  } as const;
-  const sources = evidence.source_evidence ?? [];
+  if (evidence.non_overlapping_sample_count === 0) return null;
+  const verdict = {
+    NO_SETTLED_SAMPLES: "尚无可评价结果",
+    INSUFFICIENT_EVIDENCE: "结果仍少，暂时无法判断预测能力",
+    ABOVE_BENCHMARK: "目前优于简单预测基线",
+    BELOW_BENCHMARK: "目前落后于简单预测基线",
+    INCONCLUSIVE: "与简单预测基线的差异尚不可靠",
+    DIAGNOSTIC_ONLY: "该批结果只用于回顾，不影响当前资金决策",
+  }[evidence.status];
+  const coverage = evidence.result_coverage === null
+    ? null
+    : `${(Number(evidence.result_coverage) * 100).toFixed(0)}%`;
   return (
-    <div className={styles.forecastSources}>
-      <b>预测来源</b>
-      {sources.map((source) => {
-        const item = source.evidence;
-        const coverage = item.result_coverage === null
-          ? "—"
-          : `${(Number(item.result_coverage) * 100).toFixed(0)}%`;
-        const brier = item.mean_brier_score === null
-          ? "—"
-          : Number(item.mean_brier_score).toFixed(3);
-        return (
-          <span key={source.stratum}>
-            {labels[source.stratum]}：到期 {item.due_slot_count} · 输出 {item.forecast_count}
-            {` · 无估计 ${item.no_estimate_count} · 结算 ${item.settled_forecast_count}`}
-            {` · 覆盖 ${coverage} · Brier ${brier}`}
-          </span>
-        );
-      })}
+    <div className={styles.forecastEvidence}>
+      <b>预测验证</b>
       <span>
-        独立样本 {evidence.non_overlapping_sample_count}
-        /{evidence.required_non_overlapping_samples}
+        已结算 {evidence.non_overlapping_sample_count} 个互不重复的预测结果
+        {coverage ? ` · 按时输出 ${coverage}` : ""}
+        {` · ${verdict}`}
       </span>
     </div>
   );
@@ -189,23 +181,27 @@ function WorldModelEvidenceLine({
 }: {
   evidence: NonNullable<ForecastEvaluationEvidence["world_model_ablation"]>;
 }) {
-  const sampleProgress = `${evidence.conservative_sample_count} / ${evidence.minimum_sample_size}`;
+  if (evidence.assignments === 0) return null;
   const headline = evidence.evidence_sufficient
-    ? "世界认知已显示稳定预测增量"
-    : evidence.conservative_sample_count < evidence.minimum_sample_size
-      ? "世界认知增量仍在前瞻验证"
-      : "当前证据尚未证明世界认知有稳定增量";
-  const execution = evidence.assignments === 0
-    ? "尚无符合计划的输入槽"
-    : `同槽对照 ${evidence.assignments} 次：成功 ${evidence.successful_controls}`
-      + `，失败 ${evidence.failed_controls}，等待 ${evidence.pending_controls}`;
+    ? "世界认知目前改善了预测"
+    : evidence.conservative_sample_count === 0
+      ? "世界认知对照已启动"
+      : evidence.conservative_improvement_lower_bound !== null
+          && Number(evidence.conservative_improvement_lower_bound) > 0
+        ? "当前结果偏正，但证据仍少"
+        : "尚未证明世界认知能改善预测";
+  const execution = evidence.conservative_sample_count > 0
+    ? `已结算 ${evidence.conservative_sample_count} 个互不重复的同时点对照结果。`
+    : evidence.successful_controls > 0
+      ? `已完成 ${evidence.successful_controls} 次无世界认知的对照预测，正在等待市场结果。`
+      : "系统已在相同市场时点启动有、无世界认知的两份预测。";
+  const failure = evidence.failed_controls > 0
+    ? ` 对照预测失败 ${evidence.failed_controls} 次。`
+    : "";
   return (
     <div className={`${styles.worldEvidence} ${evidence.evidence_sufficient ? styles.worldEvidenceGood : ""}`}>
-      <div>
-        <b>{headline}</b>
-        <span>独立结算样本 {sampleProgress}</span>
-      </div>
-      <p>{execution}；完整预测配对已结算 {evidence.settled_pairs} 次。</p>
+      <div><b>{headline}</b></div>
+      <p>{execution}{failure}</p>
     </div>
   );
 }
