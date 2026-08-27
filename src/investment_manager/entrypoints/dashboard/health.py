@@ -129,7 +129,7 @@ def _capital_freshness_check(
         if any(product != "SPOT" for product in products)
         else None
     )
-    owner_symbol = config.capital.execution_specs[0].instrument.symbol
+    owner_symbol = config.assessment.review_trigger_symbol
     owner_scope = next(
         (item for item in analysis.scopes if item.symbol == owner_symbol),
         None,

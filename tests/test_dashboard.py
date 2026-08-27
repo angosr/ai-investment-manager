@@ -243,6 +243,7 @@ def test_world_cognition_summary_is_the_highest_value_mechanism() -> None:
 
 def _health_policy_extras() -> dict:
     return {
+        "assessment": SimpleNamespace(review_trigger_symbol="BTCUSDT"),
         "trigger": SimpleNamespace(
             heartbeat_minutes=15,
             outbox_fallback_poll_seconds=1,
@@ -440,8 +441,14 @@ def test_capital_health_uses_product_ledger_without_legacy_account_checks() -> N
             execution_specs=(
                 SimpleNamespace(
                     instrument=SimpleNamespace(
+                        symbol="SPYUSDT",
+                        product=SimpleNamespace(value="TRADFI_PERPETUAL"),
+                    )
+                ),
+                SimpleNamespace(
+                    instrument=SimpleNamespace(
                         symbol="BTCUSDT",
-                        product=SimpleNamespace(value="SPOT"),
+                        product=SimpleNamespace(value="USD_M_PERPETUAL"),
                     )
                 ),
             ),
