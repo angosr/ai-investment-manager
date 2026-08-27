@@ -193,14 +193,37 @@ class AppConfig(StrictConfig):
                 item.instrument.key: item.instrument
                 for item in self.capital.execution_specs
             }
+            reference_by_key = {
+                item.key: item
+                for item in self.capital.forecast_reference_instruments
+            }
+            forecast_instruments = {**execution_by_key, **reference_by_key}
             perpetual_by_key = {
                 item.key: item for item in self.market_data.perpetual_instruments
             }
+            spot_symbols = set(self.market_data.symbols)
+            for reference in self.capital.forecast_reference_instruments:
+                if (
+                    reference.product == InstrumentProduct.SPOT
+                    and reference.symbol not in spot_symbols
+                ):
+                    raise ValueError(
+                        "Forecast Spot 只读参考必须属于 MarketData spot universe"
+                    )
+                if (
+                    reference.product != InstrumentProduct.SPOT
+                    and reference.key not in perpetual_by_key
+                ):
+                    raise ValueError(
+                        "Forecast Derivative 只读参考必须属于 MarketData perpetual universe"
+                    )
             for target_policy in context.targets:
-                target = execution_by_key.get(target_policy.reference_instrument_key)
+                target = forecast_instruments.get(
+                    target_policy.reference_instrument_key
+                )
                 if target is None:
                     raise ValueError(
-                        "Context Forecast target 必须属于 Capital execution_specs"
+                        "Context Forecast target 必须属于执行产品或只读参考产品"
                     )
                 evidence_key = target_policy.derivative_evidence_instrument_key
                 if evidence_key is not None:
@@ -234,8 +257,6 @@ class AppConfig(StrictConfig):
                     raise ValueError(
                         "Product payoff products 必须全部属于 Capital execution_specs"
                     )
-                if target_policy.reference_instrument_key not in payoff_specs:
-                    raise ValueError("Product payoff 必须包含 Forecast 规范参考产品")
                 missing_market_products = {
                     key
                     for key, instrument in payoff_specs.items()

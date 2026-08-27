@@ -104,9 +104,9 @@ def test_release_requires_the_bound_reference_selection_artifact() -> None:
         "universe_version": config.capital.investable_universe.version,
         "selection_artifact_id": "reference-selection-v1",
         "allocations": (
-            {
-                "implementation_key": "BINANCE:SPOT:BTCUSDT",
-                "target_exposure_fraction": "0.10",
+                {
+                    "implementation_key": "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
+                    "target_exposure_fraction": "0.10",
             },
             {
                 "implementation_key": "CASH:USDT",

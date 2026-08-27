@@ -13,6 +13,7 @@ from investment_manager.forecast.contracts import (
 )
 from investment_manager.kernel.configuration import StrictConfig
 from investment_manager.kernel.types import UnitInterval
+from investment_manager.market.models import InstrumentId
 from investment_manager.portfolio.decision import PortfolioDecisionPolicy
 from investment_manager.portfolio.models import CandidateCapitalAuthorization
 from investment_manager.risk.portfolio import PortfolioRiskPolicy
@@ -229,6 +230,7 @@ class CapitalPolicy(StrictConfig):
     settlement_asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
     mandate: InvestmentMandatePolicy
     investable_universe: InvestableUniversePolicy
+    forecast_reference_instruments: tuple[InstrumentId, ...] = ()
     reference_policy: ReferencePortfolioPolicy | None = None
     decision: PortfolioDecisionPolicy
     risk: PortfolioRiskPolicy
@@ -258,6 +260,13 @@ class CapitalPolicy(StrictConfig):
         )
         if universe_keys != spec_keys:
             raise ValueError("Investable universe 必须唯一覆盖 Capital execution specs")
+        reference_keys = tuple(
+            item.key for item in self.forecast_reference_instruments
+        )
+        if tuple(sorted(set(reference_keys))) != reference_keys:
+            raise ValueError("Forecast reference instruments 必须唯一且排序")
+        if set(reference_keys) & set(spec_keys):
+            raise ValueError("Forecast 只读参考不得重复进入 Capital execution specs")
         disallowed_exposures = {
             item.economic_exposure
             for item in self.investable_universe.instruments
@@ -313,6 +322,14 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital candidate authorization 不得重复")
         context = self.context_forecast
         if context is not None and context.enabled:
+            target_reference_keys = {
+                item.reference_instrument_key for item in context.targets
+            }
+            expected_read_only_references = target_reference_keys - set(spec_keys)
+            if set(reference_keys) != expected_read_only_references:
+                raise ValueError(
+                    "Forecast 只读参考必须精确覆盖不属于 execution specs 的规范参考"
+                )
             expected = {
                 (
                     context.producer_id,
@@ -331,8 +348,6 @@ class CapitalPolicy(StrictConfig):
                 payoffs = target.product_payoffs
                 if payoffs is None:
                     continue
-                if target.reference_instrument_key not in payoffs.instrument_keys:
-                    raise ValueError("Product payoff 必须保留规范参考产品")
                 if not set(payoffs.instrument_keys).issubset(spec_keys):
                     raise ValueError("Product payoff instruments 必须属于 execution specs")
                 if len({exposure_by_key[key] for key in payoffs.instrument_keys}) != 1:

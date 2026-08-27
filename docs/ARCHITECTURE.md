@@ -154,6 +154,8 @@ PortfolioTarget 必须冻结本轮全部合法候选与现金比较所使用的�
 
 同一经济暴露分布只产生一个预测样本。Forecast 可以从同一分布生成多个产品投影，不得再次调用 AI 或把产品数量计为多个 Alpha 样本；每个投影的跟踪误差与费用后资本结果仍分别结算。对于同一已经验收的线性 Derivative，规范 payoff 可以生成正负名义候选；Spot 不能直接生成负持仓，Spot 与 Perpetual、不同结算资产或不同场所也不能机械镜像。[Binance 的 mark/index 与 funding 合同](https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price)必须进入 Perpetual 产品投影，未知的未来 funding、basis 和保证金压力以冻结模型和不确定性处理，无法可靠处理时拒绝该产品候选。
 
+Forecast 的规范参考 Instrument、Market 的观察 Instrument 与 Capital 的可投资 Instrument 是三个不同集合。规范参考只定义经济 Outcome 的价格与结算口径，可以是不可交易的指数、代理或本轮明确不持有的 Spot；观察集合只提供状态和映射证据；只有可投资集合才进入产品投影、Portfolio、Risk、Planner、账户和持仓页面。引用某个 Spot 作为 BTC 或 PAXG 的规范价格，不得隐式把它加入账户候选；反过来，移除一个执行产品也不得改写已经冻结的经济 Forecast 合同。配置必须分别冻结这些身份并验证产品映射，禁止再用“规范参考必须属于 execution specs”把不同职责耦合起来。
+
 每份产品投影无论是否被 Portfolio 选择，都从自身冻结的可成交入场锚点结算到源经济 Forecast 的共同终点；Spot 使用退出侧报价，Derivative 同时结算真实 funding，点时行情或资金费率在宽限期后仍不完整就永久记为不可用。产品映射评价不能直接比较“预测产品总收益”与“实际产品总收益”，否则源 Forecast 的方向误差会被错误归因给 basis、funding 或产品规则。对同一完整资本决策截面，先以同决策时点、同终点的规范经济参考消去已经实现的经济暴露收益，再比较产品相对该参考的预测与实现残差；当前 BTC 合同可使用 Spot，非现货经济暴露则必须由 ForecastContract 冻结可点时结算的指数、总回报序列或合格代理，不能把 Spot 写成跨资产前提。长短方向按有符号经济暴露对齐。只有 PortfolioTarget 已冻结完整候选集合的截面才有产品排序语义，孤立或中途失败留下的 projection 可以结算和诊断，但不能由时间戳拼成一份完整产品选择样本。后续持仓复核投影仍永久保存和结算，却不能因触发更频繁而在主证据中获得更高权重。映射残差的误差与保守覆盖只裁决产品映射；相对事后最佳产品的 gross 后悔值只能诊断，不能授予选择权限。手续费、点差、滑点、未成交机会成本、保证金风险，以及实际选择相对现金、规范产品或冻结 Portfolio 基线的费用后增量，仍由 Portfolio/Execution 资本评价负责。源概率分布继续只用 proper score 评价一次，不因产品数量增加样本。
 
 PortfolioTarget 是产品目标暴露的组合映射，不是订单集合。策略名、分析次数或预测来源不形成永久的“仓位对象”；只有确有独立执行原子性或评价语义的多腿实验，才可在该实验中引入组合腿定义，不能预建通用 Sleeve 体系。
@@ -174,11 +176,13 @@ PortfolioTarget 是产品目标暴露的组合映射，不是订单集合。策�
 
 | 经济暴露 | 规范参考 | 可比较的产品表达 |
 |---|---|---|
-| BTC | BTCUSDT Spot | Spot 多头；BTCUSDT USD-M Perpetual 多头或空头 |
-| PAXG | PAXGUSDT Spot | Spot 多头；PAXGUSDT USD-M Perpetual 多头或空头 |
+| BTC | BTCUSDT Spot（只读参考） | BTCUSDT USD-M Perpetual 多头或空头 |
+| PAXG | PAXGUSDT Spot（只读参考） | PAXGUSDT USD-M Perpetual 多头或空头 |
 | SPY | 合同冻结的 SPY 点时参考及现金流口径 | SPYUSDT TradFi Perpetual 多头或空头 |
 
-Spot 没有负持仓语义，做空必须由合格 Derivative 表达。某个 Perpetual 只有在交易状态、双边报价、交易时段、乘数、数量步长、最小名义、funding 规则、保证金和点时结算均完整时才进入本轮候选；否则只移除该产品表达，不能伪造默认规则，也不能阻断其他暴露。最终 `PortfolioTarget` 对同一经济暴露最多选择一个产品表达，因此页面和账户不会把 Spot 与 Perpetual 误报成两个相同持仓。
+当前 cohort 选择单一永续表达不是把 Spot 与 Perpetual 当成相同产品，也不是永久产品政策：它保留 Spot 的规范参考与市场证据，同时消除同一敞口的重复执行候选，让三个现役暴露都可在一个对称产品合同下做多或做空。经济 gross 仍受总权益 100% 上限约束，永续的较低保证金占用不产生额外经济杠杆；funding、basis、标记价格、保证金、强平、交易时段和场所风险继续完整进入 payoff 与 Risk。未来只有产品级费用后前瞻证据证明加入 Spot 能改善总组合时，才以新的可投资域版本恢复比较，不在当前路径保留关闭的候选或兼容分支。
+
+Spot 没有负持仓语义，做空必须由合格 Derivative 表达。某个 Perpetual 只有在交易状态、双边报价、交易时段、乘数、数量步长、最小名义、funding 规则、保证金和点时结算均完整时才进入本轮候选；否则只移除该产品表达，不能伪造默认规则，也不能阻断其他暴露。最终 `PortfolioTarget` 对同一经济暴露最多选择一个产品表达；当前 cohort 每个暴露只有一个执行产品，因此页面和账户也只能出现一个产品合格的持仓行。
 
 为了兼顾 AI 效率和组合一致性，同一决策槽只调用一次 Forecast Analyst。输入包含一份共同 WorldModel、三个冻结 ForecastContract 和各自目标市场状态；输出是按合同身份唯一对应的三份概率 Forecast。WorldModel 负责开放式因果综合，保留高推理深度；Forecast 只把已冻结解释映射为受 Schema 约束的概率分布，使用独立、版本化的推理强度，不能继承前者的计算预算。该参数属于 Forecast producer behavior，必须用真实完成时延、结构成功率和前瞻评分共同裁决，不能为追求文字长度提高。每份 Forecast 独立结算、独立获得或失去资本权限，但共享同一信息截止点和调用审计。某一合同因休市或输入不足形成 `NoEstimate` 时，不得拖垮另外两份合法结果，也不得补发第二次 AI 调用。产品多空投影完全程序化，不增加 AI 次数，不把六个产品候选冒充六份 Alpha 样本。
 

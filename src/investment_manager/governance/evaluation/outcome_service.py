@@ -212,6 +212,12 @@ def configured_world_model_ablation_contracts(
     instruments = {
         item.instrument.key: item.instrument for item in config.capital.execution_specs
     }
+    instruments.update(
+        {
+            item.key: item
+            for item in config.capital.forecast_reference_instruments
+        }
+    )
     try:
         return tuple(
             context_forecast_contract(
@@ -224,7 +230,7 @@ def configured_world_model_ablation_contracts(
         )
     except KeyError as exc:
         raise ValueError(
-            "WorldModel control 参考合同品种不在 Capital 范围"
+            "WorldModel control 参考合同品种不在 Forecast 参考范围"
         ) from exc
 
 

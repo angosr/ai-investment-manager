@@ -62,7 +62,7 @@ from investment_manager.market.perpetual.models import (
     TradingSessionType,
 )
 from investment_manager.market.repository import SqlMarketDataStore
-from investment_manager.market.tables import market_quotes
+from investment_manager.market.tables import perpetual_quotes
 from investment_manager.portfolio.models import (
     CandidateCapitalAuthorization,
     CapitalCycleOutcome,
@@ -109,14 +109,17 @@ def _assemble_capital_cycle(config, engine, **kwargs):
     )
 
 
-def _test_spot_target() -> ForecastTarget:
+def _test_btc_target() -> ForecastTarget:
     return ForecastTarget.create(
         (
             ForecastLeg(
-                instrument=InstrumentId.binance_spot(
+                instrument=InstrumentId(
+                    venue="BINANCE",
+                    product=InstrumentProduct.USD_M_PERPETUAL,
                     symbol="BTCUSDT",
                     base_asset="BTC",
                     quote_asset="USDT",
+                    settlement_asset="USDT",
                 ),
                 direction=ExposureDirection.LONG,
                 gross_weight=Decimal("1"),
@@ -129,10 +132,13 @@ def _test_paxg_target() -> ForecastTarget:
     return ForecastTarget.create(
         (
             ForecastLeg(
-                instrument=InstrumentId.binance_spot(
+                instrument=InstrumentId(
+                    venue="BINANCE",
+                    product=InstrumentProduct.USD_M_PERPETUAL,
                     symbol="PAXGUSDT",
                     base_asset="PAXG",
                     quote_asset="USDT",
+                    settlement_asset="USDT",
                 ),
                 direction=ExposureDirection.LONG,
                 gross_weight=Decimal("1"),
@@ -195,9 +201,9 @@ class _FixedMockForecastProducer:
                 price=(
                     Decimal("765.1")
                     if item.instrument.symbol == "SPYUSDT"
+                    else Decimal("4623.49")
+                    if item.instrument.symbol == "PAXGUSDT"
                     else Decimal("100000")
-                    if item.instrument.product == InstrumentProduct.SPOT
-                    else Decimal("100300")
                 ),
                 observed_at=as_of,
                 available_at=as_of,
@@ -339,7 +345,7 @@ def _test_contract_and_binding(
     contract = ForecastContract.create(
         contract_version="test-carry-contract-v1",
         outcome_family_id=_TEST_FORECAST_FAMILY,
-        target=target or _test_spot_target(),
+        target=target or _test_btc_target(),
         outcome_buckets=buckets,
         horizon_minutes=7 * 24 * 60,
         decision_slot_rule="test-slot-v1",
@@ -458,6 +464,21 @@ def _put_market(
             source="test",
         )
     )
+    btc = _test_btc_target().legs[0].instrument
+    market.put_perpetual_quote(
+        PerpetualQuote(
+            quote_id=stable_id("perpetual_quote", btc.key, sequence),
+            instrument=btc,
+            exchange_time=at,
+            observed_at=at,
+            bid=Decimal(spot_bid),
+            bid_quantity=Decimal("2"),
+            ask=Decimal(spot_ask),
+            ask_quantity=Decimal("2"),
+            update_id=sequence,
+            source="test",
+        )
+    )
     if include_paxg:
         market.put_quote(
             MarketQuote(
@@ -468,6 +489,21 @@ def _put_market(
                 bid_quantity=Decimal("2"),
                 ask=Decimal("4623.49"),
                 ask_quantity=Decimal("2"),
+                source="test",
+            )
+        )
+        paxg = _test_paxg_target().legs[0].instrument
+        market.put_perpetual_quote(
+            PerpetualQuote(
+                quote_id=stable_id("perpetual_quote", paxg.key, sequence),
+                instrument=paxg,
+                exchange_time=at,
+                observed_at=at,
+                bid=Decimal("4623.48"),
+                bid_quantity=Decimal("2"),
+                ask=Decimal("4623.49"),
+                ask_quantity=Decimal("2"),
+                update_id=sequence,
                 source="test",
             )
         )
@@ -814,7 +850,7 @@ def test_material_cycle_uses_economic_cause_and_recovers_only_missing_receipt() 
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=at, sequence=80)
-    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    config, service = _candidate_service(config, engine, raw_score=Decimal("0"))
     consumer = CapitalTriggerConsumer(
         capital=service,
         context_cadence_minutes=240,
@@ -865,7 +901,7 @@ def test_mixed_cycle_persists_two_causes_and_shared_batch_provenance() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=at.replace(minute=0), sequence=81)
-    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    config, service = _candidate_service(config, engine, raw_score=Decimal("0"))
     consumer = CapitalTriggerConsumer(
         capital=service,
         context_cadence_minutes=240,
@@ -1100,9 +1136,9 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     assert policy is not None
     target_policy = policy.targets[0]
     instrument = next(
-        item.instrument
-        for item in config.capital.execution_specs
-        if item.instrument.key == target_policy.reference_instrument_key
+        item
+        for item in config.capital.forecast_reference_instruments
+        if item.key == target_policy.reference_instrument_key
     )
     contract = context_forecast_contract(
         policy=policy,
@@ -1154,7 +1190,12 @@ def test_held_product_still_requires_valuation_and_execution_quotes() -> None:
     assert isinstance(opened, TradePlanExecutionResult)
     assert opened.account.positions[0].instrument.symbol == "PAXGUSDT"
     with engine.begin() as connection:
-        connection.execute(delete(market_quotes).where(market_quotes.c.symbol == "PAXGUSDT"))
+        connection.execute(
+            delete(perpetual_quotes).where(
+                perpetual_quotes.c.instrument_id
+                == "BINANCE:USD_M_PERPETUAL:PAXGUSDT"
+            )
+        )
     later = NOW + timedelta(minutes=1)
     _put_market(
         market,
@@ -1345,7 +1386,6 @@ def test_context_forecast_uses_observation_only_perpetual_market_evidence(
     assert evidence is not None
     assert evidence.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
     assert {item.instrument.product for item in config.capital.execution_specs} == {
-        InstrumentProduct.SPOT,
         InstrumentProduct.TRADFI_PERPETUAL,
         InstrumentProduct.USD_M_PERPETUAL,
     }
@@ -1440,7 +1480,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert first.groups[0].terminal
     assert first.groups[0].valid_until == NOW + timedelta(minutes=30)
     assert first.account.equity < Decimal("10000")
-    assert first.account.equity == Decimal("9996.70")
+    assert first.account.equity == Decimal("9998.20")
     assert first.account.revision == 1
     assert content_hash(first.account) == content_hash(
         first.account.model_copy(update={"revision": 0})
@@ -1470,7 +1510,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "objective": "REAL_CAPITAL_GROWTH",
         "horizon_years": 5,
         "base_currency": "USDT",
-        "universe_version": "binance-shadow-investable-v8",
+            "universe_version": "binance-shadow-investable-v9",
         "covered_exposures": [
             "CASH",
             "CRYPTO_NETWORK",
@@ -1479,7 +1519,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         ],
         "reference_policy_version": None,
     }
-    assert dto["account"]["equity"] == "9996.70"
+    assert dto["account"]["equity"] == "9998.20"
     assert dto["decision"]["risk_outcome"] == "APPROVED"
     assert dto["execution"] == {
         "active_group_count": 0,
@@ -1487,22 +1527,22 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
         "total_order_count": 1,
     }
     assert dto["performance"]["interval_count"] == 1
-    assert dto["performance"]["cumulative_net_pnl"] == "-3.30"
+    assert dto["performance"]["cumulative_net_pnl"] == "-1.80"
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
-    assert dto["performance"]["latest"]["net_pnl"] == "-3.30"
+    assert dto["performance"]["latest"]["net_pnl"] == "-1.80"
     equity_points = CapitalDashboardReader(engine, config).equity_history()
     by_revision = sorted(equity_points, key=lambda item: item.revision)
     assert [item.revision for item in by_revision] == [0, 1]
-    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9996.70")]
+    assert [item.equity for item in by_revision] == [Decimal("10000"), Decimal("9998.20")]
     assert serialize_capital_equity(tuple(by_revision))["points"][-1] == {
         "snapshot_id": first.account.snapshot_id,
         "at": NOW.isoformat(),
         "revision": 1,
-        "equity": "9996.70",
-        "net_pnl": "-3.30",
-        "drawdown_fraction": "0.00033",
+        "equity": "9998.20",
+        "net_pnl": "-1.80",
+        "drawdown_fraction": "0.00018",
         "cash_benchmark_equity": "10000",
-        "increment_vs_cash": "-3.30",
+        "increment_vs_cash": "-1.80",
     }
     newest_equity_page = CapitalDashboardReader(engine, config).equity_history(limit=1)
     older_equity_page = CapitalDashboardReader(engine, config).equity_history(
@@ -1524,7 +1564,7 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert activity_by_symbol["BTCUSDT"].trigger_types == ("HEARTBEAT",)
     assert len(activity_by_symbol["BTCUSDT"].position_changes) == 1
     opening_change = activity_by_symbol["BTCUSDT"].position_changes[0]
-    assert opening_change.instrument.key == "BINANCE:SPOT:BTCUSDT"
+    assert opening_change.instrument.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
     assert opening_change.side.value == "BUY"
     assert opening_change.effect == "OPEN_LONG"
     assert opening_change.filled_quantity == Decimal("0.03")
@@ -1708,7 +1748,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=at, sequence=71)
 
-    config, service = _candidate_service(config, engine, raw_score=Decimal("20"))
+    config, service = _candidate_service(config, engine, raw_score=Decimal("0"))
     result = service.produce(
         as_of=at,
         cause_id="unprofitable-candidate-batch",
@@ -1728,7 +1768,7 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert economics.candidate_id
     assert economics.payoff_projection_id is None
     assert economics.target_legs == (
-        ("BINANCE:SPOT:BTCUSDT", "BTCUSDT", "SPOT", "LONG"),
+        ("BINANCE:USD_M_PERPETUAL:BTCUSDT", "BTCUSDT", "USD_M_PERPETUAL", "LONG"),
     )
     assert economics.estimated_cost_bps == (
         economics.fee_bps
@@ -1740,9 +1780,9 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     assert serialized["candidate_economics"][0]["candidate_id"] == economics.candidate_id
     assert serialized["candidate_economics"][0]["target_legs"] == [
         {
-            "instrument": "BINANCE:SPOT:BTCUSDT",
+            "instrument": "BINANCE:USD_M_PERPETUAL:BTCUSDT",
             "symbol": "BTCUSDT",
-            "product": "SPOT",
+            "product": "USD_M_PERPETUAL",
             "direction": "LONG",
         }
     ]
@@ -1805,28 +1845,28 @@ def test_late_slot_accepts_an_existing_forecast_after_pipeline_change() -> None:
     assert isinstance(terminal[0], BaseForecast)
 
 
-def test_spot_only_forecast_receives_only_its_executable_quote() -> None:
+def test_single_product_forecast_receives_only_its_executable_quote() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
     market = SqlMarketDataStore(engine)
     _put_market(market, config, at=NOW, sequence=72)
-    spot = next(
+    instrument = next(
         item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.product == InstrumentProduct.SPOT
+        if item.instrument.key == "BINANCE:USD_M_PERPETUAL:BTCUSDT"
     )
     config, service = _candidate_service(
         config,
         engine,
-        raw_score=Decimal("9"),
-        target=ForecastTarget.single_long(spot),
+        raw_score=Decimal("0"),
+        target=ForecastTarget.single_long(instrument),
     )
 
     result = service.produce(
         as_of=NOW,
-        cause_id="spot-only-candidate-batch",
-        trigger_batch_id="spot-only-candidate-batch",
+        cause_id="single-product-candidate-batch",
+        trigger_batch_id="single-product-candidate-batch",
         symbol="BTCUSDT",
         trigger_types=("WORLD_MODEL_UPDATED",),
     )

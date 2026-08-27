@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v70
+  version: total-portfolio-capital-v71
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -151,15 +151,9 @@ capital:
       - NOMINAL_RATES
       - US_EQUITY
   investable_universe:
-    version: binance-shadow-investable-v8
+    version: binance-shadow-investable-v9
     mandate_version: provisional-total-portfolio-real-growth-v2
     instruments:
-      - instrument_key: BINANCE:SPOT:BTCUSDT
-        economic_exposure: CRYPTO_NETWORK
-        reference_candidate: false
-      - instrument_key: BINANCE:SPOT:PAXGUSDT
-        economic_exposure: INFLATION_SENSITIVE
-        reference_candidate: true
       - instrument_key: BINANCE:TRADFI_PERPETUAL:SPYUSDT
         economic_exposure: US_EQUITY
         reference_candidate: true
@@ -169,6 +163,22 @@ capital:
       - instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
         economic_exposure: INFLATION_SENSITIVE
         reference_candidate: false
+  # Forecast 结算参考不等于账户可投资产品；Spot 只提供经济 Outcome 与市场状态。
+  forecast_reference_instruments:
+    - venue: BINANCE
+      product: SPOT
+      symbol: BTCUSDT
+      base_asset: BTC
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+    - venue: BINANCE
+      product: SPOT
+      symbol: PAXGUSDT
+      base_asset: PAXG
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
   # 候选尚无冻结的风险匹配选择制品，故拒绝用任一当前产品补成总账户基准。
   reference_policy: null
   decision:
@@ -183,8 +193,8 @@ capital:
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
-    version: multi-product-portfolio-risk-v9
-    instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
+    version: perpetual-portfolio-risk-v10
+    instrument_allowlist: [BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
@@ -200,33 +210,9 @@ capital:
     reduction_authorization_seconds: 300
     kill_switch: false
   planner:
-    version: multi-product-trade-planner-v6
-    managed_instruments: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
+    version: perpetual-trade-planner-v7
+    managed_instruments: [BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
   execution_specs:
-    - instrument:
-        venue: BINANCE
-        product: SPOT
-        symbol: BTCUSDT
-        base_asset: BTC
-        quote_asset: USDT
-        settlement_asset: USDT
-        contract_multiplier: "1"
-      quantity_step: "0.00001"
-      minimum_order_notional: "5"
-      # Binance 普通账户 Spot taker 非促销费率；点差与深度滑点由成本模型另计。
-      fee_bps: "10"
-    - instrument:
-        venue: BINANCE
-        product: SPOT
-        symbol: PAXGUSDT
-        base_asset: PAXG
-        quote_asset: USDT
-        settlement_asset: USDT
-        contract_multiplier: "1"
-      quantity_step: "0.0001"
-      minimum_order_notional: "5"
-      # Binance 普通账户 Spot taker 非促销费率；点差与深度滑点由成本模型另计。
-      fee_bps: "10"
     - instrument:
         venue: BINANCE
         product: TRADFI_PERPETUAL
@@ -294,9 +280,9 @@ capital:
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
         required_feature_keys: [asset_state:BTC.realized_volatility, asset_state:BTC.return_fraction]
         product_payoffs:
-          version: btc-linear-product-payoff-v3
+          version: btc-perpetual-product-payoff-v4
           economic_exposure_id: CRYPTO_NETWORK:BTC:USDT
-          instrument_keys: [BINANCE:SPOT:BTCUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT]
+          instrument_keys: [BINANCE:USD_M_PERPETUAL:BTCUSDT]
           maximum_rule_age_seconds: 900
         # 2024-08-26..2026-08-26 Binance Spot 1h 收盘价滚动 4h 收益的
         # 10/30/70/90 分位边界；代表值为桶内中位数。合同激活后不可追改。
@@ -318,9 +304,9 @@ capital:
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
         required_feature_keys: [asset_state:PAXG.realized_volatility, asset_state:PAXG.return_fraction]
         product_payoffs:
-          version: paxg-linear-product-payoff-v1
+          version: paxg-perpetual-product-payoff-v2
           economic_exposure_id: INFLATION_SENSITIVE:PAXG:USDT
-          instrument_keys: [BINANCE:SPOT:PAXGUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
+          instrument_keys: [BINANCE:USD_M_PERPETUAL:PAXGUSDT]
           maximum_rule_age_seconds: 900
         # 同一冻结方法和截止时点，使用 PAXG 自身分布，避免继承 BTC 波动尺度。
         outcome_buckets:

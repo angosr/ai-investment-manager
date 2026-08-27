@@ -1333,6 +1333,7 @@ def _context_projector_fixture(
     funding_override: bool = True,
     market_observed_at: datetime | None = None,
     next_funding_time: datetime | None = None,
+    perpetual_only: bool = False,
 ):
     contract = _contract()
     forecast = _forecast(contract)
@@ -1349,7 +1350,7 @@ def _context_projector_fixture(
         funding_override=funding_override,
     )
     market.put_perpetual_product_rules(rules)
-    specs = (
+    all_specs = (
         InstrumentExecutionSpec(
             instrument=SPOT,
             quantity_step=Decimal("0.00001"),
@@ -1363,18 +1364,20 @@ def _context_projector_fixture(
             fee_bps=Decimal("5"),
         ),
     )
+    specs = all_specs[1:] if perpetual_only else all_specs
+    instruments = (PERPETUAL,) if perpetual_only else (SPOT, PERPETUAL)
     store = _ProjectionStore()
     projector = ContextProductPayoffProjector(
         policy=ProductPayoffPolicy(
             version="btc-linear-product-payoff-v1",
             economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
-            instrument_keys=(SPOT.key, PERPETUAL.key),
+            instrument_keys=tuple(item.key for item in instruments),
             maximum_rule_age_seconds=900,
         ),
         contract=contract,
         market=market,
         target_states=_TargetStates(),
-        instruments=(SPOT, PERPETUAL),
+        instruments=instruments,
         execution_specs=specs,
         risk=SleeveRiskTemplate(
             version="test",
@@ -1408,6 +1411,23 @@ def test_context_projector_emits_spot_and_both_legal_perpetual_directions() -> N
     assert all(rules.rules_id in item.product_rule_refs for item in derivatives)
     assert all(item.expected_funding_bps == Decimal("0.5") for item in derivatives)
     assert len(store.values) == 3
+
+
+def test_context_projector_keeps_spot_reference_out_of_perpetual_only_candidates() -> None:
+    forecast, _, rules, store, projector = _context_projector_fixture(
+        perpetual_only=True
+    )
+
+    projections = projector.project(forecast, as_of=forecast.available_at)
+
+    assert len(projections) == 2
+    assert {item.target.legs[0].instrument for item in projections} == {PERPETUAL}
+    assert {item.target.legs[0].direction for item in projections} == {
+        ExposureDirection.LONG,
+        ExposureDirection.SHORT,
+    }
+    assert all(rules.rules_id in item.product_rule_refs for item in projections)
+    assert len(store.values) == 2
 
 
 def test_context_projector_advances_fresh_lagging_funding_schedule() -> None:

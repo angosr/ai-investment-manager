@@ -54,8 +54,6 @@ class ContextProductPayoffProjector:
         if len(self.contract.target.legs) != 1:
             raise ValueError("Context product payoff 规范参考必须是单腿")
         reference = self.contract.target.legs[0].instrument
-        if reference.key not in keys:
-            raise ValueError("Context product payoff 缺少规范参考产品")
         if any(
             item.base_asset != reference.base_asset
             or item.quote_asset != reference.quote_asset

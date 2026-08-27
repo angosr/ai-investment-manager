@@ -441,11 +441,14 @@ def _context_forecast_producer(engine, analyst, *, preflight=None):
     policy = config.capital.context_forecast
     assert policy is not None
     target_policy = policy.targets[0]
-    instrument = next(
-        item.instrument
+    instruments = {
+        item.instrument.key: item.instrument
         for item in config.capital.execution_specs
-        if item.instrument.key == target_policy.reference_instrument_key
+    }
+    instruments.update(
+        {item.key: item for item in config.capital.forecast_reference_instruments}
     )
+    instrument = instruments[target_policy.reference_instrument_key]
     contract = context_forecast_contract(
         policy=policy,
         target_policy=target_policy,
@@ -579,6 +582,9 @@ def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets()
     instruments = {
         item.instrument.key: item.instrument for item in config.capital.execution_specs
     }
+    instruments.update(
+        {item.key: item for item in config.capital.forecast_reference_instruments}
+    )
     runtimes = []
     for target_policy in policy.targets:
         instrument = instruments[target_policy.reference_instrument_key]
@@ -676,9 +682,9 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
     policy = config.capital.context_forecast
     assert policy is not None
     spot = next(
-        item.instrument
-        for item in config.capital.execution_specs
-        if item.instrument.key == policy.targets[0].reference_instrument_key
+        item
+        for item in config.capital.forecast_reference_instruments
+        if item.key == policy.targets[0].reference_instrument_key
     )
     market = InMemoryMarketDataStore()
     closes = (Decimal("70000"), Decimal("70100"), Decimal("70200"))

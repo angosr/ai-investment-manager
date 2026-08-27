@@ -1384,6 +1384,14 @@ def assemble_capital_cycle(
             spec_by_key = {
                 item.instrument.key: item for item in config.capital.execution_specs
             }
+            reference_by_key = {
+                item.key: item
+                for item in config.capital.forecast_reference_instruments
+            }
+            forecast_instruments = {
+                **{key: spec.instrument for key, spec in spec_by_key.items()},
+                **reference_by_key,
+            }
             perpetual_by_key = {
                 item.key: item for item in config.market_data.perpetual_instruments
             }
@@ -1399,8 +1407,9 @@ def assemble_capital_cycle(
             behaviors: list[ContextForecastTargetStateBehavior] = []
             activation_times: list[datetime] = []
             for target_policy in context.targets:
-                spec = spec_by_key[target_policy.reference_instrument_key]
-                instrument = spec.instrument
+                instrument = forecast_instruments[
+                    target_policy.reference_instrument_key
+                ]
                 perpetual = (
                     perpetual_by_key.get(
                         target_policy.derivative_evidence_instrument_key

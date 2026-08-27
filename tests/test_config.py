@@ -65,22 +65,26 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v70"
+    assert config.capital.version == "total-portfolio-capital-v71"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
     assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v8"
+        "binance-shadow-investable-v9"
     )
     assert config.capital.reference_policy is None
     assert tuple(
         item.instrument_key for item in config.capital.investable_universe.instruments
     ) == (
-        "BINANCE:SPOT:BTCUSDT",
-        "BINANCE:SPOT:PAXGUSDT",
         "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
         "BINANCE:USD_M_PERPETUAL:BTCUSDT",
         "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
+    )
+    assert tuple(
+        item.key for item in config.capital.forecast_reference_instruments
+    ) == (
+        "BINANCE:SPOT:BTCUSDT",
+        "BINANCE:SPOT:PAXGUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v16"
     assert config.information.version == "information-intake-v40"
@@ -360,6 +364,9 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
     instruments = {
         item.instrument.key: item.instrument for item in config.capital.execution_specs
     }
+    instruments.update(
+        {item.key: item for item in config.capital.forecast_reference_instruments}
+    )
     perpetual = {
         item.key: item for item in config.market_data.perpetual_instruments
     }
@@ -478,7 +485,7 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
         "rebalance_band_fraction": Decimal("0.05"),
         "allocations": (
             {
-                "implementation_key": "BINANCE:SPOT:BTCUSDT",
+                "implementation_key": "BINANCE:TRADFI_PERPETUAL:SPYUSDT",
                 "target_exposure_fraction": Decimal("0.10"),
             },
             {
@@ -491,6 +498,34 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
     validated = type(config.capital).model_validate(payload)
     assert validated.reference_policy is not None
     assert validated.reference_policy.version == "underdiversified-reference-v1"
+
+
+def test_forecast_reference_products_are_not_capital_products() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    capital = config.capital
+    execution_keys = {
+        item.instrument.key for item in capital.execution_specs
+    }
+    reference_keys = {
+        item.key for item in capital.forecast_reference_instruments
+    }
+
+    assert execution_keys.isdisjoint(reference_keys)
+    assert all(
+        item.instrument.product != InstrumentProduct.SPOT
+        for item in capital.execution_specs
+    )
+    assert all(
+        set(target.product_payoffs.instrument_keys) <= execution_keys
+        and set(target.product_payoffs.instrument_keys).isdisjoint(reference_keys)
+        for target in capital.context_forecast.targets
+        if target.product_payoffs is not None
+    )
+
+    payload = capital.model_dump(mode="python")
+    payload["forecast_reference_instruments"] = ()
+    with pytest.raises(ValidationError, match="只读参考必须精确覆盖"):
+        type(capital).model_validate(payload)
 
 
 def test_provisional_mandate_cannot_grant_reference_policy() -> None:
