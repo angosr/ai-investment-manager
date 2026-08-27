@@ -57,12 +57,17 @@ class PortfolioSleeveInput(FrozenModel):
     def forecast_permission_must_be_explicit(self):
         if isinstance(self.forecast, BaseForecast):
             permission = self.capital_authorization
-            if permission is None or (
-                permission.producer_id != self.forecast.producer_id
-                or permission.producer_behavior_id != self.forecast.producer_behavior_id
-                or permission.outcome_family_id != self.forecast.outcome_family_id
-            ):
-                raise ValueError("BaseForecast 必须精确绑定 candidate capital authorization")
+            if self.new_capital_allowed:
+                if permission is None or (
+                    permission.producer_id != self.forecast.producer_id
+                    or permission.producer_behavior_id != self.forecast.producer_behavior_id
+                    or permission.outcome_family_id != self.forecast.outcome_family_id
+                ):
+                    raise ValueError(
+                        "新增资本的 BaseForecast 必须精确绑定 candidate capital authorization"
+                    )
+            elif permission is not None:
+                raise ValueError("既有持仓复核不得借用当前 candidate capital authorization")
         elif self.capital_authorization is not None:
             raise ValueError("CalibratedForecast 不得使用 candidate capital authorization")
         projection = self.payoff_projection
@@ -159,9 +164,7 @@ def remaining_target_gross_bps(
         quote = quote_by_instrument[leg.instrument.key]
         new_entry_price = quote.ask if leg.direction == ExposureDirection.LONG else quote.bid
         retained_price = quote.bid if leg.direction == ExposureDirection.LONG else quote.ask
-        decision_basis_price = (
-            retained_fraction * retained_price + added_fraction * new_entry_price
-        )
+        decision_basis_price = retained_fraction * retained_price + added_fraction * new_entry_price
         sign = Decimal("1") if leg.direction == ExposureDirection.LONG else Decimal("-1")
         realized_to_entry_bps += (
             sign
@@ -311,9 +314,7 @@ class PortfolioDecisionEngine:
         account_by_sleeve = {item.sleeve_id: item for item in account.sleeves}
         if set(account_by_sleeve) - {item.sleeve_id for item in sleeves}:
             raise ValueError("Portfolio 输入必须显式覆盖全部当前 Sleeve")
-        required_quote_keys = {
-            leg.instrument.key for item in sleeves for leg in item.target.legs
-        }
+        required_quote_keys = {leg.instrument.key for item in sleeves for leg in item.target.legs}
         if set(quote_by_instrument) != required_quote_keys:
             raise ValueError("ExecutableQuote 必须精确覆盖 Portfolio Sleeve Instruments")
         if not required_quote_keys.issubset(spec_by_instrument):
@@ -386,11 +387,7 @@ class PortfolioDecisionEngine:
         }
         eligible = tuple(
             sorted(
-                (
-                    item
-                    for item in sleeves
-                    if candidate_evaluations[item.sleeve_id].eligible
-                ),
+                (item for item in sleeves if candidate_evaluations[item.sleeve_id].eligible),
                 key=lambda item: (
                     -candidate_evaluations[item.sleeve_id].decision_net_bps,
                     0 if isinstance(item.forecast, CalibratedForecast) else 1,
@@ -419,9 +416,7 @@ class PortfolioDecisionEngine:
             if current_id is None:
                 if candidates:
                     selected_expression_ids.add(candidates[0].sleeve_id)
-                    duplicate_expression_ids.update(
-                        item.sleeve_id for item in candidates[1:]
-                    )
+                    duplicate_expression_ids.update(item.sleeve_id for item in candidates[1:])
                 continue
             current = item_by_sleeve[current_id]
             current_evaluation = candidate_evaluations[current_id]
@@ -431,9 +426,7 @@ class PortfolioDecisionEngine:
             best = candidates[0]
             if best.sleeve_id == current_id:
                 selected_expression_ids.add(current_id)
-                duplicate_expression_ids.update(
-                    item.sleeve_id for item in candidates[1:]
-                )
+                duplicate_expression_ids.update(item.sleeve_id for item in candidates[1:])
                 continue
             immediate_exit = self._cost(
                 current,
@@ -444,8 +437,7 @@ class PortfolioDecisionEngine:
                 spec_by_instrument=spec_by_instrument,
             )
             if (
-                candidate_evaluations[best.sleeve_id].decision_net_bps
-                - immediate_exit.total_bps
+                candidate_evaluations[best.sleeve_id].decision_net_bps - immediate_exit.total_bps
                 > current_evaluation.decision_net_bps
             ):
                 switch_exit_ids.add(current_id)
@@ -453,9 +445,7 @@ class PortfolioDecisionEngine:
             else:
                 selected_expression_ids.add(current_id)
                 duplicate_expression_ids.update(
-                    item.sleeve_id
-                    for item in candidates
-                    if item.sleeve_id != current_id
+                    item.sleeve_id for item in candidates if item.sleeve_id != current_id
                 )
         allocation_candidates = [
             item for item in eligible if item.sleeve_id in selected_expression_ids
@@ -529,9 +519,7 @@ class PortfolioDecisionEngine:
                 candidate_evaluations[item.sleeve_id],
                 desired_notional=final_desired.get(item.sleeve_id, Decimal("0")),
                 capacity_selected=item.sleeve_id in eligible_ids,
-                alternative_product_not_selected=(
-                    item.sleeve_id in duplicate_expression_ids
-                ),
+                alternative_product_not_selected=(item.sleeve_id in duplicate_expression_ids),
                 product_switch_exit=(item.sleeve_id in switch_exit_ids),
             )
             for item in sorted(sleeves, key=lambda value: value.sleeve_id)
@@ -543,25 +531,16 @@ class PortfolioDecisionEngine:
             for item in sleeves
         )
         reason_codes: set[str] = set()
-        if any(
-            candidate_evaluations[item].decision_net_bps > 0
-            for item in eligible_ids
-        ):
+        if any(candidate_evaluations[item].decision_net_bps > 0 for item in eligible_ids):
             reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
-        if any(
-            candidate_evaluations[item].decision_net_bps <= 0
-            for item in eligible_ids
-        ):
+        if any(candidate_evaluations[item].decision_net_bps <= 0 for item in eligible_ids):
             reason_codes.add("HOLDING_VALUE_EXCEEDS_EXIT_COST")
         if not eligible_ids and duplicate_expression_ids:
             reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
         elif not eligible_ids:
             reason_codes.add(
                 "CASH_SELECTED_NO_POSITIVE_NET_EDGE"
-                if any(
-                    candidate.forecast_current
-                    for candidate in candidate_evaluations.values()
-                )
+                if any(candidate.forecast_current for candidate in candidate_evaluations.values())
                 else "CASH_SELECTED_FORECAST_INVALID"
             )
         if invalid_holding_exit:
@@ -622,13 +601,11 @@ class PortfolioDecisionEngine:
         evaluation_notional: Decimal,
         minimum_net_bps: Decimal,
     ) -> PortfolioCandidateEvaluation:
-        forecast_current, validity_reason_codes, validity_evidence_refs = (
-            self._forecast_validity(
-                item,
-                as_of=as_of,
-                current_notional=current_notional,
-                evaluation_notional=evaluation_notional,
-            )
+        forecast_current, validity_reason_codes, validity_evidence_refs = self._forecast_validity(
+            item,
+            as_of=as_of,
+            current_notional=current_notional,
+            evaluation_notional=evaluation_notional,
         )
         gross = remaining_target_gross_bps(
             item.forecast,
@@ -651,7 +628,8 @@ class PortfolioDecisionEngine:
         else:
             # Candidate authorization is research identity, not a second
             # sizing or admission policy.
-            assert item.capital_authorization is not None
+            if item.new_capital_allowed:
+                assert item.capital_authorization is not None
             edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
         # The cash alternative for an existing holding includes immediate exit cost.
@@ -660,9 +638,7 @@ class PortfolioDecisionEngine:
             sleeve_id=item.sleeve_id,
             forecast_id=item.forecast.forecast_id,
             payoff_projection_id=(
-                item.payoff_projection.projection_id
-                if item.payoff_projection is not None
-                else None
+                item.payoff_projection.projection_id if item.payoff_projection is not None else None
             ),
             edge_basis=edge_basis,
             current_gross_notional=current_notional,
@@ -736,12 +712,8 @@ class PortfolioDecisionEngine:
                 ("PRODUCT_PAYOFF_INPUT_INVALID",),
                 (projection.projection_id,),
             )
-        retaining_only = (
-            current_notional > 0 and evaluation_notional <= current_notional
-        )
-        support_until = (
-            item.valid_until if retaining_only else item.new_exposure_valid_until
-        )
+        retaining_only = current_notional > 0 and evaluation_notional <= current_notional
+        support_until = item.valid_until if retaining_only else item.new_exposure_valid_until
         if not (item.available_at <= as_of < support_until):
             return False, ("FORECAST_TIME_WINDOW_INVALID",), ()
         return True, (), ()
@@ -812,9 +784,7 @@ class PortfolioDecisionEngine:
             desired_gross_notional=desired_notional,
             forecast_ids=(item.forecast.forecast_id,),
             payoff_projection_id=(
-                item.payoff_projection.projection_id
-                if item.payoff_projection is not None
-                else None
+                item.payoff_projection.projection_id if item.payoff_projection is not None else None
             ),
             edge_basis=(
                 PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
@@ -882,9 +852,7 @@ class PortfolioDecisionEngine:
             (
                 bucket.probability
                 * min(
-                    bucket.conservative_payoff_bps
-                    + remaining_shift
-                    - candidate.cost.total_bps,
+                    bucket.conservative_payoff_bps + remaining_shift - candidate.cost.total_bps,
                     Decimal("0"),
                 )
                 ** 2
@@ -930,8 +898,5 @@ class PortfolioDecisionEngine:
         sleeve_ids = tuple(item.sleeve_id for item in sleeves)
         if tuple(sorted(set(sleeve_ids))) != sleeve_ids:
             raise ValueError("PortfolioSleeveInput 必须按 sleeve_id 唯一且排序")
-        if (
-            account.as_of != as_of
-            or account.portfolio_id != self._policy.portfolio_id
-        ):
+        if account.as_of != as_of or account.portfolio_id != self._policy.portfolio_id:
             raise ValueError("Portfolio account 与 as_of/portfolio 不一致")

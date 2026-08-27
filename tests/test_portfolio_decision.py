@@ -35,9 +35,7 @@ from investment_manager.portfolio.models import (
 )
 
 NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
-SPOT = InstrumentId.binance_spot(
-    symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT"
-)
+SPOT = InstrumentId.binance_spot(symbol="BTCUSDT", base_asset="BTC", quote_asset="USDT")
 PERPETUAL = InstrumentId(
     product=InstrumentProduct.USD_M_PERPETUAL,
     symbol="BTCUSDT",
@@ -228,10 +226,10 @@ def _account(*, holding: bool = False) -> PortfolioAccountSnapshot:
         observed_at=NOW,
         settlement_asset="USDT",
         cash_balance=Decimal("10000"),
-            equity=Decimal("10000"),
-            equity_high_water=Decimal("10000"),
-            positions=product_positions,
-            sleeves=positions,
+        equity=Decimal("10000"),
+        equity_high_water=Decimal("10000"),
+        positions=product_positions,
+        sleeves=positions,
     )
 
 
@@ -414,18 +412,24 @@ def test_repricing_keeps_favorable_and_adverse_moves_in_payoff_algebra() -> None
         forecast,
         current_gross_notional=Decimal("0"),
         evaluation_gross_notional=Decimal("1000"),
-        quote_by_instrument={item.instrument.key: item for item in _quotes(
-            spot_bid="99", spot_ask="99", perpetual_bid="101", perpetual_ask="101"
-        )},
+        quote_by_instrument={
+            item.instrument.key: item
+            for item in _quotes(
+                spot_bid="99", spot_ask="99", perpetual_bid="101", perpetual_ask="101"
+            )
+        },
         as_of=NOW,
     )
     adverse = remaining_target_gross_bps(
         forecast,
         current_gross_notional=Decimal("0"),
         evaluation_gross_notional=Decimal("1000"),
-        quote_by_instrument={item.instrument.key: item for item in _quotes(
-            spot_bid="101", spot_ask="101", perpetual_bid="99", perpetual_ask="99"
-        )},
+        quote_by_instrument={
+            item.instrument.key: item
+            for item in _quotes(
+                spot_bid="101", spot_ask="101", perpetual_bid="99", perpetual_ask="99"
+            )
+        },
         as_of=NOW,
     )
     assert favorable > forecast.expected_gross_bps
@@ -463,15 +467,44 @@ def test_repricing_uses_exit_side_for_the_retained_fraction() -> None:
 
 def test_base_forecast_requires_exact_behavior_authorization() -> None:
     forecast = _forecast()
-    permission = _authorization(forecast).model_copy(
-        update={"producer_behavior_id": "different"}
-    )
+    permission = _authorization(forecast).model_copy(update={"producer_behavior_id": "different"})
     with pytest.raises(ValueError, match="精确绑定"):
         PortfolioSleeveInput(
             sleeve_id=_input(forecast).sleeve_id,
             forecast=forecast,
             capital_authorization=permission,
         )
+
+
+def test_existing_position_review_does_not_borrow_new_behavior_authorization() -> None:
+    old_forecast = _forecast(behavior="old-behavior")
+    new_authorization = _authorization(_forecast(behavior="new-behavior"))
+    with pytest.raises(ValueError, match="不得借用"):
+        PortfolioSleeveInput(
+            sleeve_id=_input(old_forecast).sleeve_id,
+            forecast=old_forecast,
+            capital_authorization=new_authorization,
+            new_capital_allowed=False,
+        )
+    sleeve = PortfolioSleeveInput(
+        sleeve_id=_input(old_forecast).sleeve_id,
+        forecast=old_forecast,
+        capital_authorization=None,
+        new_capital_allowed=False,
+    )
+
+    target = _engine().decide(
+        cycle_id="behavior-transition-review",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(sleeve,),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional > 0
+    assert target.sleeves[0].forecast_ids == (old_forecast.forecast_id,)
 
 
 @pytest.mark.parametrize(
@@ -488,9 +521,7 @@ def test_expired_entry_window_can_only_retain_or_reduce_an_existing_sleeve(
         valid_until=NOW - timedelta(hours=1),
     )
     sleeve = _input(entry_expired)
-    target = _engine(
-        maximum_single_sleeve_fraction=Decimal(maximum_allocation_fraction)
-    ).decide(
+    target = _engine(maximum_single_sleeve_fraction=Decimal(maximum_allocation_fraction)).decide(
         cycle_id="cycle-1",
         as_of=NOW,
         account=_account(holding=True),

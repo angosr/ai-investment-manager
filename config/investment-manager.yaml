@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v73
+  version: total-portfolio-capital-v74
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -361,11 +361,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v37
+    version: world-model-ablation-forward-v38
     enabled: false
-    plan_id: world-model-ablation-forward-v37
+    plan_id: world-model-ablation-forward-v38
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T10:00:00Z
+    activated_at: 2026-08-27T11:00:00Z
     minimum_sample_size: 30
 
 governance:

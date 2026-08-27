@@ -1022,7 +1022,7 @@ class CapitalCycleService:
             forecast=forecast,
             payoff_projection=projection,
             payoff_projection_current=projection_current,
-            capital_authorization=source.capital_authorization,
+            capital_authorization=None,
             new_capital_allowed=False,
         )
 
