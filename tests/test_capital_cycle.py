@@ -2021,7 +2021,7 @@ def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
     assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
 
 
-def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:
+def test_current_holding_review_does_not_create_a_new_alpha_target() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -2052,13 +2052,18 @@ def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:
         payloads = connection.execute(select(capital_cycle_records.c.payload)).scalars()
         records = tuple(CapitalCycleRecord.model_validate(item) for item in payloads)
     record = next(item for item in records if item.cause_id == batch.batch_id)
-    assert record.outcome == CapitalCycleOutcome.TARGET_DECIDED
-    assert record.target_id is not None
+    assert record.outcome == CapitalCycleOutcome.HOLD
+    assert record.target_id is None
     assert record.execution_authorization_id is None
-    assert "POSITIVE_NET_EDGE_SELECTED" in record.reason_codes
+    assert record.reason_codes == (
+        "HOLDING_RISK_REVIEWED",
+        "PROGRAMMATIC_RISK_REVIEW",
+    )
     activity = CapitalDashboardReader(engine, config).activity()
-    assert activity[0].outcome == "NO_ORDER"
+    assert activity[0].outcome == "HOLD"
     assert activity[0].order_count == 0
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
 
 
 def test_holding_review_cannot_increase_capital_without_a_fresh_forecast() -> None:
@@ -2074,20 +2079,22 @@ def test_holding_review_cannot_increase_capital_without_a_fresh_forecast() -> No
     )
     opened = service.produce(as_of=NOW)
     assert isinstance(opened, TradePlanExecutionResult)
-    with engine.connect() as connection:
-        opened_target = load_portfolio_target(
-            connection.execute(
-                select(portfolio_targets.c.payload).where(
-                    portfolio_targets.c.as_of == NOW
-                )
-            ).scalar_one()
-        )
-    opened_notional = opened_target.sleeves[0].desired_gross_notional
-
     review_at = NOW + timedelta(minutes=5)
     _put_market(market, config, at=review_at, sequence=76)
+    upgraded = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={
+                    "version": "upgraded-capital-behavior",
+                    "decision": config.capital.decision.model_copy(
+                        update={"version": "upgraded-portfolio-decision"}
+                    ),
+                }
+            )
+        }
+    )
     config, restarted = _candidate_service(
-        config,
+        upgraded,
         engine,
         maximum_allocation_fraction=Decimal("0.50"),
         emit=False,
@@ -2098,16 +2105,136 @@ def test_holding_review_cannot_increase_capital_without_a_fresh_forecast() -> No
     )
 
     assert not isinstance(reviewed, TradePlanExecutionResult)
-    target = reviewed.target
-    assert target is not None
-    assert target.candidate_evaluations is not None
-    assert (
-        target.sleeves[0].desired_gross_notional
-        <= target.candidate_evaluations[0].current_gross_notional
-        <= opened_notional
-    )
+    assert reviewed.target is None
+    assert reviewed.holding_risk_review is not None
+    assert reviewed.holding_risk_review.outcome.value == "HOLD"
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+
+
+def test_completed_economic_cause_is_not_reopened_by_a_new_capital_behavior() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=77)
+    _configured, service = _candidate_service(config, engine)
+    cause_id = "already-consumed-cadence"
+
+    service.produce(
+        as_of=NOW,
+        cause_id=cause_id,
+        trigger_batch_id=cause_id,
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    changed = config.model_copy(
+        update={
+            "capital": config.capital.model_copy(
+                update={
+                    "version": "different-capital-behavior",
+                    "decision": config.capital.decision.model_copy(
+                        update={"version": "different-portfolio-decision"}
+                    ),
+                }
+            )
+        }
+    )
+    _changed, restarted = _candidate_service(changed, engine, emit=False)
+
+    assert restarted.cause_completed(cause_id)
+    replayed = restarted.produce(
+        as_of=NOW,
+        cause_id=cause_id,
+        trigger_batch_id=cause_id,
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+    assert replayed == service.produce(
+        as_of=NOW,
+        cause_id=cause_id,
+        trigger_batch_id=cause_id,
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(capital_cycle_records)) == 1
+
+
+def test_same_forecasts_cannot_add_risk_after_portfolio_decision_upgrade() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=78)
+    configured, service = _candidate_service(
+        config,
+        engine,
+        raw_score=Decimal("80"),
+        maximum_allocation_fraction=Decimal("0.50"),
+    )
+    opened = service.produce(
+        as_of=NOW,
+        cause_id="decision-v16-cause",
+        trigger_batch_id="decision-v16-cause",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+    assert isinstance(opened, TradePlanExecutionResult)
+    with engine.connect() as connection:
+        opened_target = load_portfolio_target(
+            connection.execute(select(portfolio_targets.c.payload)).scalar_one()
+        )
+    opened_notional = opened_target.sleeves[0].desired_gross_notional
+    assert opened_notional > 0
+
+    upgraded = configured.model_copy(
+        update={
+            "capital": configured.capital.model_copy(
+                update={
+                    "version": "capital-release-v17",
+                    "decision": configured.capital.decision.model_copy(
+                        update={"version": "portfolio-decision-v17"}
+                    ),
+                }
+            )
+        }
+    )
+    _upgraded, restarted = _candidate_service(
+        upgraded,
+        engine,
+        raw_score=Decimal("80"),
+        maximum_allocation_fraction=Decimal("0.50"),
+    )
+    replayed = restarted.produce(
+        as_of=NOW,
+        cause_id="release-rebound-cause",
+        trigger_batch_id="release-rebound-cause",
+        symbol="BTCUSDT",
+        trigger_types=("FORECAST_CADENCE",),
+    )
+
+    assert replayed == opened
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
+        assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
+        records = tuple(
+            CapitalCycleRecord.model_validate(item)
+            for item in connection.execute(
+                select(capital_cycle_records.c.payload).order_by(
+                    capital_cycle_records.c.evaluated_at,
+                    capital_cycle_records.c.record_id,
+                )
+            ).scalars()
+        )
+    assert len(records) == 2
+    original = next(item for item in records if item.cause_id == "decision-v16-cause")
+    rebound = next(item for item in records if item.cause_id == "release-rebound-cause")
+    assert rebound.outcome == CapitalCycleOutcome.FORECAST_ALREADY_DECIDED
+    assert rebound.forecast_ids == original.forecast_ids
+    assert rebound.target_id == original.target_id
 
 
 def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:

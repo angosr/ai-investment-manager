@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v75
+  version: total-portfolio-capital-v76
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -350,7 +350,7 @@ capital:
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v45
+  version: typed-outcome-settlement-v46
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30

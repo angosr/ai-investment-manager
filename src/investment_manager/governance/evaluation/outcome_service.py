@@ -70,6 +70,14 @@ class OutcomeEvaluationSupervisor:
     )
 
     async def run(self, stop: asyncio.Event) -> None:
+        workers = [self._run_settlement_loop(stop)]
+        if self.world_model_ablation_runner is not None:
+            workers.append(self._run_world_model_ablation_loop(stop))
+        if self.forecast_stability_runner is not None:
+            workers.append(self._run_forecast_stability_loop(stop))
+        await asyncio.gather(*workers)
+
+    async def _run_settlement_loop(self, stop: asyncio.Event) -> None:
         policy = self.config.outcome_evaluation
         while not stop.is_set():
             now = require_utc(self.clock())
@@ -108,48 +116,80 @@ class OutcomeEvaluationSupervisor:
                     if self.health.last_product_payoff_error_class != type(exc).__name__:
                         logger.exception("product payoff settlement failed")
                     self.health.last_product_payoff_error_class = type(exc).__name__
-            if self.world_model_ablation_runner is not None:
-                try:
-                    report = await asyncio.to_thread(
-                        self.world_model_ablation_runner.reconcile,
-                        as_of=now,
-                    )
-                    self.health.world_model_ablation_assignments = report.assignments
-                    self.health.world_model_ablation_settled_pairs = report.settled_pairs
-                    self.health.world_model_ablation_failed_controls = report.failed_controls
-                    self.health.last_world_model_ablation_error_class = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    if self.health.last_world_model_ablation_error_class != type(exc).__name__:
-                        logger.exception("world model ablation evaluation failed")
-                    self.health.last_world_model_ablation_error_class = type(exc).__name__
-            if self.forecast_stability_runner is not None:
-                try:
-                    report = await asyncio.to_thread(
-                        self.forecast_stability_runner.reconcile,
-                        as_of=now,
-                    )
-                    self.health.forecast_stability_assignments = report.assignment_count
-                    self.health.forecast_stability_complete_samples = (
-                        report.complete_sample_count
-                    )
-                    self.health.forecast_stability_failed_replicas = (
-                        report.failed_replica_count
-                    )
-                    self.health.last_forecast_stability_error_class = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    if self.health.last_forecast_stability_error_class != type(exc).__name__:
-                        logger.exception("context forecast stability evaluation failed")
-                    self.health.last_forecast_stability_error_class = type(exc).__name__
-            delay = _seconds_until_next_poll(
-                require_utc(self.clock()),
+            await _wait_for_next_poll(
+                stop,
+                now=require_utc(self.clock()),
                 poll_seconds=policy.poll_seconds,
             )
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=delay)
+
+    async def _run_world_model_ablation_loop(self, stop: asyncio.Event) -> None:
+        policy = self.config.outcome_evaluation
+        runner = self.world_model_ablation_runner
+        assert runner is not None
+        while not stop.is_set():
+            now = require_utc(self.clock())
+            try:
+                report = await asyncio.to_thread(
+                    runner.reconcile,
+                    as_of=now,
+                )
+                self.health.world_model_ablation_assignments = report.assignments
+                self.health.world_model_ablation_settled_pairs = report.settled_pairs
+                self.health.world_model_ablation_failed_controls = report.failed_controls
+                self.health.last_world_model_ablation_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_world_model_ablation_error_class != type(exc).__name__:
+                    logger.exception("world model ablation evaluation failed")
+                self.health.last_world_model_ablation_error_class = type(exc).__name__
+            await _wait_for_next_poll(
+                stop,
+                now=require_utc(self.clock()),
+                poll_seconds=policy.poll_seconds,
+            )
+
+    async def _run_forecast_stability_loop(self, stop: asyncio.Event) -> None:
+        policy = self.config.outcome_evaluation
+        runner = self.forecast_stability_runner
+        assert runner is not None
+        while not stop.is_set():
+            now = require_utc(self.clock())
+            try:
+                report = await asyncio.to_thread(
+                    runner.reconcile,
+                    as_of=now,
+                )
+                self.health.forecast_stability_assignments = report.assignment_count
+                self.health.forecast_stability_complete_samples = (
+                    report.complete_sample_count
+                )
+                self.health.forecast_stability_failed_replicas = (
+                    report.failed_replica_count
+                )
+                self.health.last_forecast_stability_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_forecast_stability_error_class != type(exc).__name__:
+                    logger.exception("context forecast stability evaluation failed")
+                self.health.last_forecast_stability_error_class = type(exc).__name__
+            await _wait_for_next_poll(
+                stop,
+                now=require_utc(self.clock()),
+                poll_seconds=policy.poll_seconds,
+            )
+
+
+async def _wait_for_next_poll(
+    stop: asyncio.Event,
+    *,
+    now: datetime,
+    poll_seconds: int,
+) -> None:
+    delay = _seconds_until_next_poll(now, poll_seconds=poll_seconds)
+    with suppress(TimeoutError):
+        await asyncio.wait_for(stop.wait(), timeout=delay)
 
 
 def _seconds_until_next_poll(now: datetime, *, poll_seconds: int) -> float:

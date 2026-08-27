@@ -328,6 +328,8 @@ Evaluation 分别报告仅定时和仅材料样本的到期、Forecast、`NO_EST
 
 TriggerCoordinator 直接产生到期槽，不依赖 WorldModel heartbeat 的相位。定时槽不强制重做 WorldModel；材料事件先更新 State 和 WorldModel，再由同一冻结触发政策决定是否产生 Forecast 槽。只有新的 Forecast 能改变 Alpha 资本目标；等待新 Forecast 时，旧 Forecast 仍按自身合同存在，程序化市场保护和账户风险可以独立只减险。Pipeline/协调语义变更时新 Coordinator 必须继承现有 Binding 和未终结槽，纯 Release 不重置 cohort。
 
+这一因果边界也约束部署与持仓复核。一个组合经济 cause 一旦由任一 Capital 行为形成终态，后续 Release 或 Capital 行为版本不得把同一 cadence/material cause 当成新机会再次作用于正式模拟账户；新行为从下一个尚未消费的新 Forecast cause 开始，旧输入只能离线重放。Heartbeat 在持仓有效时只恢复执行、对账和运行 Portfolio-independent Risk，不得因为价格、basis 或费用变化重新运行 Alpha Portfolio、改变目标金额或从旧 Forecast 新开产品；否则点时 Forecast 会被暗中改造成未登记的分钟级均值回归策略。只有冻结支持已经到期或失效时，持仓复核才可沿原链产生确定性的只减目标，且不能扩大其他有效持仓。新的 Forecast 到来时，Portfolio 才按当时完整未来成本原子比较持有、现金和合法替代表达。
+
 同一产品出现更新 Forecast 后，Portfolio 在下一次原子决策中使用最新可用 Forecast 重新比较当前持有、现金和合法目标；旧 Forecast 不回写、不删除，仍按原 Outcome 独立结算。事件槽失败不能伪造方向：普通失败保留旧 Forecast 到其自然到期，只有事前冻结且与 Alpha 无关的 CRITICAL 市场或账户安全政策可以只减险。事件触发政策本身必须以“定时策略”对“定时加事件策略”的同风险、费用后前瞻账户评价响应价值，不能用多产生的 Forecast 数量或局部评分证明有资本增量；在当前无市场冲击的 Mock 范围可确定性配对，真实资本存在冲击、容量或排队差异时必须改用受控 Venue 实验。
 
 Heartbeat 只恢复到期任务、结算、对账和遗漏的 Forecast 终态；它不自动更新 WorldModel，也不能在没有已登记槽时重复调用 Codex。到期唤醒命中尚未完成且仍在截止期内的槽时调用一次 Forecast 生产者；迟到则保存 `NO_ESTIMATE`。程序化市场保护和风险退出不等待 AI。相同任务身份只能产生一次有效运行，重试、heartbeat 和账号切换不能制造新预测样本。
@@ -393,6 +395,8 @@ investment_manager/
 退役行为的数据库事实永久保留，但“可查询”不等于“仍运行”。Dashboard 可以通过现役只读投影展示历史行动；Outcome 可以完成迁移切流时已经登记且尚未到期的终结义务。除此之外，不保留旧 Producer、周期编排、订单入口、定时结算器、通用窗口评价或自动提案轮询。历史读取必须由拥有该审计事实的现役领域提供窄合同；仓库不存在 `legacy` 兼容包、双写或后台补算。
 
 在线 Outcome 服务只运行当前 Release 明确启用的类型化结算器。一个旧评价器如果既不能影响现役权限，也不承担尚未到期的冻结义务，就不得因为数据库仍有旧表或 Dashboard 仍展示旧记录而继续轮询。Release、对账、风险、幂等恢复和前瞻评价属于最小生产保障；自动改代码、自动提案、通用治理评分和与现役资本无关的消融不得常驻运行。
+
+Outcome 进程可以承载多种现役终结义务，但它们不是一条串行流水线。到期 Forecast/Product 结算、WorldModel 配对消融和同输入稳定性复算分别按自己的绝对 UTC 周期推进；任一慢 AI 调用不得阻塞另一实验，更不得延迟已到期 Outcome。它们只共享不可变事实库和只读输入，不共享一次运行的成功、失败或等待状态，也不能因为并发而把副本、对照输出写入正式 Forecast 或资本链。进程停止时统一收敛这些有界循环，运行健康分别报告各自积压与失败。
 
 ## 9. 硬迁移原则
 

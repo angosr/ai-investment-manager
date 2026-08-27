@@ -8,7 +8,7 @@
 
 - `market-stream`：公开市场事实；
 - `information-collector`：新闻、官方文件、日历和连续指标；
-- `outcome-evaluation-service`：到期 Forecast 与资本结果结算；
+- `outcome-evaluation-service`：以互不阻塞的独立循环完成到期 Forecast/Product 结算、现役配对消融与同输入稳定性复算；
 - `trigger-service`：Outbox 投递、TriggerCoordinator 和资本消费者；
 - `assessment-worker`：WorldModel 与 Context Forecast 的 Codex Activity；
 - `dashboard-service`：只读 API 和冻结前端制品。

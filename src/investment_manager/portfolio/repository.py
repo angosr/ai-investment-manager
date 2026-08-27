@@ -434,6 +434,29 @@ class SqlCapitalCycleStore:
             ).scalar_one_or_none()
         return None if payload is None else CapitalCycleRecord.model_validate(payload)
 
+    def for_cause(
+        self,
+        *,
+        portfolio_id: str,
+        cause_id: str,
+    ) -> CapitalCycleRecord | None:
+        """Return the first receipt for an economic cause across Capital releases."""
+
+        with self._engine.connect() as connection:
+            payload = connection.execute(
+                select(capital_cycle_records.c.payload)
+                .where(
+                    capital_cycle_records.c.portfolio_id == portfolio_id,
+                    capital_cycle_records.c.cause_id == cause_id,
+                )
+                .order_by(
+                    capital_cycle_records.c.evaluated_at,
+                    capital_cycle_records.c.record_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+        return None if payload is None else CapitalCycleRecord.model_validate(payload)
+
 
 class SqlPortfolioPerformanceStore:
     """Append one causal net-equity interval for every account snapshot after inception."""

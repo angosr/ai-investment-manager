@@ -60,7 +60,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v75"
+    assert config.capital.version == "total-portfolio-capital-v76"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -124,7 +124,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v53"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v45"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v46"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (

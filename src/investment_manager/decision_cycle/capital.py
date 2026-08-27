@@ -395,13 +395,9 @@ class CapitalCycleService:
         """Whether this pipeline already completed one durable capital cause."""
 
         return (
-            self._cycle_records.get(
-                stable_id(
-                    "capital_cycle_record",
-                    self._policy.decision.portfolio_id,
-                    self._capital_behavior_id,
-                    cause_id,
-                )
+            self._cycle_records.for_cause(
+                portfolio_id=self._policy.decision.portfolio_id,
+                cause_id=cause_id,
             )
             is not None
         )
@@ -498,13 +494,9 @@ class CapitalCycleService:
             self._capital_behavior_id,
             requested_at.isoformat(),
         )
-        prior_record = self._cycle_records.get(
-            stable_id(
-                "capital_cycle_record",
-                self._policy.decision.portfolio_id,
-                self._capital_behavior_id,
-                evaluation_cause_id,
-            )
+        prior_record = self._cycle_records.for_cause(
+            portfolio_id=self._policy.decision.portfolio_id,
+            cause_id=evaluation_cause_id,
         )
         if prior_record is not None:
             if (
@@ -843,7 +835,6 @@ class CapitalCycleService:
         return stable_id(
             "capital_forecast_cycle",
             self._policy.decision.portfolio_id,
-            self._policy.decision.version,
             tuple(sorted(item.forecast_id for item in forecasts)),
         )
 
@@ -1130,11 +1121,20 @@ class CapitalCycleService:
             execution_specs=self._policy.execution_specs,
         )
         plan = protected.trade_plan
+        support_invalid = any(
+            not item.payoff_projection_current
+            or as_of >= item.forecast.economic_horizon_end
+            for item in sleeves
+        )
         if (
             plan is None
             and protected.holding_risk_review is not None
             and protected.holding_risk_review.outcome.value == "HOLD"
+            and support_invalid
         ):
+            # A heartbeat cannot turn a frozen Forecast into a minute-by-minute
+            # Alpha strategy.  Portfolio is re-entered here only to withdraw an
+            # expired/invalid holding authorization; every input is reduce-only.
             protected = self._decisions.run(
                 cycle_id=cycle_id,
                 as_of=as_of,
