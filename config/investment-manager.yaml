@@ -374,7 +374,7 @@ outcome_evaluation:
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
   quant_baseline:
-    version: transparent-conditional-quant-v3
+    version: transparent-conditional-quant-v4
     enabled: false
     producer_id: program-quant-baseline
     artifacts:
@@ -385,7 +385,7 @@ outcome_evaluation:
         artifact_id: quant_forecast_artifact_6d7056cb69ff71e482a9
         relative_path: evidence/quant-forecasts/quant_forecast_artifact_6d7056cb69ff71e482a9.json
   quant_context_posterior:
-    version: quant-context-posterior-forward-v2
+    version: quant-context-posterior-forward-v3
     enabled: false
     producer_id: codex-quant-context-posterior
     activated_at: 2026-08-27T16:00:00Z

@@ -61,7 +61,7 @@ from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.settings import AppConfig
 
-POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v1"
+POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v2"
 POSTERIOR_INSTRUCTIONS = (
     "你是组合概率预测员。输入逐目标提供同槽确定性市场状态、预登记 ForecastContract、"
     "经过样本外验证的 Quant prior 与共享 WorldModel。",
@@ -69,6 +69,8 @@ POSTERIOR_INSTRUCTIONS = (
     "确定性状态表明历史 Quant 条件不再充分时，才调整概率；posterior 与 prior 完全相同是合法结论。",
     "不得选择、启停或重新加权 Quant 模型，不得读取训练数据，不得重新计算输入特征，"
     "也不得为了体现 AI 作用而制造概率变化。",
+    "Quant reliability 只描述历史概率质量；必须结合当前 cell 样本量、最弱阶段增量、"
+    "预期毛收益和输入中的产品 break-even 判断，不得把 Brier 改善直接称为可交易 Alpha。",
     (
         "你必须为每个可见 decision_slot_id 恰好输出一份 Forecast，只回答合同终点"
         "收益落入各 bucket 的概率；不得输出订单、仓位、杠杆、精确收益点数、止损、"
@@ -286,6 +288,7 @@ def build_quant_context_posterior_assignment(
         projected["quant_panel"] = {
             key: panel[key]
             for key in (
+                "panel_version",
                 "artifact_id",
                 "inference_version",
                 "features",

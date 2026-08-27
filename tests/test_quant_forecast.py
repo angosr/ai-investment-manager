@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from investment_manager.forecast.context.producer import context_forecast_contract
+from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.quant.runtime import (
+    QuantForecastArtifact,
     load_quant_forecast_artifact,
     quant_cell_key,
     quant_features_from_bars,
@@ -15,16 +18,34 @@ from investment_manager.forecast.quant.runtime import (
 )
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.market.models import MarketBar
+from investment_manager.settings import load_config
 
 
 def _artifact_path(
     artifact_id: str = "quant_forecast_artifact_f54ca8ba93572cffb9a7",
 ) -> Path:
     return (
-        Path(__file__).resolve().parents[1]
-        / "evidence"
-        / "quant-forecasts"
-        / f"{artifact_id}.json"
+        Path(__file__).resolve().parents[1] / "evidence" / "quant-forecasts" / f"{artifact_id}.json"
+    )
+
+
+def _contract_for_artifact(artifact: QuantForecastArtifact) -> ForecastContract:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "config" / "investment-manager.shadow.yaml")
+    policy = config.capital.context_forecast
+    assert policy is not None
+    target = next(
+        item for item in policy.targets if item.outcome_family_id == artifact.outcome_family_id
+    )
+    instruments = {
+        **{item.instrument.key: item.instrument for item in config.capital.execution_specs},
+        **{item.key: item for item in config.capital.forecast_reference_instruments},
+    }
+    return context_forecast_contract(
+        policy=policy,
+        target_policy=target,
+        instrument=instruments[target.reference_instrument_key],
+        cost_semantics_version=config.capital.decision.cost_model_version,
     )
 
 
@@ -96,12 +117,11 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
     assert artifact.blind_sample_count == 3_503
     assert sum(artifact.validation_phase_sample_counts) == 3_499
     assert sum(artifact.blind_phase_sample_counts) == 3_503
-    assert max(artifact.validation_phase_sample_counts) - min(
-        artifact.validation_phase_sample_counts
-    ) <= 1
-    assert max(artifact.blind_phase_sample_counts) - min(
-        artifact.blind_phase_sample_counts
-    ) <= 1
+    assert (
+        max(artifact.validation_phase_sample_counts) - min(artifact.validation_phase_sample_counts)
+        <= 1
+    )
+    assert max(artifact.blind_phase_sample_counts) - min(artifact.blind_phase_sample_counts) <= 1
     assert all(
         selected_score < baseline_score
         for selected_score, baseline_score in zip(
@@ -140,11 +160,15 @@ def test_quant_features_and_cell_are_deterministic_and_point_in_time() -> None:
     panel = quant_panel_projection(
         artifact,
         features,
+        contract=_contract_for_artifact(artifact),
         decision_slot_id="test-slot",
     )
     assert panel["decision_slot_id"] == "test-slot"
     assert len(panel["candidate_predictions"]) == 3
     assert panel["maximum_bucket_probability_range"] > 0
+    assert panel["panel_version"] == "quant-reliability-panel-v2"
+    assert panel["quant_prior"]["cell_sample_count"] > 0
+    assert panel["quant_prior"]["reliability"]["blind_brier_skill"] > 0
 
     with pytest.raises(PointInTimeInputUnavailable, match="时间缺口"):
         quant_features_from_bars(_bars(gap_at=20))

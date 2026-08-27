@@ -39,6 +39,7 @@ from investment_manager.market.repository import MarketDataStore
 
 QUANT_FEATURE_VERSION = "hourly-5m-momentum-volatility-v1"
 QUANT_INFERENCE_VERSION = "conditional-empirical-dirichlet-v1"
+QUANT_PANEL_VERSION = "quant-reliability-panel-v2"
 _FIVE_MINUTES = timedelta(minutes=5)
 _FEATURE_BARS = 49
 
@@ -96,9 +97,9 @@ class QuantCandidateEvaluation(FrozenModel):
     def validation_summary_matches_phases(self):
         if len(self.validation_phase_briers) != 4:
             raise ValueError("Quant validation 必须保存四个非重叠相位")
-        if self.validation_brier != sum(
-            self.validation_phase_briers, Decimal("0")
-        ) / Decimal(len(self.validation_phase_briers)):
+        if self.validation_brier != sum(self.validation_phase_briers, Decimal("0")) / Decimal(
+            len(self.validation_phase_briers)
+        ):
             raise ValueError("Quant validation Brier 必须等于非重叠相位均值")
         if self.validation_worst_phase_brier != max(self.validation_phase_briers):
             raise ValueError("Quant validation 最差相位 Brier 与相位明细不一致")
@@ -202,6 +203,14 @@ class QuantForecastArtifact(FrozenModel):
         *,
         model_name: str | None = None,
     ) -> tuple[ForecastBucketProbability, ...]:
+        return self.distribution_for(features, model_name=model_name).probabilities
+
+    def distribution_for(
+        self,
+        features: QuantFeatureVector,
+        *,
+        model_name: str | None = None,
+    ) -> QuantCellDistribution:
         selected_name = model_name or self.selected_model
         candidate = next(
             (item for item in self.candidate_evaluations if item.model_name == selected_name),
@@ -215,7 +224,7 @@ class QuantForecastArtifact(FrozenModel):
             self.feature_thresholds,
         )
         cell = next((item for item in candidate.cells if item.cell_key == key), None)
-        return self.global_distribution.probabilities if cell is None else cell.probabilities
+        return self.global_distribution if cell is None else cell
 
 
 def load_quant_forecast_artifact(
@@ -249,6 +258,7 @@ def quant_forecast_behavior_id(
         producer_id,
         QUANT_FEATURE_VERSION,
         QUANT_INFERENCE_VERSION,
+        QUANT_PANEL_VERSION,
         tuple(
             (
                 contract.contract_id,
@@ -263,9 +273,10 @@ def quant_panel_projection(
     artifact: QuantForecastArtifact,
     features: QuantFeatureVector,
     *,
+    contract: ForecastContract,
     decision_slot_id: str,
 ) -> dict[str, object]:
-    """Project exact candidate disagreement without exposing training rows."""
+    """Project exact candidate disagreement and compact reliability evidence."""
 
     candidate_values = tuple(
         (
@@ -275,34 +286,71 @@ def quant_panel_projection(
                 features,
                 artifact.feature_thresholds,
             ),
-            artifact.probabilities_for(features, model_name=candidate.model_name),
+            artifact.distribution_for(features, model_name=candidate.model_name),
         )
         for candidate in artifact.candidate_evaluations
     )
-    selected_probabilities = artifact.probabilities_for(features)
+    selected = next(
+        item
+        for item in artifact.candidate_evaluations
+        if item.model_name == artifact.selected_model
+    )
+    selected_distribution = artifact.distribution_for(features)
+    selected_probabilities = selected_distribution.probabilities
+    representatives = {item.bucket_id: item.representative_bps for item in contract.outcome_buckets}
+    if tuple(representatives) != tuple(item.bucket_id for item in selected_probabilities):
+        raise ValueError("Quant panel 与 ForecastContract bucket 不一致")
+    expected_gross_bps = sum(
+        (item.probability * representatives[item.bucket_id] for item in selected_probabilities),
+        Decimal("0"),
+    )
     probability_ranges = tuple(
-        max(values[2][index].probability for values in candidate_values)
-        - min(values[2][index].probability for values in candidate_values)
+        max(values[2].probabilities[index].probability for values in candidate_values)
+        - min(values[2].probabilities[index].probability for values in candidate_values)
         for index in range(len(selected_probabilities))
     )
     return {
         "purpose": "PROGRAM_QUANT_FORECAST",
+        "panel_version": QUANT_PANEL_VERSION,
         "artifact_id": artifact.artifact_id,
         "inference_version": artifact.inference_version,
         "decision_slot_id": decision_slot_id,
         "features": features,
         "quant_prior": {
             "model_name": artifact.selected_model,
+            "cell_key": selected_distribution.cell_key,
+            "cell_sample_count": selected_distribution.sample_count,
+            "expected_gross_bps": expected_gross_bps,
             "outcome_probabilities": selected_probabilities,
+            "reliability": {
+                "validation_min_phase_brier_skill": min(
+                    baseline - model
+                    for baseline, model in zip(
+                        artifact.validation_unconditional_phase_briers,
+                        selected.validation_phase_briers,
+                        strict=True,
+                    )
+                ),
+                "blind_brier_skill": (
+                    artifact.blind_unconditional_brier - artifact.selected_blind_brier
+                ),
+                "blind_min_phase_brier_skill": min(
+                    baseline - model
+                    for baseline, model in zip(
+                        artifact.blind_unconditional_phase_briers,
+                        artifact.selected_blind_phase_briers,
+                        strict=True,
+                    )
+                ),
+            },
         },
         "candidate_predictions": tuple(
             {
                 "model_name": candidate.model_name,
-                "validation_brier": candidate.validation_brier,
                 "cell_key": cell_key,
-                "outcome_probabilities": probabilities,
+                "outcome_probabilities": distribution.probabilities,
             }
-            for candidate, cell_key, probabilities in candidate_values
+            for candidate, cell_key, distribution in candidate_values
         ),
         "maximum_bucket_probability_range": max(probability_ranges),
     }
@@ -517,6 +565,7 @@ class PortfolioQuantForecastProducer:
         panel = quant_panel_projection(
             target.artifact,
             features,
+            contract=target.contract,
             decision_slot_id=slot.slot_id,
         )
         forecast = BaseForecast(

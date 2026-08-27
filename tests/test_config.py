@@ -140,7 +140,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.quant_context_posterior is not None
     assert config.outcome_evaluation.quant_context_posterior.enabled
     assert config.outcome_evaluation.quant_context_posterior.version == (
-        "quant-context-posterior-forward-v2"
+        "quant-context-posterior-forward-v3"
     )
     assert (
         config.outcome_evaluation.quant_context_posterior.assignment_poll_seconds == 5

@@ -147,6 +147,7 @@ def _fixture():
     )
     panel = {
         "purpose": "PROGRAM_QUANT_FORECAST",
+        "panel_version": "quant-reliability-panel-v2",
         "artifact_id": "artifact-1",
         "inference_version": "conditional-empirical-dirichlet-v1",
         "decision_slot_id": slot.slot_id,
