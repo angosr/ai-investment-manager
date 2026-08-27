@@ -28,6 +28,7 @@ dataset:
 forecast:
   horizon_minutes: 1440
   sample_anchor_hours_utc: [0, 6, 12, 18]
+  sample_anchor_semantics: completed_5m_bar_close_hour_utc
   features:
     momentum_return_minutes: 1440
     short_return_minutes: 240
@@ -37,6 +38,9 @@ forecast:
     representatives: development_bucket_medians
 
 candidates:
+  smoothing_strength: "20"
+  probability_model: empirical_cells_with_global_dirichlet_prior
+  models:
   - momentum
   - momentum_volatility
   - momentum_reversal_volatility
@@ -54,8 +58,9 @@ evaluation:
     选定候选必须在每个 UTC 锚点均优于该锚点的开发期无条件分布，且每个锚点按预测期望收益
     五分位形成的最高组与最低组真实毛收益差均大于 10 bp；否则不揭示 blind。
   blind_rule: >-
-    validation 通过后只评价已选模型一次；分别报告四个锚点的 Brier、无条件基线、期望收益分组、
-    方向毛收益和样本数，不把四个相关锚点合并成独立样本。
+    validation 通过后冻结桶、阈值和已选模型，只用 development 加 validation 重估该模型的条件概率，
+    再评价 blind 一次；分别报告四个锚点的 Brier、无条件基线、期望收益分组、方向毛收益和样本数，
+    不把四个相关锚点合并成独立样本。
   cost_semantics: >-
     10 bp 只是一开一平手续费的偏乐观下界；历史通过仍需由现役 Product、Portfolio、Risk 与
     Execution 在前向逻辑账户中计入 spread、slippage、funding、换手和持仓路径。
