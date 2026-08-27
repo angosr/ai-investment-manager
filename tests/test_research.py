@@ -181,6 +181,13 @@ def test_historical_catalog_round_trip_and_rejects_tampering(
     catalog = HistoricalDatasetCatalog(tmp_path)
     target = catalog.store(dataset)
     assert catalog.load(dataset.manifest.dataset_id) == dataset
+    repeated = HistoricalDataset(
+        manifest=dataset.manifest.model_copy(
+            update={"collected_at": dataset.manifest.collected_at + timedelta(hours=1)}
+        ),
+        bars=dataset.bars,
+    )
+    assert catalog.store(repeated) == target
     window = catalog.load_window(
         dataset.manifest.dataset_id,
         start=dataset.bars[5].close_time,

@@ -154,8 +154,11 @@ class HistoricalDatasetCatalog:
         target = self._root / dataset.manifest.dataset_id
         if target.exists():
             existing = self.load(dataset.manifest.dataset_id)
-            if existing.manifest != dataset.manifest:
-                raise ValueError("同一历史数据集 ID 的 Manifest 不一致")
+            same_manifest_identity = existing.manifest.model_copy(
+                update={"collected_at": dataset.manifest.collected_at}
+            ) == dataset.manifest
+            if not same_manifest_identity or existing.bars != dataset.bars:
+                raise ValueError("同一历史数据集 ID 的内容不一致")
             return target
 
         self._root.mkdir(parents=True, exist_ok=True)
