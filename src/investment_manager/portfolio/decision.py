@@ -353,34 +353,14 @@ class PortfolioDecisionEngine:
         for item in sleeves:
             current = current_by_sleeve[item.sleeve_id]
             maximum = maximum_candidate_notional[item.sleeve_id]
-            candidate = self._evaluate_candidate(
+            candidate_evaluations[item.sleeve_id] = self._evaluate_transition_candidate(
                 item,
                 quote_by_instrument=quote_by_instrument,
                 spec_by_instrument=spec_by_instrument,
                 as_of=as_of,
                 current_notional=current,
                 evaluation_notional=maximum,
-                minimum_net_bps=Decimal("0"),
             )
-            if current > 0 and not candidate.eligible and candidate.forecast_current:
-                immediate_exit = self._cost(
-                    item,
-                    current_notional=current,
-                    target_notional=Decimal("0"),
-                    evaluation_notional=current,
-                    quote_by_instrument=quote_by_instrument,
-                    spec_by_instrument=spec_by_instrument,
-                )
-                candidate = self._evaluate_candidate(
-                    item,
-                    quote_by_instrument=quote_by_instrument,
-                    spec_by_instrument=spec_by_instrument,
-                    as_of=as_of,
-                    current_notional=current,
-                    evaluation_notional=current,
-                    minimum_net_bps=-immediate_exit.total_bps,
-                )
-            candidate_evaluations[item.sleeve_id] = candidate
         candidate_notional = {
             sleeve_id: candidate.evaluation_gross_notional
             for sleeve_id, candidate in candidate_evaluations.items()
@@ -452,31 +432,79 @@ class PortfolioDecisionEngine:
         ]
         requested_by_sleeve = {
             item.sleeve_id: (
-                current_by_sleeve[item.sleeve_id]
+                min(
+                    current_by_sleeve[item.sleeve_id],
+                    candidate_notional[item.sleeve_id],
+                )
                 if candidate_evaluations[item.sleeve_id].decision_net_bps <= 0
                 else min(
                     candidate_notional[item.sleeve_id],
-                    account.equity
-                    * self._downside_scaled_allocation_fraction(
-                        item,
-                        candidate_evaluations[item.sleeve_id],
+                    max(
+                        current_by_sleeve[item.sleeve_id],
+                        min(
+                            candidate_notional[item.sleeve_id],
+                            account.equity
+                            * self._downside_scaled_allocation_fraction(
+                                item,
+                                candidate_evaluations[item.sleeve_id],
+                            ),
+                        ),
                     ),
                 )
             )
             for item in allocation_candidates
         }
-        total_requested = sum(requested_by_sleeve.values(), Decimal("0"))
         total_limit = account.equity * self._policy.maximum_total_exposure_fraction
-        scale = (
-            min(Decimal("1"), total_limit / total_requested)
-            if total_requested > 0
+        retained_by_sleeve = {
+            sleeve_id: min(requested, current_by_sleeve[sleeve_id])
+            for sleeve_id, requested in requested_by_sleeve.items()
+        }
+        retained_total = sum(retained_by_sleeve.values(), Decimal("0"))
+        incremental_by_sleeve = {
+            sleeve_id: requested - retained_by_sleeve[sleeve_id]
+            for sleeve_id, requested in requested_by_sleeve.items()
+        }
+        incremental_total = sum(incremental_by_sleeve.values(), Decimal("0"))
+        incremental_capacity = max(total_limit - retained_total, Decimal("0"))
+        incremental_scale = (
+            min(Decimal("1"), incremental_capacity / incremental_total)
+            if incremental_total > 0
             else Decimal("0")
         )
         desired_by_sleeve = {
-            sleeve_id: requested * scale
-            for sleeve_id, requested in requested_by_sleeve.items()
-            if requested > 0
+            sleeve_id: retained_by_sleeve[sleeve_id]
+            + incremental_by_sleeve[sleeve_id] * incremental_scale
+            for sleeve_id in requested_by_sleeve
+            if retained_by_sleeve[sleeve_id] + incremental_by_sleeve[sleeve_id] * incremental_scale
+            > 0
         }
+
+        # Sizing is only a proposed state.  Re-evaluate the actual target so a
+        # candidate admitted at the concentration cap cannot carry that
+        # eligibility into a materially different, uneconomic transition.
+        finalized_candidates = dict(candidate_evaluations)
+        finalized_desired: dict[str, Decimal] = {}
+        for item in allocation_candidates:
+            sleeve_id = item.sleeve_id
+            desired = desired_by_sleeve.get(sleeve_id, Decimal("0"))
+            if desired <= 0:
+                continue
+            current = current_by_sleeve[sleeve_id]
+            candidate = self._evaluate_transition_candidate(
+                item,
+                quote_by_instrument=quote_by_instrument,
+                spec_by_instrument=spec_by_instrument,
+                as_of=as_of,
+                current_notional=current,
+                evaluation_notional=desired,
+            )
+            desired = candidate.evaluation_gross_notional if candidate.eligible else Decimal("0")
+            if candidate.eligible and desired > 0:
+                finalized_candidates[sleeve_id] = candidate
+                finalized_desired[sleeve_id] = desired
+
+        candidate_evaluations = finalized_candidates
+        desired_by_sleeve = finalized_desired
 
         eligible_ids = set(desired_by_sleeve)
         targets = tuple(
@@ -661,6 +689,47 @@ class PortfolioDecisionEngine:
                 if not forecast_current
                 else "NON_POSITIVE_NET_EDGE_CASH",
             ),
+        )
+
+    def _evaluate_transition_candidate(
+        self,
+        item: PortfolioSleeveInput,
+        *,
+        quote_by_instrument: dict[str, ExecutableQuote],
+        spec_by_instrument: dict[str, InstrumentExecutionSpec],
+        as_of: datetime,
+        current_notional: Decimal,
+        evaluation_notional: Decimal,
+    ) -> PortfolioCandidateEvaluation:
+        candidate = self._evaluate_candidate(
+            item,
+            quote_by_instrument=quote_by_instrument,
+            spec_by_instrument=spec_by_instrument,
+            as_of=as_of,
+            current_notional=current_notional,
+            evaluation_notional=evaluation_notional,
+            minimum_net_bps=Decimal("0"),
+        )
+        if current_notional <= 0 or candidate.eligible or not candidate.forecast_current:
+            return candidate
+
+        review_notional = min(current_notional, evaluation_notional)
+        immediate_exit = self._cost(
+            item,
+            current_notional=current_notional,
+            target_notional=Decimal("0"),
+            evaluation_notional=review_notional,
+            quote_by_instrument=quote_by_instrument,
+            spec_by_instrument=spec_by_instrument,
+        )
+        return self._evaluate_candidate(
+            item,
+            quote_by_instrument=quote_by_instrument,
+            spec_by_instrument=spec_by_instrument,
+            as_of=as_of,
+            current_notional=current_notional,
+            evaluation_notional=review_notional,
+            minimum_net_bps=-immediate_exit.total_bps,
         )
 
     @staticmethod

@@ -629,8 +629,51 @@ def test_portfolio_scales_experimental_size_from_full_cost_downside() -> None:
         / downside_second_moment.sqrt()
     )
     assert Decimal("0") < expected < Decimal("3000")
-    assert target.sleeves[0].desired_gross_notional == expected
+    assert abs(target.sleeves[0].desired_gross_notional - expected) < Decimal("1e-20")
 
+
+
+def test_downside_sizing_cannot_turn_a_positive_holding_into_a_costly_reduction() -> None:
+    contract = _contract()
+    forecast = _forecast(contract).model_copy(
+        update={
+            "outcome_probabilities": (
+                ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.25")),
+                ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.476")),
+                ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.274")),
+            ),
+            "expected_gross_bps": Decimal("2.4"),
+        }
+    )
+    forecast, projections, sleeves, quotes, specs = _decision_projection_inputs(forecast)
+    spot_projection = projections[0]
+    spot_sleeve = next(item for item in sleeves if item.payoff_projection == spot_projection)
+    spot_quotes = tuple(item for item in quotes if item.instrument == SPOT)
+    spot_specs = tuple(item for item in specs if item.instrument == SPOT)
+
+    target = _decision_engine().decide(
+        cycle_id="retain-positive-holding-cycle",
+        as_of=forecast.available_at,
+        account=_decision_account(
+            at=forecast.available_at,
+            cycle_id="retain-positive-holding-cycle",
+            holding=spot_sleeve,
+        ),
+        sleeves=(spot_sleeve,),
+        quotes=spot_quotes,
+        execution_specs=spot_specs,
+    )
+
+    assert target is not None and target.candidate_evaluations is not None
+    sleeve = target.sleeves[0]
+    candidate = target.candidate_evaluations[0]
+    assert sleeve.desired_gross_notional == Decimal("1000")
+    assert candidate.evaluation_gross_notional == sleeve.desired_gross_notional
+    assert candidate.desired_gross_notional == sleeve.desired_gross_notional
+    assert candidate.decision_gross_bps == sleeve.decision_gross_bps
+    assert candidate.cost == sleeve.cost
+    assert candidate.decision_net_bps == sleeve.decision_net_bps
+    assert candidate.decision_net_bps > 0
 
 def test_bearish_forecast_can_select_the_short_product_expression() -> None:
     contract = _contract()

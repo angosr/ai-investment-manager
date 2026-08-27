@@ -52,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v68"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v69"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -62,7 +62,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v74"
+    assert config.capital.version == "total-portfolio-capital-v75"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -79,7 +79,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:BTCUSDT",
         "BINANCE:SPOT:PAXGUSDT",
     )
-    assert config.capital.decision.version == "portfolio-net-edge-v16"
+    assert config.capital.decision.version == "portfolio-net-edge-v17"
     assert config.information.version == "information-intake-v41"
     assert config.information.normalizer_version == "trendradar-collector-v10"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
