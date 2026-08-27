@@ -9,7 +9,9 @@ class TriggerPolicy(StrictConfig):
     version: str
     heartbeat_minutes: int = Field(default=15, ge=1, le=240)
     debounce_seconds: int = Field(default=120, ge=0, le=3600)
-    high_impact_threshold: Decimal = Field(default=Decimal("0.80"), ge=0, le=1)
+    minimum_intelligence_review_priority: Decimal = Field(
+        default=Decimal("0.80"), ge=0, le=1
+    )
     volatility_jump_threshold: Decimal = Field(default=Decimal("0.01"), gt=0)
     volatility_window_seconds: int = Field(default=600, ge=60, le=86_400)
     minimum_call_interval_seconds: int = Field(default=15, ge=1, le=3600)

@@ -14,7 +14,7 @@ export function WorldFeed({ events }: { events: WorldEvent[] }) {
         const shock = event.kind === "MARKET_SHOCK";
         const kindLabel = EVENT_LABEL[event.kind] ?? event.kind;
         const folded = members.length > 1;
-        const scale = event.priority === null ? event.impact : event.priority / 100;
+        const scale = event.priority === null ? event.attention_priority : event.priority / 100;
         return (
           <div key={event.event_id} className={`${styles.row} ${shock ? styles.shock : styles.news}`}>
             <span className={styles.time}>{hhmm(event.at)}</span>
@@ -47,9 +47,9 @@ export function WorldFeed({ events }: { events: WorldEvent[] }) {
               ) : null}
             </div>
             <div className={styles.right}>
-              <span className={styles.impact}>
+              <span className={styles.priority}>
                 {event.priority === null
-                  ? `影响 ${event.impact === null ? "—" : event.impact.toFixed(2)}`
+                  ? `发现优先级 ${event.attention_priority === null ? "—" : event.attention_priority.toFixed(2)}`
                   : `调度优先级 ${event.priority}`}
               </span>
               {scale !== null ? (

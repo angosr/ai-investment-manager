@@ -465,7 +465,7 @@ export interface WorldEvent {
   source: string;
   title: string;
   symbols: string[];
-  impact: number | null;
+  attention_priority: number | null;
   priority: number | null;
   injection_suspected: boolean;
   fed_cycle_id: string | null;

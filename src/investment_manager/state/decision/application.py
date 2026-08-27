@@ -198,7 +198,7 @@ class DecisionPacketPreparation:
         if weak_triggered_events:
             attention_review = PacketReviewRequest.create(
                 requested_at=as_of,
-                reason="复核高影响但尚未达到方向证据等级的外部线索",
+                reason="复核已获立即复核资格但尚未达到方向证据等级的外部线索",
                 evidence_ids=tuple(event.evidence_id for event in weak_triggered_events),
             )
             reviews_by_id = {item.review_id: item for item in review_requests}

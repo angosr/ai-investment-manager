@@ -147,7 +147,9 @@ def test_release_rebind_preserves_pipeline_plan_without_resetting_identity(
         "pipeline_id": "pipeline-v1",
         "manifest_id": "manifest-v2",
         "heartbeat_seconds": 900,
-        "high_impact_threshold": app_config.trigger.high_impact_threshold,
+        "minimum_intelligence_review_priority": (
+            app_config.trigger.minimum_intelligence_review_priority
+        ),
         "debounce_seconds": 30,
         "now": now,
     }

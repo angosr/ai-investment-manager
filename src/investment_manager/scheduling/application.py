@@ -25,7 +25,7 @@ def ensure_trigger_plans(
     pipeline_id: str,
     manifest_id: str,
     heartbeat_seconds: int,
-    high_impact_threshold: Decimal,
+    minimum_intelligence_review_priority: Decimal,
     debounce_seconds: int,
     now: datetime,
     scheduled_wakeups_by_symbol: dict[str, tuple[ScheduledWakeup, ...]] | None = None,
@@ -71,7 +71,7 @@ def ensure_trigger_plans(
                         AnalysisEventRule(
                             rule_id="intelligence-default",
                             trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
-                            minimum_priority=int(high_impact_threshold * 100),
+                            minimum_priority=int(minimum_intelligence_review_priority * 100),
                             coalesce_seconds=debounce_seconds,
                             ordinary_cooldown_seconds=debounce_seconds,
                         ),

@@ -257,7 +257,9 @@ def test_calendar_sync_keeps_obligations_without_premature_ai_wakeups(
         pipeline_id=app_config.pipeline.version,
         manifest_id="economic-calendar-test-manifest",
         heartbeat_seconds=app_config.trigger.heartbeat_minutes * 60,
-        high_impact_threshold=app_config.trigger.high_impact_threshold,
+        minimum_intelligence_review_priority=(
+            app_config.trigger.minimum_intelligence_review_priority
+        ),
         debounce_seconds=app_config.trigger.debounce_seconds,
         now=OBSERVED_AT,
     )

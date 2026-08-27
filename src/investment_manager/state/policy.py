@@ -40,7 +40,7 @@ class DecisionPacketPolicy(FrozenModel):
         ge=100,
         le=1_000,
     )
-    minimum_background_intelligence_impact: Decimal = Field(
+    minimum_background_attention_priority: Decimal = Field(
         default=Decimal("0.80"),
         ge=0,
         le=1,

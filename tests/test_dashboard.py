@@ -374,7 +374,7 @@ def test_world_event_serializes_injection_flag():
         source="TrendRadar",
         title="疑似夹带指令的推广内容",
         symbols=("BTCUSDT",),
-        impact=0.12,
+        attention_priority=0.12,
         injection_suspected=True,
     )
     dto = ser.world_event(event)

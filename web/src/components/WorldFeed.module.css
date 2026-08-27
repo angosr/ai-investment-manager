@@ -106,7 +106,7 @@
   text-align: right;
   white-space: nowrap;
 }
-.impact {
+.priority {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);

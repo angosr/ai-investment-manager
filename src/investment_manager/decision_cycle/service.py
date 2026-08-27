@@ -187,7 +187,9 @@ def run_trigger_service(
             pipeline_id=config.pipeline.version,
             manifest_id=manifest.manifest_id,
             heartbeat_seconds=config.trigger.heartbeat_minutes * 60,
-            high_impact_threshold=config.trigger.high_impact_threshold,
+            minimum_intelligence_review_priority=(
+                config.trigger.minimum_intelligence_review_priority
+            ),
             debounce_seconds=config.trigger.debounce_seconds,
             now=now,
         )

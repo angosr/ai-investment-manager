@@ -52,7 +52,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v66"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v67"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -80,8 +80,8 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:SPOT:PAXGUSDT",
     )
     assert config.capital.decision.version == "portfolio-net-edge-v16"
-    assert config.information.version == "information-intake-v40"
-    assert config.information.normalizer_version == "trendradar-collector-v9"
+    assert config.information.version == "information-intake-v41"
+    assert config.information.normalizer_version == "trendradar-collector-v10"
     assert config.information.economic_release_calendar_poll_seconds == 21_600
     assert config.information.economic_release_actual_poll_seconds == 15
     assert config.information.economic_release_actual_deadline_seconds == 900
@@ -126,7 +126,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v34"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
-    assert config.trigger.version == "analysis-trigger-v31"
+    assert config.trigger.version == "analysis-trigger-v32"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v13"
     assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
         ("CRYPTO_NETWORK", "BTC"),

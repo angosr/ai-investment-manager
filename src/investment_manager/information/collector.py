@@ -58,6 +58,8 @@ class RawIntelligenceItem(FrozenModel):
     url: str | None = Field(default=None, max_length=2_000)
     source_reliability: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
     rank: int | None = Field(default=None, ge=0)
+    immediate_review_eligible: bool = False
+    directional_support_eligible: bool = False
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
@@ -383,6 +385,7 @@ class OfficialRssSource:
                     url=url,
                     source_reliability=Decimal("1"),
                     rank=0,
+                    directional_support_eligible=True,
                 )
             )
         return tuple(items)
@@ -491,9 +494,9 @@ class EventNormalizer:
         "稳定币",
         "加密交易所",
     )
-    # Only a concrete macro release/shock crosses the AI wake-up threshold.
-    # Broad agency mentions remain background evidence.
-    _critical_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
+    # These terms only rank bounded discovery candidates.  They never authorize
+    # an AI wake-up or promote an unverified lead into directional evidence.
+    _priority_cross_asset_keywords: ClassVar[tuple[str, ...]] = (
         "cpi",
         "consumer price index",
         "24-hour trading",
@@ -527,7 +530,7 @@ class EventNormalizer:
     def __init__(
         self,
         *,
-        version: str = "intelligence-normalizer-v8",
+        version: str = "intelligence-normalizer-v9",
         universe: tuple[str, ...] = ("BTCUSDT", "ETHUSDT"),
         quote_asset: str = "USDT",
     ) -> None:
@@ -562,7 +565,7 @@ class EventNormalizer:
                 symbols = self._universe
                 relevance = (
                     Decimal("0.85")
-                    if self._has_critical_cross_asset_relevance(text)
+                    if self._has_priority_cross_asset_relevance(text)
                     else Decimal("0.50")
                 )
         rank_component = (
@@ -589,9 +592,11 @@ class EventNormalizer:
             url=item.url,
             symbols=symbols,
             relevance=relevance,
-            impact=rank_component * relevance,
+            attention_priority=rank_component * relevance,
             source_reliability=item.source_reliability,
             novelty=Decimal("1"),
+            immediate_review_eligible=item.immediate_review_eligible,
+            directional_support_eligible=item.directional_support_eligible,
         )
 
     def _keywords_for_symbol(self, symbol: str) -> tuple[str, ...]:
@@ -616,10 +621,10 @@ class EventNormalizer:
             for keyword in self._crypto_context_keywords
         )
 
-    def _has_critical_cross_asset_relevance(self, text: str) -> bool:
+    def _has_priority_cross_asset_relevance(self, text: str) -> bool:
         return any(
             self._contains_symbol_keyword(text, keyword)
-            for keyword in self._critical_cross_asset_keywords
+            for keyword in self._priority_cross_asset_keywords
         )
 
     @staticmethod

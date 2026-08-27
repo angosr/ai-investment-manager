@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from investment_manager.kernel.identity import SHA256_PATTERN, content_hash, stable_id
 from investment_manager.kernel.time import optional_utc, require_utc
@@ -184,15 +184,21 @@ class IntelligenceEvent(FrozenModel):
     url: str | None = None
     symbols: tuple[str, ...]
     relevance: UnitInterval
-    impact: UnitInterval
+    attention_priority: UnitInterval = Field(
+        validation_alias=AliasChoices("attention_priority", "impact")
+    )
     source_reliability: UnitInterval
     novelty: UnitInterval
+    immediate_review_eligible: bool = False
+    directional_support_eligible: bool = False
 
     _utc_event_time = field_validator("event_time")(require_utc)
     _utc_observed_at = field_validator("observed_at")(require_utc)
 
     @property
     def trigger_priority(self) -> int:
-        """Attention priority only; epistemic quality is gated in the packet."""
+        """Only a qualified lead may turn discovery rank into scheduling priority."""
 
-        return int(self.impact * 100)
+        if not self.immediate_review_eligible:
+            return 0
+        return int(self.attention_priority * 100)

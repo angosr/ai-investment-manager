@@ -341,7 +341,9 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         pipeline_id=app_config.pipeline.version,
         manifest_id="manifest-official-fact-test",
         heartbeat_seconds=app_config.trigger.heartbeat_minutes * 60,
-        high_impact_threshold=app_config.trigger.high_impact_threshold,
+        minimum_intelligence_review_priority=(
+            app_config.trigger.minimum_intelligence_review_priority
+        ),
         debounce_seconds=app_config.trigger.debounce_seconds,
         now=OBSERVED_AT,
     )

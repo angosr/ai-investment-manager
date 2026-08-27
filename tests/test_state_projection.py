@@ -763,6 +763,7 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
         impact="0.8",
         source_reliability="0.7",
         novelty="0.9",
+        directional_support_eligible=True,
     )
     events.put(event)
     background = event.model_copy(
@@ -825,6 +826,7 @@ def test_explicit_review_receives_recent_background_intelligence(
         impact="0.8",
         source_reliability="0.7",
         novelty="0.9",
+        directional_support_eligible=True,
     )
     events.put(event)
     preparation = DecisionPacketPreparation(

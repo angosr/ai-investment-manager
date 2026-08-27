@@ -266,7 +266,7 @@ def world_event(event: WorldEvent) -> dict:
         "source": event.source,
         "title": event.title,
         "symbols": list(event.symbols),
-        "impact": event.impact,
+        "attention_priority": event.attention_priority,
         "priority": event.priority,
         "injection_suspected": event.injection_suspected,
         "fed_cycle_id": event.fed_cycle_id,

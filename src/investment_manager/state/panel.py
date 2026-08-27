@@ -111,7 +111,7 @@ class PanelBuilder:
             )
             score = (
                 Decimal("0.25") * event.relevance
-                + Decimal("0.20") * event.impact
+                + Decimal("0.20") * event.attention_priority
                 + Decimal("0.20") * event.source_reliability
                 + Decimal("0.20") * event.novelty
                 + Decimal("0.15") * freshness

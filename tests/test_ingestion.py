@@ -295,7 +295,8 @@ def test_official_rss_source_emits_only_fresh_first_party_items() -> None:
     assert items[0].source == "official:sec-press-releases"
     assert items[0].source_reliability == Decimal("1")
     assert event is not None
-    assert event.trigger_priority == 85
+    assert event.directional_support_eligible
+    assert event.trigger_priority == 0
 
 
 def test_official_macro_release_has_ai_trigger_priority() -> None:
@@ -310,6 +311,8 @@ def test_official_macro_release_has_ai_trigger_priority() -> None:
             title="GDP (Advance Estimate), 2nd Quarter 2026",
             source_reliability=Decimal("1"),
             rank=0,
+            immediate_review_eligible=True,
+            directional_support_eligible=True,
         )
     )
 
@@ -318,7 +321,7 @@ def test_official_macro_release_has_ai_trigger_priority() -> None:
     assert event.trigger_priority == 85
 
 
-def test_high_impact_aggregator_lead_keeps_attention_priority() -> None:
+def test_ranked_aggregator_lead_keeps_attention_without_immediate_review() -> None:
     observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
     event = EventNormalizer(version="aggregator-attention-test-v1").normalize(
         RawIntelligenceItem(
@@ -334,9 +337,35 @@ def test_high_impact_aggregator_lead_keeps_attention_priority() -> None:
     )
 
     assert event is not None
-    assert event.impact == Decimal("0.8415")
-    assert event.trigger_priority == 84
+    assert event.attention_priority == Decimal("0.8415")
+    assert event.trigger_priority == 0
     assert event.source_reliability == Decimal("0.60")
+
+
+def test_legacy_intelligence_impact_loads_as_non_triggering_attention_priority() -> None:
+    observed_at = datetime(2026, 8, 18, 12, tzinfo=UTC)
+    event = IntelligenceEvent.model_validate(
+        {
+            "evidence_id": "legacy-ranked-lead",
+            "normalizer_version": "legacy-v1",
+            "acquisition_route": "legacy-feed-v1",
+            "event_time": observed_at,
+            "observed_at": observed_at,
+            "source": "legacy:aggregator",
+            "title": "Legacy ranked lead",
+            "body": "Discovery metadata only.",
+            "symbols": ["BTCUSDT"],
+            "relevance": "0.85",
+            "impact": "0.84",
+            "source_reliability": "0.60",
+            "novelty": "1",
+        }
+    )
+
+    assert event.attention_priority == Decimal("0.84")
+    assert not event.immediate_review_eligible
+    assert not event.directional_support_eligible
+    assert event.trigger_priority == 0
 
 
 def test_official_publication_source_follows_only_bounded_same_host_entries() -> None:
@@ -401,7 +430,8 @@ def test_official_publication_source_follows_only_bounded_same_host_entries() ->
     assert first[0].source_reliability == Decimal("1")
     assert "Nearly 60 designations" in first[0].body
     assert event is not None
-    assert event.trigger_priority == 85
+    assert event.directional_support_eligible
+    assert event.trigger_priority == 0
 
 
 def test_official_publication_source_uses_dated_action_url_as_time_fallback() -> None:
@@ -772,10 +802,10 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
     )
 
     assert event is not None
-    assert event.normalizer_version == "intelligence-normalizer-v8"
+    assert event.normalizer_version == "intelligence-normalizer-v9"
     assert event.symbols == ("BTCUSDT", "ETHUSDT")
     assert event.relevance == Decimal("0.85")
-    assert event.impact == Decimal("0.8415")
+    assert event.attention_priority == Decimal("0.8415")
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     assert SqlEventStore(engine, pipeline_id="pipeline-v1").put(event)
@@ -788,8 +818,8 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
                 ).order_by(analysis_trigger_events.c.symbol)
             )
         )
-    # Attention follows mandate impact; source quality is a later evidence gate.
-    assert tuple(row.priority for row in trigger_rows) == (84, 84)
+    # Discovery rank is persisted for later bounded review but cannot wake AI.
+    assert tuple(row.priority for row in trigger_rows) == (0, 0)
     assert all(
         row.expires_at.replace(tzinfo=UTC) == observed_at + timedelta(minutes=15)
         for row in trigger_rows
@@ -807,7 +837,7 @@ def test_cross_asset_macro_event_reaches_panels_without_direct_asset_relevance()
     )
     assert general is not None
     assert general.relevance == Decimal("0.50")
-    assert general.impact == Decimal("0.495")
+    assert general.attention_priority == Decimal("0.495")
 
     dollar_index = EventNormalizer(universe=("BTCUSDT", "ETHUSDT")).normalize(
         RawIntelligenceItem(
@@ -924,7 +954,7 @@ def test_normalizer_requires_crypto_context_for_generic_etf_route() -> None:
     assert direct.relevance == Decimal("1")
 
 
-def test_normalizer_keeps_broad_macro_context_without_high_impact_trigger() -> None:
+def test_normalizer_keeps_broad_macro_context_without_immediate_review() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     normalizer = EventNormalizer(
         version="trendradar-collector-v8",
@@ -951,7 +981,7 @@ def test_normalizer_keeps_broad_macro_context_without_high_impact_trigger() -> N
         assert event is not None and event.relevance == Decimal("0.50")
 
 
-def test_normalizer_high_impact_requires_crypto_context_or_specific_macro_shock() -> None:
+def test_normalizer_prioritizes_crypto_context_or_specific_macro_shock_for_discovery() -> None:
     observed_at = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     normalizer = EventNormalizer(
         version="trendradar-collector-v8",
@@ -978,7 +1008,9 @@ def test_normalizer_high_impact_requires_crypto_context_or_specific_macro_shock(
         assert event is not None
         assert event.symbols == ("BTCUSDT", "ETHUSDT")
         assert event.relevance == expected_relevance
-        assert event.impact == Decimal("0.8415")
+        assert event.attention_priority == Decimal("0.8415")
+        assert not event.immediate_review_eligible
+        assert event.trigger_priority == 0
 
 
 def test_normalizer_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -> None:
@@ -1012,7 +1044,7 @@ def test_normalizer_rejects_generic_sec_filings_but_keeps_crypto_enforcement() -
     assert relevant is not None
     assert relevant.symbols == ("BTCUSDT", "ETHUSDT")
     assert relevant.relevance == Decimal("0.85")
-    assert relevant.impact == Decimal("0.8415")
+    assert relevant.attention_priority == Decimal("0.8415")
 
 
 def test_normalizer_routes_configured_symbol_without_hardcoded_alias() -> None:

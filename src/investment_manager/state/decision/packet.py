@@ -131,7 +131,8 @@ def _analysis_fact(item: PacketFact) -> dict[str, object]:
 def _analysis_intelligence_event(item: PacketIntelligenceEvent) -> dict[str, object]:
     """Keep inference-bearing event evidence, not selector/audit metadata.
 
-    ``impact``, novelty and relevance rank an unverified lead before selection.
+    The packet's legacy-named ``impact`` field stores discovery priority;
+    discovery priority, novelty and relevance rank a lead before selection.
     Once selected they do not become evidence about the real-world event.  The
     immutable packet retains them for audit.  The analyst only needs the event,
     its source, its epistemic eligibility and the time at which it happened.
@@ -1543,7 +1544,8 @@ class DecisionPacketBuilder:
             evidence_ref = content_hash(event)
             age_seconds = (as_of - event.event_time).total_seconds()
             if evidence_ref not in direct_event_refs and (
-                event.impact < self._policy.minimum_background_intelligence_impact
+                event.attention_priority
+                < self._policy.minimum_background_attention_priority
                 or event.source_reliability < self._policy.minimum_background_source_reliability
             ):
                 omitted.append(evidence_ref)
@@ -1559,7 +1561,7 @@ class DecisionPacketBuilder:
             eligible,
             key=lambda item: (
                 content_hash(item) not in direct_event_refs,
-                -item.impact,
+                -item.attention_priority,
                 -item.source_reliability,
                 -item.novelty,
                 -item.observed_at.timestamp(),
@@ -1606,7 +1608,9 @@ class DecisionPacketBuilder:
                     url=event.url,
                     symbols=event.symbols,
                     relevance=event.relevance,
-                    impact=event.impact,
+                    # Frozen packet field retained for historical schema/hash
+                    # compatibility; its value is discovery priority, not impact.
+                    impact=event.attention_priority,
                     source_reliability=event.source_reliability,
                     novelty=event.novelty,
                     prompt_injection_suspected=True,
@@ -1625,15 +1629,12 @@ class DecisionPacketBuilder:
     ) -> bool:
         """Keep weak leads visible to a triggered review without promoting them.
 
-        Direct triggering is a latency decision, not an epistemic promotion.  A
-        lead must independently clear both materiality and source-quality gates
-        before it may persist in the current world model or support direction.
+        Direct triggering is a latency decision, not an epistemic promotion.
+        Evidence eligibility is frozen by the source/enrichment contract and is
+        never reconstructed from discovery rank or source reliability here.
         """
 
-        return (
-            event.impact >= self._policy.minimum_background_intelligence_impact
-            and event.source_reliability >= self._policy.minimum_background_source_reliability
-        )
+        return event.directional_support_eligible
 
     def _compact_previous_context(
         self,

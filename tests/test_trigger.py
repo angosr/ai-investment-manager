@@ -221,7 +221,9 @@ def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
         pipeline_id="pipeline-v1",
         manifest_id="manifest-v1",
         heartbeat_seconds=900,
-        high_impact_threshold=app_config.trigger.high_impact_threshold,
+        minimum_intelligence_review_priority=(
+            app_config.trigger.minimum_intelligence_review_priority
+        ),
         debounce_seconds=30,
         now=replay_input.market.as_of,
     )
@@ -315,7 +317,9 @@ def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_pl
         "pipeline_id": "pipeline-v1",
         "manifest_id": "manifest-v1",
         "heartbeat_seconds": 900,
-        "high_impact_threshold": app_config.trigger.high_impact_threshold,
+        "minimum_intelligence_review_priority": (
+            app_config.trigger.minimum_intelligence_review_priority
+        ),
         "debounce_seconds": 30,
         "now": now,
         "scheduled_wakeups_by_symbol": {"BTCUSDT": (candidate,)},

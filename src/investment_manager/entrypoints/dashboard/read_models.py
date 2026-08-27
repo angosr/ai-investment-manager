@@ -98,9 +98,9 @@ class WorldEvent:
     source: str
     title: str
     symbols: tuple[str, ...]
-    impact: float | None
+    attention_priority: float | None
     injection_suspected: bool
-    # 新闻使用 impact；系统触发使用原始调度优先级。两者语义不同，不能互相换算。
+    # 新闻使用发现优先级；系统触发使用原始调度优先级。两者不能互相换算。
     priority: int | None = None
     # 若这条新闻被选入某周期的信息面板（喂给了那次分析），记录该周期
     fed_cycle_id: str | None = None
@@ -399,7 +399,7 @@ class DashboardReader:
                     source=event.source,
                     title=event.title,
                     symbols=event.symbols,
-                    impact=float(event.impact),
+                    attention_priority=float(event.attention_priority),
                     injection_suspected=title_suspicious or body_suspicious,
                     fed_cycle_id=link[0] if link else None,
                     fed_cycle_at=link[1] if link else None,
@@ -516,7 +516,7 @@ class DashboardReader:
                     source=sources.get(trigger_type, "系统调度"),
                     title=title,
                     symbols=(symbol,),
-                    impact=None,
+                    attention_priority=None,
                     injection_suspected=False,
                     priority=row["priority"],
                 )

@@ -286,6 +286,7 @@ class OfficialPublicationSource:
             url=url,
             source_reliability=Decimal("1"),
             rank=0,
+            directional_support_eligible=True,
         )
 
     @staticmethod

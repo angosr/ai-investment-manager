@@ -123,7 +123,7 @@ decision_state:
     maximum_intelligence_characters: 3000
     maximum_characters_per_intelligence_event: 500
     # 低可靠聚合新闻永久入库，但不作为人工复核时的普通背景占用 AI 注意力。
-    minimum_background_intelligence_impact: "0.80"
+    minimum_background_attention_priority: "0.80"
     minimum_background_source_reliability: "0.70"
     # AI 投影的上限；精简后的通用分析契约约 2K，完整提示仍须低于 runtime 的 16K 硬上限。
     maximum_packet_characters: 12750
@@ -376,11 +376,11 @@ governance:
   cycle_interval_hours: 24
 
 trigger:
-  version: analysis-trigger-v31
+  version: analysis-trigger-v32
   # 仅用于没有任何前代 TriggerPlan 时创建初始计划；运行真相在数据库 revision。
   heartbeat_minutes: 15
   debounce_seconds: 120
-  high_impact_threshold: "0.80"
+  minimum_intelligence_review_priority: "0.80"
   volatility_jump_threshold: "0.01"
   volatility_window_seconds: 600
   minimum_call_interval_seconds: 15
@@ -482,8 +482,8 @@ shadow:
   lifecycle_poll_seconds: 10
 
 information:
-  version: information-intake-v40
-  normalizer_version: trendradar-collector-v9
+  version: information-intake-v41
+  normalizer_version: trendradar-collector-v10
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444
   # 只直连 NewsNow 中原生 2 分钟刷新源；其余广覆盖来源仍由 TrendRadar 聚合。
