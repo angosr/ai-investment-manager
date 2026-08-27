@@ -498,7 +498,7 @@ shadow:
   analysis_deadline_seconds: 900
 
 information:
-  version: information-intake-v41
+  version: information-intake-v42
   normalizer_version: trendradar-collector-v10
   trendradar_mcp_url: http://127.0.0.1:3333/mcp
   newsnow_base_url: http://127.0.0.1:4444

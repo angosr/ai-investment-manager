@@ -47,6 +47,7 @@ class _EtfFlowRow(FrozenModel):
     net_assets_usd: Decimal = Field(gt=0)
     cumulative_inflow_usd: Decimal
     value_traded_usd: Decimal = Field(ge=0)
+    source: Literal["bykaranteli.com"]
 
 
 class _EtfFlowDataset(FrozenModel):

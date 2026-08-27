@@ -47,6 +47,7 @@ def _document(*, latest_btc_flow_usd: int = 100_000_000) -> AggregatedEtfFlowDoc
                     "net_assets_usd": 50_000_000_000,
                     "cumulative_inflow_usd": 10_000_000_000 + net_flow,
                     "value_traded_usd": 2_000_000_000,
+                    "source": "bykaranteli.com",
                 }
             )
     return AggregatedEtfFlowDocument(
@@ -83,15 +84,17 @@ def test_aggregate_flow_parser_keeps_point_in_time_and_source_tier() -> None:
     assert btc.observation.payload_ref == eth.observation.payload_ref
 
 
-@pytest.mark.parametrize("mutation", ("count", "duplicate", "future"))
+@pytest.mark.parametrize("mutation", ("count", "duplicate", "future", "source"))
 def test_aggregate_flow_parser_rejects_inconsistent_dataset(mutation: str) -> None:
     payload = json.loads(_document().content)
     if mutation == "count":
         payload["count"] += 1
     elif mutation == "duplicate":
         payload["rows"][-1] = payload["rows"][0]
-    else:
+    elif mutation == "future":
         payload["rows"][-1]["date"] = "2026-08-22"
+    else:
+        payload["rows"][-1]["source"] = "untrusted.example"
     document = AggregatedEtfFlowDocument(content=json.dumps(payload).encode())
 
     with pytest.raises(ValueError):
