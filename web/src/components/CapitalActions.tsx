@@ -6,16 +6,16 @@ import styles from "./CapitalActions.module.css";
 const ROUTINE_OUTCOMES = new Set(["CASH", "NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
 
 const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
-  CASH: { badge: "未下单", title: "保持现金" },
-  NO_OPPORTUNITY: { badge: "未下单", title: "保持现金" },
-  HOLD: { badge: "仓位不变", title: "保持当前仓位" },
+  CASH: { badge: "未下单", title: "持仓未变化" },
+  NO_OPPORTUNITY: { badge: "未下单", title: "持仓未变化" },
+  HOLD: { badge: "仓位不变", title: "持仓未变化" },
   TARGET_DECIDED: { badge: "已形成目标", title: "准备调整仓位" },
-  FORECAST_ALREADY_DECIDED: { badge: "未重复下单", title: "同一预测已经处理" },
-  OPPORTUNITY_ALREADY_DECIDED: { badge: "未重复下单", title: "同一历史机会已经处理" },
+  FORECAST_ALREADY_DECIDED: { badge: "未重复下单", title: "持仓未变化" },
+  OPPORTUNITY_ALREADY_DECIDED: { badge: "未重复下单", title: "持仓未变化" },
   RISK_EXIT: { badge: "风险退出", title: "退出风险仓位" },
   PENDING: { badge: "处理中", title: "资金决策仍在处理" },
-  RISK_REJECTED: { badge: "风控阻止", title: "交易被风控阻止" },
-  NO_ORDER: { badge: "无需下单", title: "目标仓位无需调整" },
+  RISK_REJECTED: { badge: "风控阻止", title: "持仓未变化" },
+  NO_ORDER: { badge: "未下单", title: "持仓未变化" },
   EXECUTING: { badge: "执行中", title: "正在执行仓位调整" },
   EXECUTED: { badge: "已执行", title: "仓位调整已经执行" },
 };
@@ -91,7 +91,7 @@ function groupRoutineChecks(actions: CapitalAction[]): ActionGroup[] {
 function CapitalActionGroup({ group }: { group: ActionGroup }) {
   const [open, setOpen] = useState(false);
   const action = group.actions[0];
-  const copy = OUTCOME_COPY[action.outcome] ?? {
+  const copy = actionCopy(action) ?? OUTCOME_COPY[action.outcome] ?? {
     badge: "已记录",
     title: "资金状态已更新",
   };
@@ -128,7 +128,9 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             {repeated ? <em>{group.actions.length} 次相同检查已归并</em> : null}
           </span>
           <span className={styles.summary}>
-            {best && zeroImpact && !best.validity_reason_codes?.length
+            {action.position_changes.length && !zeroImpact
+              ? positionChangeSummary(action)
+              : best && zeroImpact && !best.validity_reason_codes?.length
               ? selected.length
                 ? `目标 ${candidateLabel(best)} ${formatUsdt(best.desired_gross_notional)} USDT；费用后预期 ${formatBps(best.net_bps)} bp`
                 : `比较 ${candidates.length} 个产品表达后保持现金；最佳费用后预期 ${formatBps(best.net_bps)} bp`
@@ -147,27 +149,35 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dd>{triggers.join("；") || "系统状态变化"}</dd>
             <dt>判断依据</dt>
             <dd>{reasons.join("；") || action.summary}</dd>
-            {candidates.map((item) => (
-              <Fragment key={item.candidate_id}>
-                <dt>{candidateLabel(item)}</dt>
-                <dd>
-                  {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
-                  预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
-                  = 费用后 {formatBps(item.net_bps)} bp
-                  {Number(item.decision_threshold_bps) < 0
-                    ? `；立即平仓也需 ${formatBps(String(-Number(item.decision_threshold_bps)))} bp，继续持有的终值更高`
-                    : Number(item.decision_threshold_bps) > 0
-                    ? `；该历史行为另有 ${formatBps(item.decision_threshold_bps)} bp 附加门槛`
-                    : ""}
-                </dd>
-                <dt>金额与成本</dt>
-                <dd>
-                  当时持仓 {formatUsdt(item.current_gross_notional)} USDT；按 {formatUsdt(item.evaluation_gross_notional)} USDT 评估；
-                  目标 {formatUsdt(item.desired_gross_notional)} USDT；手续费 {formatBps(item.fee_bps)} bp，
-                  退出点差 {formatBps(item.exit_spread_bps)} bp，深度滑点 {formatBps(item.depth_slippage_bps)} bp
-                </dd>
+            {action.position_changes.map((change, index) => (
+              <Fragment key={`${change.instrument}-${change.role}-${index}`}>
+                <dt>{change.role === "COMPENSATION" ? "补偿成交" : "仓位变动"}</dt>
+                <dd>{positionChangeLabel(change)}</dd>
               </Fragment>
             ))}
+            {candidates.length ? (
+              <>
+                <dt>产品方案比较</dt>
+                <dd>
+                  <details className={styles.snapshot}>
+                    <summary>查看全部 {candidates.length} 个候选；未选方案不是持仓或成交</summary>
+                    {candidates.map((item) => (
+                      <div key={item.candidate_id}>
+                        <b>{candidateLabel(item)}</b> · {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
+                        预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
+                        = 费用后 {formatBps(item.net_bps)} bp；当时持仓 {formatUsdt(item.current_gross_notional)} USDT，
+                        目标 {formatUsdt(item.desired_gross_notional)} USDT
+                        {Number(item.decision_threshold_bps) < 0
+                          ? `；立即平仓需 ${formatBps(String(-Number(item.decision_threshold_bps)))} bp，继续持有的终值更高`
+                          : Number(item.decision_threshold_bps) > 0
+                          ? `；该历史行为另有 ${formatBps(item.decision_threshold_bps)} bp 附加门槛`
+                          : ""}
+                      </div>
+                    ))}
+                  </details>
+                </dd>
+              </>
+            ) : null}
             {forecasts.map((item) => (
               <Fragment key={item.forecast_id}>
                 <dt>概率预测</dt>
@@ -234,8 +244,10 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dd>
               {zeroImpact
                 ? "0 USDT；没有新增订单，仓位未变化"
-                : action.order_count > 0
-                  ? `产生 ${action.order_count} 笔订单`
+                : action.position_changes.some((item) => Number(item.filled_quantity) > 0)
+                  ? positionChangeSummary(action)
+                  : action.order_count > 0
+                    ? `已提交 ${action.order_count} 笔订单，尚无成交`
                   : "决策仍在处理，尚未产生订单"}
             </dd>
             <dt>风控状态</dt>
@@ -252,6 +264,110 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
       ) : null}
     </div>
   );
+}
+
+function actionCopy(action: CapitalAction): { badge: string; title: string } | null {
+  if (!new Set(["EXECUTED", "EXECUTING"]).has(action.outcome)) return null;
+  const filled = action.position_changes.filter((item) => Number(item.filled_quantity) > 0);
+  if (!filled.length) {
+    return action.outcome === "EXECUTING"
+      ? { badge: "执行中", title: "订单执行中，持仓尚未变化" }
+      : { badge: "未成交", title: "持仓未变化" };
+  }
+  const target = filled.filter((item) => item.role === "TARGET");
+  const effects = [...new Set(target.map((item) => item.effect))];
+  const instruments = [...new Set(target.map(instrumentLabel))];
+  if (effects.length === 1 && instruments.length === 1) {
+    return {
+      badge: action.outcome === "EXECUTING" ? "部分成交" : "已成交",
+      title: `${instruments[0]}${effectHeadline(effects[0])}`,
+    };
+  }
+  return {
+    badge: action.outcome === "EXECUTING" ? "部分成交" : "已成交",
+    title: action.outcome === "EXECUTING" ? "持仓正在调整" : "持仓已调整",
+  };
+}
+
+function positionChangeSummary(action: CapitalAction): string {
+  return action.position_changes.map(positionChangeLabel).join("；");
+}
+
+function positionChangeLabel(
+  change: CapitalAction["position_changes"][number],
+): string {
+  const requested = formatNumber(change.requested_quantity, 8);
+  const filled = formatNumber(change.filled_quantity, 8);
+  const quantity = Number(change.filled_quantity) === Number(change.requested_quantity)
+    ? filled
+    : `${filled} / ${requested}`;
+  const price = change.average_fill_price === null
+    ? orderStatusLabel(change.status)
+    : `成交价 ${formatNumber(change.average_fill_price, 8)} USDT`;
+  const fee = Number(change.fee) > 0
+    ? `，手续费 ${formatNumber(change.fee, 8)} USDT`
+    : "";
+  const role = change.role === "COMPENSATION"
+    ? "补偿交易"
+    : effectLabelForTrade(change.effect);
+  const side = change.side === "BUY" ? "买入" : "卖出";
+  return `${instrumentLabel(change)} · ${role}：${side} ${quantity}，${price}${fee}`;
+}
+
+function instrumentLabel(
+  change: CapitalAction["position_changes"][number],
+): string {
+  const product = change.product === "SPOT" ? "现货" : "永续";
+  return `${change.symbol} ${product}`;
+}
+
+function effectHeadline(effect: string): string {
+  const labels: Record<string, string> = {
+    OPEN_LONG: "多仓已开仓",
+    OPEN_SHORT: "空仓已开仓",
+    INCREASE_LONG: "多仓已加仓",
+    INCREASE_SHORT: "空仓已加仓",
+    REDUCE_LONG: "多仓已减仓",
+    REDUCE_SHORT: "空仓已减仓",
+    CLOSE_LONG: "多仓已平仓",
+    CLOSE_SHORT: "空仓已平仓",
+  };
+  return labels[effect] ?? "持仓已调整";
+}
+
+function effectLabelForTrade(effect: string): string {
+  const labels: Record<string, string> = {
+    OPEN_LONG: "开多仓",
+    OPEN_SHORT: "开空仓",
+    INCREASE_LONG: "加多仓",
+    INCREASE_SHORT: "加空仓",
+    REDUCE_LONG: "减多仓",
+    REDUCE_SHORT: "减空仓",
+    CLOSE_LONG: "平多仓",
+    CLOSE_SHORT: "平空仓",
+  };
+  return labels[effect] ?? effect;
+}
+
+function orderStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    PENDING: "等待提交",
+    WORKING: "订单已提交",
+    PARTIALLY_FILLED: "部分成交",
+    FILLED: "全部成交",
+    CANCELED: "已撤单",
+    REJECTED: "已拒绝",
+    EXPIRED: "已过期",
+    UNKNOWN: "成交状态待对账",
+  };
+  return labels[status] ?? status;
+}
+
+function formatNumber(value: string, maximumFractionDigits: number): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("zh-CN", { maximumFractionDigits })
+    : value;
 }
 
 function formatBps(value: string): string {

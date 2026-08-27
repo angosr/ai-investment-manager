@@ -11,7 +11,8 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.entrypoints.dashboard.pagination import PageCursor, older_than
-from investment_manager.execution.group.models import ExecutionGroup
+from investment_manager.execution.group.models import ExecutionGroup, ExecutionLegRole
+from investment_manager.execution.models import Side
 from investment_manager.execution.planning.planner import TradePlan
 from investment_manager.execution.tables import (
     execution_groups,
@@ -166,6 +167,19 @@ class CapitalCandidateEconomics:
 
 
 @dataclass(frozen=True, slots=True)
+class CapitalPositionChange:
+    instrument: InstrumentId
+    side: Side
+    effect: str
+    role: ExecutionLegRole
+    status: str
+    requested_quantity: Decimal
+    filled_quantity: Decimal
+    average_fill_price: Decimal | None
+    fee: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class CapitalActivity:
     activity_id: str
     at: datetime
@@ -176,6 +190,7 @@ class CapitalActivity:
     reason_codes: tuple[str, ...] = ()
     risk_outcome: str | None = None
     order_count: int = 0
+    position_changes: tuple[CapitalPositionChange, ...] = ()
     candidate_economics_recorded: bool = False
     candidate_economics: tuple[CapitalCandidateEconomics, ...] = ()
     analysis_input: dict | None = None
@@ -1104,6 +1119,7 @@ class CapitalDashboardReader:
                 )
             groups = tuple(groups_by_plan.get(plan.plan_id, ()))
             order_count = order_counts.get(plan.plan_id, 0)
+            position_changes = self._position_changes(plan=plan, groups=groups)
             if not groups:
                 outcome = "NO_ORDER"
                 summary = "程序化减险已授权，当前数量无需下单"
@@ -1123,6 +1139,7 @@ class CapitalDashboardReader:
                 reason_codes=record.reason_codes,
                 risk_outcome="REDUCE_ONLY",
                 order_count=order_count,
+                position_changes=position_changes,
             )
         if target is None:
             raise ValueError("Capital activity record 缺少绑定 Target")
@@ -1188,6 +1205,7 @@ class CapitalDashboardReader:
             )
         groups = tuple(groups_by_plan.get(plan.plan_id, ()))
         order_count = order_counts.get(plan.plan_id, 0)
+        position_changes = self._position_changes(plan=plan, groups=groups)
         if not groups:
             outcome = "NO_ORDER"
             summary = "组合决策完成，无需产生订单"
@@ -1207,10 +1225,63 @@ class CapitalDashboardReader:
             reason_codes=target.reason_codes,
             risk_outcome=risk.outcome.value,
             order_count=order_count,
+            position_changes=position_changes,
             candidate_economics_recorded=candidate_economics_recorded,
             candidate_economics=candidate_economics,
             analysis_input=analysis_input,
         )
+
+    @staticmethod
+    def _position_changes(
+        *,
+        plan: TradePlan,
+        groups: tuple[ExecutionGroup, ...],
+    ) -> tuple[CapitalPositionChange, ...]:
+        deltas = {item.sleeve_id: item for item in plan.target_deltas}
+        planned_legs = {
+            item.leg_id: item
+            for group in plan.groups
+            for item in group.legs
+        }
+        changes: list[CapitalPositionChange] = []
+        for group in sorted(groups, key=lambda item: item.group_id):
+            delta = deltas.get(group.sleeve_id)
+            for leg in (*group.target_legs, *group.compensation_legs):
+                planned = planned_legs.get(leg.planned_leg_id)
+                if leg.role == ExecutionLegRole.COMPENSATION:
+                    effect = "COMPENSATION"
+                else:
+                    if planned is None or delta is None:
+                        raise ValueError("ExecutionGroup 无法还原权威仓位变动语义")
+                    direction = "LONG" if leg.side == Side.BUY else "SHORT"
+                    if planned.reduce_only:
+                        direction = "LONG" if leg.side == Side.SELL else "SHORT"
+                        operation = (
+                            "CLOSE"
+                            if delta.desired_gross_notional == 0
+                            else "REDUCE"
+                        )
+                    else:
+                        operation = (
+                            "OPEN"
+                            if delta.current_gross_notional == 0
+                            else "INCREASE"
+                        )
+                    effect = f"{operation}_{direction}"
+                changes.append(
+                    CapitalPositionChange(
+                        instrument=leg.instrument,
+                        side=leg.side,
+                        effect=effect,
+                        role=leg.role,
+                        status=leg.status.value,
+                        requested_quantity=leg.requested_quantity,
+                        filled_quantity=leg.filled_quantity,
+                        average_fill_price=leg.average_fill_price,
+                        fee=leg.fee,
+                    )
+                )
+        return tuple(changes)
 
     @staticmethod
     def _decision_analysis_input(
@@ -1633,6 +1704,26 @@ def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
                 "reason_codes": list(item.reason_codes),
                 "risk_outcome": item.risk_outcome,
                 "order_count": item.order_count,
+                "position_changes": [
+                    {
+                        "instrument": change.instrument.key,
+                        "symbol": change.instrument.symbol,
+                        "product": change.instrument.product.value,
+                        "side": change.side.value,
+                        "effect": change.effect,
+                        "role": change.role.value,
+                        "status": change.status,
+                        "requested_quantity": str(change.requested_quantity),
+                        "filled_quantity": str(change.filled_quantity),
+                        "average_fill_price": (
+                            None
+                            if change.average_fill_price is None
+                            else str(change.average_fill_price)
+                        ),
+                        "fee": str(change.fee),
+                    }
+                    for change in item.position_changes
+                ],
                 "candidate_economics_recorded": item.candidate_economics_recorded,
                 "analysis_input": item.analysis_input,
                 "candidate_economics": [

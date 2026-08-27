@@ -101,6 +101,19 @@ export interface CapitalAction {
   reason_codes: string[];
   risk_outcome: string | null;
   order_count: number;
+  position_changes: {
+    instrument: string;
+    symbol: string;
+    product: "SPOT" | "USD_M_PERPETUAL" | "TRADFI_PERPETUAL";
+    side: "BUY" | "SELL";
+    effect: string;
+    role: "TARGET" | "COMPENSATION";
+    status: string;
+    requested_quantity: string;
+    filled_quantity: string;
+    average_fill_price: string | null;
+    fee: string;
+  }[];
   candidate_economics_recorded: boolean;
   analysis_input: Record<string, unknown> | null;
   candidate_economics: {

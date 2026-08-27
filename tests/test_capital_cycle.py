@@ -1522,6 +1522,17 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     assert activity_by_symbol["ETHUSDT"].trigger_types == ("MARKET_SHOCK",)
     assert activity_by_symbol["BTCUSDT"].outcome == "EXECUTED"
     assert activity_by_symbol["BTCUSDT"].trigger_types == ("HEARTBEAT",)
+    assert len(activity_by_symbol["BTCUSDT"].position_changes) == 1
+    opening_change = activity_by_symbol["BTCUSDT"].position_changes[0]
+    assert opening_change.instrument.key == "BINANCE:SPOT:BTCUSDT"
+    assert opening_change.side.value == "BUY"
+    assert opening_change.effect == "OPEN_LONG"
+    assert opening_change.filled_quantity == Decimal("0.03")
+    serialized_change = serialize_capital_activity(
+        (activity_by_symbol["BTCUSDT"],)
+    )["actions"][0]["position_changes"][0]
+    assert serialized_change["effect"] == "OPEN_LONG"
+    assert serialized_change["filled_quantity"] == "0.03"
     first_page = CapitalDashboardReader(engine, config).activity(limit=1)
     second_page = CapitalDashboardReader(engine, config).activity(
         cursor=PageCursor(first_page[0].at, first_page[0].activity_id),
@@ -1902,6 +1913,7 @@ def test_capital_cycle_uses_forecast_identity_and_holds_without_one() -> None:
     activity = CapitalDashboardReader(engine, config).activity()
     assert activity[0].outcome == "EXECUTED"
     assert "EXPIRED_FORECAST_EXIT" in activity[0].reason_codes
+    assert activity[0].position_changes[0].effect == "CLOSE_LONG"
 
 
 def test_trigger_review_records_an_exit_that_finishes_in_cash() -> None:
