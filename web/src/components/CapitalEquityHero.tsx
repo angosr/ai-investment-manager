@@ -12,6 +12,7 @@ export function CapitalEquityHero({
 }) {
   const account = data?.account ?? null;
   const net = data?.performance.cumulative_net_pnl ?? null;
+  const attribution = data?.performance.attribution ?? null;
   const curve = capitalCurve(points);
   const cashCurve = cashBenchmarkCurve(points);
   const latestPoint = [...points].sort((left, right) => right.revision - left.revision)[0] ?? null;
@@ -45,6 +46,10 @@ export function CapitalEquityHero({
         <Stat k="可用现金" v={account ? `${money(account.cash_balance)} USDT` : "—"} />
         <Stat k="相对持现" v={moneyDelta(latestPoint?.increment_vs_cash ?? null)} />
         <Stat k="当前回撤" v={account ? fractionPercent(account.drawdown_fraction) : "—"} tone="neg" />
+        <Stat k="价格变动贡献" v={moneyDelta(attribution?.price_pnl ?? null)} />
+        <Stat k="Funding" v={moneyDelta(attribution?.funding_pnl ?? null)} />
+        <Stat k="交易手续费" v={costDelta(attribution?.fee_cost ?? null)} tone="neg" />
+        <Stat k="费用后净收益" v={moneyDelta(attribution?.net_pnl ?? null)} />
       </div>
     </section>
   );
@@ -108,4 +113,9 @@ function Stat({ k, v, tone }: { k: string; v: string; tone?: "neg" }) {
 function moneyDelta(value: string | null): string {
   const formatted = signed(value);
   return formatted === "—" ? formatted : `${formatted} USDT`;
+}
+
+function costDelta(value: string | null): string {
+  if (value === null) return "—";
+  return `${signed(`-${value}`)} USDT`;
 }

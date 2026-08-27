@@ -1583,6 +1583,16 @@ def serialize_capital_overview(overview: CapitalOverview) -> dict:
         "performance": {
             "interval_count": overview.performance_interval_count,
             "cumulative_net_pnl": str(overview.cumulative_net_pnl),
+            "attribution": (
+                None
+                if account is None or account.accounting is None
+                else {
+                    "price_pnl": str(account.accounting.price_pnl),
+                    "funding_pnl": str(account.accounting.funding_pnl),
+                    "fee_cost": str(account.accounting.fee_cost),
+                    "net_pnl": str(account.accounting.net_pnl),
+                }
+            ),
             "latest": None
             if performance is None
             else {

@@ -1528,6 +1528,12 @@ def test_capital_cycle_turns_an_explicit_candidate_into_idempotent_order() -> No
     }
     assert dto["performance"]["interval_count"] == 1
     assert dto["performance"]["cumulative_net_pnl"] == "-1.80"
+    assert dto["performance"]["attribution"] == {
+        "price_pnl": "-0.30",
+        "funding_pnl": "0",
+        "fee_cost": "1.50",
+        "net_pnl": "-1.80",
+    }
     assert dto["performance"]["latest"]["kind"] == "EXECUTION"
     assert dto["performance"]["latest"]["net_pnl"] == "-1.80"
     equity_points = CapitalDashboardReader(engine, config).equity_history()

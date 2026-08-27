@@ -72,6 +72,12 @@ export interface CapitalOverview {
   performance: {
     interval_count: number;
     cumulative_net_pnl: string;
+    attribution: {
+      price_pnl: string;
+      funding_pnl: string;
+      fee_cost: string;
+      net_pnl: string;
+    } | null;
     latest: {
       kind: "EXECUTION" | "MARK_TO_MARKET";
       start_as_of: string;
