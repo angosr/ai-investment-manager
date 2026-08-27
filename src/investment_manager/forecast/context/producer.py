@@ -231,7 +231,7 @@ def finalize_context_base_forecast(
 
 @dataclass(frozen=True, slots=True)
 class CompositeContextForecastPreflight:
-    """Require every independent evaluation assignment before the formal call."""
+    """Attempt every independent research assignment before the formal call."""
 
     preflights: tuple[ContextForecastPreflight, ...]
 
@@ -248,12 +248,21 @@ class CompositeContextForecastPreflight:
         formal_output_schema: dict[str, object],
     ) -> None:
         for preflight in self.preflights:
-            preflight.before_estimate(
-                slot=slot,
-                formal_producer_behavior_id=formal_producer_behavior_id,
-                formal_analysis_input=formal_analysis_input,
-                formal_output_schema=formal_output_schema,
-            )
+            try:
+                preflight.before_estimate(
+                    slot=slot,
+                    formal_producer_behavior_id=formal_producer_behavior_id,
+                    formal_analysis_input=formal_analysis_input,
+                    formal_output_schema=formal_output_schema,
+                )
+            except Exception:
+                logger.exception(
+                    "independent Context Forecast research preflight failed",
+                    extra={
+                        "preflight_type": type(preflight).__name__,
+                        "slot_id": slot.slot_id,
+                    },
+                )
 
 
 class ContextTargetStateProvider(Protocol):

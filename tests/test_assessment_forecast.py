@@ -30,6 +30,7 @@ from investment_manager.forecast.context.executor import (
     ContextAssessmentExecutor,
 )
 from investment_manager.forecast.context.producer import (
+    CompositeContextForecastPreflight,
     ContextForecastRuntimeTarget,
     MarketContextTargetStateProvider,
     PortfolioContextForecastProducer,
@@ -445,6 +446,14 @@ class _FailingForecastPreflight:
         raise RuntimeError("research unavailable")
 
 
+class _CountingForecastPreflight:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def before_estimate(self, **_kwargs) -> None:
+        self.calls += 1
+
+
 def _context_forecast_producer(engine, analyst, *, preflight=None):
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
@@ -613,6 +622,46 @@ def test_research_preflight_failure_does_not_block_capital_forecast(caplog) -> N
     assert isinstance(result, BaseForecast)
     assert analyst.calls == 1
     assert "research preflight failed without blocking capital" in caplog.text
+
+
+def test_independent_research_preflight_failure_does_not_skip_later_assignment(caplog) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    assessment = contexts.record_assessment(packet.packet_id, _assessment())
+    completed_at = assessment.available_at + timedelta(seconds=10)
+    analyst = _FixedProbabilityAnalyst(completed_at)
+    later = _CountingForecastPreflight()
+    producer = _context_forecast_producer(
+        engine,
+        analyst,
+        preflight=CompositeContextForecastPreflight(
+            (_FailingForecastPreflight(), later),
+        ),
+    )
+    market = SqlMarketDataStore(engine)
+    for index, observed_at in enumerate((NOW, completed_at), start=1):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"context-composite-preflight-quote-{index}",
+                symbol="BTCUSDT",
+                observed_at=observed_at,
+                bid=Decimal("69999"),
+                bid_quantity=Decimal("10"),
+                ask=Decimal("70001"),
+                ask_quantity=Decimal("10"),
+                update_id=index,
+                source="test",
+            )
+        )
+
+    result = producer.produce(as_of=assessment.available_at)
+
+    assert isinstance(result, BaseForecast)
+    assert analyst.calls == 1
+    assert later.calls == 1
+    assert "independent Context Forecast research preflight failed" in caplog.text
 
 
 def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets() -> None:
