@@ -91,6 +91,52 @@ export interface CapitalEquityPoint extends EquityPoint {
   increment_vs_cash: string | null;
 }
 
+export interface CapitalTargetLeg {
+  instrument: string;
+  symbol: string;
+  product: "SPOT" | "USD_M_PERPETUAL" | "TRADFI_PERPETUAL";
+  direction: "LONG" | "SHORT";
+}
+
+export interface CapitalCandidateSummary {
+  candidate_id: string;
+  outcome_family_id: string;
+  target_legs: CapitalTargetLeg[];
+  net_bps: string;
+  desired_gross_notional: string;
+  validity_reason_codes: string[] | null;
+}
+
+export interface CapitalCandidateEconomics extends CapitalCandidateSummary {
+  forecast_id: string;
+  payoff_projection_id: string | null;
+  producer_id: string;
+  edge_basis: "CALIBRATED_CONSERVATIVE" | "EXPERIMENTAL_HYPOTHESIS";
+  forecast_current: boolean;
+  information_cutoff_at: string;
+  available_at: string;
+  valid_until: string;
+  world_model_id: string | null;
+  outcome_probabilities: { bucket_id: string; probability: string }[];
+  mechanism_contributions: {
+    mechanism_id: string;
+    effect: "UPSIDE" | "DOWNSIDE" | "UNCERTAINTY" | "NO_MATERIAL_EFFECT";
+    rationale: string;
+  }[];
+  evidence_refs: string[];
+  gross_bps: string;
+  fee_bps: string;
+  exit_spread_bps: string;
+  depth_slippage_bps: string;
+  estimated_cost_bps: string;
+  decision_threshold_bps: string;
+  current_gross_notional: string;
+  evaluation_gross_notional: string;
+  eligible: boolean;
+  reason_codes: string[];
+  validity_evidence_refs: string[] | null;
+}
+
 export interface CapitalAction {
   activity_id: string;
   at: string;
@@ -115,47 +161,12 @@ export interface CapitalAction {
     fee: string;
   }[];
   candidate_economics_recorded: boolean;
+  candidate_summaries: CapitalCandidateSummary[];
+}
+
+export interface CapitalActionDetail extends CapitalAction {
   analysis_input: Record<string, unknown> | null;
-  candidate_economics: {
-    candidate_id: string;
-    forecast_id: string;
-    payoff_projection_id: string | null;
-    producer_id: string;
-    outcome_family_id: string;
-    target_legs: {
-      instrument: string;
-      symbol: string;
-      product: "SPOT" | "USD_M_PERPETUAL" | "TRADFI_PERPETUAL";
-      direction: "LONG" | "SHORT";
-    }[];
-    edge_basis: "CALIBRATED_CONSERVATIVE" | "EXPERIMENTAL_HYPOTHESIS";
-    forecast_current: boolean;
-    information_cutoff_at: string;
-    available_at: string;
-    valid_until: string;
-    world_model_id: string | null;
-    outcome_probabilities: { bucket_id: string; probability: string }[];
-    mechanism_contributions: {
-      mechanism_id: string;
-      effect: "UPSIDE" | "DOWNSIDE" | "UNCERTAINTY" | "NO_MATERIAL_EFFECT";
-      rationale: string;
-    }[];
-    evidence_refs: string[];
-    gross_bps: string;
-    fee_bps: string;
-    exit_spread_bps: string;
-    depth_slippage_bps: string;
-    estimated_cost_bps: string;
-    net_bps: string;
-    decision_threshold_bps: string;
-    current_gross_notional: string;
-    evaluation_gross_notional: string;
-    desired_gross_notional: string;
-    eligible: boolean;
-    reason_codes: string[];
-    validity_reason_codes: string[] | null;
-    validity_evidence_refs: string[] | null;
-  }[];
+  candidate_economics: CapitalCandidateEconomics[];
 }
 
 export interface AssessmentRecordRow {

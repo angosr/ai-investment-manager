@@ -876,11 +876,15 @@ class CapitalDashboardReader:
         *,
         cursor: PageCursor | None = None,
         limit: int = 30,
+        record_id: str | None = None,
+        include_details: bool = True,
     ) -> tuple[CapitalActivity, ...]:
         """Project durable capital decisions, excluding retired no-op receipts."""
 
         if limit < 1 or limit > 101:
             raise ValueError("Capital activity internal limit 必须在 1..101")
+        if record_id is not None and (not record_id or cursor is not None):
+            raise ValueError("Capital activity 精确读取不能使用空 ID 或分页游标")
         query = select(
             capital_cycle_records.c.evaluated_at,
             capital_cycle_records.c.payload,
@@ -893,6 +897,8 @@ class CapitalDashboardReader:
                 )
             )
         )
+        if record_id is not None:
+            query = query.where(capital_cycle_records.c.record_id == record_id)
         if cursor is not None:
             query = query.where(
                 older_than(
@@ -1063,9 +1069,18 @@ class CapitalDashboardReader:
                 order_counts=order_counts,
                 forecasts=loaded_forecasts,
                 projections=projections,
+                include_details=include_details,
             )
             for record in records
         )
+
+    def activity_detail(self, activity_id: str) -> CapitalActivity | None:
+        items = self.activity(
+            limit=1,
+            record_id=activity_id,
+            include_details=True,
+        )
+        return items[0] if items else None
 
     def _activity_row(
         self,
@@ -1078,6 +1093,7 @@ class CapitalDashboardReader:
         order_counts: dict[str, int],
         forecasts: dict[str, BaseForecast | CalibratedForecast],
         projections: dict[str, ProductPayoffProjection],
+        include_details: bool,
     ) -> CapitalActivity:
         candidate_economics = self._candidate_economics(
             target=target,
@@ -1087,9 +1103,13 @@ class CapitalDashboardReader:
         candidate_economics_recorded = (
             target is not None and target.candidate_evaluations is not None
         )
-        analysis_input = self._decision_analysis_input(
-            target=target,
-            forecasts=forecasts,
+        analysis_input = (
+            self._decision_analysis_input(
+                target=target,
+                forecasts=forecasts,
+            )
+            if include_details
+            else None
         )
         if record.outcome in {CapitalCycleOutcome.CASH, CapitalCycleOutcome.HOLD}:
             return CapitalActivity(
@@ -1691,107 +1711,151 @@ def _serialize_forecast_evidence_payload(evidence: ForecastEvidence) -> dict:
     return payload
 
 
-def serialize_capital_activity(items: tuple[CapitalActivity, ...]) -> dict:
+def serialize_capital_activity(
+    items: tuple[CapitalActivity, ...],
+    *,
+    include_details: bool = True,
+) -> dict:
     return {
         "actions": [
-            {
-                "activity_id": item.activity_id,
-                "at": _iso(item.at),
-                "symbol": item.symbol,
-                "trigger_types": list(item.trigger_types),
-                "outcome": item.outcome,
-                "summary": item.summary,
-                "reason_codes": list(item.reason_codes),
-                "risk_outcome": item.risk_outcome,
-                "order_count": item.order_count,
-                "position_changes": [
-                    {
-                        "instrument": change.instrument.key,
-                        "symbol": change.instrument.symbol,
-                        "product": change.instrument.product.value,
-                        "side": change.side.value,
-                        "effect": change.effect,
-                        "role": change.role.value,
-                        "status": change.status,
-                        "requested_quantity": str(change.requested_quantity),
-                        "filled_quantity": str(change.filled_quantity),
-                        "average_fill_price": (
-                            None
-                            if change.average_fill_price is None
-                            else str(change.average_fill_price)
-                        ),
-                        "fee": str(change.fee),
-                    }
-                    for change in item.position_changes
-                ],
-                "candidate_economics_recorded": item.candidate_economics_recorded,
-                "analysis_input": item.analysis_input,
-                "candidate_economics": [
-                    {
-                        "candidate_id": candidate.candidate_id,
-                        "forecast_id": candidate.forecast_id,
-                        "payoff_projection_id": candidate.payoff_projection_id,
-                        "producer_id": candidate.producer_id,
-                        "outcome_family_id": candidate.outcome_family_id,
-                        "target_legs": [
-                            {
-                                "instrument": instrument,
-                                "symbol": symbol,
-                                "product": product,
-                                "direction": direction,
-                            }
-                            for instrument, symbol, product, direction in candidate.target_legs
-                        ],
-                        "edge_basis": candidate.edge_basis,
-                        "forecast_current": candidate.forecast_current,
-                        "information_cutoff_at": _iso(candidate.information_cutoff_at),
-                        "available_at": _iso(candidate.available_at),
-                        "valid_until": _iso(candidate.valid_until),
-                        "world_model_id": candidate.world_model_id,
-                        "outcome_probabilities": [
-                            {"bucket_id": bucket_id, "probability": str(probability)}
-                            for bucket_id, probability in candidate.outcome_probabilities
-                        ],
-                        "mechanism_contributions": [
-                            {
-                                "mechanism_id": mechanism_id,
-                                "effect": effect,
-                                "rationale": rationale,
-                            }
-                            for mechanism_id, effect, rationale in candidate.mechanism_contributions
-                        ],
-                        "evidence_refs": list(candidate.evidence_refs),
-                        "gross_bps": str(candidate.gross_bps),
-                        "fee_bps": str(candidate.fee_bps),
-                        "exit_spread_bps": str(candidate.exit_spread_bps),
-                        "depth_slippage_bps": str(candidate.depth_slippage_bps),
-                        "estimated_cost_bps": str(candidate.estimated_cost_bps),
-                        "net_bps": str(candidate.net_bps),
-                        "decision_threshold_bps": str(candidate.decision_threshold_bps),
-                        "current_gross_notional": str(candidate.current_gross_notional),
-                        "evaluation_gross_notional": str(
-                            candidate.evaluation_gross_notional
-                        ),
-                        "desired_gross_notional": str(candidate.desired_gross_notional),
-                        "eligible": candidate.eligible,
-                        "reason_codes": list(candidate.reason_codes),
-                        "validity_reason_codes": (
-                            None
-                            if candidate.validity_reason_codes is None
-                            else list(candidate.validity_reason_codes)
-                        ),
-                        "validity_evidence_refs": (
-                            None
-                            if candidate.validity_evidence_refs is None
-                            else list(candidate.validity_evidence_refs)
-                        ),
-                    }
-                    for candidate in item.candidate_economics
-                ],
-            }
+            _serialize_capital_activity_item(item, include_details=include_details)
             for item in items
         ]
     }
+
+
+def serialize_capital_activity_detail(item: CapitalActivity) -> dict:
+    return _serialize_capital_activity_item(item, include_details=True)
+
+
+def _serialize_capital_activity_item(
+    item: CapitalActivity,
+    *,
+    include_details: bool,
+) -> dict:
+    payload = {
+        "activity_id": item.activity_id,
+        "at": _iso(item.at),
+        "symbol": item.symbol,
+        "trigger_types": list(item.trigger_types),
+        "outcome": item.outcome,
+        "summary": item.summary,
+        "reason_codes": list(item.reason_codes),
+        "risk_outcome": item.risk_outcome,
+        "order_count": item.order_count,
+        "position_changes": [
+            {
+                "instrument": change.instrument.key,
+                "symbol": change.instrument.symbol,
+                "product": change.instrument.product.value,
+                "side": change.side.value,
+                "effect": change.effect,
+                "role": change.role.value,
+                "status": change.status,
+                "requested_quantity": str(change.requested_quantity),
+                "filled_quantity": str(change.filled_quantity),
+                "average_fill_price": (
+                    None
+                    if change.average_fill_price is None
+                    else str(change.average_fill_price)
+                ),
+                "fee": str(change.fee),
+            }
+            for change in item.position_changes
+        ],
+        "candidate_economics_recorded": item.candidate_economics_recorded,
+        "candidate_summaries": [
+            {
+                "candidate_id": candidate.candidate_id,
+                "outcome_family_id": candidate.outcome_family_id,
+                "target_legs": [
+                    {
+                        "instrument": instrument,
+                        "symbol": symbol,
+                        "product": product,
+                        "direction": direction,
+                    }
+                    for instrument, symbol, product, direction in candidate.target_legs
+                ],
+                "net_bps": str(candidate.net_bps),
+                "desired_gross_notional": str(candidate.desired_gross_notional),
+                "validity_reason_codes": (
+                    None
+                    if candidate.validity_reason_codes is None
+                    else list(candidate.validity_reason_codes)
+                ),
+            }
+            for candidate in item.candidate_economics
+        ],
+    }
+    if not include_details:
+        return payload
+    payload.update(
+        {
+            "analysis_input": item.analysis_input,
+            "candidate_economics": [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "forecast_id": candidate.forecast_id,
+                    "payoff_projection_id": candidate.payoff_projection_id,
+                    "producer_id": candidate.producer_id,
+                    "outcome_family_id": candidate.outcome_family_id,
+                    "target_legs": [
+                        {
+                            "instrument": instrument,
+                            "symbol": symbol,
+                            "product": product,
+                            "direction": direction,
+                        }
+                        for instrument, symbol, product, direction in candidate.target_legs
+                    ],
+                    "edge_basis": candidate.edge_basis,
+                    "forecast_current": candidate.forecast_current,
+                    "information_cutoff_at": _iso(candidate.information_cutoff_at),
+                    "available_at": _iso(candidate.available_at),
+                    "valid_until": _iso(candidate.valid_until),
+                    "world_model_id": candidate.world_model_id,
+                    "outcome_probabilities": [
+                        {"bucket_id": bucket_id, "probability": str(probability)}
+                        for bucket_id, probability in candidate.outcome_probabilities
+                    ],
+                    "mechanism_contributions": [
+                        {
+                            "mechanism_id": mechanism_id,
+                            "effect": effect,
+                            "rationale": rationale,
+                        }
+                        for mechanism_id, effect, rationale in candidate.mechanism_contributions
+                    ],
+                    "evidence_refs": list(candidate.evidence_refs),
+                    "gross_bps": str(candidate.gross_bps),
+                    "fee_bps": str(candidate.fee_bps),
+                    "exit_spread_bps": str(candidate.exit_spread_bps),
+                    "depth_slippage_bps": str(candidate.depth_slippage_bps),
+                    "estimated_cost_bps": str(candidate.estimated_cost_bps),
+                    "net_bps": str(candidate.net_bps),
+                    "decision_threshold_bps": str(candidate.decision_threshold_bps),
+                    "current_gross_notional": str(candidate.current_gross_notional),
+                    "evaluation_gross_notional": str(candidate.evaluation_gross_notional),
+                    "desired_gross_notional": str(candidate.desired_gross_notional),
+                    "eligible": candidate.eligible,
+                    "reason_codes": list(candidate.reason_codes),
+                    "validity_reason_codes": (
+                        None
+                        if candidate.validity_reason_codes is None
+                        else list(candidate.validity_reason_codes)
+                    ),
+                    "validity_evidence_refs": (
+                        None
+                        if candidate.validity_evidence_refs is None
+                        else list(candidate.validity_evidence_refs)
+                    ),
+                }
+                for candidate in item.candidate_economics
+            ],
+        }
+    )
+    return payload
 
 
 def serialize_capital_equity(items: tuple[CapitalEquityPoint, ...]) -> dict:

@@ -23,6 +23,7 @@ from investment_manager.entrypoints.dashboard import serializers as ser
 from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
     serialize_capital_activity,
+    serialize_capital_activity_detail,
     serialize_capital_choice_evidence,
     serialize_capital_equity,
     serialize_capital_overview,
@@ -184,10 +185,19 @@ def create_app(
         )
         return _json(
             {
-                **serialize_capital_activity(page.items),
+                **serialize_capital_activity(page.items, include_details=False),
                 "next_cursor": page.next_cursor,
             }
         )
+
+    async def capital_activity_detail(request: Request) -> JSONResponse:
+        item = await run_in_threadpool(
+            capital_reader.activity_detail,
+            request.path_params["activity_id"],
+        )
+        if item is None:
+            return _json({"detail": "capital activity not found"}, status_code=404)
+        return _json(serialize_capital_activity_detail(item))
 
     async def capital_equity(request: Request) -> JSONResponse:
         limit = _parse_limit(request)
@@ -310,6 +320,7 @@ def create_app(
         Route("/api/capital", capital),
         Route("/api/capital/equity", capital_equity),
         Route("/api/capital/activity", capital_activity),
+        Route("/api/capital/activity/{activity_id}", capital_activity_detail),
         Route("/api/evaluation/forecast", forecast_evidence),
         Route("/api/assessment/records", assessment_records),
         Route(

@@ -5,6 +5,7 @@ import type {
   AssessmentFeed,
   AssessmentRecordDetail,
   CapitalAction,
+  CapitalActionDetail,
   CapitalEquityPoint,
   CapitalOverview,
   ForecastEvaluationEvidence,
@@ -64,6 +65,10 @@ export const api = {
     );
     return { items: result.actions, nextCursor: result.next_cursor };
   },
+  capitalActivityDetail: (id: string) =>
+    getJson<CapitalActionDetail>(
+      `/api/capital/activity/${encodeURIComponent(id)}`,
+    ),
   assessmentRecords: (cursor?: string, limit = 30) =>
     getJson<AssessmentFeed>(pagePath("/api/assessment/records", cursor, limit)),
   latestAssessment: () =>

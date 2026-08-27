@@ -1787,6 +1787,16 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
         }
     ]
     assert serialized["candidate_economics_recorded"] is True
+    assert serialized["candidate_summaries"] == [
+        {
+            "candidate_id": economics.candidate_id,
+            "outcome_family_id": economics.outcome_family_id,
+            "target_legs": serialized["candidate_economics"][0]["target_legs"],
+            "net_bps": str(economics.net_bps),
+            "desired_gross_notional": str(economics.desired_gross_notional),
+            "validity_reason_codes": [],
+        }
+    ]
     assert serialized["analysis_input"] is None
     assert "analysis_input" not in serialized["candidate_economics"][0]
     with_input = serialize_capital_activity(
@@ -1794,6 +1804,24 @@ def test_unprofitable_candidate_explains_cash_without_fake_rebalance() -> None:
     )["actions"][0]
     assert with_input["analysis_input"] == {"purpose": "FORECAST_ESTIMATE"}
     assert "analysis_input" not in with_input["candidate_economics"][0]
+
+    summary_activity = CapitalDashboardReader(engine, config).activity(
+        include_details=False
+    )[0]
+    assert len(summary_activity.candidate_economics) == 1
+    assert summary_activity.analysis_input is None
+    summary_payload = serialize_capital_activity(
+        (summary_activity,),
+        include_details=False,
+    )["actions"][0]
+    assert "candidate_economics" not in summary_payload
+    assert "analysis_input" not in summary_payload
+    detail = CapitalDashboardReader(engine, config).activity_detail(
+        summary_activity.activity_id
+    )
+    assert detail is not None
+    assert detail.candidate_economics[0].candidate_id == economics.candidate_id
+    assert CapitalDashboardReader(engine, config).activity_detail("missing") is None
 
     assert result.trade_plan is not None
     target = SqlPortfolioStore(engine).target_for_cycle(result.trade_plan.cycle_id)

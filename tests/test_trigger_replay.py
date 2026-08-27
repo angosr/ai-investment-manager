@@ -20,7 +20,7 @@ def _event(
     *,
     observed_at: datetime,
     evidence_id: str,
-    impact: Decimal,
+    attention_priority: Decimal,
     symbols: tuple[str, ...] = ("BTCUSDT",),
 ) -> IntelligenceEvent:
     return IntelligenceEvent(
@@ -34,7 +34,8 @@ def _event(
         body=evidence_id,
         symbols=symbols,
         relevance=Decimal("1"),
-        impact=impact,
+        attention_priority=attention_priority,
+        immediate_review_eligible=True,
         source_reliability=Decimal("1"),
         novelty=Decimal("1"),
     )
@@ -81,22 +82,22 @@ def test_external_trigger_replay_matches_coalesce_specific_cooldown_and_latency(
         _event(
             observed_at=start + timedelta(minutes=1),
             evidence_id="ordinary-1",
-            impact=Decimal("0.84"),
+            attention_priority=Decimal("0.84"),
         ),
         _event(
             observed_at=start + timedelta(minutes=1, seconds=30),
             evidence_id="ordinary-2",
-            impact=Decimal("0.83"),
+            attention_priority=Decimal("0.83"),
         ),
         _event(
             observed_at=start + timedelta(minutes=4),
             evidence_id="urgent-1",
-            impact=Decimal("0.98"),
+            attention_priority=Decimal("0.98"),
         ),
         _event(
             observed_at=start + timedelta(minutes=5),
             evidence_id="below-threshold",
-            impact=Decimal("0.70"),
+            attention_priority=Decimal("0.70"),
         ),
     )
     dataset = freeze_historical_events(
@@ -145,12 +146,12 @@ def test_external_trigger_replay_discards_event_that_expires_during_cooldown(
         _event(
             observed_at=start,
             evidence_id="first",
-            impact=Decimal("0.84"),
+            attention_priority=Decimal("0.84"),
         ),
         _event(
             observed_at=start + timedelta(minutes=3),
             evidence_id="expires",
-            impact=Decimal("0.84"),
+            attention_priority=Decimal("0.84"),
         ),
     )
     dataset = freeze_historical_events(
@@ -187,7 +188,7 @@ def test_external_trigger_replay_enforces_global_cross_symbol_admission(
         _event(
             observed_at=start,
             evidence_id="shared",
-            impact=Decimal("1"),
+            attention_priority=Decimal("1"),
             symbols=("BTCUSDT", "ETHUSDT"),
         ),
     )
@@ -233,7 +234,7 @@ def test_external_trigger_replay_carries_last_global_admission(app_config) -> No
             _event(
                 observed_at=start,
                 evidence_id="shared",
-                impact=Decimal("1"),
+                attention_priority=Decimal("1"),
                 symbols=("BTCUSDT", "ETHUSDT"),
             ),
         ),

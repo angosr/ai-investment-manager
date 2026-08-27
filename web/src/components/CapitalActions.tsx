@@ -1,5 +1,10 @@
 import { Fragment, useState } from "react";
-import type { CapitalAction } from "../api/types";
+import { api } from "../api/client";
+import type {
+  CapitalAction,
+  CapitalActionDetail,
+  CapitalCandidateSummary,
+} from "../api/types";
 import { hhmm } from "../lib/format";
 import styles from "./CapitalActions.module.css";
 
@@ -90,6 +95,9 @@ function groupRoutineChecks(actions: CapitalAction[]): ActionGroup[] {
 
 function CapitalActionGroup({ group }: { group: ActionGroup }) {
   const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<CapitalActionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const action = group.actions[0];
   const copy = actionCopy(action) ?? OUTCOME_COPY[action.outcome] ?? {
     badge: "已记录",
@@ -102,11 +110,14 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
     (trigger) => TRIGGER_LABELS[trigger] ?? trigger,
   );
   const repeated = group.actions.length > 1;
-  const candidates = action.candidate_economics;
-  const selected = candidates.filter((item) => Number(item.desired_gross_notional) > 0);
-  const best = selected[0] ?? [...candidates].sort(
+  const summaries = action.candidate_summaries;
+  const selectedSummaries = summaries.filter(
+    (item) => Number(item.desired_gross_notional) > 0,
+  );
+  const best = selectedSummaries[0] ?? [...summaries].sort(
     (left, right) => Number(right.net_bps) - Number(left.net_bps),
   )[0];
+  const candidates = detail?.candidate_economics ?? [];
   const forecasts = [...new Map(candidates.map((item) => [item.forecast_id, item])).values()];
   const zeroImpact = new Set([
     "NO_OPPORTUNITY",
@@ -118,9 +129,26 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
     "NO_ORDER",
   ]).has(action.outcome);
 
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (detail !== null || detailLoading) return;
+    setDetailError(null);
+    setDetailLoading(true);
+    void api.capitalActivityDetail(action.activity_id)
+      .then((loaded) => setDetail(loaded))
+      .catch((error: unknown) => {
+        setDetailError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setDetailLoading(false));
+  };
+
   return (
     <div className={`${styles.item} ${open ? styles.open : ""}`}>
-      <button className={styles.row} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button className={styles.row} aria-expanded={open} onClick={toggle}>
         <span className={styles.time}>{hhmm(action.at)}</span>
         <span className={styles.body}>
           <span className={styles.line}>
@@ -131,9 +159,9 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             {action.position_changes.length && !zeroImpact
               ? positionChangeSummary(action)
               : best && zeroImpact && !best.validity_reason_codes?.length
-              ? selected.length
+              ? selectedSummaries.length
                 ? `目标 ${candidateLabel(best)} ${formatUsdt(best.desired_gross_notional)} USDT；费用后预期 ${formatBps(best.net_bps)} bp`
-                : `比较 ${candidates.length} 个产品表达后保持现金；最佳费用后预期 ${formatBps(best.net_bps)} bp`
+                : `比较 ${summaries.length} 个产品表达后保持现金；最佳费用后预期 ${formatBps(best.net_bps)} bp`
               : reasons[0] ?? action.summary}
           </span>
         </span>
@@ -149,6 +177,17 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
             <dd>{triggers.join("；") || "系统状态变化"}</dd>
             <dt>判断依据</dt>
             <dd>{reasons.join("；") || action.summary}</dd>
+            {detailLoading ? (
+              <>
+                <dt>决策详情</dt>
+                <dd>正在读取当时冻结的候选、预测与 AI 输入…</dd>
+              </>
+            ) : detailError ? (
+              <>
+                <dt>决策详情</dt>
+                <dd>读取失败：{detailError}</dd>
+              </>
+            ) : null}
             {action.position_changes.map((change, index) => (
               <Fragment key={`${change.instrument}-${change.role}-${index}`}>
                 <dt>{change.role === "COMPENSATION" ? "补偿成交" : "仓位变动"}</dt>
@@ -223,13 +262,13 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                 </dd>
               </Fragment>
             ))}
-            {action.analysis_input ? (
+            {detail?.analysis_input ? (
               <>
                 <dt>AI 输入</dt>
                 <dd>
                   <details className={styles.snapshot}>
                     <summary>查看这次 AI 看到的信息快照</summary>
-                    <pre>{JSON.stringify(action.analysis_input, null, 2)}</pre>
+                    <pre>{JSON.stringify(detail.analysis_input, null, 2)}</pre>
                   </details>
                 </dd>
               </>
@@ -385,7 +424,7 @@ function formatUsdt(value: string): string {
   return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
 }
 
-function candidateLabel(candidate: CapitalAction["candidate_economics"][number]): string {
+function candidateLabel(candidate: CapitalCandidateSummary): string {
   return candidate.target_legs.map((leg) => {
     const product = leg.product === "SPOT" ? "现货" : "永续";
     const direction = leg.direction === "LONG" ? "做多" : "做空";
