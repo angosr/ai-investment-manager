@@ -304,7 +304,7 @@ def test_historical_event_freeze_accepts_empty_window_as_observed_fact() -> None
         )
 
 
-def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
+def test_fetch_binance_history_paginates_and_freezes_instrument(tmp_path) -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = start + timedelta(minutes=10)
     first_ms = int(start.timestamp() * 1000)
@@ -346,7 +346,20 @@ def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
         return httpx.Response(
             200,
             json=[
-                [first_ms, "100", "102", "99", "101", "5", first_ms + 299_999],
+                [
+                    first_ms,
+                    "100",
+                    "102",
+                    "99",
+                    "101",
+                    "5",
+                    first_ms + 299_999,
+                    "505",
+                    12,
+                    "3",
+                    "303",
+                    "0",
+                ],
                 [
                     first_ms + 300_000,
                     "101",
@@ -355,6 +368,11 @@ def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
                     "102",
                     "6",
                     first_ms + 599_999,
+                    "612",
+                    14,
+                    "4",
+                    "408",
+                    "0",
                 ],
             ],
         )
@@ -372,8 +390,15 @@ def test_fetch_binance_history_paginates_and_freezes_instrument() -> None:
         )
     )
     assert dataset.manifest.bar_count == 2
+    assert dataset.manifest.schema_version == "historical-bars-v2"
     assert dataset.manifest.instrument.quantity_increment == Decimal("0.000001")
     assert dataset.bars[0].observed_at == dataset.bars[0].close_time
+    assert dataset.bars[0].quote_volume == Decimal("505")
+    assert dataset.bars[0].taker_buy_base_volume == Decimal("3")
+    assert dataset.bars[0].taker_buy_quote_volume == Decimal("303")
+    catalog = HistoricalDatasetCatalog(tmp_path)
+    catalog.store(dataset)
+    assert catalog.load(dataset.manifest.dataset_id) == dataset
     assert calls == 1
 
 
@@ -414,7 +439,20 @@ def test_fetch_binance_usdm_history_has_distinct_source_and_rules() -> None:
         return httpx.Response(
             200,
             json=[
-                [first_ms, "100", "102", "99", "101", "5", first_ms + 299_999],
+                [
+                    first_ms,
+                    "100",
+                    "102",
+                    "99",
+                    "101",
+                    "5",
+                    first_ms + 299_999,
+                    "505",
+                    12,
+                    "3",
+                    "303",
+                    "0",
+                ],
                 [
                     first_ms + 300_000,
                     "101",
@@ -423,6 +461,11 @@ def test_fetch_binance_usdm_history_has_distinct_source_and_rules() -> None:
                     "102",
                     "6",
                     first_ms + 599_999,
+                    "612",
+                    14,
+                    "4",
+                    "408",
+                    "0",
                 ],
             ],
         )
@@ -441,9 +484,11 @@ def test_fetch_binance_usdm_history_has_distinct_source_and_rules() -> None:
     )
 
     assert dataset.manifest.source == "binance-usdm-rest-historical"
+    assert dataset.manifest.schema_version == "historical-bars-v2"
     assert dataset.manifest.instrument.quantity_increment == Decimal("0.001")
     assert dataset.manifest.instrument.minimum_notional == Decimal("100")
     assert dataset.bars[0].source == dataset.manifest.source
+    assert dataset.bars[0].taker_buy_base_volume == Decimal("3")
     with pytest.raises(ValueError, match="官方 REST"):
         asyncio.run(
             fetch_binance_usdm_history(

@@ -40,6 +40,7 @@ _INTERVAL_MILLISECONDS = {
 _BINANCE_FUNDING_ARCHIVE_SOURCE = "binance-public-data-usdm-funding-rate"
 _BINANCE_FUNDING_AVAILABILITY_LAG = timedelta(minutes=1)
 _BINANCE_FUNDING_REST_SOURCE = "binance-usdm-funding-rest"
+HistoricalBarSchema = Literal["historical-bars-v1", "historical-bars-v2"]
 
 
 class InstrumentSpec(FrozenModel):
@@ -64,7 +65,7 @@ class InstrumentSpec(FrozenModel):
 
 
 class HistoricalDatasetManifest(FrozenModel):
-    schema_version: str = "historical-bars-v1"
+    schema_version: HistoricalBarSchema = "historical-bars-v1"
     dataset_id: str
     symbol: str
     interval: str
@@ -160,7 +161,11 @@ class HistoricalDatasetCatalog:
         self._root.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix=".dataset-", dir=self._root))
         try:
-            _write_json(temporary / "bars.json", [_compact_bar(item) for item in dataset.bars])
+            rows = [
+                _compact_bar(item, schema_version=dataset.manifest.schema_version)
+                for item in dataset.bars
+            ]
+            _write_json(temporary / "bars.json", rows)
             _write_json(
                 temporary / "manifest.json",
                 dataset.manifest.model_dump(mode="json"),
@@ -215,9 +220,10 @@ class HistoricalDatasetCatalog:
         first_open_time: datetime | None = None
         last_close_time: datetime | None = None
         selected_started = False
+        expected_fields = _historical_bar_field_count(manifest.schema_version)
         for raw in _iter_json_array(target / "bars.json"):
-            if not isinstance(raw, list) or len(raw) != 7:
-                raise ValueError("历史 K 线条目必须包含 7 个字段")
+            if not isinstance(raw, list) or len(raw) != expected_fields:
+                raise ValueError(f"历史 K 线条目必须包含 {expected_fields} 个字段")
             digest.update(
                 json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode()
             )
@@ -829,7 +835,7 @@ async def _fetch_binance_kline_history(
             if not page:
                 break
             for item in page:
-                if not isinstance(item, list) or len(item) < 7:
+                if not isinstance(item, list) or len(item) < 11:
                     raise ValueError("Binance kline REST 条目非法")
                 open_ms = int(item[0])
                 close_ms = int(item[6])
@@ -844,6 +850,9 @@ async def _fetch_binance_kline_history(
                         str(item[4]),
                         str(item[5]),
                         close_ms,
+                        str(item[7]),
+                        str(item[9]),
+                        str(item[10]),
                     ]
                 )
             next_cursor = int(page[-1][0]) + interval_ms
@@ -854,11 +863,18 @@ async def _fetch_binance_kline_history(
     if not rows:
         raise ValueError("指定区间没有完整已收盘 K 线")
     bars = tuple(
-        _bar_from_row(row, symbol=symbol, interval=interval, source=source) for row in rows
+        _bar_from_row(
+            row,
+            symbol=symbol,
+            interval=interval,
+            source=source,
+            schema_version="historical-bars-v2",
+        )
+        for row in rows
     )
-    bars_hash = _bars_hash(bars)
+    bars_hash = _bars_hash(bars, schema_version="historical-bars-v2")
     manifest_payload = {
-        "schema_version": "historical-bars-v1",
+        "schema_version": "historical-bars-v2",
         "source": source,
         "symbol": symbol,
         "interval": interval,
@@ -869,6 +885,7 @@ async def _fetch_binance_kline_history(
     }
     manifest = HistoricalDatasetManifest(
         dataset_id=stable_id("historical_dataset", *manifest_payload.values()),
+        schema_version="historical-bars-v2",
         symbol=symbol,
         interval=interval,
         source=source,
@@ -971,19 +988,36 @@ def _validate_bars(
         ) != interval_ms:
             raise ValueError("历史 K 线存在缺口；必须补齐或登记为新数据集后再评价")
         previous = bar
+        if manifest.schema_version == "historical-bars-v2" and any(
+            item is None
+            for item in (
+                bar.quote_volume,
+                bar.taker_buy_base_volume,
+                bar.taker_buy_quote_volume,
+            )
+        ):
+            raise ValueError("历史 K 线 v2 必须保留完整成交摘要")
     if bars[0].open_time != manifest.first_open_time:
         raise ValueError("历史首根 K 线与 Manifest 不一致")
     if bars[-1].close_time != manifest.last_close_time:
         raise ValueError("历史末根 K 线与 Manifest 不一致")
-    if _bars_hash(bars) != manifest.bars_hash:
+    if _bars_hash(bars, schema_version=manifest.schema_version) != manifest.bars_hash:
         raise ValueError("历史 K 线内容哈希与 Manifest 不一致")
 
 
-def _bars_hash(bars: Iterable[ClosedMarketBar]) -> str:
+def _bars_hash(
+    bars: Iterable[ClosedMarketBar],
+    *,
+    schema_version: HistoricalBarSchema = "historical-bars-v1",
+) -> str:
     digest = hashlib.sha256()
     for bar in bars:
         digest.update(
-            json.dumps(_compact_bar(bar), ensure_ascii=False, separators=(",", ":")).encode()
+            json.dumps(
+                _compact_bar(bar, schema_version=schema_version),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
         )
         digest.update(b"\n")
     return digest.hexdigest()
@@ -1110,8 +1144,12 @@ def _validate_funding_observations(
         raise ValueError("历史资金费率内容哈希与 Manifest 不一致")
 
 
-def _compact_bar(bar: ClosedMarketBar) -> list[Any]:
-    return [
+def _compact_bar(
+    bar: ClosedMarketBar,
+    *,
+    schema_version: HistoricalBarSchema = "historical-bars-v1",
+) -> list[Any]:
+    values = [
         int(bar.open_time.timestamp() * 1000),
         str(bar.open),
         str(bar.high),
@@ -1120,6 +1158,16 @@ def _compact_bar(bar: ClosedMarketBar) -> list[Any]:
         str(bar.volume),
         int(bar.close_time.timestamp() * 1000),
     ]
+    if schema_version == "historical-bars-v1":
+        return values
+    flow = (
+        bar.quote_volume,
+        bar.taker_buy_base_volume,
+        bar.taker_buy_quote_volume,
+    )
+    if any(item is None for item in flow):
+        raise ValueError("历史 K 线 v2 必须保留完整成交摘要")
+    return [*values, *(str(item) for item in flow)]
 
 
 def _compact_funding(
@@ -1376,12 +1424,21 @@ def _bar_from_compact(row: Any, manifest: HistoricalDatasetManifest) -> ClosedMa
         symbol=manifest.symbol,
         interval=manifest.interval,
         source=manifest.source,
+        schema_version=manifest.schema_version,
     )
 
 
-def _bar_from_row(row: list[Any], *, symbol: str, interval: str, source: str) -> ClosedMarketBar:
-    if len(row) != 7:
-        raise ValueError("历史 K 线条目必须包含 7 个字段")
+def _bar_from_row(
+    row: list[Any],
+    *,
+    symbol: str,
+    interval: str,
+    source: str,
+    schema_version: HistoricalBarSchema = "historical-bars-v1",
+) -> ClosedMarketBar:
+    expected_fields = _historical_bar_field_count(schema_version)
+    if len(row) != expected_fields:
+        raise ValueError(f"历史 K 线条目必须包含 {expected_fields} 个字段")
     open_time = datetime.fromtimestamp(int(row[0]) / 1000, tz=UTC)
     close_time = datetime.fromtimestamp(int(row[6]) / 1000, tz=UTC)
     return ClosedMarketBar(
@@ -1395,8 +1452,19 @@ def _bar_from_row(row: list[Any], *, symbol: str, interval: str, source: str) ->
         low=Decimal(str(row[3])),
         close=Decimal(str(row[4])),
         volume=Decimal(str(row[5])),
+        quote_volume=(Decimal(str(row[7])) if schema_version == "historical-bars-v2" else None),
+        taker_buy_base_volume=(
+            Decimal(str(row[8])) if schema_version == "historical-bars-v2" else None
+        ),
+        taker_buy_quote_volume=(
+            Decimal(str(row[9])) if schema_version == "historical-bars-v2" else None
+        ),
         source=source,
     )
+
+
+def _historical_bar_field_count(schema_version: HistoricalBarSchema) -> int:
+    return 7 if schema_version == "historical-bars-v1" else 10
 
 
 def _iter_json_array(path: Path, *, chunk_size: int = 1 << 20) -> Iterator[Any]:
