@@ -163,6 +163,20 @@ class AppConfig(StrictConfig):
             )
         ):
             raise ValueError("WorldModel 成对评估必须绑定已启用的 Context Forecast 与 Codex")
+        quant = self.outcome_evaluation.quant_baseline
+        if quant is not None and quant.enabled:
+            if context_forecast is None or not context_forecast.enabled:
+                raise ValueError("Quant baseline 必须复用已启用的 Context Forecast 合同")
+            if self.market_data.interval != "5m" or self.market_data.bar_window < 49:
+                raise ValueError("Quant baseline 需要至少 49 根 5m 点时 K 线")
+            target_families = {
+                item.outcome_family_id for item in context_forecast.targets
+            }
+            artifact_families = {
+                item.outcome_family_id for item in quant.artifacts
+            }
+            if not artifact_families or not artifact_families.issubset(target_families):
+                raise ValueError("Quant baseline 制品必须属于当前 Forecast targets")
         if self.capital.enabled:
             if self.deployment.stage != DeploymentStage.SHADOW:
                 raise ValueError("当前实验候选资本权限只允许 SHADOW")

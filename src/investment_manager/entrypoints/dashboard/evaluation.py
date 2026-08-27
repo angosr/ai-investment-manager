@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, replace
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from threading import Lock
 
 from sqlalchemy import and_, func, select
@@ -34,6 +35,10 @@ from investment_manager.forecast.product.evaluation import (
 )
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
+)
+from investment_manager.forecast.quant.runtime import (
+    load_quant_forecast_artifact,
+    quant_forecast_behavior_id,
 )
 from investment_manager.forecast.results import (
     BaseForecast,
@@ -96,8 +101,59 @@ class EvaluationDashboardReader:
 
     def forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
         now = require_utc(now)
+        policy = self._config.capital.context_forecast
+        if policy is None or not policy.enabled:
+            return None
         with self._engine.connect() as connection:
-            return self._forecast_evidence(connection, now=now)
+            return self._forecast_evidence(
+                connection,
+                now=now,
+                producer_id=policy.producer_id,
+                producer_behavior_id=policy.producer_behavior_id,
+            )
+
+    def quant_forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
+        """Read the research-only Program producer on the same source-independent slots."""
+
+        now = require_utc(now)
+        policy = self._config.outcome_evaluation.quant_baseline
+        context = self._config.capital.context_forecast
+        if policy is None or not policy.enabled or context is None or not context.enabled:
+            return None
+        with self._engine.connect() as connection:
+            contracts = self._active_forecast_contracts(connection)
+            if not contracts:
+                return None
+            artifact_policy_by_family = {
+                item.outcome_family_id: item for item in policy.artifacts
+            }
+            artifacts = {
+                family: load_quant_forecast_artifact(
+                    Path(item.relative_path),
+                    expected_artifact_id=item.artifact_id,
+                )
+                for family, item in artifact_policy_by_family.items()
+            }
+            behavior_id = quant_forecast_behavior_id(
+                policy_version=policy.version,
+                producer_id=policy.producer_id,
+                targets=tuple(
+                    (
+                        contract,
+                        artifacts.get(contract.outcome_family_id),
+                    )
+                    for contract in sorted(
+                        contracts,
+                        key=lambda item: item.outcome_family_id,
+                    )
+                ),
+            )
+            return self._forecast_evidence(
+                connection,
+                now=now,
+                producer_id=policy.producer_id,
+                producer_behavior_id=behavior_id,
+            )
 
     def forecast_stability_evidence(
         self,
@@ -354,22 +410,32 @@ class EvaluationDashboardReader:
             expected_fee_cost=expected_fee_cost,
         )
 
-    def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
+    def _active_forecast_contracts(self, connection) -> tuple[ForecastContract, ...]:
         policy = self._config.capital.context_forecast
         if policy is None or not policy.enabled:
-            return None
+            return ()
         target_versions = {item.outcome_family_id: item.contract_version for item in policy.targets}
         contract_rows = connection.execute(
             select(forecast_contracts.c.contract_id, forecast_contracts.c.payload).where(
                 forecast_contracts.c.outcome_family_id.in_(tuple(target_versions))
             )
         ).all()
-        contracts = tuple(
+        return tuple(
             ForecastContract.model_validate(row.payload)
             for row in contract_rows
             if target_versions.get(row.payload["outcome_family_id"])
             == row.payload["contract_version"]
         )
+
+    def _forecast_evidence(
+        self,
+        connection,
+        *,
+        now: datetime,
+        producer_id: str,
+        producer_behavior_id: str,
+    ) -> ForecastEvidence | None:
+        contracts = self._active_forecast_contracts(connection)
         if not contracts:
             return None
         contract_by_id = {item.contract_id: item for item in contracts}
@@ -387,8 +453,8 @@ class EvaluationDashboardReader:
             )
             .where(
                 forecast_decision_slots.c.contract_id.in_(contract_ids),
-                forecast_slot_obligations.c.producer_id == policy.producer_id,
-                forecast_slot_obligations.c.producer_behavior_id == policy.producer_behavior_id,
+                forecast_slot_obligations.c.producer_id == producer_id,
+                forecast_slot_obligations.c.producer_behavior_id == producer_behavior_id,
                 forecast_decision_slots.c.completion_deadline_at <= now,
             )
         ).all()
@@ -405,8 +471,8 @@ class EvaluationDashboardReader:
                 .where(
                     forecast_records.c.contract_id.in_(contract_ids),
                     forecast_records.c.kind == ForecastResultKind.BASE.value,
-                    forecast_records.c.producer_id == policy.producer_id,
-                    forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_records.c.producer_id == producer_id,
+                    forecast_records.c.producer_behavior_id == producer_behavior_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                 )
             ).all()
@@ -420,8 +486,8 @@ class EvaluationDashboardReader:
                 )
                 .where(
                     forecast_no_estimates.c.contract_id.in_(contract_ids),
-                    forecast_no_estimates.c.producer_id == policy.producer_id,
-                    forecast_no_estimates.c.producer_behavior_id == policy.producer_behavior_id,
+                    forecast_no_estimates.c.producer_id == producer_id,
+                    forecast_no_estimates.c.producer_behavior_id == producer_behavior_id,
                     forecast_decision_slots.c.completion_deadline_at <= now,
                 )
             ).all()
@@ -454,8 +520,8 @@ class EvaluationDashboardReader:
             .where(
                 forecast_records.c.contract_id.in_(contract_ids),
                 forecast_records.c.kind == ForecastResultKind.BASE.value,
-                forecast_records.c.producer_id == policy.producer_id,
-                forecast_records.c.producer_behavior_id == policy.producer_behavior_id,
+                forecast_records.c.producer_id == producer_id,
+                forecast_records.c.producer_behavior_id == producer_behavior_id,
                 forecast_outcomes.c.status == ForecastOutcomeStatus.SETTLED.value,
             )
             .order_by(forecast_records.c.available_at, forecast_records.c.forecast_id)
@@ -527,7 +593,13 @@ class EvaluationDashboardReader:
         """Read the point-in-time regime frozen in this Forecast, never current state."""
 
         if forecast.analysis_input_json is None:
-            return None
+            if forecast.program_input_json is None:
+                return None
+            try:
+                cell_key = json.loads(forecast.program_input_json)["cell_key"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                return None
+            return cell_key if isinstance(cell_key, str) and cell_key else None
         try:
             payload = json.loads(forecast.analysis_input_json)
             target_states = payload.get("forecast_targets")
@@ -554,6 +626,14 @@ def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
     if evidence is None:
         return {"forecast_evidence": None}
     return {"forecast_evidence": _serialize_forecast_evidence_payload(evidence)}
+
+
+def serialize_quant_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
+    return {
+        "quant_forecast_evidence": (
+            None if evidence is None else _serialize_forecast_evidence_payload(evidence)
+        )
+    }
 
 
 def serialize_forecast_stability_evidence(

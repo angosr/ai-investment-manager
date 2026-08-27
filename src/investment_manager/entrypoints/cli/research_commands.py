@@ -324,6 +324,94 @@ def fetch_binance_history_command(
     )
 
 
+@app.command("train-quant-baseline")
+def train_quant_baseline_command(
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    dataset_id: Annotated[str, typer.Option()],
+    outcome_family_id: Annotated[str, typer.Option()],
+    training_cutoff: Annotated[str, typer.Option(help="带时区的 ISO-8601 训练截止")],
+    dataset_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        ".runtime/datasets"
+    ),
+    artifact_catalog: Annotated[Path, typer.Option(file_okay=False)] = Path(
+        "evidence/quant-forecasts"
+    ),
+) -> None:
+    """冻结透明 Quant prior；只生成研究制品，不授予资本权限。"""
+
+    from investment_manager.forecast.context.producer import context_forecast_contract
+    from investment_manager.platform.artifacts import write_json_artifact
+    from investment_manager.research.dataset import HistoricalDatasetCatalog
+    from investment_manager.research.quant import train_quant_forecast_artifact
+
+    loaded = load_config(config)
+    context = loaded.capital.context_forecast
+    if context is None:
+        raise typer.BadParameter("当前配置没有 Context Forecast 合同")
+    targets = tuple(
+        item for item in context.targets if item.outcome_family_id == outcome_family_id
+    )
+    if len(targets) != 1:
+        raise typer.BadParameter("outcome-family-id 必须唯一属于当前 Forecast 合同")
+    instruments = {
+        **{
+            item.instrument.key: item.instrument
+            for item in loaded.capital.execution_specs
+        },
+        **{
+            item.key: item for item in loaded.capital.forecast_reference_instruments
+        },
+    }
+    target_policy = targets[0]
+    instrument = instruments[target_policy.reference_instrument_key]
+    contract = context_forecast_contract(
+        policy=context,
+        target_policy=target_policy,
+        instrument=instrument,
+        cost_semantics_version=loaded.capital.decision.cost_model_version,
+    )
+    artifact = train_quant_forecast_artifact(
+        dataset=HistoricalDatasetCatalog(dataset_catalog).load(dataset_id),
+        contract=contract,
+        reference_instrument=instrument,
+        training_cutoff_at=_parse_utc_option(training_cutoff, name="training-cutoff"),
+    )
+    target = artifact_catalog / f"{artifact.artifact_id}.json"
+    write_json_artifact(
+        root=artifact_catalog,
+        target=target,
+        prefix=".quant-forecast-",
+        payload=artifact,
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "artifact_id": artifact.artifact_id,
+                "outcome_family_id": artifact.outcome_family_id,
+                "selected_model": artifact.selected_model,
+                "development_sample_count": artifact.development_sample_count,
+                "validation_sample_count": artifact.validation_sample_count,
+                "blind_sample_count": artifact.blind_sample_count,
+                "selected_validation_brier": str(
+                    next(
+                        item.validation_brier
+                        for item in artifact.candidate_evaluations
+                        if item.model_name == artifact.selected_model
+                    )
+                ),
+                "validation_unconditional_brier": str(
+                    artifact.validation_unconditional_brier
+                ),
+                "selected_blind_brier": str(artifact.selected_blind_brier),
+                "blind_unconditional_brier": str(artifact.blind_unconditional_brier),
+                "path": str(target),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @app.command("fetch-binance-usdm-history")
 def fetch_binance_usdm_history_command(
     config: Annotated[Path, typer.Option(exists=True, dir_okay=False)],

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Protocol
 
 from investment_manager.decision_cycle.portfolio import (
@@ -56,6 +57,12 @@ from investment_manager.forecast.contracts import (
 from investment_manager.forecast.product.context import ContextProductPayoffProjector
 from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.product.repository import SqlProductPayoffProjectionStore
+from investment_manager.forecast.quant.runtime import (
+    PortfolioQuantForecastProducer,
+    QuantForecastRuntimeTarget,
+    load_quant_forecast_artifact,
+    quant_forecast_behavior_id,
+)
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, Forecast
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
@@ -130,6 +137,17 @@ class CapitalForecastProducer(Protocol):
         before_as_of: datetime,
         completed_at: datetime,
     ) -> tuple[ForecastNoEstimate, ...]: ...
+
+
+class ResearchForecastProducer(Protocol):
+    """Side-effect-limited Forecast evidence producer with no capital consumer."""
+
+    def produce_all(
+        self,
+        *,
+        as_of: datetime,
+        cause: ForecastSlotCause | None = None,
+    ) -> tuple[object, ...]: ...
 
 
 class CapitalProductPayoffProjector(Protocol):
@@ -361,6 +379,7 @@ class CapitalCycleService:
         decisions: PortfolioDecisionPipeline,
         execution: TradePlanExecutionPipeline,
         cycle_records: SqlCapitalCycleStore,
+        research_forecast_producers: tuple[ResearchForecastProducer, ...] = (),
         context_activation_at: datetime | None = None,
     ) -> None:
         families = tuple(item.contract.outcome_family_id for item in forecast_sources)
@@ -383,6 +402,7 @@ class CapitalCycleService:
         self._decisions = decisions
         self._execution = execution
         self._cycle_records = cycle_records
+        self._research_forecast_producers = research_forecast_producers
         self.context_activation_at = (
             require_utc(context_activation_at) if context_activation_at is not None else None
         )
@@ -506,6 +526,17 @@ class CapitalCycleService:
             ):
                 raise ValueError("Capital evaluation cause 已绑定不同触发事实")
             return self._recorded_result(prior_record)
+        for producer in self._research_forecast_producers:
+            try:
+                producer.produce_all(as_of=requested_at, cause=cause)
+            except Exception:
+                # Research evidence must never delay or alter the only capital
+                # path.  Any partial obligation remains visible as missing
+                # coverage and the full exception remains in managed logs.
+                logger.exception(
+                    "research Forecast producer failed without blocking capital",
+                    extra={"slot_at": requested_at.isoformat()},
+                )
         production_results = tuple(
             source.producer.produce(as_of=requested_at)
             if cause is None
@@ -1360,6 +1391,7 @@ def assemble_capital_cycle(
     forecast_sources: tuple[CapitalForecastSource, ...] | None = None,
     code_version: str | None = None,
     producer_activation_at: datetime | None = None,
+    quant_artifact_paths: dict[str, Path] | None = None,
     context_forecast_preflight_factory: (
         Callable[[tuple[ForecastContract, ...]], ContextForecastPreflight] | None
     ) = None,
@@ -1372,6 +1404,7 @@ def assemble_capital_cycle(
     forecasts = SqlForecastStore(engine)
     world_models = SqlContextAssessmentStore(engine)
     contracts = SqlForecastContractStore(engine)
+    research_forecast_producers: list[ResearchForecastProducer] = []
     context_activation_at: datetime | None = None
     if forecast_sources is None:
         configured_sources: list[CapitalForecastSource] = []
@@ -1521,6 +1554,76 @@ def assemble_capital_cycle(
                     audit=SqlCodexAuditStore(engine),
                 ),
             )
+            quant_policy = config.outcome_evaluation.quant_baseline
+            if quant_policy is not None and quant_policy.enabled:
+                assert producer_activation_at is not None
+                if quant_artifact_paths is None:
+                    raise ValueError("装配 Quant baseline 必须提供 Release 冻结制品")
+                artifact_policy_by_family = {
+                    item.outcome_family_id: item for item in quant_policy.artifacts
+                }
+                artifacts_by_family = {
+                    family: load_quant_forecast_artifact(
+                        quant_artifact_paths[artifact_policy.artifact_id],
+                        expected_artifact_id=artifact_policy.artifact_id,
+                    )
+                    for family, artifact_policy in artifact_policy_by_family.items()
+                }
+                behavior_id = quant_forecast_behavior_id(
+                    policy_version=quant_policy.version,
+                    producer_id=quant_policy.producer_id,
+                    targets=tuple(
+                        (
+                            runtime.contract,
+                            artifacts_by_family.get(runtime.contract.outcome_family_id),
+                        )
+                        for runtime in frozen_runtimes
+                    ),
+                )
+                quant_targets = []
+                quant_activation_times = []
+                for runtime in frozen_runtimes:
+                    quant_binding = ForecastProducerBinding.create(
+                        contract_id=runtime.contract.contract_id,
+                        producer_kind=ForecastProducerKind.PROGRAM,
+                        producer_id=quant_policy.producer_id,
+                        producer_behavior_id=behavior_id,
+                        permission=ForecastPermission.RESEARCH,
+                    )
+                    quant_binding = contracts.resolve_binding(
+                        quant_binding,
+                        activated_at=producer_activation_at,
+                    )
+                    quant_activation_times.append(
+                        contracts.binding_activation_at(quant_binding.binding_id)
+                    )
+                    quant_targets.append(
+                        QuantForecastRuntimeTarget(
+                            contract=runtime.contract,
+                            binding=quant_binding,
+                            instrument=runtime.instrument,
+                            artifact=artifacts_by_family.get(
+                                runtime.contract.outcome_family_id
+                            ),
+                        )
+                    )
+                research_forecast_producers.append(
+                    PortfolioQuantForecastProducer(
+                        targets=tuple(
+                            sorted(
+                                quant_targets,
+                                key=lambda item: item.contract.outcome_family_id,
+                            )
+                        ),
+                        market=market,
+                        contracts=contracts,
+                        forecasts=forecasts,
+                        interval=config.market_data.interval,
+                        bar_window=config.market_data.bar_window,
+                        maximum_quote_age_seconds=context.maximum_quote_age_seconds,
+                        activated_at=max(quant_activation_times),
+                    )
+                )
             authorization_by_family = {
                 item.outcome_family_id: item
                 for item in config.capital.candidate_capital_authorizations
@@ -1604,5 +1707,6 @@ def assemble_capital_cycle(
             portfolio_store=portfolio,
         ),
         cycle_records=SqlCapitalCycleStore(engine),
+        research_forecast_producers=tuple(research_forecast_producers),
         context_activation_at=context_activation_at,
     )

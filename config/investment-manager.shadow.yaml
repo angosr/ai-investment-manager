@@ -26,6 +26,8 @@ outcome_evaluation:
     enabled: true
   context_forecast_stability:
     enabled: true
+  quant_baseline:
+    enabled: true
 
 codex_runtime:
   enabled: true

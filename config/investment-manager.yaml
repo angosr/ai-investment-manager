@@ -373,6 +373,14 @@ outcome_evaluation:
     # 每个联合 Forecast 一个精确输入副本；副本不形成 Forecast、Outcome 或资本投票。
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
+  quant_baseline:
+    version: transparent-conditional-quant-v1
+    enabled: false
+    producer_id: program-quant-baseline
+    artifacts:
+      - outcome_family_id: btc-price-directional-4h
+        artifact_id: quant_forecast_artifact_d233f98c27de79d8e692
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_d233f98c27de79d8e692.json
 
 governance:
   version: governance-cycle-v2

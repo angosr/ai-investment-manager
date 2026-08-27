@@ -21,6 +21,8 @@ assessment:
 outcome_evaluation:
   world_model_ablation:
     enabled: false
+  quant_baseline:
+    enabled: false
 
 market_data:
   version: binance-public-testnet-v3

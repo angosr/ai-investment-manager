@@ -71,6 +71,8 @@ class BaseForecast(FrozenModel):
     invalidation_conditions: tuple[str, ...] = ()
     analysis_input_json: str | None = None
     analysis_input_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    program_input_json: str | None = None
+    program_input_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     _utc_information_cutoff_at = field_validator("information_cutoff_at")(require_utc)
     _utc_input_observed_at = field_validator("input_observed_at")(require_utc)
@@ -114,6 +116,10 @@ class BaseForecast(FrozenModel):
             raise ValueError("BaseForecast WorldModel 身份与 Context 来源链必须同时存在")
         if (self.analysis_input_json is None) != (self.analysis_input_hash is None):
             raise ValueError("BaseForecast AI 输入原文与哈希必须同时存在")
+        if (self.program_input_json is None) != (self.program_input_hash is None):
+            raise ValueError("BaseForecast 程序输入原文与哈希必须同时存在")
+        if self.analysis_input_json is not None and self.program_input_json is not None:
+            raise ValueError("BaseForecast AI 与程序输入快照不能同时存在")
         if self.world_model_id is not None and self.analysis_input_json is None:
             raise ValueError("Context BaseForecast 必须保存真实 AI 输入快照")
         if self.world_model_id is None and self.analysis_input_json is not None:
@@ -127,6 +133,15 @@ class BaseForecast(FrozenModel):
                 raise ValueError("BaseForecast AI 输入快照必须是规范 JSON")
             if content_hash(parsed_input) != self.analysis_input_hash:
                 raise ValueError("BaseForecast AI 输入快照哈希不一致")
+        if self.program_input_json is not None:
+            try:
+                parsed_program_input = json.loads(self.program_input_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError("BaseForecast 程序输入快照不是有效 JSON") from exc
+            if canonical_json(parsed_program_input) != self.program_input_json:
+                raise ValueError("BaseForecast 程序输入快照必须是规范 JSON")
+            if content_hash(parsed_program_input) != self.program_input_hash:
+                raise ValueError("BaseForecast 程序输入快照哈希不一致")
         expected = stable_id(
             "base_forecast",
             self.decision_slot_id,

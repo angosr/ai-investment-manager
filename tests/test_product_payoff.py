@@ -49,7 +49,7 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
-from investment_manager.kernel.identity import stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
     ExecutableQuote,
     InstrumentId,
@@ -200,6 +200,7 @@ def _forecast(
 ) -> BaseForecast:
     slot_id = decision_slot_id or stable_id("slot", NOW.isoformat())
     available_at = NOW + timedelta(minutes=1)
+    program_input = {"fixture": "product-payoff-source"}
     return BaseForecast(
         forecast_id=stable_id("base_forecast", slot_id, "behavior-v1"),
         contract_id=contract.contract_id,
@@ -226,6 +227,8 @@ def _forecast(
         ),
         expected_gross_bps=Decimal("30"),
         input_refs=("test-input",),
+        program_input_json=canonical_json(program_input),
+        program_input_hash=content_hash(program_input),
     )
 
 
@@ -241,14 +244,14 @@ def _persisted_forecast(engine, contract: ForecastContract) -> BaseForecast:
         binding_id=stable_id(
             "forecast_producer_binding",
             contract.contract_id,
-            ForecastProducerKind.CONTEXT.value,
+            ForecastProducerKind.PROGRAM.value,
             "test",
             "behavior-v1",
             ForecastPermission.CAPITAL_CANDIDATE.value,
             (),
         ),
         contract_id=contract.contract_id,
-        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_kind=ForecastProducerKind.PROGRAM,
         producer_id="test",
         producer_behavior_id="behavior-v1",
         permission=ForecastPermission.CAPITAL_CANDIDATE,

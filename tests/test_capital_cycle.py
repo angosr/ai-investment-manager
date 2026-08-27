@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, delete, func, insert, select, update
@@ -101,6 +102,11 @@ _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
 
 def _assemble_capital_cycle(config, engine, **kwargs):
     execution = assemble_product_execution_runtime(config, engine)
+    quant = config.outcome_evaluation.quant_baseline
+    if quant is not None and quant.enabled and "quant_artifact_paths" not in kwargs:
+        kwargs["quant_artifact_paths"] = {
+            item.artifact_id: Path(item.relative_path) for item in quant.artifacts
+        }
     return assemble_capital_cycle(
         config,
         engine,

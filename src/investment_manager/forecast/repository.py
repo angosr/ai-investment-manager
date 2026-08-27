@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
+    ForecastProducerKind,
     ForecastSlotObligation,
 )
 from investment_manager.forecast.results import (
@@ -341,6 +342,15 @@ class SqlForecastStore:
             or obligation.producer_id != forecast.producer_id
         ):
             raise ValueError("Forecast 与槽义务身份不一致")
+        if (
+            isinstance(forecast, BaseForecast)
+            and obligation.producer_kind == ForecastProducerKind.CONTEXT
+            and (
+                forecast.analysis_input_json is None
+                or forecast.program_input_json is not None
+            )
+        ):
+            raise ValueError("CONTEXT Forecast 必须且只能保存 AI 输入快照")
         if isinstance(forecast, CalibratedForecast):
             base = connection.execute(
                 select(forecasts.c.kind, forecasts.c.payload).where(

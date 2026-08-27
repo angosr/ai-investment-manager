@@ -59,6 +59,9 @@ CLI_CONTRACT = {
     ),
     "shadow-audit": "config,release_manifest,project_root",
     "submit-context-assessment": "input_path,config,deadline_minutes",
+    "train-quant-baseline": (
+        "config,dataset_id,outcome_family_id,training_cutoff,dataset_catalog,artifact_catalog"
+    ),
     "trigger-now": "symbol,request_id,reason,config,database_url,evidence_id,release_manifest",
     "trigger-service": "config,database_url,release_manifest",
     "validate-config": "config",
@@ -73,6 +76,7 @@ RESEARCH_COMMAND_NAMES = {
     "freeze-event-history",
     "freeze-executable-quotes",
     "record-reference-rejection",
+    "train-quant-baseline",
 }
 
 
@@ -281,6 +285,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
             "freeze-event-history",
+            "train-quant-baseline",
         },
     }
 
@@ -380,7 +385,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
     }
     capabilities = {
         "execution": {"group", "planning", "venue"},
-        "forecast": {"codex", "context", "product"},
+        "forecast": {"codex", "context", "product", "quant"},
         "governance": {"audit", "evaluation", "release"},
         "information": {"official"},
         "market": {"perpetual"},

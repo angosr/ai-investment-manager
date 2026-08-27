@@ -25,7 +25,7 @@ from investment_manager.forecast.context.stability import (
 from investment_manager.governance.evaluation.world_model_ablation import (
     assemble_world_model_ablation_preallocator,
 )
-from investment_manager.governance.models import ReleaseManifest
+from investment_manager.governance.models import ReleaseManifest, resolve_manifest_artifact
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.application import ensure_trigger_plans
@@ -210,6 +210,15 @@ def _assemble_capital_consumer(
     execution = assemble_product_execution_runtime(config, engine)
     ablation_policy = config.outcome_evaluation.world_model_ablation
     stability_policy = config.outcome_evaluation.context_forecast_stability
+    quant_policy = config.outcome_evaluation.quant_baseline
+    quant_artifact_paths = (
+        {
+            item.artifact_id: resolve_manifest_artifact(manifest, item.artifact_id)
+            for item in quant_policy.artifacts
+        }
+        if quant_policy is not None and quant_policy.enabled
+        else None
+    )
 
     def evaluation_preflight(contracts):
         preflights = []
@@ -242,6 +251,7 @@ def _assemble_capital_consumer(
         initial_cash=execution.initial_cash,
         code_version=manifest.code_version,
         producer_activation_at=manifest.created_at,
+        quant_artifact_paths=quant_artifact_paths,
         context_forecast_preflight_factory=(
             evaluation_preflight
             if (
