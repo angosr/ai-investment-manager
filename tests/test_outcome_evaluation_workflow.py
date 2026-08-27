@@ -135,3 +135,42 @@ def test_slow_ai_evaluation_cannot_block_outcome_settlement(app_config) -> None:
             await task
 
     asyncio.run(scenario())
+
+
+def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config) -> None:
+    class Settler:
+        def settle(self, *, as_of):
+            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
+
+    class PosteriorRunner:
+        def __init__(self, stop: asyncio.Event) -> None:
+            configured = app_config.outcome_evaluation.quant_context_posterior
+            assert configured is not None
+            self.policy = configured.model_copy(update={"assignment_poll_seconds": 1})
+            self.stop = stop
+            self.calls = 0
+
+        def reconcile(self, *, as_of):
+            self.calls += 1
+            if self.calls == 2:
+                self.stop.set()
+            return SimpleNamespace(
+                assignment_count=0,
+                forecast_count=0,
+                no_estimate_count=0,
+                pending_count=0,
+            )
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        runner = PosteriorRunner(stop)
+        supervisor = OutcomeEvaluationSupervisor(
+            config=app_config,
+            target_forecast_settler=Settler(),
+            quant_posterior_runner=runner,
+            clock=lambda: datetime.now(UTC),
+        )
+        await asyncio.wait_for(supervisor.run(stop), timeout=2)
+        assert runner.calls == 2
+
+    asyncio.run(scenario())

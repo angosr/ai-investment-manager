@@ -73,6 +73,7 @@ class QuantContextPosteriorPolicy(StrictConfig):
     enabled: bool = False
     producer_id: str = Field(min_length=1)
     activated_at: datetime
+    assignment_poll_seconds: int = Field(default=5, ge=1, le=60)
 
     _utc_activated_at = field_validator("activated_at")(require_utc)
 

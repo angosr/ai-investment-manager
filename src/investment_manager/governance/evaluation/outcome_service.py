@@ -201,7 +201,6 @@ class OutcomeEvaluationSupervisor:
             )
 
     async def _run_quant_posterior_loop(self, stop: asyncio.Event) -> None:
-        policy = self.config.outcome_evaluation
         runner = self.quant_posterior_runner
         assert runner is not None
         while not stop.is_set():
@@ -222,7 +221,7 @@ class OutcomeEvaluationSupervisor:
             await _wait_for_next_poll(
                 stop,
                 now=require_utc(self.clock()),
-                poll_seconds=policy.poll_seconds,
+                poll_seconds=runner.policy.assignment_poll_seconds,
             )
 
 

@@ -385,10 +385,11 @@ outcome_evaluation:
         artifact_id: quant_forecast_artifact_04e9f39e611268fa4193
         relative_path: evidence/quant-forecasts/quant_forecast_artifact_04e9f39e611268fa4193.json
   quant_context_posterior:
-    version: quant-context-posterior-forward-v1
+    version: quant-context-posterior-forward-v2
     enabled: false
     producer_id: codex-quant-context-posterior
     activated_at: 2026-08-27T16:00:00Z
+    assignment_poll_seconds: 5
 
 governance:
   version: governance-cycle-v2
