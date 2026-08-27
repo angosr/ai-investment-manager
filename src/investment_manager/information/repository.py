@@ -19,7 +19,7 @@ from investment_manager.scheduling.tables import analysis_trigger_events
 
 
 class SqlEventStore:
-    """标准事件事实；新增事件与每品种 Trigger/Outbox 在同一事务提交。"""
+    """标准事件事实；新增事件与唯一组合 Trigger/Outbox 在同一事务提交。"""
 
     def __init__(
         self,
@@ -55,14 +55,12 @@ class SqlEventStore:
                         payload=payload,
                     )
                 )
-                routing_symbols = set(event.symbols)
-                if self._analysis_owner_symbol is not None:
-                    routing_symbols.add(self._analysis_owner_symbol)
+                routing_symbols = (
+                    {self._analysis_owner_symbol}
+                    if self._analysis_owner_symbol is not None
+                    else set(event.symbols)
+                )
                 for symbol in sorted(routing_symbols):
-                    cross_scope_route = (
-                        symbol == self._analysis_owner_symbol
-                        and symbol not in event.symbols
-                    )
                     trigger = build_trigger_event(
                         trigger_type=AnalysisTriggerType.INTELLIGENCE_INSERTED,
                         symbol=symbol,
@@ -72,7 +70,9 @@ class SqlEventStore:
                         priority=event.trigger_priority,
                         dedup_key=event.evidence_id,
                         evidence_ids=(event.evidence_id,),
-                        affected_symbols=event.symbols if cross_scope_route else (),
+                        affected_symbols=(
+                            event.symbols if self._analysis_owner_symbol is not None else ()
+                        ),
                         expires_at=event.observed_at
                         + timedelta(seconds=self._trigger_expiry_seconds),
                     )

@@ -30,8 +30,7 @@ NOW = datetime(2026, 8, 18, 12, 10, 30, tzinfo=UTC)
 
 def _shadow_config(app_config) -> AppConfig:
     raw = {
-        name: getattr(app_config, name).model_dump(mode="python")
-        for name in AppConfig.model_fields
+        name: getattr(app_config, name).model_dump(mode="python") for name in AppConfig.model_fields
     }
     raw["pipeline"] = {"version": app_config.pipeline.version}
     raw["deployment"] = {
@@ -47,7 +46,9 @@ def _shadow_config(app_config) -> AppConfig:
     raw["market_data"]["cross_venue_spot"]["products"] = (
         raw["market_data"]["cross_venue_spot"]["products"][0],
     )
-    raw["assessment"]["mandate"]["assets"] = (raw["assessment"]["mandate"]["assets"][0],)
+    raw["assessment"]["mandate"]["observation_assets"] = (
+        raw["assessment"]["mandate"]["observation_assets"][0],
+    )
     raw["decision_state"]["official_fact_policy"]["affected_assets"] = ("BTC",)
     return AppConfig.model_validate(raw)
 

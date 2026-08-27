@@ -34,7 +34,7 @@ from investment_manager.state.tables import canonical_fact_revisions
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
 POLICY = OfficialFactProjectionPolicy(
     version="fed-fact-v1",
-    affected_assets=("BTC", "ETH"),
+    affected_assets=("BTC", "ETH", "PAXG"),
 )
 
 
@@ -161,16 +161,12 @@ def test_unchanged_source_replay_does_not_reproject_existing_fact() -> None:
 
     assert replayed.records[0].inserted is False
     assert replayed.new_fact_revisions == ()
-    assert SqlFactStateStore(engine).latest_fact(
-        first.new_fact_revisions[0].fact_id
-    ) == first.new_fact_revisions[0]
+    assert (
+        SqlFactStateStore(engine).latest_fact(first.new_fact_revisions[0].fact_id)
+        == first.new_fact_revisions[0]
+    )
     with engine.connect() as connection:
-        assert (
-            connection.scalar(
-                select(func.count()).select_from(canonical_fact_revisions)
-            )
-            == 1
-        )
+        assert connection.scalar(select(func.count()).select_from(canonical_fact_revisions)) == 1
 
 
 def test_non_policy_fed_rss_projects_canonical_release_fact() -> None:
@@ -230,12 +226,7 @@ def test_fed_policy_document_is_first_canonical_policy_fact_and_rss_cannot_regre
     assert replayed_rss.new_fact_revisions == ()
     assert SqlFactStateStore(engine).latest_fact(policy_fact.fact_id) == policy_fact
     with engine.connect() as connection:
-        assert (
-            connection.scalar(
-                select(func.count()).select_from(canonical_fact_revisions)
-            )
-            == 1
-        )
+        assert connection.scalar(select(func.count()).select_from(canonical_fact_revisions)) == 1
 
 
 def test_official_collector_polls_both_first_party_feeds_and_publishes() -> None:
@@ -392,6 +383,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
         required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
+        analysis_owner_symbol=app_config.assessment.review_trigger_symbol,
     )
 
     publish_at = OBSERVED_AT + timedelta(seconds=1)
@@ -406,7 +398,7 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
             )
             # Calendar facts own future wakeups; only the newly published
             # policy release spends an immediate event-driven review.
-            == 2
+            == 1
         )
         assert (
             connection.scalar(
@@ -414,32 +406,32 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
                 .select_from(trigger_outbox)
                 .where(trigger_outbox.c.message_kind == "TRIGGER_CREATED")
             )
-            == 2
+            == 1
         )
-    for symbol in app_config.analysis_symbols:
-        plan = triggers.plan_for_scope(
+    owner = app_config.assessment.review_trigger_symbol
+    plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
+    assert len(plan.scheduled_wakeups) == 2
+    assert plan.scheduled_wakeups[0].evidence_ids == (chair.new_fact_revisions[0].revision_id,)
+    assert plan.scheduled_wakeups[0].wake_at == datetime(
+        2026,
+        8,
+        28,
+        14,
+        tzinfo=UTC,
+    )
+    assert plan.scheduled_wakeups[1].evidence_ids == (calendar.new_fact_revisions[0].revision_id,)
+    assert plan.scheduled_wakeups[1].wake_at == datetime(
+        2026,
+        9,
+        16,
+        18,
+        tzinfo=UTC,
+    )
+    for symbol in set(app_config.analysis_symbols) - {owner}:
+        assert not triggers.plan_for_scope(
             symbol=symbol,
             pipeline_id=app_config.pipeline.version,
-        )
-        assert len(plan.scheduled_wakeups) == 2
-        assert plan.scheduled_wakeups[0].evidence_ids == (chair.new_fact_revisions[0].revision_id,)
-        assert plan.scheduled_wakeups[0].wake_at == datetime(
-            2026,
-            8,
-            28,
-            14,
-            tzinfo=UTC,
-        )
-        assert plan.scheduled_wakeups[1].evidence_ids == (
-            calendar.new_fact_revisions[0].revision_id,
-        )
-        assert plan.scheduled_wakeups[1].wake_at == datetime(
-            2026,
-            9,
-            16,
-            18,
-            tzinfo=UTC,
-        )
+        ).scheduled_wakeups
 
     revised_at = OBSERVED_AT + timedelta(minutes=1)
     revised_calendar = fed.ingest_calendar(
@@ -447,22 +439,18 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         observed_at=revised_at,
     )
     publisher.publish_recent(revised_at)
-    for symbol in app_config.analysis_symbols:
-        plan = triggers.plan_for_scope(
-            symbol=symbol,
-            pipeline_id=app_config.pipeline.version,
-        )
-        assert len(plan.scheduled_wakeups) == 2
-        assert plan.scheduled_wakeups[1].evidence_ids == (
-            revised_calendar.new_fact_revisions[0].revision_id,
-        )
-        assert plan.scheduled_wakeups[1].wake_at == datetime(
-            2026,
-            9,
-            17,
-            18,
-            tzinfo=UTC,
-        )
+    plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
+    assert len(plan.scheduled_wakeups) == 2
+    assert plan.scheduled_wakeups[1].evidence_ids == (
+        revised_calendar.new_fact_revisions[0].revision_id,
+    )
+    assert plan.scheduled_wakeups[1].wake_at == datetime(
+        2026,
+        9,
+        17,
+        18,
+        tzinfo=UTC,
+    )
 
     cancelled_at = OBSERVED_AT + timedelta(minutes=2)
     cancelled = fed.ingest_public_calendar(
@@ -472,12 +460,8 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
     )
     assert cancelled.new_fact_revisions[0].status.value == "CANCELLED"
     publisher.publish_recent(cancelled_at)
-    for symbol in app_config.analysis_symbols:
-        plan = triggers.plan_for_scope(
-            symbol=symbol,
-            pipeline_id=app_config.pipeline.version,
-        )
-        assert len(plan.scheduled_wakeups) == 1
-        assert plan.scheduled_wakeups[0].evidence_ids == (
-            revised_calendar.new_fact_revisions[0].revision_id,
-        )
+    plan = triggers.plan_for_scope(symbol=owner, pipeline_id=app_config.pipeline.version)
+    assert len(plan.scheduled_wakeups) == 1
+    assert plan.scheduled_wakeups[0].evidence_ids == (
+        revised_calendar.new_fact_revisions[0].revision_id,
+    )

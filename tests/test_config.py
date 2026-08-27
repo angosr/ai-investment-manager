@@ -47,15 +47,12 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.enabled
     assert config.codex_runtime.isolation_verified
     assert config.codex_runtime.maximum_prompt_characters == 16_000
-    assess_prompt_overhead = len(
-        "\n".join((*ASSESS_INSTRUCTIONS, "decision_packet_json="))
-    ) + 1
+    assess_prompt_overhead = len("\n".join((*ASSESS_INSTRUCTIONS, "decision_packet_json="))) + 1
     assert (
-        config.decision_state.packet_policy.maximum_packet_characters
-        + assess_prompt_overhead
+        config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v65"
+    assert config.pipeline.version == "world-forecast-product-capital-shadow-v66"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -65,13 +62,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v71"
+    assert config.capital.version == "total-portfolio-capital-v72"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
-    assert config.capital.investable_universe.version == (
-        "binance-shadow-investable-v9"
-    )
+    assert config.capital.investable_universe.version == ("binance-shadow-investable-v9")
     assert config.capital.reference_policy is None
     assert tuple(
         item.instrument_key for item in config.capital.investable_universe.instruments
@@ -80,9 +75,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:USD_M_PERPETUAL:BTCUSDT",
         "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
     )
-    assert tuple(
-        item.key for item in config.capital.forecast_reference_instruments
-    ) == (
+    assert tuple(item.key for item in config.capital.forecast_reference_instruments) == (
         "BINANCE:SPOT:BTCUSDT",
         "BINANCE:SPOT:PAXGUSDT",
     )
@@ -97,11 +90,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.stream_id for item in config.information.official_event_feeds
     }
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v47"
-    assert config.decision_state.official_fact_policy.version == "official-fact-v18"
+    assert config.decision_state.version == "portfolio-state-v48"
+    assert config.decision_state.official_fact_policy.version == "official-fact-v19"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v50"
-    assert config.decision_state.packet_policy.schema_version == "decision-packet-v19"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v51"
+    assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
     assert config.decision_state.packet_policy.maximum_characters_per_fact == 1_200
@@ -110,7 +103,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.market_data.funding_history_lookback_hours == 720
     assert config.market_data.version == "binance-public-shadow-v15"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
-    assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT")
+    assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
     assert config.market_data.perpetual_poll_seconds == 120
     assert (
@@ -121,20 +114,25 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.market_data.cross_venue_spot.version == "cross-venue-spot-v1"
     assert config.market_data.cross_venue_spot.poll_seconds == 10
     assert config.market_data.cross_venue_spot.maximum_age_seconds == 30
-    assert tuple(
-        item.symbol for item in config.market_data.cross_venue_spot.products
-    ) == ("BTCUSDT", "ETHUSDT")
-    assert config.assessment.version == "context-assessment-v51"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v41"
+    assert tuple(item.symbol for item in config.market_data.cross_venue_spot.products) == (
+        "BTCUSDT",
+        "ETHUSDT",
+    )
+    assert config.assessment.version == "context-assessment-v52"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v42"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version
-        == "world-model-ablation-forward-v33"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v34"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v31"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v12"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v13"
+    assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
+        ("CRYPTO_NETWORK", "BTC"),
+        ("INFLATION_SENSITIVE", "PAXG"),
+        ("US_EQUITY", "SPY"),
+    )
     regulation = next(
         item
         for item in config.information.coverage_requirements
@@ -209,9 +207,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "coinbase-spot-market",
         "kraken-spot-market",
     )
-    assert {
-        source.stream_id: source.capabilities for source in spot_derivatives.sources
-    } == {
+    assert {source.stream_id: source.capabilities for source in spot_derivatives.sources} == {
         "binance-usdm-market": ("BINANCE_PERPETUAL", "BINANCE_SPOT"),
         "coinbase-spot-market": ("MULTI_VENUE_SPOT",),
         "kraken-spot-market": ("MULTI_VENUE_SPOT",),
@@ -238,6 +234,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.official_fact_policy.affected_assets == (
         "BTC",
         "ETH",
+        "PAXG",
     )
     assert config.assessment.mandate.required_risk_factors == (
         "US_MONETARY_POLICY",
@@ -262,6 +259,20 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.trigger.volatility_jump_threshold == Decimal("0.01")
 
 
+def test_world_model_economic_targets_must_equal_capital_universe() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    payload["assessment"]["mandate"]["mandate_exposures"] = payload["assessment"]["mandate"][
+        "mandate_exposures"
+    ][:-1]
+
+    with pytest.raises(
+        ValidationError,
+        match="economic exposures 必须精确覆盖 Capital 可投资域",
+    ):
+        AppConfig.model_validate(payload)
+
+
 def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.market_data.model_dump(mode="python")
@@ -279,10 +290,13 @@ def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
 def test_perpetual_state_cadence_preserves_capital_freshness_recovery() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
-    payload["market_data"]["perpetual_poll_seconds"] = min(
-        config.capital.context_forecast.maximum_quote_age_seconds,
-        config.capital.risk.maximum_quote_age_seconds,
-    ) // 2
+    payload["market_data"]["perpetual_poll_seconds"] = (
+        min(
+            config.capital.context_forecast.maximum_quote_age_seconds,
+            config.capital.risk.maximum_quote_age_seconds,
+        )
+        // 2
+    )
 
     with pytest.raises(
         ValidationError,
@@ -308,9 +322,13 @@ def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
 
     restored = config.__class__.model_validate(payload)
 
-    assert tuple(
-        item.symbol for item in restored.market_data.perpetual_instruments
-    ) == ("SPYUSDT", "BTCUSDT", "ETHUSDT", "PAXGUSDT", "XRPUSDT")
+    assert tuple(item.symbol for item in restored.market_data.perpetual_instruments) == (
+        "SPYUSDT",
+        "BTCUSDT",
+        "ETHUSDT",
+        "PAXGUSDT",
+        "XRPUSDT",
+    )
 
 
 def test_shadow_decision_packet_composition_accepts_observation_only_products() -> None:
@@ -354,25 +372,17 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
     assert not hasattr(config.capital.decision, "cooldown_minutes")
     assert not hasattr(config.capital.decision, "minimum_sample_size")
     assert len(context.targets) == 3
-    assert {
-        item.outcome_family_id for item in config.capital.candidate_capital_authorizations
-    } == {item.outcome_family_id for item in context.targets}
+    assert {item.outcome_family_id for item in config.capital.candidate_capital_authorizations} == {
+        item.outcome_family_id for item in context.targets
+    }
     assert {
         item.producer_behavior_id for item in config.capital.candidate_capital_authorizations
     } == {context.producer_behavior_id}
 
-    instruments = {
-        item.instrument.key: item.instrument for item in config.capital.execution_specs
-    }
-    instruments.update(
-        {item.key: item for item in config.capital.forecast_reference_instruments}
-    )
-    perpetual = {
-        item.key: item for item in config.market_data.perpetual_instruments
-    }
-    cross_venue_symbols = {
-        item.symbol for item in config.market_data.cross_venue_spot.products
-    }
+    instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
+    instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})
+    perpetual = {item.key: item for item in config.market_data.perpetual_instruments}
+    cross_venue_symbols = {item.symbol for item in config.market_data.cross_venue_spot.products}
     contracts = tuple(
         context_forecast_contract(
             policy=context,
@@ -386,31 +396,24 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
         ContextForecastTargetStateBehavior(
             feature_policy=config.feature,
             reference_instrument=instruments[target.reference_instrument_key],
-            derivative_evidence_instrument=perpetual.get(
-                target.derivative_evidence_instrument_key
-            ),
+            derivative_evidence_instrument=perpetual.get(target.derivative_evidence_instrument_key),
             interval=config.market_data.interval,
             bar_window=config.market_data.bar_window,
             funding_lookback_hours=config.market_data.funding_history_lookback_hours,
-            maximum_quote_skew_seconds=(
-                config.market_data.maximum_cross_market_quote_skew_seconds
-            ),
+            maximum_quote_skew_seconds=(config.market_data.maximum_cross_market_quote_skew_seconds),
             cross_venue_spot_version=(
                 config.market_data.cross_venue_spot.version
-                if instruments[target.reference_instrument_key].symbol
-                in cross_venue_symbols
+                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
                 else None
             ),
             cross_venue_spot_venues=(
                 tuple(sorted(SpotVenue, key=lambda item: item.value))
-                if instruments[target.reference_instrument_key].symbol
-                in cross_venue_symbols
+                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
                 else ()
             ),
             maximum_cross_venue_spot_age_seconds=(
                 config.market_data.cross_venue_spot.maximum_age_seconds
-                if instruments[target.reference_instrument_key].symbol
-                in cross_venue_symbols
+                if instruments[target.reference_instrument_key].symbol in cross_venue_symbols
                 else 30
             ),
         )
@@ -425,25 +428,23 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
     )
     assert context.producer_behavior_id == behavior_id
     changed = list(behaviors)
-    changed[0] = changed[0].model_copy(
-        update={"bar_window": changed[0].bar_window + 1}
+    changed[0] = changed[0].model_copy(update={"bar_window": changed[0].bar_window + 1})
+    assert (
+        context_forecast_behavior_hash(
+            config.codex_runtime,
+            context,
+            contracts,
+            tuple(changed),
+            configured_assess_behavior_hash(config),
+        )
+        != behavior_id
     )
-    assert context_forecast_behavior_hash(
-        config.codex_runtime,
-        context,
-        contracts,
-        tuple(changed),
-        configured_assess_behavior_hash(config),
-    ) != behavior_id
 
-    fee_bps = {
-        item.instrument.key: item.fee_bps for item in config.capital.execution_specs
-    }
+    fee_bps = {item.instrument.key: item.fee_bps for item in config.capital.execution_specs}
     assert fee_bps["BINANCE:TRADFI_PERPETUAL:SPYUSDT"] == Decimal("5")
     assert all(contract.permission_evidence_eligible for contract in contracts)
     assert contracts[0].settlement_rule.endswith("spot-return-v3")
     assert contracts[-1].settlement_rule.endswith("perpetual-return-and-funding-v1")
-
 
 
 def test_reference_policy_cannot_relabel_the_btc_experiment_as_total_benchmark() -> None:
@@ -503,17 +504,12 @@ def test_reference_policy_validation_does_not_use_exposure_count_as_risk_proof()
 def test_forecast_reference_products_are_not_capital_products() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     capital = config.capital
-    execution_keys = {
-        item.instrument.key for item in capital.execution_specs
-    }
-    reference_keys = {
-        item.key for item in capital.forecast_reference_instruments
-    }
+    execution_keys = {item.instrument.key for item in capital.execution_specs}
+    reference_keys = {item.key for item in capital.forecast_reference_instruments}
 
     assert execution_keys.isdisjoint(reference_keys)
     assert all(
-        item.instrument.product != InstrumentProduct.SPOT
-        for item in capital.execution_specs
+        item.instrument.product != InstrumentProduct.SPOT for item in capital.execution_specs
     )
     assert all(
         set(target.product_payoffs.instrument_keys) <= execution_keys
@@ -569,18 +565,14 @@ def test_investable_universe_cannot_exceed_the_owner_mandate() -> None:
 def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
-    payload["capital"]["context_forecast"]["targets"][0][
-        "derivative_evidence_instrument_key"
-    ] = (
+    payload["capital"]["context_forecast"]["targets"][0]["derivative_evidence_instrument_key"] = (
         "BINANCE:USD_M_PERPETUAL:ETHUSDT"
     )
 
     with pytest.raises(ValidationError, match="证据产品必须与 target 同标的计价"):
         type(config).model_validate(payload)
 
-    payload["capital"]["context_forecast"]["targets"][0][
-        "derivative_evidence_instrument_key"
-    ] = (
+    payload["capital"]["context_forecast"]["targets"][0]["derivative_evidence_instrument_key"] = (
         "BINANCE:USD_M_PERPETUAL:SOLUSDT"
     )
     with pytest.raises(ValidationError, match="必须属于 MarketData 只读 universe"):

@@ -60,7 +60,8 @@ from investment_manager.state.decision.packet import (
     DecisionPacket,
     DecisionPacketBuilder,
     DecisionPacketCapacityError,
-    MandateAsset,
+    MandateExposure,
+    ObservationAsset,
     PacketDerivativeState,
     PacketPreviousCausalNode,
     PacketPreviousContext,
@@ -92,6 +93,7 @@ from investment_manager.state.models import (
 from investment_manager.state.policy import DecisionPacketPolicy
 
 HASH = "a" * 64
+TEST_MANDATE_EXPOSURES = (MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),)
 
 
 def _mandate() -> AnalysisMandate:
@@ -99,13 +101,14 @@ def _mandate() -> AnalysisMandate:
         version="mandate-v1",
         analysis_scope="crypto-risk",
         question="Assess material changes across the crypto portfolio.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
             ),
-            MandateAsset(
+            ObservationAsset(
                 asset="ETH",
                 market_symbol="ETHUSDT",
                 horizons_minutes=(60, 240),
@@ -382,6 +385,29 @@ def test_packet_recovers_legacy_hash_without_default_review_field(app_config, re
     assert DecisionPacket.model_validate(payload) == packet
 
 
+def test_packet_requires_mandate_exposures_from_schema_v20_onward(
+    app_config,
+    replay_input,
+) -> None:
+    _, current = _packet(app_config, replay_input)
+    content = {
+        name: getattr(current, name)
+        for name in DecisionPacket.model_fields
+        if name not in {"packet_id", "content_hash", "mandate_exposures", "schema_version"}
+    }
+    historical = DecisionPacket.create(
+        **content,
+        schema_version="decision-packet-v19",
+    )
+    payload = historical.model_dump(mode="json")
+    payload.pop("mandate_exposures")
+    assert DecisionPacket.model_validate(payload) == historical
+
+    payload["schema_version"] = "decision-packet-v20"
+    with pytest.raises(ValueError, match="必须冻结 Capital mandate exposures"):
+        DecisionPacket.model_validate(payload)
+
+
 def test_packet_rejects_trigger_refs_that_do_not_match_deltas(app_config, replay_input) -> None:
     _, packet = _packet(app_config, replay_input)
     payload = packet.model_dump(mode="json")
@@ -480,8 +506,9 @@ def test_direct_fact_cannot_be_silently_truncated(app_config, replay_input) -> N
                 version="mandate-v1",
                 analysis_scope="crypto-risk",
                 question="Assess the event.",
-                assets=(
-                    MandateAsset(
+                mandate_exposures=TEST_MANDATE_EXPOSURES,
+                observation_assets=(
+                    ObservationAsset(
                         asset="BTC",
                         market_symbol="BTCUSDT",
                         horizons_minutes=(60,),
@@ -560,8 +587,9 @@ def test_packet_evicts_low_priority_background_facts_to_fit_total_capacity(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess the event.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -668,12 +696,8 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
         markets=(market,),
         features=features,
         intelligence_events=(event,),
-    ).model_copy(
-        update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)}
-    )
-    delta = _delta(market.as_of).model_copy(
-        update={"intelligence_event_refs": (event_ref,)}
-    )
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
+    delta = _delta(market.as_of).model_copy(update={"intelligence_event_refs": (event_ref,)})
 
     def build(
         maximum_packet_characters: int,
@@ -695,8 +719,9 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
                 version="mandate-v1",
                 analysis_scope="crypto-risk",
                 question="Assess the event against the causal baseline.",
-                assets=(
-                    MandateAsset(
+                mandate_exposures=TEST_MANDATE_EXPOSURES,
+                observation_assets=(
+                    ObservationAsset(
                         asset="BTC",
                         market_symbol="BTCUSDT",
                         horizons_minutes=(60,),
@@ -736,25 +761,18 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
         assessment_id="assessment-capacity-refreeze",
     )
     inherited = build(16_000, previous_context=previous)
-    inherited_size = len(
-        canonical_json(decision_packet_analysis_projection(inherited))
-    )
+    inherited_size = len(canonical_json(decision_packet_analysis_projection(inherited)))
     refrozen = replace_packet_previous_context(
         inherited,
         previous,
         maximum_analysis_characters=inherited_size - 1,
     )
 
-    assert (
-        len(canonical_json(decision_packet_analysis_projection(refrozen)))
-        <= inherited_size - 1
-    )
+    assert len(canonical_json(decision_packet_analysis_projection(refrozen))) <= inherited_size - 1
     assert refrozen.intelligence_events[0].directly_triggered
     assert refrozen.facts[0].directly_triggered
     assert len(refrozen.facts) < len(inherited.facts)
-    unique_baseline_size = len(
-        canonical_json(decision_packet_analysis_projection(refrozen))
-    )
+    unique_baseline_size = len(canonical_json(decision_packet_analysis_projection(refrozen)))
     with pytest.raises(
         DecisionPacketCapacityError,
         match="final verified projection exceeds",
@@ -810,8 +828,9 @@ def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess the event.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -871,8 +890,9 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess the event.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -894,9 +914,7 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
     )
     assert packet.omitted_fact_revision_ids == ()
     projection = decision_packet_analysis_projection(packet)
-    assert tuple(item["revision_id"] for item in projection["facts"]) == (
-        "revision-1",
-    )
+    assert tuple(item["revision_id"] for item in projection["facts"]) == ("revision-1",)
     assert projection["state_features"] == {
         "algorithm_version": "decision-state-feature-v2",
         "regime_states": (
@@ -907,10 +925,10 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
                 "ref": "revision-tga",
             },
         ),
-            "flow_states": (),
-            "financing_states": (),
-            "policy_states": (),
-        }
+        "flow_states": (),
+        "financing_states": (),
+        "policy_states": (),
+    }
     numeric_metric = packet.facts[1].model_copy(
         update={
             "claim": (
@@ -919,9 +937,7 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
             )
         }
     )
-    numeric_packet = packet.model_copy(
-        update={"facts": (packet.facts[0], numeric_metric)}
-    )
+    numeric_packet = packet.model_copy(update={"facts": (packet.facts[0], numeric_metric)})
 
     assert continuous_fact_numeric_values(numeric_metric) == {
         "tga_balance_usd_m": Decimal("800000"),
@@ -972,9 +988,7 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
         packet.model_copy(update={"facts": (generic, policy, financing)})
     )
 
-    assert tuple(item["revision_id"] for item in projection["facts"]) == (
-        generic.revision_id,
-    )
+    assert tuple(item["revision_id"] for item in projection["facts"]) == (generic.revision_id,)
     assert projection["state_features"]["policy_states"] == (
         {
             "type": FED_MONETARY_RELEASE_FACT_TYPE,
@@ -988,15 +1002,15 @@ def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
         {
             "type": "US_TREASURY_AUCTION_ABSORPTION_SNAPSHOT",
             "at": financing.event_time.isoformat(),
-                "state": (
-                    "treasury_bill_offering_14d_usd_m=1096000; "
-                    "treasury_coupon_offering_14d_usd_m=149000; "
-                    "treasury_coupon_bid_to_cover=2.59; "
-                    "treasury_coupon_direct_share_pct=20.3; "
-                    "treasury_coupon_indirect_share_pct=68.6; "
-                    "treasury_coupon_primary_dealer_share_pct=10.3; "
-                    "treasury_coupon_soma_addon_14d_usd_m=34703"
-                ),
+            "state": (
+                "treasury_bill_offering_14d_usd_m=1096000; "
+                "treasury_coupon_offering_14d_usd_m=149000; "
+                "treasury_coupon_bid_to_cover=2.59; "
+                "treasury_coupon_direct_share_pct=20.3; "
+                "treasury_coupon_indirect_share_pct=68.6; "
+                "treasury_coupon_primary_dealer_share_pct=10.3; "
+                "treasury_coupon_soma_addon_14d_usd_m=34703"
+            ),
             "ref": "revision-auction",
         },
     )
@@ -1042,8 +1056,9 @@ def test_packet_keeps_treasury_calendar_context_beyond_event_window(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess the event.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -1150,8 +1165,9 @@ def test_packet_preserves_transmission_evidence_before_repeating_calendar_rows(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess the event and its transmission evidence.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -1277,8 +1293,9 @@ def test_packet_round_robins_causal_channels_before_repeating_one_channel(
             version="mandate-v1",
             analysis_scope="crypto-risk",
             question="Assess current causal transmission.",
-            assets=(
-                MandateAsset(
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
                     asset="BTC",
                     market_symbol="BTCUSDT",
                     horizons_minutes=(60,),
@@ -1603,10 +1620,7 @@ def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(
     mechanism_properties = definitions["ContextMechanismDraft"]["properties"]
     assert draft_properties["mechanisms"]["maxItems"] == MAX_ACTIVE_WORLD_MECHANISMS
     assert mechanism_properties["causal_chain"]["maxItems"] == MAX_WORLD_CAUSAL_NODES
-    assert (
-        mechanism_properties["verification_tests"]["maxItems"]
-        == MAX_WORLD_VERIFICATION_TESTS
-    )
+    assert mechanism_properties["verification_tests"]["maxItems"] == MAX_WORLD_VERIFICATION_TESTS
     assert (
         mechanism_properties["invalidation_conditions"]["maxItems"]
         == MAX_WORLD_INVALIDATION_CONDITIONS
@@ -1647,9 +1661,9 @@ def test_assess_schema_restricts_retirement_to_current_evidence(
     _, packet = _packet(app_config, replay_input, previous_context=previous)
 
     schema = assess_output_schema(packet)
-    retirement_ids = schema["$defs"]["ContextMechanismRetirement"]["properties"][
-        "evidence_ids"
-    ]["items"]["enum"]
+    retirement_ids = schema["$defs"]["ContextMechanismRetirement"]["properties"]["evidence_ids"][
+        "items"
+    ]["enum"]
 
     assert set(retirement_ids) == set(assessment_current_evidence_ids(packet))
     assert "old-1" not in retirement_ids
@@ -1688,9 +1702,7 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
         ),
     )
     packet_event = packet.intelligence_events[0]
-    projected_event = decision_packet_analysis_projection(packet)[
-        "intelligence_events"
-    ][0]
+    projected_event = decision_packet_analysis_projection(packet)["intelligence_events"][0]
     assert projected_event["body"] == event.body
     for audit_only in (
         "attention_priority",
@@ -1711,15 +1723,13 @@ def test_assess_schema_exposes_weak_event_for_review_but_forbids_persistence(
 
     schema = assess_output_schema(packet)
     definitions = schema["$defs"]
-    causal_ids = definitions["ContextCausalNode"]["properties"]["evidence_ids"][
-        "items"
-    ]["enum"]
+    causal_ids = definitions["ContextCausalNode"]["properties"]["evidence_ids"]["items"]["enum"]
     conflicting_ids = definitions["ContextMechanismDraft"]["properties"][
         "conflicting_evidence_ids"
     ]["items"]["enum"]
-    retirement_ids = definitions["ContextMechanismRetirement"]["properties"][
-        "evidence_ids"
-    ]["items"]["enum"]
+    retirement_ids = definitions["ContextMechanismRetirement"]["properties"]["evidence_ids"][
+        "items"
+    ]["enum"]
     for allowed_ids in (causal_ids, conflicting_ids, retirement_ids):
         assert packet_event.evidence_ref not in allowed_ids
     assert "event_relevance_updates" not in definitions["WorldModelDraft"]["properties"]
@@ -1863,9 +1873,7 @@ def test_world_model_continuous_cause_requires_connected_fact_test(
         update={
             "world_model": _world_model_output().world_model.model_copy(
                 update={
-                    "mechanisms": (
-                        mechanism.model_copy(update={"causal_chain": causal_chain}),
-                    )
+                    "mechanisms": (mechanism.model_copy(update={"causal_chain": causal_chain}),)
                 }
             )
         }
@@ -2037,9 +2045,7 @@ def test_world_model_can_continue_every_previous_mechanism(
     assessment = finalize_world_model(
         output=output.model_copy(
             update={
-                "world_model": output.world_model.model_copy(
-                    update={"mechanisms": (continued,)}
-                )
+                "world_model": output.world_model.model_copy(update={"mechanisms": (continued,)})
             }
         ),
         packet=packet,

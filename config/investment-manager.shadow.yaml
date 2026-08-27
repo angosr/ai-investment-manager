@@ -5,19 +5,19 @@ capital:
   context_forecast:
     enabled: true
   candidate_capital_authorizations:
-    - version: btc-context-candidate-v29
+    - version: btc-context-candidate-v30
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "b9b1ea12764b8c74aaa5b4954f3fa3374f6243f3f0445d579f964990da171194"
+      producer_behavior_id: "aa61da6711b3532ed77e79044b1ec15a9cc3aca6d3b73bc1abf20fe89c93a6ea"
       outcome_family_id: btc-price-directional-4h
       hypothesis_fingerprint: "88e784ff0bf1e3f87b7e1f9a0c3609baeb4b34707f2e369b7fdbb85bde11168b"
-    - version: paxg-context-candidate-v7
+    - version: paxg-context-candidate-v8
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "b9b1ea12764b8c74aaa5b4954f3fa3374f6243f3f0445d579f964990da171194"
+      producer_behavior_id: "aa61da6711b3532ed77e79044b1ec15a9cc3aca6d3b73bc1abf20fe89c93a6ea"
       outcome_family_id: paxg-price-directional-4h
       hypothesis_fingerprint: "a7872af9f99c48f186a00a3bfee34cf3234958a03c68c389b5699096b546b5d0"
-    - version: spy-context-candidate-v7
+    - version: spy-context-candidate-v8
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "b9b1ea12764b8c74aaa5b4954f3fa3374f6243f3f0445d579f964990da171194"
+      producer_behavior_id: "aa61da6711b3532ed77e79044b1ec15a9cc3aca6d3b73bc1abf20fe89c93a6ea"
       outcome_family_id: spy-price-directional-4h
       hypothesis_fingerprint: "bd6c2656efb3108ff2a42aa48dd3fc3ba169893d853cc49d92130e4dd3be06e5"
 
@@ -48,7 +48,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v65
+  version: world-forecast-product-capital-shadow-v66
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

@@ -31,7 +31,8 @@ from investment_manager.state.decision.application import (
 from investment_manager.state.decision.packet import (
     AnalysisMandate,
     DecisionPacketCapacityError,
-    MandateAsset,
+    MandateExposure,
+    ObservationAsset,
     PacketReviewRequest,
     decision_packet_analysis_projection,
 )
@@ -58,6 +59,7 @@ from investment_manager.state.tables import (
 )
 
 OBSERVED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
+TEST_MANDATE_EXPOSURES = (MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),)
 FACT_POLICY = OfficialFactProjectionPolicy(
     version="fed-fact-v1",
     affected_assets=("BTC", "ETH"),
@@ -277,8 +279,9 @@ def test_fact_state_projector_records_frozen_evidence_and_fact_revision(
         version="crypto-mandate-v1",
         analysis_scope="crypto-portfolio",
         question="Assess the material Fed revision across the portfolio.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -357,8 +360,9 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
         version="crypto-mandate-v1",
         analysis_scope="crypto-portfolio",
         question="Assess material first-party changes across the portfolio.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -549,8 +553,9 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         version="crypto-derivative-mandate-v1",
         analysis_scope="crypto-derivative-portfolio",
         question="结合可执行基差和资金费率更新世界认知。",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -625,8 +630,9 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
         version="crypto-recovery-mandate-v1",
         analysis_scope="crypto-recovery-portfolio",
         question="Assess a durable material state transition.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -727,8 +733,9 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
         version="crypto-event-mandate-v1",
         analysis_scope="crypto-portfolio",
         question="Assess accepted external evidence.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -847,8 +854,9 @@ def test_explicit_review_receives_recent_background_intelligence(
         version="crypto-review-context-v1",
         analysis_scope="crypto-portfolio",
         question="Assess the current portfolio context.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -935,8 +943,9 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
         version="crypto-weak-background-v1",
         analysis_scope="crypto-portfolio",
         question="Assess current decision-grade evidence.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -1013,8 +1022,9 @@ def test_direct_high_impact_aggregator_lead_is_visible_but_not_directional(
         version="crypto-direct-weak-lead-v1",
         analysis_scope="crypto-portfolio",
         question="核验重大外部线索及其传导。",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),
@@ -1082,8 +1092,9 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
         version="crypto-market-mandate-v1",
         analysis_scope="crypto-portfolio",
         question="Assess an explicitly detected market shock.",
-        assets=(
-            MandateAsset(
+        mandate_exposures=TEST_MANDATE_EXPOSURES,
+        observation_assets=(
+            ObservationAsset(
                 asset="BTC",
                 market_symbol="BTCUSDT",
                 horizons_minutes=(60, 240),

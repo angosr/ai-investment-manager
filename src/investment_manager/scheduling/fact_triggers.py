@@ -62,20 +62,14 @@ class CanonicalFactTriggerPublisher:
         required_freshness_seconds: int,
         analysis_owner_symbol: str | None = None,
     ) -> None:
-        if (
-            trigger_expiry_seconds < 1
-            or required_freshness_seconds < 1
-            or not pipeline_id
-        ):
+        if trigger_expiry_seconds < 1 or required_freshness_seconds < 1 or not pipeline_id:
             raise ValueError("CanonicalFact trigger expiry/freshness/pipeline 配置非法")
         self._facts = facts
         self._triggers = triggers
         self._symbols_by_asset = {
-            item.asset: item.market_symbol for item in mandate.assets
+            item.asset: item.market_symbol for item in mandate.observation_assets
         }
-        self._assets_by_symbol = {
-            symbol: asset for asset, symbol in self._symbols_by_asset.items()
-        }
+        self._assets_by_symbol = {symbol: asset for asset, symbol in self._symbols_by_asset.items()}
         if (
             analysis_owner_symbol is not None
             and analysis_owner_symbol not in self._assets_by_symbol
@@ -94,9 +88,7 @@ class CanonicalFactTriggerPublisher:
             observed_since=observed_since,
             as_of=as_of,
         )
-        self._published_revision_ids.intersection_update(
-            fact.revision_id for fact in recent
-        )
+        self._published_revision_ids.intersection_update(fact.revision_id for fact in recent)
         for fact in recent:
             if fact.revision_id in self._published_revision_ids:
                 continue
@@ -121,31 +113,21 @@ class CanonicalFactTriggerPublisher:
                 # separate AI call before the normal portfolio review.
                 self._published_revision_ids.add(fact.revision_id)
                 continue
-            unknown_assets = tuple(
-                sorted(set(fact.affected_assets) - set(self._symbols_by_asset))
-            )
+            unknown_assets = tuple(sorted(set(fact.affected_assets) - set(self._symbols_by_asset)))
             if unknown_assets:
                 raise ValueError(
-                    "CanonicalFact affected_assets 不属于 Mandate: "
-                    + ", ".join(unknown_assets)
+                    "CanonicalFact affected_assets 不属于 Mandate: " + ", ".join(unknown_assets)
                 )
             occurred_at = min(fact.event_time or fact.observed_at, fact.observed_at)
-            routing_symbols = {
-                self._symbols_by_asset[asset] for asset in fact.affected_assets
-            }
-            if self._analysis_owner_symbol is not None:
-                routing_symbols.add(self._analysis_owner_symbol)
             directly_affected_symbols = tuple(
-                sorted(
-                    self._symbols_by_asset[asset]
-                    for asset in fact.affected_assets
-                )
+                sorted(self._symbols_by_asset[asset] for asset in fact.affected_assets)
+            )
+            routing_symbols = (
+                {self._analysis_owner_symbol}
+                if self._analysis_owner_symbol is not None
+                else set(directly_affected_symbols)
             )
             for symbol in sorted(routing_symbols):
-                cross_scope_route = (
-                    symbol == self._analysis_owner_symbol
-                    and symbol not in directly_affected_symbols
-                )
                 trigger = build_trigger_event(
                     trigger_type=AnalysisTriggerType.CANONICAL_FACT_REVISED,
                     symbol=symbol,
@@ -156,10 +138,9 @@ class CanonicalFactTriggerPublisher:
                     dedup_key=fact.revision_id,
                     evidence_ids=(fact.revision_id,),
                     affected_symbols=(
-                        directly_affected_symbols if cross_scope_route else ()
+                        directly_affected_symbols if self._analysis_owner_symbol is not None else ()
                     ),
-                    expires_at=fact.observed_at
-                    + timedelta(seconds=self._trigger_expiry_seconds),
+                    expires_at=fact.observed_at + timedelta(seconds=self._trigger_expiry_seconds),
                 )
                 self._triggers.record_trigger(trigger)
             self._published_revision_ids.add(fact.revision_id)
@@ -167,7 +148,12 @@ class CanonicalFactTriggerPublisher:
 
     def _sync_calendar(self, as_of: datetime) -> None:
         facts = self._facts.facts_as_of(as_of=as_of)
-        for symbol in self._symbols_by_asset.values():
+        routing_symbols = (
+            (self._analysis_owner_symbol,)
+            if self._analysis_owner_symbol is not None
+            else tuple(self._symbols_by_asset.values())
+        )
+        for symbol in routing_symbols:
             try:
                 plan = self._triggers.plan_for_scope(
                     symbol=symbol,
@@ -182,7 +168,11 @@ class CanonicalFactTriggerPublisher:
                     or fact.status != FactRevisionStatus.ACTIVE
                     or fact.event_time is None
                     or fact.event_time <= as_of
-                    or self._assets_by_symbol[symbol] not in fact.affected_assets
+                    or (
+                        not set(fact.affected_assets).intersection(self._symbols_by_asset)
+                        if self._analysis_owner_symbol is not None
+                        else self._assets_by_symbol[symbol] not in fact.affected_assets
+                    )
                 ):
                     continue
                 scheduled_by_time.setdefault(fact.event_time, []).append(fact)
@@ -250,8 +240,7 @@ class CanonicalFactTriggerPublisher:
                 event_time.isoformat(),
             ),
             wake_at=event_time,
-            expires_at=event_time
-            + timedelta(seconds=self._trigger_expiry_seconds),
+            expires_at=event_time + timedelta(seconds=self._trigger_expiry_seconds),
             reason=f"Official scheduled release: {fact_types}",
             evidence_ids=evidence_ids,
             hypothesis="Reassess the portfolio after the official release becomes observable.",

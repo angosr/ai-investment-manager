@@ -367,7 +367,7 @@ def test_official_publication_source_follows_only_bounded_same_host_entries() ->
             text=(
                 '<html><head><meta property="og:title" '
                 'content="Treasury expands digital asset sanctions" /></head>'
-                '<body><main><nav>Interest rates and sanctions navigation</nav>'
+                "<body><main><nav>Interest rates and sanctions navigation</nav>"
                 '<article><time datetime="2026-08-24T17:30:00Z"></time>'
                 "<h1>Treasury expands sanctions</h1>"
                 "<p>Official action expands sectoral sanctions to digital assets."
@@ -461,10 +461,10 @@ def test_official_publication_source_does_not_treat_site_navigation_as_body() ->
             200,
             text=(
                 '<meta property="og:title" content="Quantum readiness task force">'
-                '<main><nav>Digital assets sanctions interest rates</nav>'
+                "<main><nav>Digital assets sanctions interest rates</nav>"
                 '<article><time datetime="2026-08-24T19:00:00Z"></time>'
-                '<p>Agency systems will migrate to post-quantum cryptography.</p>'
-                '</article></main>'
+                "<p>Agency systems will migrate to post-quantum cryptography.</p>"
+                "</article></main>"
             ),
             request=request,
         )
@@ -558,12 +558,10 @@ def test_sql_event_store_routes_every_event_to_portfolio_analysis_owner() -> Non
     with engine.connect() as connection:
         symbols = tuple(
             connection.scalars(
-                select(analysis_trigger_events.c.symbol).order_by(
-                    analysis_trigger_events.c.symbol
-                )
+                select(analysis_trigger_events.c.symbol).order_by(analysis_trigger_events.c.symbol)
             )
         )
-    assert symbols == ("BTCUSDT", "ETHUSDT")
+    assert symbols == ("BTCUSDT",)
 
 
 def test_sql_event_store_shows_only_latest_point_in_time_version_per_url() -> None:

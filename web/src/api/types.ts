@@ -339,6 +339,7 @@ export interface AssessmentInputSnapshot {
   analysis_scope: string;
   as_of: string;
   question: string;
+  mandate_exposures: { economic_exposure: string; asset: string }[];
   required_views: { asset: string; horizon_minutes: number }[];
   asset_states: {
     asset: string;

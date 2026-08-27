@@ -129,9 +129,10 @@ class DecisionPacketPreparation:
             raise ValueError("DecisionPacket 跨市场报价偏差配置非法")
         if maximum_cross_venue_spot_age_seconds < 1:
             raise ValueError("DecisionPacket 跨场所现货年龄配置非法")
-        if tuple(
-            sorted(set(cross_venue_spot_venues), key=lambda item: item.value)
-        ) != cross_venue_spot_venues:
+        if (
+            tuple(sorted(set(cross_venue_spot_venues), key=lambda item: item.value))
+            != cross_venue_spot_venues
+        ):
             raise ValueError("DecisionPacket 跨场所现货 venues 必须唯一排序")
         perpetual_symbols = tuple(item.symbol for item in perpetual_instruments)
         if len(set(perpetual_symbols)) != len(perpetual_symbols):
@@ -148,18 +149,12 @@ class DecisionPacketPreparation:
         self._maximum_market_age_seconds = maximum_market_age_seconds
         self._coverage_reader = coverage_reader
         self._coverage_requirements = coverage_requirements
-        self._perpetual_by_symbol = {
-            item.symbol: item for item in perpetual_instruments
-        }
+        self._perpetual_by_symbol = {item.symbol: item for item in perpetual_instruments}
         self._funding_history_lookback_hours = funding_history_lookback_hours
         self._maximum_perpetual_age_seconds = maximum_perpetual_age_seconds
-        self._maximum_cross_market_quote_skew_seconds = (
-            maximum_cross_market_quote_skew_seconds
-        )
+        self._maximum_cross_market_quote_skew_seconds = maximum_cross_market_quote_skew_seconds
         self._cross_venue_spot_venues = cross_venue_spot_venues
-        self._maximum_cross_venue_spot_age_seconds = (
-            maximum_cross_venue_spot_age_seconds
-        )
+        self._maximum_cross_venue_spot_age_seconds = maximum_cross_venue_spot_age_seconds
         self._clock = clock
 
     def prepare(
@@ -197,9 +192,7 @@ class DecisionPacketPreparation:
         )
         material_event_ids = {event.evidence_id for event in material_triggered_events}
         weak_triggered_events = tuple(
-            event
-            for event in triggered_events
-            if event.evidence_id not in material_event_ids
+            event for event in triggered_events if event.evidence_id not in material_event_ids
         )
         effective_reviews = review_requests
         if weak_triggered_events:
@@ -210,9 +203,7 @@ class DecisionPacketPreparation:
             )
             reviews_by_id = {item.review_id: item for item in review_requests}
             reviews_by_id[attention_review.review_id] = attention_review
-            effective_reviews = tuple(
-                reviews_by_id[item] for item in sorted(reviews_by_id)
-            )
+            effective_reviews = tuple(reviews_by_id[item] for item in sorted(reviews_by_id))
         # A trigger explains why analysis runs; it is not the whole world state.
         # Rebuild a bounded recent context from the reader for every mandate asset,
         # then let DecisionPacketPolicy rank and cap what reaches the model.  The
@@ -220,7 +211,7 @@ class DecisionPacketPreparation:
         # would otherwise omit them.
         visible_by_id: dict[str, IntelligenceEvent] = {
             event.evidence_id: event
-            for asset in mandate.assets
+            for asset in mandate.observation_assets
             for event in self._event_reader.visible(
                 symbol=asset.market_symbol,
                 as_of=as_of,
@@ -232,20 +223,15 @@ class DecisionPacketPreparation:
                 raise ValueError("相同 evidence_id 的可见事件内容不一致")
             visible_by_id[event.evidence_id] = event
         intelligence_events = tuple(
-            visible_by_id[evidence_id]
-            for evidence_id in sorted(visible_by_id)
+            visible_by_id[evidence_id] for evidence_id in sorted(visible_by_id)
         )
-        symbol_to_asset = {
-            item.market_symbol: item.asset
-            for item in mandate.assets
-        }
+        symbol_to_asset = {item.market_symbol: item.asset for item in mandate.observation_assets}
         missing_market_symbols = tuple(
             item for item in market_shock_symbols if item not in symbol_to_asset
         )
         if missing_market_symbols:
             raise ValueError(
-                "Market shock 未命中 Mandate assets: "
-                + ", ".join(missing_market_symbols)
+                "Market shock 未命中 Mandate assets: " + ", ".join(missing_market_symbols)
             )
         intelligence_affected_assets = tuple(
             sorted(
@@ -271,13 +257,12 @@ class DecisionPacketPreparation:
                 bar_window=self._market_bar_window,
                 source=self._market_source,
             )
-            for asset in mandate.assets
+            for asset in mandate.observation_assets
         )
         stale_symbols = tuple(
             market.symbol
             for market in markets
-            if (as_of - market.observed_at).total_seconds()
-            > self._maximum_market_age_seconds
+            if (as_of - market.observed_at).total_seconds() > self._maximum_market_age_seconds
         )
         if stale_symbols:
             raise ValueError("DecisionPacket 行情已过期: " + ", ".join(stale_symbols))
@@ -295,9 +280,7 @@ class DecisionPacketPreparation:
                 as_of=as_of,
                 requirements=self._coverage_requirements,
             )
-            coverage_gap_codes = self._coverage_reader.gap_codes(
-                information_coverage
-            )
+            coverage_gap_codes = self._coverage_reader.gap_codes(information_coverage)
         projection = self._projector.project(
             analysis_scope=mandate.analysis_scope,
             as_of=as_of,
@@ -329,11 +312,7 @@ class DecisionPacketPreparation:
                     if baseline
                     else PacketPreparationStatus.NO_MATERIAL_DELTA
                 ),
-                reason_code=(
-                    "STATE_BASELINE_RECORDED"
-                    if baseline
-                    else "NO_MATERIAL_STATE_CHANGE"
-                ),
+                reason_code=("STATE_BASELINE_RECORDED" if baseline else "NO_MATERIAL_STATE_CHANGE"),
                 state_id=projection.state.state_id,
             )
         delta = projection.delta
@@ -365,9 +344,7 @@ class DecisionPacketPreparation:
         return DecisionPacketPreparationResult(
             status=PacketPreparationStatus.READY,
             reason_code=(
-                "EXPLICIT_REVIEW_PACKET_READY"
-                if delta is None
-                else "DECISION_PACKET_READY"
+                "EXPLICIT_REVIEW_PACKET_READY" if delta is None else "DECISION_PACKET_READY"
             ),
             state_id=projection.state.state_id,
             delta_id=delta.delta_id if delta is not None else None,
@@ -385,18 +362,17 @@ class DecisionPacketPreparation:
     ) -> tuple[DerivativeContextSnapshot, ...]:
         if not self._perpetual_by_symbol:
             return ()
-        mandate_symbols = tuple(item.market_symbol for item in mandate.assets)
+        mandate_symbols = tuple(item.market_symbol for item in mandate.observation_assets)
         missing_symbols = tuple(
             symbol for symbol in mandate_symbols if symbol not in self._perpetual_by_symbol
         )
         if missing_symbols:
             raise ValueError(
-                "DecisionPacket Perpetual 观测域未覆盖 Mandate: "
-                + ", ".join(missing_symbols)
+                "DecisionPacket Perpetual 观测域未覆盖 Mandate: " + ", ".join(missing_symbols)
             )
         market_by_symbol = {item.symbol: item for item in markets}
         snapshots: list[DerivativeContextSnapshot] = []
-        for asset in mandate.assets:
+        for asset in mandate.observation_assets:
             instrument = self._perpetual_by_symbol[asset.market_symbol]
             state = self._market_store.latest_perpetual_state(
                 instrument=instrument,
@@ -408,16 +384,15 @@ class DecisionPacketPreparation:
                 visible_at=as_of,
             )
             if state is None or quote is None:
-                raise ValueError(
-                    f"DecisionPacket 缺少 {asset.market_symbol} Perpetual 状态或报价"
+                raise ValueError(f"DecisionPacket 缺少 {asset.market_symbol} Perpetual 状态或报价")
+            if (
+                max(
+                    (as_of - state.observed_at).total_seconds(),
+                    (as_of - quote.observed_at).total_seconds(),
                 )
-            if max(
-                (as_of - state.observed_at).total_seconds(),
-                (as_of - quote.observed_at).total_seconds(),
-            ) > self._maximum_perpetual_age_seconds:
-                raise ValueError(
-                    f"DecisionPacket {asset.market_symbol} Perpetual 行情已过期"
-                )
+                > self._maximum_perpetual_age_seconds
+            ):
+                raise ValueError(f"DecisionPacket {asset.market_symbol} Perpetual 行情已过期")
             aligned_spot_quote = self._market_store.latest_spot_quote(
                 instrument=InstrumentId.binance_spot(
                     symbol=asset.market_symbol,
@@ -428,9 +403,7 @@ class DecisionPacketPreparation:
                 visible_at=as_of,
             )
             if aligned_spot_quote is None:
-                raise ValueError(
-                    f"DecisionPacket 缺少 {asset.market_symbol} 点时对齐 Spot 报价"
-                )
+                raise ValueError(f"DecisionPacket 缺少 {asset.market_symbol} 点时对齐 Spot 报价")
             settlements = self._market_store.funding_settlements(
                 instrument=instrument,
                 start=as_of - timedelta(hours=self._funding_history_lookback_hours),
@@ -444,9 +417,7 @@ class DecisionPacketPreparation:
                     venues=self._cross_venue_spot_venues,
                     as_of=as_of,
                 )
-                if len(cross_venue_quotes) != len(
-                    self._cross_venue_spot_venues
-                ) or any(
+                if len(cross_venue_quotes) != len(self._cross_venue_spot_venues) or any(
                     (as_of - item.observed_at).total_seconds()
                     > self._maximum_cross_venue_spot_age_seconds
                     for item in cross_venue_quotes
@@ -462,13 +433,9 @@ class DecisionPacketPreparation:
                     quote=quote,
                     settlements=settlements,
                     funding_window_hours=self._funding_history_lookback_hours,
-                    maximum_quote_skew_seconds=(
-                        self._maximum_cross_market_quote_skew_seconds
-                    ),
+                    maximum_quote_skew_seconds=(self._maximum_cross_market_quote_skew_seconds),
                     cross_venue_quotes=cross_venue_quotes,
-                    maximum_cross_venue_age_seconds=(
-                        self._maximum_cross_venue_spot_age_seconds
-                    ),
+                    maximum_cross_venue_age_seconds=(self._maximum_cross_venue_spot_age_seconds),
                 )
             )
         return tuple(sorted(snapshots, key=lambda item: item.asset))

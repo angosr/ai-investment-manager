@@ -43,6 +43,7 @@ from investment_manager.scheduling.repository import SqlTriggerRepository
 from investment_manager.schema import create_schema
 from investment_manager.state.decision.packet import (
     DecisionPacket,
+    MandateExposure,
     PacketAssetState,
     PacketDelta,
     PacketIntelligenceEvent,
@@ -68,6 +69,7 @@ def _dashboard_assessment_packet(*, as_of: datetime, analysis_scope: str) -> Dec
         state_id="dashboard-state-1",
         question="评估当前组合风险与方向倾向。",
         trigger_ids=("dashboard-delta-1",),
+        mandate_exposures=(MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),),
         required_views=(RequiredView(asset="BTC", horizon_minutes=60),),
         portfolio=PacketPortfolioState(
             quote_balance=Decimal("10000"),
@@ -244,14 +246,8 @@ def test_world_model_assessment_dto_has_one_traceable_contract() -> None:
 
     assert dto["schema_version"] == "world-model-assessment-v3"
     assert dto["synthesis"] == assessment.synthesis
-    assert (
-        dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"]
-        == evidence_id
-    )
-    assert (
-        dto["cited_evidence"]
-        == dto["mechanisms"][0]["causal_chain"][0]["evidence"]
-    )
+    assert dto["mechanisms"][0]["causal_chain"][0]["evidence"][0]["evidence_id"] == evidence_id
+    assert dto["cited_evidence"] == dto["mechanisms"][0]["causal_chain"][0]["evidence"]
 
 
 def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
@@ -342,9 +338,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
                 error_class="SCHEMA_INVALID",
                 observed_at=bad_assessment.available_at - timedelta(seconds=1),
                 payload={
-                    "analysis_behavior_hash": configured_assess_behavior_hash(
-                        app_config
-                    ),
+                    "analysis_behavior_hash": configured_assess_behavior_hash(app_config),
                     "completed_at": bad_assessment.available_at.isoformat(),
                 },
             )
@@ -390,9 +384,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             return await asyncio.gather(
                 client.get("/api/assessment/records"),
                 client.get(f"/api/assessment/records/{assessment.assessment_id}"),
-                client.get(
-                    f"/api/assessment/records/{bad_assessment.assessment_id}"
-                ),
+                client.get(f"/api/assessment/records/{bad_assessment.assessment_id}"),
                 client.get("/api/capital/activity"),
                 client.get("/api/capital"),
                 client.get("/api/evaluation/forecast"),
@@ -410,10 +402,10 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     ) = asyncio.run(read_endpoints())
 
     assert assessment_rows.status_code == 200
-    assert [
-        item["assessment_id"]
-        for item in assessment_rows.json()["assessments"][:2]
-    ] == [bad_assessment.assessment_id, assessment.assessment_id]
+    assert [item["assessment_id"] for item in assessment_rows.json()["assessments"][:2]] == [
+        bad_assessment.assessment_id,
+        assessment.assessment_id,
+    ]
     assert assessment_rows.json()["quality"] == {
         "latest_attempt_at": bad_assessment.available_at.isoformat(),
         "latest_attempt_status": "REJECTED",
@@ -438,14 +430,10 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         }
     ]
     assert assessment_detail.json()["event_references"][0]["impact_state"] == "ACTIVE"
-    assert assessment_detail.json()["input_snapshot"]["analysis_scope"] == (
-        packet.analysis_scope
-    )
+    assert assessment_detail.json()["input_snapshot"]["analysis_scope"] == (packet.analysis_scope)
     assert "packet_id" not in assessment_detail.json()["input_snapshot"]
     assert "capacity_summary" not in assessment_detail.json()["input_snapshot"]
-    assert "omitted_intelligence_event_refs" not in assessment_detail.json()[
-        "input_snapshot"
-    ]
+    assert "omitted_intelligence_event_refs" not in assessment_detail.json()["input_snapshot"]
     assert bad_assessment_detail.status_code == 200
     assert capital_overview.status_code == 200
     assert "forecast_evidence" not in capital_overview.json()
@@ -460,10 +448,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert capital_rows.status_code == 200
     assert capital_rows.json() == {"actions": [], "next_cursor": None}
     assert events.status_code == 200
-    assert any(
-        item["title"] == "统一事实库中的一手事件"
-        for item in events.json()["events"]
-    )
+    assert any(item["title"] == "统一事实库中的一手事件" for item in events.json()["events"])
 
     async def read_assessment_pages():
         async with httpx.AsyncClient(
@@ -477,9 +462,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             )
             return first, second
 
-    first_assessment_page, second_assessment_page = asyncio.run(
-        read_assessment_pages()
-    )
+    first_assessment_page, second_assessment_page = asyncio.run(read_assessment_pages())
     assert first_assessment_page.json()["assessments"][0]["assessment_id"] == (
         bad_assessment.assessment_id
     )
@@ -537,9 +520,7 @@ def test_event_api_cursor_pages_one_fact_store_without_gap(
         "NEWS:event-c",
         "NEWS:event-b",
     ]
-    assert [item["event_id"] for item in second.json()["events"]] == [
-        "NEWS:event-a"
-    ]
+    assert [item["event_id"] for item in second.json()["events"]] == ["NEWS:event-a"]
     assert second.json()["next_cursor"] is None
 
 
@@ -575,16 +556,12 @@ def test_dashboard_accounts_use_the_runtime_release_identity(app_config, tmp_pat
     response = asyncio.run(read_accounts())
 
     assert response.status_code == 200
-    assert [item["account_id"] for item in response.json()["accounts"]] == [
-        ".codex-runtime"
-    ]
+    assert [item["account_id"] for item in response.json()["accounts"]] == [".codex-runtime"]
     usage = response.json()["token_usage"]
     assert usage["window_days"] == 7
     assert usage["total_tokens"] == 0
     assert len(usage["daily"]) == 7
-    assert [item["account_id"] for item in usage["accounts"]] == [
-        ".codex-runtime"
-    ]
+    assert [item["account_id"] for item in usage["accounts"]] == [".codex-runtime"]
 
 
 def test_dashboard_token_usage_aggregates_each_account_and_total(app_config) -> None:
@@ -673,7 +650,7 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
                 as_of=now - timedelta(minutes=10),
                 policy_version=config.decision_state.packet_policy.version,
                 content_hash="a" * 64,
-                    payload={},
+                payload={},
             )
         )
         connection.execute(

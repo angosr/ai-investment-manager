@@ -143,11 +143,8 @@ def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
 
     publisher.publish_recent(now)
     publisher.publish_recent(now)
-    assert len(triggers.items) == 2
-    assert {item.symbol for item in triggers.items.values()} == {
-        "BTCUSDT",
-        "ETHUSDT",
-    }
+    assert len(triggers.items) == 1
+    assert {item.symbol for item in triggers.items.values()} == {"BTCUSDT"}
     assert all(
         item.trigger_type == AnalysisTriggerType.CANONICAL_FACT_REVISED
         and item.occurred_at == now
@@ -203,7 +200,8 @@ def test_trigger_service_acquires_leadership_before_durable_release_setup(
 
 
 def test_trigger_plan_bootstrap_is_a_reusable_scheduling_use_case(
-    app_config, replay_input,
+    app_config,
+    replay_input,
 ) -> None:
     created = []
 
@@ -260,7 +258,8 @@ def test_retired_position_recheck_rule_remains_read_compatible(replay_input) -> 
 
 
 def test_trigger_plan_bootstrap_adds_owned_wakeups_without_replacing_existing_plan(
-    app_config, replay_input,
+    app_config,
+    replay_input,
 ) -> None:
     now = replay_input.market.as_of
     official = ScheduledWakeup(
@@ -833,8 +832,7 @@ def test_release_cutover_terminates_every_inactive_coordinator(app_config) -> No
 
         def list_workflows(self, query):
             assert query == (
-                'WorkflowType="TriggerCoordinatorWorkflow" '
-                'AND ExecutionStatus="Running"'
+                'WorkflowType="TriggerCoordinatorWorkflow" AND ExecutionStatus="Running"'
             )
             return self._executions()
 

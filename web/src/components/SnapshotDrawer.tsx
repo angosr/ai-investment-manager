@@ -68,9 +68,14 @@ function AssessmentBody({
           <span className={`${styles.flag} ${styles.ok}`}>
             账户、仓位和订单未注入世界认知
           </span>
+          {snapshot.mandate_exposures.map((exposure) => (
+            <span className={`${styles.flag} ${styles.ok}`} key={`${exposure.economic_exposure}-${exposure.asset}`}>
+              组合目标 · {exposure.asset} / {exposure.economic_exposure}
+            </span>
+          ))}
           {snapshot.required_views.map((view) => (
             <span className={`${styles.flag} ${styles.warn}`} key={`${view.asset}-${view.horizon_minutes}`}>
-              {view.asset} · {view.horizon_minutes} 分钟观察域
+              只读观察 · {view.asset} / {view.horizon_minutes} 分钟
             </span>
           ))}
         </div>

@@ -433,8 +433,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     payload["facts"] = tuple(
         _analysis_fact(item)
         for item in packet.facts
-        if item.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES
-        and item not in policy_facts
+        if item.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES and item not in policy_facts
     )
     if continuous_facts or policy_facts:
         feature_items = tuple(_analysis_state_feature(item) for item in continuous_facts)
@@ -483,8 +482,7 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
                     "horizon_h": mechanism["horizon_hours"],
                     "stage": mechanism["transmission_stage"],
                     "tests": tuple(
-                        test_index[canonical_json(test)]
-                        for test in mechanism["verification_tests"]
+                        test_index[canonical_json(test)] for test in mechanism["verification_tests"]
                     ),
                     "review_at": mechanism["next_review_at"],
                 }
@@ -506,16 +504,8 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         payload.pop("review_requests", None)
     payload["capability_summary"] = {
         item.domain.value: {
-            **(
-                {"status": item.status.value}
-                if item.status != CoverageStatus.PARTIAL
-                else {}
-            ),
-            **(
-                {"missing": item.missing_capabilities}
-                if item.missing_capabilities
-                else {}
-            ),
+            **({"status": item.status.value} if item.status != CoverageStatus.PARTIAL else {}),
+            **({"missing": item.missing_capabilities} if item.missing_capabilities else {}),
         }
         for item in packet.information_coverage
         if item.status != CoverageStatus.CURRENT
@@ -524,7 +514,16 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
     return payload
 
 
-class MandateAsset(FrozenModel):
+class MandateExposure(FrozenModel):
+    economic_exposure: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    asset: str = Field(pattern=r"^[A-Z0-9._-]+$")
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.economic_exposure, self.asset
+
+
+class ObservationAsset(FrozenModel):
     asset: str = Field(min_length=1)
     market_symbol: str = Field(min_length=1)
     horizons_minutes: tuple[int, ...] = Field(min_length=1)
@@ -542,17 +541,21 @@ class AnalysisMandate(FrozenModel):
     version: str = Field(min_length=1)
     analysis_scope: str = Field(min_length=1)
     question: str = Field(min_length=1, max_length=500)
-    assets: tuple[MandateAsset, ...] = Field(min_length=1)
+    mandate_exposures: tuple[MandateExposure, ...] = Field(min_length=1)
+    observation_assets: tuple[ObservationAsset, ...] = Field(min_length=1)
     required_risk_factors: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def mandate_identity_must_be_unique_and_sorted(self):
-        asset_keys = tuple(item.asset for item in self.assets)
-        symbol_keys = tuple(item.market_symbol for item in self.assets)
+        exposure_keys = tuple(item.key for item in self.mandate_exposures)
+        if tuple(sorted(set(exposure_keys))) != exposure_keys:
+            raise ValueError("Mandate economic exposures 必须唯一且排序")
+        asset_keys = tuple(item.asset for item in self.observation_assets)
+        symbol_keys = tuple(item.market_symbol for item in self.observation_assets)
         if tuple(sorted(set(asset_keys))) != asset_keys:
-            raise ValueError("Mandate assets 必须唯一且排序")
+            raise ValueError("Mandate observation assets 必须唯一且排序")
         if len(set(symbol_keys)) != len(symbol_keys):
-            raise ValueError("Mandate market_symbol 必须唯一")
+            raise ValueError("Mandate observation market_symbol 必须唯一")
         # Order is the mandate owner's explicit causal priority when the packet
         # cannot carry one representative for every channel.  Sorting it would
         # silently turn lexical order into investment priority.
@@ -1027,6 +1030,8 @@ class DecisionPacket(FrozenModel):
     state_id: str
     question: str
     trigger_ids: tuple[str, ...] = Field(min_length=1)
+    # v19 历史快照没有该字段；v20 起它是 Capital 可投资经济暴露的唯一模型输入。
+    mandate_exposures: tuple[MandateExposure, ...] = ()
     required_views: tuple[RequiredView, ...] = Field(min_length=1)
     # Read-only historical field. Current WorldModel packets do not carry
     # portfolio state; capital truth belongs exclusively to Portfolio.
@@ -1079,6 +1084,17 @@ class DecisionPacket(FrozenModel):
             raise ValueError("DecisionPacket review_requests 必须唯一且排序")
         if any(item.requested_at > self.as_of for item in self.review_requests):
             raise ValueError("DecisionPacket 评审请求不能晚于 as_of")
+        exposure_keys = tuple(item.key for item in self.mandate_exposures)
+        if tuple(sorted(set(exposure_keys))) != exposure_keys:
+            raise ValueError("DecisionPacket mandate exposures 必须唯一且排序")
+        schema_prefix = "decision-packet-v"
+        schema_generation = (
+            int(self.schema_version.removeprefix(schema_prefix))
+            if self.schema_version.startswith(schema_prefix)
+            else None
+        )
+        if schema_generation is not None and schema_generation >= 20 and not exposure_keys:
+            raise ValueError("当前 DecisionPacket 必须冻结 Capital mandate exposures")
         required_view_keys = tuple(
             (item.asset, item.horizon_minutes) for item in self.required_views
         )
@@ -1302,9 +1318,7 @@ class DecisionPacketBuilder:
         )
         visible_by_id = {item.fact.revision_id: item for item in facts}
         reviewed_evidence_ids = {
-            evidence_id
-            for review in ordered_reviews
-            for evidence_id in review.evidence_ids
+            evidence_id for review in ordered_reviews for evidence_id in review.evidence_ids
         }
         direct_fact_ids = tuple(
             sorted(
@@ -1350,7 +1364,7 @@ class DecisionPacketBuilder:
                 market=market_by_symbol[item.market_symbol],
                 features=feature_by_symbol[item.market_symbol],
             )
-            for item in mandate.assets
+            for item in mandate.observation_assets
         )
         derivative_states = tuple(
             self._derivative_state(item)
@@ -1358,7 +1372,7 @@ class DecisionPacketBuilder:
         )
         required_views = tuple(
             RequiredView(asset=item.asset, horizon_minutes=horizon)
-            for item in mandate.assets
+            for item in mandate.observation_assets
             for horizon in item.horizons_minutes
         )
         trigger_ids = (
@@ -1374,10 +1388,9 @@ class DecisionPacketBuilder:
             "state_id": state.state_id,
             "question": mandate.question,
             "trigger_ids": trigger_ids,
+            "mandate_exposures": mandate.mandate_exposures,
             "required_views": required_views,
-            "portfolio": (
-                self._portfolio_state(account) if account is not None else None
-            ),
+            "portfolio": (self._portfolio_state(account) if account is not None else None),
             "asset_states": asset_states,
             "derivative_states": derivative_states,
             "deltas": tuple(self._delta(item) for item in ordered_deltas),
@@ -1463,7 +1476,7 @@ class DecisionPacketBuilder:
                 raise ValueError("账户事实晚于 StateSnapshot as_of")
             if state.account_snapshot_ref != content_hash(account):
                 raise ValueError("账户事实与 StateSnapshot account_snapshot_ref 不一致")
-        symbols = tuple(item.market_symbol for item in mandate.assets)
+        symbols = tuple(item.market_symbol for item in mandate.observation_assets)
         if tuple(sorted(item.symbol for item in markets)) != tuple(sorted(symbols)):
             raise ValueError("MarketSnapshot 集合与 Mandate assets 不一致")
         if tuple(sorted(item.symbol for item in features)) != tuple(sorted(symbols)):
@@ -1479,7 +1492,7 @@ class DecisionPacketBuilder:
         derivative_assets = tuple(item.asset for item in derivatives)
         derivative_symbols = tuple(item.instrument.symbol for item in derivatives)
         if derivatives and (
-            set(derivative_assets) != {item.asset for item in mandate.assets}
+            set(derivative_assets) != {item.asset for item in mandate.observation_assets}
             or set(derivative_symbols) != set(symbols)
         ):
             raise ValueError("DerivativeContextSnapshot 集合与 Mandate assets 不一致")
@@ -1647,7 +1660,7 @@ class DecisionPacketBuilder:
         direct_fact_ids: frozenset[str],
         as_of: datetime,
     ) -> tuple[tuple[PacketFact, ...], tuple[str, ...]]:
-        relevant_assets = {item.asset for item in mandate.assets}
+        relevant_assets = {item.asset for item in mandate.observation_assets}
         relevant_risk = set(mandate.required_risk_factors)
         scope_relevant = [
             item
@@ -1809,7 +1822,7 @@ class DecisionPacketBuilder:
     @staticmethod
     def _asset_state(
         *,
-        asset: MandateAsset,
+        asset: ObservationAsset,
         market: MarketSnapshot,
         features: FeatureSnapshot,
     ) -> PacketAssetState:
@@ -1878,9 +1891,7 @@ class DecisionPacketBuilder:
             cross_venue_observed_at=snapshot.cross_venue_observed_at,
             spot_venue_count=snapshot.spot_venue_count,
             spot_mid_range_bps=snapshot.spot_mid_range_bps,
-            reference_spot_mid_deviation_bps=(
-                snapshot.reference_spot_mid_deviation_bps
-            ),
+            reference_spot_mid_deviation_bps=(snapshot.reference_spot_mid_deviation_bps),
             widest_spot_spread_bps=snapshot.widest_spot_spread_bps,
             positioning_observed_at=snapshot.positioning_observed_at,
             positioning_window_minutes=snapshot.positioning_window_minutes,

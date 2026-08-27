@@ -80,6 +80,7 @@ from investment_manager.schema import create_schema
 from investment_manager.settings import load_config
 from investment_manager.state.decision.packet import (
     DecisionPacket,
+    MandateExposure,
     PacketAssetState,
     PacketDelta,
     PacketPortfolioState,
@@ -100,6 +101,7 @@ def _packet() -> DecisionPacket:
         state_id="state-1",
         question="Assess the portfolio context.",
         trigger_ids=("delta-1",),
+        mandate_exposures=(MandateExposure(economic_exposure="CRYPTO_NETWORK", asset="BTC"),),
         required_views=(RequiredView(asset="BTC", horizon_minutes=240),),
         portfolio=PacketPortfolioState(
             quote_balance=Decimal("10000"),
@@ -314,25 +316,27 @@ class _FixedProbabilityAnalyst:
             success=True,
             output=ContextForecastStructuredOutput.model_validate(
                 {
-                    "forecasts": [{
-                        "decision_slot_id": target.slot.slot_id,
-                        "outcome_probabilities": [
-                            {"bucket_id": "LARGE_LOSS", "probability": "0.05"},
-                            {"bucket_id": "LOSS", "probability": "0.10"},
-                            {"bucket_id": "FLAT", "probability": "0.20"},
-                            {"bucket_id": "GAIN", "probability": "0.35"},
-                            {"bucket_id": "LARGE_GAIN", "probability": "0.30"},
-                        ],
-                        "mechanism_contributions": [
-                            {
-                                "mechanism_id": assessment.mechanisms[0].mechanism_id,
-                                "effect": "UPSIDE",
-                                "rationale": "政策传导对未来四小时风险偏好形成可证伪上行贡献。",
-                            }
-                        ],
-                        "evidence_refs": ["delta-1"],
-                        "invalidation_conditions": ["政策传导在目标窗口内被市场响应反驳"],
-                    }]
+                    "forecasts": [
+                        {
+                            "decision_slot_id": target.slot.slot_id,
+                            "outcome_probabilities": [
+                                {"bucket_id": "LARGE_LOSS", "probability": "0.05"},
+                                {"bucket_id": "LOSS", "probability": "0.10"},
+                                {"bucket_id": "FLAT", "probability": "0.20"},
+                                {"bucket_id": "GAIN", "probability": "0.35"},
+                                {"bucket_id": "LARGE_GAIN", "probability": "0.30"},
+                            ],
+                            "mechanism_contributions": [
+                                {
+                                    "mechanism_id": assessment.mechanisms[0].mechanism_id,
+                                    "effect": "UPSIDE",
+                                    "rationale": "政策传导对未来四小时风险偏好形成可证伪上行贡献。",
+                                }
+                            ],
+                            "evidence_refs": ["delta-1"],
+                            "invalidation_conditions": ["政策传导在目标窗口内被市场响应反驳"],
+                        }
+                    ]
                 }
             ),
             reason_code="CODEX_OK",
@@ -389,9 +393,7 @@ class _SharedProbabilityAnalyst:
             )
         return AnalystResult(
             success=True,
-            output=ContextForecastStructuredOutput.model_validate(
-                {"forecasts": forecasts}
-            ),
+            output=ContextForecastStructuredOutput.model_validate({"forecasts": forecasts}),
             reason_code="CODEX_OK",
             completed_at=targets[0].slot.slot_as_of + timedelta(seconds=10),
         )
@@ -441,13 +443,8 @@ def _context_forecast_producer(engine, analyst, *, preflight=None):
     policy = config.capital.context_forecast
     assert policy is not None
     target_policy = policy.targets[0]
-    instruments = {
-        item.instrument.key: item.instrument
-        for item in config.capital.execution_specs
-    }
-    instruments.update(
-        {item.key: item for item in config.capital.forecast_reference_instruments}
-    )
+    instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
+    instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})
     instrument = instruments[target_policy.reference_instrument_key]
     contract = context_forecast_contract(
         policy=policy,
@@ -540,17 +537,18 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
         "world_model",
     }
     assert analysis_input["purpose"] == "FORECAST_ESTIMATE"
-    assert datetime.fromisoformat(
-        analysis_input["forecast_targets"][0]["decision_slot"]["information_cutoff_at"]
-    ) == assessment.available_at
+    assert (
+        datetime.fromisoformat(
+            analysis_input["forecast_targets"][0]["decision_slot"]["information_cutoff_at"]
+        )
+        == assessment.available_at
+    )
     assert analysis_input["forecast_targets"][0]["decision_slot"]["cause_origin"] == (
         "MATERIAL_STATE" if material_event else "CADENCE"
     )
     assert datetime.fromisoformat(
         analysis_input["forecast_targets"][0]["target_state"]["as_of"]
-    ) == (
-        assessment.available_at
-    )
+    ) == (assessment.available_at)
     assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
     assert "portfolio" not in assessment_input_projection(packet)
     assert "data_quality_codes" not in analysis_input["forecast_targets"][0]["target_state"]
@@ -561,8 +559,7 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert "invalidation_conditions" not in analysis_input["world_model"]["mechanisms"][0]
     serialized_input = json.dumps(analysis_input, ensure_ascii=False).lower()
     assert all(
-        token not in serialized_input
-        for token in ("shadow", "testnet", "mock", "模拟", "仿真")
+        token not in serialized_input for token in ("shadow", "testnet", "mock", "模拟", "仿真")
     )
     assert first.analysis_input_hash == content_hash(analysis_input)
     assert preflight.calls == 1
@@ -579,12 +576,8 @@ def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets()
     config = load_config("config/investment-manager.shadow.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
-    instruments = {
-        item.instrument.key: item.instrument for item in config.capital.execution_specs
-    }
-    instruments.update(
-        {item.key: item for item in config.capital.forecast_reference_instruments}
-    )
+    instruments = {item.instrument.key: item.instrument for item in config.capital.execution_specs}
+    instruments.update({item.key: item for item in config.capital.forecast_reference_instruments})
     runtimes = []
     for target_policy in policy.targets:
         instrument = instruments[target_policy.reference_instrument_key]
@@ -642,9 +635,7 @@ def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets()
                 canonical_json(frozen),
             )
         )
-        assert len(prompt) < (
-            config.codex_runtime.maximum_prompt_characters - 2_000
-        )
+        assert len(prompt) < (config.codex_runtime.maximum_prompt_characters - 2_000)
 
 
 def test_context_forecast_records_stale_world_model_without_calling_codex() -> None:
@@ -918,16 +909,12 @@ def test_world_model_success_plans_one_idempotent_mechanism_review(app_config) -
     assert wakeup.hypothesis == f"{WORLD_MODEL_REVIEW_MARKER}{world_model.assessment_id}"
     update_messages = tuple(
         item
-        for item in triggers.pending_outbox(
-            as_of=world_model.available_at + timedelta(minutes=20)
-        )
+        for item in triggers.pending_outbox(as_of=world_model.available_at + timedelta(minutes=20))
         if item.message_kind == "TRIGGER_CREATED"
         and item.payload["trigger"]["trigger_type"] == "WORLD_MODEL_UPDATED"
     )
     assert len(update_messages) == 1
-    assert update_messages[0].payload["trigger"]["evidence_ids"] == [
-        world_model.assessment_id
-    ]
+    assert update_messages[0].payload["trigger"]["evidence_ids"] == [world_model.assessment_id]
 
 
 def test_material_world_model_update_creates_one_event_forecast_trigger(app_config) -> None:
@@ -973,9 +960,7 @@ def test_material_world_model_update_creates_one_event_forecast_trigger(app_conf
 
     messages = tuple(
         item
-        for item in triggers.pending_outbox(
-            as_of=assessment.available_at + timedelta(minutes=1)
-        )
+        for item in triggers.pending_outbox(as_of=assessment.available_at + timedelta(minutes=1))
         if item.message_kind == "TRIGGER_CREATED"
     )
     assert len(messages) == 1

@@ -58,9 +58,7 @@ def assess_output_schema(packet: DecisionPacket) -> dict[str, object]:
     continuity = mechanism["properties"]["continuity_ref"]
     continuity["anyOf"][0]["enum"] = list(previous_mechanism_ids)
     retirement = definitions["ContextMechanismRetirement"]
-    retirement["properties"]["previous_mechanism_id"]["enum"] = list(
-        previous_mechanism_ids
-    )
+    retirement["properties"]["previous_mechanism_id"]["enum"] = list(previous_mechanism_ids)
     retirement["properties"]["evidence_ids"]["items"]["enum"] = list(
         sorted(assessment_current_evidence_ids(packet))
     )
@@ -82,7 +80,12 @@ def assess_behavior_hash(
         packet_schema_version=packet.schema_version,
         packet_policy_version=packet.policy_version,
         mandate_version=packet.mandate_version,
-        required_views=tuple((item.asset, item.horizon_minutes) for item in packet.required_views),
+        mandate_exposures=tuple(
+            (item.economic_exposure, item.asset) for item in packet.mandate_exposures
+        ),
+        observation_windows=tuple(
+            (item.asset, item.horizon_minutes) for item in packet.required_views
+        ),
     )
 
 
@@ -95,8 +98,13 @@ def configured_assess_behavior_hash(config: AppConfig) -> str:
         packet_schema_version=config.decision_state.packet_policy.schema_version,
         packet_policy_version=config.decision_state.packet_policy.version,
         mandate_version=mandate.version,
-        required_views=tuple(
-            (asset.asset, horizon) for asset in mandate.assets for horizon in asset.horizons_minutes
+        mandate_exposures=tuple(
+            (item.economic_exposure, item.asset) for item in mandate.mandate_exposures
+        ),
+        observation_windows=tuple(
+            (asset.asset, horizon)
+            for asset in mandate.observation_assets
+            for horizon in asset.horizons_minutes
         ),
     )
 
@@ -107,7 +115,8 @@ def _assess_behavior_hash(
     packet_schema_version: str,
     packet_policy_version: str,
     mandate_version: str,
-    required_views: tuple[tuple[str, int], ...],
+    mandate_exposures: tuple[tuple[str, str], ...],
+    observation_windows: tuple[tuple[str, int], ...],
 ) -> str:
     return content_hash(
         {
@@ -119,7 +128,8 @@ def _assess_behavior_hash(
             "output_schema": strict_output_schema(WorldModelStructuredOutput.model_json_schema()),
             "dynamic_output_contract_version": ASSESS_DYNAMIC_OUTPUT_CONTRACT_VERSION,
             "mandate_version": mandate_version,
-            "required_views": required_views,
+            "mandate_exposures": mandate_exposures,
+            "observation_windows": observation_windows,
             "execution_contract": codex_execution_contract(),
             "runtime_policy_version": runtime.version,
             "expected_cli_version": runtime.expected_cli_version,
