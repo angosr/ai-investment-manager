@@ -1,0 +1,72 @@
+schema_version: quant-horizon-candidate-plan-v1
+plan_id: btc-daily-momentum-v1
+evaluation_family_id: btc-directional-horizon-research
+
+hypothesis: >-
+  BTC 当前 24 小时收益包含对下一 24 小时收益的可重复信息；相对现役 4 小时
+  Quant，其预测幅度更可能覆盖一次往返成本，但历史结果只生成研究假设，不授予资本权限。
+
+research_prior:
+  - https://www.nber.org/papers/w24877
+  - https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4675565
+
+target:
+  research_outcome_id: btc-price-directional-24h-research-v1
+  symbol: BTCUSDT
+  reference_instrument_key: BINANCE:SPOT:BTCUSDT
+  possible_implementation_instrument_key: BINANCE:USD_M_PERPETUAL:BTCUSDT
+
+dataset:
+  dataset_id: historical_dataset_dbc898af147b44cbe744
+  source: binance-rest-historical
+  market: spot
+  interval: 5m
+  requested_start: 2024-08-19T00:00:00Z
+  requested_end: 2026-08-19T00:00:00Z
+  availability: kline-close
+
+forecast:
+  horizon_minutes: 1440
+  sample_anchor_hours_utc: [0, 6, 12, 18]
+  features:
+    momentum_return_minutes: 1440
+    short_return_minutes: 240
+    realized_volatility_minutes: 1440
+  outcome_buckets:
+    development_quantiles: ["0.10", "0.30", "0.70", "0.90"]
+    representatives: development_bucket_medians
+
+candidates:
+  - momentum
+  - momentum_volatility
+  - momentum_reversal_volatility
+
+evaluation:
+  chronological_split:
+    development_fraction: "0.60"
+    validation_fraction: "0.20"
+    blind_fraction: "0.20"
+  purge_full_horizon_at_boundaries: true
+  selection_metric: multiclass_brier
+  selection_rule: >-
+    仅在 validation 比较三个固定候选；按四个 UTC 锚点中最差 Brier 排序，完全相同选择更简单候选。
+  validation_rejection_rule: >-
+    选定候选必须在每个 UTC 锚点均优于该锚点的开发期无条件分布，且每个锚点按预测期望收益
+    五分位形成的最高组与最低组真实毛收益差均大于 10 bp；否则不揭示 blind。
+  blind_rule: >-
+    validation 通过后只评价已选模型一次；分别报告四个锚点的 Brier、无条件基线、期望收益分组、
+    方向毛收益和样本数，不把四个相关锚点合并成独立样本。
+  cost_semantics: >-
+    10 bp 只是一开一平手续费的偏乐观下界；历史通过仍需由现役 Product、Portfolio、Risk 与
+    Execution 在前向逻辑账户中计入 spread、slippage、funding、换手和持仓路径。
+
+search_scope:
+  candidate_horizon_count: 1
+  candidate_model_count: 3
+  prohibited_follow_ups: >-
+    结果揭示后不得在同一 blind 区间继续搜索 12h、36h、48h、其他阈值、锚点或特征组合；
+    新假设只能使用新的未来样本或独立数据集。
+
+capital_rule: >-
+  本计划不修改现役 4h Forecast、AI、Portfolio、Risk、Execution 或前端；即使历史通过，
+  也只能建立带新行为身份的研究 Producer，直至费用后前向证据证明增量。
