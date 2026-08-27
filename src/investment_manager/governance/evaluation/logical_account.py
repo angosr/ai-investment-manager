@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from sqlalchemy import select
+from sqlalchemy.engine import Engine
+
 from investment_manager.execution.group.accounting import ProductAccountProjector
 from investment_manager.execution.group.engine import execution_leg_from_order
 from investment_manager.execution.group.models import (
@@ -22,7 +25,18 @@ from investment_manager.execution.venue.product_mock import (
     MockSubmitBehavior,
     build_mock_product_order,
 )
-from investment_manager.forecast.results import BaseForecast
+from investment_manager.forecast.contracts import (
+    ForecastDecisionSlot,
+    ForecastNoEstimate,
+    ForecastSlotObligation,
+)
+from investment_manager.forecast.results import BaseForecast, ForecastResultKind
+from investment_manager.forecast.tables import (
+    forecast_decision_slots,
+    forecast_no_estimates,
+    forecast_slot_obligations,
+    forecasts,
+)
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -73,6 +87,186 @@ class LogicalAccountPath(FrozenModel):
     account: PortfolioAccountSnapshot
     step_ids: tuple[str, ...]
     gross_turnover: Decimal
+
+
+class ProducerDecisionPanel(FrozenModel):
+    """All terminal answers one producer made for one shared decision instant."""
+
+    panel_id: str
+    producer_id: str
+    producer_behavior_id: str
+    slot_as_of: datetime
+    information_cutoff_at: datetime
+    available_at: datetime
+    obligations: tuple[ForecastSlotObligation, ...]
+    slots: tuple[ForecastDecisionSlot, ...]
+    forecasts: tuple[BaseForecast, ...]
+    no_estimates: tuple[ForecastNoEstimate, ...]
+
+
+class ProducerPanelLedger(FrozenModel):
+    producer_behavior_id: str
+    as_of: datetime
+    obligated_panel_count: int
+    complete_panels: tuple[ProducerDecisionPanel, ...]
+    pending_panel_count: int
+
+
+class SqlProducerPanelReader:
+    """Read complete panels without hiding missing or late producer answers."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def read(
+        self,
+        *,
+        producer_behavior_id: str,
+        as_of: datetime,
+    ) -> ProducerPanelLedger:
+        if not producer_behavior_id:
+            raise ValueError("Producer panel 必须指定行为身份")
+        as_of = require_utc(as_of)
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    forecast_slot_obligations.c.payload,
+                    forecast_decision_slots.c.payload,
+                )
+                .select_from(
+                    forecast_slot_obligations.join(
+                        forecast_decision_slots,
+                        forecast_decision_slots.c.slot_id == forecast_slot_obligations.c.slot_id,
+                    )
+                )
+                .where(
+                    forecast_slot_obligations.c.producer_behavior_id == producer_behavior_id,
+                    forecast_slot_obligations.c.assigned_at <= as_of,
+                )
+                .order_by(
+                    forecast_decision_slots.c.slot_as_of,
+                    forecast_slot_obligations.c.contract_id,
+                )
+            ).all()
+            slot_ids = tuple(row[1]["slot_id"] for row in rows)
+            forecast_payloads = (
+                ()
+                if not slot_ids
+                else tuple(
+                    connection.execute(
+                        select(forecasts.c.payload).where(
+                            forecasts.c.kind == ForecastResultKind.BASE.value,
+                            forecasts.c.producer_behavior_id == producer_behavior_id,
+                            forecasts.c.decision_slot_id.in_(slot_ids),
+                            forecasts.c.available_at <= as_of,
+                        )
+                    ).scalars()
+                )
+            )
+            no_estimate_payloads = (
+                ()
+                if not slot_ids
+                else tuple(
+                    connection.execute(
+                        select(forecast_no_estimates.c.payload).where(
+                            forecast_no_estimates.c.producer_behavior_id == producer_behavior_id,
+                            forecast_no_estimates.c.slot_id.in_(slot_ids),
+                            forecast_no_estimates.c.completed_at <= as_of,
+                        )
+                    ).scalars()
+                )
+            )
+        forecasts_by_slot = {
+            item.decision_slot_id: item
+            for payload in forecast_payloads
+            for item in (BaseForecast.model_validate(payload),)
+        }
+        no_estimates_by_slot = {
+            item.slot_id: item
+            for payload in no_estimate_payloads
+            for item in (ForecastNoEstimate.model_validate(payload),)
+        }
+        grouped: dict[
+            tuple[datetime, datetime, str],
+            list[tuple[ForecastSlotObligation, ForecastDecisionSlot]],
+        ] = {}
+        for obligation_payload, slot_payload in rows:
+            obligation = ForecastSlotObligation.model_validate(obligation_payload)
+            slot = ForecastDecisionSlot.model_validate(slot_payload)
+            cause_hash = content_hash(None if slot.cause is None else slot.cause.identity_payload())
+            grouped.setdefault(
+                (slot.slot_as_of, slot.information_cutoff_at, cause_hash),
+                [],
+            ).append((obligation, slot))
+
+        panels: list[ProducerDecisionPanel] = []
+        pending = 0
+        for (slot_as_of, information_cutoff_at, cause_hash), values in sorted(grouped.items()):
+            obligations = tuple(item[0] for item in values)
+            slots = tuple(item[1] for item in values)
+            terminal_forecasts = tuple(
+                forecasts_by_slot[item.slot_id]
+                for item in obligations
+                if item.slot_id in forecasts_by_slot
+            )
+            terminal_no_estimates = tuple(
+                no_estimates_by_slot[item.slot_id]
+                for item in obligations
+                if item.slot_id in no_estimates_by_slot
+            )
+            terminal_slot_ids = {
+                *(item.decision_slot_id for item in terminal_forecasts),
+                *(item.slot_id for item in terminal_no_estimates),
+            }
+            obligation_slot_ids = {item.slot_id for item in obligations}
+            if terminal_slot_ids != obligation_slot_ids:
+                pending += 1
+                continue
+            producer_ids = {item.producer_id for item in obligations}
+            if len(producer_ids) != 1:
+                raise ValueError("同一 Producer panel 出现多个 producer_id")
+            available_at = max(
+                (
+                    *(item.available_at for item in terminal_forecasts),
+                    *(item.completed_at for item in terminal_no_estimates),
+                )
+            )
+            panel_values = {
+                "producer_id": next(iter(producer_ids)),
+                "producer_behavior_id": producer_behavior_id,
+                "slot_as_of": slot_as_of,
+                "information_cutoff_at": information_cutoff_at,
+                "available_at": available_at,
+                "obligations": obligations,
+                "slots": slots,
+                "forecasts": tuple(
+                    sorted(terminal_forecasts, key=lambda item: item.outcome_family_id)
+                ),
+                "no_estimates": tuple(
+                    sorted(terminal_no_estimates, key=lambda item: item.contract_id)
+                ),
+            }
+            panels.append(
+                ProducerDecisionPanel(
+                    panel_id=stable_id(
+                        "producer_decision_panel",
+                        producer_behavior_id,
+                        slot_as_of.isoformat(),
+                        information_cutoff_at.isoformat(),
+                        cause_hash,
+                        content_hash(panel_values),
+                    ),
+                    **panel_values,
+                )
+            )
+        ordered = tuple(sorted(panels, key=lambda item: (item.available_at, item.panel_id)))
+        return ProducerPanelLedger(
+            producer_behavior_id=producer_behavior_id,
+            as_of=as_of,
+            obligated_panel_count=len(grouped),
+            complete_panels=ordered,
+            pending_panel_count=pending,
+        )
 
 
 class ProducerLogicalAccount:

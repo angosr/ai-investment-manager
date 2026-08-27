@@ -51,6 +51,7 @@ from investment_manager.forecast.results import (
 )
 from investment_manager.governance.evaluation.logical_account import (
     ProducerLogicalAccount,
+    SqlProducerPanelReader,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
@@ -265,6 +266,27 @@ def _persisted_forecast(engine, contract: ForecastContract) -> BaseForecast:
     forecast = _forecast(contract, decision_slot_id=slot.slot_id)
     assert forecasts.record(forecast)
     return forecast
+
+
+def test_producer_panel_reader_preserves_the_complete_slot_obligation() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    contract = _contract()
+    forecast = _persisted_forecast(engine, contract)
+
+    ledger = SqlProducerPanelReader(engine).read(
+        producer_behavior_id=forecast.producer_behavior_id,
+        as_of=forecast.available_at,
+    )
+
+    assert ledger.obligated_panel_count == 1
+    assert ledger.pending_panel_count == 0
+    assert len(ledger.complete_panels) == 1
+    panel = ledger.complete_panels[0]
+    assert panel.available_at == forecast.available_at
+    assert panel.forecasts == (forecast,)
+    assert panel.no_estimates == ()
+    assert panel.obligations[0].slot_id == forecast.decision_slot_id
 
 
 def _state(
