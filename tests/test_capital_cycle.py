@@ -2084,8 +2084,9 @@ def test_current_holding_review_does_not_create_a_new_alpha_target() -> None:
         "PROGRAMMATIC_RISK_REVIEW",
     )
     activity = CapitalDashboardReader(engine, config).activity()
-    assert activity[0].outcome == "HOLD"
-    assert activity[0].order_count == 0
+    assert len(activity) == 1
+    assert activity[0].outcome == "EXECUTED"
+    assert activity[0].order_count == 1
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(portfolio_targets)) == 1
 

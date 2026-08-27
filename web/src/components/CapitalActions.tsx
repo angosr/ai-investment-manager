@@ -15,15 +15,11 @@ import {
 } from "../lib/format";
 import styles from "./CapitalActions.module.css";
 
-const ROUTINE_OUTCOMES = new Set(["CASH", "NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
+const ROUTINE_OUTCOMES = new Set(["NO_ORDER"]);
 
 const OUTCOME_COPY: Record<string, { badge: string; title: string }> = {
-  CASH: { badge: "未下单", title: "持仓未变化" },
-  NO_OPPORTUNITY: { badge: "未下单", title: "持仓未变化" },
-  HOLD: { badge: "仓位不变", title: "持仓未变化" },
   TARGET_DECIDED: { badge: "已形成目标", title: "准备调整仓位" },
   FORECAST_ALREADY_DECIDED: { badge: "未重复下单", title: "持仓未变化" },
-  OPPORTUNITY_ALREADY_DECIDED: { badge: "未重复下单", title: "持仓未变化" },
   RISK_EXIT: { badge: "风险退出", title: "退出风险仓位" },
   PENDING: { badge: "处理中", title: "资金决策仍在处理" },
   RISK_REJECTED: { badge: "风控阻止", title: "持仓未变化" },
@@ -53,7 +49,6 @@ const REASON_LABELS: Record<string, string> = {
   FORECAST_WORLD_MODEL_LINEAGE_UNAVAILABLE: "预测依赖的世界认知演化链无法确认",
   FORECAST_WORLD_MODEL_CAUSAL_STRUCTURE_CHANGED: "预测依赖的因果结构已经变化",
   PROGRAMMATIC_RISK_REVIEW: "完成程序化账户、持仓和硬风险复核",
-  HOLDING_RISK_REVIEWED: "现有持仓已经完成程序化风险复核",
 };
 
 const TRIGGER_LABELS: Record<string, string> = {
@@ -127,11 +122,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
   const candidates = detail?.candidate_economics ?? [];
   const forecasts = [...new Map(candidates.map((item) => [item.forecast_id, item])).values()];
   const zeroImpact = new Set([
-    "NO_OPPORTUNITY",
-    "CASH",
-    "HOLD",
     "FORECAST_ALREADY_DECIDED",
-    "OPPORTUNITY_ALREADY_DECIDED",
     "RISK_REJECTED",
     "NO_ORDER",
   ]).has(action.outcome);

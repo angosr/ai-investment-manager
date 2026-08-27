@@ -87,7 +87,7 @@ Context Forecast 由 TriggerCoordinator 直接唤醒，不依赖 heartbeat 相�
 
 市场冲击检测以 mandate 为作用域：窗口内首次普通冲击立即触发，其他资产的同等级命中不重复调用，只有升级为紧急或新窗口开始才重新触发。排查时应查看永久行情事实和已发布 Trigger；不得通过缩短 heartbeat、增加 symbol 规则或人工重复触发补偿被正确合并的候选冲击。
 
-Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。全现金且没有新 Forecast/Target/订单时不生成行动条目。
+Heartbeat 负责恢复到期任务、账户投影、对账和风险复核，不自动更新 WorldModel。没有形成仓位、订单或风险变化的例行复核仍保存其不可变 Risk/Capital 审计事实，但不进入“资金决策”行动投影；否则每分钟无变化记录会挤走真正的下单与减险历史。全现金且没有新 Forecast/Target/订单时同样不生成行动条目。
 
 ## 5. Codex 账号
 

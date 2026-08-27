@@ -482,6 +482,7 @@ class CapitalDashboardReader:
             capital_cycle_records.c.outcome.not_in(
                 (
                     CapitalCycleOutcome.CASH.value,
+                    CapitalCycleOutcome.HOLD.value,
                     CapitalCycleOutcome.NO_OPPORTUNITY.value,
                     CapitalCycleOutcome.OPPORTUNITY_ALREADY_DECIDED.value,
                 )
