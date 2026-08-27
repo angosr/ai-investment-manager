@@ -1,0 +1,38 @@
+{
+  "schema_version": "quant-candidate-result-v1",
+  "plan_id": "quant-order-flow-4h-v1",
+  "plan_commit": "57040efb1056c88a86352dab56fa0edf65e450cd",
+  "evaluation_base_code_commit": "9b58fc91fc13a98dc93a601979c2f0b289f387c8",
+  "evaluated_at": "2026-08-27T20:06:18Z",
+  "status": "REJECTED_ON_VALIDATION",
+  "primary_metric": "multiclass_brier",
+  "method": "chronological-cell-panel-selection-v2-with-preregistered-flow-tertiles",
+  "results": [
+    {
+      "outcome_family_id": "btc-price-directional-4h",
+      "dataset_id": "historical_dataset_dbc898af147b44cbe744",
+      "bars_hash": "2798b8ab2e8e13423da73d35f1b1a796e4df55d24ebcdcc54bf05a6392d3f5d0",
+      "development_sample_count": 10507,
+      "validation_sample_count": 3502,
+      "blind_sample_count": 3503,
+      "baseline_validation_brier": "0.7476522693719300786087806745",
+      "candidate_validation_brier": "0.7493098286480937076092102190",
+      "selected_model": "momentum_reversal_volatility",
+      "blind_score_computed": false
+    },
+    {
+      "outcome_family_id": "paxg-price-directional-4h",
+      "dataset_id": "historical_dataset_70198615b88be00108cb",
+      "bars_hash": "8bc580a4fa37487aefba8ed115c310ec18229f1cae4a0a2803c4a8db40b32d9d",
+      "development_sample_count": 10507,
+      "validation_sample_count": 3502,
+      "blind_sample_count": 3503,
+      "baseline_validation_brier": "0.7562357258327711529472157850",
+      "candidate_validation_brier": "0.7587470971256972499611598983",
+      "selected_model": "momentum_reversal_volatility",
+      "blind_score_computed": false
+    }
+  ],
+  "runtime_change": "NONE",
+  "conclusion": "四小时 taker imbalance 未增加验证集概率质量；不进入 Quant panel，不建立新 Producer。"
+}
