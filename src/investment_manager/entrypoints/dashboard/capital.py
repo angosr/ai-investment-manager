@@ -518,7 +518,9 @@ class CapitalDashboardReader:
                 )
                 .where(
                     portfolio_targets.c.portfolio_id
-                    == self._config.capital.decision.portfolio_id
+                    == self._config.capital.decision.portfolio_id,
+                    capital_cycle_records.c.pipeline_id
+                    == self._config.capital.version,
                 )
                 .order_by(portfolio_targets.c.as_of.desc(), portfolio_targets.c.target_id.desc())
                 .execution_options(stream_results=True)
@@ -526,7 +528,10 @@ class CapitalDashboardReader:
             for row in rows:
                 target = PortfolioTarget.model_validate(row[0])
                 receipt = CapitalCycleRecord.model_validate(row[1])
-                if not is_full_forecast_capital_choice(receipt):
+                if not is_full_forecast_capital_choice(
+                    receipt,
+                    capital_behavior_id=self._config.capital.version,
+                ):
                     continue
                 candidates = target.candidate_evaluations
                 if not candidates or any(
@@ -587,7 +592,10 @@ class CapitalDashboardReader:
                             realized_product_gross_bps=outcome.realized_gross_bps,
                         )
                     )
-                return evaluate_capital_choice(tuple(cases))
+                return evaluate_capital_choice(
+                    tuple(cases),
+                    capital_behavior_id=self._config.capital.version,
+                )
         return None
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
@@ -1616,6 +1624,7 @@ def serialize_capital_choice_evidence(
     return {
         "capital_choice_evidence": {
             "evaluation_version": evidence.evaluation_version,
+            "capital_behavior_id": evidence.capital_behavior_id,
             "decision_id": evidence.decision_id,
             "decision_at": _iso(evidence.decision_at),
             "evaluation_at": _iso(evidence.evaluation_at),

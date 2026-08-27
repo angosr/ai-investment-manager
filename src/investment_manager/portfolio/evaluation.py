@@ -11,11 +11,15 @@ from investment_manager.forecast.models import ExposureDirection
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.models import CapitalCycleOutcome, CapitalCycleRecord
 
-CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v3"
+CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v4"
 _FORECAST_DECISION_TRIGGERS = frozenset({"FORECAST_CADENCE", "FORECAST_EVENT_DUE"})
 
 
-def is_full_forecast_capital_choice(record: CapitalCycleRecord) -> bool:
+def is_full_forecast_capital_choice(
+    record: CapitalCycleRecord,
+    *,
+    capital_behavior_id: str,
+) -> bool:
     """Whether a receipt owns a fresh Forecast-to-capital comparison.
 
     Holding/risk reviews may legally retain, resize, or exit current Sleeves, but
@@ -23,8 +27,11 @@ def is_full_forecast_capital_choice(record: CapitalCycleRecord) -> bool:
     a cross-exposure missed-opportunity claim.
     """
 
+    if not capital_behavior_id:
+        raise ValueError("Capital choice 评价必须指定资本行为身份")
     return (
-        record.outcome == CapitalCycleOutcome.TARGET_DECIDED
+        record.pipeline_id == capital_behavior_id
+        and record.outcome == CapitalCycleOutcome.TARGET_DECIDED
         and not _FORECAST_DECISION_TRIGGERS.isdisjoint(record.trigger_types)
     )
 
@@ -102,6 +109,7 @@ class CapitalChoiceExposureOutcome:
 @dataclass(frozen=True, slots=True)
 class CapitalChoiceEvidence:
     evaluation_version: str
+    capital_behavior_id: str
     decision_id: str
     decision_at: datetime
     evaluation_at: datetime
@@ -119,6 +127,8 @@ class CapitalChoiceEvidence:
 
 def evaluate_capital_choice(
     cases: tuple[CapitalChoiceCase, ...],
+    *,
+    capital_behavior_id: str,
 ) -> CapitalChoiceEvidence:
     """Compare the chosen product or cash with hindsight products per exposure.
 
@@ -128,6 +138,8 @@ def evaluate_capital_choice(
 
     if not cases:
         raise ValueError("Capital choice 评价至少需要一个候选")
+    if not capital_behavior_id:
+        raise ValueError("Capital choice 评价必须指定资本行为身份")
     decision_ids = {item.decision_id for item in cases}
     decision_times = {item.decision_at for item in cases}
     evaluation_times = {item.evaluation_at for item in cases}
@@ -173,6 +185,7 @@ def evaluate_capital_choice(
 
     return CapitalChoiceEvidence(
         evaluation_version=CAPITAL_CHOICE_EVALUATION_VERSION,
+        capital_behavior_id=capital_behavior_id,
         decision_id=next(iter(decision_ids)),
         decision_at=next(iter(decision_times)),
         evaluation_at=next(iter(evaluation_times)),

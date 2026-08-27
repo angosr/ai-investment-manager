@@ -89,7 +89,8 @@ def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
         realized_net_bps=Decimal("14.65"),
     )
     evidence = CapitalChoiceEvidence(
-        evaluation_version="capital-choice-outcome-v3",
+        evaluation_version="capital-choice-outcome-v4",
+        capital_behavior_id="capital-v1",
         decision_id="target-1",
         decision_at=decision_at,
         evaluation_at=decision_at + timedelta(hours=4),
@@ -108,7 +109,8 @@ def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
 
     assert serialize_capital_choice_evidence(evidence) == {
         "capital_choice_evidence": {
-            "evaluation_version": "capital-choice-outcome-v3",
+            "evaluation_version": "capital-choice-outcome-v4",
+            "capital_behavior_id": "capital-v1",
             "decision_id": "target-1",
             "decision_at": decision_at.isoformat(),
             "evaluation_at": (decision_at + timedelta(hours=4)).isoformat(),

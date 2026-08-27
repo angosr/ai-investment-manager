@@ -84,7 +84,8 @@ def test_capital_choice_identifies_missed_exposure_after_decision_time_costs() -
                 cost="20",
                 realized="24",
             ),
-        )
+        ),
+        capital_behavior_id="capital-v1",
     )
 
     assert evidence.evaluation_version == CAPITAL_CHOICE_EVALUATION_VERSION
@@ -119,7 +120,8 @@ def test_capital_choice_separates_selected_loss_from_product_choice_gap() -> Non
                 predicted="-18",
                 realized="12",
             ),
-        )
+        ),
+        capital_behavior_id="capital-v1",
     )
 
     exposure = evidence.exposures[0]
@@ -147,7 +149,8 @@ def test_capital_choice_reanchors_product_outcome_to_the_actual_decision_time() 
                 projection_gross="20",
                 realized="30",
             ),
-        )
+        ),
+        capital_behavior_id="capital-v1",
     )
 
     # Product outcome is +30 bp from the original anchor, but +15 bp had
@@ -209,19 +212,27 @@ def test_only_fresh_forecast_decisions_support_cross_exposure_choice_evaluation(
         )
 
     assert is_full_forecast_capital_choice(
-        receipt(trigger_types=("FORECAST_CADENCE",))
+        receipt(trigger_types=("FORECAST_CADENCE",)),
+        capital_behavior_id="capital-v1",
     )
     assert is_full_forecast_capital_choice(
-        receipt(trigger_types=("FORECAST_EVENT_DUE",))
+        receipt(trigger_types=("FORECAST_EVENT_DUE",)),
+        capital_behavior_id="capital-v1",
     )
     assert not is_full_forecast_capital_choice(
-        receipt(trigger_types=("WORLD_MODEL_UPDATED",))
+        receipt(trigger_types=("WORLD_MODEL_UPDATED",)),
+        capital_behavior_id="capital-v1",
     )
     assert not is_full_forecast_capital_choice(
         receipt(
             outcome=CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
             trigger_types=("FORECAST_CADENCE",),
-        )
+        ),
+        capital_behavior_id="capital-v1",
+    )
+    assert not is_full_forecast_capital_choice(
+        receipt(trigger_types=("FORECAST_CADENCE",)),
+        capital_behavior_id="capital-v2",
     )
 
 
@@ -234,7 +245,7 @@ def test_capital_choice_rejects_duplicate_or_multiple_selected_products() -> Non
         selected=True,
     )
     with pytest.raises(ValueError, match="projection 不得重复"):
-        evaluate_capital_choice((case, case))
+        evaluate_capital_choice((case, case), capital_behavior_id="capital-v1")
 
     with pytest.raises(ValueError, match="不得选择多个产品"):
         evaluate_capital_choice(
@@ -247,5 +258,6 @@ def test_capital_choice_rejects_duplicate_or_multiple_selected_products() -> Non
                     ExposureDirection.SHORT,
                     selected=True,
                 ),
-            )
+            ),
+            capital_behavior_id="capital-v1",
         )

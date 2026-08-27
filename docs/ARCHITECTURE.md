@@ -156,6 +156,8 @@ Portfolio 每次从当前产品暴露向目标暴露交易，而不是清仓后�
 
 PortfolioTarget 必须冻结本轮全部合法候选与现金比较所使用的点时经济事实，而不只保存最终目标：Forecast 与产品 projection 身份、当前与评估名义金额、可成交报价引用、剩余毛 Edge、尚未发生的完整成本、净 Edge、适用门槛、资格结论、拒绝原因和最终目标金额。Dashboard、回放和评价只能读取这份不可变比较，不能用当前授权、成本、配置或行为重算历史；旧版本没有保存且无法从冻结制品无歧义恢复的字段明确标为缺失，不得猜测回填。
 
+资本选择、错过机会与费用后结果必须按冻结的 `capital_behavior_id` 分 cohort 评价。可投资域、产品映射、Portfolio 规则、成本或 sizing 任一实质变化后，当前证据只读取新身份产生的完整决策；旧目标与结果继续不可变结算并保留在历史行动审计中，但不得冒充现役盈利诊断、与新候选拼成比较，或把旧产品重新显示为当前可投资表达。
+
 同一经济暴露分布只产生一个预测样本。Forecast 可以从同一分布生成多个产品投影，不得再次调用 AI 或把产品数量计为多个 Alpha 样本；每个投影的跟踪误差与费用后资本结果仍分别结算。对于同一已经验收的线性 Derivative，规范 payoff 可以生成正负名义候选；Spot 不能直接生成负持仓，Spot 与 Perpetual、不同结算资产或不同场所也不能机械镜像。[Binance 的 mark/index 与 funding 合同](https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price)必须进入 Perpetual 产品投影，未知的未来 funding、basis 和保证金压力以冻结模型和不确定性处理，无法可靠处理时拒绝该产品候选。
 
 Forecast 的规范参考 Instrument、Market 的观察 Instrument 与 Capital 的可投资 Instrument 是三个不同集合。规范参考只定义经济 Outcome 的价格与结算口径，可以是不可交易的指数、代理或本轮明确不持有的 Spot；观察集合只提供状态和映射证据；只有可投资集合才进入产品投影、Portfolio、Risk、Planner、账户和持仓页面。引用某个 Spot 作为 BTC 或 PAXG 的规范价格，不得隐式把它加入账户候选；反过来，移除一个执行产品也不得改写已经冻结的经济 Forecast 合同。配置必须分别冻结这些身份并验证产品映射，禁止再用“规范参考必须属于 execution specs”把不同职责耦合起来。

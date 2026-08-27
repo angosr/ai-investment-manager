@@ -216,6 +216,7 @@ export interface ForecastEvaluationEvidence {
   } | null;
   capital_choice_evidence: {
     evaluation_version: string;
+    capital_behavior_id: string;
     decision_id: string;
     decision_at: string;
     evaluation_at: string;
