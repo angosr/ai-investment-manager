@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,9 +16,13 @@ from investment_manager.execution.group.models import ExecutionGroup
 from investment_manager.execution.tables import execution_groups
 from investment_manager.forecast.context.evaluation import (
     ForecastEvidence,
+    ForecastPairEvidence,
+    ForecastPairPanelCase,
     ForecastScoringCase,
     ForecastSourceEvidence,
     evaluate_forecast_evidence,
+    evaluate_forecast_pair_evidence,
+    multiclass_brier_score,
 )
 from investment_manager.forecast.context.posterior import (
     quant_context_posterior_behavior_id,
@@ -61,6 +65,7 @@ from investment_manager.governance.evaluation.world_model_ablation import (
     SqlWorldModelAblationRepository,
     WorldModelAblationReport,
 )
+from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
@@ -85,6 +90,12 @@ from investment_manager.portfolio.tables import (
     portfolio_targets,
 )
 from investment_manager.settings import AppConfig
+
+
+@dataclass(frozen=True, slots=True)
+class QuantContextPairEvidence:
+    vs_quant: ForecastPairEvidence | None
+    vs_context: ForecastPairEvidence | None
 
 
 class EvaluationDashboardReader:
@@ -163,6 +174,50 @@ class EvaluationDashboardReader:
                 now=now,
                 producer_id=policy.producer_id,
                 producer_behavior_id=behavior_id,
+            )
+
+    def quant_context_pair_evidence(self) -> QuantContextPairEvidence | None:
+        """Compare the posterior only on shared settled DecisionSlots."""
+
+        posterior = self._config.outcome_evaluation.quant_context_posterior
+        quant = self._config.outcome_evaluation.quant_baseline
+        context = self._config.capital.context_forecast
+        if (
+            posterior is None
+            or not posterior.enabled
+            or quant is None
+            or not quant.enabled
+            or context is None
+            or not context.enabled
+        ):
+            return None
+        with self._engine.connect() as connection:
+            contracts = self._active_forecast_contracts(connection)
+            if not contracts:
+                return None
+            quant_behavior_id = self._quant_behavior_id(contracts)
+            posterior_behavior_id = quant_context_posterior_behavior_id(
+                config=self._config,
+                contracts=tuple(sorted(contracts, key=lambda item: item.outcome_family_id)),
+                quant_producer_behavior_id=quant_behavior_id,
+            )
+            return QuantContextPairEvidence(
+                vs_quant=self._forecast_pair_evidence(
+                    connection,
+                    contracts=contracts,
+                    candidate_producer_id=posterior.producer_id,
+                    candidate_behavior_id=posterior_behavior_id,
+                    comparator_producer_id=quant.producer_id,
+                    comparator_behavior_id=quant_behavior_id,
+                ),
+                vs_context=self._forecast_pair_evidence(
+                    connection,
+                    contracts=contracts,
+                    candidate_producer_id=posterior.producer_id,
+                    candidate_behavior_id=posterior_behavior_id,
+                    comparator_producer_id=context.producer_id,
+                    comparator_behavior_id=context.producer_behavior_id,
+                ),
             )
 
     def _quant_behavior_id(self, contracts: tuple[ForecastContract, ...]) -> str:
@@ -628,6 +683,154 @@ class EvaluationDashboardReader:
         )
         return replace(overall, source_evidence=source_evidence)
 
+    def _forecast_pair_evidence(
+        self,
+        connection,
+        *,
+        contracts: tuple[ForecastContract, ...],
+        candidate_producer_id: str,
+        candidate_behavior_id: str,
+        comparator_producer_id: str,
+        comparator_behavior_id: str,
+    ) -> ForecastPairEvidence | None:
+        candidate = forecast_records.alias("pair_candidate_forecast")
+        comparator = forecast_records.alias("pair_comparator_forecast")
+        contract_ids = tuple(item.contract_id for item in contracts)
+        rows = connection.execute(
+            select(
+                candidate.c.payload,
+                comparator.c.payload,
+                forecast_outcomes.c.payload,
+                forecast_decision_slots.c.payload,
+            )
+            .select_from(
+                candidate.join(
+                    comparator,
+                    and_(
+                        comparator.c.decision_slot_id == candidate.c.decision_slot_id,
+                        comparator.c.contract_id == candidate.c.contract_id,
+                    ),
+                )
+                .join(
+                    forecast_outcomes,
+                    and_(
+                        forecast_outcomes.c.decision_slot_id
+                        == candidate.c.decision_slot_id,
+                        forecast_outcomes.c.evaluation_version
+                        == self._config.outcome_evaluation.target_forecast_version,
+                    ),
+                )
+                .join(
+                    forecast_decision_slots,
+                    forecast_decision_slots.c.slot_id == candidate.c.decision_slot_id,
+                )
+            )
+            .where(
+                candidate.c.contract_id.in_(contract_ids),
+                candidate.c.kind == ForecastResultKind.BASE.value,
+                candidate.c.producer_id == candidate_producer_id,
+                candidate.c.producer_behavior_id == candidate_behavior_id,
+                comparator.c.kind == ForecastResultKind.BASE.value,
+                comparator.c.producer_id == comparator_producer_id,
+                comparator.c.producer_behavior_id == comparator_behavior_id,
+                forecast_outcomes.c.status == ForecastOutcomeStatus.SETTLED.value,
+            )
+            .order_by(
+                forecast_decision_slots.c.information_cutoff_at,
+                candidate.c.decision_slot_id,
+            )
+        ).all()
+        grouped: dict[
+            tuple[datetime, datetime, ForecastSlotStratum],
+            list[tuple[Decimal, Decimal, Decimal, Decimal]],
+        ] = {}
+        for candidate_raw, comparator_raw, outcome_raw, slot_raw in rows:
+            candidate_forecast = BaseForecast.model_validate(candidate_raw)
+            comparator_forecast = BaseForecast.model_validate(comparator_raw)
+            outcome = ForecastOutcome.model_validate(outcome_raw)
+            slot = ForecastDecisionSlot.model_validate(slot_raw)
+            if (
+                candidate_forecast.decision_slot_id != comparator_forecast.decision_slot_id
+                or candidate_forecast.contract_id != comparator_forecast.contract_id
+                or candidate_forecast.outcome_family_id != comparator_forecast.outcome_family_id
+                or outcome.realized_bucket_id is None
+            ):
+                raise ValueError("Forecast 配对读取到不一致的 Slot/Contract/Outcome")
+            candidate_probabilities = tuple(
+                (item.bucket_id, item.probability)
+                for item in candidate_forecast.outcome_probabilities
+            )
+            comparator_probabilities = tuple(
+                (item.bucket_id, item.probability)
+                for item in comparator_forecast.outcome_probabilities
+            )
+            if tuple(item[0] for item in candidate_probabilities) != tuple(
+                item[0] for item in comparator_probabilities
+            ):
+                raise ValueError("Forecast 配对概率桶不一致")
+            maximum_probability_delta = max(
+                abs(candidate_item[1] - comparator_item[1])
+                for candidate_item, comparator_item in zip(
+                    candidate_probabilities,
+                    comparator_probabilities,
+                    strict=True,
+                )
+            )
+            key = (slot.information_cutoff_at, outcome.evaluation_at, slot.stratum)
+            grouped.setdefault(key, []).append(
+                (
+                    multiclass_brier_score(
+                        candidate_probabilities,
+                        outcome.realized_bucket_id,
+                    ),
+                    multiclass_brier_score(
+                        comparator_probabilities,
+                        outcome.realized_bucket_id,
+                    ),
+                    maximum_probability_delta,
+                    candidate_forecast.expected_gross_bps
+                    - comparator_forecast.expected_gross_bps,
+                )
+            )
+        if not grouped:
+            return None
+        panels = []
+        for (cutoff, evaluation_at, stratum), values in sorted(grouped.items()):
+            count = Decimal(len(values))
+            panels.append(
+                ForecastPairPanelCase(
+                    panel_id=stable_id(
+                        "forecast_pair_panel",
+                        candidate_behavior_id,
+                        comparator_behavior_id,
+                        cutoff.isoformat(),
+                        evaluation_at.isoformat(),
+                        stratum.value,
+                    ),
+                    information_cutoff_at=cutoff,
+                    evaluation_at=evaluation_at,
+                    source_stratum=stratum,
+                    paired_target_count=len(values),
+                    candidate_brier_score=sum(
+                        (item[0] for item in values), Decimal("0")
+                    )
+                    / count,
+                    comparator_brier_score=sum(
+                        (item[1] for item in values), Decimal("0")
+                    )
+                    / count,
+                    mean_max_bucket_probability_delta=sum(
+                        (item[2] for item in values), Decimal("0")
+                    )
+                    / count,
+                    mean_expected_gross_bps_delta=sum(
+                        (item[3] for item in values), Decimal("0")
+                    )
+                    / count,
+                )
+            )
+        return evaluate_forecast_pair_evidence(tuple(panels))
+
     @staticmethod
     def _forecast_market_state_key(forecast: BaseForecast) -> str | None:
         """Read the point-in-time regime frozen in this Forecast, never current state."""
@@ -682,6 +885,38 @@ def serialize_quant_context_posterior_evidence(
     return {
         "quant_context_posterior_evidence": (
             None if evidence is None else _serialize_forecast_evidence_payload(evidence)
+        )
+    }
+
+
+def serialize_quant_context_pair_evidence(
+    evidence: QuantContextPairEvidence | None,
+) -> dict:
+    def serialize_pair(value: ForecastPairEvidence | None) -> dict | None:
+        if value is None:
+            return None
+        payload = asdict(value)
+        for field_name in (
+            "mean_candidate_brier_score",
+            "mean_comparator_brier_score",
+            "mean_brier_improvement",
+            "brier_improvement_lower_bound",
+            "brier_improvement_upper_bound",
+            "mean_max_bucket_probability_delta",
+            "mean_expected_gross_bps_delta",
+        ):
+            field_value = getattr(value, field_name)
+            payload[field_name] = None if field_value is None else str(field_value)
+        return payload
+
+    return {
+        "quant_context_pair_evidence": (
+            None
+            if evidence is None
+            else {
+                "vs_quant": serialize_pair(evidence.vs_quant),
+                "vs_context": serialize_pair(evidence.vs_context),
+            }
         )
     }
 

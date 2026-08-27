@@ -5,8 +5,10 @@ import pytest
 
 from investment_manager.forecast.context.evaluation import (
     ForecastEvidenceStatus,
+    ForecastPairPanelCase,
     ForecastScoringCase,
     evaluate_forecast_evidence,
+    evaluate_forecast_pair_evidence,
 )
 from investment_manager.forecast.contracts import ForecastSlotStratum
 
@@ -34,6 +36,71 @@ def _case(
         outcome_available_at=outcome_available_at,
         source_stratum=source_stratum,
     )
+
+
+def _pair_case(
+    name: str,
+    start: datetime,
+    *,
+    candidate: str,
+    comparator: str,
+    targets: int = 2,
+) -> ForecastPairPanelCase:
+    return ForecastPairPanelCase(
+        panel_id=name,
+        information_cutoff_at=start,
+        evaluation_at=start + timedelta(hours=4),
+        source_stratum=ForecastSlotStratum.CADENCE_ONLY,
+        paired_target_count=targets,
+        candidate_brier_score=Decimal(candidate),
+        comparator_brier_score=Decimal(comparator),
+        mean_max_bucket_probability_delta=Decimal("0.07"),
+        mean_expected_gross_bps_delta=Decimal("3.5"),
+    )
+
+
+def test_forecast_pair_evidence_is_empty_without_shared_settled_panels() -> None:
+    evidence = evaluate_forecast_pair_evidence(())
+
+    assert evidence.settled_panel_count == 0
+    assert evidence.paired_target_count == 0
+    assert evidence.non_overlapping_panel_count == 0
+    assert evidence.mean_brier_improvement is None
+    assert evidence.brier_improvement_lower_bound is None
+
+
+def test_forecast_pair_evidence_scores_only_shared_non_overlapping_panels() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    evidence = evaluate_forecast_pair_evidence(
+        (
+            _pair_case("first", start, candidate="0.2", comparator="0.4"),
+            _pair_case(
+                "overlap",
+                start + timedelta(hours=1),
+                candidate="0.8",
+                comparator="0.1",
+                targets=1,
+            ),
+            _pair_case(
+                "second",
+                start + timedelta(hours=4),
+                candidate="0.3",
+                comparator="0.5",
+            ),
+        )
+    )
+
+    assert evidence.settled_panel_count == 3
+    assert evidence.paired_target_count == 5
+    assert evidence.non_overlapping_panel_count == 2
+    assert evidence.mean_candidate_brier_score == Decimal("0.25")
+    assert evidence.mean_comparator_brier_score == Decimal("0.45")
+    assert evidence.mean_brier_improvement == Decimal("0.20")
+    assert evidence.brier_improvement_lower_bound == Decimal("0.20")
+    assert evidence.brier_improvement_upper_bound == Decimal("0.20")
+    assert evidence.candidate_better_panel_count == 2
+    assert evidence.candidate_worse_panel_count == 0
+    assert evidence.mean_max_bucket_probability_delta == Decimal("0.07")
 
 
 def test_forecast_evidence_rejects_duplicate_interval_within_source_stratum() -> None:

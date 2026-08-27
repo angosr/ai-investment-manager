@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy import create_engine
 
+from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashboardReader
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import ContextForecastStructuredOutput
 from investment_manager.forecast.context.posterior import (
@@ -24,8 +25,15 @@ from investment_manager.forecast.contracts import (
     ForecastProducerBinding,
     ForecastProducerKind,
 )
+from investment_manager.forecast.models import ExposureDirection
 from investment_manager.forecast.repository import SqlForecastStore
-from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
+from investment_manager.forecast.results import (
+    BaseForecast,
+    ForecastBucketProbability,
+    ForecastLegOutcome,
+    ForecastOutcome,
+    ForecastOutcomeStatus,
+)
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import MarketQuote
 from investment_manager.market.repository import SqlMarketDataStore
@@ -397,6 +405,54 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
     assert forecast.world_model_id == "assessment-1"
     assert forecast.analysis_input_json == assignment.analysis_input_json
     assert forecast.producer_id == posterior_policy.producer_id
+    SqlForecastStore(engine).record_outcome(
+        ForecastOutcome(
+            outcome_id=stable_id(
+                "forecast_outcome",
+                assignment.targets[0].slot.slot_id,
+                config.outcome_evaluation.target_forecast_version,
+            ),
+            contract_id=contract.contract_id,
+            decision_slot_id=assignment.targets[0].slot.slot_id,
+            evaluation_version=config.outcome_evaluation.target_forecast_version,
+            status=ForecastOutcomeStatus.SETTLED,
+            information_cutoff_at=assignment.information_cutoff_at,
+            outcome_start_at=assignment.targets[0].slot.outcome_start_at,
+            evaluation_at=assignment.evaluation_at,
+            settled_at=assignment.evaluation_at + timedelta(seconds=1),
+            legs=(
+                ForecastLegOutcome(
+                    instrument_id=contract.target.legs[0].instrument.key,
+                    direction=ExposureDirection.LONG,
+                    gross_weight=Decimal("1"),
+                    reference_price=Decimal("80000"),
+                    exit_price=Decimal("80800"),
+                    price_return_bps=Decimal("100"),
+                ),
+            ),
+            gross_target_return_bps=Decimal("100"),
+            realized_bucket_id="LARGE_GAIN",
+            reason_code="SETTLED",
+        )
+    )
+    reader = EvaluationDashboardReader(engine, config)
+    with engine.connect() as connection:
+        pair = reader._forecast_pair_evidence(
+            connection,
+            contracts=(contract,),
+            candidate_producer_id=posterior_policy.producer_id,
+            candidate_behavior_id=assignment.producer_behavior_id,
+            comparator_producer_id=quant_forecast.producer_id,
+            comparator_behavior_id=quant_forecast.producer_behavior_id,
+        )
+
+    assert pair is not None
+    assert pair.settled_panel_count == 1
+    assert pair.paired_target_count == 1
+    assert pair.mean_candidate_brier_score == Decimal("0.9428")
+    assert pair.mean_comparator_brier_score == Decimal("1.06")
+    assert pair.mean_brier_improvement == Decimal("0.1172")
+    assert pair.mean_max_bucket_probability_delta == Decimal("0.05")
 
 
 def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> None:

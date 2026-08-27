@@ -442,6 +442,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
         "forecast_evidence": None,
         "quant_forecast_evidence": None,
         "quant_context_posterior_evidence": None,
+        "quant_context_pair_evidence": None,
         "forecast_stability_evidence": None,
         "product_payoff_evidence": None,
         "capital_choice_evidence": None,

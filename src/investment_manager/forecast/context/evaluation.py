@@ -12,6 +12,7 @@ from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
 FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v5"
+FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v1"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
@@ -101,6 +102,95 @@ class ForecastEvidence:
 class ForecastSourceEvidence:
     stratum: ForecastSlotStratum
     evidence: ForecastEvidence
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastPairPanelCase:
+    """One jointly-produced target panel scored on a shared settled outcome set."""
+
+    panel_id: str
+    information_cutoff_at: datetime
+    evaluation_at: datetime
+    source_stratum: ForecastSlotStratum
+    paired_target_count: int
+    candidate_brier_score: Decimal
+    comparator_brier_score: Decimal
+    mean_max_bucket_probability_delta: Decimal
+    mean_expected_gross_bps_delta: Decimal
+
+    def __post_init__(self) -> None:
+        if not self.panel_id or self.paired_target_count < 1:
+            raise ValueError("Forecast 配对面板身份和目标数必须有效")
+        require_utc(self.information_cutoff_at)
+        require_utc(self.evaluation_at)
+        if self.information_cutoff_at >= self.evaluation_at:
+            raise ValueError("Forecast 配对面板截止时间必须早于评价时间")
+        if min(self.candidate_brier_score, self.comparator_brier_score) < 0:
+            raise ValueError("Forecast 配对 Brier 不能为负数")
+        if not Decimal("0") <= self.mean_max_bucket_probability_delta <= Decimal("1"):
+            raise ValueError("Forecast 配对概率变化必须位于 [0, 1]")
+
+    @property
+    def brier_improvement(self) -> Decimal:
+        """Positive means the candidate beat the comparator on the same panel."""
+
+        return self.comparator_brier_score - self.candidate_brier_score
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastPairEvidence:
+    evaluation_version: str
+    settled_panel_count: int
+    paired_target_count: int
+    non_overlapping_panel_count: int
+    mean_candidate_brier_score: Decimal | None
+    mean_comparator_brier_score: Decimal | None
+    mean_brier_improvement: Decimal | None
+    brier_improvement_lower_bound: Decimal | None
+    brier_improvement_upper_bound: Decimal | None
+    candidate_better_panel_count: int
+    equal_panel_count: int
+    candidate_worse_panel_count: int
+    mean_max_bucket_probability_delta: Decimal | None
+    mean_expected_gross_bps_delta: Decimal | None
+
+
+def evaluate_forecast_pair_evidence(
+    cases: tuple[ForecastPairPanelCase, ...],
+) -> ForecastPairEvidence:
+    """Compare two producers only on their shared, settled, non-overlapping panels."""
+
+    independent = select_non_overlapping_intervals(
+        cases,
+        identity=lambda item: item.panel_id,
+        information_cutoff_at=lambda item: item.information_cutoff_at,
+        evaluation_at=lambda item: item.evaluation_at,
+        stratum=lambda item: item.source_stratum.value,
+    )
+    candidate_scores = tuple(item.candidate_brier_score for item in independent)
+    comparator_scores = tuple(item.comparator_brier_score for item in independent)
+    improvements = tuple(item.brier_improvement for item in independent)
+    interval = _mean_confidence_interval(improvements) if len(improvements) >= 2 else None
+    return ForecastPairEvidence(
+        evaluation_version=FORECAST_PAIR_EVALUATION_VERSION,
+        settled_panel_count=len(cases),
+        paired_target_count=sum(item.paired_target_count for item in cases),
+        non_overlapping_panel_count=len(independent),
+        mean_candidate_brier_score=_mean(candidate_scores),
+        mean_comparator_brier_score=_mean(comparator_scores),
+        mean_brier_improvement=_mean(improvements),
+        brier_improvement_lower_bound=None if interval is None else interval[0],
+        brier_improvement_upper_bound=None if interval is None else interval[1],
+        candidate_better_panel_count=sum(item > 0 for item in improvements),
+        equal_panel_count=sum(item == 0 for item in improvements),
+        candidate_worse_panel_count=sum(item < 0 for item in improvements),
+        mean_max_bucket_probability_delta=_mean(
+            tuple(item.mean_max_bucket_probability_delta for item in independent)
+        ),
+        mean_expected_gross_bps_delta=_mean(
+            tuple(item.mean_expected_gross_bps_delta for item in independent)
+        ),
+    )
 
 
 def evaluate_forecast_evidence(

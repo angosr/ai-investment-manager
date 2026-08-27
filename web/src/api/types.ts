@@ -209,6 +209,10 @@ export interface ForecastEvaluationEvidence {
   forecast_evidence: ForecastEvidenceSummary | null;
   quant_forecast_evidence: ForecastEvidenceSummary | null;
   quant_context_posterior_evidence: ForecastEvidenceSummary | null;
+  quant_context_pair_evidence: {
+    vs_quant: ForecastPairEvidenceSummary | null;
+    vs_context: ForecastPairEvidenceSummary | null;
+  } | null;
   forecast_stability_evidence: {
     assignment_count: number;
     successful_replica_count: number;
@@ -272,6 +276,23 @@ export interface ForecastEvaluationEvidence {
     minimum_sample_size: number;
     evidence_sufficient: boolean;
   } | null;
+}
+
+export interface ForecastPairEvidenceSummary {
+  evaluation_version: string;
+  settled_panel_count: number;
+  paired_target_count: number;
+  non_overlapping_panel_count: number;
+  mean_candidate_brier_score: string | null;
+  mean_comparator_brier_score: string | null;
+  mean_brier_improvement: string | null;
+  brier_improvement_lower_bound: string | null;
+  brier_improvement_upper_bound: string | null;
+  candidate_better_panel_count: number;
+  equal_panel_count: number;
+  candidate_worse_panel_count: number;
+  mean_max_bucket_probability_delta: string | null;
+  mean_expected_gross_bps_delta: string | null;
 }
 
 export interface CapitalChoiceCandidateOutcome {
