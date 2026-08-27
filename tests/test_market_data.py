@@ -14,6 +14,7 @@ from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.features import (
     build_derivative_context_snapshot,
     freeze_quote_views,
+    point_in_time_quote_views,
 )
 from investment_manager.market.models import (
     ClosedMarketBar,
@@ -411,6 +412,30 @@ def test_quote_views_separate_valuation_from_execution_authority() -> None:
                 update={"observed_at": NOW + timedelta(seconds=1)}
             ),
         )
+
+
+def test_point_in_time_quote_views_never_read_a_later_quote() -> None:
+    instrument = InstrumentId.binance_spot(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+    )
+    market = InMemoryMarketDataStore()
+    market.put_quote(_quote(NOW, update_id=1))
+    market.put_quote(_quote(NOW + timedelta(seconds=1), update_id=2))
+
+    views = point_in_time_quote_views(
+        market=market,
+        instrument=instrument,
+        as_of=NOW,
+        maximum_live_age_seconds=5,
+    )
+
+    assert views is not None
+    valuation, executable = views
+    assert valuation.source_quote_id == "quote-1"
+    assert executable is not None
+    assert executable.source_quote_id == "quote-1"
 
 
 @pytest.mark.parametrize(

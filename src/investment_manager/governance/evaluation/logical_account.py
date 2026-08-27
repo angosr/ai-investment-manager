@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from pydantic import model_validator
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
@@ -40,13 +41,19 @@ from investment_manager.forecast.tables import (
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
-from investment_manager.market.models import ExecutableQuote, ValuationQuote
+from investment_manager.market.models import (
+    ExecutableQuote,
+    ValuationQuote,
+)
 from investment_manager.market.perpetual.models import FundingSettlement
 from investment_manager.portfolio.decision import (
     PortfolioDecisionEngine,
     PortfolioSleeveInput,
 )
-from investment_manager.portfolio.models import PortfolioAccountSnapshot, PortfolioTarget
+from investment_manager.portfolio.models import (
+    PortfolioAccountSnapshot,
+    PortfolioTarget,
+)
 from investment_manager.portfolio.policy import CapitalPolicy
 from investment_manager.risk.models import RiskOutcome
 from investment_manager.risk.portfolio import (
@@ -102,6 +109,44 @@ class ProducerDecisionPanel(FrozenModel):
     slots: tuple[ForecastDecisionSlot, ...]
     forecasts: tuple[BaseForecast, ...]
     no_estimates: tuple[ForecastNoEstimate, ...]
+
+    @model_validator(mode="after")
+    def terminals_must_exactly_cover_the_shared_obligations(self):
+        if not self.obligations or len(self.obligations) != len(self.slots):
+            raise ValueError("Producer panel 必须包含等量非空槽义务和决策槽")
+        slots_by_id = {item.slot_id: item for item in self.slots}
+        obligations_by_slot = {item.slot_id: item for item in self.obligations}
+        if len(slots_by_id) != len(self.slots) or set(slots_by_id) != set(obligations_by_slot):
+            raise ValueError("Producer panel Slot/Obligation 必须唯一且精确对应")
+        terminal_slot_ids = {
+            *(item.decision_slot_id for item in self.forecasts),
+            *(item.slot_id for item in self.no_estimates),
+        }
+        if len(terminal_slot_ids) != len(self.forecasts) + len(self.no_estimates) or (
+            terminal_slot_ids != set(obligations_by_slot)
+        ):
+            raise ValueError("Producer panel Forecast/NO_ESTIMATE 必须精确覆盖槽义务")
+        if any(
+            item.producer_id != self.producer_id
+            or item.producer_behavior_id != self.producer_behavior_id
+            for item in (*self.obligations, *self.forecasts, *self.no_estimates)
+        ):
+            raise ValueError("Producer panel 终态与行为身份不一致")
+        if any(
+            item.slot_as_of != self.slot_as_of
+            or item.information_cutoff_at != self.information_cutoff_at
+            for item in self.slots
+        ):
+            raise ValueError("Producer panel 决策槽不共享同一截止点")
+        expected_available = max(
+            (
+                *(item.available_at for item in self.forecasts),
+                *(item.completed_at for item in self.no_estimates),
+            )
+        )
+        if self.available_at != expected_available:
+            raise ValueError("Producer panel 可用时间必须等于最晚终态时间")
+        return self
 
 
 class ProducerPanelLedger(FrozenModel):
@@ -319,6 +364,37 @@ class ProducerLogicalAccount:
     @property
     def path_id(self) -> str:
         return self._path_id
+
+    @property
+    def current_account(self) -> PortfolioAccountSnapshot | None:
+        return self._account
+
+    def mark(
+        self,
+        *,
+        as_of: datetime,
+        quotes: tuple[ExecutableQuote, ...],
+        funding_settlements: tuple[FundingSettlement, ...] = (),
+    ) -> PortfolioAccountSnapshot:
+        """Value an existing path at a common cutoff without creating a decision."""
+
+        as_of = require_utc(as_of)
+        if self._account is None:
+            raise ValueError("逻辑账户尚不能在首个决策前估值")
+        self._require_chronological(as_of)
+        self._merge_funding(funding_settlements, as_of=as_of)
+        self._account = self._project_account(
+            cycle_id=stable_id(
+                "producer_logical_account_mark",
+                self._path_id,
+                self._account.snapshot_id,
+                as_of.isoformat(),
+                tuple(sorted(item.source_quote_id for item in quotes)),
+            ),
+            as_of=as_of,
+            quotes=quotes,
+        )
+        return self._account
 
     def advance(
         self,

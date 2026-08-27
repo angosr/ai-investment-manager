@@ -4,6 +4,7 @@ import math
 from datetime import datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
+from typing import TYPE_CHECKING
 
 from investment_manager.kernel.identity import content_hash
 from investment_manager.kernel.time import require_utc
@@ -26,6 +27,9 @@ from investment_manager.market.perpetual.models import (
     TradingScheduleSnapshot,
 )
 from investment_manager.market.policy import FeaturePolicy
+
+if TYPE_CHECKING:
+    from investment_manager.market.repository import MarketDataStore
 
 
 class FeatureEngine:
@@ -453,6 +457,41 @@ def freeze_quote_views(
         else None
     )
     return valuation, executable
+
+
+def point_in_time_quote_views(
+    *,
+    market: MarketDataStore,
+    instrument: InstrumentId,
+    as_of: datetime,
+    maximum_live_age_seconds: int,
+    trading_schedule: TradingScheduleSnapshot | None = None,
+) -> tuple[ValuationQuote, ExecutableQuote | None] | None:
+    """Read and freeze the latest quote visible at one capital cutoff."""
+
+    at = require_utc(as_of)
+    quote = (
+        market.latest_spot_quote(
+            instrument=instrument,
+            evaluation_at=at,
+            visible_at=at,
+        )
+        if instrument.product == InstrumentProduct.SPOT
+        else market.latest_perpetual_quote(
+            instrument=instrument,
+            evaluation_at=at,
+            visible_at=at,
+        )
+    )
+    if quote is None:
+        return None
+    return freeze_quote_views(
+        instrument=instrument,
+        quote=quote,
+        as_of=at,
+        maximum_live_age_seconds=maximum_live_age_seconds,
+        trading_schedule=trading_schedule,
+    )
 
 
 def _tradfi_quote_quality(

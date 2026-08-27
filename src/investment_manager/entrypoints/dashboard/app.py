@@ -46,6 +46,10 @@ from investment_manager.entrypoints.dashboard.pagination import (
     decode_page_cursor,
     page_slice,
 )
+from investment_manager.entrypoints.dashboard.producer_capital import (
+    ProducerCapitalDashboardReader,
+    serialize_producer_capital_evidence,
+)
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
 from investment_manager.entrypoints.dashboard.resources import (
     prime_cpu_sampler,
@@ -90,6 +94,7 @@ def create_app(
     assessment_store = SqlContextAssessmentStore(engine)
     capital_reader = CapitalDashboardReader(engine, config)
     evaluation_reader = EvaluationDashboardReader(engine, config)
+    producer_capital_reader = ProducerCapitalDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
     temporal_lock = asyncio.Lock()
@@ -167,6 +172,7 @@ def create_app(
             quant_evidence,
             posterior_evidence,
             posterior_pair_evidence,
+            producer_capital_evidence,
             stability,
             product_payoff,
             capital_choice,
@@ -180,6 +186,7 @@ def create_app(
                 now=now,
             ),
             run_in_threadpool(evaluation_reader.quant_context_pair_evidence),
+            run_in_threadpool(producer_capital_reader.evidence, now=now),
             run_in_threadpool(evaluation_reader.forecast_stability_evidence),
             run_in_threadpool(evaluation_reader.product_payoff_evidence),
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
@@ -195,6 +202,7 @@ def create_app(
                 **serialize_quant_forecast_evidence(quant_evidence),
                 **serialize_quant_context_posterior_evidence(posterior_evidence),
                 **serialize_quant_context_pair_evidence(posterior_pair_evidence),
+                **serialize_producer_capital_evidence(producer_capital_evidence),
                 **serialize_forecast_stability_evidence(stability),
                 **serialize_product_payoff_evidence(product_payoff),
                 **serialize_capital_choice_evidence(capital_choice),

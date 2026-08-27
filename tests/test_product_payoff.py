@@ -21,6 +21,7 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotObligation,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -50,8 +51,14 @@ from investment_manager.forecast.results import (
     ForecastOutcomeStatus,
 )
 from investment_manager.governance.evaluation.logical_account import (
+    ProducerDecisionPanel,
     ProducerLogicalAccount,
+    ProducerPanelLedger,
     SqlProducerPanelReader,
+)
+from investment_manager.governance.evaluation.producer_capital import (
+    ProducerCapitalReplay,
+    compare_producer_capital_paths,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
@@ -1573,6 +1580,99 @@ def test_context_projector_can_build_without_mutating_projection_ledger() -> Non
     assert store.values == list(built)
 
 
+def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config) -> None:
+    contract = _contract()
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=NOW,
+        cutoff_prices=(_anchor(SPOT, "100", "panel-cutoff"),),
+    )
+    binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="test",
+        producer_behavior_id="behavior-v1",
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
+    )
+    obligation = ForecastSlotObligation.create(slot=slot, binding=binding)
+    source = _forecast(contract, decision_slot_id=slot.slot_id)
+    forecast, projections, _, _, _ = _decision_projection_inputs(source)
+    perpetual_projections = tuple(
+        item for item in projections if item.target.legs[0].instrument == PERPETUAL
+    )
+    market = InMemoryMarketDataStore()
+    _put_context_market(market, at=forecast.available_at, update_id=7)
+    projector = SimpleNamespace(
+        build=lambda _forecast, *, as_of: perpetual_projections,
+    )
+    risk = SleeveRiskTemplate(
+        version="logical-panel-risk-v1",
+        basis_stress_bps=Decimal("100"),
+        funding_stress_bps=Decimal("30"),
+        execution_stress_bps=Decimal("100"),
+        derivative_initial_margin_fraction=Decimal("0.1"),
+    )
+    replay = ProducerCapitalReplay(
+        producer_behavior_id=forecast.producer_behavior_id,
+        capital_policy=app_config.capital.model_copy(update={"enabled": True}),
+        initial_cash=Decimal("10000"),
+        market=market,
+        product_payoffs_by_family={forecast.outcome_family_id: projector},
+        sleeve_risk=risk,
+    )
+    panel = ProducerDecisionPanel(
+        panel_id="test-panel",
+        producer_id=forecast.producer_id,
+        producer_behavior_id=forecast.producer_behavior_id,
+        slot_as_of=forecast.information_cutoff_at,
+        information_cutoff_at=forecast.information_cutoff_at,
+        available_at=forecast.available_at,
+        obligations=(obligation,),
+        slots=(slot,),
+        forecasts=(forecast,),
+        no_estimates=(),
+    )
+
+    step = replay.advance(panel)
+
+    assert step.target is not None
+    assert step.target.candidate_evaluations is not None
+    assert all(item.cost.total_bps > 0 for item in step.target.candidate_evaluations)
+    assert step.account.accounting is not None
+    assert replay.account.result().account == step.account
+
+    ledger = ProducerPanelLedger(
+        producer_behavior_id=forecast.producer_behavior_id,
+        as_of=forecast.available_at,
+        obligated_panel_count=1,
+        complete_panels=(panel,),
+        pending_panel_count=0,
+    )
+
+    def independent_replay() -> ProducerCapitalReplay:
+        return ProducerCapitalReplay(
+            producer_behavior_id=forecast.producer_behavior_id,
+            capital_policy=app_config.capital.model_copy(update={"enabled": True}),
+            initial_cash=Decimal("10000"),
+            market=market,
+            product_payoffs_by_family={forecast.outcome_family_id: projector},
+            sleeve_risk=risk,
+        )
+
+    comparison = compare_producer_capital_paths(
+        initial_cash=Decimal("10000"),
+        sources={
+            "QUANT": (ledger, independent_replay()),
+            "AI_QUANT": (ledger, independent_replay()),
+        },
+    )
+
+    assert comparison is not None
+    assert comparison.shared_decision_slot_sets == ((slot.slot_id,),)
+    assert len(comparison.paths) == 2
+    assert comparison.paths[0].path.account.equity == comparison.paths[1].path.account.equity
+
+
 def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(
     app_config,
 ) -> None:
@@ -1614,6 +1714,24 @@ def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(
     assert step.account.accounting is not None
     assert step.account.accounting.fee_cost > 0
     assert step.account.equity == Decimal("10000") - step.account.accounting.fee_cost
+
+    mark_at = forecast.available_at + timedelta(minutes=5)
+    marked = evaluator.mark(
+        as_of=mark_at,
+        quotes=(
+            perpetual_quotes[0].model_copy(
+                update={
+                    "source_quote_id": "perpetual-common-cutoff",
+                    "as_of": mark_at,
+                    "observed_at": mark_at,
+                    "bid": Decimal("100.5"),
+                    "ask": Decimal("100.5"),
+                }
+            ),
+        ),
+    )
+    assert marked.as_of == mark_at
+    assert marked.equity > step.account.equity
 
     second_at = forecast.available_at + timedelta(minutes=10)
     second_slot_id = stable_id("slot", second_at.isoformat())
