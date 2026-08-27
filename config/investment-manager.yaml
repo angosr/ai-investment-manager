@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v67
+  version: total-portfolio-capital-v68
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -183,12 +183,11 @@ capital:
     target_validity_minutes: 30
     cost_model_version: executable-state-transition-v1
   risk:
-    version: multi-product-portfolio-risk-v8
+    version: multi-product-portfolio-risk-v9
     instrument_allowlist: [BINANCE:SPOT:BTCUSDT, BINANCE:SPOT:PAXGUSDT, BINANCE:TRADFI_PERPETUAL:SPYUSDT, BINANCE:USD_M_PERPETUAL:BTCUSDT, BINANCE:USD_M_PERPETUAL:PAXGUSDT]
     maximum_quote_age_seconds: 300
     maximum_quote_skew_seconds: 15
     maximum_account_age_seconds: 60
-    maximum_daily_loss: "200"
     maximum_drawdown_fraction: "0.05"
     maximum_gross_exposure_fraction: "1.00"
     maximum_net_delta_fraction: "1.00"

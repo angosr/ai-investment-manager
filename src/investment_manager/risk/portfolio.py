@@ -36,7 +36,6 @@ class PortfolioRiskPolicy(FrozenModel):
     maximum_quote_age_seconds: int = Field(gt=0)
     maximum_quote_skew_seconds: int = Field(gt=0)
     maximum_account_age_seconds: int = Field(gt=0)
-    maximum_daily_loss: Money
     maximum_drawdown_fraction: UnitInterval
     maximum_gross_exposure_fraction: UnitInterval
     maximum_net_delta_fraction: UnitInterval
@@ -121,7 +120,6 @@ class PortfolioHoldingRiskReview(FrozenModel):
             "input-freshness",
             "quote-alignment",
             "kill-switch",
-            "daily-loss",
             "drawdown",
             "gross-exposure",
             "net-delta",
@@ -399,10 +397,7 @@ class PortfolioRiskEngine:
         force_cash = (
             self._policy.kill_switch
             or account.kill_switch_active
-            or (
-                account.daily_pnl < -self._policy.maximum_daily_loss
-                or account.drawdown_fraction > self._policy.maximum_drawdown_fraction
-            )
+            or account.drawdown_fraction > self._policy.maximum_drawdown_fraction
         )
         requested_after_gates: dict[str, Decimal] = {}
         reasons: dict[str, set[str]] = {}
@@ -586,14 +581,6 @@ class PortfolioRiskEngine:
                 "KILL_SWITCH_ACTIVE",
                 None,
                 None,
-            ),
-            (
-                "daily-loss",
-                account.daily_pnl >= -self._policy.maximum_daily_loss,
-                "DAILY_LOSS_WITHIN_LIMIT",
-                "DAILY_LOSS_LIMIT_EXCEEDED",
-                account.daily_pnl,
-                -self._policy.maximum_daily_loss,
             ),
             (
                 "drawdown",
@@ -930,12 +917,6 @@ class PortfolioRiskEngine:
                 not (self._policy.kill_switch or account.kill_switch_active),
                 "KILL_SWITCH_CLEAR",
                 "KILL_SWITCH_ACTIVE",
-            ),
-            self._rule(
-                "daily-loss",
-                account.daily_pnl >= -self._policy.maximum_daily_loss,
-                "DAILY_LOSS_WITHIN_LIMIT",
-                "DAILY_LOSS_LIMIT_EXCEEDED",
             ),
             self._rule(
                 "drawdown",

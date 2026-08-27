@@ -217,7 +217,6 @@ def _policy() -> PortfolioRiskPolicy:
         maximum_quote_age_seconds=180,
         maximum_quote_skew_seconds=15,
         maximum_account_age_seconds=60,
-        maximum_daily_loss=Decimal("200"),
         maximum_drawdown_fraction=Decimal("0.05"),
         maximum_gross_exposure_fraction=Decimal("0.5"),
         maximum_net_delta_fraction=Decimal("0.1"),
@@ -338,6 +337,44 @@ def test_kill_switch_forces_whole_sleeve_to_cash() -> None:
 
     assert decision.approved_target is not None
     assert decision.approved_target.sleeves[0].approved_gross_notional == 0
+
+
+def test_calendar_day_loss_does_not_override_continuous_survival_risk() -> None:
+    account = _account(daily_pnl="-500", drawdown="0.04")
+    decision = _evaluate(account=account)
+    review = PortfolioRiskEngine(_policy()).review_holding(
+        cycle_id="daily-attribution-only",
+        account=_account(gross="1000", daily_pnl="-500", drawdown="0.04"),
+        quotes=_quotes(),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+
+    assert decision.approved_target is not None
+    assert decision.approved_target.sleeves[0].approved_gross_notional > 0
+    assert all(item.rule_id != "daily-loss" for item in decision.rule_results)
+    assert review.outcome == HoldingRiskOutcome.HOLD
+    assert all(item.rule_id != "daily-loss" for item in review.rule_results)
+
+
+def test_continuous_drawdown_still_forces_cash_and_holding_exit() -> None:
+    account = _account(gross="1000", daily_pnl="0", drawdown="0.051")
+    decision = _evaluate(target=_target(desired="3000", account=account), account=account)
+    review = PortfolioRiskEngine(_policy()).review_holding(
+        cycle_id="continuous-drawdown",
+        account=account,
+        quotes=_quotes(),
+        risk_profiles=(_profile(),),
+        as_of=NOW,
+    )
+
+    assert decision.approved_target is not None
+    assert decision.approved_target.sleeves[0].approved_gross_notional == 0
+    assert review.outcome == HoldingRiskOutcome.EXIT
+    assert any(
+        item.reason_code == "DRAWDOWN_LIMIT_EXCEEDED"
+        for item in review.rule_results
+    )
 
 
 def test_holding_risk_review_distinguishes_hold_exit_and_defer() -> None:

@@ -244,7 +244,6 @@ def _pipeline(*, enabled: bool) -> PortfolioDecisionPipeline:
                 maximum_quote_age_seconds=180,
                 maximum_quote_skew_seconds=15,
                 maximum_account_age_seconds=60,
-                maximum_daily_loss=Decimal("200"),
                 maximum_drawdown_fraction=Decimal("0.05"),
                 maximum_gross_exposure_fraction=Decimal("0.5"),
                 maximum_net_delta_fraction=Decimal("0.1"),

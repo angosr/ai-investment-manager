@@ -1573,7 +1573,6 @@ def test_held_perpetual_exits_when_current_product_projection_is_unavailable(
             maximum_quote_age_seconds=180,
             maximum_quote_skew_seconds=15,
             maximum_account_age_seconds=60,
-            maximum_daily_loss=Decimal("200"),
             maximum_drawdown_fraction=Decimal("0.10"),
             maximum_gross_exposure_fraction=Decimal("0.50"),
             maximum_net_delta_fraction=Decimal("0.50"),
