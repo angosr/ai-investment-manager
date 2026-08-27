@@ -1974,6 +1974,55 @@ def test_holding_review_target_is_not_mislabeled_as_risk_exit() -> None:
     assert activity[0].order_count == 0
 
 
+def test_holding_review_cannot_increase_capital_without_a_fresh_forecast() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    market = SqlMarketDataStore(engine)
+    _put_market(market, config, at=NOW, sequence=75)
+    config, service = _candidate_service(
+        config,
+        engine,
+        maximum_allocation_fraction=Decimal("0.10"),
+    )
+    opened = service.produce(as_of=NOW)
+    assert isinstance(opened, TradePlanExecutionResult)
+    with engine.connect() as connection:
+        opened_target = load_portfolio_target(
+            connection.execute(
+                select(portfolio_targets.c.payload).where(
+                    portfolio_targets.c.as_of == NOW
+                )
+            ).scalar_one()
+        )
+    opened_notional = opened_target.sleeves[0].desired_gross_notional
+
+    review_at = NOW + timedelta(minutes=5)
+    _put_market(market, config, at=review_at, sequence=76)
+    config, restarted = _candidate_service(
+        config,
+        engine,
+        maximum_allocation_fraction=Decimal("0.50"),
+        emit=False,
+    )
+
+    reviewed = restarted.review(
+        _runtime_batch(AnalysisTriggerType.WORLD_MODEL_UPDATED, at=review_at)
+    )
+
+    assert not isinstance(reviewed, TradePlanExecutionResult)
+    target = reviewed.target
+    assert target is not None
+    assert target.candidate_evaluations is not None
+    assert (
+        target.sleeves[0].desired_gross_notional
+        <= target.candidate_evaluations[0].current_gross_notional
+        <= opened_notional
+    )
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(mock_product_orders)) == 1
+
+
 def test_candidate_risk_forced_cash_is_idempotent_for_the_same_cause() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)

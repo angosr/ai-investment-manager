@@ -1023,6 +1023,7 @@ class CapitalCycleService:
             payoff_projection=projection,
             payoff_projection_current=projection_current,
             capital_authorization=source.capital_authorization,
+            new_capital_allowed=False,
         )
 
     @staticmethod

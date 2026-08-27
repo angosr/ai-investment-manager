@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v66
+  version: total-portfolio-capital-v67
   enabled: false
   settlement_asset: USDT
   mandate:

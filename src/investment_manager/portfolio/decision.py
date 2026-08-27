@@ -49,6 +49,9 @@ class PortfolioSleeveInput(FrozenModel):
     payoff_projection: ProductPayoffProjection | None = None
     payoff_projection_current: bool = True
     capital_authorization: CandidateCapitalAuthorization | None = None
+    # A review may protect an existing Sleeve with its still-valid Forecast,
+    # but only a fresh Forecast decision may authorize new capital.
+    new_capital_allowed: bool = True
 
     @model_validator(mode="after")
     def forecast_permission_must_be_explicit(self):
@@ -705,6 +708,10 @@ class PortfolioDecisionEngine:
         current_notional: Decimal,
         as_of: datetime,
     ) -> Decimal:
+        if not item.new_capital_allowed:
+            if current_notional <= 0:
+                raise ValueError("只减持仓复核必须对应当前非零 Sleeve")
+            return current_notional
         if current_notional > 0 and as_of >= item.new_exposure_valid_until:
             return min(allocation_limit, current_notional)
         return allocation_limit
