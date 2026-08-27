@@ -69,6 +69,7 @@ from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
     CapitalChoiceEvidence,
     evaluate_capital_choice,
+    is_full_forecast_capital_choice,
 )
 from investment_manager.portfolio.models import (
     CapitalCycleOutcome,
@@ -492,17 +493,26 @@ class CapitalDashboardReader:
         store = SqlProductPayoffProjectionStore(self._engine)
         outcome_version = self._config.outcome_evaluation.product_payoff_version
         with self._engine.connect() as connection:
-            payloads = connection.execute(
-                select(portfolio_targets.c.payload)
+            rows = connection.execute(
+                select(portfolio_targets.c.payload, capital_cycle_records.c.payload)
+                .select_from(
+                    portfolio_targets.join(
+                        capital_cycle_records,
+                        capital_cycle_records.c.target_id == portfolio_targets.c.target_id,
+                    )
+                )
                 .where(
                     portfolio_targets.c.portfolio_id
                     == self._config.capital.decision.portfolio_id
                 )
                 .order_by(portfolio_targets.c.as_of.desc(), portfolio_targets.c.target_id.desc())
                 .execution_options(stream_results=True)
-            ).scalars()
-            for payload in payloads:
-                target = PortfolioTarget.model_validate(payload)
+            )
+            for row in rows:
+                target = PortfolioTarget.model_validate(row[0])
+                receipt = CapitalCycleRecord.model_validate(row[1])
+                if not is_full_forecast_capital_choice(receipt):
+                    continue
                 candidates = target.candidate_evaluations
                 if not candidates or any(
                     item.payoff_projection_id is None for item in candidates

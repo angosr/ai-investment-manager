@@ -9,8 +9,24 @@ from decimal import Decimal
 
 from investment_manager.forecast.models import ExposureDirection
 from investment_manager.kernel.time import require_utc
+from investment_manager.portfolio.models import CapitalCycleOutcome, CapitalCycleRecord
 
-CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v2"
+CAPITAL_CHOICE_EVALUATION_VERSION = "capital-choice-outcome-v3"
+_FORECAST_DECISION_TRIGGERS = frozenset({"FORECAST_CADENCE", "FORECAST_EVENT_DUE"})
+
+
+def is_full_forecast_capital_choice(record: CapitalCycleRecord) -> bool:
+    """Whether a receipt owns a fresh Forecast-to-capital comparison.
+
+    Holding/risk reviews may legally retain, resize, or exit current Sleeves, but
+    they do not reconstruct every unheld candidate and therefore cannot support
+    a cross-exposure missed-opportunity claim.
+    """
+
+    return (
+        record.outcome == CapitalCycleOutcome.TARGET_DECIDED
+        and not _FORECAST_DECISION_TRIGGERS.isdisjoint(record.trigger_types)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,4 +198,5 @@ __all__ = [
     "CapitalChoiceEvidence",
     "CapitalChoiceExposureOutcome",
     "evaluate_capital_choice",
+    "is_full_forecast_capital_choice",
 ]

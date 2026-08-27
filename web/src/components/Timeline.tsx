@@ -114,12 +114,12 @@ function CapitalChoiceEvidenceLine({
     (item) => item.selected_unprofitable_exposure && item.selected !== null,
   );
   const headline = missed.length > 0 && selectedLosses.length > 0
-    ? "资金判断既有错过，也有错误入场"
+    ? "固定终点评价：既有错过，也有错误入场"
     : missed.length > 0
-      ? "资金判断错过了成本后机会"
+      ? "固定终点评价：错过了成本后机会"
       : selectedLosses.length > 0
-        ? "资金判断选中的方向结算为亏损"
-        : "最近结算的资金判断与成本后方向一致";
+        ? "固定终点评价：选中的方向结算为亏损"
+        : "固定终点评价：所选方向与成本后结果一致";
   const period = `${hhmm(evidence.decision_at)} → ${hhmm(evidence.evaluation_at)}`;
   const missedDetail = missed.map((item) => (
     `${capitalCandidateLabel(item.best_realized.instrument_key, item.best_realized.direction)}`
@@ -143,7 +143,10 @@ function CapitalChoiceEvidenceLine({
   return (
     <div className={styles.forecastEvidence}>
       <b>{headline}</b>
-      <span>{detail}。这是事后诊断，不是追涨或反向下单信号。</span>
+      <span>
+        {detail}。这是单次决策的固定终点事后诊断，不代表账户实际持有全过程盈利，
+        也不是追涨或反向下单信号。
+      </span>
     </div>
   );
 }

@@ -8,7 +8,9 @@ from investment_manager.portfolio.evaluation import (
     CAPITAL_CHOICE_EVALUATION_VERSION,
     CapitalChoiceCase,
     evaluate_capital_choice,
+    is_full_forecast_capital_choice,
 )
+from investment_manager.portfolio.models import CapitalCycleOutcome, CapitalCycleRecord
 
 NOW = datetime(2026, 8, 26, 19, tzinfo=UTC)
 
@@ -173,6 +175,54 @@ def test_capital_choice_rejects_inconsistent_predicted_net_economics() -> None:
             decision_cost_bps=Decimal("10"),
             realized_product_gross_bps=Decimal("20"),
         )
+
+
+def test_only_fresh_forecast_decisions_support_cross_exposure_choice_evaluation() -> None:
+    def receipt(
+        *,
+        outcome: CapitalCycleOutcome = CapitalCycleOutcome.TARGET_DECIDED,
+        trigger_types: tuple[str, ...],
+    ) -> CapitalCycleRecord:
+        return CapitalCycleRecord.create(
+            portfolio_id="primary",
+            pipeline_id="capital-v1",
+            cause_id=f"cause-{trigger_types[0]}",
+            trigger_batch_id="batch-1",
+            symbol="BTCUSDT",
+            trigger_types=trigger_types,
+            triggered_at=NOW,
+            evaluated_at=NOW,
+            decision_cycle_id="cycle-1",
+            account_snapshot_id="account-1",
+            forecast_ids=("forecast-1",),
+            target_id=(
+                "target-1"
+                if outcome
+                in {
+                    CapitalCycleOutcome.TARGET_DECIDED,
+                    CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
+                }
+                else None
+            ),
+            outcome=outcome,
+            reason_codes=("TEST",),
+        )
+
+    assert is_full_forecast_capital_choice(
+        receipt(trigger_types=("FORECAST_CADENCE",))
+    )
+    assert is_full_forecast_capital_choice(
+        receipt(trigger_types=("FORECAST_EVENT_DUE",))
+    )
+    assert not is_full_forecast_capital_choice(
+        receipt(trigger_types=("WORLD_MODEL_UPDATED",))
+    )
+    assert not is_full_forecast_capital_choice(
+        receipt(
+            outcome=CapitalCycleOutcome.FORECAST_ALREADY_DECIDED,
+            trigger_types=("FORECAST_CADENCE",),
+        )
+    )
 
 
 def test_capital_choice_rejects_duplicate_or_multiple_selected_products() -> None:
