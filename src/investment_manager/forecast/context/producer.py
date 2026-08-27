@@ -14,6 +14,7 @@ from investment_manager.forecast.context.estimate import (
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
     context_forecast_input_projection,
+    context_forecast_output_schema,
 )
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
@@ -84,7 +85,35 @@ class ContextForecastPreflight(Protocol):
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
         formal_analysis_input: dict[str, object],
+        formal_output_schema: dict[str, object],
     ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeContextForecastPreflight:
+    """Require every independent evaluation assignment before the formal call."""
+
+    preflights: tuple[ContextForecastPreflight, ...]
+
+    def __post_init__(self) -> None:
+        if not self.preflights:
+            raise ValueError("Context Forecast composite preflight 不能为空")
+
+    def before_estimate(
+        self,
+        *,
+        slot: ForecastDecisionSlot,
+        formal_producer_behavior_id: str,
+        formal_analysis_input: dict[str, object],
+        formal_output_schema: dict[str, object],
+    ) -> None:
+        for preflight in self.preflights:
+            preflight.before_estimate(
+                slot=slot,
+                formal_producer_behavior_id=formal_producer_behavior_id,
+                formal_analysis_input=formal_analysis_input,
+                formal_output_schema=formal_output_schema,
+            )
 
 
 class ContextTargetStateProvider(Protocol):
@@ -600,6 +629,10 @@ class PortfolioContextForecastProducer:
                 slot=frozen_targets[0].slot,
                 formal_producer_behavior_id=self.policy.producer_behavior_id,
                 formal_analysis_input=analysis_input,
+                formal_output_schema=context_forecast_output_schema(
+                    targets=frozen_targets,
+                    assessment=assessment,
+                ),
             )
         result = self.analyst.estimate(
             targets=frozen_targets,

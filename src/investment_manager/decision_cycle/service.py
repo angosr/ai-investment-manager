@@ -17,7 +17,11 @@ from investment_manager.decision_cycle.trigger import (
     TriggerDispatchBuilder,
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
+from investment_manager.forecast.context.producer import CompositeContextForecastPreflight
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
+from investment_manager.forecast.context.stability import (
+    assemble_context_forecast_stability_preallocator,
+)
 from investment_manager.governance.evaluation.world_model_ablation import (
     assemble_world_model_ablation_preallocator,
 )
@@ -205,18 +209,31 @@ def _assemble_capital_consumer(
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
     ablation_policy = config.outcome_evaluation.world_model_ablation
+    stability_policy = config.outcome_evaluation.context_forecast_stability
 
-    def paired_preflight(contracts):
-        preflight = assemble_world_model_ablation_preallocator(
-            config,
-            engine=engine,
-            release=manifest,
-            contracts=contracts,
-            clock=lambda: datetime.now(UTC),
-        )
-        if preflight is None:
-            raise ValueError("WorldModel 配对 preflight 未启用")
-        return preflight
+    def evaluation_preflight(contracts):
+        preflights = []
+        if ablation_policy is not None and ablation_policy.enabled:
+            ablation = assemble_world_model_ablation_preallocator(
+                config,
+                engine=engine,
+                release=manifest,
+                contracts=contracts,
+                clock=lambda: datetime.now(UTC),
+            )
+            if ablation is None:
+                raise ValueError("WorldModel 配对 preflight 未启用")
+            preflights.append(ablation)
+        if stability_policy is not None and stability_policy.enabled:
+            stability = assemble_context_forecast_stability_preallocator(
+                config,
+                engine=engine,
+                clock=lambda: datetime.now(UTC),
+            )
+            if stability is None:
+                raise ValueError("Context Forecast stability preflight 未启用")
+            preflights.append(stability)
+        return CompositeContextForecastPreflight(tuple(preflights))
 
     return assemble_capital_cycle(
         config,
@@ -226,8 +243,11 @@ def _assemble_capital_consumer(
         code_version=manifest.code_version,
         producer_activation_at=manifest.created_at,
         context_forecast_preflight_factory=(
-            paired_preflight
-            if ablation_policy is not None and ablation_policy.enabled
+            evaluation_preflight
+            if (
+                (ablation_policy is not None and ablation_policy.enabled)
+                or (stability_policy is not None and stability_policy.enabled)
+            )
             else None
         ),
     )

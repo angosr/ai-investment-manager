@@ -10,6 +10,10 @@ from datetime import UTC, datetime
 from sqlalchemy.engine import Engine
 
 from investment_manager.forecast.context.producer import context_forecast_contract
+from investment_manager.forecast.context.stability import (
+    ContextForecastStabilityRunner,
+    assemble_context_forecast_stability_runner,
+)
 from investment_manager.forecast.contracts import ForecastContract
 from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
@@ -44,9 +48,13 @@ class OutcomeEvaluationSupervisorHealth:
     world_model_ablation_assignments: int = 0
     world_model_ablation_settled_pairs: int = 0
     world_model_ablation_failed_controls: int = 0
+    forecast_stability_assignments: int = 0
+    forecast_stability_complete_samples: int = 0
+    forecast_stability_failed_replicas: int = 0
     last_target_forecast_error_class: str | None = None
     last_product_payoff_error_class: str | None = None
     last_world_model_ablation_error_class: str | None = None
+    last_forecast_stability_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -55,6 +63,7 @@ class OutcomeEvaluationSupervisor:
     target_forecast_settler: ForecastOutcomeSettler
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
     world_model_ablation_runner: WorldModelAblationRunner | None = None
+    forecast_stability_runner: ContextForecastStabilityRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -115,6 +124,26 @@ class OutcomeEvaluationSupervisor:
                     if self.health.last_world_model_ablation_error_class != type(exc).__name__:
                         logger.exception("world model ablation evaluation failed")
                     self.health.last_world_model_ablation_error_class = type(exc).__name__
+            if self.forecast_stability_runner is not None:
+                try:
+                    report = await asyncio.to_thread(
+                        self.forecast_stability_runner.reconcile,
+                        as_of=now,
+                    )
+                    self.health.forecast_stability_assignments = report.assignment_count
+                    self.health.forecast_stability_complete_samples = (
+                        report.complete_sample_count
+                    )
+                    self.health.forecast_stability_failed_replicas = (
+                        report.failed_replica_count
+                    )
+                    self.health.last_forecast_stability_error_class = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self.health.last_forecast_stability_error_class != type(exc).__name__:
+                        logger.exception("context forecast stability evaluation failed")
+                    self.health.last_forecast_stability_error_class = type(exc).__name__
             delay = _seconds_until_next_poll(
                 require_utc(self.clock()),
                 poll_seconds=policy.poll_seconds,
@@ -143,6 +172,10 @@ def assemble_outcome_evaluation(
         engine=engine,
         release=release,
     )
+    stability_runner = assemble_context_forecast_stability_runner(
+        config,
+        engine=engine,
+    )
     # Outcome owns already-recorded obligations across Release changes.  Whether the
     # current Capital policy can create new projections must not orphan old ones.
     product_payoff_settler = ProductPayoffOutcomeSettler(
@@ -167,6 +200,7 @@ def assemble_outcome_evaluation(
         ),
         product_payoff_settler=product_payoff_settler,
         world_model_ablation_runner=ablation_runner,
+        forecast_stability_runner=stability_runner,
     )
 
 

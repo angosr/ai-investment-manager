@@ -285,6 +285,7 @@ def _preassign(repository, config, plan, slot, formal, *, assigned_at=None):
         slot=slot,
         formal_producer_behavior_id=formal.producer_behavior_id,
         formal_analysis_input=json.loads(formal.analysis_input_json),
+        formal_output_schema={},
     )
 
 
@@ -553,6 +554,7 @@ def test_preassignment_retry_rejects_input_drift() -> None:
             slot=slot,
             formal_producer_behavior_id=formal.producer_behavior_id,
             formal_analysis_input=changed_input,
+            formal_output_schema={},
         )
 
 

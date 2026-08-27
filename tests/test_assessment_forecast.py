@@ -432,10 +432,12 @@ class _RecordingForecastPreflight:
         slot,
         formal_producer_behavior_id,
         formal_analysis_input,
+        formal_output_schema,
     ) -> None:
         assert self.analyst.calls == 0
         self.calls += 1
         self.analysis_input = formal_analysis_input
+        assert formal_output_schema["properties"]["forecasts"]["minItems"] == 1
 
 
 def _context_forecast_producer(engine, analyst, *, preflight=None):

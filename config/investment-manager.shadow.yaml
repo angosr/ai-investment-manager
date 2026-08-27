@@ -24,6 +24,8 @@ capital:
 outcome_evaluation:
   world_model_ablation:
     enabled: true
+  context_forecast_stability:
+    enabled: true
 
 codex_runtime:
   enabled: true
@@ -48,7 +50,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v67
+  version: world-forecast-product-capital-shadow-v68
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

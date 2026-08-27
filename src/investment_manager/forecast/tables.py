@@ -97,6 +97,45 @@ Index(
     assessment_executions.c.completed_at,
 )
 
+context_forecast_stability_assignments = Table(
+    "context_forecast_stability_assignments",
+    metadata,
+    Column("assignment_id", String(128), primary_key=True),
+    Column("policy_version", String(128), nullable=False),
+    Column("formal_producer_behavior_id", String(64), nullable=False),
+    Column("information_cutoff_at", DateTime(timezone=True), nullable=False),
+    Column("assigned_at", DateTime(timezone=True), nullable=False),
+    Column("completion_deadline_at", DateTime(timezone=True), nullable=False),
+    Column("source_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_context_forecast_stability_behavior_cutoff",
+    context_forecast_stability_assignments.c.policy_version,
+    context_forecast_stability_assignments.c.formal_producer_behavior_id,
+    context_forecast_stability_assignments.c.information_cutoff_at,
+)
+
+context_forecast_stability_results = Table(
+    "context_forecast_stability_results",
+    metadata,
+    Column("result_id", String(128), primary_key=True),
+    Column(
+        "assignment_id",
+        ForeignKey("context_forecast_stability_assignments.assignment_id"),
+        nullable=False,
+    ),
+    Column("replica_index", Integer, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    Column("payload", JSON, nullable=False),
+    UniqueConstraint(
+        "assignment_id",
+        "replica_index",
+        name="uq_context_forecast_stability_replica",
+    ),
+)
+
 context_mechanism_observations = Table(
     "context_mechanism_observations",
     metadata,

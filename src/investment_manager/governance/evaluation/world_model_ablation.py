@@ -1065,7 +1065,9 @@ class WorldModelAblationPreallocator:
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
         formal_analysis_input: dict[str, object],
+        formal_output_schema: dict[str, object],
     ) -> None:
+        del formal_output_schema
         if slot.information_cutoff_at < self.policy.activated_at:
             return
         if formal_producer_behavior_id != self.formal_producer_behavior_id:

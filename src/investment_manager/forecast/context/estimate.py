@@ -253,6 +253,18 @@ CONTEXT_FORECAST_INSTRUCTIONS = (
 )
 
 
+def context_forecast_prompt(analysis_input: dict[str, object]) -> str:
+    """Build the only model-visible prompt for formal and exact-replica calls."""
+
+    return "\n".join(
+        (
+            *CONTEXT_FORECAST_INSTRUCTIONS,
+            "context_forecast_input_json=",
+            canonical_json(analysis_input),
+        )
+    )
+
+
 def context_forecast_runtime(
     runtime: CodexRuntimePolicy,
     policy: ContextForecastPolicy,
@@ -576,13 +588,7 @@ class ContextForecastRunBundleBuilder:
             assessment=assessment,
             packet=packet,
         )
-        prompt = "\n".join(
-            (
-                *CONTEXT_FORECAST_INSTRUCTIONS,
-                "context_forecast_input_json=",
-                canonical_json(projected),
-            )
-        )
+        prompt = context_forecast_prompt(projected)
         if len(prompt) > self._runtime.maximum_prompt_characters:
             raise ValueError("FORECAST_ESTIMATE 输入超过 Codex 提示容量上限")
         output_schema = context_forecast_output_schema(
