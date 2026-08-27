@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -11,6 +12,7 @@ from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import (
     ContextForecastAnalysisTarget,
     ContextForecastComparisonState,
+    ContextForecastDraft,
     ContextForecastModelInput,
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
@@ -65,6 +67,7 @@ from investment_manager.state.decision.packet import (
 )
 
 ForecastProductionResult = BaseForecast | ForecastNoEstimate
+logger = logging.getLogger(__name__)
 
 
 class ContextProbabilityAnalyst(Protocol):
@@ -99,6 +102,131 @@ class ContextForecastPreflight(Protocol):
         formal_analysis_input: dict[str, object],
         formal_output_schema: dict[str, object],
     ) -> None: ...
+
+
+def finalize_context_base_forecast(
+    *,
+    binding: ForecastProducerBinding,
+    contract: ForecastContract,
+    slot: ForecastDecisionSlot,
+    draft: ContextForecastDraft,
+    analysis_input: dict[str, object],
+    input_observed_at: datetime,
+    available_at: datetime,
+    entry_prices: tuple[ForecastPriceAnchor, ...],
+    input_refs: tuple[str, ...],
+) -> BaseForecast:
+    """Materialize one audited Context Forecast from its exact model-visible input."""
+
+    bucket_ids = tuple(item.bucket_id for item in draft.outcome_probabilities)
+    expected_bucket_ids = tuple(item.bucket_id for item in contract.outcome_buckets)
+    if bucket_ids != expected_bucket_ids:
+        raise ValueError("Context Forecast 概率未按合同完整覆盖 bucket")
+    probabilities = tuple(
+        ForecastBucketProbability(
+            bucket_id=item.bucket_id,
+            probability=Decimal(item.probability),
+        )
+        for item in draft.outcome_probabilities
+    )
+    if sum((item.probability for item in probabilities), Decimal("0")) != 1:
+        raise ValueError("Context Forecast 概率之和必须精确为 1")
+
+    world_model = analysis_input.get("world_model")
+    if not isinstance(world_model, dict):
+        raise ValueError("Context Forecast 输入缺少 WorldModel 投影")
+    world_model_id = world_model.get("assessment_id")
+    mechanisms = world_model.get("mechanisms")
+    event_references = world_model.get("event_references")
+    if (
+        not isinstance(world_model_id, str)
+        or not isinstance(mechanisms, (list, tuple))
+        or not isinstance(event_references, (list, tuple))
+    ):
+        raise ValueError("Context Forecast WorldModel 投影结构非法")
+    mechanism_ids = {
+        item.get("mechanism_id") for item in mechanisms if isinstance(item, dict)
+    }
+    if None in mechanism_ids or len(mechanism_ids) != len(mechanisms):
+        raise ValueError("Context Forecast WorldModel mechanism 身份非法")
+    contribution_ids = tuple(item.mechanism_id for item in draft.mechanism_contributions)
+    if len(set(contribution_ids)) != len(contribution_ids) or not set(
+        contribution_ids
+    ).issubset(mechanism_ids):
+        raise ValueError("Context Forecast 引用了未知或重复 WorldModel mechanism")
+    visible_evidence = {
+        item.get("evidence_id")
+        for item in event_references
+        if isinstance(item, dict)
+    }
+    for mechanism in mechanisms:
+        if not isinstance(mechanism, dict):
+            raise ValueError("Context Forecast WorldModel mechanism 结构非法")
+        for key in ("evidence_ids", "conflicting_evidence_ids"):
+            refs = mechanism.get(key, ())
+            if not isinstance(refs, (list, tuple)):
+                raise ValueError("Context Forecast WorldModel evidence 结构非法")
+            visible_evidence.update(refs)
+    if None in visible_evidence or not set(draft.evidence_refs).issubset(visible_evidence):
+        raise ValueError("Context Forecast 引用了 WorldModel 之外的 evidence")
+
+    available = require_utc(available_at)
+    expected_gross_bps = sum(
+        (
+            probability.probability * bucket.representative_bps
+            for probability, bucket in zip(
+                probabilities,
+                contract.outcome_buckets,
+                strict=True,
+            )
+        ),
+        Decimal("0"),
+    )
+    return BaseForecast(
+        forecast_id=stable_id(
+            "base_forecast",
+            slot.slot_id,
+            binding.producer_behavior_id,
+        ),
+        contract_id=contract.contract_id,
+        decision_slot_id=slot.slot_id,
+        producer_id=binding.producer_id,
+        producer_behavior_id=binding.producer_behavior_id,
+        outcome_family_id=contract.outcome_family_id,
+        target=contract.target,
+        horizon_minutes=contract.horizon_minutes,
+        cutoff_prices=slot.cutoff_prices,
+        entry_prices=entry_prices,
+        information_cutoff_at=slot.information_cutoff_at,
+        input_observed_at=require_utc(input_observed_at),
+        available_at=available,
+        valid_until=min(
+            slot.evaluation_at,
+            available + timedelta(minutes=contract.validity_minutes),
+        ),
+        outcome_probabilities=probabilities,
+        expected_gross_bps=expected_gross_bps,
+        input_refs=tuple(
+            sorted(
+                {
+                    *input_refs,
+                    world_model_id,
+                    *contribution_ids,
+                    *draft.evidence_refs,
+                    *(item.quote_ref for item in slot.cutoff_prices),
+                }
+            )
+        ),
+        world_model_id=world_model_id,
+        mechanism_contributions=tuple(
+            ForecastMechanismContribution(**item.model_dump())
+            for item in draft.mechanism_contributions
+        ),
+        evidence_refs=tuple(sorted(set(draft.evidence_refs))),
+        invalidation_conditions=tuple(sorted(set(draft.invalidation_conditions))),
+        analysis_input_json=canonical_json(analysis_input),
+        analysis_input_hash=content_hash(analysis_input),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,15 +765,23 @@ class PortfolioContextForecastProducer:
             return self._ordered(existing)
         analysis_input = model_input.payload
         if self.preflight is not None:
-            self.preflight.before_estimate(
-                slot=frozen_targets[0].slot,
-                formal_producer_behavior_id=self.policy.producer_behavior_id,
-                formal_analysis_input=analysis_input,
-                formal_output_schema=context_forecast_output_schema(
-                    targets=frozen_targets,
-                    assessment=assessment,
-                ),
-            )
+            try:
+                self.preflight.before_estimate(
+                    slot=frozen_targets[0].slot,
+                    formal_producer_behavior_id=self.policy.producer_behavior_id,
+                    formal_analysis_input=analysis_input,
+                    formal_output_schema=context_forecast_output_schema(
+                        targets=frozen_targets,
+                        assessment=assessment,
+                    ),
+                )
+            except Exception:
+                # Research assignment integrity remains visible in its own
+                # ledger and logs, but it cannot deny the only capital Forecast.
+                logger.exception(
+                    "Context Forecast research preflight failed without blocking capital",
+                    extra={"slot_at": slot_at.isoformat()},
+                )
         result = self.analyst.estimate(
             targets=frozen_targets,
             assessment=assessment,
@@ -869,80 +1005,20 @@ class PortfolioContextForecastProducer:
     ) -> BaseForecast:
         slot = target.slot
         contract = target.contract
-        bucket_ids = tuple(item.bucket_id for item in draft.outcome_probabilities)
-        expected_bucket_ids = tuple(item.bucket_id for item in contract.outcome_buckets)
-        if bucket_ids != expected_bucket_ids:
-            raise ValueError("Context Forecast 概率未按合同完整覆盖 bucket")
-        probabilities = tuple(
-            ForecastBucketProbability(
-                bucket_id=item.bucket_id,
-                probability=Decimal(item.probability),
-            )
-            for item in draft.outcome_probabilities
-        )
-        if sum((item.probability for item in probabilities), Decimal("0")) != 1:
-            raise ValueError("Context Forecast 概率之和必须精确为 1")
-        mechanisms = {item.mechanism_id for item in assessment.mechanisms}
         contribution_ids = tuple(item.mechanism_id for item in draft.mechanism_contributions)
-        if len(set(contribution_ids)) != len(contribution_ids) or not set(
-            contribution_ids
-        ).issubset(mechanisms):
-            raise ValueError("Context Forecast 引用了未知或重复 WorldModel mechanism")
-        visible_evidence = {
-            *(item.evidence_id for item in assessment.event_references),
-            *(
-                evidence_id
-                for mechanism in assessment.mechanisms
-                for node in mechanism.causal_chain
-                for evidence_id in node.evidence_ids
-            ),
-            *(
-                evidence_id
-                for mechanism in assessment.mechanisms
-                for evidence_id in mechanism.conflicting_evidence_ids
-            ),
-        }
-        if not set(draft.evidence_refs).issubset(visible_evidence):
-            raise ValueError("Context Forecast 引用了 WorldModel 之外的 evidence")
-        expected_gross_bps = sum(
-            (
-                probability.probability * bucket.representative_bps
-                for probability, bucket in zip(
-                    probabilities,
-                    contract.outcome_buckets,
-                    strict=True,
-                )
-            ),
-            Decimal("0"),
-        )
-        forecast = BaseForecast(
-            forecast_id=stable_id(
-                "base_forecast",
-                slot.slot_id,
-                runtime.binding.producer_behavior_id,
-            ),
-            contract_id=contract.contract_id,
-            decision_slot_id=slot.slot_id,
-            producer_id=runtime.binding.producer_id,
-            producer_behavior_id=runtime.binding.producer_behavior_id,
-            outcome_family_id=contract.outcome_family_id,
-            target=contract.target,
-            horizon_minutes=contract.horizon_minutes,
-            cutoff_prices=slot.cutoff_prices,
+        forecast = finalize_context_base_forecast(
+            binding=runtime.binding,
+            contract=contract,
+            slot=slot,
+            draft=draft,
+            analysis_input=analysis_input,
+            input_observed_at=target.target_state.as_of,
+            available_at=completed_at,
             entry_prices=self._anchors(
                 runtime.instrument,
                 quote=entry_quote,
                 available_at=completed_at,
             ),
-            information_cutoff_at=slot.information_cutoff_at,
-            input_observed_at=target.target_state.as_of,
-            available_at=completed_at,
-            valid_until=min(
-                slot.evaluation_at,
-                completed_at + timedelta(minutes=contract.validity_minutes),
-            ),
-            outcome_probabilities=probabilities,
-            expected_gross_bps=expected_gross_bps,
             input_refs=tuple(
                 sorted(
                     {
@@ -953,19 +1029,9 @@ class PortfolioContextForecastProducer:
                         *additional_input_refs,
                         *contribution_ids,
                         *draft.evidence_refs,
-                        *(item.quote_ref for item in slot.cutoff_prices),
                     }
                 )
             ),
-            world_model_id=assessment.assessment_id,
-            mechanism_contributions=tuple(
-                ForecastMechanismContribution(**item.model_dump())
-                for item in draft.mechanism_contributions
-            ),
-            evidence_refs=tuple(sorted(set(draft.evidence_refs))),
-            invalidation_conditions=tuple(sorted(set(draft.invalidation_conditions))),
-            analysis_input_json=canonical_json(analysis_input),
-            analysis_input_hash=content_hash(analysis_input),
         )
         self.forecasts.record(forecast)
         return forecast

@@ -261,6 +261,8 @@ AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定
 
 同槽不等于把两个 Codex 调用串在交易关键路径上。Quant prior 和 posterior 的完整模型输入必须在槽时冻结；当前获授权行为先独立完成资金链，posterior 由 Evaluation worker 从冻结输入异步完成。评价同时记录生成延迟，并坚持原 information cutoff；研究调用不能争抢正式调用的截止时间、延迟下单或在晚到后偷看新事实。posterior 若晋升为唯一资本来源，原 Context 调用必须退出正式路径，不能永久维持“双 AI 再投票”。
 
+异步 challenger 只增加一类耐久任务，不增加另一套结果系统：槽前置步骤把正式输入、同槽 Quant 终态、posterior Prompt/Schema、研究 ProducerBinding 和截止时间原子冻结为一份 assignment；Evaluation worker 只消费该 assignment，并把成功 Forecast 或明确 `NO_ESTIMATE` 写回公共 Forecast/Outcome 账本。成功输出自身就是任务终态，不另建重复 result 表、策略账户或候选组合。Quant 缺少某个目标时，assignment 必须显式保留该缺失终态并立刻为该目标写入同一 challenger 行为的 `NO_ESTIMATE`；它不进入 posterior Prompt，不能偷偷退回无条件先验后仍声称完成了 Quant posterior。一次联合调用仍可覆盖其余拥有真实 Quant prior 的目标。
+
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 
 仅定时槽评价“在持续、非选择性时点上是否具有一般预测增量”；仅材料槽评价“在冻结触发条件成立时，重新估计是否优于同条件基线”。两类样本分别使用同来源、同触发政策的滚动无条件与市场基线，报告样本量和保守下界；材料相关样本不能相加后宣称一般 Alpha。共同事件和重叠时域形成依赖簇，而不是多个独立成功。

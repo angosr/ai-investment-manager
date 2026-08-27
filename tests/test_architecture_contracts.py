@@ -174,9 +174,9 @@ def _internal_import_graph() -> dict[str, set[str]]:
 def test_schema_shape_is_frozen_during_structure_migration() -> None:
     contract = _schema_contract()
 
-    assert len(contract) == 71
+    assert len(contract) == 72
     assert content_hash(contract) == (
-        "98fbfd990187b04e16193930cc92adfa5cad50023a3faf9a208afb1366d07852"
+        "d9c5b7277c670c256d933d75404b607dea329361f1c71112c4e34ecef302ffc8"
     )
 
 
@@ -922,6 +922,7 @@ def test_new_forecast_chain_has_one_domain_owner() -> None:
         "codex_account_leases",
         "codex_runs",
         "context_assessments",
+        "context_forecast_posterior_assignments",
         "context_forecast_stability_assignments",
         "context_forecast_stability_results",
         "forecast_outcomes",

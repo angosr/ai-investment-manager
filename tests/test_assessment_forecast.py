@@ -439,6 +439,12 @@ class _RecordingForecastPreflight:
         assert formal_output_schema["properties"]["forecasts"]["minItems"] == 1
 
 
+class _FailingForecastPreflight:
+    @staticmethod
+    def before_estimate(**_kwargs) -> None:
+        raise RuntimeError("research unavailable")
+
+
 def _context_forecast_producer(engine, analyst, *, preflight=None):
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
@@ -571,6 +577,42 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert preflight.calls == 1
     assert json.loads(canonical_json(preflight.analysis_input)) == analysis_input
     assert analyst.calls == 1
+
+
+def test_research_preflight_failure_does_not_block_capital_forecast(caplog) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    assessment = contexts.record_assessment(packet.packet_id, _assessment())
+    completed_at = assessment.available_at + timedelta(seconds=10)
+    analyst = _FixedProbabilityAnalyst(completed_at)
+    producer = _context_forecast_producer(
+        engine,
+        analyst,
+        preflight=_FailingForecastPreflight(),
+    )
+    market = SqlMarketDataStore(engine)
+    for index, observed_at in enumerate((NOW, completed_at), start=1):
+        market.put_quote(
+            MarketQuote(
+                quote_id=f"context-preflight-failure-quote-{index}",
+                symbol="BTCUSDT",
+                observed_at=observed_at,
+                bid=Decimal("69999"),
+                bid_quantity=Decimal("10"),
+                ask=Decimal("70001"),
+                ask_quantity=Decimal("10"),
+                update_id=index,
+                source="test",
+            )
+        )
+
+    result = producer.produce(as_of=assessment.available_at)
+
+    assert isinstance(result, BaseForecast)
+    assert analyst.calls == 1
+    assert "research preflight failed without blocking capital" in caplog.text
 
 
 def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets() -> None:

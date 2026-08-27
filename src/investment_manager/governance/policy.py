@@ -66,6 +66,17 @@ class QuantBaselinePolicy(StrictConfig):
         return self
 
 
+class QuantContextPosteriorPolicy(StrictConfig):
+    """Research-only AI posterior over one frozen deterministic Quant prior."""
+
+    version: str = Field(min_length=1)
+    enabled: bool = False
+    producer_id: str = Field(min_length=1)
+    activated_at: datetime
+
+    _utc_activated_at = field_validator("activated_at")(require_utc)
+
+
 class OutcomeEvaluationPolicy(StrictConfig):
     version: str
     forecast_version: str = "analysis-forecast-v3"
@@ -80,6 +91,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     world_model_ablation: WorldModelAblationPolicy | None = None
     context_forecast_stability: ContextForecastStabilityPolicy | None = None
     quant_baseline: QuantBaselinePolicy | None = None
+    quant_context_posterior: QuantContextPosteriorPolicy | None = None
 
 
 class GovernancePolicy(StrictConfig):

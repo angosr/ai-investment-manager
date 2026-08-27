@@ -28,6 +28,8 @@ outcome_evaluation:
     enabled: true
   quant_baseline:
     enabled: true
+  quant_context_posterior:
+    enabled: true
 
 codex_runtime:
   enabled: true
@@ -52,7 +54,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v69
+  version: world-forecast-product-capital-shadow-v70
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

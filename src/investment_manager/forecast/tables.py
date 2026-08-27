@@ -136,6 +136,26 @@ context_forecast_stability_results = Table(
     ),
 )
 
+context_forecast_posterior_assignments = Table(
+    "context_forecast_posterior_assignments",
+    metadata,
+    Column("assignment_id", String(128), primary_key=True),
+    Column("policy_version", String(128), nullable=False),
+    Column("producer_behavior_id", String(64), nullable=False),
+    Column("quant_producer_behavior_id", String(64), nullable=False),
+    Column("information_cutoff_at", DateTime(timezone=True), nullable=False),
+    Column("assigned_at", DateTime(timezone=True), nullable=False),
+    Column("completion_deadline_at", DateTime(timezone=True), nullable=False),
+    Column("source_hash", String(64), nullable=False, unique=True),
+    Column("payload", JSON, nullable=False),
+)
+Index(
+    "ix_context_forecast_posterior_behavior_cutoff",
+    context_forecast_posterior_assignments.c.policy_version,
+    context_forecast_posterior_assignments.c.producer_behavior_id,
+    context_forecast_posterior_assignments.c.information_cutoff_at,
+)
+
 context_mechanism_observations = Table(
     "context_mechanism_observations",
     metadata,

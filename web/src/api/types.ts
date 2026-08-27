@@ -207,6 +207,8 @@ export interface AssessmentFeed {
 
 export interface ForecastEvaluationEvidence {
   forecast_evidence: ForecastEvidenceSummary | null;
+  quant_forecast_evidence: ForecastEvidenceSummary | null;
+  quant_context_posterior_evidence: ForecastEvidenceSummary | null;
   forecast_stability_evidence: {
     assignment_count: number;
     successful_replica_count: number;

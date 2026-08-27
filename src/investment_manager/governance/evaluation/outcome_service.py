@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy.engine import Engine
 
+from investment_manager.forecast.context.posterior import (
+    QuantContextPosteriorRunner,
+    assemble_quant_context_posterior_runner,
+)
 from investment_manager.forecast.context.producer import context_forecast_contract
 from investment_manager.forecast.context.stability import (
     ContextForecastStabilityRunner,
@@ -19,6 +23,10 @@ from investment_manager.forecast.product.repository import (
     SqlProductPayoffProjectionStore,
 )
 from investment_manager.forecast.product.settlement import ProductPayoffOutcomeSettler
+from investment_manager.forecast.quant.runtime import (
+    load_quant_forecast_artifact,
+    quant_forecast_behavior_id,
+)
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.settlement import ForecastOutcomeSettler
 from investment_manager.governance.evaluation.world_model_ablation import (
@@ -27,7 +35,11 @@ from investment_manager.governance.evaluation.world_model_ablation import (
     assemble_world_model_ablation_analyst,
     ensure_world_model_ablation_plan,
 )
-from investment_manager.governance.models import EvaluationPlan, ReleaseManifest
+from investment_manager.governance.models import (
+    EvaluationPlan,
+    ReleaseManifest,
+    resolve_manifest_artifact,
+)
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.repository import SqlMarketDataStore
@@ -51,10 +63,15 @@ class OutcomeEvaluationSupervisorHealth:
     forecast_stability_assignments: int = 0
     forecast_stability_complete_samples: int = 0
     forecast_stability_failed_replicas: int = 0
+    quant_posterior_assignments: int = 0
+    quant_posterior_forecasts: int = 0
+    quant_posterior_no_estimates: int = 0
+    quant_posterior_pending: int = 0
     last_target_forecast_error_class: str | None = None
     last_product_payoff_error_class: str | None = None
     last_world_model_ablation_error_class: str | None = None
     last_forecast_stability_error_class: str | None = None
+    last_quant_posterior_error_class: str | None = None
 
 
 @dataclass(slots=True)
@@ -64,6 +81,7 @@ class OutcomeEvaluationSupervisor:
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
     world_model_ablation_runner: WorldModelAblationRunner | None = None
     forecast_stability_runner: ContextForecastStabilityRunner | None = None
+    quant_posterior_runner: QuantContextPosteriorRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -75,6 +93,8 @@ class OutcomeEvaluationSupervisor:
             workers.append(self._run_world_model_ablation_loop(stop))
         if self.forecast_stability_runner is not None:
             workers.append(self._run_forecast_stability_loop(stop))
+        if self.quant_posterior_runner is not None:
+            workers.append(self._run_quant_posterior_loop(stop))
         await asyncio.gather(*workers)
 
     async def _run_settlement_loop(self, stop: asyncio.Event) -> None:
@@ -180,6 +200,31 @@ class OutcomeEvaluationSupervisor:
                 poll_seconds=policy.poll_seconds,
             )
 
+    async def _run_quant_posterior_loop(self, stop: asyncio.Event) -> None:
+        policy = self.config.outcome_evaluation
+        runner = self.quant_posterior_runner
+        assert runner is not None
+        while not stop.is_set():
+            now = require_utc(self.clock())
+            try:
+                report = await asyncio.to_thread(runner.reconcile, as_of=now)
+                self.health.quant_posterior_assignments = report.assignment_count
+                self.health.quant_posterior_forecasts = report.forecast_count
+                self.health.quant_posterior_no_estimates = report.no_estimate_count
+                self.health.quant_posterior_pending = report.pending_count
+                self.health.last_quant_posterior_error_class = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self.health.last_quant_posterior_error_class != type(exc).__name__:
+                    logger.exception("quant context posterior evaluation failed")
+                self.health.last_quant_posterior_error_class = type(exc).__name__
+            await _wait_for_next_poll(
+                stop,
+                now=require_utc(self.clock()),
+                poll_seconds=policy.poll_seconds,
+            )
+
 
 async def _wait_for_next_poll(
     stop: asyncio.Event,
@@ -216,6 +261,11 @@ def assemble_outcome_evaluation(
         config,
         engine=engine,
     )
+    posterior_runner = _assemble_quant_context_posterior(
+        config=config,
+        engine=engine,
+        release=release,
+    )
     # Outcome owns already-recorded obligations across Release changes.  Whether the
     # current Capital policy can create new projections must not orphan old ones.
     product_payoff_settler = ProductPayoffOutcomeSettler(
@@ -241,6 +291,43 @@ def assemble_outcome_evaluation(
         product_payoff_settler=product_payoff_settler,
         world_model_ablation_runner=ablation_runner,
         forecast_stability_runner=stability_runner,
+        quant_posterior_runner=posterior_runner,
+    )
+
+
+def _assemble_quant_context_posterior(
+    *,
+    config: AppConfig,
+    engine: Engine,
+    release: ReleaseManifest | None,
+) -> QuantContextPosteriorRunner | None:
+    posterior = config.outcome_evaluation.quant_context_posterior
+    quant = config.outcome_evaluation.quant_baseline
+    if posterior is None or not posterior.enabled:
+        return None
+    if release is None or quant is None or not quant.enabled:
+        raise ValueError("Quant Context posterior 运行必须绑定 Release 与 Quant baseline")
+    contracts = configured_world_model_ablation_contracts(config)
+    policy_by_family = {item.outcome_family_id: item for item in quant.artifacts}
+    artifacts = {
+        family: load_quant_forecast_artifact(
+            resolve_manifest_artifact(release, item.artifact_id),
+            expected_artifact_id=item.artifact_id,
+        )
+        for family, item in policy_by_family.items()
+    }
+    quant_behavior_id = quant_forecast_behavior_id(
+        policy_version=quant.version,
+        producer_id=quant.producer_id,
+        targets=tuple(
+            (contract, artifacts.get(contract.outcome_family_id)) for contract in contracts
+        ),
+    )
+    return assemble_quant_context_posterior_runner(
+        config,
+        engine=engine,
+        contracts=contracts,
+        quant_producer_behavior_id=quant_behavior_id,
     )
 
 

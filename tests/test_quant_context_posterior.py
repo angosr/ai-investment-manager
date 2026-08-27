@@ -1,0 +1,479 @@
+import json
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import create_engine
+
+from investment_manager.forecast.codex.router import AnalystResult
+from investment_manager.forecast.context.estimate import ContextForecastStructuredOutput
+from investment_manager.forecast.context.posterior import (
+    QuantContextPosteriorRunner,
+    QuantContextPosteriorTarget,
+    SqlQuantContextPosteriorRepository,
+    build_quant_context_posterior_assignment,
+    quant_context_posterior_behavior_id,
+)
+from investment_manager.forecast.context.producer import context_forecast_contract
+from investment_manager.forecast.contract_repository import SqlForecastContractStore
+from investment_manager.forecast.contracts import (
+    ForecastDecisionSlot,
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
+    ForecastPermission,
+    ForecastPriceAnchor,
+    ForecastProducerBinding,
+    ForecastProducerKind,
+)
+from investment_manager.forecast.repository import SqlForecastStore
+from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.market.models import MarketQuote
+from investment_manager.market.repository import SqlMarketDataStore
+from investment_manager.schema import create_schema
+from investment_manager.settings import load_config
+
+NOW = datetime(2026, 8, 27, 17, tzinfo=UTC)
+
+
+class _PosteriorAnalyst:
+    def __init__(self, completed_at: datetime) -> None:
+        self.completed_at = completed_at
+        self.calls = 0
+
+    def estimate(self, assignment) -> AnalystResult:
+        self.calls += 1
+        target = assignment.analysis_targets[0]
+        return AnalystResult(
+            success=True,
+            output=ContextForecastStructuredOutput.model_validate(
+                {
+                    "forecasts": [
+                        {
+                            "decision_slot_id": target.slot.slot_id,
+                            "outcome_probabilities": [
+                                {"bucket_id": "LARGE_LOSS", "probability": "0.08"},
+                                {"bucket_id": "LOSS", "probability": "0.17"},
+                                {"bucket_id": "FLAT", "probability": "0.35"},
+                                {"bucket_id": "GAIN", "probability": "0.25"},
+                                {"bucket_id": "LARGE_GAIN", "probability": "0.15"},
+                            ],
+                            "mechanism_contributions": [
+                                {
+                                    "mechanism_id": "mechanism-1",
+                                    "effect": "UPSIDE",
+                                    "rationale": "资金传导相对量化先验增加了可证伪的上行概率。",
+                                }
+                            ],
+                            "evidence_refs": ["evidence-1"],
+                            "invalidation_conditions": ["现货资金流转为持续净流出"],
+                        }
+                    ]
+                }
+            ),
+            reason_code="CODEX_OK",
+            completed_at=self.completed_at,
+        )
+
+
+def _fixture():
+    config = load_config("config/investment-manager.shadow.yaml")
+    context = config.capital.context_forecast
+    posterior = config.outcome_evaluation.quant_context_posterior
+    quant = config.outcome_evaluation.quant_baseline
+    assert context is not None and posterior is not None and quant is not None
+    target_policy = context.targets[0]
+    instrument = next(
+        item
+        for item in config.capital.forecast_reference_instruments
+        if item.key == target_policy.reference_instrument_key
+    )
+    contract = context_forecast_contract(
+        policy=context,
+        target_policy=target_policy,
+        instrument=instrument,
+        cost_semantics_version=config.capital.decision.cost_model_version,
+    )
+    formal_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=context.producer_id,
+        producer_behavior_id=context.producer_behavior_id,
+        permission=ForecastPermission.CAPITAL_CANDIDATE,
+        required_feature_keys=target_policy.required_feature_keys,
+    )
+    quant_behavior = "a" * 64
+    posterior_behavior = quant_context_posterior_behavior_id(
+        config=config,
+        contracts=(contract,),
+        quant_producer_behavior_id=quant_behavior,
+    )
+    posterior_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.CONTEXT,
+        producer_id=posterior.producer_id,
+        producer_behavior_id=posterior_behavior,
+        permission=ForecastPermission.RESEARCH,
+    )
+    cutoff = ForecastPriceAnchor(
+        instrument_id=instrument.key,
+        price=Decimal("80000"),
+        observed_at=NOW,
+        available_at=NOW,
+        quote_ref="cutoff-quote",
+    )
+    slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=NOW,
+        cutoff_prices=(cutoff,),
+    )
+    probabilities = tuple(
+        ForecastBucketProbability(
+            bucket_id=item.bucket_id,
+            probability=probability,
+        )
+        for item, probability in zip(
+            contract.outcome_buckets,
+            (Decimal("0.10"), Decimal("0.20"), Decimal("0.40"), Decimal("0.20"), Decimal("0.10")),
+            strict=True,
+        )
+    )
+    panel = {
+        "purpose": "PROGRAM_QUANT_FORECAST",
+        "artifact_id": "artifact-1",
+        "inference_version": "conditional-empirical-dirichlet-v1",
+        "decision_slot_id": slot.slot_id,
+        "features": {
+            "observed_at": NOW,
+            "return_60m_bps": "10",
+            "return_240m_bps": "30",
+            "volatility_240m_bps": "8",
+        },
+        "quant_prior": {
+            "model_name": "momentum_reversal_volatility",
+            "outcome_probabilities": probabilities,
+        },
+        "candidate_predictions": (),
+        "maximum_bucket_probability_range": "0.04",
+    }
+    quant_forecast = BaseForecast(
+        forecast_id=stable_id("base_forecast", slot.slot_id, quant_behavior),
+        contract_id=contract.contract_id,
+        decision_slot_id=slot.slot_id,
+        producer_id=quant.producer_id,
+        producer_behavior_id=quant_behavior,
+        outcome_family_id=contract.outcome_family_id,
+        target=contract.target,
+        horizon_minutes=contract.horizon_minutes,
+        cutoff_prices=slot.cutoff_prices,
+        entry_prices=(cutoff.model_copy(update={"available_at": NOW + timedelta(seconds=1)}),),
+        information_cutoff_at=NOW,
+        input_observed_at=NOW,
+        available_at=NOW + timedelta(seconds=1),
+        valid_until=NOW + timedelta(minutes=60),
+        outcome_probabilities=probabilities,
+        expected_gross_bps=sum(
+            (
+                probability.probability * bucket.representative_bps
+                for probability, bucket in zip(
+                    probabilities,
+                    contract.outcome_buckets,
+                    strict=True,
+                )
+            ),
+            Decimal("0"),
+        ),
+        input_refs=("artifact-1", "cutoff-quote"),
+        program_input_json=canonical_json(panel),
+        program_input_hash=content_hash(panel),
+    )
+    formal_input = {
+        "purpose": "FORECAST_ESTIMATE",
+        "forecast_targets": (
+            {
+                "decision_slot": {
+                    "decision_slot_id": slot.slot_id,
+                    "information_cutoff_at": slot.information_cutoff_at,
+                    "completion_deadline_at": slot.completion_deadline_at,
+                    "evaluation_at": slot.evaluation_at,
+                    "cause_origin": "CADENCE",
+                },
+                "forecast_contract": {
+                    "contract_id": contract.contract_id,
+                    "outcome_family_id": contract.outcome_family_id,
+                    "horizon_minutes": contract.horizon_minutes,
+                    "reference_instrument": {
+                        "symbol": instrument.symbol,
+                        "product": instrument.product.value,
+                    },
+                    "outcome_buckets": tuple(
+                        {
+                            "bucket_id": item.bucket_id,
+                            "lower_bps": item.lower_bps,
+                            "upper_bps": item.upper_bps,
+                            "representative_bps": item.representative_bps,
+                        }
+                        for item in contract.outcome_buckets
+                    ),
+                    "forecast_benchmark": tuple(
+                        {
+                            "bucket_id": item.bucket_id,
+                            "probability": item.probability,
+                        }
+                        for item in contract.forecast_benchmark
+                    ),
+                },
+                "target_state": {
+                    "as_of": NOW,
+                    "asset_states": (),
+                    "derivative_states": (),
+                    "comparison_states": (),
+                    "missing_comparison_instrument_keys": (),
+                },
+            },
+        ),
+        "world_model": {
+            "assessment_id": "assessment-1",
+            "as_of": NOW,
+            "available_at": NOW,
+            "synthesis": "流动性支持仍在传导。",
+            "synthesis_horizon_hours": 24,
+            "event_references": (
+                {
+                    "evidence_id": "evidence-1",
+                    "source": "OFFICIAL",
+                    "title": "资金事实",
+                    "event_time": NOW,
+                    "impact_state": "CURRENT",
+                },
+            ),
+            "mechanisms": (
+                {
+                    "mechanism_id": "mechanism-1",
+                    "relationship": "SUPPORTS",
+                    "claim": "流动性支持风险资产。",
+                    "horizon_hours": 24,
+                    "transmission_stage": "PROPAGATING",
+                    "evidence_ids": ("evidence-1",),
+                    "conflicting_evidence_ids": (),
+                },
+            ),
+        },
+    }
+    target = QuantContextPosteriorTarget(
+        slot=slot,
+        contract=contract,
+        binding=posterior_binding,
+        instrument=instrument,
+        input_observed_at=NOW,
+        quant_forecast_id=quant_forecast.forecast_id,
+        quant_input_refs=("artifact-1", quant_forecast.forecast_id),
+    )
+    assignment = build_quant_context_posterior_assignment(
+        policy=posterior,
+        producer_behavior_id=posterior_behavior,
+        formal_producer_behavior_id=context.producer_behavior_id,
+        quant_producer_behavior_id=quant_behavior,
+        targets=(target,),
+        formal_analysis_input=formal_input,
+        quant_forecasts={slot.slot_id: quant_forecast},
+        assigned_at=NOW + timedelta(seconds=2),
+    )
+    return config, contract, formal_binding, posterior_binding, quant_forecast, assignment
+
+
+def test_quant_context_posterior_behavior_is_independent_of_contract_order() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    context = config.capital.context_forecast
+    assert context is not None
+    instruments = {item.key: item for item in config.capital.forecast_reference_instruments}
+    instruments.update(
+        {item.instrument.key: item.instrument for item in config.capital.execution_specs}
+    )
+    contracts = tuple(
+        context_forecast_contract(
+            policy=context,
+            target_policy=target,
+            instrument=instruments[target.reference_instrument_key],
+            cost_semantics_version=config.capital.decision.cost_model_version,
+        )
+        for target in context.targets
+    )
+
+    forward = quant_context_posterior_behavior_id(
+        config=config,
+        contracts=contracts,
+        quant_producer_behavior_id="a" * 64,
+    )
+    reverse = quant_context_posterior_behavior_id(
+        config=config,
+        contracts=tuple(reversed(contracts)),
+        quant_producer_behavior_id="a" * 64,
+    )
+
+    assert forward == reverse
+
+
+def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> None:
+    (
+        config,
+        contract,
+        formal_binding,
+        posterior_binding,
+        quant_forecast,
+        assignment,
+    ) = _fixture()
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_contract(contract)
+    contracts.record_binding(formal_binding, activated_at=NOW)
+    contracts.record_binding(posterior_binding, activated_at=NOW)
+    contracts.record_slot(assignment.targets[0].slot, binding=formal_binding)
+    quant_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id=quant_forecast.producer_id,
+        producer_behavior_id=quant_forecast.producer_behavior_id,
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(quant_binding, activated_at=NOW)
+    contracts.record_obligation(slot=assignment.targets[0].slot, binding=quant_binding)
+    SqlForecastStore(engine).record(quant_forecast)
+    repository = SqlQuantContextPosteriorRepository(engine)
+
+    assert repository.record_assignment(assignment)
+    assert not repository.record_assignment(assignment)
+    assert (
+        contracts.obligation(
+            stable_id(
+                "forecast_slot_obligation",
+                assignment.targets[0].slot.slot_id,
+                posterior_binding.binding_id,
+            )
+        )
+        is not None
+    )
+
+    completed_at = NOW + timedelta(seconds=10)
+    SqlMarketDataStore(engine).put_quote(
+        MarketQuote(
+            quote_id="posterior-entry-quote",
+            symbol="BTCUSDT",
+            observed_at=completed_at,
+            bid=Decimal("80009"),
+            bid_quantity=Decimal("10"),
+            ask=Decimal("80010"),
+            ask_quantity=Decimal("10"),
+            update_id=1,
+            source="test",
+        )
+    )
+    analyst = _PosteriorAnalyst(completed_at)
+    posterior_policy = config.outcome_evaluation.quant_context_posterior
+    assert posterior_policy is not None
+    runner = QuantContextPosteriorRunner(
+        policy=posterior_policy,
+        producer_behavior_id=assignment.producer_behavior_id,
+        repository=repository,
+        contracts=contracts,
+        forecasts=SqlForecastStore(engine),
+        market=SqlMarketDataStore(engine),
+        analyst=analyst,
+        maximum_quote_age_seconds=300,
+    )
+
+    report = runner.reconcile(as_of=NOW + timedelta(seconds=3))
+    replay = runner.reconcile(as_of=NOW + timedelta(seconds=20))
+
+    assert report.forecast_count == replay.forecast_count == 1
+    assert report.no_estimate_count == replay.no_estimate_count == 0
+    assert report.pending_count == replay.pending_count == 0
+    assert analyst.calls == 1
+    forecast = SqlForecastStore(engine).result_for_behavior(
+        decision_slot_id=assignment.targets[0].slot.slot_id,
+        producer_behavior_id=assignment.producer_behavior_id,
+    )
+    assert isinstance(forecast, BaseForecast)
+    assert forecast.world_model_id == "assessment-1"
+    assert forecast.analysis_input_json == assignment.analysis_input_json
+    assert forecast.producer_id == posterior_policy.producer_id
+
+
+def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> None:
+    config, contract, formal_binding, posterior_binding, _, assignment = _fixture()
+    posterior_policy = config.outcome_evaluation.quant_context_posterior
+    assert posterior_policy is not None
+    quant_no_estimate_id = stable_id(
+        "forecast_no_estimate",
+        assignment.targets[0].slot.slot_id,
+        assignment.quant_producer_behavior_id,
+    )
+    target = assignment.targets[0].model_copy(
+        update={
+            "quant_forecast_id": None,
+            "quant_no_estimate_id": quant_no_estimate_id,
+            "quant_reason": ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
+            "quant_input_refs": (quant_no_estimate_id,),
+        }
+    )
+    missing_assignment = build_quant_context_posterior_assignment(
+        policy=posterior_policy,
+        producer_behavior_id=assignment.producer_behavior_id,
+        formal_producer_behavior_id=assignment.formal_producer_behavior_id,
+        quant_producer_behavior_id=assignment.quant_producer_behavior_id,
+        targets=(target,),
+        formal_analysis_input=json.loads(assignment.analysis_input_json),
+        quant_forecasts={},
+        assigned_at=assignment.assigned_at,
+    )
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contracts = SqlForecastContractStore(engine)
+    contracts.record_contract(contract)
+    contracts.record_binding(formal_binding, activated_at=NOW)
+    contracts.record_binding(posterior_binding, activated_at=NOW)
+    contracts.record_slot(target.slot, binding=formal_binding)
+    quant_binding = ForecastProducerBinding.create(
+        contract_id=contract.contract_id,
+        producer_kind=ForecastProducerKind.PROGRAM,
+        producer_id="program-quant-baseline",
+        producer_behavior_id=missing_assignment.quant_producer_behavior_id,
+        permission=ForecastPermission.RESEARCH,
+    )
+    contracts.record_binding(quant_binding, activated_at=NOW)
+    contracts.record_obligation(slot=target.slot, binding=quant_binding)
+    contracts.record_no_estimate(
+        ForecastNoEstimate(
+            result_id=quant_no_estimate_id,
+            slot_id=target.slot.slot_id,
+            contract_id=target.contract.contract_id,
+            producer_kind=ForecastProducerKind.PROGRAM,
+            producer_id="program-quant-baseline",
+            producer_behavior_id=missing_assignment.quant_producer_behavior_id,
+            reason=ForecastNoEstimateReason.REQUIRED_FEATURE_MISSING,
+            information_cutoff_at=target.slot.information_cutoff_at,
+            attempted_at=target.slot.slot_as_of,
+            completed_at=target.slot.slot_as_of,
+            input_refs=(quant_no_estimate_id,),
+        )
+    )
+    repository = SqlQuantContextPosteriorRepository(engine)
+    repository.record_assignment(missing_assignment)
+    analyst = _PosteriorAnalyst(NOW + timedelta(seconds=10))
+    runner = QuantContextPosteriorRunner(
+        policy=posterior_policy,
+        producer_behavior_id=missing_assignment.producer_behavior_id,
+        repository=repository,
+        contracts=contracts,
+        forecasts=SqlForecastStore(engine),
+        market=SqlMarketDataStore(engine),
+        analyst=analyst,
+        maximum_quote_age_seconds=300,
+    )
+
+    report = runner.reconcile(as_of=NOW + timedelta(seconds=3))
+
+    assert report.forecast_count == 0
+    assert report.no_estimate_count == 1
+    assert report.pending_count == 0
+    assert analyst.calls == 0

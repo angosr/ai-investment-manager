@@ -23,6 +23,8 @@ outcome_evaluation:
     enabled: false
   quant_baseline:
     enabled: false
+  quant_context_posterior:
+    enabled: false
 
 market_data:
   version: binance-public-testnet-v3

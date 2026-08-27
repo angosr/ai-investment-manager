@@ -20,6 +20,9 @@ from investment_manager.forecast.context.evaluation import (
     ForecastSourceEvidence,
     evaluate_forecast_evidence,
 )
+from investment_manager.forecast.context.posterior import (
+    quant_context_posterior_behavior_id,
+)
 from investment_manager.forecast.context.stability import (
     SqlContextForecastStabilityRepository,
 )
@@ -124,29 +127,36 @@ class EvaluationDashboardReader:
             contracts = self._active_forecast_contracts(connection)
             if not contracts:
                 return None
-            artifact_policy_by_family = {
-                item.outcome_family_id: item for item in policy.artifacts
-            }
-            artifacts = {
-                family: load_quant_forecast_artifact(
-                    Path(item.relative_path),
-                    expected_artifact_id=item.artifact_id,
-                )
-                for family, item in artifact_policy_by_family.items()
-            }
-            behavior_id = quant_forecast_behavior_id(
-                policy_version=policy.version,
+            behavior_id = self._quant_behavior_id(contracts)
+            return self._forecast_evidence(
+                connection,
+                now=now,
                 producer_id=policy.producer_id,
-                targets=tuple(
-                    (
-                        contract,
-                        artifacts.get(contract.outcome_family_id),
-                    )
-                    for contract in sorted(
-                        contracts,
-                        key=lambda item: item.outcome_family_id,
-                    )
+                producer_behavior_id=behavior_id,
+            )
+
+    def quant_context_posterior_evidence(
+        self,
+        *,
+        now: datetime,
+    ) -> ForecastEvidence | None:
+        """Read the research-only AI posterior on the same Quant-backed slots."""
+
+        now = require_utc(now)
+        policy = self._config.outcome_evaluation.quant_context_posterior
+        context = self._config.capital.context_forecast
+        if policy is None or not policy.enabled or context is None or not context.enabled:
+            return None
+        with self._engine.connect() as connection:
+            contracts = self._active_forecast_contracts(connection)
+            if not contracts:
+                return None
+            behavior_id = quant_context_posterior_behavior_id(
+                config=self._config,
+                contracts=tuple(
+                    sorted(contracts, key=lambda item: item.outcome_family_id)
                 ),
+                quant_producer_behavior_id=self._quant_behavior_id(contracts),
             )
             return self._forecast_evidence(
                 connection,
@@ -154,6 +164,35 @@ class EvaluationDashboardReader:
                 producer_id=policy.producer_id,
                 producer_behavior_id=behavior_id,
             )
+
+    def _quant_behavior_id(self, contracts: tuple[ForecastContract, ...]) -> str:
+        policy = self._config.outcome_evaluation.quant_baseline
+        if policy is None or not policy.enabled:
+            raise ValueError("Quant Forecast evidence 缺少启用政策")
+        artifact_policy_by_family = {
+            item.outcome_family_id: item for item in policy.artifacts
+        }
+        artifacts = {
+            family: load_quant_forecast_artifact(
+                Path(item.relative_path),
+                expected_artifact_id=item.artifact_id,
+            )
+            for family, item in artifact_policy_by_family.items()
+        }
+        return quant_forecast_behavior_id(
+            policy_version=policy.version,
+            producer_id=policy.producer_id,
+            targets=tuple(
+                (
+                    contract,
+                    artifacts.get(contract.outcome_family_id),
+                )
+                for contract in sorted(
+                    contracts,
+                    key=lambda item: item.outcome_family_id,
+                )
+            ),
+        )
 
     def forecast_stability_evidence(
         self,
@@ -632,6 +671,16 @@ def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
 def serialize_quant_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
     return {
         "quant_forecast_evidence": (
+            None if evidence is None else _serialize_forecast_evidence_payload(evidence)
+        )
+    }
+
+
+def serialize_quant_context_posterior_evidence(
+    evidence: ForecastEvidence | None,
+) -> dict:
+    return {
+        "quant_context_posterior_evidence": (
             None if evidence is None else _serialize_forecast_evidence_payload(evidence)
         )
     }

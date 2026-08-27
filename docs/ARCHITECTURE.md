@@ -86,6 +86,8 @@ ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不
 
 同一经济问题在一个决策时点最多只有一个获得资本权限的 Forecast。若存在多个来源，它们在同一合同和 Outcome 下评价；只有前瞻证据证明组合优于单一来源后，才允许发布组合政策。来源差异不能产生不同标签、不同成本口径或不同资本入口。
 
+研究 Forecast 复用同一 Contract、DecisionSlot、ProducerBinding、Forecast/`NO_ESTIMATE` 和 Outcome 账本。需要异步 Codex 的候选只持久化一份冻结 assignment 作为工作义务，成功或失败直接终结公共 Forecast 槽；禁止再复制一套候选结果表、结算器或资本流水。assignment 必须在任何候选调用前保存完整模型输入、Prompt、Schema、来源行为、截止和研究权限，worker 不得在执行时重新读取“最新”市场、世界认知或 Quant 状态来改写输入。研究 assignment 的缺失或持久化故障必须记录并降低该候选覆盖率，但不能阻断、延迟或改写唯一资本 Forecast。
+
 任何校准、收缩、来源选择或权限计算只能读取严格早于本次 information cutoff 且已经结算的 Forecast—Outcome；本次及更晚 Outcome 只能影响未来决策。输入样本身份和政策版本必须随 Forecast 保存，不能用事后更新的“最新校准”重写当时资本判断。
 
 ### 4.3 组合目标
@@ -473,6 +475,8 @@ Outcome 进程可以承载多种现役终结义务，但它们不是一条串行
 - Black 与 Litterman 的[Global Portfolio Optimization](https://rpc.cfainstitute.org/research/financial-analysts-journal/1992/faj-v48-n5-28)以中性收益先验承接没有观点的资产，再按观点不确定性调整。本设计只采用“先验 + 可校准观点 + 收缩”的原则，不预设必须实现原论文模型。
 - DeMiguel、Garlappi 与 Uppal 的[样本外组合比较](https://www.tse-fr.eu/sites/default/files/medias/doc/conf/fineco/papers_2010/uppal.pdf)显示复杂均值—方差规则可能因估计误差输给简单分散基线；Olivares-Nadal 与 DeMiguel 的[交易成本与稳健优化研究](https://pubsonline.informs.org/doi/10.1287/opre.2017.1699)进一步说明成本约束也能抑制估计误差。本设计因此强制简单基线、观点收缩和成本内生化，而不把优化器复杂度当作价值。
 - Gârleanu 与 Pedersen 的[含交易成本动态组合研究](https://www.nber.org/papers/w15205)说明在信号持续性和交易成本并存时，应从现有持仓部分向动态目标调整。本设计因此使用成本感知的目标暴露和无交易区间，而不是每次 Forecast 清仓重建。
+- Moskowitz、Ooi 与 Pedersen 的[时间序列动量研究](https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum)以及跨更长历史和更多资产的[趋势跟随证据](https://www.aqr.com/Insights/Research/Journal-Article/A-Century-of-Evidence-on-Trend-Following-Investing)支持把趋势/动量作为透明候选，而不支持把月度、多资产毛收益结论直接移植到 4 小时加密合约。本设计只继承可解释假设，并要求当前目标、时域、点时数据和完整成本下的独立验证；短期反转、carry、波动和流动性同样只是竞争候选，不因“主流指标”名称获得权重。
+- Binance USDⓈ-M 官方分别提供[资金费率历史](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History)、[未平仓量统计](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest-Statistics)与[主动买卖量](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Taker-BuySell-Volume)。这些是可点时验证的产品状态，不是天然 Alpha；系统只有在其增量样本外预测和费用后资本价值成立时才把它们纳入 Quant 制品，AI 只能读取冻结投影，不能从单一拥挤代理直接推断方向。
 - Gu、Kelly 与 Xiu 的[机器学习实证资产定价研究](https://www.nber.org/papers/w25398)以及 Kelly 与 Xiu 的[金融机器学习综述](https://www.nber.org/papers/w31502)共同强调高维信号、非线性和样本外验证，也显示模型复杂度必须由真实预测增量而非拟合度裁决。本设计因此先冻结透明 Quant prior，再让复杂候选在同槽盲测中竞争。
 - Ke、Kelly 与 Xiu 的[文本数据收益预测研究](https://www.nber.org/papers/w26186)说明文本可与市场状态共同形成可检验预测，但不证明任意语言模型叙事具有 Alpha。本设计只允许 WorldModel 通过可结算 posterior 改变 Forecast，并要求相对不读取文本的 Quant prior 证明增量。
 - [FinBench](https://arxiv.org/html/2607.16229v1)把严格时间截止、基准概率和 proper score 作为金融预测评测的核心。本设计采用这些实验约束，但不把其短期基准结果视为本项目或 Codex 的盈利证据。
