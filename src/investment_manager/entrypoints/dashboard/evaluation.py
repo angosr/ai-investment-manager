@@ -589,6 +589,7 @@ class EvaluationDashboardReader:
         )
         return replace(overall, source_evidence=source_evidence)
 
+    @staticmethod
     def _forecast_market_state_key(forecast: BaseForecast) -> str | None:
         """Read the point-in-time regime frozen in this Forecast, never current state."""
 

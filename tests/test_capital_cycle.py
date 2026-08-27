@@ -2,6 +2,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, delete, func, insert, select, update
@@ -48,7 +49,7 @@ from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.forecast.tables import forecast_decision_slots, forecasts
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
-from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
@@ -1160,6 +1161,25 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     assert evidence is not None
     assert tuple(item.stratum for item in evidence.source_evidence) == tuple(ForecastSlotStratum)
     assert all(item.evidence.due_slot_count == 0 for item in evidence.source_evidence)
+
+
+def test_forecast_evidence_reads_quant_state_from_program_snapshot() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    reader = EvaluationDashboardReader(
+        engine,
+        load_config("config/investment-manager.shadow.yaml"),
+    )
+    forecast = SimpleNamespace(
+        analysis_input_json=None,
+        program_input_json=canonical_json(
+            {"cell_key": "momentum=HIGH|reversal=LOW|volatility=HIGH"}
+        ),
+    )
+
+    assert reader._forecast_market_state_key(forecast) == (
+        "momentum=HIGH|reversal=LOW|volatility=HIGH"
+    )
 
 
 def test_trading_cost_evidence_reuses_unchanged_execution_ledger(

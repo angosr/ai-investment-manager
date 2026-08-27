@@ -559,18 +559,6 @@ class PortfolioContextForecastProducer:
         provenance = (assessment.assessment_id, packet.packet_id, packet.content_hash)
         if assessment.decision_packet_hash != packet.content_hash:
             raise ValueError("Context Forecast 的 WorldModel/Packet 身份不一致")
-        if any(item.next_review_at <= slot_at for item in assessment.mechanisms):
-            self._fill_no_estimates(
-                existing,
-                pending,
-                slots,
-                reason=ForecastNoEstimateReason.WORLD_MODEL_STALE,
-                completed_at=slot_at,
-                input_refs=provenance,
-                detail="WORLD_MODEL_MECHANISM_REVIEW_DUE",
-            )
-            return self._ordered(existing)
-
         analysis_targets: list[ContextForecastAnalysisTarget] = []
         input_refs: dict[str, tuple[str, ...]] = {}
         cutoff_quotes: dict[str, object] = {}

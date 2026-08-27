@@ -74,6 +74,8 @@ WorldModel 解释“哪些力量正在起作用、如何传导、什么会推翻
 
 完整 WorldModel 永久保存。Forecast 只读可由 `world_model_id` 追溯的目标高密度投影，不建立第二套认知状态；Portfolio 只读取 Forecast 自身冻结的概率、可用时间、产品、时域和有效期。旧 Forecast 由新 Forecast 接替或按自身合同到期，不因后续 AI 改写因果叙事而被旁路撤销。
 
+机制的 `next_review_at` 是 WorldModel 更新调度承诺，不是 WorldModel 或 Forecast 的失效时钟。到点只触发新认知生产；在新认知实际可用之前，点时系统继续使用当时最新的旧认知并保留其身份，不能先写入 `WORLD_MODEL_STALE` 来等待刷新。输入事实是否仍可用于推断由各自来源时效合同表达，机制是否被反驳或退休由下一份 WorldModel 表达，二者都不得由 Forecast 编排层重复裁决。
+
 Forecast 在结果发生前绑定：收益对象、信息截止、完成时间、时域、结果定义、输入身份、生产者行为和结算方法。正、负、中性、不确定及最终未交易的 Forecast 都进入同一 Outcome 账本。生产者不能以费用后 Edge 或当前无持仓为由省略预测。
 
 用于预测或资本权限的 Outcome 经济起点不得早于 Forecast 实际可用时点；来源需要同口径比较时，合同可以冻结一个晚于共同完成期限的统一决策锚点。`information_cutoff → Forecast 可用` 期间已经发生的收益不可交易，采用更早起点的历史标签只能作为行为诊断，不能贡献权限证据。Portfolio 与资本 PnL 始终从当时真实可成交锚点或实际成交开始。

@@ -45,7 +45,6 @@ from investment_manager.forecast.context.service import (
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
-    ForecastNoEstimate,
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
@@ -645,7 +644,7 @@ def test_portfolio_context_forecast_uses_one_call_for_three_settleable_targets()
         assert len(prompt) < (config.codex_runtime.maximum_prompt_characters - 2_000)
 
 
-def test_context_forecast_records_stale_world_model_without_calling_codex() -> None:
+def test_context_forecast_uses_latest_world_model_after_review_becomes_due() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     contexts = SqlContextAssessmentStore(engine)
@@ -653,11 +652,12 @@ def test_context_forecast_records_stale_world_model_without_calling_codex() -> N
     contexts.record_assessment(packet.packet_id, _assessment())
     analyst = _FixedProbabilityAnalyst(NOW + timedelta(hours=2))
     producer = _context_forecast_producer(engine, analyst)
+    slot_at = NOW + timedelta(hours=2)
     SqlMarketDataStore(engine).put_quote(
         MarketQuote(
-            quote_id="context-stale-cutoff",
+            quote_id="context-review-due-cutoff",
             symbol="BTCUSDT",
-            observed_at=NOW,
+            observed_at=slot_at,
             bid=Decimal("69999"),
             bid_quantity=Decimal("10"),
             ask=Decimal("70001"),
@@ -667,12 +667,11 @@ def test_context_forecast_records_stale_world_model_without_calling_codex() -> N
         )
     )
 
-    result = producer.produce(as_of=NOW + timedelta(hours=2))
+    result = producer.produce(as_of=slot_at)
 
-    assert isinstance(result, ForecastNoEstimate)
-    assert result.reason.value == "WORLD_MODEL_STALE"
-    assert result.detail == "WORLD_MODEL_MECHANISM_REVIEW_DUE"
-    assert analyst.calls == 0
+    assert isinstance(result, BaseForecast)
+    assert result.world_model_id == "assessment-1"
+    assert analyst.calls == 1
 
 
 def test_context_forecast_target_state_includes_optional_economic_comparison() -> None:
