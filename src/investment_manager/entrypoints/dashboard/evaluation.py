@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, replace
 from datetime import datetime
+from decimal import Decimal
+from threading import Lock
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Engine
 
 from investment_manager.execution.group.models import ExecutionGroup
@@ -83,6 +85,14 @@ class EvaluationDashboardReader:
     def __init__(self, engine: Engine, config: AppConfig) -> None:
         self._engine = engine
         self._config = config
+        self._trading_cost_cache_key: tuple[
+            int,
+            int,
+            datetime | None,
+            tuple[str, ...],
+        ] | None = None
+        self._trading_cost_cache: TradingCostEvidence | None = None
+        self._trading_cost_cache_lock = Lock()
 
     def forecast_evidence(self, *, now: datetime) -> ForecastEvidence | None:
         now = require_utc(now)
@@ -262,20 +272,60 @@ class EvaluationDashboardReader:
         return None
 
     def trading_cost_evidence(self) -> TradingCostEvidence:
-        """Reconstruct fee drag from immutable terminal execution fills."""
+        """Reconstruct fee drag once per immutable execution-ledger revision."""
 
         with self._engine.connect() as connection:
-            groups = tuple(
-                ExecutionGroup.model_validate(item)
-                for item in connection.execute(
-                    select(execution_groups.c.payload)
-                    .where(execution_groups.c.terminal.is_(True))
-                    .order_by(
-                        execution_groups.c.started_at,
-                        execution_groups.c.group_id,
-                    )
-                ).scalars()
+            row = connection.execute(
+                select(
+                    func.count(execution_groups.c.group_id),
+                    func.coalesce(func.sum(execution_groups.c.revision), 0),
+                    func.max(execution_groups.c.updated_at),
+                ).where(execution_groups.c.terminal.is_(True))
+            ).one()
+        account = SqlPortfolioStore(self._engine).head_account(
+            portfolio_id=self._config.capital.decision.portfolio_id
+        )
+        accounting = None if account is None else account.accounting
+        can_reconcile = account is not None and accounting is not None and not account.positions
+        reconciliation_key = (
+            ("FLAT", str(accounting.price_pnl), str(accounting.fee_cost))
+            if can_reconcile
+            else ("UNAVAILABLE",)
+        )
+        cache_key = (int(row[0]), int(row[1]), row[2], reconciliation_key)
+        with self._trading_cost_cache_lock:
+            if cache_key == self._trading_cost_cache_key and self._trading_cost_cache is not None:
+                return self._trading_cost_cache
+            with self._engine.connect() as connection:
+                groups = tuple(
+                    ExecutionGroup.model_validate(item)
+                    for item in connection.execute(
+                        select(execution_groups.c.payload)
+                        .where(execution_groups.c.terminal.is_(True))
+                        .order_by(
+                            execution_groups.c.started_at,
+                            execution_groups.c.group_id,
+                        )
+                    ).scalars()
+                )
+            evidence = self._evaluate_trading_cost(
+                groups,
+                expected_price_pnl=(accounting.price_pnl if can_reconcile else None),
+                expected_fee_cost=(accounting.fee_cost if can_reconcile else None),
             )
+            self._trading_cost_cache_key = cache_key
+            self._trading_cost_cache = evidence
+            return evidence
+
+    def _evaluate_trading_cost(
+        self,
+        groups: tuple[ExecutionGroup, ...],
+        *,
+        expected_price_pnl: Decimal | None,
+        expected_fee_cost: Decimal | None,
+    ) -> TradingCostEvidence:
+        """Project final fills and reconcile the derived totals to the flat account."""
+
         fills = []
         for group in groups:
             for leg in (*group.target_legs, *group.compensation_legs):
@@ -298,15 +348,10 @@ class EvaluationDashboardReader:
                         fee=leg.fee,
                     )
                 )
-        account = SqlPortfolioStore(self._engine).head_account(
-            portfolio_id=self._config.capital.decision.portfolio_id
-        )
-        accounting = None if account is None else account.accounting
-        can_reconcile = account is not None and accounting is not None and not account.positions
         return evaluate_trading_cost(
             tuple(fills),
-            expected_price_pnl=(accounting.price_pnl if can_reconcile else None),
-            expected_fee_cost=(accounting.fee_cost if can_reconcile else None),
+            expected_price_pnl=expected_price_pnl,
+            expected_fee_cost=expected_fee_cost,
         )
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
@@ -601,27 +646,6 @@ def serialize_trading_cost_evidence(evidence: TradingCostEvidence) -> dict:
         "positive_gross_pnl": str(evidence.positive_gross_pnl),
         "cost_reversal_round_trip_count": evidence.cost_reversal_round_trip_count,
         "accounting_reconciled": evidence.accounting_reconciled,
-        "round_trips": [
-            {
-                "round_trip_id": item.round_trip_id,
-                "sleeve_id": item.sleeve_id,
-                "instrument_key": item.instrument_key,
-                "direction": item.direction.value,
-                "entry_fill_id": item.entry_fill_id,
-                "exit_fill_id": item.exit_fill_id,
-                "entry_cycle_id": item.entry_cycle_id,
-                "exit_cycle_id": item.exit_cycle_id,
-                "opened_at": _iso(item.opened_at),
-                "closed_at": _iso(item.closed_at),
-                "holding_seconds": str(item.holding_seconds),
-                "quantity": str(item.quantity),
-                "gross_turnover": str(item.gross_turnover),
-                "realized_gross_pnl": str(item.realized_gross_pnl),
-                "fee_cost": str(item.fee_cost),
-                "realized_net_pnl": str(item.realized_net_pnl),
-            }
-            for item in evidence.round_trips
-        ],
     }
     for field_name in optional_decimals:
         value = getattr(evidence, field_name)

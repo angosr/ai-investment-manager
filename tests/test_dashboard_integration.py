@@ -456,7 +456,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
             "positive_gross_pnl": "0",
             "cost_reversal_round_trip_count": 0,
             "accounting_reconciled": None,
-            "round_trips": [],
             "closed_fee_to_realized_gross_pnl": None,
             "closed_fee_to_positive_gross_pnl": None,
             "minimum_holding_seconds": None,

@@ -1156,6 +1156,30 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     assert all(item.evidence.due_slot_count == 0 for item in evidence.source_evidence)
 
 
+def test_trading_cost_evidence_reuses_unchanged_execution_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    config = load_config("config/investment-manager.shadow.yaml")
+    reader = EvaluationDashboardReader(engine, config)
+    original = reader._evaluate_trading_cost
+    calls = 0
+
+    def counted(groups, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(groups, **kwargs)
+
+    monkeypatch.setattr(reader, "_evaluate_trading_cost", counted)
+
+    first = reader.trading_cost_evidence()
+    second = reader.trading_cost_evidence()
+
+    assert first is second
+    assert calls == 1
+
+
 def test_candidate_requires_only_its_own_executable_quote() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
