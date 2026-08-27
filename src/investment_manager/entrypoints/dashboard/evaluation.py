@@ -561,7 +561,22 @@ def serialize_forecast_stability_evidence(
 ) -> dict:
     return {
         "forecast_stability_evidence": (
-            None if evidence is None else evidence.model_dump(mode="json")
+            None
+            if evidence is None
+            else {
+                "assignment_count": evidence.assignment_count,
+                "successful_replica_count": evidence.successful_replica_count,
+                "replayable_case_count": evidence.replayable_case_count,
+                "missing_capital_target_count": evidence.missing_capital_target_count,
+                "cash_flip_count": evidence.cash_flip_count,
+                "expression_flip_count": evidence.expression_flip_count,
+                "target_change_count": evidence.target_change_count,
+                "maximum_allocation_fraction_delta": (
+                    None
+                    if evidence.maximum_allocation_fraction_delta is None
+                    else str(evidence.maximum_allocation_fraction_delta)
+                ),
+            }
         )
     }
 

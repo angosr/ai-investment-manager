@@ -18,6 +18,7 @@ from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
+    serialize_forecast_stability_evidence,
     serialize_trading_cost_evidence,
     serialize_world_model_ablation_evidence,
 )
@@ -161,6 +162,33 @@ def test_empty_trading_cost_evidence_is_explicit_and_non_judgmental() -> None:
             "minimum_holding_seconds": None,
             "median_holding_seconds": None,
             "maximum_holding_seconds": None,
+        }
+    }
+
+
+def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() -> None:
+    evidence = SimpleNamespace(
+        assignment_count=4,
+        successful_replica_count=3,
+        replayable_case_count=3,
+        missing_capital_target_count=0,
+        cash_flip_count=0,
+        expression_flip_count=0,
+        target_change_count=1,
+        maximum_allocation_fraction_delta=Decimal("0.04"),
+        cases=(object(), object(), object()),
+    )
+
+    assert serialize_forecast_stability_evidence(evidence) == {
+        "forecast_stability_evidence": {
+            "assignment_count": 4,
+            "successful_replica_count": 3,
+            "replayable_case_count": 3,
+            "missing_capital_target_count": 0,
+            "cash_flip_count": 0,
+            "expression_flip_count": 0,
+            "target_change_count": 1,
+            "maximum_allocation_fraction_delta": "0.04",
         }
     }
 
