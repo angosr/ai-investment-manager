@@ -188,6 +188,8 @@ PortfolioTarget 是产品目标暴露的组合映射，不是订单集合。策�
 | PAXG | PAXGUSDT Spot（只读参考） | PAXGUSDT USD-M Perpetual 多头或空头 |
 | SPY | 合同冻结的 SPY 点时参考及现金流口径 | SPYUSDT TradFi Perpetual 多头或空头 |
 
+规范 Outcome、经济交叉参考与执行产品是三种独立身份。某个代理资产的 Forecast 可以在不改写 Outcome 合同的前提下携带一个观察专用的外部比较 Instrument，用来区分经济标的变化与代理或执行产品自身偏差；比较关系必须显式冻结 Instrument、价格换算比例、新鲜度和交易时段，进入 Forecast producer behavior，但不得获得 Forecast、持仓或订单身份。当前 PAXG Outcome 仍按已冻结的 PAXGUSDT Spot 结算，XAUUSDT 指数只提供黄金经济参考，PAXGUSDT Perpetual 仍是唯一执行表达。XAU 缺失只留下该目标的明确观察缺口并扩大其不确定性，不能阻断 BTC/SPY，也不能被包装成 WorldModel 已具备完整 GOLD 因果覆盖。只有产品残差的前瞻结算才能证明该比较信息是否提高费用后资本结果。
+
 当前 cohort 选择单一永续表达不是把 Spot 与 Perpetual 当成相同产品，也不是永久产品政策：它保留 Spot 的规范参考与市场证据，同时消除同一敞口的重复执行候选，让三个现役暴露都可在一个对称产品合同下做多或做空。经济 gross 仍受总权益 100% 上限约束，永续的较低保证金占用不产生额外经济杠杆；funding、basis、标记价格、保证金、强平、交易时段和场所风险继续完整进入 payoff 与 Risk。未来只有产品级费用后前瞻证据证明加入 Spot 能改善总组合时，才以新的可投资域版本恢复比较，不在当前路径保留关闭的候选或兼容分支。
 
 Spot 没有负持仓语义，做空必须由合格 Derivative 表达。某个 Perpetual 只有在交易状态、双边报价、交易时段、乘数、数量步长、最小名义、funding 规则、保证金和点时结算均完整时才进入本轮候选；否则只移除该产品表达，不能伪造默认规则，也不能阻断其他暴露。最终 `PortfolioTarget` 对同一经济暴露最多选择一个产品表达；当前 cohort 每个暴露只有一个执行产品，因此页面和账户也只能出现一个产品合格的持仓行。

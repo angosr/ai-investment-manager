@@ -1,6 +1,6 @@
 import { api } from "../api/client";
 import { useLive } from "../hooks";
-import { gib } from "../lib/format";
+import { decimal, gib } from "../lib/format";
 import { Card } from "./Card";
 import { Meter } from "./Meter";
 import styles from "./Resources.module.css";
@@ -10,9 +10,9 @@ export function Resources() {
   const load = data?.load_average["1m"];
 
   return (
-    <Card title="主机资源" aside={load === null || load === undefined ? "负载 —" : `负载 ${load}`} bodyPadded>
+    <Card title="主机资源" aside={load === null || load === undefined ? "负载 —" : `负载 ${decimal(load, 2)}`} bodyPadded>
       <div className={styles.res}>
-        <ResourceRow label="CPU" value={data ? `${data.cpu_percent}%` : "—"} percent={data?.cpu_percent ?? 0} />
+        <ResourceRow label="CPU" value={data ? `${decimal(data.cpu_percent, 1)}%` : "—"} percent={data?.cpu_percent ?? 0} />
         <ResourceRow
           label="内存"
           value={data ? `${gib(data.memory.used_bytes)} / ${gib(data.memory.total_bytes)} GB` : "—"}

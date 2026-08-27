@@ -5,7 +5,14 @@ import type {
   CapitalActionDetail,
   CapitalCandidateSummary,
 } from "../api/types";
-import { hhmm } from "../lib/format";
+import {
+  bps,
+  hhmm,
+  money,
+  price,
+  probability,
+  quantity,
+} from "../lib/format";
 import styles from "./CapitalActions.module.css";
 
 const ROUTINE_OUTCOMES = new Set(["CASH", "NO_OPPORTUNITY", "HOLD", "NO_ORDER"]);
@@ -160,8 +167,8 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
               ? positionChangeSummary(action)
               : best && zeroImpact && !best.validity_reason_codes?.length
               ? selectedSummaries.length
-                ? `目标 ${candidateLabel(best)} ${formatUsdt(best.desired_gross_notional)} USDT；费用后预期 ${formatBps(best.net_bps)} bp`
-                : `比较 ${summaries.length} 个产品表达后保持现金；最佳费用后预期 ${formatBps(best.net_bps)} bp`
+                ? `目标 ${candidateLabel(best)} ${money(best.desired_gross_notional)} USDT；费用后预期 ${bps(best.net_bps)} bp`
+                : `比较 ${summaries.length} 个产品表达后保持现金；最佳费用后预期 ${bps(best.net_bps)} bp`
               : reasons[0] ?? action.summary}
           </span>
         </span>
@@ -203,13 +210,13 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                     {candidates.map((item) => (
                       <div key={item.candidate_id}>
                         <b>{candidateLabel(item)}</b> · {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
-                        预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
-                        = 费用后 {formatBps(item.net_bps)} bp；当时持仓 {formatUsdt(item.current_gross_notional)} USDT，
-                        目标 {formatUsdt(item.desired_gross_notional)} USDT
+                        预计毛收益 {bps(item.gross_bps)} bp − 未来成本 {bps(item.estimated_cost_bps)} bp
+                        = 费用后 {bps(item.net_bps)} bp；当时持仓 {money(item.current_gross_notional)} USDT，
+                        目标 {money(item.desired_gross_notional)} USDT
                         {Number(item.decision_threshold_bps) < 0
-                          ? `；立即平仓需 ${formatBps(String(-Number(item.decision_threshold_bps)))} bp，继续持有的终值更高`
+                          ? `；立即平仓需 ${bps(-Number(item.decision_threshold_bps))} bp，继续持有的终值更高`
                           : Number(item.decision_threshold_bps) > 0
-                          ? `；该历史行为另有 ${formatBps(item.decision_threshold_bps)} bp 附加门槛`
+                          ? `；该历史行为另有 ${bps(item.decision_threshold_bps)} bp 附加门槛`
                           : ""}
                       </div>
                     ))}
@@ -224,7 +231,7 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                   {forecastLabel(item.outcome_family_id)}　
                   {item.outcome_probabilities.map((bucket) => (
                     <span key={bucket.bucket_id}>
-                      {bucket.bucket_id} {formatPercent(bucket.probability)}　
+                      {bucket.bucket_id} {probability(bucket.probability)}　
                     </span>
                   ))}
                 </dd>
@@ -335,22 +342,22 @@ function positionChangeSummary(action: CapitalAction): string {
 function positionChangeLabel(
   change: CapitalAction["position_changes"][number],
 ): string {
-  const requested = formatNumber(change.requested_quantity, 8);
-  const filled = formatNumber(change.filled_quantity, 8);
-  const quantity = Number(change.filled_quantity) === Number(change.requested_quantity)
+  const requested = quantity(change.requested_quantity);
+  const filled = quantity(change.filled_quantity);
+  const quantityText = Number(change.filled_quantity) === Number(change.requested_quantity)
     ? filled
     : `${filled} / ${requested}`;
-  const price = change.average_fill_price === null
+  const priceText = change.average_fill_price === null
     ? orderStatusLabel(change.status)
-    : `成交价 ${formatNumber(change.average_fill_price, 8)} USDT`;
+    : `成交价 ${price(change.average_fill_price)} USDT`;
   const fee = Number(change.fee) > 0
-    ? `，手续费 ${formatNumber(change.fee, 8)} USDT`
+    ? `，手续费 ${money(change.fee)} USDT`
     : "";
   const role = change.role === "COMPENSATION"
     ? "补偿交易"
     : effectLabelForTrade(change.effect);
   const side = change.side === "BUY" ? "买入" : "卖出";
-  return `${instrumentLabel(change)} · ${role}：${side} ${quantity}，${price}${fee}`;
+  return `${instrumentLabel(change)} · ${role}：${side} ${quantityText}，${priceText}${fee}`;
 }
 
 function instrumentLabel(
@@ -400,28 +407,6 @@ function orderStatusLabel(status: string): string {
     UNKNOWN: "成交状态待对账",
   };
   return labels[status] ?? status;
-}
-
-function formatNumber(value: string, maximumFractionDigits: number): string {
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? parsed.toLocaleString("zh-CN", { maximumFractionDigits })
-    : value;
-}
-
-function formatBps(value: string): string {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
-}
-
-function formatPercent(value: string): string {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : value;
-}
-
-function formatUsdt(value: string): string {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed.toFixed(2) : value;
 }
 
 function candidateLabel(candidate: CapitalCandidateSummary): string {

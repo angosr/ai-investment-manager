@@ -255,11 +255,11 @@ capital:
     execution_stress_bps: "100"
     derivative_initial_margin_fraction: "0.10"
   context_forecast:
-    version: portfolio-context-forecast-v32
+    version: portfolio-context-forecast-v33
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "9cb1f355fdb7b7dead6fa36871aef997414ddad43c491c5fbadf328b7d8fc6a2"
+    producer_behavior_id: "4a66c746ba8465d7135d0b8647d97cf18bb2eb7f29c0ba5ff5c07974fdc54731"
     # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
@@ -302,6 +302,9 @@ capital:
         contract_version: paxg-price-directional-4h-v2
         reference_instrument_key: BINANCE:SPOT:PAXGUSDT
         derivative_evidence_instrument_key: BINANCE:USD_M_PERPETUAL:PAXGUSDT
+        comparison:
+          instrument_key: BINANCE:TRADFI_PERPETUAL:XAUUSDT
+          reference_price_multiplier: "1"
         required_feature_keys: [asset_state:PAXG.realized_volatility, asset_state:PAXG.return_fraction]
         product_payoffs:
           version: paxg-perpetual-product-payoff-v2
@@ -358,11 +361,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v36
+    version: world-model-ablation-forward-v37
     enabled: false
-    plan_id: world-model-ablation-forward-v36
+    plan_id: world-model-ablation-forward-v37
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T09:00:00Z
+    activated_at: 2026-08-27T10:00:00Z
     minimum_sample_size: 30
 
 governance:
@@ -408,7 +411,7 @@ temporal:
   worker_threads: 4
 
 market_data:
-  version: binance-public-shadow-v15
+  version: binance-public-shadow-v16
   symbols: [BTCUSDT, ETHUSDT, PAXGUSDT]
   interval: 5m
   bar_window: 64
@@ -431,6 +434,14 @@ market_data:
       settlement_asset: USDT
       contract_multiplier: "1"
       tradfi_market: EQUITY
+    - venue: BINANCE
+      product: TRADFI_PERPETUAL
+      symbol: XAUUSDT
+      base_asset: XAU
+      quote_asset: USDT
+      settlement_asset: USDT
+      contract_multiplier: "1"
+      tradfi_market: COMMODITY
     - venue: BINANCE
       product: USD_M_PERPETUAL
       symbol: BTCUSDT

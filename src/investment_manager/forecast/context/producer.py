@@ -10,6 +10,7 @@ from typing import Protocol, cast
 from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import (
     ContextForecastAnalysisTarget,
+    ContextForecastComparisonState,
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
     context_forecast_input_projection,
@@ -43,7 +44,12 @@ from investment_manager.market.features import (
     build_derivative_context_snapshot,
     build_perpetual_only_context_snapshot,
 )
-from investment_manager.market.models import InstrumentId, InstrumentProduct, SpotVenue
+from investment_manager.market.models import (
+    InstrumentId,
+    InstrumentProduct,
+    MarketSnapshot,
+    SpotVenue,
+)
 from investment_manager.market.policy import FeaturePolicy
 from investment_manager.market.repository import MarketDataStore
 from investment_manager.portfolio.policy import (
@@ -97,14 +103,30 @@ class MarketContextTargetStateProvider:
     bar_window: int
     funding_lookback_hours: int
     maximum_quote_skew_seconds: int
+    comparison: InstrumentId | None = None
+    comparison_price_multiplier: Decimal | None = None
+    maximum_comparison_age_seconds: int = 300
     cross_venue_spot_venues: tuple[SpotVenue, ...] = ()
     maximum_cross_venue_spot_age_seconds: int = 30
 
+    def __post_init__(self) -> None:
+        enabled = self.comparison is not None
+        if enabled != (self.comparison_price_multiplier is not None):
+            raise ValueError("Context Forecast comparison 与价格换算必须同时配置")
+        if enabled:
+            assert self.comparison is not None
+            if self.reference.product != InstrumentProduct.SPOT:
+                raise ValueError("Context Forecast comparison 只允许比较 Spot Outcome")
+            if self.comparison.product == InstrumentProduct.SPOT:
+                raise ValueError("Context Forecast comparison 必须是指数化线性产品")
+            if self.comparison.quote_asset != self.reference.quote_asset:
+                raise ValueError("Context Forecast comparison 与 Outcome 计价资产不一致")
+        if self.maximum_comparison_age_seconds < 1:
+            raise ValueError("Context Forecast comparison 新鲜度必须为正数")
+
     def build(self, *, as_of: datetime) -> ContextForecastTargetState:
         at = require_utc(as_of)
-        cycle_id = stable_id(
-            "context_forecast_target_state", self.reference.key, at.isoformat()
-        )
+        cycle_id = stable_id("context_forecast_target_state", self.reference.key, at.isoformat())
         snapshot = None
         asset_states: tuple[PacketAssetState, ...] = ()
         refs: set[str] = set()
@@ -190,18 +212,89 @@ class MarketContextTargetStateProvider:
                         funding_window_hours=self.funding_lookback_hours,
                         maximum_quote_skew_seconds=self.maximum_quote_skew_seconds,
                         cross_venue_quotes=self._cross_venue_quotes(as_of=at),
-                        maximum_cross_venue_age_seconds=(
-                            self.maximum_cross_venue_spot_age_seconds
-                        ),
+                        maximum_cross_venue_age_seconds=(self.maximum_cross_venue_spot_age_seconds),
                     )
                 derivative_states = (self._derivative_state(derivative),)
                 refs.update(derivative.input_refs)
                 refs.add(content_hash(derivative))
+        comparison_states: tuple[ContextForecastComparisonState, ...] = ()
+        missing_comparison_keys: tuple[str, ...] = ()
+        if self.comparison is not None:
+            comparison_state = self._comparison_state(
+                as_of=at,
+                target_snapshot=snapshot,
+            )
+            if comparison_state is None:
+                missing_comparison_keys = (self.comparison.key,)
+            else:
+                comparison_states = (comparison_state,)
+                refs.update(comparison_state.input_refs)
+                refs.add(content_hash(comparison_state))
         return ContextForecastTargetState(
             as_of=at,
             asset_states=asset_states,
             derivative_states=derivative_states,
+            comparison_states=comparison_states,
+            missing_comparison_instrument_keys=missing_comparison_keys,
             input_refs=tuple(sorted(refs)),
+        )
+
+    def _comparison_state(
+        self,
+        *,
+        as_of: datetime,
+        target_snapshot: MarketSnapshot | None,
+    ) -> ContextForecastComparisonState | None:
+        assert self.comparison is not None
+        assert self.comparison_price_multiplier is not None
+        if target_snapshot is None:
+            raise ValueError("Context Forecast comparison 缺少 Spot Outcome 状态")
+        observed = self.market.latest_perpetual_state(
+            instrument=self.comparison,
+            as_of=as_of,
+        )
+        if (
+            observed is None
+            or (as_of - observed.observed_at).total_seconds() > self.maximum_comparison_age_seconds
+        ):
+            return None
+        schedule = None
+        if self.comparison.product == InstrumentProduct.TRADFI_PERPETUAL:
+            schedule = self.market.latest_trading_schedule(as_of=as_of)
+            session = (
+                None
+                if schedule is None
+                else schedule.session_at(instrument=self.comparison, at=as_of)
+            )
+            market_session = (
+                "SCHEDULE_UNAVAILABLE"
+                if schedule is None
+                else "OUTSIDE_SCHEDULE"
+                if session is None
+                else session.session_type.value
+            )
+        else:
+            market_session = "CONTINUOUS"
+        target_mid = (target_snapshot.bid + target_snapshot.ask) / Decimal("2")
+        normalized_reference = observed.index_price * self.comparison_price_multiplier
+        return ContextForecastComparisonState(
+            instrument=self.comparison,
+            observed_at=observed.observed_at,
+            index_price=observed.index_price,
+            comparison_price_multiplier=self.comparison_price_multiplier,
+            target_reference_deviation_bps=(
+                (target_mid / normalized_reference - Decimal("1")) * Decimal("10000")
+            ),
+            mark_index_premium_bps=(
+                (observed.mark_price / observed.index_price - Decimal("1")) * Decimal("10000")
+            ),
+            market_session=market_session,
+            input_refs=tuple(
+                sorted(
+                    {content_hash(observed)}
+                    | (set() if schedule is None else {content_hash(schedule)})
+                )
+            ),
         )
 
     def _cross_venue_quotes(self, *, as_of: datetime):
@@ -333,11 +426,7 @@ class PortfolioContextForecastProducer:
 
     def view(self, outcome_family_id: str) -> ContextForecastProducerView:
         target = next(
-            (
-                item
-                for item in self.targets
-                if item.contract.outcome_family_id == outcome_family_id
-            ),
+            (item for item in self.targets if item.contract.outcome_family_id == outcome_family_id),
             None,
         )
         if target is None:
@@ -406,9 +495,7 @@ class PortfolioContextForecastProducer:
             else None
         )
         pending = tuple(
-            target
-            for target in self.targets
-            if existing[target.contract.outcome_family_id] is None
+            target for target in self.targets if existing[target.contract.outcome_family_id] is None
         )
         slots = {
             target.contract.outcome_family_id: self._slot(
@@ -464,8 +551,7 @@ class PortfolioContextForecastProducer:
             input_refs[family] = refs
             missing = tuple(
                 sorted(
-                    set(target.binding.required_feature_keys)
-                    - set(target_state.feature_selectors)
+                    set(target.binding.required_feature_keys) - set(target_state.feature_selectors)
                 )
             )
             if missing:
@@ -482,9 +568,7 @@ class PortfolioContextForecastProducer:
             if quote is None or self._quote_age_seconds(
                 self._quote_observed_at(target.instrument, quote),
                 slot_at,
-            ) > (
-                self.policy.maximum_quote_age_seconds
-            ):
+            ) > (self.policy.maximum_quote_age_seconds):
                 existing[family] = self._no_estimate(
                     target,
                     slot=slot,
@@ -546,9 +630,7 @@ class PortfolioContextForecastProducer:
                 detail="CONTEXT_FORECAST_TARGET_SET_INVALID",
             )
             return self._ordered(existing)
-        runtime_by_family = {
-            item.contract.outcome_family_id: item for item in self.targets
-        }
+        runtime_by_family = {item.contract.outcome_family_id: item for item in self.targets}
         for analysis_target in frozen_targets:
             family = analysis_target.contract.outcome_family_id
             runtime = runtime_by_family[family]
@@ -576,10 +658,14 @@ class PortfolioContextForecastProducer:
                 )
                 continue
             entry_quote = self._quote(runtime.instrument, at=completed_at)
-            if entry_quote is None or self._quote_age_seconds(
-                self._quote_observed_at(runtime.instrument, entry_quote),
-                completed_at,
-            ) > self.policy.maximum_quote_age_seconds:
+            if (
+                entry_quote is None
+                or self._quote_age_seconds(
+                    self._quote_observed_at(runtime.instrument, entry_quote),
+                    completed_at,
+                )
+                > self.policy.maximum_quote_age_seconds
+            ):
                 existing[family] = self._no_estimate(
                     runtime,
                     slot=slot,
@@ -590,10 +676,7 @@ class PortfolioContextForecastProducer:
                 )
                 continue
             cutoff_quote = cutoff_quotes[family]
-            move_bps = abs(
-                (entry_quote.ask / cutoff_quote.ask - Decimal("1"))
-                * Decimal("10000")
-            )
+            move_bps = abs((entry_quote.ask / cutoff_quote.ask - Decimal("1")) * Decimal("10000"))
             if move_bps > self.policy.maximum_reanchor_move_bps:
                 existing[family] = self._no_estimate(
                     runtime,
@@ -677,9 +760,7 @@ class PortfolioContextForecastProducer:
         cursor = latest + timedelta(minutes=self.policy.cadence_minutes)
         recovered: list[ForecastNoEstimate] = []
         while cursor < before:
-            if completed <= cursor + timedelta(
-                seconds=target.contract.completion_deadline_seconds
-            ):
+            if completed <= cursor + timedelta(seconds=target.contract.completion_deadline_seconds):
                 break
             outcome = self.record_deadline_missed(
                 target,
@@ -751,9 +832,7 @@ class PortfolioContextForecastProducer:
         if sum((item.probability for item in probabilities), Decimal("0")) != 1:
             raise ValueError("Context Forecast 概率之和必须精确为 1")
         mechanisms = {item.mechanism_id for item in assessment.mechanisms}
-        contribution_ids = tuple(
-            item.mechanism_id for item in draft.mechanism_contributions
-        )
+        contribution_ids = tuple(item.mechanism_id for item in draft.mechanism_contributions)
         if len(set(contribution_ids)) != len(contribution_ids) or not set(
             contribution_ids
         ).issubset(mechanisms):
@@ -832,9 +911,7 @@ class PortfolioContextForecastProducer:
                 for item in draft.mechanism_contributions
             ),
             evidence_refs=tuple(sorted(set(draft.evidence_refs))),
-            invalidation_conditions=tuple(
-                sorted(set(draft.invalidation_conditions))
-            ),
+            invalidation_conditions=tuple(sorted(set(draft.invalidation_conditions))),
             analysis_input_json=canonical_json(analysis_input),
             analysis_input_hash=content_hash(analysis_input),
         )
@@ -872,9 +949,7 @@ class PortfolioContextForecastProducer:
         input_refs: dict[str, tuple[str, ...]],
         detail: str,
     ) -> None:
-        runtime_by_family = {
-            item.contract.outcome_family_id: item for item in self.targets
-        }
+        runtime_by_family = {item.contract.outcome_family_id: item for item in self.targets}
         for item in targets:
             family = item.contract.outcome_family_id
             results[family] = self._no_estimate(
@@ -1002,9 +1077,7 @@ class ContextForecastProducerView:
     ) -> ForecastProductionResult:
         results = self.program.produce_all(as_of=as_of, cause=cause)
         return next(
-            item
-            for item in results
-            if item.contract_id == self.target.contract.contract_id
+            item for item in results if item.contract_id == self.target.contract.contract_id
         )
 
     def record_deadline_missed(

@@ -135,10 +135,13 @@ class ReferencePortfolioPolicy(StrictConfig):
         keys = tuple(item.implementation_key for item in self.allocations)
         if tuple(sorted(set(keys))) != keys:
             raise ValueError("Reference allocations 必须唯一且排序")
-        if sum(
-            (item.target_exposure_fraction for item in self.allocations),
-            Decimal("0"),
-        ) != 1:
+        if (
+            sum(
+                (item.target_exposure_fraction for item in self.allocations),
+                Decimal("0"),
+            )
+            != 1
+        ):
             raise ValueError("Reference allocations 目标经济暴露之和必须为 1")
         if self.rebalance_band_fraction <= 0:
             raise ValueError("Reference Policy 再平衡带必须为正")
@@ -160,6 +163,13 @@ class ProductPayoffPolicy(StrictConfig):
         return self
 
 
+class ContextForecastComparisonPolicy(StrictConfig):
+    """Observation-only economic reference for one proxy Forecast target."""
+
+    instrument_key: str = Field(min_length=1)
+    reference_price_multiplier: Decimal = Field(gt=0)
+
+
 class ContextForecastTargetPolicy(StrictConfig):
     """One economic outcome contract inside a shared Context forecast call."""
 
@@ -167,6 +177,7 @@ class ContextForecastTargetPolicy(StrictConfig):
     contract_version: str = Field(min_length=1)
     reference_instrument_key: str = Field(min_length=1)
     derivative_evidence_instrument_key: str | None = Field(default=None, min_length=1)
+    comparison: ContextForecastComparisonPolicy | None = None
     required_feature_keys: tuple[str, ...] = ()
     outcome_buckets: tuple[ForecastOutcomeBucket, ...] = Field(min_length=3)
     forecast_benchmark: tuple[ForecastBenchmarkProbability, ...] = Field(min_length=3)
@@ -255,14 +266,10 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Mandate 记账本位必须等于 Capital settlement asset")
         if self.investable_universe.mandate_version != self.mandate.version:
             raise ValueError("Investable universe 必须绑定当前 Mandate")
-        universe_keys = tuple(
-            item.instrument_key for item in self.investable_universe.instruments
-        )
+        universe_keys = tuple(item.instrument_key for item in self.investable_universe.instruments)
         if universe_keys != spec_keys:
             raise ValueError("Investable universe 必须唯一覆盖 Capital execution specs")
-        reference_keys = tuple(
-            item.key for item in self.forecast_reference_instruments
-        )
+        reference_keys = tuple(item.key for item in self.forecast_reference_instruments)
         if tuple(sorted(set(reference_keys))) != reference_keys:
             raise ValueError("Forecast reference instruments 必须唯一且排序")
         if set(reference_keys) & set(spec_keys):
@@ -276,15 +283,9 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Investable universe 包含 Mandate 未允许的经济暴露")
         if self.risk.maximum_drawdown_fraction > self.mandate.maximum_drawdown_fraction:
             raise ValueError("Capital Risk 回撤上限不得宽于 Mandate")
-        if (
-            self.risk.maximum_stress_loss_fraction
-            > self.mandate.maximum_stress_loss_fraction
-        ):
+        if self.risk.maximum_stress_loss_fraction > self.mandate.maximum_stress_loss_fraction:
             raise ValueError("Capital Risk 压力损失上限不得宽于 Mandate")
-        if (
-            self.risk.maximum_gross_exposure_fraction
-            > self.mandate.maximum_gross_exposure_fraction
-        ):
+        if self.risk.maximum_gross_exposure_fraction > self.mandate.maximum_gross_exposure_fraction:
             raise ValueError("Capital Risk gross 上限不得宽于 Mandate")
         reference = self.reference_policy
         if reference is not None:
@@ -303,9 +304,7 @@ class CapitalPolicy(StrictConfig):
                     if item.reference_candidate
                 },
             }
-            allocation_keys = tuple(
-                item.implementation_key for item in reference.allocations
-            )
+            allocation_keys = tuple(item.implementation_key for item in reference.allocations)
             if not set(allocation_keys).issubset(by_key):
                 raise ValueError("Reference Policy 使用了不合格的实现产品")
         if self.enabled and not self.decision.enabled:
@@ -322,14 +321,10 @@ class CapitalPolicy(StrictConfig):
             raise ValueError("Capital candidate authorization 不得重复")
         context = self.context_forecast
         if context is not None and context.enabled:
-            target_reference_keys = {
-                item.reference_instrument_key for item in context.targets
-            }
+            target_reference_keys = {item.reference_instrument_key for item in context.targets}
             expected_read_only_references = target_reference_keys - set(spec_keys)
             if set(reference_keys) != expected_read_only_references:
-                raise ValueError(
-                    "Forecast 只读参考必须精确覆盖不属于 execution specs 的规范参考"
-                )
+                raise ValueError("Forecast 只读参考必须精确覆盖不属于 execution specs 的规范参考")
             expected = {
                 (
                     context.producer_id,

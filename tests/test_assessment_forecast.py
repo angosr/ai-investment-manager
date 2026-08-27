@@ -549,6 +549,11 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     assert datetime.fromisoformat(
         analysis_input["forecast_targets"][0]["target_state"]["as_of"]
     ) == (assessment.available_at)
+    assert analysis_input["forecast_targets"][0]["target_state"]["comparison_states"] == []
+    assert (
+        analysis_input["forecast_targets"][0]["target_state"]["missing_comparison_instrument_keys"]
+        == []
+    )
     assert analysis_input["world_model"]["assessment_id"] == assessment.assessment_id
     assert "portfolio" not in assessment_input_projection(packet)
     assert "data_quality_codes" not in analysis_input["forecast_targets"][0]["target_state"]
@@ -668,17 +673,17 @@ def test_context_forecast_records_stale_world_model_without_calling_codex() -> N
     assert analyst.calls == 0
 
 
-def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
+def test_context_forecast_target_state_includes_optional_economic_comparison() -> None:
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
     spot = next(
         item
         for item in config.capital.forecast_reference_instruments
-        if item.key == policy.targets[0].reference_instrument_key
+        if item.key == policy.targets[1].reference_instrument_key
     )
     market = InMemoryMarketDataStore()
-    closes = (Decimal("70000"), Decimal("70100"), Decimal("70200"))
+    closes = (Decimal("4588"), Decimal("4590"), Decimal("4593"))
     for index, close in enumerate(closes):
         open_at = NOW - timedelta(minutes=15 - index * 5)
         market.put_bar(
@@ -701,9 +706,9 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
             quote_id="fresh-target-quote",
             symbol=spot.symbol,
             observed_at=NOW,
-            bid=Decimal("70199"),
+            bid=Decimal("4592.9"),
             bid_quantity=Decimal("2"),
-            ask=Decimal("70201"),
+            ask=Decimal("4593.1"),
             ask_quantity=Decimal("2"),
             source="test",
         )
@@ -715,7 +720,7 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
             aggregate_trade_id=1,
             event_time=NOW,
             observed_at=NOW,
-            price=Decimal("70200"),
+            price=Decimal("4593"),
             quantity=Decimal("0.1"),
             buyer_is_maker=False,
             source="test",
@@ -739,8 +744,8 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
             instrument=perpetual,
             exchange_time=exchange_time,
             observed_at=NOW,
-            mark_price=Decimal("70205"),
-            index_price=Decimal("70200"),
+            mark_price=Decimal("4591"),
+            index_price=Decimal("4590"),
             last_funding_rate=Decimal("0.0001"),
             interest_rate=Decimal("0.0001"),
             next_funding_time=NOW + timedelta(hours=4),
@@ -753,16 +758,21 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
             instrument=perpetual,
             exchange_time=exchange_time,
             observed_at=NOW,
-            bid=Decimal("70204"),
+            bid=Decimal("4590.9"),
             bid_quantity=Decimal("2"),
-            ask=Decimal("70206"),
+            ask=Decimal("4591.1"),
             ask_quantity=Decimal("2"),
             update_id=42,
             source="test",
         )
     )
 
-    state = MarketContextTargetStateProvider(
+    comparison = next(
+        item
+        for item in config.market_data.perpetual_instruments
+        if item.key == policy.targets[1].comparison.instrument_key
+    )
+    provider = MarketContextTargetStateProvider(
         market=market,
         feature_policy=config.feature,
         reference=spot,
@@ -771,13 +781,45 @@ def test_context_forecast_target_state_is_rebuilt_at_the_slot() -> None:
         bar_window=3,
         funding_lookback_hours=24,
         maximum_quote_skew_seconds=15,
-    ).build(as_of=NOW)
+        comparison=comparison,
+        comparison_price_multiplier=Decimal("1"),
+        maximum_comparison_age_seconds=300,
+    )
+
+    missing = provider.build(as_of=NOW)
+    assert missing.comparison_states == ()
+    assert missing.missing_comparison_instrument_keys == (comparison.key,)
+
+    market.put_perpetual_state(
+        PerpetualMarketState(
+            state_id=stable_id(
+                "perpetual_market_state",
+                comparison.key,
+                exchange_time.isoformat(),
+            ),
+            instrument=comparison,
+            exchange_time=exchange_time,
+            observed_at=NOW,
+            mark_price=Decimal("4600.52"),
+            index_price=Decimal("4598.15"),
+            last_funding_rate=Decimal("0"),
+            interest_rate=Decimal("0"),
+            next_funding_time=NOW + timedelta(hours=4),
+            source="test",
+        )
+    )
+    state = provider.build(as_of=NOW)
 
     assert state.as_of == NOW
-    assert state.asset_states[0].last == Decimal("70200")
+    assert state.asset_states[0].last == Decimal("4593")
     assert state.asset_states[0].return_fraction > 0
     assert state.derivative_states[0].mark_index_premium_bps > 0
-    assert "asset_state:BTC.realized_volatility" in state.feature_selectors
+    assert state.missing_comparison_instrument_keys == ()
+    assert state.comparison_states[0].target_reference_deviation_bps < 0
+    assert state.comparison_states[0].mark_index_premium_bps > 0
+    assert state.comparison_states[0].market_session == "SCHEDULE_UNAVAILABLE"
+    assert "asset_state:PAXG.realized_volatility" in state.feature_selectors
+    assert "comparison_state:XAU.target_reference_deviation_bps" in state.feature_selectors
 
 
 def test_assessment_execution_replay_never_calls_codex_twice() -> None:

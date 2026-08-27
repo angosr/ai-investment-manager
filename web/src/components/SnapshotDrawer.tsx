@@ -4,7 +4,13 @@ import type {
   AssessmentInputSnapshot,
   AssessmentStateFeature,
 } from "../api/types";
-import { hhmm } from "../lib/format";
+import {
+  bps,
+  fractionPercent,
+  hhmm,
+  price,
+  ratio,
+} from "../lib/format";
 import styles from "./SnapshotDrawer.module.css";
 
 interface SnapshotDrawerProps {
@@ -85,10 +91,10 @@ function AssessmentBody({
             <Item
               key={`${asset.asset}-${asset.observed_at}`}
               title={`${asset.asset} · ${asset.market_symbol} · ${asset.regime}`}
-              meta={`${hhmm(asset.observed_at)} UTC · last ${asset.last}`}
+              meta={`${hhmm(asset.observed_at)} UTC · 最新价 ${price(asset.last)}`}
             >
-              收益 {asset.return_fraction} · 波动 {asset.realized_volatility} · ATR {asset.atr} ·
-              点差 {asset.spread_bps} bp · 量比 {asset.volume_ratio}
+              收益 {fractionPercent(asset.return_fraction)} · 波动 {fractionPercent(asset.realized_volatility)} · ATR {price(asset.atr)} ·
+              点差 {bps(asset.spread_bps)} bp · 量比 {ratio(asset.volume_ratio)}
             </Item>
           ))}
         </Section>
@@ -98,12 +104,12 @@ function AssessmentBody({
             <Item
               key={state.evidence_ref}
               title={`${state.asset} · ${hhmm(state.observed_at)} UTC`}
-              meta={`funding ${state.last_funding_rate_bps} bp · OI ${state.open_interest_change_fraction ?? "—"}`}
+              meta={`funding ${bps(state.last_funding_rate_bps)} bp · OI ${fractionPercent(state.open_interest_change_fraction)}`}
             >
-              标记溢价 {state.mark_index_premium_bps} bp · 可执行空头基差 {state.executable_short_basis_bps} bp ·
-              现货主动买卖比 {state.spot_taker_buy_sell_ratio ?? "—"} ·
-              多头账户占比 {state.global_long_account_fraction ?? "—"} ·
-              永续主动买卖比 {state.taker_buy_sell_ratio ?? "—"}
+              标记溢价 {bps(state.mark_index_premium_bps)} bp · 可执行空头基差 {bps(state.executable_short_basis_bps)} bp ·
+              现货主动买卖比 {ratio(state.spot_taker_buy_sell_ratio)} ·
+              多头账户占比 {fractionPercent(state.global_long_account_fraction, 1)} ·
+              永续主动买卖比 {ratio(state.taker_buy_sell_ratio)}
             </Item>
           )) : <Empty>本次没有衍生品结构输入</Empty>}
         </Section>

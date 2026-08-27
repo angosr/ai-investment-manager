@@ -9,7 +9,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from investment_manager.entrypoints.dashboard.capital import CapitalOverview
-from investment_manager.entrypoints.dashboard.formatting import assessment_reason_plain
+from investment_manager.entrypoints.dashboard.formatting import (
+    assessment_reason_plain,
+    display_decimal,
+)
 from investment_manager.entrypoints.dashboard.read_models import (
     AnalysisRuntimeStatus,
     AssessmentQualityStatus,
@@ -102,13 +105,14 @@ def _capital_account_check(
             "capital_account",
             "资本账户",
             "bad",
-            f"回撤 {account.drawdown_fraction} 超过限制",
+            f"回撤 {display_decimal(account.drawdown_fraction * 100)}% 超过限制",
         )
     return _check(
         "capital_account",
         "资本账户",
         "ok",
-        f"权益 {account.equity} {account.settlement_asset} · 现金 {account.cash_balance}",
+        f"权益 {display_decimal(account.equity)} {account.settlement_asset} · "
+        f"现金 {display_decimal(account.cash_balance)}",
     )
 
 
@@ -270,7 +274,8 @@ def _capital_performance_check(
         "capital_performance",
         "资本绩效",
         "ok",
-        f"{count} 个费用后净权益区间 · 累计 {overview.cumulative_net_pnl}",
+        f"{count} 个费用后净权益区间 · 累计 "
+        f"{display_decimal(overview.cumulative_net_pnl)}",
     )
 
 

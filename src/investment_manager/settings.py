@@ -70,9 +70,7 @@ class AppConfig(StrictConfig):
         mandate_symbols = tuple(
             item.market_symbol for item in self.assessment.mandate.observation_assets
         )
-        if self.assessment.enabled and not set(mandate_symbols).issubset(
-            self.market_data.symbols
-        ):
+        if self.assessment.enabled and not set(mandate_symbols).issubset(self.market_data.symbols):
             raise ValueError("Assessment mandate 必须属于 MarketData 观测域")
         perpetual_symbols = tuple(item.symbol for item in self.market_data.perpetual_instruments)
         if self.assessment.enabled and not set(mandate_symbols).issubset(perpetual_symbols):
@@ -231,6 +229,23 @@ class AppConfig(StrictConfig):
                         or evidence.quote_asset != target.quote_asset
                     ):
                         raise ValueError("Context Forecast 证据产品必须与 target 同标的计价")
+                comparison_policy = target_policy.comparison
+                if comparison_policy is not None:
+                    comparison = perpetual_by_key.get(comparison_policy.instrument_key)
+                    if comparison is None:
+                        raise ValueError(
+                            "Context Forecast comparison 必须属于 MarketData perpetual universe"
+                        )
+                    if comparison.key in execution_by_key:
+                        raise ValueError("Context Forecast comparison 必须是观察专用产品")
+                    if target.product != InstrumentProduct.SPOT:
+                        raise ValueError("Context Forecast comparison 只允许比较 Spot Outcome")
+                    if comparison.product == InstrumentProduct.SPOT:
+                        raise ValueError("Context Forecast comparison 必须使用指数化线性产品")
+                    if comparison.quote_asset != target.quote_asset:
+                        raise ValueError(
+                            "Context Forecast comparison 与 Outcome 必须使用同一计价资产"
+                        )
                 payoffs = target_policy.product_payoffs
                 if payoffs is None:
                     continue

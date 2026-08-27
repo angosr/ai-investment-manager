@@ -7,7 +7,7 @@ import type {
   AssessmentRecordRow as Row,
   SnapshotPayload,
 } from "../api/types";
-import { hhmm } from "../lib/format";
+import { decimal, hhmm } from "../lib/format";
 import styles from "./AssessmentRow.module.css";
 
 const RELATIONSHIP: Record<string, string> = {
@@ -152,11 +152,11 @@ function WorldModelView({ detail }: { detail: AssessmentRecordDetail }) {
               {mechanism.verification_tests.map((test) => (
                 <li key={test.feature_selector}>
                   {test.feature_selector} · {test.evaluation_window_minutes} 分钟 ·
-                  支持 {test.supports_predicate.operator} {test.supports_predicate.value} ·
-                  反驳 {test.contradicts_predicate.operator} {test.contradicts_predicate.value}
+                  支持 {test.supports_predicate.operator} {decimal(test.supports_predicate.value, 4)} ·
+                  反驳 {test.contradicts_predicate.operator} {decimal(test.contradicts_predicate.value, 4)}
                   <div>
                     {test.latest_observation
-                      ? `最新：${test.latest_observation.resolution}，值 ${test.latest_observation.value}，支持连续 ${test.latest_observation.support_streak}，反驳连续 ${test.latest_observation.contradiction_streak}`
+                      ? `最新：${test.latest_observation.resolution}，值 ${decimal(test.latest_observation.value, 4)}，支持连续 ${test.latest_observation.support_streak}，反驳连续 ${test.latest_observation.contradiction_streak}`
                       : "尚无到期后的程序观测"}
                   </div>
                 </li>

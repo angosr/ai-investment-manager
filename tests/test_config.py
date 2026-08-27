@@ -101,11 +101,18 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.packet_policy.maximum_packet_characters == 12_750
     assert config.decision_state.packet_policy.maximum_market_age_seconds == 180
     assert config.market_data.funding_history_lookback_hours == 720
-    assert config.market_data.version == "binance-public-shadow-v15"
+    assert config.market_data.version == "binance-public-shadow-v16"
     assert config.market_data.symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.analysis_symbols == ("BTCUSDT", "ETHUSDT", "PAXGUSDT")
     assert config.market_data.perpetual_quote_poll_seconds == 5
     assert config.market_data.perpetual_poll_seconds == 120
+    assert tuple(item.symbol for item in config.market_data.perpetual_instruments) == (
+        "SPYUSDT",
+        "XAUUSDT",
+        "BTCUSDT",
+        "ETHUSDT",
+        "PAXGUSDT",
+    )
     assert (
         config.market_data.perpetual_quote_poll_seconds
         <= config.market_data.maximum_cross_market_quote_skew_seconds
@@ -123,7 +130,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v36"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v37"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v32"
@@ -324,6 +331,7 @@ def test_market_observation_domain_may_exceed_assessment_mandate() -> None:
 
     assert tuple(item.symbol for item in restored.market_data.perpetual_instruments) == (
         "SPYUSDT",
+        "XAUUSDT",
         "BTCUSDT",
         "ETHUSDT",
         "PAXGUSDT",
@@ -397,6 +405,17 @@ def test_shadow_has_one_shared_multi_asset_context_candidate_program() -> None:
             feature_policy=config.feature,
             reference_instrument=instruments[target.reference_instrument_key],
             derivative_evidence_instrument=perpetual.get(target.derivative_evidence_instrument_key),
+            comparison_instrument=(
+                perpetual[target.comparison.instrument_key]
+                if target.comparison is not None
+                else None
+            ),
+            comparison_price_multiplier=(
+                target.comparison.reference_price_multiplier
+                if target.comparison is not None
+                else None
+            ),
+            maximum_comparison_age_seconds=context.maximum_quote_age_seconds,
             interval=config.market_data.interval,
             bar_window=config.market_data.bar_window,
             funding_lookback_hours=config.market_data.funding_history_lookback_hours,
@@ -522,6 +541,20 @@ def test_forecast_reference_products_are_not_capital_products() -> None:
     payload["forecast_reference_instruments"] = ()
     with pytest.raises(ValidationError, match="只读参考必须精确覆盖"):
         type(capital).model_validate(payload)
+
+
+def test_forecast_comparison_product_remains_observation_only() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    payload = config.model_dump(mode="python")
+    paxg = next(
+        item
+        for item in payload["capital"]["context_forecast"]["targets"]
+        if item["outcome_family_id"] == "paxg-price-directional-4h"
+    )
+    paxg["comparison"]["instrument_key"] = "BINANCE:USD_M_PERPETUAL:BTCUSDT"
+
+    with pytest.raises(ValidationError, match="comparison 必须是观察专用产品"):
+        AppConfig.model_validate(payload)
 
 
 def test_provisional_mandate_cannot_grant_reference_policy() -> None:

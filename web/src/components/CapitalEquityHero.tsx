@@ -1,5 +1,5 @@
 import type { CapitalEquityPoint, CapitalOverview, EquityPoint } from "../api/types";
-import { isPositive, signed } from "../lib/format";
+import { fractionPercent, isPositive, money, signed } from "../lib/format";
 import { EquityChart } from "./EquityChart";
 import styles from "./EquityHero.module.css";
 
@@ -41,10 +41,10 @@ export function CapitalEquityHero({
       </div>
       {data?.policy ? <PortfolioPolicyLine policy={data.policy} /> : null}
       <div className={styles.stats}>
-        <Stat k="当前权益" v={account ? `${account.equity} USDT` : "—"} />
-        <Stat k="可用现金" v={account ? `${account.cash_balance} USDT` : "—"} />
+        <Stat k="当前权益" v={account ? `${money(account.equity)} USDT` : "—"} />
+        <Stat k="可用现金" v={account ? `${money(account.cash_balance)} USDT` : "—"} />
         <Stat k="相对持现" v={moneyDelta(latestPoint?.increment_vs_cash ?? null)} />
-        <Stat k="当前回撤" v={account ? `${fractionPercent(account.drawdown_fraction)}%` : "—"} tone="neg" />
+        <Stat k="当前回撤" v={account ? fractionPercent(account.drawdown_fraction) : "—"} tone="neg" />
       </div>
     </section>
   );
@@ -103,11 +103,6 @@ function Stat({ k, v, tone }: { k: string; v: string; tone?: "neg" }) {
       </div>
     </div>
   );
-}
-
-function fractionPercent(value: string): string {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? (parsed * 100).toFixed(2) : value;
 }
 
 function moneyDelta(value: string | null): string {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import Field, TypeAdapter, field_validator, model_validator
@@ -40,7 +41,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v11"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v12"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -67,12 +68,36 @@ class ContextForecastStructuredOutput(FrozenModel):
     forecasts: tuple[ContextForecastDraft, ...] = Field(min_length=1)
 
 
+class ContextForecastComparisonState(FrozenModel):
+    """Point-in-time economic cross-check; never an Outcome or capital product."""
+
+    instrument: InstrumentId
+    observed_at: datetime
+    index_price: Decimal = Field(gt=0)
+    comparison_price_multiplier: Decimal = Field(gt=0)
+    target_reference_deviation_bps: Decimal
+    mark_index_premium_bps: Decimal
+    market_session: str = Field(min_length=1)
+    input_refs: tuple[str, ...] = Field(min_length=1)
+
+    _utc_observed_at = field_validator("observed_at")(require_utc)
+
+    @field_validator("input_refs")
+    @classmethod
+    def refs_are_canonical(cls, refs: tuple[str, ...]) -> tuple[str, ...]:
+        if tuple(sorted(set(refs))) != refs:
+            raise ValueError("Context Forecast comparison refs 必须唯一排序")
+        return refs
+
+
 class ContextForecastTargetState(FrozenModel):
     """Fresh deterministic market state at one Forecast decision slot."""
 
     as_of: datetime
     asset_states: tuple[PacketAssetState, ...] = ()
     derivative_states: tuple[PacketDerivativeState, ...] = ()
+    comparison_states: tuple[ContextForecastComparisonState, ...] = ()
+    missing_comparison_instrument_keys: tuple[str, ...] = ()
     input_refs: tuple[str, ...] = Field(min_length=1)
 
     _utc_as_of = field_validator("as_of")(require_utc)
@@ -87,6 +112,17 @@ class ContextForecastTargetState(FrozenModel):
             raise ValueError("Context Forecast asset state 不能晚于决策槽")
         if any(item.observed_at > self.as_of for item in self.derivative_states):
             raise ValueError("Context Forecast derivative state 不能晚于决策槽")
+        if any(item.observed_at > self.as_of for item in self.comparison_states):
+            raise ValueError("Context Forecast comparison state 不能晚于决策槽")
+        comparison_keys = tuple(item.instrument.key for item in self.comparison_states)
+        if tuple(sorted(set(comparison_keys))) != comparison_keys:
+            raise ValueError("Context Forecast comparison states 必须唯一排序")
+        if tuple(sorted(set(self.missing_comparison_instrument_keys))) != (
+            self.missing_comparison_instrument_keys
+        ):
+            raise ValueError("Context Forecast missing comparison keys 必须唯一排序")
+        if set(comparison_keys) & set(self.missing_comparison_instrument_keys):
+            raise ValueError("Context Forecast comparison 不能同时存在和缺失")
         return self
 
     @property
@@ -119,6 +155,14 @@ class ContextForecastTargetState(FrozenModel):
             )
             if getattr(item, field_name) is not None
         )
+        selectors.update(
+            f"comparison_state:{item.instrument.base_asset}.{field_name}"
+            for item in self.comparison_states
+            for field_name in (
+                "target_reference_deviation_bps",
+                "mark_index_premium_bps",
+            )
+        )
         return tuple(sorted(selectors))
 
 
@@ -142,6 +186,9 @@ class ContextForecastTargetStateBehavior(FrozenModel):
     feature_policy: FeaturePolicy
     reference_instrument: InstrumentId
     derivative_evidence_instrument: InstrumentId | None = None
+    comparison_instrument: InstrumentId | None = None
+    comparison_price_multiplier: Decimal | None = Field(default=None, gt=0)
+    maximum_comparison_age_seconds: int = Field(default=300, ge=1, le=3_600)
     interval: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|1d)$")
     bar_window: int = Field(ge=8, le=1_000)
     funding_lookback_hours: int = Field(ge=8, le=720)
@@ -155,15 +202,28 @@ class ContextForecastTargetStateBehavior(FrozenModel):
         enabled = self.cross_venue_spot_version is not None
         if enabled != bool(self.cross_venue_spot_venues):
             raise ValueError("Forecast 跨场所现货行为必须完整启用或关闭")
-        if self.cross_venue_spot_venues and tuple(
-            sorted(set(self.cross_venue_spot_venues), key=lambda item: item.value)
-        ) != self.cross_venue_spot_venues:
+        if (
+            self.cross_venue_spot_venues
+            and tuple(sorted(set(self.cross_venue_spot_venues), key=lambda item: item.value))
+            != self.cross_venue_spot_venues
+        ):
             raise ValueError("Forecast 跨场所现货 venues 必须唯一排序")
         if (
             self.reference_instrument.product != InstrumentProduct.SPOT
             and self.cross_venue_spot_venues
         ):
             raise ValueError("非 Spot 规范参考不得伪造跨场所现货证据")
+        comparison_enabled = self.comparison_instrument is not None
+        if comparison_enabled != (self.comparison_price_multiplier is not None):
+            raise ValueError("Forecast comparison Instrument 与价格换算必须同时配置")
+        if comparison_enabled:
+            assert self.comparison_instrument is not None
+            if self.reference_instrument.product != InstrumentProduct.SPOT:
+                raise ValueError("Forecast comparison 目前只允许比较 Spot Outcome")
+            if self.comparison_instrument.product == InstrumentProduct.SPOT:
+                raise ValueError("Forecast comparison 必须使用独立指数化线性产品")
+            if self.comparison_instrument.quote_asset != self.reference_instrument.quote_asset:
+                raise ValueError("Forecast comparison 与 Outcome 必须使用同一计价资产")
         return self
 
 
@@ -180,6 +240,10 @@ CONTEXT_FORECAST_INSTRUCTIONS = (
     "形成条件分布。target_state 中的近期收益、波动和状态、成交量、现货与永续主动流、"
     "未平仓量、资金费率和仓位是目标自身的可预测状态，不需要先被外生机制重复证明才能"
     "改变先验；但不得把单一短窗口动量机械外推到合同终点。",
+    "comparison_states 是观察专用经济交叉参考：target_reference_deviation_bps 区分代理 Outcome"
+    "与外部指数，mark_index_premium_bps 区分比较产品自身 basis，market_session 标记其交易时段。"
+    "它不改变 Outcome 或赋予比较 Instrument 资本身份；缺失键只扩大对应目标的不确定性，"
+    "不得从目标自身价格补猜外部参考。",
     "mechanism_contributions 只引用输入 world_model.mechanisms 的 mechanism_id，"
     "说明该机制相对合同基准分布"
     "带来上行、下行、不确定性或无实质影响；不得把市场价格结果冒充外生原因。",
@@ -289,12 +353,18 @@ def context_forecast_input_projection(
                 "target_state": {
                     "as_of": item.target_state.as_of,
                     "asset_states": tuple(
-                        _compact_asset_state(state)
-                        for state in item.target_state.asset_states
+                        _compact_asset_state(state) for state in item.target_state.asset_states
                     ),
                     "derivative_states": tuple(
                         _compact_derivative_state(state)
                         for state in item.target_state.derivative_states
+                    ),
+                    "comparison_states": tuple(
+                        _compact_comparison_state(state)
+                        for state in item.target_state.comparison_states
+                    ),
+                    "missing_comparison_instrument_keys": (
+                        item.target_state.missing_comparison_instrument_keys
                     ),
                 },
             }
@@ -376,10 +446,21 @@ def _compact_derivative_state(state: PacketDerivativeState) -> dict[str, object]
         "spot_taker_buy_sell_ratio",
         "reference_spot_mid_deviation_bps",
     )
+    return {name: value for name in fields if (value := getattr(state, name)) is not None}
+
+
+def _compact_comparison_state(
+    state: ContextForecastComparisonState,
+) -> dict[str, object]:
     return {
-        name: value
-        for name in fields
-        if (value := getattr(state, name)) is not None
+        "symbol": state.instrument.symbol,
+        "product": state.instrument.product.value,
+        "observed_at": state.observed_at,
+        "index_price": state.index_price,
+        "comparison_price_multiplier": state.comparison_price_multiplier,
+        "target_reference_deviation_bps": state.target_reference_deviation_bps,
+        "mark_index_premium_bps": state.mark_index_premium_bps,
+        "market_session": state.market_session,
     }
 
 
@@ -392,11 +473,7 @@ def context_forecast_output_schema(
         decision_slot_ids=tuple(item.slot.slot_id for item in targets),
         bucket_ids=tuple(
             sorted(
-                {
-                    bucket.bucket_id
-                    for item in targets
-                    for bucket in item.contract.outcome_buckets
-                }
+                {bucket.bucket_id for item in targets for bucket in item.contract.outcome_buckets}
             )
         ),
         mechanism_ids=tuple(item.mechanism_id for item in assessment.mechanisms),

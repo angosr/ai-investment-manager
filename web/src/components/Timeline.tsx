@@ -4,7 +4,7 @@ import type { SnapshotPayload } from "../api/types";
 import type { AssessmentQuality, ForecastEvaluationEvidence } from "../api/types";
 import { useLive, usePagedLive } from "../hooks";
 import type { PagedLive } from "../hooks";
-import { hhmm } from "../lib/format";
+import { bps, hhmm } from "../lib/format";
 import { CapitalDecisionFeed } from "./CapitalActions";
 import { AssessmentRow } from "./AssessmentRow";
 import { WorldFeed } from "./WorldFeed";
@@ -159,7 +159,7 @@ function capitalCandidateLabel(instrumentKey: string, direction: "LONG" | "SHORT
 
 function signedBps(value: string): string {
   const parsed = Number(value);
-  return `${parsed >= 0 ? "+" : ""}${parsed.toFixed(2)} bp`;
+  return `${parsed >= 0 ? "+" : ""}${bps(value)} bp`;
 }
 
 function ForecastEvidenceLine({

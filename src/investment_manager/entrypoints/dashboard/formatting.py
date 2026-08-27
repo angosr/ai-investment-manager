@@ -38,6 +38,13 @@ def money(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
+def display_decimal(value: Decimal, *, places: int = 2) -> str:
+    """Compact Decimal for prose-only dashboard health details."""
+
+    rendered = f"{value:,.{places}f}".rstrip("0").rstrip(".")
+    return "0" if rendered == "-0" else rendered
+
+
 def iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 

@@ -1,5 +1,5 @@
 import type { CapitalOverview } from "../api/types";
-import { fixed, hhmm } from "../lib/format";
+import { hhmm, money, price, quantity } from "../lib/format";
 import { Card } from "./Card";
 import styles from "./Capital.module.css";
 
@@ -10,7 +10,7 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
   return (
     <Card
       title="资金状态"
-      aside={account ? `权益 ${fixed(account.equity)} USDT` : "等待账户"}
+      aside={account ? `权益 ${money(account.equity)} USDT` : "等待账户"}
       bodyPadded
     >
       {account ? (
@@ -26,7 +26,7 @@ export function Capital({ data }: { data: CapitalOverview | null }) {
           <div className={styles.section}>
             <div className={styles.row}>
               <span>可用现金</span>
-              <b>{fixed(account.cash_balance)} USDT</b>
+              <b>{money(account.cash_balance)} USDT</b>
             </div>
             <div className={styles.row}>
               <span>待完成交易</span>
@@ -66,13 +66,13 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
             </p>
           ) : null}
           {instruments.map((item) => {
-          const quantity = item.quantity === null ? null : Number(item.quantity);
+          const positionQuantity = item.quantity === null ? null : Number(item.quantity);
           const direction =
-            quantity === null
+            positionQuantity === null
               ? "未核实"
-              : quantity > 0
+              : positionQuantity > 0
                 ? "多"
-                : quantity < 0
+                : positionQuantity < 0
                   ? "空"
                   : "空仓";
           const quoteState =
@@ -100,25 +100,25 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
               <div className={styles.positionDetail}>
                 持仓量{" "}
                 <b title={item.quantity ?? undefined}>
-                  {quantity === 0 ? "0" : fixed(item.quantity, 8)}
+                  {positionQuantity === 0 ? "0" : quantity(item.quantity)}
                 </b>
-                {quantity !== null && quantity !== 0 ? (
+                {positionQuantity !== null && positionQuantity !== 0 ? (
                   <>
                     {" "}· 持仓均价{" "}
                     <b title={item.average_price ?? undefined}>
-                      {fixed(item.average_price)}
+                      {price(item.average_price)}
                     </b>
                   </>
                 ) : null}
               </div>
               <div className={styles.positionDetail}>
                 {item.quote_quality === "LIVE_MARKET" ? "实时价" : "最近价"}{" "}
-                <b title={item.price ?? undefined}>{fixed(item.price)}</b> USDT
+                <b title={item.price ?? undefined}>{price(item.price)}</b> USDT
                 {item.bid !== null && item.ask !== null ? (
                   <>
                     {" "}· 买一/卖一{" "}
                     <b>
-                      {fixed(item.bid)} / {fixed(item.ask)}
+                      {price(item.bid)} / {price(item.ask)}
                     </b>
                   </>
                 ) : null}

@@ -1381,25 +1381,17 @@ def assemble_capital_cycle(
                 raise ValueError("装配 Context Forecast 必须冻结 code_version")
             if producer_activation_at is None:
                 raise ValueError("装配 Context Forecast 必须冻结 producer activation")
-            spec_by_key = {
-                item.instrument.key: item for item in config.capital.execution_specs
-            }
+            spec_by_key = {item.instrument.key: item for item in config.capital.execution_specs}
             reference_by_key = {
-                item.key: item
-                for item in config.capital.forecast_reference_instruments
+                item.key: item for item in config.capital.forecast_reference_instruments
             }
             forecast_instruments = {
                 **{key: spec.instrument for key, spec in spec_by_key.items()},
                 **reference_by_key,
             }
-            perpetual_by_key = {
-                item.key: item for item in config.market_data.perpetual_instruments
-            }
+            perpetual_by_key = {item.key: item for item in config.market_data.perpetual_instruments}
             cross_venue_symbols = (
-                {
-                    item.symbol
-                    for item in config.market_data.cross_venue_spot.products
-                }
+                {item.symbol for item in config.market_data.cross_venue_spot.products}
                 if config.market_data.cross_venue_spot is not None
                 else set()
             )
@@ -1407,14 +1399,16 @@ def assemble_capital_cycle(
             behaviors: list[ContextForecastTargetStateBehavior] = []
             activation_times: list[datetime] = []
             for target_policy in context.targets:
-                instrument = forecast_instruments[
-                    target_policy.reference_instrument_key
-                ]
+                instrument = forecast_instruments[target_policy.reference_instrument_key]
                 perpetual = (
-                    perpetual_by_key.get(
-                        target_policy.derivative_evidence_instrument_key
-                    )
+                    perpetual_by_key.get(target_policy.derivative_evidence_instrument_key)
                     if target_policy.derivative_evidence_instrument_key is not None
+                    else None
+                )
+                comparison_policy = target_policy.comparison
+                comparison = (
+                    perpetual_by_key[comparison_policy.instrument_key]
+                    if comparison_policy is not None
                     else None
                 )
                 cross_venue_enabled = instrument.symbol in cross_venue_symbols
@@ -1422,18 +1416,21 @@ def assemble_capital_cycle(
                     feature_policy=config.feature,
                     reference_instrument=instrument,
                     derivative_evidence_instrument=perpetual,
+                    comparison_instrument=comparison,
+                    comparison_price_multiplier=(
+                        comparison_policy.reference_price_multiplier
+                        if comparison_policy is not None
+                        else None
+                    ),
+                    maximum_comparison_age_seconds=(context.maximum_quote_age_seconds),
                     interval=config.market_data.interval,
                     bar_window=config.market_data.bar_window,
-                    funding_lookback_hours=(
-                        config.market_data.funding_history_lookback_hours
-                    ),
+                    funding_lookback_hours=(config.market_data.funding_history_lookback_hours),
                     maximum_quote_skew_seconds=(
                         config.market_data.maximum_cross_market_quote_skew_seconds
                     ),
                     cross_venue_spot_version=(
-                        config.market_data.cross_venue_spot.version
-                        if cross_venue_enabled
-                        else None
+                        config.market_data.cross_venue_spot.version if cross_venue_enabled else None
                     ),
                     cross_venue_spot_venues=(
                         tuple(sorted(SpotVenue, key=lambda item: item.value))
@@ -1442,8 +1439,7 @@ def assemble_capital_cycle(
                     ),
                     maximum_cross_venue_spot_age_seconds=(
                         config.market_data.cross_venue_spot.maximum_age_seconds
-                        if cross_venue_enabled
-                        and config.market_data.cross_venue_spot is not None
+                        if cross_venue_enabled and config.market_data.cross_venue_spot is not None
                         else 30
                     ),
                 )
@@ -1451,9 +1447,7 @@ def assemble_capital_cycle(
                     policy=context,
                     target_policy=target_policy,
                     instrument=instrument,
-                    cost_semantics_version=(
-                        config.capital.decision.cost_model_version
-                    ),
+                    cost_semantics_version=(config.capital.decision.cost_model_version),
                 )
                 binding = ForecastProducerBinding.create(
                     contract_id=contract.contract_id,
@@ -1477,12 +1471,13 @@ def assemble_capital_cycle(
                     feature_policy=behavior.feature_policy,
                     reference=behavior.reference_instrument,
                     perpetual=behavior.derivative_evidence_instrument,
+                    comparison=behavior.comparison_instrument,
+                    comparison_price_multiplier=(behavior.comparison_price_multiplier),
+                    maximum_comparison_age_seconds=(behavior.maximum_comparison_age_seconds),
                     interval=behavior.interval,
                     bar_window=behavior.bar_window,
                     funding_lookback_hours=behavior.funding_lookback_hours,
-                    maximum_quote_skew_seconds=(
-                        behavior.maximum_quote_skew_seconds
-                    ),
+                    maximum_quote_skew_seconds=(behavior.maximum_quote_skew_seconds),
                     cross_venue_spot_venues=behavior.cross_venue_spot_venues,
                     maximum_cross_venue_spot_age_seconds=(
                         behavior.maximum_cross_venue_spot_age_seconds
@@ -1534,22 +1529,16 @@ def assemble_capital_cycle(
                 payoff_policy = runtime.policy.product_payoffs
                 product_payoffs = None
                 if payoff_policy is not None:
-                    payoff_specs = tuple(
-                        spec_by_key[key] for key in payoff_policy.instrument_keys
-                    )
+                    payoff_specs = tuple(spec_by_key[key] for key in payoff_policy.instrument_keys)
                     product_payoffs = ContextProductPayoffProjector(
                         policy=payoff_policy,
                         contract=runtime.contract,
                         market=market,
                         target_states=runtime.target_states,
-                        instruments=tuple(
-                            item.instrument for item in payoff_specs
-                        ),
+                        instruments=tuple(item.instrument for item in payoff_specs),
                         execution_specs=payoff_specs,
                         risk=config.capital.sleeve_risk,
-                        maximum_quote_age_seconds=(
-                            context.maximum_quote_age_seconds
-                        ),
+                        maximum_quote_age_seconds=(context.maximum_quote_age_seconds),
                         store=SqlProductPayoffProjectionStore(engine),
                     )
                 family = runtime.contract.outcome_family_id
