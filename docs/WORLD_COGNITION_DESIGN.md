@@ -251,6 +251,12 @@ Context Forecast 与无技巧分布、简单程序基线以及存在时的 Progr
 
 静态无技巧概率只证明最弱的分布能力。正式评价同时包含滚动无条件分布和至少一个不使用 WorldModel 的简单市场基线，避免把学会总体 bucket 频率误认为时变 Alpha。`model_mean_score < benchmark_mean_score` 只能描述点估计，不能单独标记为已证明胜出或授予权限。
 
+Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个世界认知、策略引擎或数据仓库。它对每个目标/时域只提供：冻结特征值及可见时间、指定 Quant prior、候选模型分布与分歧、训练制品身份、适用/缺失状态，以及由统一 Product 状态计算的 break-even。所有值都由程序生成并可点时回放，AI 不读取训练数据或 raw data，也不能在输出中自行改写这些值。
+
+AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定性 State、当前 WorldModel 投影、Quant panel、ForecastContract。AI 先把 Quant prior 当作可被证据修正的基准，再比较主机制与竞争机制在合同期限内会怎样改变结果；最终逐目标输出唯一 posterior、逐 bucket 的 prior→posterior 变化、造成变化的机制/反证引用和失效条件。解释若不能对应概率变化就不进入 Forecast；概率变化若不能对应输入中的点时事实就拒绝。`posterior == prior` 是合法结论，不要求 AI 为证明存在感制造观点。
+
+纯 Quant、现有 Context 与 AI + Quant 使用同一 DecisionSlot/Outcome 账本形成前瞻对照。纯 Quant 和 challenger 均先以 `RESEARCH` 身份运行，只有当前被明确授权的一个行为可以进入 Portfolio；对照不是多 Agent 投票，也不产生第二目标组合。评价既比较概率、校准和覆盖，也比较预测幅度是否足以在统一产品映射与完整成本后形成资本增量。若 posterior 只增加噪声、换手或费用，直接删除该行为或无增量输入，而不是增加门禁、置信乘数或更多叙事字段。
+
 ForecastContract 是来源无关的公共问题，但槽义务属于具体 producer behavior。行为覆盖率只用事前分配给该行为的到期槽作分母，并把 Forecast 与 `NO_ESTIMATE` 都计作终态；换模型、Prompt 或输入行为后，旧行为槽不能稀释新行为，也不能因切换而从原行为漏报中消失。
 
 仅定时槽评价“在持续、非选择性时点上是否具有一般预测增量”；仅材料槽评价“在冻结触发条件成立时，重新估计是否优于同条件基线”。两类样本分别使用同来源、同触发政策的滚动无条件与市场基线，报告样本量和保守下界；材料相关样本不能相加后宣称一般 Alpha。共同事件和重叠时域形成依赖簇，而不是多个独立成功。
@@ -335,6 +341,7 @@ Crypto Spot、Perpetual、股票或指数衍生品、贵金属等都只是候选
 
 - 所有预登记 Forecast 或明确失败都按时结算；
 - 能以同槽、同模型、点时前瞻对照判断 WorldModel 是否改善 Forecast；
+- 能在同一槽区分 Quant prior、AI posterior 及逐 bucket 修正，并证明任何偏离来自可引用机制而非生成噪声；
 - Forecast 胜出结论包含保守下界、校准、动态简单基线和搜索影响，不以均值轻微领先代替证据；
 - 能区分判断错误、完成太慢、成本吞噬、风险拒绝和执行偏差；
 - 行为变更不继承旧成绩，失败实验永久可查但运行代码删除。

@@ -254,6 +254,18 @@ Reference 候选还必须在增长、通胀、通缩、流动性紧缩和相关�
 
 评价必须把四个互不替代的问题分开。Forecast proper score 判断概率分布是否优于同合同的简单基线；Product residual 判断从规范标的到具体 Spot/Perpetual 的 basis、funding 与规则映射是否准确；Capital choice 使用当时已冻结的全部合法候选、目标金额和完整未来成本，在共同终点按经济暴露比较“当时选择的产品或现金”与“事后最佳合法产品”的单位净收益，只诊断捕获、错误入场或错过的方向；Execution/Account 才评价实际订单、成交、持仓和费用后的资金结果。只有本轮新产生 Forecast 并完成完整候选比较的 Capital Target 可以进入跨经济暴露评价；只覆盖当前持仓的程序化风险复核、重复消费既有 Forecast 或只减险动作不具备声称“没有错过其他机会”的信息范围。产品 Outcome 从原始投影锚点结算，Capital choice 必须先用冻结的决策毛收益与投影毛收益之差把它重锚到真实决策时点，再扣决策时冻结的未来成本，禁止把决策发生前的行情归功或归罪于该选择。Capital choice 的事后最佳产品不是可投资基准、交易策略或授权依据，不能据此追涨、回填订单或降低未来门槛；它只负责让“没有下单”也能区分正确持币与错过成本后机会。四层都读取不可变点时事实，任何一层不得用另一层的好结果掩盖自身失败。
 
+#### 4.5.1 Quant prior 与唯一资本来源
+
+ForecastContract 是来源无关的经济问题，DecisionSlot 和 Outcome 也只各存在一份；不同生产者通过各自不可变的 ProducerBinding 对同一槽承担应答义务。纯程序 Quant、Context AI 及候选的 AI + Quant 因此只是同一 Forecast 账本中的不同研究生产者，不是三套策略、账户、调度、结算或资金链。任一经济问题在同一时点最多只有一个 `CAPITAL_CANDIDATE` 生产者，其余必须为 `RESEARCH`；研究 Forecast 永不投票、合并目标或进入 Portfolio。更换正式来源只能发布新的前瞻行为和资本授权，不能由运行时比较当轮输出后挑赢家。
+
+Quant prior 是 Forecast 内部的冻结概率输入，不是新的业务阶段。它由内容寻址制品和本次点时投影共同确定：制品保存训练数据身份、严格训练截止、特征定义、缺失规则、候选模型及事前选择规则、参数、残差/校准分布和适用边界；点时投影只保存本槽实际可见的因子值、各候选预测、指定 prior、模型分歧、适用状态与完整引用。原始 K 线、逐笔、新闻正文和训练样本不进入 AI 输入；程序只发送能够改变本次概率判断的高密度投影。制品、特征或选择规则变化必须产生新的 producer behavior，历史 Forecast 与 Outcome 不重写。
+
+初始 Quant 实验从一个简单、透明、可完全回放的指定模型和少量有经济含义的因子开始；momentum、mean reversion、carry、breakout、volatility 与 liquidity 只有在当前目标、时域和数据点时语义完整时才进入候选。开发、验证和盲测按时间顺序冻结，所有搜索过的候选和失败结果计入选择历史；不得因为复杂模型历史拟合更好就默认组合或上线。某目标缺少合格点时历史时输出 `NO_ESTIMATE`，不得用静态概率、其他产品 K 线或当前已知未来补齐成伪 Quant 预测。
+
+AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯一 posterior。输出必须逐 bucket 说明相对 prior 的概率变化，并把每次实质偏离绑定到当前机制、竞争解释、反向证据或适用状态变化；未形成可验证增量时保持或收缩到 prior，而不是为展示 AI 价值强行偏离。AI 不重新计算因子、收益、波动、成本、仓位或订单。产品 break-even、预测延迟和完整未来成本由程序以确定性字段提供，帮助 AI 判断机制是否可能在合同期限内产生足够幅度，但规范 Forecast 仍预测同一 gross economic Outcome；净可交易性只由统一 Product/Portfolio 与资本评价计算，不能在三处各维护一套成本公式。
+
+最小前瞻对照固定为三个角色：纯 Quant 研究基线、冻结的现有 Context 行为、AI + Quant 研究候选。它们共享槽、信息截止、完成后 Outcome 起点、bucket、缺失语义和评分；分别报告覆盖、proper score、校准、预测幅度与真实收益的单调性、同输入离散度，以及把相同预测映射到当时合法产品后的费用后资本反事实。样本数量只描述不确定性，不构成固定交易门槛。若 Quant 不能优于滚动无条件/简单市场基线，删除该模型假设；若 AI + Quant 不能相对 Quant 提供前瞻增量，删除 posterior 复杂度；只有获授权的唯一行为继续进入正式 Portfolio。
+
 运行幂等与模型稳定性是两件事。同一决策槽只保存一次权威 Forecast，重试不能更换交易结果；后续持仓复核只对这份不可变 Forecast 做程序化重估，不能再次询问 AI。但这仍不能证明生成模型对同一输入不敏感：候选行为必须在正式调用前登记精确输入副本，副本使用同一模型可见输入、Prompt、Schema、模型、推理强度和期限，分别审计概率分布与期望收益离散度。副本只形成稳定性事实，不增加 Forecast、Outcome、独立样本或投票权，也不进入实时资本链。
 
 稳定性报告不设置脱离效应大小与样本依赖的固定“通过次数”。产品选择和开平仓由确定性资本规则完成；若要测量副本是否会翻转产品、方向或现金选择，必须用当时冻结的账户、报价、产品映射、成本和整套 Portfolio 行为做完整点时重放，不能在稳定性 evaluator 中另写近似资本公式。副本、正式目标和重放 case 永久保存在各自事实域，Dashboard 只返回现金、表达、目标变化和最大配置差异等恒定大小汇总，不把随历史增长的 case 列表反复传给浏览器。生成噪声与候选费用后 Edge 同量级时，该 Edge 不具备新增资本的可识别性；如何收缩仓位或撤销行为权限，由预登记的前瞻 Forecast、费用后资本结果和稳定性联合实验裁决，不能用多次采样投票把不确定性伪装成 Alpha。
@@ -457,6 +469,9 @@ Outcome 进程可以承载多种现役终结义务，但它们不是一条串行
 - Black 与 Litterman 的[Global Portfolio Optimization](https://rpc.cfainstitute.org/research/financial-analysts-journal/1992/faj-v48-n5-28)以中性收益先验承接没有观点的资产，再按观点不确定性调整。本设计只采用“先验 + 可校准观点 + 收缩”的原则，不预设必须实现原论文模型。
 - DeMiguel、Garlappi 与 Uppal 的[样本外组合比较](https://www.tse-fr.eu/sites/default/files/medias/doc/conf/fineco/papers_2010/uppal.pdf)显示复杂均值—方差规则可能因估计误差输给简单分散基线；Olivares-Nadal 与 DeMiguel 的[交易成本与稳健优化研究](https://pubsonline.informs.org/doi/10.1287/opre.2017.1699)进一步说明成本约束也能抑制估计误差。本设计因此强制简单基线、观点收缩和成本内生化，而不把优化器复杂度当作价值。
 - Gârleanu 与 Pedersen 的[含交易成本动态组合研究](https://www.nber.org/papers/w15205)说明在信号持续性和交易成本并存时，应从现有持仓部分向动态目标调整。本设计因此使用成本感知的目标暴露和无交易区间，而不是每次 Forecast 清仓重建。
+- Gu、Kelly 与 Xiu 的[机器学习实证资产定价研究](https://www.nber.org/papers/w25398)以及 Kelly 与 Xiu 的[金融机器学习综述](https://www.nber.org/papers/w31502)共同强调高维信号、非线性和样本外验证，也显示模型复杂度必须由真实预测增量而非拟合度裁决。本设计因此先冻结透明 Quant prior，再让复杂候选在同槽盲测中竞争。
+- Ke、Kelly 与 Xiu 的[文本数据收益预测研究](https://www.nber.org/papers/w26186)说明文本可与市场状态共同形成可检验预测，但不证明任意语言模型叙事具有 Alpha。本设计只允许 WorldModel 通过可结算 posterior 改变 Forecast，并要求相对不读取文本的 Quant prior 证明增量。
+- [FinBench](https://arxiv.org/html/2607.16229v1)把严格时间截止、基准概率和 proper score 作为金融预测评测的核心。本设计采用这些实验约束，但不把其短期基准结果视为本项目或 Codex 的盈利证据。
 - 开源交易引擎 NautilusTrader 的[当前架构](https://nautilustrader.io/docs/latest/concepts/architecture/)让 backtest、sandbox 与 live 复用同一内核，并把 Risk、Execution、账户状态和 Venue reconciliation 置于明确边界。本项目借鉴的是环境等价、类型化命令和恢复语义，不照搬其消息总线、组件数量或多 Venue 平台；现有单库闭环没有被证明需要更重的基础设施。
 
 这些外部方法只确定合理先验和否决明显错误；本项目采用何种先验、优化器、风险目标和资产集合，仍必须由自身点时回放、盲测和前瞻费用后结果决定。
