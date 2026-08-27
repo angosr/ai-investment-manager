@@ -4,7 +4,7 @@ feature:
   volatility_window: 8
 
 decision_state:
-  version: portfolio-state-v48
+  version: portfolio-state-v49
   analysis_scope: primary-portfolio
   official_fact_policy:
     version: official-fact-v19
@@ -109,7 +109,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v51
+    version: decision-packet-policy-v52
     schema_version: decision-packet-v20
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -130,7 +130,7 @@ decision_state:
     maximum_market_age_seconds: 180
 
 capital:
-  version: total-portfolio-capital-v72
+  version: total-portfolio-capital-v73
   enabled: false
   settlement_asset: USDT
   mandate:
@@ -259,7 +259,7 @@ capital:
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "aa61da6711b3532ed77e79044b1ec15a9cc3aca6d3b73bc1abf20fe89c93a6ea"
+    producer_behavior_id: "dd17b3bc2ab7bbef731e8d0c737dccdc5e44e7bc61803acd8ed2146dc66fdf8f"
     # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
@@ -347,7 +347,7 @@ capital:
           - {bucket_id: LARGE_GAIN, probability: "0.10"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v42
+  version: typed-outcome-settlement-v43
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   target_forecast_minimum_sample_size: 30
@@ -358,11 +358,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v34
+    version: world-model-ablation-forward-v35
     enabled: false
-    plan_id: world-model-ablation-forward-v34
+    plan_id: world-model-ablation-forward-v35
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T05:00:00Z
+    activated_at: 2026-08-27T08:00:00Z
     minimum_sample_size: 30
 
 governance:
@@ -605,11 +605,11 @@ codex_runtime:
   max_account_switches: 1
 
 assessment:
-  version: context-assessment-v52
+  version: context-assessment-v53
   enabled: false
   review_trigger_symbol: BTCUSDT
   mandate:
-    version: primary-portfolio-mandate-v13
+    version: primary-portfolio-mandate-v14
     analysis_scope: primary-portfolio
     question: 以点时证据维护组合级可证伪世界模型，解释外生事件经利率、美元、流动性、资金行为与市场结构传导至可交易资产的主路径和竞争路径；不为没有独立盈利证据的候选制造资本结论。
     mandate_exposures:
@@ -627,7 +627,7 @@ assessment:
         market_symbol: PAXGUSDT
         horizons_minutes: [60, 240]
     # 顺序是 Packet 容量不足时的因果优先级：政策与最新官方宏观结果、流动性/定价中介、资金行为、交叉验证。
-    required_risk_factors: [US_MONETARY_POLICY, US_INFLATION, US_EMPLOYMENT, US_GROWTH, US_FISCAL_LIQUIDITY, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_REAL_INTEREST_RATES, US_DOLLAR, US_ENERGY_INFLATION, US_HIGH_YIELD_CREDIT_RISK, US_EQUITY_RISK_APPETITE, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
+    required_risk_factors: [US_MONETARY_POLICY, US_INFLATION, US_EMPLOYMENT, US_GROWTH, US_FISCAL_LIQUIDITY, US_REAL_INTEREST_RATES, US_DOLLAR, US_EQUITY_RISK_APPETITE, US_HIGH_YIELD_CREDIT_RISK, CRYPTO_LIQUIDITY_CAPACITY, BTC_INSTITUTIONAL_FLOW, ETH_INSTITUTIONAL_FLOW, US_MONETARY_LIQUIDITY, US_INTEREST_RATES, US_ENERGY_INFLATION, BTC_INSTITUTIONAL_HOLDINGS, EXTERNAL_INFORMATION, MARKET_VOLATILITY]
 
 codex_accounts:
   version: local-directory-account-registry-v2

@@ -948,6 +948,116 @@ def test_packet_keeps_latest_continuous_official_metric_beyond_event_window(
     assert packet_feature_values(numeric_packet)[selector] == Decimal("-31510")
 
 
+def test_compact_state_refills_capacity_rejected_by_verbose_fact_budget(
+    app_config,
+    replay_input,
+) -> None:
+    market = replay_input.market
+    features = (FeatureEngine(app_config.feature).compute(market),)
+    direct = _fact(market.as_of)
+    flow = _fact(
+        market.as_of,
+        revision_id="revision-etf-flow",
+        fact_id="fact-etf-flow",
+        event_time=market.as_of - timedelta(days=1),
+        observation_id="obs-etf-flow",
+    )
+    flow = flow.model_copy(
+        update={
+            "fact": flow.fact.model_copy(
+                update={
+                    "fact_type": BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
+                    "claim": (
+                        "aggregator=ByKaranteli; effective_date=2026-08-25; "
+                        "finalized_daily_net_inflow_usd_m=314.370 USD_MILLIONS; "
+                        "net_assets_usd_m=99045.023 USD_MILLIONS; "
+                        "cumulative_inflow_usd_m=54358.049 USD_MILLIONS; "
+                        "value_traded_usd_m=3518.441 USD_MILLIONS; "
+                        "absolute_flow_percentile=0.6667; sample_size=318; "
+                        "lookback=2025-05-20..2026-08-25. "
+                        "This is a finalized aggregate series and not a direction signal."
+                    ),
+                    "risk_factors": ("BTC_INSTITUTIONAL_FLOW",),
+                    "decision_materiality": FactDecisionMateriality.BACKGROUND,
+                }
+            ),
+            "highest_source_tier": SourceTier.AGGREGATOR,
+        }
+    )
+    background = _fact(
+        market.as_of,
+        revision_id="revision-background",
+        fact_id="fact-background",
+        observation_id="obs-background",
+    )
+    background = background.model_copy(
+        update={
+            "fact": background.fact.model_copy(
+                update={
+                    "fact_type": "EXTERNAL_BACKGROUND_EVENT",
+                    "claim": (
+                        "这是低优先级背景材料，不应仅因为最终输入仍有空位而被重新加入。" * 30
+                    ),
+                    "risk_factors": ("EXTERNAL_INFORMATION",),
+                    "decision_materiality": FactDecisionMateriality.BACKGROUND,
+                }
+            )
+        }
+    )
+    facts = (direct, flow, background)
+    state = _state(
+        market.as_of,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    ).model_copy(update={"fact_revision_ids": tuple(item.fact.revision_id for item in facts)})
+
+    packet = DecisionPacketBuilder(
+        DecisionPacketPolicy(
+            version="packet-policy-final-cost-v1",
+            schema_version="decision-packet-v1",
+            maximum_fact_characters=500,
+            maximum_packet_characters=6_000,
+        )
+    ).build(
+        mandate=AnalysisMandate(
+            version="mandate-v1",
+            analysis_scope="crypto-risk",
+            question="Assess the event and current institutional flow.",
+            mandate_exposures=TEST_MANDATE_EXPOSURES,
+            observation_assets=(
+                ObservationAsset(
+                    asset="BTC",
+                    market_symbol="BTCUSDT",
+                    horizons_minutes=(60,),
+                ),
+            ),
+            required_risk_factors=(
+                "REGULATION",
+                "BTC_INSTITUTIONAL_FLOW",
+                "EXTERNAL_INFORMATION",
+            ),
+        ),
+        state=state,
+        deltas=(_delta(market.as_of),),
+        facts=facts,
+        account=replay_input.account,
+        markets=(market,),
+        features=features,
+    )
+
+    assert tuple(item.revision_id for item in packet.facts) == (
+        "revision-1",
+        "revision-etf-flow",
+    )
+    assert packet.omitted_fact_revision_ids == ("revision-background",)
+    projection = decision_packet_analysis_projection(packet)
+    assert tuple(item["type"] for item in projection["state_features"]["flow_states"]) == (
+        BTC_ETF_AGGREGATE_FLOW_FACT_TYPE,
+    )
+    assert len(canonical_json(projection)) <= 6_000
+
+
 def test_analysis_projection_separates_policy_and_financing_from_generic_facts(
     app_config,
     replay_input,

@@ -62,7 +62,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v72"
+    assert config.capital.version == "total-portfolio-capital-v73"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -90,10 +90,10 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         item.stream_id for item in config.information.official_event_feeds
     }
     assert config.information.official_metric_slow_poll_seconds == 21_600
-    assert config.decision_state.version == "portfolio-state-v48"
+    assert config.decision_state.version == "portfolio-state-v49"
     assert config.decision_state.official_fact_policy.version == "official-fact-v19"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v51"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v52"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -118,16 +118,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BTCUSDT",
         "ETHUSDT",
     )
-    assert config.assessment.version == "context-assessment-v52"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v42"
+    assert config.assessment.version == "context-assessment-v53"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v43"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v34"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v35"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v32"
-    assert config.assessment.mandate.version == "primary-portfolio-mandate-v13"
+    assert config.assessment.mandate.version == "primary-portfolio-mandate-v14"
     assert tuple(item.key for item in config.assessment.mandate.mandate_exposures) == (
         ("CRYPTO_NETWORK", "BTC"),
         ("INFLATION_SENSITIVE", "PAXG"),
@@ -242,16 +242,16 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "US_EMPLOYMENT",
         "US_GROWTH",
         "US_FISCAL_LIQUIDITY",
-        "US_MONETARY_LIQUIDITY",
-        "US_INTEREST_RATES",
         "US_REAL_INTEREST_RATES",
         "US_DOLLAR",
-        "US_ENERGY_INFLATION",
-        "US_HIGH_YIELD_CREDIT_RISK",
         "US_EQUITY_RISK_APPETITE",
+        "US_HIGH_YIELD_CREDIT_RISK",
         "CRYPTO_LIQUIDITY_CAPACITY",
         "BTC_INSTITUTIONAL_FLOW",
         "ETH_INSTITUTIONAL_FLOW",
+        "US_MONETARY_LIQUIDITY",
+        "US_INTEREST_RATES",
+        "US_ENERGY_INFLATION",
         "BTC_INSTITUTIONAL_HOLDINGS",
         "EXTERNAL_INFORMATION",
         "MARKET_VOLATILITY",

@@ -1332,7 +1332,7 @@ class DecisionPacketBuilder:
         missing_fact_ids = tuple(
             fact_id for fact_id in direct_fact_ids if fact_id not in visible_by_id
         )
-        selected, omitted = self._select_facts(
+        selected, omitted, fact_candidates = self._select_facts(
             mandate=mandate,
             facts=facts,
             direct_fact_ids=frozenset(direct_fact_ids),
@@ -1423,6 +1423,15 @@ class DecisionPacketBuilder:
                 len(canonical_json(decision_packet_analysis_projection(packet)))
                 <= self._policy.maximum_packet_characters
             ):
+                if self._refill_one_compact_fact(
+                    payload=payload,
+                    candidates=fact_candidates,
+                    selected_facts=selected_facts,
+                    selected_intelligence=selected_intelligence,
+                    omitted_facts=omitted_facts,
+                    omitted_intelligence=omitted_intelligence,
+                ):
+                    continue
                 return packet
             # The selector protects directly triggered evidence and preserves a
             # causal baseline. A previous WorldModel can carry unchanged typed
@@ -1438,6 +1447,56 @@ class DecisionPacketBuilder:
                 "DecisionPacket causal baseline and directly triggered content "
                 "exceed maximum_packet_characters"
             )
+
+    def _refill_one_compact_fact(
+        self,
+        *,
+        payload: dict[str, object],
+        candidates: tuple[PacketFact, ...],
+        selected_facts: list[PacketFact],
+        selected_intelligence: list[PacketIntelligenceEvent],
+        omitted_facts: set[str],
+        omitted_intelligence: set[str],
+    ) -> bool:
+        """Use final model-visible cost to fill capacity left by raw preselection.
+
+        ``maximum_fact_characters`` bounds the verbose auditable Packet before
+        projection.  Continuous facts are sent as compact typed state, so that
+        intermediate bound can reject a useful state that still fits the real
+        Codex input.  Reconsider candidates in the original causal order after
+        the final projection is known; never replace an existing higher-ranked
+        input or exceed the fact-count contract.
+        """
+
+        if len(selected_facts) >= self._policy.maximum_facts:
+            return False
+        selected_ids = {item.revision_id for item in selected_facts}
+        for candidate in candidates:
+            if (
+                candidate.revision_id in selected_ids
+                or candidate.fact_type not in CONTINUOUS_CONTEXT_FACT_TYPES
+            ):
+                continue
+            trial_ids = {*selected_ids, candidate.revision_id}
+            trial_facts = [item for item in candidates if item.revision_id in trial_ids]
+            trial_omitted = omitted_facts - {candidate.revision_id}
+            trial_payload = {
+                **payload,
+                "facts": tuple(trial_facts),
+                "intelligence_events": tuple(selected_intelligence),
+                "omitted_fact_revision_ids": tuple(sorted(trial_omitted)),
+                "omitted_intelligence_event_refs": tuple(sorted(omitted_intelligence)),
+            }
+            trial = DecisionPacket.create(**trial_payload)
+            if (
+                len(canonical_json(decision_packet_analysis_projection(trial)))
+                > self._policy.maximum_packet_characters
+            ):
+                continue
+            selected_facts[:] = trial_facts
+            omitted_facts.discard(candidate.revision_id)
+            return True
+        return False
 
     def _validate_inputs(
         self,
@@ -1544,8 +1603,7 @@ class DecisionPacketBuilder:
             evidence_ref = content_hash(event)
             age_seconds = (as_of - event.event_time).total_seconds()
             if evidence_ref not in direct_event_refs and (
-                event.attention_priority
-                < self._policy.minimum_background_attention_priority
+                event.attention_priority < self._policy.minimum_background_attention_priority
                 or event.source_reliability < self._policy.minimum_background_source_reliability
             ):
                 omitted.append(evidence_ref)
@@ -1660,7 +1718,11 @@ class DecisionPacketBuilder:
         facts: tuple[VisibleFact, ...],
         direct_fact_ids: frozenset[str],
         as_of: datetime,
-    ) -> tuple[tuple[PacketFact, ...], tuple[str, ...]]:
+    ) -> tuple[
+        tuple[PacketFact, ...],
+        tuple[str, ...],
+        tuple[PacketFact, ...],
+    ]:
         relevant_assets = {item.asset for item in mandate.observation_assets}
         relevant_risk = set(mandate.required_risk_factors)
         scope_relevant = [
@@ -1776,8 +1838,7 @@ class DecisionPacketBuilder:
         direct_count = sum(item.fact.revision_id in direct_fact_ids for item in eligible)
         if direct_count > self._policy.maximum_facts:
             raise DecisionPacketCapacityError("direct facts exceed maximum_facts")
-        selected: list[PacketFact] = []
-        used_characters = 0
+        candidates: list[tuple[PacketFact, int]] = []
         for item in eligible:
             headline, headline_suspicious = sanitize_external_text(
                 item.fact.headline,
@@ -1787,38 +1848,51 @@ class DecisionPacketBuilder:
                 item.fact.claim,
                 maximum_length=self._policy.maximum_characters_per_fact,
             )
-            character_cost = len(headline) + len(claim)
             required = item.fact.revision_id in direct_fact_ids
+            candidates.append(
+                (
+                    PacketFact(
+                        fact_id=item.fact.fact_id,
+                        revision_id=item.fact.revision_id,
+                        fact_type=item.fact.fact_type,
+                        status=item.fact.status,
+                        event_time=item.fact.event_time,
+                        observed_at=item.fact.observed_at,
+                        headline=headline,
+                        claim=claim,
+                        affected_assets=item.fact.affected_assets,
+                        risk_factors=item.fact.risk_factors,
+                        decision_materiality=item.fact.decision_materiality,
+                        highest_source_tier=item.highest_source_tier,
+                        independent_source_count=item.independent_source_count,
+                        prompt_injection_suspected=(
+                            item.prompt_injection_suspected
+                            or headline_suspicious
+                            or claim_suspicious
+                        ),
+                        directly_triggered=required,
+                    ),
+                    len(headline) + len(claim),
+                )
+            )
+        selected: list[PacketFact] = []
+        used_characters = 0
+        for candidate, character_cost in candidates:
+            required = candidate.directly_triggered
             if len(selected) >= self._policy.maximum_facts or (
                 used_characters + character_cost > self._policy.maximum_fact_characters
             ):
                 if required:
                     raise DecisionPacketCapacityError("direct facts exceed fact character capacity")
-                omitted.append(item.fact.revision_id)
+                omitted.append(candidate.revision_id)
                 continue
-            selected.append(
-                PacketFact(
-                    fact_id=item.fact.fact_id,
-                    revision_id=item.fact.revision_id,
-                    fact_type=item.fact.fact_type,
-                    status=item.fact.status,
-                    event_time=item.fact.event_time,
-                    observed_at=item.fact.observed_at,
-                    headline=headline,
-                    claim=claim,
-                    affected_assets=item.fact.affected_assets,
-                    risk_factors=item.fact.risk_factors,
-                    decision_materiality=item.fact.decision_materiality,
-                    highest_source_tier=item.highest_source_tier,
-                    independent_source_count=item.independent_source_count,
-                    prompt_injection_suspected=(
-                        item.prompt_injection_suspected or headline_suspicious or claim_suspicious
-                    ),
-                    directly_triggered=required,
-                )
-            )
+            selected.append(candidate)
             used_characters += character_cost
-        return tuple(selected), tuple(sorted(omitted))
+        return (
+            tuple(selected),
+            tuple(sorted(omitted)),
+            tuple(item for item, _cost in candidates),
+        )
 
     @staticmethod
     def _asset_state(
