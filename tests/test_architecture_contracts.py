@@ -22,23 +22,10 @@ CLI_CONTRACT = {
     "assessment-worker": "config,database_url,release_manifest",
     "binance-testnet-audit": "config",
     "binance-testnet-order-test": "symbol,config",
-    "blind-evaluate": (
-        "config,database_url,source_evaluation_id,catalog,event_catalog,funding_catalog,"
-        "evaluation_catalog,blind_evaluation_catalog,include_trades"
-    ),
-    "build-edge-calibration": (
-        "config,database_url,producer_id,producer_version,symbol,side,horizon_minutes,"
-        "training_start,training_end,published_at,valid_from,valid_until,evaluation_version,"
-        "source_calibration_ref,source_execution_policy_version,source_frequency_policy_version"
-    ),
     "challenger-audit": "config,release_manifest,project_root",
     "codex-isolation-audit": "config,release_manifest,project_root,audit_catalog",
     "dashboard-service": (
         "config,database_url,release_manifest,host,port,web_dist"
-    ),
-    "diagnose-legacy-analysis-forecasts": (
-        "config,database_url,window_start,window_end,published_at,pipeline_version,"
-        "analysis_behavior_hash,minimum_non_overlapping_samples"
     ),
     "fetch-binance-carry-history": (
         "config,spot_dataset_id,funding_dataset_id,spot_catalog,funding_catalog,carry_catalog"
@@ -62,30 +49,11 @@ CLI_CONTRACT = {
     "preregister-world-model-ablation": (
         "project_root,config,release_manifest,database_url"
     ),
-    "perpetual-trend-walk-forward": (
-        "database_url,carry_dataset_id,plan_id,carry_catalog,evaluation_catalog,register_only"
-    ),
     "record-reference-rejection": (
         "config,plan,information_cutoff,project_root,economic_catalog,product_catalog,"
         "funding_catalog,quote_catalog,result_catalog"
     ),
-    "paired-decision-tape": (
-        "config,database_url,pipeline_version,symbol,plan_id,signal_end,"
-        "source_blind_evaluation_id,dataset_id,horizon_minutes,maximum_age_minutes,"
-        "minimum_confidence,minimum_non_overlapping_forecasts,candidate,catalog,"
-        "blind_evaluation_catalog,starting_equity,spread_bps,include_trades,register_only"
-    ),
     "phase-a-audit": "config,project_root",
-    "replay-event-triggers": (
-        "config,database_url,event_dataset_id,replay_start,replay_end,"
-        "analysis_duration_seconds,admission_order,event_catalog,include_batches"
-    ),
-    "research-catalog": "evaluation_catalog,blind_evaluation_catalog",
-    "screen-signals": (
-        "config,dataset_id,signal_start,signal_end,candidate,event_dataset_id,catalog,"
-        "event_catalog,spread_bps,minimum_non_overlapping_samples,"
-        "minimum_net_return_bps_lower_bound,minimum_incremental_return_bps_lower_bound"
-    ),
     "set-trigger-heartbeat": (
         "symbol,heartbeat_minutes,config,database_url,release_manifest"
     ),
@@ -94,19 +62,9 @@ CLI_CONTRACT = {
     "trigger-now": "symbol,request_id,reason,config,database_url,evidence_id,release_manifest",
     "trigger-service": "config,database_url,release_manifest",
     "validate-config": "config",
-    "walk-forward": (
-        "config,database_url,dataset_id,plan_id,training_bars,test_bars,blind_bars,candidate,"
-        "event_dataset_id,funding_dataset_id,catalog,event_catalog,funding_catalog,"
-        "evaluation_catalog,starting_equity,spread_bps,minimum_trades,minimum_profit_factor,"
-        "minimum_average_net_return_bps_lower_bound,maximum_drawdown_fraction,"
-        "minimum_positive_fold_fraction,include_trades,register_only"
-    ),
 }
 
 RESEARCH_COMMAND_NAMES = {
-    "blind-evaluate",
-    "build-edge-calibration",
-    "diagnose-legacy-analysis-forecasts",
     "fetch-binance-carry-history",
     "fetch-binance-funding-history",
     "fetch-binance-history",
@@ -114,13 +72,7 @@ RESEARCH_COMMAND_NAMES = {
     "fetch-economic-series",
     "freeze-event-history",
     "freeze-executable-quotes",
-    "paired-decision-tape",
-    "perpetual-trend-walk-forward",
     "record-reference-rejection",
-    "replay-event-triggers",
-    "research-catalog",
-    "screen-signals",
-    "walk-forward",
 }
 
 
@@ -305,10 +257,6 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "binance-testnet-audit",
             "binance-testnet-order-test",
         },
-        "entrypoints/cli/legacy_research_commands.py": {
-            "build-edge-calibration",
-            "diagnose-legacy-analysis-forecasts",
-        },
         "entrypoints/cli/service_commands.py": {
             "assessment-worker",
             "submit-context-assessment",
@@ -332,14 +280,7 @@ def test_cli_commands_are_owned_by_change_reason() -> None:
             "fetch-binance-usdm-history",
             "fetch-binance-funding-history",
             "fetch-binance-carry-history",
-            "screen-signals",
-            "walk-forward",
-            "blind-evaluate",
             "freeze-event-history",
-            "replay-event-triggers",
-            "research-catalog",
-            "paired-decision-tape",
-            "perpetual-trend-walk-forward",
         },
     }
 
