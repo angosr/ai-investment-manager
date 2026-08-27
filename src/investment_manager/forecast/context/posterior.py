@@ -61,7 +61,7 @@ from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.settings import AppConfig
 
-POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v3"
+POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v4"
 POSTERIOR_INSTRUCTIONS = (
     "你是组合概率预测员。输入逐目标提供同槽确定性市场状态、预登记 ForecastContract、"
     "经过样本外验证的 Quant prior 与共享 WorldModel。",
@@ -293,7 +293,6 @@ def build_quant_context_posterior_assignment(
                 "inference_version",
                 "features",
                 "quant_prior",
-                "candidate_predictions",
                 "maximum_bucket_probability_range",
             )
         }

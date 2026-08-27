@@ -253,7 +253,7 @@ Context Forecast 与无技巧分布、简单程序基线以及存在时的 Progr
 
 静态无技巧概率只证明最弱的分布能力。正式评价同时包含滚动无条件分布和至少一个不使用 WorldModel 的简单市场基线，避免把学会总体 bucket 频率误认为时变 Alpha。`model_mean_score < benchmark_mean_score` 只能描述点估计，不能单独标记为已证明胜出或授予权限。
 
-Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个世界认知、策略引擎或数据仓库。它对每个目标/时域只提供：冻结特征值及可见时间、指定 Quant prior、候选模型分布与分歧、训练制品身份、程序计算的适用状态、当前条件样本量、跨阶段可靠性和按合同代表值计算的预期毛收益。常规 regime、模型适用度和候选权重由冻结程序决定；AI 不得按本轮叙事点名启停算法或另做一次模型选择。所有值都可点时回放，AI 不读取训练数据或 raw data，也不能在输出中自行改写这些值。产品 break-even、手续费、basis、funding、滑点与预测延迟只在后续统一 Product/Portfolio 映射中出现一次，不进入 AI 输入。
+Quant panel 是 State 到 Forecast 的确定性高密度投影，不是第二个世界认知、策略引擎或数据仓库。完整审计投影对每个目标/时域保存冻结特征值及可见时间、指定 Quant prior、候选模型分布与分歧、训练制品身份、程序计算的适用状态、当前条件样本量、跨阶段可靠性和按合同代表值计算的预期毛收益；模型可见投影只保留胜出 prior、实际特征值、可靠性及候选分歧的标量摘要，不重复发送已落选候选的完整概率表。常规 regime、模型适用度和候选权重由冻结程序决定；AI 不得按本轮叙事点名启停算法或另做一次模型选择。所有值都可点时回放，AI 不读取训练数据或 raw data，也不能在输出中自行改写这些值。产品 break-even、手续费、basis、funding、滑点与预测延迟只在后续统一 Product/Portfolio 映射中出现一次，不进入 AI 输入。
 
 AI + Quant 的模型可见输入保持四块且只各出现一次：当前确定性 State、当前 WorldModel 投影、Quant panel、ForecastContract。AI 先把 Quant prior 当作可被证据修正的基准，再判断有引用的事件、政策博弈和传导机制是否构成历史模型尚未表达的结构变化；最终逐目标输出唯一 posterior、逐 bucket 的 prior→posterior 变化、造成变化的机制/反证引用和失效条件。AI 的权限止于这种结构性概率修正，不延伸到算法选择、因子计算和交易执行。解释若不能对应概率变化就不进入 Forecast；概率变化若不能对应输入中的点时事实就拒绝。`posterior == prior` 是合法结论，不要求 AI 为证明存在感制造观点。
 

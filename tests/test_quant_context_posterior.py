@@ -322,6 +322,20 @@ def test_quant_context_posterior_behavior_is_independent_of_contract_order() -> 
     assert forward == reverse
 
 
+def test_quant_context_posterior_exposes_selected_prior_not_candidate_distributions() -> None:
+    *_, quant_forecast, assignment = _fixture()
+
+    program_panel = json.loads(quant_forecast.program_input_json or "{}")
+    model_input = json.loads(assignment.analysis_input_json)
+    projected_panel = model_input["forecast_targets"][0]["quant_panel"]
+
+    assert "candidate_predictions" in program_panel
+    assert "candidate_predictions" not in projected_panel
+    assert projected_panel["features"] == program_panel["features"]
+    assert projected_panel["quant_prior"] == program_panel["quant_prior"]
+    assert projected_panel["maximum_bucket_probability_range"] == "0.04"
+
+
 def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> None:
     (
         config,
