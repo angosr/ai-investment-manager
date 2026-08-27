@@ -65,7 +65,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
-    assert config.capital.version == "total-portfolio-capital-v68"
+    assert config.capital.version == "total-portfolio-capital-v69"
     assert config.capital.mandate.portfolio_id == "primary"
     assert config.capital.mandate.status == MandateStatus.PROVISIONAL
     assert config.capital.mandate.objective == "REAL_CAPITAL_GROWTH"
@@ -82,7 +82,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "BINANCE:USD_M_PERPETUAL:BTCUSDT",
         "BINANCE:USD_M_PERPETUAL:PAXGUSDT",
     )
-    assert config.capital.decision.version == "portfolio-net-edge-v15"
+    assert config.capital.decision.version == "portfolio-net-edge-v16"
     assert config.information.version == "information-intake-v40"
     assert config.information.normalizer_version == "trendradar-collector-v9"
     assert config.information.economic_release_calendar_poll_seconds == 21_600

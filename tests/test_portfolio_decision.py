@@ -324,6 +324,47 @@ def test_existing_holding_does_not_pay_its_entry_fee_again() -> None:
     assert candidate.eligible
 
 
+def test_existing_holding_compares_with_the_cost_of_exiting_now() -> None:
+    target = _engine(maximum_single_sleeve_fraction=Decimal("0.10")).decide(
+        cycle_id="hold-vs-exit",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(_input(_forecast(expected_bps="5")),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == Decimal("1000")
+    assert target.reason_codes == ("HOLDING_VALUE_EXCEEDS_EXIT_COST",)
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert candidate.evaluation_gross_notional == Decimal("1000")
+    assert candidate.decision_net_bps == Decimal("-5.00")
+    assert candidate.minimum_net_bps == Decimal("-10.00")
+    assert candidate.eligible
+    assert candidate.reason_codes == ("HOLDING_VALUE_EXCEEDS_EXIT_COST",)
+
+
+def test_existing_holding_exits_when_holding_is_worse_than_exit_cost() -> None:
+    target = _engine(maximum_single_sleeve_fraction=Decimal("0.10")).decide(
+        cycle_id="exit-better-than-hold",
+        as_of=NOW,
+        account=_account(holding=True),
+        sleeves=(_input(_forecast(expected_bps="-1")),),
+        quotes=_quotes(),
+        execution_specs=_specs(),
+    )
+
+    assert target is not None
+    assert target.sleeves[0].desired_gross_notional == 0
+    assert target.candidate_evaluations is not None
+    candidate = target.candidate_evaluations[0]
+    assert candidate.decision_net_bps == Decimal("-11.00")
+    assert candidate.minimum_net_bps == Decimal("-10.00")
+    assert not candidate.eligible
+
+
 def test_negative_fee_after_edge_is_preserved_as_a_cash_decision() -> None:
     target = _engine().decide(
         cycle_id="cycle-1",

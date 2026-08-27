@@ -336,7 +336,7 @@ class PortfolioDecisionEngine:
                 raise ValueError("PortfolioSleeveInput sleeve_id 与 Forecast 不一致")
 
         single_limit = account.equity * self._policy.maximum_single_sleeve_fraction
-        candidate_notional = {
+        maximum_candidate_notional = {
             item.sleeve_id: self._candidate_notional(
                 item,
                 allocation_limit=min(
@@ -348,16 +348,41 @@ class PortfolioDecisionEngine:
             )
             for item in sleeves
         }
-        candidate_evaluations = {
-            item.sleeve_id: self._evaluate_candidate(
+        candidate_evaluations: dict[str, PortfolioCandidateEvaluation] = {}
+        for item in sleeves:
+            current = current_by_sleeve[item.sleeve_id]
+            maximum = maximum_candidate_notional[item.sleeve_id]
+            candidate = self._evaluate_candidate(
                 item,
                 quote_by_instrument=quote_by_instrument,
                 spec_by_instrument=spec_by_instrument,
                 as_of=as_of,
-                current_notional=current_by_sleeve[item.sleeve_id],
-                evaluation_notional=candidate_notional[item.sleeve_id],
+                current_notional=current,
+                evaluation_notional=maximum,
+                minimum_net_bps=Decimal("0"),
             )
-            for item in sleeves
+            if current > 0 and not candidate.eligible and candidate.forecast_current:
+                immediate_exit = self._cost(
+                    item,
+                    current_notional=current,
+                    target_notional=Decimal("0"),
+                    evaluation_notional=current,
+                    quote_by_instrument=quote_by_instrument,
+                    spec_by_instrument=spec_by_instrument,
+                )
+                candidate = self._evaluate_candidate(
+                    item,
+                    quote_by_instrument=quote_by_instrument,
+                    spec_by_instrument=spec_by_instrument,
+                    as_of=as_of,
+                    current_notional=current,
+                    evaluation_notional=current,
+                    minimum_net_bps=-immediate_exit.total_bps,
+                )
+            candidate_evaluations[item.sleeve_id] = candidate
+        candidate_notional = {
+            sleeve_id: candidate.evaluation_gross_notional
+            for sleeve_id, candidate in candidate_evaluations.items()
         }
         eligible = tuple(
             sorted(
@@ -436,13 +461,17 @@ class PortfolioDecisionEngine:
             item for item in eligible if item.sleeve_id in selected_expression_ids
         ]
         requested_by_sleeve = {
-            item.sleeve_id: min(
-                candidate_notional[item.sleeve_id],
-                account.equity
-                * self._downside_scaled_allocation_fraction(
-                    item,
-                    candidate_evaluations[item.sleeve_id],
-                ),
+            item.sleeve_id: (
+                current_by_sleeve[item.sleeve_id]
+                if candidate_evaluations[item.sleeve_id].decision_net_bps <= 0
+                else min(
+                    candidate_notional[item.sleeve_id],
+                    account.equity
+                    * self._downside_scaled_allocation_fraction(
+                        item,
+                        candidate_evaluations[item.sleeve_id],
+                    ),
+                )
             )
             for item in allocation_candidates
         }
@@ -474,7 +503,10 @@ class PortfolioDecisionEngine:
                 spec_by_instrument=spec_by_instrument,
                 as_of=as_of,
                 allocation_reason=(
-                    "POSITIVE_NET_EDGE_SELECTED"
+                    "HOLDING_VALUE_EXCEEDS_EXIT_COST"
+                    if item.sleeve_id in eligible_ids
+                    and candidate_evaluations[item.sleeve_id].decision_net_bps <= 0
+                    else "POSITIVE_NET_EDGE_SELECTED"
                     if item.sleeve_id in eligible_ids
                     else "PRODUCT_SWITCH_EXIT_FIRST"
                     if item.sleeve_id in switch_exit_ids
@@ -511,8 +543,16 @@ class PortfolioDecisionEngine:
             for item in sleeves
         )
         reason_codes: set[str] = set()
-        if eligible_ids:
+        if any(
+            candidate_evaluations[item].decision_net_bps > 0
+            for item in eligible_ids
+        ):
             reason_codes.add("POSITIVE_NET_EDGE_SELECTED")
+        if any(
+            candidate_evaluations[item].decision_net_bps <= 0
+            for item in eligible_ids
+        ):
+            reason_codes.add("HOLDING_VALUE_EXCEEDS_EXIT_COST")
         if not eligible_ids and duplicate_expression_ids:
             reason_codes.add("CASH_SELECTED_FOR_PRODUCT_TRANSITION")
         elif not eligible_ids:
@@ -580,6 +620,7 @@ class PortfolioDecisionEngine:
         as_of: datetime,
         current_notional: Decimal,
         evaluation_notional: Decimal,
+        minimum_net_bps: Decimal,
     ) -> PortfolioCandidateEvaluation:
         forecast_current, validity_reason_codes, validity_evidence_refs = (
             self._forecast_validity(
@@ -613,9 +654,8 @@ class PortfolioDecisionEngine:
             assert item.capital_authorization is not None
             edge_basis = PortfolioEdgeBasis.EXPERIMENTAL_HYPOTHESIS
         net = gross - cost.total_bps
-        # Break-even is an economic identity, not a configurable experiment gate.
-        threshold = Decimal("0")
-        eligible = forecast_current and net > threshold
+        # The cash alternative for an existing holding includes immediate exit cost.
+        eligible = forecast_current and net > minimum_net_bps
         return PortfolioCandidateEvaluation(
             sleeve_id=item.sleeve_id,
             forecast_id=item.forecast.forecast_id,
@@ -632,12 +672,14 @@ class PortfolioDecisionEngine:
             decision_gross_bps=gross,
             cost=cost,
             decision_net_bps=net,
-            minimum_net_bps=threshold,
+            minimum_net_bps=minimum_net_bps,
             eligible=eligible,
             validity_reason_codes=validity_reason_codes,
             validity_evidence_refs=validity_evidence_refs,
             reason_codes=(
-                "ELIGIBLE_FOR_ALLOCATION"
+                "HOLDING_VALUE_EXCEEDS_EXIT_COST"
+                if eligible and net <= 0
+                else "ELIGIBLE_FOR_ALLOCATION"
                 if eligible
                 else "FORECAST_INVALID_CASH"
                 if not forecast_current
@@ -655,7 +697,11 @@ class PortfolioDecisionEngine:
         product_switch_exit: bool,
     ) -> PortfolioCandidateEvaluation:
         if capacity_selected:
-            reason = "POSITIVE_NET_EDGE_SELECTED"
+            reason = (
+                "HOLDING_VALUE_EXCEEDS_EXIT_COST"
+                if candidate.decision_net_bps <= 0
+                else "POSITIVE_NET_EDGE_SELECTED"
+            )
         elif product_switch_exit:
             reason = "PRODUCT_SWITCH_EXIT_FIRST"
         elif alternative_product_not_selected:

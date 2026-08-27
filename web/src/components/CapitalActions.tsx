@@ -33,6 +33,7 @@ const REASON_LABELS: Record<string, string> = {
   CASH_SELECTED_NO_POSITIVE_NET_EDGE: "预测扣除完整未来成本后净边际不为正，选择现金",
   CASH_SELECTED_FORECAST_INVALID: "预测已不再允许新增风险，保持现金",
   POSITIVE_NET_EDGE_SELECTED: "预测扣除完整未来成本后净边际为正，纳入组合",
+  HOLDING_VALUE_EXCEEDS_EXIT_COST: "继续持有的预期终值高于立即平仓，保留现有仓位",
   EXPIRED_FORECAST_EXIT: "原持仓预测已经失效，要求退出",
   FORECAST_TIME_WINDOW_INVALID: "预测已经超过允许使用的时间窗口",
   FORECAST_WORLD_MODEL_UNAVAILABLE: "预测依赖的世界认知已无法确认",
@@ -153,7 +154,9 @@ function CapitalActionGroup({ group }: { group: ActionGroup }) {
                   {Number(item.desired_gross_notional) > 0 ? "已选入组合" : "未选入组合"}；
                   预计毛收益 {formatBps(item.gross_bps)} bp − 未来成本 {formatBps(item.estimated_cost_bps)} bp
                   = 费用后 {formatBps(item.net_bps)} bp
-                  {Number(item.decision_threshold_bps) > 0
+                  {Number(item.decision_threshold_bps) < 0
+                    ? `；立即平仓也需 ${formatBps(String(-Number(item.decision_threshold_bps)))} bp，继续持有的终值更高`
+                    : Number(item.decision_threshold_bps) > 0
                     ? `；该历史行为另有 ${formatBps(item.decision_threshold_bps)} bp 附加门槛`
                     : ""}
                 </dd>
