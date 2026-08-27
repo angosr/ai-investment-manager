@@ -91,8 +91,13 @@ def test_release_children_import_candidate_before_existing_pythonpath(tmp_path: 
 
 def test_release_requires_the_bound_reference_selection_artifact() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
-    quant_artifact_id = config.outcome_evaluation.quant_baseline.artifacts[0].artifact_id
-    assert _required_release_artifacts(config) == (quant_artifact_id, "web-dist")
+    quant_artifact_ids = tuple(
+        sorted(
+            item.artifact_id
+            for item in config.outcome_evaluation.quant_baseline.artifacts
+        )
+    )
+    assert _required_release_artifacts(config) == (*quant_artifact_ids, "web-dist")
 
     payload = config.model_dump(mode="python")
     payload["capital"]["mandate"]["status"] = "APPROVED"
@@ -119,7 +124,7 @@ def test_release_requires_the_bound_reference_selection_artifact() -> None:
     configured = type(config).model_validate(payload)
 
     assert _required_release_artifacts(configured) == (
-        quant_artifact_id,
+        *quant_artifact_ids,
         "reference-selection-v1",
         "web-dist",
     )

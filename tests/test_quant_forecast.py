@@ -17,12 +17,14 @@ from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.market.models import MarketBar
 
 
-def _artifact_path() -> Path:
+def _artifact_path(
+    artifact_id: str = "quant_forecast_artifact_b41990aeb6a3135ae636",
+) -> Path:
     return (
         Path(__file__).resolve().parents[1]
         / "evidence"
         / "quant-forecasts"
-        / "quant_forecast_artifact_b41990aeb6a3135ae636.json"
+        / f"{artifact_id}.json"
     )
 
 
@@ -47,10 +49,29 @@ def _bars(*, gap_at: int | None = None) -> tuple[MarketBar, ...]:
     return tuple(bars)
 
 
-def test_frozen_quant_artifact_has_chronological_out_of_sample_increment() -> None:
+@pytest.mark.parametrize(
+    ("artifact_id", "validation_brier", "blind_brier"),
+    (
+        (
+            "quant_forecast_artifact_b41990aeb6a3135ae636",
+            Decimal("0.7476522693719300786087806745"),
+            Decimal("0.6956653227435457636872250097"),
+        ),
+        (
+            "quant_forecast_artifact_04e9f39e611268fa4193",
+            Decimal("0.7562357258327711529472157850"),
+            Decimal("0.7217160262658755722436418124"),
+        ),
+    ),
+)
+def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
+    artifact_id: str,
+    validation_brier: Decimal,
+    blind_brier: Decimal,
+) -> None:
     artifact = load_quant_forecast_artifact(
-        _artifact_path(),
-        expected_artifact_id="quant_forecast_artifact_b41990aeb6a3135ae636",
+        _artifact_path(artifact_id),
+        expected_artifact_id=artifact_id,
     )
 
     selected = next(
@@ -60,6 +81,8 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment() -> No
     )
     assert selected.validation_brier < artifact.validation_unconditional_brier
     assert artifact.selected_blind_brier < artifact.blind_unconditional_brier
+    assert selected.validation_brier == validation_brier
+    assert artifact.selected_blind_brier == blind_brier
     assert artifact.development_sample_count == 10_507
     assert artifact.validation_sample_count == 3_502
     assert artifact.blind_sample_count == 3_503

@@ -381,6 +381,9 @@ outcome_evaluation:
       - outcome_family_id: btc-price-directional-4h
         artifact_id: quant_forecast_artifact_b41990aeb6a3135ae636
         relative_path: evidence/quant-forecasts/quant_forecast_artifact_b41990aeb6a3135ae636.json
+      - outcome_family_id: paxg-price-directional-4h
+        artifact_id: quant_forecast_artifact_04e9f39e611268fa4193
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_04e9f39e611268fa4193.json
 
 governance:
   version: governance-cycle-v2
