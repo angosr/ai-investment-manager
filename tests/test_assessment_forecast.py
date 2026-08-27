@@ -309,7 +309,7 @@ class _FixedProbabilityAnalyst:
         self.completed_at = completed_at
         self.calls = 0
 
-    def estimate(self, *, targets, assessment, packet) -> AnalystResult:
+    def estimate(self, *, targets, assessment, packet, analysis_input) -> AnalystResult:
         self.calls += 1
         target = targets[0]
         return AnalystResult(
@@ -361,7 +361,7 @@ class _SharedProbabilityAnalyst:
     def __init__(self) -> None:
         self.calls = 0
 
-    def estimate(self, *, targets, assessment, packet) -> AnalystResult:
+    def estimate(self, *, targets, assessment, packet, analysis_input) -> AnalystResult:
         del packet
         self.calls += 1
         forecasts = []

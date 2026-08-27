@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -180,6 +181,19 @@ class ContextForecastAnalysisTarget(FrozenModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class ContextForecastModelInput:
+    payload: dict[str, object]
+    source_refs_by_slot: dict[str, tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        slot_ids = tuple(self.source_refs_by_slot)
+        if len(slot_ids) != len(set(slot_ids)) or any(
+            refs != tuple(sorted(set(refs))) for refs in self.source_refs_by_slot.values()
+        ):
+            raise ValueError("Context Forecast 附加来源引用必须按槽唯一排序")
+
+
 class ContextForecastTargetStateBehavior(FrozenModel):
     """Immutable identity of the deterministic point-in-time state producer."""
 
@@ -321,69 +335,72 @@ def context_forecast_input_projection(
     targets: tuple[ContextForecastAnalysisTarget, ...],
     assessment: ContextAssessment,
     packet: DecisionPacket,
-) -> dict[str, object]:
+) -> ContextForecastModelInput:
     """Exclude raw news and portfolio state from the second, target-only AI call."""
 
-    return {
-        "purpose": "FORECAST_ESTIMATE",
-        "forecast_targets": tuple(
-            {
-                "decision_slot": {
-                    "decision_slot_id": item.slot.slot_id,
-                    "information_cutoff_at": item.slot.information_cutoff_at,
-                    "completion_deadline_at": item.slot.completion_deadline_at,
-                    "evaluation_at": item.slot.evaluation_at,
-                    "cause_origin": (
-                        None if item.slot.cause is None else item.slot.cause.origin.value
-                    ),
-                },
-                "forecast_contract": {
-                    "contract_id": item.contract.contract_id,
-                    "outcome_family_id": item.contract.outcome_family_id,
-                    "horizon_minutes": item.contract.horizon_minutes,
-                    "reference_instrument": {
-                        "symbol": item.contract.target.legs[0].instrument.symbol,
-                        "product": item.contract.target.legs[0].instrument.product.value,
+    return ContextForecastModelInput(
+        payload={
+            "purpose": "FORECAST_ESTIMATE",
+            "forecast_targets": tuple(
+                {
+                    "decision_slot": {
+                        "decision_slot_id": item.slot.slot_id,
+                        "information_cutoff_at": item.slot.information_cutoff_at,
+                        "completion_deadline_at": item.slot.completion_deadline_at,
+                        "evaluation_at": item.slot.evaluation_at,
+                        "cause_origin": (
+                            None if item.slot.cause is None else item.slot.cause.origin.value
+                        ),
                     },
-                    "outcome_buckets": tuple(
-                        {
-                            "bucket_id": bucket.bucket_id,
-                            "lower_bps": bucket.lower_bps,
-                            "upper_bps": bucket.upper_bps,
-                            "representative_bps": bucket.representative_bps,
-                        }
-                        for bucket in item.contract.outcome_buckets
-                    ),
-                    "forecast_benchmark": tuple(
-                        {
-                            "bucket_id": bucket.bucket_id,
-                            "probability": bucket.probability,
-                        }
-                        for bucket in item.contract.forecast_benchmark
-                    ),
-                },
-                "target_state": {
-                    "as_of": item.target_state.as_of,
-                    "asset_states": tuple(
-                        _compact_asset_state(state) for state in item.target_state.asset_states
-                    ),
-                    "derivative_states": tuple(
-                        _compact_derivative_state(state)
-                        for state in item.target_state.derivative_states
-                    ),
-                    "comparison_states": tuple(
-                        _compact_comparison_state(state)
-                        for state in item.target_state.comparison_states
-                    ),
-                    "missing_comparison_instrument_keys": (
-                        item.target_state.missing_comparison_instrument_keys
-                    ),
-                },
-            }
-            for item in targets
-        ),
-        "world_model": context_forecast_world_model_projection(assessment),
-    }
+                    "forecast_contract": {
+                        "contract_id": item.contract.contract_id,
+                        "outcome_family_id": item.contract.outcome_family_id,
+                        "horizon_minutes": item.contract.horizon_minutes,
+                        "reference_instrument": {
+                            "symbol": item.contract.target.legs[0].instrument.symbol,
+                            "product": item.contract.target.legs[0].instrument.product.value,
+                        },
+                        "outcome_buckets": tuple(
+                            {
+                                "bucket_id": bucket.bucket_id,
+                                "lower_bps": bucket.lower_bps,
+                                "upper_bps": bucket.upper_bps,
+                                "representative_bps": bucket.representative_bps,
+                            }
+                            for bucket in item.contract.outcome_buckets
+                        ),
+                        "forecast_benchmark": tuple(
+                            {
+                                "bucket_id": bucket.bucket_id,
+                                "probability": bucket.probability,
+                            }
+                            for bucket in item.contract.forecast_benchmark
+                        ),
+                    },
+                    "target_state": {
+                        "as_of": item.target_state.as_of,
+                        "asset_states": tuple(
+                            _compact_asset_state(state) for state in item.target_state.asset_states
+                        ),
+                        "derivative_states": tuple(
+                            _compact_derivative_state(state)
+                            for state in item.target_state.derivative_states
+                        ),
+                        "comparison_states": tuple(
+                            _compact_comparison_state(state)
+                            for state in item.target_state.comparison_states
+                        ),
+                        "missing_comparison_instrument_keys": (
+                            item.target_state.missing_comparison_instrument_keys
+                        ),
+                    },
+                }
+                for item in targets
+            ),
+            "world_model": context_forecast_world_model_projection(assessment),
+        },
+        source_refs_by_slot={},
+    )
 
 
 def context_forecast_world_model_projection(
@@ -552,6 +569,10 @@ class ContextForecastRunBundleBuilder:
         *,
         code_version: str,
         configuration_hash: str,
+        analysis_mode: str = "FORECAST_ESTIMATE",
+        input_version: str = CONTEXT_FORECAST_INPUT_VERSION,
+        instructions: tuple[str, ...] = CONTEXT_FORECAST_INSTRUCTIONS,
+        behavior_hash: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._policy = policy
@@ -560,10 +581,18 @@ class ContextForecastRunBundleBuilder:
         self._world_model_behavior_id = world_model_behavior_id
         self._code_version = code_version
         self._configuration_hash = configuration_hash
+        self._analysis_mode = analysis_mode
+        self._input_version = input_version
+        self._instructions = instructions
+        self._behavior_hash = behavior_hash
+
+    @property
+    def analysis_mode(self) -> str:
+        return self._analysis_mode
 
     @property
     def behavior_hash(self) -> str:
-        return context_forecast_behavior_hash(
+        return self._behavior_hash or context_forecast_behavior_hash(
             self._runtime,
             self._policy,
             self._contracts,
@@ -581,14 +610,16 @@ class ContextForecastRunBundleBuilder:
         targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
+        analysis_input: dict[str, object],
         target: Path,
     ) -> RunBundle:
-        projected = context_forecast_input_projection(
-            targets=targets,
-            assessment=assessment,
-            packet=packet,
+        prompt = "\n".join(
+            (
+                *self._instructions,
+                "context_forecast_input_json=",
+                canonical_json(analysis_input),
+            )
         )
-        prompt = context_forecast_prompt(projected)
         if len(prompt) > self._runtime.maximum_prompt_characters:
             raise ValueError("FORECAST_ESTIMATE 输入超过 Codex 提示容量上限")
         output_schema = context_forecast_output_schema(
@@ -597,7 +628,7 @@ class ContextForecastRunBundleBuilder:
         )
         slot_ids = tuple(item.slot.slot_id for item in targets)
         cycle_id = stable_id("context_forecast_set", *slot_ids)
-        input_text = canonical_json(projected) + "\n"
+        input_text = canonical_json(analysis_input) + "\n"
         return write_run_bundle(
             cycle_id=cycle_id,
             target=target,
@@ -614,8 +645,8 @@ class ContextForecastRunBundleBuilder:
                 + "\n",
             },
             manifest={
-                "analysis_mode": "FORECAST_ESTIMATE",
-                "input_version": CONTEXT_FORECAST_INPUT_VERSION,
+                "analysis_mode": self.analysis_mode,
+                "input_version": self._input_version,
                 "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
                 "decision_slot_ids": slot_ids,
                 "contract_ids": self.contract_ids,
@@ -651,6 +682,7 @@ class CodexContextForecastAnalyst:
         targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
+        analysis_input: dict[str, object],
     ) -> AnalystResult:
         slot_ids = tuple(item.slot.slot_id for item in targets)
         cycle_id = stable_id("context_forecast_set", *slot_ids)
@@ -665,7 +697,7 @@ class CodexContextForecastAnalyst:
                 cycle_id=cycle_id,
                 target=target,
                 expected_manifest={
-                    "analysis_mode": "FORECAST_ESTIMATE",
+                    "analysis_mode": self._builder.analysis_mode,
                     "decision_slot_ids": slot_ids,
                     "contract_ids": self._builder.contract_ids,
                     "world_model_id": assessment.assessment_id,
@@ -677,6 +709,7 @@ class CodexContextForecastAnalyst:
                     targets=targets,
                     assessment=assessment,
                     packet=packet,
+                    analysis_input=analysis_input,
                     target=target,
                 )
         except ValueError as exc:

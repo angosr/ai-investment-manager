@@ -264,6 +264,8 @@ Quant prior 是 Forecast 内部的冻结概率输入，不是新的业务阶段�
 
 AI + Quant 行为读取同一 State、WorldModel 和 Quant prior，并输出唯一 posterior。Quant panel 同时暴露候选分布、程序计算的适用度与分歧，使 AI 能识别“历史模型未覆盖的结构变化”，但 AI 只能依据有时间边界和引用的现实机制修正最终 bucket，不能改模型权重、点名启停算法或再建立一套 regime 分类。输出必须逐 bucket 说明相对 prior 的概率变化，并把每次实质偏离绑定到当前机制、竞争解释、反向证据或适用状态变化；未形成可验证增量时保持或收缩到 prior，而不是为展示 AI 价值强行偏离。AI 不重新计算因子、收益、波动、成本、仓位或订单。产品 break-even、预测延迟和完整未来成本由程序以确定性字段提供，帮助 AI 判断机制是否可能在合同期限内产生足够幅度，但规范 Forecast 仍预测同一 gross economic Outcome；净可交易性只由统一 Product/Portfolio 与资本评价计算，不能在三处各维护一套成本公式。
 
+研究期的 challenger 不能成为正式资金链前的第二个同步 Codex 调用。槽建立时，程序先瞬时形成 Quant Forecast，并把 AI + Quant 所需的 State、WorldModel、Quant panel、合同和信息截止冻结成不可变研究任务；当前唯一获授权行为继续完成 Forecast、Portfolio、Risk 与 Execution。独立 Evaluation worker 随后只从这份冻结输入运行 posterior，保存实际 available_at、延迟、失败和 `NO_ESTIMATE`，不得读取截止后的新事实。这样两者仍共享同槽经济问题和终点 Outcome，但 challenger 的账号占用、超时或生成失败不会延迟当轮下单、改变当前目标或阻塞 Trigger。若未来 posterior 获得资本权限，它将替换原正式生产者并直接位于唯一资金链中；旧正式行为同时降为研究或停止，不能继续并行调用后再投票。
+
 前瞻研究的长期对照只有两种方法：纯 Quant prior 与 AI + Quant posterior；冻结的现有 Context 行为仅作为迁移期历史参照，不扩建为第三套长期架构。它们共享槽、信息截止、完成后 Outcome 起点、bucket、缺失语义和评分；分别报告覆盖、proper score、校准、预测幅度与真实收益的单调性、同输入离散度，以及把相同预测映射到当时合法产品后的费用后资本反事实。样本数量只描述不确定性，不构成固定交易门槛。若 Quant 不能优于滚动无条件/简单市场基线，删除该模型假设；若 AI + Quant 不能相对 Quant 提供前瞻增量，删除 posterior 复杂度；只有获授权的唯一行为继续进入正式 Portfolio。
 
 运行幂等与模型稳定性是两件事。同一决策槽只保存一次权威 Forecast，重试不能更换交易结果；后续持仓复核只对这份不可变 Forecast 做程序化重估，不能再次询问 AI。但这仍不能证明生成模型对同一输入不敏感：候选行为必须在正式调用前登记精确输入副本，副本使用同一模型可见输入、Prompt、Schema、模型、推理强度和期限，分别审计概率分布与期望收益离散度。副本只形成稳定性事实，不增加 Forecast、Outcome、独立样本或投票权，也不进入实时资本链。

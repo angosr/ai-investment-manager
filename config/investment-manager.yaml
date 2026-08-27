@@ -374,13 +374,13 @@ outcome_evaluation:
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
   quant_baseline:
-    version: transparent-conditional-quant-v1
+    version: transparent-conditional-quant-v2
     enabled: false
     producer_id: program-quant-baseline
     artifacts:
       - outcome_family_id: btc-price-directional-4h
-        artifact_id: quant_forecast_artifact_d233f98c27de79d8e692
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_d233f98c27de79d8e692.json
+        artifact_id: quant_forecast_artifact_b41990aeb6a3135ae636
+        relative_path: evidence/quant-forecasts/quant_forecast_artifact_b41990aeb6a3135ae636.json
 
 governance:
   version: governance-cycle-v2

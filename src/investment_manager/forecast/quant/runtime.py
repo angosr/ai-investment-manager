@@ -88,19 +88,18 @@ class QuantCandidateEvaluation(FrozenModel):
     model_name: str = Field(min_length=1)
     cell_count: int = Field(gt=0)
     validation_brier: Decimal = Field(ge=0)
+    cells: tuple[QuantCellDistribution, ...] = Field(min_length=1)
 
 
 class QuantForecastArtifact(FrozenModel):
     """Content-addressed training result; runtime inference performs no fitting."""
 
-    schema_version: Literal["quant-forecast-artifact-v1"] = "quant-forecast-artifact-v1"
+    schema_version: Literal["quant-forecast-artifact-v2"] = "quant-forecast-artifact-v2"
     artifact_id: str = Field(min_length=1)
-    training_method_version: Literal["chronological-cell-selection-v1"] = (
-        "chronological-cell-selection-v1"
+    training_method_version: Literal["chronological-cell-panel-selection-v2"] = (
+        "chronological-cell-panel-selection-v2"
     )
-    inference_version: Literal["conditional-empirical-dirichlet-v1"] = (
-        QUANT_INFERENCE_VERSION
-    )
+    inference_version: Literal["conditional-empirical-dirichlet-v1"] = QUANT_INFERENCE_VERSION
     contract_id: str = Field(min_length=1)
     outcome_family_id: str = Field(min_length=1)
     reference_instrument_key: str = Field(min_length=1)
@@ -114,7 +113,6 @@ class QuantForecastArtifact(FrozenModel):
     selected_model: str = Field(min_length=1)
     smoothing_strength: Decimal = Field(gt=0)
     global_distribution: QuantCellDistribution
-    cells: tuple[QuantCellDistribution, ...] = Field(min_length=1)
     development_sample_count: int = Field(gt=0)
     validation_sample_count: int = Field(gt=0)
     blind_sample_count: int = Field(gt=0)
@@ -132,15 +130,18 @@ class QuantForecastArtifact(FrozenModel):
         names = tuple(item.model_name for item in self.candidate_evaluations)
         if len(set(names)) != len(names) or self.selected_model not in names:
             raise ValueError("Quant candidate/selected model 身份非法")
-        cell_keys = tuple(item.cell_key for item in self.cells)
-        if cell_keys != tuple(sorted(set(cell_keys))):
-            raise ValueError("Quant cells 必须按唯一 key 排序")
         expected_ids = tuple(item.bucket_id for item in self.global_distribution.probabilities)
-        if any(
-            tuple(item.bucket_id for item in cell.probabilities) != expected_ids
-            for cell in self.cells
-        ):
-            raise ValueError("Quant cell bucket 必须与全局分布同序")
+        for candidate in self.candidate_evaluations:
+            cell_keys = tuple(item.cell_key for item in candidate.cells)
+            if cell_keys != tuple(sorted(set(cell_keys))) or candidate.cell_count != len(
+                candidate.cells
+            ):
+                raise ValueError("Quant candidate cells 必须按唯一 key 排序且计数一致")
+            if any(
+                tuple(item.bucket_id for item in cell.probabilities) != expected_ids
+                for cell in candidate.cells
+            ):
+                raise ValueError("Quant candidate bucket 必须与全局分布同序")
         expected = stable_id(
             "quant_forecast_artifact",
             self.model_dump(mode="json", exclude={"artifact_id"}),
@@ -152,18 +153,23 @@ class QuantForecastArtifact(FrozenModel):
     def probabilities_for(
         self,
         features: QuantFeatureVector,
+        *,
+        model_name: str | None = None,
     ) -> tuple[ForecastBucketProbability, ...]:
+        selected_name = model_name or self.selected_model
+        candidate = next(
+            (item for item in self.candidate_evaluations if item.model_name == selected_name),
+            None,
+        )
+        if candidate is None:
+            raise ValueError(f"Quant artifact 不包含模型：{selected_name}")
         key = quant_cell_key(
-            self.selected_model,
+            selected_name,
             features,
             self.feature_thresholds,
         )
-        cell = next((item for item in self.cells if item.cell_key == key), None)
-        return (
-            self.global_distribution.probabilities
-            if cell is None
-            else cell.probabilities
-        )
+        cell = next((item for item in candidate.cells if item.cell_key == key), None)
+        return self.global_distribution.probabilities if cell is None else cell.probabilities
 
 
 def load_quant_forecast_artifact(
@@ -207,6 +213,55 @@ def quant_forecast_behavior_id(
     )
 
 
+def quant_panel_projection(
+    artifact: QuantForecastArtifact,
+    features: QuantFeatureVector,
+    *,
+    decision_slot_id: str,
+) -> dict[str, object]:
+    """Project exact candidate disagreement without exposing training rows."""
+
+    candidate_values = tuple(
+        (
+            candidate,
+            quant_cell_key(
+                candidate.model_name,
+                features,
+                artifact.feature_thresholds,
+            ),
+            artifact.probabilities_for(features, model_name=candidate.model_name),
+        )
+        for candidate in artifact.candidate_evaluations
+    )
+    selected_probabilities = artifact.probabilities_for(features)
+    probability_ranges = tuple(
+        max(values[2][index].probability for values in candidate_values)
+        - min(values[2][index].probability for values in candidate_values)
+        for index in range(len(selected_probabilities))
+    )
+    return {
+        "purpose": "PROGRAM_QUANT_FORECAST",
+        "artifact_id": artifact.artifact_id,
+        "inference_version": artifact.inference_version,
+        "decision_slot_id": decision_slot_id,
+        "features": features,
+        "quant_prior": {
+            "model_name": artifact.selected_model,
+            "outcome_probabilities": selected_probabilities,
+        },
+        "candidate_predictions": tuple(
+            {
+                "model_name": candidate.model_name,
+                "validation_brier": candidate.validation_brier,
+                "cell_key": cell_key,
+                "outcome_probabilities": probabilities,
+            }
+            for candidate, cell_key, probabilities in candidate_values
+        ),
+        "maximum_bucket_probability_range": max(probability_ranges),
+    }
+
+
 def quant_features(snapshot: MarketSnapshot) -> QuantFeatureVector:
     return quant_features_from_bars(snapshot.bars)
 
@@ -215,20 +270,12 @@ def quant_features_from_bars(bars: tuple[MarketBar, ...]) -> QuantFeatureVector:
     bars = bars[-_FEATURE_BARS:]
     if len(bars) != _FEATURE_BARS:
         raise PointInTimeInputUnavailable("Quant 4h 特征需要连续 49 根 5m K 线")
-    if any(
-        right.event_time - left.event_time != _FIVE_MINUTES
-        for left, right in pairwise(bars)
-    ):
+    if any(right.event_time - left.event_time != _FIVE_MINUTES for left, right in pairwise(bars)):
         raise PointInTimeInputUnavailable("Quant 5m K 线存在时间缺口")
     closes = tuple(item.close for item in bars)
-    returns = tuple(
-        right / left - Decimal("1")
-        for left, right in pairwise(closes)
-    )
+    returns = tuple(right / left - Decimal("1") for left, right in pairwise(closes))
     mean = sum(returns, Decimal("0")) / Decimal(len(returns))
-    variance = sum(((item - mean) ** 2 for item in returns), Decimal("0")) / Decimal(
-        len(returns)
-    )
+    variance = sum(((item - mean) ** 2 for item in returns), Decimal("0")) / Decimal(len(returns))
     return QuantFeatureVector(
         observed_at=max(item.observed_at for item in bars),
         return_60m_bps=(closes[-1] / closes[-13] - Decimal("1")) * Decimal("10000"),
@@ -258,9 +305,7 @@ def quant_cell_key(
             thresholds.short_return_low_bps,
             thresholds.short_return_high_bps,
         )
-        return (
-            f"momentum={momentum}|short_return={short_return}|volatility={volatility}"
-        )
+        return f"momentum={momentum}|short_return={short_return}|volatility={volatility}"
     raise ValueError(f"未知 Quant model: {model_name}")
 
 
@@ -406,11 +451,15 @@ class PortfolioQuantForecastProducer:
                 detail="QUANT_CUTOFF_QUOTE_MISSING_OR_STALE",
             )
         entry_quote = self._quote(target.instrument, at=completed_at)
-        if entry_quote is None or self._quote_age(
-            target.instrument,
-            entry_quote,
-            completed_at,
-        ) > self.maximum_quote_age_seconds:
+        if (
+            entry_quote is None
+            or self._quote_age(
+                target.instrument,
+                entry_quote,
+                completed_at,
+            )
+            > self.maximum_quote_age_seconds
+        ):
             return self._no_estimate(
                 target,
                 slot=slot,
@@ -419,20 +468,11 @@ class PortfolioQuantForecastProducer:
                 detail="QUANT_ENTRY_QUOTE_MISSING_OR_STALE",
             )
         probabilities = target.artifact.probabilities_for(features)
-        panel = {
-            "purpose": "PROGRAM_QUANT_FORECAST",
-            "artifact_id": target.artifact.artifact_id,
-            "inference_version": target.artifact.inference_version,
-            "decision_slot_id": slot.slot_id,
-            "features": features,
-            "selected_model": target.artifact.selected_model,
-            "cell_key": quant_cell_key(
-                target.artifact.selected_model,
-                features,
-                target.artifact.feature_thresholds,
-            ),
-            "outcome_probabilities": probabilities,
-        }
+        panel = quant_panel_projection(
+            target.artifact,
+            features,
+            decision_slot_id=slot.slot_id,
+        )
         forecast = BaseForecast(
             forecast_id=stable_id(
                 "base_forecast",

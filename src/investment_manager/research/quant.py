@@ -61,7 +61,7 @@ def train_quant_forecast_artifact(
     if contract.target.legs[0].instrument != reference_instrument:
         raise ValueError("Quant 合同与参考产品不一致")
     if contract.horizon_minutes != 240:
-        raise ValueError("Quant artifact v1 只支持 4h ForecastContract")
+        raise ValueError("Quant artifact v2 只支持 4h ForecastContract")
 
     samples = _training_samples(dataset, contract=contract, cutoff=cutoff)
     if len(samples) < 1_000:
@@ -75,7 +75,7 @@ def train_quant_forecast_artifact(
         raise ValueError("Quant chronological split 样本不足")
 
     thresholds = _feature_thresholds(development)
-    candidates = tuple(
+    candidate_evaluations = tuple(
         _candidate_evaluation(
             model_name,
             training=development,
@@ -91,7 +91,7 @@ def train_quant_forecast_artifact(
         _global_distribution(development, contract=contract).probabilities,
     )
     selected = min(
-        candidates,
+        candidate_evaluations,
         key=lambda item: (item.validation_brier, _CANDIDATE_MODELS.index(item.model_name)),
     )
     development_and_validation = (*development, *validation)
@@ -115,13 +115,21 @@ def train_quant_forecast_artifact(
             contract=contract,
         ).probabilities,
     )
-    final_distributions = _fit_distributions(
-        selected.model_name,
-        samples,
-        thresholds=thresholds,
-        contract=contract,
-        smoothing_strength=smoothing_strength,
-    )
+    candidates = []
+    for candidate in candidate_evaluations:
+        distributions = _fit_distributions(
+            candidate.model_name,
+            samples,
+            thresholds=thresholds,
+            contract=contract,
+            smoothing_strength=smoothing_strength,
+        )
+        cells = tuple(distributions[key] for key in sorted(distributions) if key != "GLOBAL")
+        candidates.append(
+            candidate.model_copy(
+                update={"cell_count": len(cells), "cells": cells},
+            )
+        )
     values = {
         "contract_id": contract.contract_id,
         "outcome_family_id": contract.outcome_family_id,
@@ -133,13 +141,10 @@ def train_quant_forecast_artifact(
             item.close_time for item in dataset.bars if item.close_time <= cutoff
         ),
         "feature_thresholds": thresholds,
-        "candidate_evaluations": candidates,
+        "candidate_evaluations": tuple(candidates),
         "selected_model": selected.model_name,
         "smoothing_strength": smoothing_strength,
         "global_distribution": _global_distribution(samples, contract=contract),
-        "cells": tuple(
-            final_distributions[key] for key in sorted(final_distributions) if key != "GLOBAL"
-        ),
         "development_sample_count": len(development),
         "validation_sample_count": len(validation),
         "blind_sample_count": len(blind),
@@ -230,6 +235,7 @@ def _candidate_evaluation(
             thresholds=thresholds,
             distributions=distributions,
         ),
+        cells=tuple(distributions[key] for key in sorted(distributions) if key != "GLOBAL"),
     )
 
 
@@ -254,10 +260,7 @@ def _fit_distributions(
         raw = tuple(
             (
                 bucket.bucket_id,
-                (
-                    Decimal(cell_counts[bucket.bucket_id])
-                    + smoothing_strength * prior.probability
-                )
+                (Decimal(cell_counts[bucket.bucket_id]) + smoothing_strength * prior.probability)
                 / denominator,
             )
             for bucket, prior in zip(
@@ -337,9 +340,7 @@ def _normalized_probabilities(
     normalized = []
     running = Decimal("0")
     for bucket_id, probability in values[:-1]:
-        normalized.append(
-            ForecastBucketProbability(bucket_id=bucket_id, probability=probability)
-        )
+        normalized.append(ForecastBucketProbability(bucket_id=bucket_id, probability=probability))
         running += probability
     normalized.append(
         ForecastBucketProbability(

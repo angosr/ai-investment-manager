@@ -11,6 +11,7 @@ from investment_manager.forecast.codex.router import AnalystResult
 from investment_manager.forecast.context.estimate import (
     ContextForecastAnalysisTarget,
     ContextForecastComparisonState,
+    ContextForecastModelInput,
     ContextForecastStructuredOutput,
     ContextForecastTargetState,
     context_forecast_input_projection,
@@ -73,7 +74,18 @@ class ContextProbabilityAnalyst(Protocol):
         targets: tuple[ContextForecastAnalysisTarget, ...],
         assessment: ContextAssessment,
         packet: DecisionPacket,
+        analysis_input: dict[str, object],
     ) -> AnalystResult: ...
+
+
+class ContextForecastInputProjector(Protocol):
+    def __call__(
+        self,
+        *,
+        targets: tuple[ContextForecastAnalysisTarget, ...],
+        assessment: ContextAssessment,
+        packet: DecisionPacket,
+    ) -> ContextForecastModelInput: ...
 
 
 class ContextForecastPreflight(Protocol):
@@ -436,6 +448,7 @@ class PortfolioContextForecastProducer:
     analyst: ContextProbabilityAnalyst
     analysis_scope: str
     activated_at: datetime
+    input_projector: ContextForecastInputProjector = context_forecast_input_projection
     preflight: ContextForecastPreflight | None = None
 
     def __post_init__(self) -> None:
@@ -619,11 +632,22 @@ class PortfolioContextForecastProducer:
         if not analysis_targets:
             return self._ordered(existing)
         frozen_targets = tuple(analysis_targets)
-        analysis_input = context_forecast_input_projection(
-            targets=frozen_targets,
-            assessment=assessment,
-            packet=packet,
-        )
+        try:
+            model_input = self.input_projector(
+                targets=frozen_targets,
+                assessment=assessment,
+                packet=packet,
+            )
+        except (PointInTimeInputUnavailable, ValueError) as exc:
+            self._fail_analysis_targets(
+                existing,
+                frozen_targets,
+                completed_at=slot_at,
+                input_refs=input_refs,
+                detail=f"CONTEXT_MODEL_INPUT_UNAVAILABLE:{type(exc).__name__}",
+            )
+            return self._ordered(existing)
+        analysis_input = model_input.payload
         if self.preflight is not None:
             self.preflight.before_estimate(
                 slot=frozen_targets[0].slot,
@@ -638,6 +662,7 @@ class PortfolioContextForecastProducer:
             targets=frozen_targets,
             assessment=assessment,
             packet=packet,
+            analysis_input=analysis_input,
         )
         completed_at = max(result.completed_at or slot_at, slot_at)
         if not result.success or not isinstance(
@@ -736,6 +761,10 @@ class PortfolioContextForecastProducer:
                     packet=packet,
                     draft=drafts[slot.slot_id],
                     analysis_input=analysis_input,
+                    additional_input_refs=model_input.source_refs_by_slot.get(
+                        slot.slot_id,
+                        (),
+                    ),
                     completed_at=completed_at,
                     entry_quote=entry_quote,
                 )
@@ -846,6 +875,7 @@ class PortfolioContextForecastProducer:
         packet: DecisionPacket,
         draft,
         analysis_input: dict[str, object],
+        additional_input_refs: tuple[str, ...],
         completed_at: datetime,
         entry_quote,
     ) -> BaseForecast:
@@ -932,6 +962,7 @@ class PortfolioContextForecastProducer:
                         packet.packet_id,
                         packet.content_hash,
                         *target.target_state.input_refs,
+                        *additional_input_refs,
                         *contribution_ids,
                         *draft.evidence_refs,
                         *(item.quote_ref for item in slot.cutoff_prices),
