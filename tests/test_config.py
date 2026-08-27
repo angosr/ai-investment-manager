@@ -124,11 +124,11 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v53"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v44"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v45"
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v38"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v39"
     )
     assert config.outcome_evaluation.context_forecast_stability is not None
     assert config.outcome_evaluation.context_forecast_stability.enabled
