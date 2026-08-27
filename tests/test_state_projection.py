@@ -582,7 +582,8 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
     assert derivative.last_funding_rate_bps == 1
     assert derivative.spot_venue_count == 3
     assert derivative.spot_mid_range_bps is not None
-    projected = decision_packet_analysis_projection(result.packet)["derivative_states"][0]
+    table = decision_packet_analysis_projection(result.packet)["derivative_states"]
+    projected = dict(zip(table["columns"], table["rows"][0], strict=True))
     assert "cross_venue_observed_at" not in projected
     assert "spot_venue_count" not in projected
     assert projected["spot_mid_range_bps"] is not None

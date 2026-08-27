@@ -109,7 +109,7 @@ decision_state:
         materiality: HIGH
         reason_code: US_WTI_OIL_REVISION
   packet_policy:
-    version: decision-packet-policy-v52
+    version: decision-packet-policy-v53
     schema_version: decision-packet-v20
     # 连续宏观/资金快照会先压缩为 StateFeature；这里要允许每条现役
     # 连续通道各保留一个可追溯输入，不能让同一字符预算只留下两条原文。
@@ -259,7 +259,7 @@ capital:
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "dd17b3bc2ab7bbef731e8d0c737dccdc5e44e7bc61803acd8ed2146dc66fdf8f"
+    producer_behavior_id: "9cb1f355fdb7b7dead6fa36871aef997414ddad43c491c5fbadf328b7d8fc6a2"
     # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
@@ -358,11 +358,11 @@ outcome_evaluation:
   settlement_grace_minutes: 120
   poll_seconds: 300
   world_model_ablation:
-    version: world-model-ablation-forward-v35
+    version: world-model-ablation-forward-v36
     enabled: false
-    plan_id: world-model-ablation-forward-v35
+    plan_id: world-model-ablation-forward-v36
     # 从预登记后的首个整点滚动槽计数；相互重叠的 4h 结果窗只构成一个独立样本。
-    activated_at: 2026-08-27T08:00:00Z
+    activated_at: 2026-08-27T09:00:00Z
     minimum_sample_size: 30
 
 governance:

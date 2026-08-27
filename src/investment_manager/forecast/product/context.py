@@ -14,6 +14,7 @@ from investment_manager.forecast.models import (
     ForecastLeg,
     ForecastTarget,
 )
+from investment_manager.forecast.product.evaluation import ProductPayoffMappingIdentity
 from investment_manager.forecast.product.models import (
     ProductPayoffProjection,
     ProductProjectionState,
@@ -86,6 +87,12 @@ class ContextProductPayoffProjector:
         if not forecast.available_at <= decision_at < forecast.economic_horizon_end:
             raise ValueError("Product payoff 决策时点超出经济 Forecast 支持范围")
         state = self.target_states.build(as_of=decision_at)
+        mapping_cohort_id = ProductPayoffMappingIdentity(
+            economic_exposure_id=self.policy.economic_exposure_id,
+            projection_version=self.policy.version,
+            instrument_keys=self.policy.instrument_keys,
+            maximum_rule_age_seconds=self.policy.maximum_rule_age_seconds,
+        ).cohort_id
         spec_by_key = {item.instrument.key: item for item in self.execution_specs}
         projections: list[ProductPayoffProjection] = []
         for instrument in self.instruments:
@@ -96,6 +103,7 @@ class ContextProductPayoffProjector:
                     as_of=decision_at,
                     instrument=instrument,
                     spec=spec,
+                    mapping_cohort_id=mapping_cohort_id,
                 )
                 self.store.record(projection)
                 projections.append(projection)
@@ -114,6 +122,7 @@ class ContextProductPayoffProjector:
                     state=projection_state,
                     economic_exposure_id=self.policy.economic_exposure_id,
                     projection_version=self.policy.version,
+                    mapping_cohort_id=mapping_cohort_id,
                 )
                 self.store.record(projection)
                 projections.append(projection)
@@ -126,6 +135,7 @@ class ContextProductPayoffProjector:
         as_of: datetime,
         instrument: InstrumentId,
         spec: InstrumentExecutionSpec,
+        mapping_cohort_id: str,
     ) -> ProductPayoffProjection:
         quote = self.market.latest_spot_quote(
             instrument=instrument,
@@ -162,6 +172,7 @@ class ContextProductPayoffProjector:
             state=projection_state,
             economic_exposure_id=self.policy.economic_exposure_id,
             projection_version=self.policy.version,
+            mapping_cohort_id=mapping_cohort_id,
         )
 
     def _derivative_states(

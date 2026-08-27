@@ -18,8 +18,9 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
+from investment_manager.kernel.identity import content_hash
 
-PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v1"
+PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION = "product-payoff-residual-evidence-v2"
 
 
 class ProductPayoffEvidenceStatus(StrEnum):
@@ -28,9 +29,49 @@ class ProductPayoffEvidenceStatus(StrEnum):
     SUFFICIENT = "SUFFICIENT"
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class ProductPayoffMappingIdentity:
+    """One configured economic exposure and its complete product mapping."""
+
+    economic_exposure_id: str
+    projection_version: str
+    instrument_keys: tuple[str, ...]
+    maximum_rule_age_seconds: int
+
+    def __post_init__(self) -> None:
+        if not self.economic_exposure_id or not self.projection_version:
+            raise ValueError("Product payoff mapping identity 不得为空")
+        if (
+            not self.instrument_keys
+            or tuple(sorted(set(self.instrument_keys))) != self.instrument_keys
+        ):
+            raise ValueError("Product payoff mapping instruments 必须唯一且排序")
+        if self.maximum_rule_age_seconds < 1:
+            raise ValueError("Product payoff mapping rule age 必须为正数")
+
+    @property
+    def cohort_id(self) -> str:
+        return content_hash(
+            {
+                "economic_exposure_id": self.economic_exposure_id,
+                "projection_version": self.projection_version,
+                "instrument_keys": self.instrument_keys,
+                "maximum_rule_age_seconds": self.maximum_rule_age_seconds,
+            }
+        )
+
+    def contains(self, projection: ProductPayoffProjection) -> bool:
+        return (
+            projection.economic_exposure_id == self.economic_exposure_id
+            and projection.projection_version == self.projection_version
+            and projection.target.legs[0].instrument.key in self.instrument_keys
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ProductPayoffEvidence:
     evaluation_version: str
+    mapping_cohort: tuple[ProductPayoffMappingIdentity, ...]
     status: ProductPayoffEvidenceStatus
     terminal_product_count: int
     settled_product_count: int
@@ -54,6 +95,7 @@ class ProductPayoffEvaluationCase:
 def evaluate_product_payoff_evidence(
     cases: tuple[ProductPayoffEvaluationCase, ...],
     *,
+    mapping_cohort: tuple[ProductPayoffMappingIdentity, ...],
     product_outcome_version: str,
     forecast_outcome_version: str,
     required_independent_source_forecasts: int,
@@ -62,6 +104,8 @@ def evaluate_product_payoff_evidence(
 
     if required_independent_source_forecasts < 1:
         raise ValueError("Product payoff 最小独立样本数必须为正数")
+    if not mapping_cohort or tuple(sorted(set(mapping_cohort))) != mapping_cohort:
+        raise ValueError("Product payoff mapping cohort 必须唯一且排序")
     for case in cases:
         projection = case.projection
         outcome = case.product_outcome
@@ -76,6 +120,11 @@ def evaluate_product_payoff_evidence(
             or case.source_outcome.evaluation_at != projection.evaluation_at
             or case.source_outcome.evaluation_version
             != forecast_outcome_version
+            or not any(
+                item.cohort_id == projection.mapping_cohort_id
+                and item.contains(projection)
+                for item in mapping_cohort
+            )
         ):
             raise ValueError("Product payoff 评价输入身份不一致")
     settled = tuple(
@@ -127,6 +176,7 @@ def evaluate_product_payoff_evidence(
     if not independent_cases:
         return ProductPayoffEvidence(
             evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
+            mapping_cohort=mapping_cohort,
             status=ProductPayoffEvidenceStatus.NO_SETTLED_SAMPLES,
             terminal_product_count=len(cases),
             settled_product_count=len(settled),
@@ -153,6 +203,7 @@ def evaluate_product_payoff_evidence(
 
     return ProductPayoffEvidence(
         evaluation_version=PRODUCT_PAYOFF_EVIDENCE_EVALUATION_VERSION,
+        mapping_cohort=mapping_cohort,
         status=(
             ProductPayoffEvidenceStatus.SUFFICIENT
             if independent_count >= required_independent_source_forecasts
@@ -204,5 +255,6 @@ __all__ = [
     "ProductPayoffEvaluationCase",
     "ProductPayoffEvidence",
     "ProductPayoffEvidenceStatus",
+    "ProductPayoffMappingIdentity",
     "evaluate_product_payoff_evidence",
 ]

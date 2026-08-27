@@ -1538,14 +1538,20 @@ def test_analysis_projection_removes_redundant_market_and_prior_cut_fields(
     projected = decision_packet_analysis_projection(
         packet.model_copy(update={"derivative_states": (derivative,)})
     )
+    asset_columns = projected["asset_states"]["columns"]
+    asset_row = dict(zip(asset_columns, projected["asset_states"]["rows"][0], strict=True))
+    derivative_columns = projected["derivative_states"]["columns"]
+    derivative_row = dict(
+        zip(derivative_columns, projected["derivative_states"]["rows"][0], strict=True)
+    )
 
     assert "packet_id" not in projected
-    assert "bid" not in projected["asset_states"][0]
-    assert "ask" not in projected["asset_states"][0]
-    assert "spot_taker_buy_volume" not in projected["derivative_states"][0]
-    assert "spot_taker_sell_volume" not in projected["derivative_states"][0]
-    assert "global_short_account_fraction" not in projected["derivative_states"][0]
-    assert "global_long_short_account_ratio" not in projected["derivative_states"][0]
+    assert "bid" not in asset_row
+    assert "ask" not in asset_row
+    assert "spot_taker_buy_volume" not in derivative_row
+    assert "spot_taker_sell_volume" not in derivative_row
+    assert "global_short_account_fraction" not in derivative_row
+    assert "global_long_short_account_ratio" not in derivative_row
     assert "contradictions" not in projected["previous_context"]
     assert "data_gaps" not in projected["previous_context"]
 
@@ -1571,9 +1577,10 @@ def test_analysis_projection_keeps_decision_precision_not_raw_decimal_noise(
         next_funding_time=packet.as_of + timedelta(hours=4),
     )
 
-    projected = decision_packet_analysis_projection(
+    table = decision_packet_analysis_projection(
         packet.model_copy(update={"derivative_states": (derivative,)})
-    )["derivative_states"][0]
+    )["derivative_states"]
+    projected = dict(zip(table["columns"], table["rows"][0], strict=True))
 
     assert projected["mark_index_premium_bps"] == "0.300278"
     assert projected["executable_short_basis_bps"] == "-0.512459"

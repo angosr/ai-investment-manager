@@ -158,6 +158,8 @@ PortfolioTarget 必须冻结本轮全部合法候选与现金比较所使用的�
 
 资本选择、错过机会与费用后结果必须按冻结的 `capital_behavior_id` 分 cohort 评价。可投资域、产品映射、Portfolio 规则、成本或 sizing 任一实质变化后，当前证据只读取新身份产生的完整决策；旧目标与结果继续不可变结算并保留在历史行动审计中，但不得冒充现役盈利诊断、与新候选拼成比较，或把旧产品重新显示为当前可投资表达。
 
+预测 Alpha 与产品映射是两项独立实验，不能共用一个含混的“当前版本”。经济 Forecast 只按冻结的 `producer_behavior_id` 累积 proper-score 证据；确定性产品映射则按当前配置中完整的 `(economic_exposure_id, projection_version, instrument_keys, maximum_rule_age_seconds)` 集合生成内容身份并累积残差证据。该身份必须随 projection 在数据库中原子冻结；改变产品集合、basis/funding 规则或映射实现时，不得重标相同 AI 概率或清空预测证据，但现役产品残差必须立即开始新的映射 cohort。旧 projection 与 outcome 继续不可变结算，只能进入历史审计。产品证据的数据库查询和领域评价边界都必须校验完整 cohort；同一 projection ID 不能绑定两个 cohort，不能只凭 AI 行为、单个版本字符串或当前产品恰好仍存在来拼接跨代样本。
+
 同一经济暴露分布只产生一个预测样本。Forecast 可以从同一分布生成多个产品投影，不得再次调用 AI 或把产品数量计为多个 Alpha 样本；每个投影的跟踪误差与费用后资本结果仍分别结算。对于同一已经验收的线性 Derivative，规范 payoff 可以生成正负名义候选；Spot 不能直接生成负持仓，Spot 与 Perpetual、不同结算资产或不同场所也不能机械镜像。[Binance 的 mark/index 与 funding 合同](https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price)必须进入 Perpetual 产品投影，未知的未来 funding、basis 和保证金压力以冻结模型和不确定性处理，无法可靠处理时拒绝该产品候选。
 
 Forecast 的规范参考 Instrument、Market 的观察 Instrument 与 Capital 的可投资 Instrument 是三个不同集合。规范参考只定义经济 Outcome 的价格与结算口径，可以是不可交易的指数、代理或本轮明确不持有的 Spot；观察集合只提供状态和映射证据；只有可投资集合才进入产品投影、Portfolio、Risk、Planner、账户和持仓页面。引用某个 Spot 作为 BTC 或 PAXG 的规范价格，不得隐式把它加入账户候选；反过来，移除一个执行产品也不得改写已经冻结的经济 Forecast 合同。配置必须分别冻结这些身份并验证产品映射，禁止再用“规范参考必须属于 execution specs”把不同职责耦合起来。
@@ -260,7 +262,7 @@ Release 的投资晋升裁决与本机切换是两个相邻但不重叠的职责
 
 切换窗口先从权威运行事实确认没有 active batch、非终态 ExecutionGroup，且账户能够从已对账快照恢复。随后由一个本机互斥租约保证任何时刻只有一组写进程：停止旧版本后按 Market/Information、Outcome/Trigger/Assessment 的依赖顺序启动候选，Dashboard 不参与写链并最后切换。候选只有在有界时间内同时证明进程仍存活、Temporal Worker 正在轮询候选任务队列、TriggerPlan 已绑定候选 Manifest、新 Market/Information 观测已经产生、账户恢复一致且已启用 Producer 可达时才 ready；历史健康记录、旧进程产生的事实和单纯端口在线不能代替这些条件。超时或任一进程退出时先完整停止候选，再用同一入口和原冻结参数恢复上一完整 Release；Schema 不兼容回滚时只能发布向前兼容的恢复版本，禁止自动 downgrade。每次预检、切换、ready、失败和回滚保存脱敏且内容寻址的运行回执，但不复制业务事实或建立第二份 Release 状态库。
 
-AI 输入容量按最终模型可见投影校验：确定性 State、机制验证观测和上一轮认知写入后仍必须满足运行时上限。当前最小因果基线与直接触发 Evidence 必须同时存在；上一轮认知是待复核假设而非当前证据，不能成为删除某个唯一当前因果通道的理由。中间 Packet 预算可以指导去重和高密度投影，但不能替代最终容量不变量；运行时失败或生成一份因事件增多而丢失宏观、流动性、资金流基线的认知，都不得被用作正常的信息淘汰机制。
+AI 输入容量按最终模型可见投影校验：确定性 State、机制验证观测和上一轮认知写入后仍必须满足运行时上限。不可变 Packet 保持具名对象供审计，模型可见投影把同构资产状态无损编码为一份列合同加多行数值，不能靠重复字段名消耗注意力，也不能以摘要、截断或提高上限代替结构压缩。当前最小因果基线与直接触发 Evidence 必须同时存在；上一轮认知是待复核假设而非当前证据，不能成为删除某个唯一当前因果通道的理由。中间 Packet 预算可以指导去重和高密度投影，但不能替代验证观测写入后的最终容量不变量；运行时失败或生成一份因事件增多而丢失宏观、流动性、资金流基线的认知，都不得被用作正常的信息淘汰机制。发布测试必须覆盖最大合法资产矩阵、世界机制验证观测和直接事件同时存在的最终投影，而不只是验证前的空观测基线。
 
 Release 是部署身份，Pipeline 是写入与协调语义，ProducerBehavior 是预测行为身份，三者不得互相代替。代码或界面发布在 Pipeline 语义未变时只把现有 TriggerPlan 递增 revision 重绑定到新 Manifest，保留同一 Temporal 协调器的 `last_analysis_at`、待处理事件和未来唤醒；只有写入/协调语义实际改变才切换 Pipeline。行为等价的 Release 也不得重置 Forecast cohort。
 

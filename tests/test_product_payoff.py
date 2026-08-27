@@ -31,6 +31,7 @@ from investment_manager.forecast.product.context import ContextProductPayoffProj
 from investment_manager.forecast.product.evaluation import (
     ProductPayoffEvaluationCase,
     ProductPayoffEvidenceStatus,
+    ProductPayoffMappingIdentity,
     evaluate_product_payoff_evidence,
 )
 from investment_manager.forecast.product.models import (
@@ -98,6 +99,21 @@ PERPETUAL = InstrumentId(
     quote_asset="USDT",
     settlement_asset="USDT",
 )
+
+
+def _mapping_cohort(
+    *,
+    version: str = "linear-product-payoff-v1",
+    instruments: tuple[InstrumentId, ...] = (SPOT, PERPETUAL),
+) -> tuple[ProductPayoffMappingIdentity, ...]:
+    return (
+        ProductPayoffMappingIdentity(
+            economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+            projection_version=version,
+            instrument_keys=tuple(sorted(item.key for item in instruments)),
+            maximum_rule_age_seconds=900,
+        ),
+    )
 
 
 def _target(
@@ -803,6 +819,7 @@ def test_projection_store_is_idempotent_and_lists_products_by_target() -> None:
     create_schema(engine)
     contract = _contract()
     forecast = _persisted_forecast(engine, contract)
+    cohort_id = _mapping_cohort()[0].cohort_id
     values = tuple(
         project_product_payoff(
             contract=contract,
@@ -820,6 +837,7 @@ def test_projection_store_is_idempotent_and_lists_products_by_target() -> None:
             ),
             economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
             projection_version="linear-product-payoff-v1",
+            mapping_cohort_id=cohort_id,
         )
         for instrument, direction in (
             (SPOT, ExposureDirection.LONG),
@@ -831,6 +849,8 @@ def test_projection_store_is_idempotent_and_lists_products_by_target() -> None:
 
     assert tuple(store.record(item) for item in values) == (True, True, True)
     assert tuple(store.record(item) for item in values) == (False, False, False)
+    with pytest.raises(ValueError, match="已存在且内容不同"):
+        store.record(values[0].model_copy(update={"mapping_cohort_id": "f" * 64}))
     assert store.get(values[0].projection_id) == values[0]
     assert set(store.for_source(forecast.forecast_id)) == set(values)
 
@@ -845,6 +865,7 @@ def test_projection_store_is_idempotent_and_lists_products_by_target() -> None:
         ),
         economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
         projection_version="linear-product-payoff-v1",
+        mapping_cohort_id=cohort_id,
     )
     assert later.target == values[0].target
     assert later.projection_id != values[0].projection_id
@@ -870,6 +891,7 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
         ),
         economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
         projection_version="linear-product-payoff-v1",
+        mapping_cohort_id=_mapping_cohort(instruments=(PERPETUAL,))[0].cohort_id,
     )
     store = SqlProductPayoffProjectionStore(engine)
     assert store.record(projection)
@@ -935,6 +957,36 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
     assert outcome.realized_gross_bps == (
         outcome.leg.price_return_bps + outcome.leg.funding_return_bps
     )
+    source_outcome_version = "forecast-target-outcome-v1"
+    source_outcome = ForecastOutcome(
+        outcome_id=stable_id(
+            "forecast_outcome",
+            forecast.decision_slot_id,
+            source_outcome_version,
+        ),
+        contract_id=forecast.contract_id,
+        decision_slot_id=forecast.decision_slot_id,
+        evaluation_version=source_outcome_version,
+        status=ForecastOutcomeStatus.SETTLED,
+        information_cutoff_at=forecast.information_cutoff_at,
+        outcome_start_at=None,
+        evaluation_at=projection.evaluation_at,
+        settled_at=projection.evaluation_at + timedelta(minutes=1),
+        legs=(
+            ForecastLegOutcome(
+                instrument_id=SPOT.key,
+                direction=ExposureDirection.LONG,
+                gross_weight=Decimal("1"),
+                reference_price=Decimal("100"),
+                exit_price=Decimal("101"),
+                price_return_bps=Decimal("100"),
+            ),
+        ),
+        gross_target_return_bps=Decimal("100"),
+        realized_bucket_id="GAIN",
+        reason_code="TEST",
+    )
+    assert SqlForecastStore(engine).record_outcome(source_outcome)
     assert store.projection_outcomes(
         projection_ids=(projection.projection_id,),
         evaluation_version="product-payoff-outcome-v1",
@@ -948,15 +1000,28 @@ def test_product_payoff_settlement_uses_executable_exit_and_actual_funding() -> 
             projection_ids=(projection.projection_id, projection.projection_id),
             evaluation_version="product-payoff-outcome-v1",
         )
+    assert len(
+        store.outcome_cases(
+            product_outcome_version="product-payoff-outcome-v1",
+            forecast_outcome_version=source_outcome_version,
+            producer_behavior_id=forecast.producer_behavior_id,
+            mapping_cohort=_mapping_cohort(instruments=(PERPETUAL,)),
+        )
+    ) == 1
     assert store.outcome_cases(
         product_outcome_version="product-payoff-outcome-v1",
-        forecast_outcome_version="forecast-target-outcome-v1",
+        forecast_outcome_version=source_outcome_version,
         producer_behavior_id=forecast.producer_behavior_id,
+        mapping_cohort=_mapping_cohort(
+            version="retired-product-payoff-v0",
+            instruments=(PERPETUAL,),
+        ),
     ) == ()
     assert store.outcome_cases(
         product_outcome_version="product-payoff-outcome-v1",
         forecast_outcome_version="forecast-target-outcome-v1",
         producer_behavior_id="different-behavior",
+        mapping_cohort=_mapping_cohort(),
     ) == ()
     assert settler.settle(
         as_of=projection.evaluation_at + timedelta(minutes=2)
@@ -978,6 +1043,7 @@ def test_product_payoff_settlement_waits_for_grace_then_freezes_unavailable() ->
         ),
         economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
         projection_version="linear-product-payoff-v1",
+        mapping_cohort_id=_mapping_cohort(instruments=(SPOT,))[0].cohort_id,
     )
     store = SqlProductPayoffProjectionStore(engine)
     assert store.record(projection)
@@ -1025,6 +1091,7 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
             ),
             economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
             projection_version="linear-product-payoff-v1",
+            mapping_cohort_id=_mapping_cohort()[0].cohort_id,
         )
         for instrument, direction, entry, uncertainty, margin in (
             (SPOT, ExposureDirection.LONG, "100", "0", "1"),
@@ -1054,6 +1121,7 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
         ),
         economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
         projection_version="linear-product-payoff-v1",
+        mapping_cohort_id=_mapping_cohort()[0].cohort_id,
     )
 
     def outcome(projection, realized: Decimal) -> ProductPayoffOutcome:
@@ -1148,16 +1216,26 @@ def test_product_payoff_evidence_removes_the_realized_economic_return() -> None:
 
     evidence = evaluate_product_payoff_evidence(
         cases,
+        mapping_cohort=_mapping_cohort(),
         product_outcome_version="product-payoff-outcome-v1",
         forecast_outcome_version=forecast_outcome_version,
         required_independent_source_forecasts=30,
     )
 
     assert evidence.status == ProductPayoffEvidenceStatus.COLLECTING
-    assert evidence.evaluation_version == "product-payoff-residual-evidence-v1"
+    assert evidence.evaluation_version == "product-payoff-residual-evidence-v2"
+    assert evidence.mapping_cohort == _mapping_cohort()
     assert evidence.source_forecast_count == 1
     assert evidence.settled_product_count == 4
     assert evidence.independent_source_forecast_count == 1
+    with pytest.raises(ValueError, match="评价输入身份不一致"):
+        evaluate_product_payoff_evidence(
+            cases,
+            mapping_cohort=_mapping_cohort(version="retired-product-payoff-v0"),
+            product_outcome_version="product-payoff-outcome-v1",
+            forecast_outcome_version=forecast_outcome_version,
+            required_independent_source_forecasts=30,
+        )
     expected_residuals = (
         first.expected_gross_bps - forecast.expected_gross_bps,
         second.expected_gross_bps - forecast.expected_gross_bps,

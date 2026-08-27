@@ -105,6 +105,25 @@ def _analysis_fields(item: FrozenModel, names: tuple[str, ...]) -> dict[str, obj
     return projected
 
 
+def _analysis_state_table(
+    items: tuple[FrozenModel, ...],
+    names: tuple[str, ...],
+) -> dict[str, tuple[object, ...]]:
+    """Encode homogeneous point-in-time states without repeated field names.
+
+    The immutable packet stays object-shaped for validation and replay.  The
+    analyst sees one explicit column contract plus rows; optional observations
+    remain explicit ``null`` values, so this is transport deduplication rather
+    than evidence deletion or summarisation.
+    """
+
+    rows: list[tuple[object, ...]] = []
+    for item in items:
+        projected = _analysis_fields(item, names)
+        rows.append(tuple(projected.get(name) for name in names))
+    return {"columns": names, "rows": tuple(rows)}
+
+
 def _analysis_fact(item: PacketFact) -> dict[str, object]:
     """Remove audit-only duplication while retaining epistemic qualifiers."""
 
@@ -373,57 +392,55 @@ def decision_packet_analysis_projection(packet: DecisionPacket) -> dict:
         "trigger_ids",
     ):
         payload.pop(field_name)
-    payload["asset_states"] = tuple(
-        _analysis_fields(
-            item,
-            (
-                "asset",
-                "market_symbol",
-                "observed_at",
-                "last",
-                "return_fraction",
-                "realized_volatility",
-                "atr",
-                "spread_bps",
-                "volume_ratio",
-                "regime",
-            ),
-        )
-        for item in packet.asset_states
+    payload["asset_states"] = _analysis_state_table(
+        packet.asset_states,
+        (
+            "asset",
+            "market_symbol",
+            "observed_at",
+            "last",
+            "return_fraction",
+            "realized_volatility",
+            "atr",
+            "spread_bps",
+            "volume_ratio",
+            "regime",
+        ),
     )
-    payload["derivative_states"] = tuple(
-        _analysis_fields(
-            item,
-            (
-                "asset",
-                "evidence_ref",
-                "observed_at",
-                "mark_index_premium_bps",
-                "executable_short_basis_bps",
-                "perpetual_spread_bps",
-                "last_funding_rate_bps",
-                "trailing_funding_rate_mean_bps",
-                "trailing_funding_rate_stddev_bps",
-                "trailing_funding_positive_fraction",
-                "trailing_funding_rate_min_bps",
-                "funding_settlement_count",
-                "funding_window_hours",
-                "next_funding_time",
-                "spot_flow_observed_at",
-                "spot_flow_window_minutes",
-                "spot_taker_buy_sell_ratio",
-                "spot_mid_range_bps",
-                "reference_spot_mid_deviation_bps",
-                "widest_spot_spread_bps",
-                "positioning_observed_at",
-                "positioning_window_minutes",
-                "open_interest_change_fraction",
-                "global_long_account_fraction",
-                "taker_buy_sell_ratio",
-            ),
-        )
-        for item in packet.derivative_states
+    derivative_names = (
+        "asset",
+        "evidence_ref",
+        "observed_at",
+        "mark_index_premium_bps",
+        "executable_short_basis_bps",
+        "perpetual_spread_bps",
+        "last_funding_rate_bps",
+        "trailing_funding_rate_mean_bps",
+        "trailing_funding_rate_stddev_bps",
+        "trailing_funding_positive_fraction",
+        "trailing_funding_rate_min_bps",
+        "funding_settlement_count",
+        "funding_window_hours",
+        "next_funding_time",
+        "spot_flow_observed_at",
+        "spot_flow_window_minutes",
+        "spot_taker_buy_sell_ratio",
+        "spot_mid_range_bps",
+        "reference_spot_mid_deviation_bps",
+        "widest_spot_spread_bps",
+        "positioning_observed_at",
+        "positioning_window_minutes",
+        "open_interest_change_fraction",
+        "global_long_account_fraction",
+        "taker_buy_sell_ratio",
     )
+    if packet.derivative_states:
+        payload["derivative_states"] = _analysis_state_table(
+            packet.derivative_states,
+            derivative_names,
+        )
+    else:
+        payload.pop("derivative_states", None)
     payload["intelligence_events"] = tuple(
         _analysis_intelligence_event(item) for item in packet.intelligence_events
     )

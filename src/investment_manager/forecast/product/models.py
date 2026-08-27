@@ -78,6 +78,11 @@ class ProductPayoffProjection(FrozenModel):
 
     projection_id: str = Field(min_length=1)
     projection_version: str = Field(min_length=1)
+    mapping_cohort_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
     economic_exposure_id: str = Field(min_length=1)
     source_forecast_id: str = Field(min_length=1)
     source_contract_id: str = Field(min_length=1)
@@ -157,7 +162,12 @@ class ProductPayoffProjection(FrozenModel):
                 raise ValueError(f"Product projection {label} 必须唯一且排序")
         expected_id = stable_id(
             "product_payoff_projection",
-            content_hash(self.model_dump(mode="json", exclude={"projection_id"})),
+            content_hash(
+                self.model_dump(
+                    mode="json",
+                    exclude={"projection_id", "mapping_cohort_id"},
+                )
+            ),
         )
         if self.projection_id != expected_id:
             raise ValueError("Product projection ID 与冻结内容不一致")
@@ -211,6 +221,7 @@ def project_product_payoff(
     state: ProductProjectionState,
     economic_exposure_id: str,
     projection_version: str,
+    mapping_cohort_id: str | None = None,
 ) -> ProductPayoffProjection:
     """Project a single reference-price distribution without another model call."""
 
@@ -286,6 +297,7 @@ def project_product_payoff(
     )
     values = {
         "projection_version": projection_version,
+        "mapping_cohort_id": mapping_cohort_id,
         "economic_exposure_id": economic_exposure_id,
         "source_forecast_id": forecast.forecast_id,
         "source_contract_id": contract.contract_id,
@@ -326,7 +338,13 @@ def project_product_payoff(
     return ProductPayoffProjection(
         projection_id=stable_id(
             "product_payoff_projection",
-            content_hash(values),
+            content_hash(
+                {
+                    key: value
+                    for key, value in values.items()
+                    if key != "mapping_cohort_id"
+                }
+            ),
         ),
         **values,
     )

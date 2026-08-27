@@ -32,6 +32,7 @@ from investment_manager.forecast.contracts import (
 )
 from investment_manager.forecast.product.evaluation import (
     ProductPayoffEvidence,
+    ProductPayoffMappingIdentity,
     evaluate_product_payoff_evidence,
 )
 from investment_manager.forecast.product.models import ProductPayoffProjection
@@ -486,13 +487,27 @@ class CapitalDashboardReader:
         ):
             return None
         evaluation = self._config.outcome_evaluation
+        mapping_cohort = tuple(
+            sorted(
+                ProductPayoffMappingIdentity(
+                    economic_exposure_id=payoffs.economic_exposure_id,
+                    projection_version=payoffs.version,
+                    instrument_keys=payoffs.instrument_keys,
+                    maximum_rule_age_seconds=payoffs.maximum_rule_age_seconds,
+                )
+                for target in context.targets
+                if (payoffs := target.product_payoffs) is not None
+            )
+        )
         cases = SqlProductPayoffProjectionStore(self._engine).outcome_cases(
             product_outcome_version=evaluation.product_payoff_version,
             forecast_outcome_version=evaluation.target_forecast_version,
             producer_behavior_id=context.producer_behavior_id,
+            mapping_cohort=mapping_cohort,
         )
         return evaluate_product_payoff_evidence(
             cases,
+            mapping_cohort=mapping_cohort,
             product_outcome_version=evaluation.product_payoff_version,
             forecast_outcome_version=evaluation.target_forecast_version,
             required_independent_source_forecasts=(

@@ -8,7 +8,10 @@ from sqlalchemy import and_, insert, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from investment_manager.forecast.product.evaluation import ProductPayoffEvaluationCase
+from investment_manager.forecast.product.evaluation import (
+    ProductPayoffEvaluationCase,
+    ProductPayoffMappingIdentity,
+)
 from investment_manager.forecast.product.models import (
     ProductPayoffOutcome,
     ProductPayoffProjection,
@@ -195,7 +198,13 @@ class SqlProductPayoffProjectionStore:
         product_outcome_version: str,
         forecast_outcome_version: str,
         producer_behavior_id: str,
+        mapping_cohort: tuple[ProductPayoffMappingIdentity, ...],
     ) -> tuple[ProductPayoffEvaluationCase, ...]:
+        if not mapping_cohort or tuple(sorted(set(mapping_cohort))) != mapping_cohort:
+            raise ValueError("Product payoff mapping cohort 必须唯一且排序")
+        economic_exposure_ids = tuple(
+            sorted({item.economic_exposure_id for item in mapping_cohort})
+        )
         source_outcomes = forecast_outcomes.alias("source_outcomes")
         with self._engine.connect() as connection:
             rows = connection.execute(
@@ -228,6 +237,9 @@ class SqlProductPayoffProjectionStore:
                     product_payoff_outcomes.c.evaluation_version
                     == product_outcome_version,
                     forecasts.c.producer_behavior_id == producer_behavior_id,
+                    product_payoff_projections.c.economic_exposure_id.in_(
+                        economic_exposure_ids
+                    ),
                 )
                 .order_by(
                     product_payoff_projections.c.evaluation_at,
@@ -235,7 +247,7 @@ class SqlProductPayoffProjectionStore:
                     product_payoff_projections.c.projection_id,
                 )
             ).all()
-        return tuple(
+        cases = tuple(
             ProductPayoffEvaluationCase(
                 source_forecast=BaseForecast.model_validate(row[0]),
                 source_outcome=ForecastOutcome.model_validate(row[1]),
@@ -243,6 +255,15 @@ class SqlProductPayoffProjectionStore:
                 product_outcome=ProductPayoffOutcome.model_validate(row[3]),
             )
             for row in rows
+        )
+        return tuple(
+            case
+            for case in cases
+            if any(
+                item.cohort_id == case.projection.mapping_cohort_id
+                and item.contains(case.projection)
+                for item in mapping_cohort
+            )
         )
 
     @staticmethod

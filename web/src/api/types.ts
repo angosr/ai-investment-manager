@@ -203,6 +203,12 @@ export interface ForecastEvaluationEvidence {
   forecast_evidence: ForecastEvidenceSummary | null;
   product_payoff_evidence: {
     evaluation_version: string;
+    mapping_cohort: {
+      economic_exposure_id: string;
+      projection_version: string;
+      instrument_keys: string[];
+      maximum_rule_age_seconds: number;
+    }[];
     status: "NO_SETTLED_SAMPLES" | "COLLECTING" | "SUFFICIENT";
     terminal_product_count: number;
     settled_product_count: number;

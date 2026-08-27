@@ -93,7 +93,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.decision_state.version == "portfolio-state-v49"
     assert config.decision_state.official_fact_policy.version == "official-fact-v19"
     assert config.decision_state.delta_policy.version == "state-delta-v19"
-    assert config.decision_state.packet_policy.version == "decision-packet-policy-v52"
+    assert config.decision_state.packet_policy.version == "decision-packet-policy-v53"
     assert config.decision_state.packet_policy.schema_version == "decision-packet-v20"
     assert config.decision_state.packet_policy.maximum_facts == 20
     assert config.decision_state.packet_policy.maximum_fact_characters == 7_000
@@ -123,7 +123,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.target_forecast_minimum_sample_size == 30
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
-        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v35"
+        config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v36"
     )
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v32"

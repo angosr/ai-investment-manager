@@ -115,6 +115,9 @@ ASSESS_INSTRUCTIONS = (
     "验证观测；上一轮认知不能代替当前事实。未列出的审计事实不能被补猜，其 ref 可作为 "
     "evidence_id 引用，at 是状态有效时点。应联合比较各 regime_states 与 flow_states，"
     "以及存在时的 financing_states，不能只挑价格或单一指标。",
+    "asset_states 和 derivative_states 采用 columns/rows 矩阵：columns 只定义一次字段顺序，"
+    "每个 rows 项按该顺序给出一个资产的完整点时状态，null 表示该资产没有该项观测；"
+    "这是无损传输编码，不表示字段优先级，也不得跳过行内的反向证据。",
     "capability_summary 只列当前非完整覆盖的观察边界，不是数据建设清单，也不能作为事实证据。"
     "只有其中某项缺失或采集异常会实质改变当前机制、竞争解释或结论边界时才说明影响；"
     "不得逐项复述、固定输出仍缺列表，也不得因未列出健康领域而推断该领域没有数据。",
