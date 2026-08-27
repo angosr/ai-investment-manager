@@ -76,6 +76,9 @@ function CapitalTimeline({
           {forecastEvaluation?.capital_choice_evidence ? (
             <CapitalChoiceEvidenceLine evidence={forecastEvaluation.capital_choice_evidence} />
           ) : null}
+          {forecastEvaluation?.forecast_stability_evidence ? (
+            <ForecastStabilityLine evidence={forecastEvaluation.forecast_stability_evidence} />
+          ) : null}
           {forecastEvaluation?.forecast_evidence ? (
             <ForecastEvidenceLine evidence={forecastEvaluation.forecast_evidence} />
           ) : null}
@@ -186,6 +189,56 @@ function ForecastEvidenceLine({
         已结算 {evidence.non_overlapping_sample_count} 个互不重复的预测结果
         {coverage ? ` · 按时输出 ${coverage}` : ""}
         {` · ${verdict}`}
+      </span>
+    </div>
+  );
+}
+
+function ForecastStabilityLine({
+  evidence,
+}: {
+  evidence: NonNullable<ForecastEvaluationEvidence["forecast_stability_evidence"]>;
+}) {
+  if (evidence.replayable_case_count === 0) return null;
+  const decisionFlipObserved = evidence.cash_flip_count > 0
+    || evidence.expression_flip_count > 0;
+  const allocationDeltaValue = evidence.maximum_allocation_fraction_delta === null
+    ? null
+    : Number(evidence.maximum_allocation_fraction_delta);
+  const allocationDelta = allocationDeltaValue !== null && allocationDeltaValue > 0
+    ? `${(allocationDeltaValue * 100).toFixed(1)}%`
+    : null;
+  const headline = decisionFlipObserved
+    ? "同一信息重复分析会改变交易动作"
+    : evidence.target_change_count > 0
+      ? "同一信息重复分析方向一致，但仓位强度不同"
+      : "同一信息重复分析的资本动作一致";
+  const changes = [
+    evidence.cash_flip_count > 0
+      ? `${evidence.cash_flip_count} 次改变是否持有仓位`
+      : null,
+    evidence.expression_flip_count > 0
+      ? `${evidence.expression_flip_count} 次改变产品或方向`
+      : null,
+    evidence.target_change_count > 0 && !decisionFlipObserved
+      ? `${evidence.target_change_count} 次只改变目标金额`
+      : decisionFlipObserved
+        ? `共 ${evidence.target_change_count} 次资本目标不同`
+      : null,
+  ].filter((item): item is string => item !== null);
+  const detail = changes.length > 0
+    ? changes.join("；")
+    : "没有改变现金、产品、方向或目标金额";
+  return (
+    <div className={styles.forecastEvidence}>
+      <b>{headline}</b>
+      <span>
+        已完成 {evidence.replayable_case_count} 次同输入复算；{detail}
+        {allocationDelta ? `；目标配置最大相差账户权益 ${allocationDelta}` : ""}。
+        {evidence.missing_capital_target_count > 0
+          ? ` 另有 ${evidence.missing_capital_target_count} 次因缺少当时的资本目标而无法比较。`
+          : ""}
+        这只衡量 AI 生成稳定性，不代表预测方向正确。
       </span>
     </div>
   );

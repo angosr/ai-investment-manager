@@ -207,6 +207,16 @@ export interface AssessmentFeed {
 
 export interface ForecastEvaluationEvidence {
   forecast_evidence: ForecastEvidenceSummary | null;
+  forecast_stability_evidence: {
+    assignment_count: number;
+    successful_replica_count: number;
+    replayable_case_count: number;
+    missing_capital_target_count: number;
+    cash_flip_count: number;
+    expression_flip_count: number;
+    target_change_count: number;
+    maximum_allocation_fraction_delta: string | null;
+  } | null;
   product_payoff_evidence: {
     evaluation_version: string;
     mapping_cohort: {
