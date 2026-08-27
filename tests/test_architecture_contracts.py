@@ -1316,6 +1316,33 @@ def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
     ):
         assert not (ROOT / "web" / "src" / "components" / retired).exists()
 
+    def methods(path: Path, class_name: str) -> set[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        owner = next(
+            item
+            for item in tree.body
+            if isinstance(item, ast.ClassDef) and item.name == class_name
+        )
+        return {
+            item.name
+            for item in owner.body
+            if isinstance(item, ast.FunctionDef)
+        }
+
+    evidence_methods = {
+        "forecast_evidence",
+        "forecast_stability_evidence",
+        "product_payoff_evidence",
+        "capital_choice_evidence",
+        "world_model_ablation_evidence",
+    }
+    assert methods(dashboard_root / "capital.py", "CapitalDashboardReader").isdisjoint(
+        evidence_methods
+    )
+    assert evidence_methods.issubset(
+        methods(dashboard_root / "evaluation.py", "EvaluationDashboardReader")
+    )
+
 
 def test_package_root_contains_only_composition_entries() -> None:
     assert {

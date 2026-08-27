@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from investment_manager.entrypoints.dashboard import serializers as ser
-from investment_manager.entrypoints.dashboard.capital import (
-    CapitalOverview,
+from investment_manager.entrypoints.dashboard.capital import CapitalOverview
+from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
     serialize_world_model_ablation_evidence,

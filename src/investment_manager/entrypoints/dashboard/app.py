@@ -24,9 +24,12 @@ from investment_manager.entrypoints.dashboard.capital import (
     CapitalDashboardReader,
     serialize_capital_activity,
     serialize_capital_activity_detail,
-    serialize_capital_choice_evidence,
     serialize_capital_equity,
     serialize_capital_overview,
+)
+from investment_manager.entrypoints.dashboard.evaluation import (
+    EvaluationDashboardReader,
+    serialize_capital_choice_evidence,
     serialize_forecast_evidence,
     serialize_forecast_stability_evidence,
     serialize_product_payoff_evidence,
@@ -52,6 +55,8 @@ from investment_manager.settings import AppConfig
 
 _DEFAULT_LIMIT = 30
 _MAX_LIMIT = 100
+
+
 class _DashboardStaticFiles(StaticFiles):
     """Always revalidate the shell while caching content-addressed build assets."""
 
@@ -80,6 +85,7 @@ def create_app(
     reader = DashboardReader(engine, config)
     assessment_store = SqlContextAssessmentStore(engine)
     capital_reader = CapitalDashboardReader(engine, config)
+    evaluation_reader = EvaluationDashboardReader(engine, config)
     prime_cpu_sampler()
     temporal_client = None
     temporal_lock = asyncio.Lock()
@@ -155,12 +161,12 @@ def create_app(
     async def forecast_evidence(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
         evidence, stability, product_payoff, capital_choice, ablation = await asyncio.gather(
-            run_in_threadpool(capital_reader.forecast_evidence, now=now),
-            run_in_threadpool(capital_reader.forecast_stability_evidence),
-            run_in_threadpool(capital_reader.product_payoff_evidence),
-            run_in_threadpool(capital_reader.capital_choice_evidence),
+            run_in_threadpool(evaluation_reader.forecast_evidence, now=now),
+            run_in_threadpool(evaluation_reader.forecast_stability_evidence),
+            run_in_threadpool(evaluation_reader.product_payoff_evidence),
+            run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(
-                capital_reader.world_model_ablation_evidence,
+                evaluation_reader.world_model_ablation_evidence,
                 now=now,
             ),
         )

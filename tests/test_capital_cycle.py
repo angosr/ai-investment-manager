@@ -17,6 +17,7 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_equity,
     serialize_capital_overview,
 )
+from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashboardReader
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
@@ -1148,7 +1149,7 @@ def test_forecast_evidence_always_exposes_both_legal_source_strata() -> None:
     )
     SqlForecastContractStore(engine).record_contract(contract)
 
-    evidence = CapitalDashboardReader(engine, config).forecast_evidence(now=NOW)
+    evidence = EvaluationDashboardReader(engine, config).forecast_evidence(now=NOW)
 
     assert evidence is not None
     assert tuple(item.stratum for item in evidence.source_evidence) == tuple(ForecastSlotStratum)
