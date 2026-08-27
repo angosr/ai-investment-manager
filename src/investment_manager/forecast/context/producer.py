@@ -99,8 +99,8 @@ class ContextForecastPreflight(Protocol):
         *,
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object],
-        formal_output_schema: dict[str, object],
+        formal_analysis_input: dict[str, object] | None,
+        formal_output_schema: dict[str, object] | None,
     ) -> None: ...
 
 
@@ -244,8 +244,8 @@ class CompositeContextForecastPreflight:
         *,
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object],
-        formal_output_schema: dict[str, object],
+        formal_analysis_input: dict[str, object] | None,
+        formal_output_schema: dict[str, object] | None,
     ) -> None:
         for preflight in self.preflights:
             try:
@@ -692,6 +692,7 @@ class PortfolioContextForecastProducer:
                 reason=ForecastNoEstimateReason.WORLD_MODEL_UNAVAILABLE,
                 completed_at=slot_at,
             )
+            self._run_preflight(slot=next(iter(slots.values())))
             return self._ordered(existing)
         provenance = (assessment.assessment_id, packet.packet_id, packet.content_hash)
         if assessment.decision_packet_hash != packet.content_hash:
@@ -755,6 +756,7 @@ class PortfolioContextForecastProducer:
             )
 
         if not analysis_targets:
+            self._run_preflight(slot=next(iter(slots.values())))
             return self._ordered(existing)
         frozen_targets = tuple(analysis_targets)
         try:
@@ -771,26 +773,17 @@ class PortfolioContextForecastProducer:
                 input_refs=input_refs,
                 detail=f"CONTEXT_MODEL_INPUT_UNAVAILABLE:{type(exc).__name__}",
             )
+            self._run_preflight(slot=frozen_targets[0].slot)
             return self._ordered(existing)
         analysis_input = model_input.payload
-        if self.preflight is not None:
-            try:
-                self.preflight.before_estimate(
-                    slot=frozen_targets[0].slot,
-                    formal_producer_behavior_id=self.policy.producer_behavior_id,
-                    formal_analysis_input=analysis_input,
-                    formal_output_schema=context_forecast_output_schema(
-                        targets=frozen_targets,
-                        assessment=assessment,
-                    ),
-                )
-            except Exception:
-                # Research assignment integrity remains visible in its own
-                # ledger and logs, but it cannot deny the only capital Forecast.
-                logger.exception(
-                    "Context Forecast research preflight failed without blocking capital",
-                    extra={"slot_at": slot_at.isoformat()},
-                )
+        self._run_preflight(
+            slot=frozen_targets[0].slot,
+            analysis_input=analysis_input,
+            output_schema=context_forecast_output_schema(
+                targets=frozen_targets,
+                assessment=assessment,
+            ),
+        )
         result = self.analyst.estimate(
             targets=frozen_targets,
             assessment=assessment,
@@ -998,6 +991,30 @@ class PortfolioContextForecastProducer:
         else:
             self.contracts.record_obligation(slot=slot, binding=target.binding)
         return slot
+
+    def _run_preflight(
+        self,
+        *,
+        slot: ForecastDecisionSlot,
+        analysis_input: dict[str, object] | None = None,
+        output_schema: dict[str, object] | None = None,
+    ) -> None:
+        if self.preflight is None:
+            return
+        try:
+            self.preflight.before_estimate(
+                slot=slot,
+                formal_producer_behavior_id=self.policy.producer_behavior_id,
+                formal_analysis_input=analysis_input,
+                formal_output_schema=output_schema,
+            )
+        except Exception:
+            # Research assignment integrity remains visible in its own ledger
+            # and logs, but it cannot deny the only capital Forecast.
+            logger.exception(
+                "Context Forecast research preflight failed without blocking capital",
+                extra={"slot_at": slot.slot_as_of.isoformat()},
+            )
 
     def _finalize(
         self,

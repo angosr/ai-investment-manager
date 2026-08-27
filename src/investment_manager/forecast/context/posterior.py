@@ -324,18 +324,40 @@ class QuantContextPosteriorPreallocator(ContextForecastPreflight):
         *,
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object],
-        formal_output_schema: dict[str, object],
+        formal_analysis_input: dict[str, object] | None,
+        formal_output_schema: dict[str, object] | None,
     ) -> None:
         del formal_output_schema
         if slot.information_cutoff_at < self.policy.activated_at:
             return
         if formal_producer_behavior_id != self.formal_producer_behavior_id:
             raise ValueError("Quant posterior preflight 正式行为身份不一致")
-        raw = _canonical_object(canonical_json(formal_analysis_input), "formal input")
-        raw_targets = raw.get("forecast_targets")
-        if not isinstance(raw_targets, list) or not raw_targets:
-            raise ValueError("Quant posterior 正式输入缺少 targets")
+        raw = (
+            None
+            if formal_analysis_input is None
+            else _canonical_object(canonical_json(formal_analysis_input), "formal input")
+        )
+        raw_targets = [] if raw is None else raw.get("forecast_targets")
+        if not isinstance(raw_targets, list):
+            raise ValueError("Quant posterior 正式输入 targets 非法")
+        raw_slot_ids = {
+            str(decision_slot["decision_slot_id"])
+            for raw_target in raw_targets
+            if isinstance(raw_target, dict)
+            and isinstance((decision_slot := raw_target.get("decision_slot")), dict)
+            and isinstance(decision_slot.get("decision_slot_id"), str)
+        }
+        if len(raw_slot_ids) != len(raw_targets):
+            raise ValueError("Quant posterior 正式输入 target 身份重复或缺失")
+        expected_slots = self._expected_slots(anchor=slot)
+        if not raw_slot_ids.issubset(expected_slots):
+            raise ValueError("Quant posterior 正式输入包含非共同 Slot")
+        self._record_formal_absences(
+            expected_slots=expected_slots,
+            visible_slot_ids=raw_slot_ids,
+        )
+        if raw is None or not raw_targets:
+            return
         targets = []
         quant_forecasts: dict[str, BaseForecast] = {}
         for raw_target in raw_targets:
@@ -358,28 +380,19 @@ class QuantContextPosteriorPreallocator(ContextForecastPreflight):
             binding = self.bindings_by_contract.get(contract_id)
             if authoritative_slot is None or contract is None or binding is None:
                 raise ValueError("Quant posterior target 缺少权威 Slot/Contract/Binding")
-            quant = self.forecasts.result_for_behavior(
-                decision_slot_id=slot_id,
-                producer_behavior_id=self.quant_producer_behavior_id,
-            )
-            absence = self.contracts.no_estimate(
-                stable_id("forecast_no_estimate", slot_id, self.quant_producer_behavior_id)
-            )
-            if isinstance(quant, BaseForecast):
+            quant, absence, quant_refs = self._quant_terminal(slot_id)
+            if quant is not None:
                 if quant.program_input_json is None:
                     raise ValueError("Quant posterior 来源 Forecast 缺少程序快照")
                 quant_forecasts[slot_id] = quant
                 quant_forecast_id = quant.forecast_id
                 quant_no_estimate_id = None
                 quant_reason = None
-                quant_refs = tuple(sorted({quant.forecast_id, *quant.input_refs}))
-            elif absence is not None:
+            else:
+                assert absence is not None
                 quant_forecast_id = None
                 quant_no_estimate_id = absence.result_id
                 quant_reason = absence.reason
-                quant_refs = tuple(sorted({absence.result_id, *absence.input_refs}))
-            else:
-                raise ValueError("Quant posterior 同槽 Quant 义务尚未形成终态")
             targets.append(
                 QuantContextPosteriorTarget(
                     slot=authoritative_slot,
@@ -416,6 +429,105 @@ class QuantContextPosteriorPreallocator(ContextForecastPreflight):
         if existing is not None and existing != assignment:
             raise ValueError("Quant posterior 重试绑定了不同冻结输入")
         self.repository.record_assignment(assignment)
+
+    def _expected_slots(
+        self,
+        *,
+        anchor: ForecastDecisionSlot,
+    ) -> dict[str, ForecastDecisionSlot]:
+        values: dict[str, ForecastDecisionSlot] = {}
+        for contract_id in sorted(self.bindings_by_contract):
+            slot_id = ForecastDecisionSlot.identity_for(
+                contract_id,
+                anchor.slot_as_of,
+                cause=anchor.cause,
+            )
+            slot = self.contracts.slot(slot_id)
+            if (
+                slot is None
+                or slot.information_cutoff_at != anchor.information_cutoff_at
+                or slot.completion_deadline_at != anchor.completion_deadline_at
+                or slot.evaluation_at != anchor.evaluation_at
+            ):
+                raise ValueError("Quant posterior 缺少同槽 Quant 权威 Slot")
+            values[slot_id] = slot
+        return values
+
+    def _record_formal_absences(
+        self,
+        *,
+        expected_slots: dict[str, ForecastDecisionSlot],
+        visible_slot_ids: set[str],
+    ) -> None:
+        for slot_id in sorted(set(expected_slots) - visible_slot_ids):
+            slot = expected_slots[slot_id]
+            binding = self.bindings_by_contract[slot.contract_id]
+            formal_absence = self.contracts.no_estimate(
+                stable_id(
+                    "forecast_no_estimate",
+                    slot_id,
+                    self.formal_producer_behavior_id,
+                )
+            )
+            if formal_absence is None:
+                raise ValueError("Quant posterior 缺失目标没有正式 NoEstimate")
+            quant, quant_absence, quant_refs = self._quant_terminal(slot_id)
+            if quant is None:
+                assert quant_absence is not None
+            quant_completed_at = (
+                quant.available_at if quant is not None else quant_absence.completed_at
+            )
+            self.contracts.record_obligation(slot=slot, binding=binding)
+            self.contracts.record_no_estimate(
+                ForecastNoEstimate(
+                    result_id=stable_id(
+                        "forecast_no_estimate",
+                        slot_id,
+                        self.producer_behavior_id,
+                    ),
+                    slot_id=slot_id,
+                    contract_id=slot.contract_id,
+                    producer_kind=binding.producer_kind,
+                    producer_id=binding.producer_id,
+                    producer_behavior_id=binding.producer_behavior_id,
+                    reason=formal_absence.reason,
+                    information_cutoff_at=slot.information_cutoff_at,
+                    attempted_at=slot.slot_as_of,
+                    completed_at=max(
+                        formal_absence.completed_at,
+                        quant_completed_at,
+                    ),
+                    input_refs=tuple(
+                        sorted(
+                            {
+                                formal_absence.result_id,
+                                *formal_absence.input_refs,
+                                *quant_refs,
+                            }
+                        )
+                    ),
+                    detail=(
+                        f"FORMAL_INPUT_UNAVAILABLE:{formal_absence.reason.value}"
+                    ),
+                )
+            )
+
+    def _quant_terminal(
+        self,
+        slot_id: str,
+    ) -> tuple[BaseForecast | None, ForecastNoEstimate | None, tuple[str, ...]]:
+        quant = self.forecasts.result_for_behavior(
+            decision_slot_id=slot_id,
+            producer_behavior_id=self.quant_producer_behavior_id,
+        )
+        absence = self.contracts.no_estimate(
+            stable_id("forecast_no_estimate", slot_id, self.quant_producer_behavior_id)
+        )
+        if isinstance(quant, BaseForecast):
+            return quant, None, tuple(sorted({quant.forecast_id, *quant.input_refs}))
+        if absence is not None:
+            return None, absence, tuple(sorted({absence.result_id, *absence.input_refs}))
+        raise ValueError("Quant posterior 同槽 Quant 义务尚未形成终态")
 
 
 class SqlQuantContextPosteriorRepository:

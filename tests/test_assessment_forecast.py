@@ -46,6 +46,8 @@ from investment_manager.forecast.context.service import (
 from investment_manager.forecast.context.workflow import AssessmentWorkflowRequest
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
+    ForecastNoEstimate,
+    ForecastNoEstimateReason,
     ForecastPermission,
     ForecastProducerBinding,
     ForecastProducerKind,
@@ -63,6 +65,7 @@ from investment_manager.forecast.models import (
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.forecast.tables import assessment_executions
+from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
     ClosedMarketBar,
@@ -449,12 +452,14 @@ class _FailingForecastPreflight:
 class _CountingForecastPreflight:
     def __init__(self) -> None:
         self.calls = 0
+        self.analysis_inputs = []
 
-    def before_estimate(self, **_kwargs) -> None:
+    def before_estimate(self, **kwargs) -> None:
         self.calls += 1
+        self.analysis_inputs.append(kwargs["formal_analysis_input"])
 
 
-def _context_forecast_producer(engine, analyst, *, preflight=None):
+def _context_forecast_producer(engine, analyst, *, preflight=None, target_states=None):
     config = load_config("config/investment-manager.yaml")
     policy = config.capital.context_forecast
     assert policy is not None
@@ -482,7 +487,7 @@ def _context_forecast_producer(engine, analyst, *, preflight=None):
         contract=contract,
         binding=binding,
         instrument=instrument,
-        target_states=_PacketTargetStateProvider(packet),
+        target_states=target_states or _PacketTargetStateProvider(packet),
     )
     program = PortfolioContextForecastProducer(
         policy=policy,
@@ -497,6 +502,12 @@ def _context_forecast_producer(engine, analyst, *, preflight=None):
         preflight=preflight,
     )
     return program.view(contract.outcome_family_id)
+
+
+class _UnavailableTargetStateProvider:
+    @staticmethod
+    def build(*, as_of):
+        raise PointInTimeInputUnavailable(f"test target unavailable at {as_of.isoformat()}")
 
 
 @pytest.mark.parametrize("material_event", (False, True))
@@ -622,6 +633,43 @@ def test_research_preflight_failure_does_not_block_capital_forecast(caplog) -> N
     assert isinstance(result, BaseForecast)
     assert analyst.calls == 1
     assert "research preflight failed without blocking capital" in caplog.text
+
+
+def test_research_preflight_observes_a_terminal_missing_target() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    contexts = SqlContextAssessmentStore(engine)
+    packet = contexts.record_packet(_packet())
+    assessment = contexts.record_assessment(packet.packet_id, _assessment())
+    analyst = _FixedProbabilityAnalyst(assessment.available_at + timedelta(seconds=10))
+    preflight = _CountingForecastPreflight()
+    producer = _context_forecast_producer(
+        engine,
+        analyst,
+        preflight=preflight,
+        target_states=_UnavailableTargetStateProvider(),
+    )
+    SqlMarketDataStore(engine).put_quote(
+        MarketQuote(
+            quote_id="context-unavailable-target-cutoff",
+            symbol="BTCUSDT",
+            observed_at=assessment.available_at,
+            bid=Decimal("69999"),
+            bid_quantity=Decimal("10"),
+            ask=Decimal("70001"),
+            ask_quantity=Decimal("10"),
+            update_id=1,
+            source="test",
+        )
+    )
+
+    result = producer.produce(as_of=assessment.available_at)
+
+    assert isinstance(result, ForecastNoEstimate)
+    assert result.reason == ForecastNoEstimateReason.MARKET_INPUT_INVALID
+    assert analyst.calls == 0
+    assert preflight.calls == 1
+    assert preflight.analysis_inputs == [None]
 
 
 def test_independent_research_preflight_failure_does_not_skip_later_assignment(caplog) -> None:

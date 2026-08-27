@@ -295,13 +295,15 @@ class ContextForecastStabilityPreallocator:
         *,
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object],
-        formal_output_schema: dict[str, object],
+        formal_analysis_input: dict[str, object] | None,
+        formal_output_schema: dict[str, object] | None,
     ) -> None:
         if slot.information_cutoff_at < self.policy.activated_at:
             return
         if formal_producer_behavior_id != self.formal_producer_behavior_id:
             raise ValueError("Context Forecast stability preflight 行为身份不一致")
+        if formal_analysis_input is None or formal_output_schema is None:
+            return
         preregister_context_forecast_stability(
             policy=self.policy,
             repository=self.repository,

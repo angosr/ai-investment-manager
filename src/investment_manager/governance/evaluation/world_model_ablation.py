@@ -1064,14 +1064,16 @@ class WorldModelAblationPreallocator:
         *,
         slot: ForecastDecisionSlot,
         formal_producer_behavior_id: str,
-        formal_analysis_input: dict[str, object],
-        formal_output_schema: dict[str, object],
+        formal_analysis_input: dict[str, object] | None,
+        formal_output_schema: dict[str, object] | None,
     ) -> None:
         del formal_output_schema
         if slot.information_cutoff_at < self.policy.activated_at:
             return
         if formal_producer_behavior_id != self.formal_producer_behavior_id:
             raise ValueError("WorldModel control preflight 绑定了错误正式行为")
+        if formal_analysis_input is None:
+            return
         formal_forecast_id = stable_id(
             "base_forecast",
             slot.slot_id,
