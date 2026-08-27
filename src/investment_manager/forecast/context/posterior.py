@@ -171,7 +171,7 @@ class QuantContextPosteriorAssignment(FrozenModel):
     policy_version: str = Field(min_length=1)
     producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     formal_producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    quant_producer_behavior_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quant_producer_behavior_id: str = Field(min_length=1)
     targets: tuple[QuantContextPosteriorTarget, ...] = Field(min_length=1)
     information_cutoff_at: datetime
     assigned_at: datetime

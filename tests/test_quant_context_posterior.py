@@ -101,7 +101,7 @@ def _fixture():
         permission=ForecastPermission.CAPITAL_CANDIDATE,
         required_feature_keys=target_policy.required_feature_keys,
     )
-    quant_behavior = "a" * 64
+    quant_behavior = stable_id("quant_forecast_behavior", "test")
     posterior_behavior = quant_context_posterior_behavior_id(
         config=config,
         contracts=(contract,),
