@@ -114,15 +114,15 @@ export function CapitalPositions({ data }: { data: CapitalOverview | null }) {
               <div className={styles.positionDetail}>
                 {item.quote_quality === "LIVE_MARKET" ? "实时价" : "最近价"}{" "}
                 <b title={item.price ?? undefined}>{price(item.price)}</b> USDT
-                {item.bid !== null && item.ask !== null ? (
-                  <>
-                    {" "}· 买一/卖一{" "}
-                    <b>
-                      {price(item.bid)} / {price(item.ask)}
-                    </b>
-                  </>
-                ) : null}
               </div>
+              {item.bid !== null && item.ask !== null ? (
+                <div className={`${styles.positionDetail} ${styles.quoteDetail}`}>
+                  买一/卖一{" "}
+                  <b>
+                    {price(item.bid)} / {price(item.ask)}
+                  </b>
+                </div>
+              ) : null}
               <div className={styles.quoteMeta} data-quality={item.quote_quality ?? "NONE"}>
                 {quoteState}
                 {item.quote_observed_at ? ` · ${hhmm(item.quote_observed_at)} UTC` : ""}

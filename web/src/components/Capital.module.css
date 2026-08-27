@@ -104,6 +104,9 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+.quoteDetail {
+  margin-top: 0;
+}
 .quoteMeta {
   margin-top: 3px;
   color: var(--faint);
