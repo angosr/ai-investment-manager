@@ -192,7 +192,7 @@ class ExecutionGroupEngine:
                     observed = None
         if observed is not None:
             self._observations.record(observed, available_at=as_of)
-            return self._from_order(leg, observed)
+            return execution_leg_from_order(leg, observed)
         if not allow_submit and leg.status == ExecutionLegStatus.PENDING:
             return leg.model_copy(
                 update={
@@ -216,41 +216,11 @@ class ExecutionGroupEngine:
                 return leg.model_copy(update={"status": ExecutionLegStatus.UNKNOWN})
         if observed is not None:
             self._observations.record(observed, available_at=as_of)
-            return self._from_order(leg, observed)
+            return execution_leg_from_order(leg, observed)
         return leg.model_copy(
             update={
                 "status": ExecutionLegStatus.CANCELED,
                 "observed_at": as_of,
-            }
-        )
-
-    @staticmethod
-    def _from_order(leg: ExecutionLeg, order: ProductOrder) -> ExecutionLeg:
-        if (
-            order.client_order_id != leg.client_order_id
-            or order.execution_leg_id != leg.execution_leg_id
-            or order.group_id != leg.group_id
-            or order.instrument != leg.instrument
-            or order.side != leg.side
-            or order.requested_quantity != leg.requested_quantity
-        ):
-            raise ValueError("Venue order 与 ExecutionLeg 合同不一致")
-        status = {
-            ProductOrderStatus.WORKING: ExecutionLegStatus.WORKING,
-            ProductOrderStatus.PARTIALLY_FILLED: ExecutionLegStatus.PARTIALLY_FILLED,
-            ProductOrderStatus.FILLED: ExecutionLegStatus.FILLED,
-            ProductOrderStatus.CANCELED: ExecutionLegStatus.CANCELED,
-            ProductOrderStatus.REJECTED: ExecutionLegStatus.REJECTED,
-            ProductOrderStatus.EXPIRED: ExecutionLegStatus.EXPIRED,
-        }[order.status]
-        return leg.model_copy(
-            update={
-                "status": status,
-                "filled_quantity": order.filled_quantity,
-                "average_fill_price": order.average_fill_price,
-                "fee": order.fee,
-                "venue_order_id": order.venue_order_id,
-                "observed_at": order.observed_at,
             }
         )
 
@@ -352,3 +322,35 @@ class ExecutionGroupEngine:
         payload.update(changes)
         payload["updated_at"] = as_of
         return ExecutionGroup.model_validate(payload)
+
+
+def execution_leg_from_order(leg: ExecutionLeg, order: ProductOrder) -> ExecutionLeg:
+    """Apply one venue fact to its immutable execution contract."""
+
+    if (
+        order.client_order_id != leg.client_order_id
+        or order.execution_leg_id != leg.execution_leg_id
+        or order.group_id != leg.group_id
+        or order.instrument != leg.instrument
+        or order.side != leg.side
+        or order.requested_quantity != leg.requested_quantity
+    ):
+        raise ValueError("Venue order 与 ExecutionLeg 合同不一致")
+    status = {
+        ProductOrderStatus.WORKING: ExecutionLegStatus.WORKING,
+        ProductOrderStatus.PARTIALLY_FILLED: ExecutionLegStatus.PARTIALLY_FILLED,
+        ProductOrderStatus.FILLED: ExecutionLegStatus.FILLED,
+        ProductOrderStatus.CANCELED: ExecutionLegStatus.CANCELED,
+        ProductOrderStatus.REJECTED: ExecutionLegStatus.REJECTED,
+        ProductOrderStatus.EXPIRED: ExecutionLegStatus.EXPIRED,
+    }[order.status]
+    return leg.model_copy(
+        update={
+            "status": status,
+            "filled_quantity": order.filled_quantity,
+            "average_fill_price": order.average_fill_price,
+            "fee": order.fee,
+            "venue_order_id": order.venue_order_id,
+            "observed_at": order.observed_at,
+        }
+    )

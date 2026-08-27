@@ -32,6 +32,45 @@ class MockSubmitBehavior(StrEnum):
     AFTER_ACCEPT_RESPONSE_LOST = "AFTER_ACCEPT_RESPONSE_LOST"
 
 
+def build_mock_product_order(
+    leg: ExecutionLeg,
+    *,
+    behavior: MockSubmitBehavior,
+    observed_at: datetime,
+    fee_bps: Decimal,
+) -> ProductOrder:
+    """Build the deterministic paper-venue fact without performing I/O."""
+
+    observed_at = require_utc(observed_at)
+    if fee_bps < 0:
+        raise ValueError("Mock Instrument fee_bps 不能为负")
+    if behavior == MockSubmitBehavior.REJECT:
+        status = ProductOrderStatus.REJECTED
+        filled = Decimal("0")
+    elif behavior == MockSubmitBehavior.PARTIAL_FILL:
+        status = ProductOrderStatus.PARTIALLY_FILLED
+        filled = leg.requested_quantity / Decimal("2")
+    else:
+        status = ProductOrderStatus.FILLED
+        filled = leg.requested_quantity
+    price = leg.reference_price if filled > 0 else None
+    fee = filled * (price or Decimal("0")) * leg.instrument.contract_multiplier * fee_bps / _BPS
+    return ProductOrder(
+        client_order_id=leg.client_order_id,
+        venue_order_id=stable_id("mock_product_order", leg.client_order_id),
+        group_id=leg.group_id,
+        execution_leg_id=leg.execution_leg_id,
+        instrument=leg.instrument,
+        side=leg.side,
+        requested_quantity=leg.requested_quantity,
+        status=status,
+        filled_quantity=filled,
+        average_fill_price=price,
+        fee=fee,
+        observed_at=observed_at,
+    )
+
+
 class SqlMockProductVenue:
     """Mock venue facts survive application restarts and remain client-ID idempotent."""
 
@@ -161,36 +200,11 @@ class SqlMockProductVenue:
         behavior: MockSubmitBehavior,
         observed_at: datetime,
     ) -> ProductOrder:
-        if behavior == MockSubmitBehavior.REJECT:
-            status = ProductOrderStatus.REJECTED
-            filled = Decimal("0")
-        elif behavior == MockSubmitBehavior.PARTIAL_FILL:
-            status = ProductOrderStatus.PARTIALLY_FILLED
-            filled = leg.requested_quantity / Decimal("2")
-        else:
-            status = ProductOrderStatus.FILLED
-            filled = leg.requested_quantity
-        price = leg.reference_price if filled > 0 else None
-        fee = (
-            filled
-            * (price or Decimal("0"))
-            * leg.instrument.contract_multiplier
-            * self._fee_bps_for(leg.instrument.key)
-            / _BPS
-        )
-        return ProductOrder(
-            client_order_id=leg.client_order_id,
-            venue_order_id=stable_id("mock_product_order", leg.client_order_id),
-            group_id=leg.group_id,
-            execution_leg_id=leg.execution_leg_id,
-            instrument=leg.instrument,
-            side=leg.side,
-            requested_quantity=leg.requested_quantity,
-            status=status,
-            filled_quantity=filled,
-            average_fill_price=price,
-            fee=fee,
+        return build_mock_product_order(
+            leg,
+            behavior=behavior,
             observed_at=observed_at,
+            fee_bps=self._fee_bps_for(leg.instrument.key),
         )
 
     def _fee_bps_for(self, instrument_key: str) -> Decimal:

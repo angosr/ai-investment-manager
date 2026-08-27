@@ -49,6 +49,9 @@ from investment_manager.forecast.results import (
     ForecastOutcome,
     ForecastOutcomeStatus,
 )
+from investment_manager.governance.evaluation.logical_account import (
+    ProducerLogicalAccount,
+)
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.market.models import (
     ExecutableQuote,
@@ -1535,6 +1538,171 @@ def test_context_projector_emits_spot_and_both_legal_perpetual_directions() -> N
     assert all(rules.rules_id in item.product_rule_refs for item in derivatives)
     assert all(item.expected_funding_bps == Decimal("0.5") for item in derivatives)
     assert len(store.values) == 3
+
+
+def test_context_projector_can_build_without_mutating_projection_ledger() -> None:
+    forecast, _, _, store, projector = _context_projector_fixture()
+
+    built = projector.build(forecast, as_of=forecast.available_at)
+
+    assert len(built) == 3
+    assert store.values == []
+    assert projector.project(forecast, as_of=forecast.available_at) == built
+    assert store.values == list(built)
+
+
+def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(
+    app_config,
+) -> None:
+    forecast, _, sleeves, quotes, _ = _decision_projection_inputs()
+    perpetual_sleeves = tuple(
+        item for item in sleeves if item.target.legs[0].instrument == PERPETUAL
+    )
+    perpetual_quotes = tuple(item for item in quotes if item.instrument == PERPETUAL)
+    profiles = tuple(
+        SleeveRiskProfile(
+            sleeve_id=item.sleeve_id,
+            version="logical-account-risk-v1",
+            basis_stress_bps=Decimal("100"),
+            funding_stress_bps=Decimal("30"),
+            execution_stress_bps=Decimal("100"),
+            derivative_initial_margin_fraction=Decimal("0.1"),
+        )
+        for item in perpetual_sleeves
+    )
+    evaluator = ProducerLogicalAccount(
+        producer_behavior_id=forecast.producer_behavior_id,
+        capital_policy=app_config.capital.model_copy(update={"enabled": True}),
+        initial_cash=Decimal("10000"),
+    )
+
+    step = evaluator.advance(
+        as_of=forecast.available_at,
+        sleeves=perpetual_sleeves,
+        quotes=perpetual_quotes,
+        risk_profiles=profiles,
+    )
+    assert step.target is not None
+    assert step.risk_decision is not None
+    assert step.trade_plan is not None
+    assert len(step.execution_groups) == 1
+    assert step.execution_groups[0].terminal
+    assert len(step.account.positions) == 1
+    assert step.account.positions[0].instrument == PERPETUAL
+    assert step.account.accounting is not None
+    assert step.account.accounting.fee_cost > 0
+    assert step.account.equity == Decimal("10000") - step.account.accounting.fee_cost
+
+    second_at = forecast.available_at + timedelta(minutes=10)
+    second_slot_id = stable_id("slot", second_at.isoformat())
+    second_forecast = forecast.model_copy(
+        update={
+            "forecast_id": stable_id(
+                "base_forecast",
+                second_slot_id,
+                forecast.producer_behavior_id,
+            ),
+            "decision_slot_id": second_slot_id,
+            "information_cutoff_at": second_at - timedelta(minutes=1),
+            "input_observed_at": second_at - timedelta(minutes=1),
+            "available_at": second_at,
+            "valid_until": second_at + timedelta(minutes=30),
+            "cutoff_prices": (
+                _anchor(SPOT, "101", "second-spot-cutoff").model_copy(
+                    update={
+                        "observed_at": second_at - timedelta(minutes=1),
+                        "available_at": second_at - timedelta(minutes=1),
+                    }
+                ),
+            ),
+            "entry_prices": (
+                _anchor(SPOT, "101", "second-spot-entry").model_copy(
+                    update={"observed_at": second_at, "available_at": second_at}
+                ),
+            ),
+            "outcome_probabilities": (
+                ForecastBucketProbability(bucket_id="LOSS", probability=Decimal("0.7")),
+                ForecastBucketProbability(bucket_id="FLAT", probability=Decimal("0.2")),
+                ForecastBucketProbability(bucket_id="GAIN", probability=Decimal("0.1")),
+            ),
+            "expected_gross_bps": Decimal("-60"),
+        }
+    )
+    authorization = CandidateCapitalAuthorization(
+        version="candidate-v1",
+        producer_id=second_forecast.producer_id,
+        producer_behavior_id=second_forecast.producer_behavior_id,
+        outcome_family_id=second_forecast.outcome_family_id,
+        hypothesis_fingerprint="a" * 64,
+    )
+    second_sleeves = tuple(
+        sorted(
+            (
+                PortfolioSleeveInput(
+                    sleeve_id=SleeveTarget.identity_for(
+                        portfolio_id="primary",
+                        forecast_family=second_forecast.outcome_family_id,
+                        forecast_target_id=projection.target.target_id,
+                    ),
+                    forecast=second_forecast,
+                    payoff_projection=projection,
+                    capital_authorization=authorization,
+                )
+                for projection in (
+                    project_product_payoff(
+                        contract=_contract(),
+                        forecast=second_forecast,
+                        state=_state(
+                            instrument=PERPETUAL,
+                            direction=direction,
+                            entry="101",
+                            uncertainty="1",
+                            margin="0.1",
+                            available_at=second_at,
+                        ),
+                        economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
+                        projection_version="linear-product-payoff-v1",
+                    )
+                    for direction in (
+                        ExposureDirection.LONG,
+                        ExposureDirection.SHORT,
+                    )
+                )
+            ),
+            key=lambda item: item.sleeve_id,
+        )
+    )
+    second_quote = perpetual_quotes[0].model_copy(
+        update={
+            "source_quote_id": "perpetual-second-executable",
+            "as_of": second_at,
+            "observed_at": second_at,
+            "bid": Decimal("101"),
+            "ask": Decimal("101"),
+        }
+    )
+    second_profiles = tuple(
+        item.model_copy(update={"sleeve_id": sleeve.sleeve_id})
+        for sleeve, item in zip(second_sleeves, profiles, strict=True)
+    )
+
+    reversal = evaluator.advance(
+        as_of=second_at,
+        sleeves=second_sleeves,
+        quotes=(second_quote,),
+        risk_profiles=second_profiles,
+    )
+    result = evaluator.result()
+
+    assert reversal.account.positions == ()
+    assert reversal.trade_plan is not None
+    assert len(reversal.trade_plan.groups) == 1
+    assert reversal.trade_plan.groups[0].legs[0].reduce_only
+    assert reversal.account.accounting is not None
+    assert reversal.account.accounting.fee_cost > step.account.accounting.fee_cost
+    assert result.account == reversal.account
+    assert result.gross_turnover > 0
+    assert result.step_ids == (step.step_id, reversal.step_id)
 
 
 def test_context_projector_keeps_spot_reference_out_of_perpetual_only_candidates() -> None:

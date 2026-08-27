@@ -81,6 +81,19 @@ class ContextProductPayoffProjector:
         *,
         as_of: datetime,
     ) -> tuple[ProductPayoffProjection, ...]:
+        projections = self.build(forecast, as_of=as_of)
+        for projection in projections:
+            self.store.record(projection)
+        return projections
+
+    def build(
+        self,
+        forecast: BaseForecast,
+        *,
+        as_of: datetime,
+    ) -> tuple[ProductPayoffProjection, ...]:
+        """Build from point-in-time facts without mutating the projection ledger."""
+
         if forecast.contract_id != self.contract.contract_id:
             raise ValueError("Product payoff 收到错误 ForecastContract")
         decision_at = require_utc(as_of)
@@ -105,7 +118,6 @@ class ContextProductPayoffProjector:
                     spec=spec,
                     mapping_cohort_id=mapping_cohort_id,
                 )
-                self.store.record(projection)
                 projections.append(projection)
                 continue
             projection_states = self._derivative_states(
@@ -124,7 +136,6 @@ class ContextProductPayoffProjector:
                     projection_version=self.policy.version,
                     mapping_cohort_id=mapping_cohort_id,
                 )
-                self.store.record(projection)
                 projections.append(projection)
         return tuple(sorted(projections, key=lambda item: item.target.target_id))
 
