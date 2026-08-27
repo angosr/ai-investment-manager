@@ -440,6 +440,7 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert forecast_evidence.status_code == 200
     assert forecast_evidence.json() == {
         "forecast_evidence": None,
+        "forecast_stability_evidence": None,
         "product_payoff_evidence": None,
         "capital_choice_evidence": None,
         "world_model_ablation": None,

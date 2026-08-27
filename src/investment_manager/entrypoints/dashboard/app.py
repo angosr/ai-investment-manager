@@ -28,6 +28,7 @@ from investment_manager.entrypoints.dashboard.capital import (
     serialize_capital_equity,
     serialize_capital_overview,
     serialize_forecast_evidence,
+    serialize_forecast_stability_evidence,
     serialize_product_payoff_evidence,
     serialize_world_model_ablation_evidence,
 )
@@ -153,8 +154,9 @@ def create_app(
 
     async def forecast_evidence(_request: Request) -> JSONResponse:
         now = datetime.now(UTC)
-        evidence, product_payoff, capital_choice, ablation = await asyncio.gather(
+        evidence, stability, product_payoff, capital_choice, ablation = await asyncio.gather(
             run_in_threadpool(capital_reader.forecast_evidence, now=now),
+            run_in_threadpool(capital_reader.forecast_stability_evidence),
             run_in_threadpool(capital_reader.product_payoff_evidence),
             run_in_threadpool(capital_reader.capital_choice_evidence),
             run_in_threadpool(
@@ -165,6 +167,7 @@ def create_app(
         return _json(
             {
                 **serialize_forecast_evidence(evidence),
+                **serialize_forecast_stability_evidence(stability),
                 **serialize_product_payoff_evidence(product_payoff),
                 **serialize_capital_choice_evidence(capital_choice),
                 **serialize_world_model_ablation_evidence(ablation),

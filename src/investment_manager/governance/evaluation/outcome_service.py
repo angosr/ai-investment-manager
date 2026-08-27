@@ -32,9 +32,6 @@ from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.kernel.time import require_utc
 from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
-from investment_manager.portfolio.stability import (
-    PortfolioForecastStabilityEvaluator,
-)
 from investment_manager.settings import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -54,9 +51,6 @@ class OutcomeEvaluationSupervisorHealth:
     forecast_stability_assignments: int = 0
     forecast_stability_complete_samples: int = 0
     forecast_stability_failed_replicas: int = 0
-    forecast_stability_replayable_capital_cases: int = 0
-    forecast_stability_capital_target_changes: int = 0
-    forecast_stability_capital_cash_flips: int = 0
     last_target_forecast_error_class: str | None = None
     last_product_payoff_error_class: str | None = None
     last_world_model_ablation_error_class: str | None = None
@@ -70,7 +64,6 @@ class OutcomeEvaluationSupervisor:
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
     world_model_ablation_runner: WorldModelAblationRunner | None = None
     forecast_stability_runner: ContextForecastStabilityRunner | None = None
-    portfolio_forecast_stability: PortfolioForecastStabilityEvaluator | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
         default_factory=OutcomeEvaluationSupervisorHealth
@@ -144,28 +137,6 @@ class OutcomeEvaluationSupervisor:
                     self.health.forecast_stability_failed_replicas = (
                         report.failed_replica_count
                     )
-                    if self.portfolio_forecast_stability is not None:
-                        assignments = self.forecast_stability_runner.repository.assignments(
-                            policy_version=self.forecast_stability_runner.policy.version,
-                            formal_producer_behavior_id=(
-                                self.forecast_stability_runner.formal_producer_behavior_id
-                            ),
-                        )
-                        capital_report = self.portfolio_forecast_stability.evaluate(
-                            assignments=assignments,
-                            results=self.forecast_stability_runner.repository.results(
-                                tuple(item.assignment_id for item in assignments)
-                            ),
-                        )
-                        self.health.forecast_stability_replayable_capital_cases = (
-                            capital_report.replayable_case_count
-                        )
-                        self.health.forecast_stability_capital_target_changes = (
-                            capital_report.target_change_count
-                        )
-                        self.health.forecast_stability_capital_cash_flips = (
-                            capital_report.cash_flip_count
-                        )
                     self.health.last_forecast_stability_error_class = None
                 except asyncio.CancelledError:
                     raise
@@ -230,14 +201,6 @@ def assemble_outcome_evaluation(
         product_payoff_settler=product_payoff_settler,
         world_model_ablation_runner=ablation_runner,
         forecast_stability_runner=stability_runner,
-        portfolio_forecast_stability=(
-            PortfolioForecastStabilityEvaluator(
-                engine=engine,
-                capital_policy=config.capital,
-            )
-            if stability_runner is not None and config.capital.enabled
-            else None
-        ),
     )
 
 

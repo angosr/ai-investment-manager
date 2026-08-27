@@ -25,6 +25,9 @@ from investment_manager.forecast.context.evaluation import (
     ForecastSourceEvidence,
     evaluate_forecast_evidence,
 )
+from investment_manager.forecast.context.stability import (
+    SqlContextForecastStabilityRepository,
+)
 from investment_manager.forecast.contracts import (
     ForecastContract,
     ForecastDecisionSlot,
@@ -82,6 +85,10 @@ from investment_manager.portfolio.models import (
 )
 from investment_manager.portfolio.policy import EconomicExposure, MandateStatus
 from investment_manager.portfolio.repository import load_portfolio_target
+from investment_manager.portfolio.stability import (
+    PortfolioForecastStabilityEvaluator,
+    PortfolioForecastStabilityReport,
+)
 from investment_manager.portfolio.tables import (
     capital_cycle_records,
     portfolio_account_snapshots,
@@ -453,6 +460,32 @@ class CapitalDashboardReader:
         now = require_utc(now)
         with self._engine.connect() as connection:
             return self._forecast_evidence(connection, now=now)
+
+    def forecast_stability_evidence(
+        self,
+    ) -> PortfolioForecastStabilityReport | None:
+        policy = self._config.outcome_evaluation.context_forecast_stability
+        context = self._config.capital.context_forecast
+        if (
+            policy is None
+            or not policy.enabled
+            or context is None
+            or not context.enabled
+            or not self._config.capital.enabled
+        ):
+            return None
+        repository = SqlContextForecastStabilityRepository(self._engine)
+        assignments = repository.assignments(
+            policy_version=policy.version,
+            formal_producer_behavior_id=context.producer_behavior_id,
+        )
+        return PortfolioForecastStabilityEvaluator(
+            engine=self._engine,
+            capital_policy=self._config.capital,
+        ).evaluate(
+            assignments=assignments,
+            results=repository.results(tuple(item.assignment_id for item in assignments)),
+        )
 
     def world_model_ablation_evidence(
         self, *, now: datetime
@@ -1610,6 +1643,16 @@ def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:
     if evidence is None:
         return {"forecast_evidence": None}
     return {"forecast_evidence": _serialize_forecast_evidence_payload(evidence)}
+
+
+def serialize_forecast_stability_evidence(
+    evidence: PortfolioForecastStabilityReport | None,
+) -> dict:
+    return {
+        "forecast_stability_evidence": (
+            None if evidence is None else evidence.model_dump(mode="json")
+        )
+    }
 
 
 def serialize_product_payoff_evidence(
