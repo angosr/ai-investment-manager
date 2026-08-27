@@ -533,7 +533,6 @@ def test_context_forecast_persists_one_replay_safe_probability_result(
     analysis_input = json.loads(first.analysis_input_json)
     assert set(analysis_input) == {
         "purpose",
-        "coverage_gap_codes",
         "forecast_targets",
         "world_model",
     }

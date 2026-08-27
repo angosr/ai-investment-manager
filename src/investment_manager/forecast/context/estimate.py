@@ -40,7 +40,7 @@ from investment_manager.state.decision.packet import (
     PacketDerivativeState,
 )
 
-CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v10"
+CONTEXT_FORECAST_INPUT_VERSION = "context-forecast-input-v11"
 CONTEXT_FORECAST_OUTPUT_VERSION = "context-forecast-output-v1"
 
 
@@ -176,6 +176,10 @@ CONTEXT_FORECAST_INSTRUCTIONS = (
     "outcome_probabilities 必须逐项使用输入合同给出的 bucket_id 和顺序，"
     "概率使用 0 到 1 的十进制字符串，"
     "总和精确等于 1。不确定时扩大中间和尾部概率，不能拒绝形成预测。",
+    "把 forecast_benchmark 作为无条件先验，再联合 target_state 和 world_model "
+    "形成条件分布。target_state 中的近期收益、波动和状态、成交量、现货与永续主动流、"
+    "未平仓量、资金费率和仓位是目标自身的可预测状态，不需要先被外生机制重复证明才能"
+    "改变先验；但不得把单一短窗口动量机械外推到合同终点。",
     "mechanism_contributions 只引用输入 world_model.mechanisms 的 mechanism_id，"
     "说明该机制相对合同基准分布"
     "带来上行、下行、不确定性或无实质影响；不得把市场价格结果冒充外生原因。",
@@ -246,7 +250,6 @@ def context_forecast_input_projection(
 
     return {
         "purpose": "FORECAST_ESTIMATE",
-        "coverage_gap_codes": packet.coverage_gap_codes,
         "forecast_targets": tuple(
             {
                 "decision_slot": {

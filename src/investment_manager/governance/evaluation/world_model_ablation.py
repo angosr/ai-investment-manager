@@ -183,7 +183,7 @@ class WorldModelAblationAssignment(FrozenModel):
         if "world_model" in control_input:
             raise ValueError("WorldModel control 输入不得包含 world_model")
         if self.targets:
-            if set(control_input) != {"purpose", "coverage_gap_codes", "forecast_targets"}:
+            if set(control_input) != {"purpose", "forecast_targets"}:
                 raise ValueError("联合 WorldModel control 输入必须只移除 world_model")
             raw_targets = control_input.get("forecast_targets")
             if not isinstance(raw_targets, list) or len(raw_targets) != len(self.targets):
@@ -495,7 +495,7 @@ def build_world_model_ablation_assignment(
         target_buckets=tuple(target_buckets),
     )
     control_input = {key: value for key, value in raw.items() if key != "world_model"}
-    if set(control_input) != {"purpose", "coverage_gap_codes", "forecast_targets"}:
+    if set(control_input) != {"purpose", "forecast_targets"}:
         raise ValueError("联合 WorldModel control 正式输入边界发生漂移")
     control_input_json = canonical_json(control_input)
     output_schema_json = canonical_json(schema)

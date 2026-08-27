@@ -164,7 +164,6 @@ def _seed(engine, *, record_formal: bool = True):
     formal_available = activation + timedelta(minutes=5)
     formal_input = {
         "purpose": "FORECAST_ESTIMATE",
-        "coverage_gap_codes": [],
         "forecast_targets": [
             {
                 "decision_slot": {
