@@ -206,6 +206,48 @@ def test_assignment_freezes_the_exact_formal_prompt_and_schema() -> None:
     assert assignment.replicas_per_input == 1
 
 
+def test_assignment_identity_uses_frozen_target_order_not_caller_anchor() -> None:
+    config = load_config("config/investment-manager.shadow.yaml")
+    policy = config.outcome_evaluation.context_forecast_stability
+    assert policy is not None
+    first = _slot()
+    second = first.model_copy(
+        update={
+            "slot_id": stable_id("forecast_decision_slot", "second"),
+            "contract_id": "contract-second",
+        }
+    )
+    analysis_input = _input(first)
+    second_target = dict(analysis_input["forecast_targets"][0])
+    second_target["decision_slot"] = dict(second_target["decision_slot"])
+    second_target["decision_slot"]["decision_slot_id"] = second.slot_id
+    second_target["forecast_contract"] = dict(second_target["forecast_contract"])
+    second_target["forecast_contract"]["contract_id"] = second.contract_id
+    analysis_input["forecast_targets"].append(second_target)
+    schema = context_forecast_output_schema_for_ids(
+        decision_slot_ids=(first.slot_id, second.slot_id),
+        bucket_ids=("LOSS", "FLAT", "GAIN"),
+        mechanism_ids=("mechanism-1",),
+        evidence_ids=("evidence-1",),
+    )
+
+    assignment = build_context_forecast_stability_assignment(
+        policy=policy,
+        slot=second,
+        formal_producer_behavior_id=BEHAVIOR,
+        formal_analysis_input=analysis_input,
+        formal_output_schema=schema,
+        assigned_at=CUTOFF + timedelta(minutes=1),
+    )
+
+    assert assignment.assignment_id == stable_id(
+        "context_forecast_stability_assignment",
+        policy.version,
+        BEHAVIOR,
+        stable_id("base_forecast", first.slot_id, BEHAVIOR),
+    )
+
+
 def test_stability_evaluation_measures_distribution_and_direction_drift() -> None:
     policy, assignment = _assignment()
     formal = _formal(assignment)

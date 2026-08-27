@@ -27,9 +27,18 @@ from investment_manager.forecast.context.estimate import (
     context_forecast_output_schema_for_ids,
     context_forecast_runtime,
 )
+from investment_manager.forecast.context.posterior_prompt import (
+    POSTERIOR_INPUT_VERSION,
+    POSTERIOR_INSTRUCTIONS,
+    quant_context_posterior_prompt,
+)
 from investment_manager.forecast.context.producer import (
     ContextForecastPreflight,
     finalize_context_base_forecast,
+)
+from investment_manager.forecast.context.stability import (
+    SqlContextForecastStabilityRepository,
+    preregister_context_forecast_stability,
 )
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
@@ -53,50 +62,16 @@ from investment_manager.forecast.tables import (
     forecast_slot_obligations,
     forecasts,
 )
-from investment_manager.governance.policy import QuantContextPosteriorPolicy
+from investment_manager.governance.policy import (
+    ContextForecastStabilityPolicy,
+    QuantContextPosteriorPolicy,
+)
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.models import InstrumentId, InstrumentProduct
 from investment_manager.market.repository import MarketDataStore, SqlMarketDataStore
 from investment_manager.settings import AppConfig
-
-POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v4"
-POSTERIOR_INSTRUCTIONS = (
-    "你是组合概率预测员。输入逐目标提供同槽确定性市场状态、预登记 ForecastContract、"
-    "经过样本外验证的 Quant prior 与共享 WorldModel。",
-    "Quant prior 是默认分布。只有输入中可引用的世界事件、政策传导、跨资产机制或"
-    "确定性状态表明历史 Quant 条件不再充分时，才调整概率；posterior 与 prior 完全相同是合法结论。",
-    "不得选择、启停或重新加权 Quant 模型，不得读取训练数据，不得重新计算输入特征，"
-    "也不得为了体现 AI 作用而制造概率变化。",
-    "Quant reliability 只描述历史概率质量；结合当前 cell 样本量、最弱阶段增量和"
-    "预期毛收益理解 prior，不得把 Brier 改善直接称为可交易 Alpha；费用后是否配置资本由程序决定。",
-    (
-        "你必须为每个可见 decision_slot_id 恰好输出一份 Forecast，只回答合同终点"
-        "收益落入各 bucket 的概率；不得输出订单、仓位、杠杆、精确收益点数、止损、"
-        "风险预算或交易建议。"
-    ),
-    (
-        "outcome_probabilities 必须使用合同给出的 bucket_id 与顺序，概率为 0 到 1 的"
-        "十进制字符串且总和精确等于 1。"
-    ),
-    "mechanism_contributions 只引用输入 WorldModel 的 mechanism_id，并具体说明它为何使 posterior"
-    "相对 Quant prior 上移、下移、扩大不确定性或保持不变。",
-    (
-        "evidence_refs 只引用输入 WorldModel 已有 evidence_id；invalidation_conditions "
-        "必须是未来可观察的重估线索。中文应清晰、具体、可证伪，资产代码、数值和枚举保留原文。"
-    ),
-)
-
-
-def quant_context_posterior_prompt(analysis_input: dict[str, object]) -> str:
-    return "\n".join(
-        (
-            *POSTERIOR_INSTRUCTIONS,
-            "quant_context_posterior_input_json=",
-            canonical_json(analysis_input),
-        )
-    )
 
 
 def quant_context_posterior_behavior_id(
@@ -733,6 +708,8 @@ class QuantContextPosteriorRunner:
     market: MarketDataStore
     analyst: CodexQuantContextPosteriorAnalyst
     maximum_quote_age_seconds: int
+    stability_policy: ContextForecastStabilityPolicy | None = None
+    stability_repository: SqlContextForecastStabilityRepository | None = None
 
     def reconcile(self, *, as_of: datetime) -> QuantContextPosteriorReport:
         now = require_utc(as_of)
@@ -789,6 +766,29 @@ class QuantContextPosteriorRunner:
                     input_refs=target.quant_input_refs,
                 )
             return
+        if self.stability_policy is not None:
+            if self.stability_repository is None:
+                raise ValueError("Quant posterior stability 缺少统一证据仓库")
+            stability_assignment = preregister_context_forecast_stability(
+                policy=self.stability_policy,
+                repository=self.stability_repository,
+                slot=analysis_targets[0].slot,
+                producer_behavior_id=assignment.producer_behavior_id,
+                analysis_input=_canonical_object(
+                    assignment.analysis_input_json,
+                    "posterior input",
+                ),
+                output_schema=_canonical_object(
+                    assignment.output_schema_json,
+                    "posterior schema",
+                ),
+                assigned_at=as_of,
+            )
+            if (
+                stability_assignment is not None
+                and stability_assignment.formal_prompt != assignment.prompt
+            ):
+                raise ValueError("Quant posterior stability 未冻结正式 prompt")
         result = self.analyst.estimate(assignment)
         completed_at = max(require_utc(result.completed_at or as_of), as_of)
         if (
@@ -1056,6 +1056,9 @@ def assemble_quant_context_posterior_runner(
         output_adapter=TypeAdapter(ContextForecastStructuredOutput),
         runtime_policy=runtime,
     )
+    stability_policy = config.outcome_evaluation.context_forecast_stability
+    if stability_policy is not None and not stability_policy.enabled:
+        stability_policy = None
     return QuantContextPosteriorRunner(
         policy=policy,
         producer_behavior_id=behavior_id,
@@ -1069,6 +1072,12 @@ def assemble_quant_context_posterior_runner(
             maximum_prompt_characters=runtime.maximum_prompt_characters,
         ),
         maximum_quote_age_seconds=context.maximum_quote_age_seconds,
+        stability_policy=stability_policy,
+        stability_repository=(
+            SqlContextForecastStabilityRepository(engine)
+            if stability_policy is not None
+            else None
+        ),
     )
 
 

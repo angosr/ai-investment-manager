@@ -174,3 +174,57 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
         assert runner.calls == 2
 
     asyncio.run(scenario())
+
+
+def test_forecast_stability_behaviors_share_one_parallel_evaluation_loop(
+    app_config,
+) -> None:
+    class Settler:
+        def settle(self, *, as_of):
+            return SimpleNamespace(settled=0, outcome_unavailable=0, pending=0)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        lock = threading.Lock()
+        completed = 0
+
+        class StabilityRunner:
+            def __init__(self, assignments: int, samples: int) -> None:
+                self.assignments = assignments
+                self.samples = samples
+                self.calls = 0
+
+            def reconcile(self, *, as_of):
+                nonlocal completed
+                self.calls += 1
+                with lock:
+                    completed += 1
+                    if completed == 2:
+                        loop.call_soon_threadsafe(stop.set)
+                return SimpleNamespace(
+                    assignment_count=self.assignments,
+                    complete_sample_count=self.samples,
+                    failed_replica_count=0,
+                )
+
+        formal = StabilityRunner(assignments=12, samples=12)
+        posterior = StabilityRunner(assignments=1, samples=1)
+        supervisor = OutcomeEvaluationSupervisor(
+            config=app_config,
+            target_forecast_settler=Settler(),
+            forecast_stability_runners=(formal, posterior),
+            clock=lambda: datetime.now(UTC),
+        )
+
+        await asyncio.wait_for(
+            supervisor._run_forecast_stability_loop(stop),
+            timeout=2,
+        )
+
+        assert formal.calls == posterior.calls == 1
+        assert supervisor.health.forecast_stability_assignments == 13
+        assert supervisor.health.forecast_stability_complete_samples == 13
+        assert supervisor.health.forecast_stability_failed_replicas == 0
+
+    asyncio.run(scenario())

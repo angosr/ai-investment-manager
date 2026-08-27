@@ -1,4 +1,4 @@
-"""Prospective exact-input stability evidence for one Context Forecast behavior."""
+"""Prospective exact-input stability evidence for one AI Forecast behavior."""
 
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ from investment_manager.forecast.context.estimate import (
     ContextForecastStructuredOutput,
     context_forecast_prompt,
     context_forecast_runtime,
+)
+from investment_manager.forecast.context.posterior_prompt import (
+    POSTERIOR_INPUT_VERSION,
+    quant_context_posterior_prompt,
 )
 from investment_manager.forecast.contracts import ForecastDecisionSlot
 from investment_manager.forecast.results import BaseForecast
@@ -113,7 +117,7 @@ class ContextForecastStabilityAssignment(FrozenModel):
             raise ValueError("Context Forecast stability prompt hash 不一致")
         if content_hash(output_schema) != self.formal_output_schema_hash:
             raise ValueError("Context Forecast stability schema hash 不一致")
-        if self.formal_prompt != context_forecast_prompt(analysis_input):
+        if self.formal_prompt != _stability_prompt(analysis_input):
             raise ValueError("Context Forecast stability prompt 不是正式输入的唯一投影")
         slot_ids = tuple(item.decision_slot_id for item in self.targets)
         if len(set(slot_ids)) != len(slot_ids):
@@ -252,14 +256,13 @@ def build_context_forecast_stability_assignment(
         )
     if slot.slot_id not in {item.decision_slot_id for item in targets}:
         raise ValueError("Context Forecast stability 正式组合缺少锚点 slot")
-    prompt = context_forecast_prompt(raw)
+    prompt = _stability_prompt(raw)
     output_schema = _canonical_object(canonical_json(formal_output_schema), "formal schema")
     values = {
-        "assignment_id": stable_id(
-            "context_forecast_stability_assignment",
-            policy.version,
-            formal_producer_behavior_id,
-            targets[0].formal_forecast_id,
+        "assignment_id": _stability_assignment_id(
+            policy=policy,
+            producer_behavior_id=formal_producer_behavior_id,
+            analysis_input=raw,
         ),
         "policy_version": policy.version,
         "formal_producer_behavior_id": formal_producer_behavior_id,
@@ -299,29 +302,60 @@ class ContextForecastStabilityPreallocator:
             return
         if formal_producer_behavior_id != self.formal_producer_behavior_id:
             raise ValueError("Context Forecast stability preflight 行为身份不一致")
-        assignment_id = stable_id(
-            "context_forecast_stability_assignment",
-            self.policy.version,
-            formal_producer_behavior_id,
-            stable_id("base_forecast", slot.slot_id, formal_producer_behavior_id),
-        )
-        existing = self.repository.assignment(assignment_id)
-        assigned_at = existing.assigned_at if existing is not None else require_utc(self.clock())
-        if existing is None and assigned_at >= slot.completion_deadline_at:
-            return
-        expected = build_context_forecast_stability_assignment(
+        preregister_context_forecast_stability(
             policy=self.policy,
+            repository=self.repository,
             slot=slot,
-            formal_producer_behavior_id=formal_producer_behavior_id,
-            formal_analysis_input=formal_analysis_input,
-            formal_output_schema=formal_output_schema,
-            assigned_at=assigned_at,
+            producer_behavior_id=formal_producer_behavior_id,
+            analysis_input=formal_analysis_input,
+            output_schema=formal_output_schema,
+            assigned_at=require_utc(self.clock()),
         )
-        if existing is not None:
-            if existing != expected:
-                raise ValueError("Context Forecast stability 重试绑定了不同输入")
-            return
-        self.repository.record_assignment(expected)
+
+
+def preregister_context_forecast_stability(
+    *,
+    policy: ContextForecastStabilityPolicy,
+    repository: SqlContextForecastStabilityRepository,
+    slot: ForecastDecisionSlot,
+    producer_behavior_id: str,
+    analysis_input: dict[str, object],
+    output_schema: dict[str, object],
+    assigned_at: datetime,
+) -> ContextForecastStabilityAssignment | None:
+    """Freeze one exact-input replica task before the producer's first call."""
+
+    if slot.information_cutoff_at < policy.activated_at:
+        return None
+    frozen_input = _canonical_object(
+        canonical_json(analysis_input),
+        "stability analysis input",
+    )
+    assignment_id = _stability_assignment_id(
+        policy=policy,
+        producer_behavior_id=producer_behavior_id,
+        analysis_input=frozen_input,
+    )
+    existing = repository.assignment(assignment_id)
+    frozen_assigned_at = (
+        existing.assigned_at if existing is not None else require_utc(assigned_at)
+    )
+    if existing is None and frozen_assigned_at >= slot.completion_deadline_at:
+        return None
+    expected = build_context_forecast_stability_assignment(
+        policy=policy,
+        slot=slot,
+        formal_producer_behavior_id=producer_behavior_id,
+        formal_analysis_input=analysis_input,
+        formal_output_schema=output_schema,
+        assigned_at=frozen_assigned_at,
+    )
+    if existing is not None:
+        if existing != expected:
+            raise ValueError("Context Forecast stability 重试绑定了不同输入")
+        return existing
+    repository.record_assignment(expected)
+    return expected
 
 
 class ContextForecastReplicaAnalyst(Protocol):
@@ -352,6 +386,7 @@ class CodexContextForecastReplicaAnalyst:
             result_id,
             assignment.formal_producer_behavior_id,
         )
+        input_version, input_filename = _stability_input_contract(assignment)
         try:
             bundle = load_existing_bundle(
                 cycle_id=result_id,
@@ -369,15 +404,13 @@ class CodexContextForecastReplicaAnalyst:
                     target=target,
                     prompt=assignment.formal_prompt,
                     files={
-                        "context_forecast_input.json": (
-                            assignment.formal_analysis_input_json + "\n"
-                        ),
+                        input_filename: assignment.formal_analysis_input_json + "\n",
                         "analyst_prompt.md": assignment.formal_prompt + "\n",
                         "output.schema.json": assignment.formal_output_schema_json + "\n",
                     },
                     manifest={
                         "analysis_mode": "CONTEXT_FORECAST_STABILITY_REPLICA",
-                        "input_version": CONTEXT_FORECAST_INPUT_VERSION,
+                        "input_version": input_version,
                         "output_version": CONTEXT_FORECAST_OUTPUT_VERSION,
                         "assignment_id": assignment.assignment_id,
                         "replica_index": replica_index,
@@ -726,6 +759,7 @@ def assemble_context_forecast_stability_runner(
     config: AppConfig,
     *,
     engine: Engine,
+    producer_behavior_id: str | None = None,
 ) -> ContextForecastStabilityRunner | None:
     policy = config.outcome_evaluation.context_forecast_stability
     context = config.capital.context_forecast
@@ -743,7 +777,11 @@ def assemble_context_forecast_stability_runner(
     )
     return ContextForecastStabilityRunner(
         policy=policy,
-        formal_producer_behavior_id=context.producer_behavior_id,
+        formal_producer_behavior_id=(
+            context.producer_behavior_id
+            if producer_behavior_id is None
+            else producer_behavior_id
+        ),
         repository=SqlContextForecastStabilityRepository(engine),
         analyst=CodexContextForecastReplicaAnalyst(
             bundle_root=runtime.bundle_root,
@@ -853,6 +891,51 @@ def _canonical_object(raw: str, name: str) -> dict[str, object]:
     return value
 
 
+def _stability_prompt(analysis_input: dict[str, object]) -> str:
+    purpose = analysis_input.get("purpose")
+    if purpose == "FORECAST_ESTIMATE":
+        return context_forecast_prompt(analysis_input)
+    if purpose == "QUANT_CONTEXT_POSTERIOR":
+        return quant_context_posterior_prompt(analysis_input)
+    raise ValueError("Context Forecast stability 不支持该输入用途")
+
+
+def _stability_input_contract(
+    assignment: ContextForecastStabilityAssignment,
+) -> tuple[str, str]:
+    purpose = _canonical_object(
+        assignment.formal_analysis_input_json,
+        "stability analysis input",
+    ).get("purpose")
+    if purpose == "FORECAST_ESTIMATE":
+        return CONTEXT_FORECAST_INPUT_VERSION, "context_forecast_input.json"
+    if purpose == "QUANT_CONTEXT_POSTERIOR":
+        return POSTERIOR_INPUT_VERSION, "quant_context_posterior_input.json"
+    raise ValueError("Context Forecast stability 不支持该输入用途")
+
+
+def _stability_assignment_id(
+    *,
+    policy: ContextForecastStabilityPolicy,
+    producer_behavior_id: str,
+    analysis_input: dict[str, object],
+) -> str:
+    raw_targets = analysis_input.get("forecast_targets")
+    first_target = raw_targets[0] if isinstance(raw_targets, list) and raw_targets else None
+    decision_slot = (
+        first_target.get("decision_slot") if isinstance(first_target, dict) else None
+    )
+    slot_id = decision_slot.get("decision_slot_id") if isinstance(decision_slot, dict) else None
+    if not isinstance(slot_id, str):
+        raise ValueError("Context Forecast stability 正式输入缺少主目标")
+    return stable_id(
+        "context_forecast_stability_assignment",
+        policy.version,
+        producer_behavior_id,
+        stable_id("base_forecast", slot_id, producer_behavior_id),
+    )
+
+
 def _direction(value: Decimal) -> int:
     return 1 if value > 0 else -1 if value < 0 else 0
 
@@ -889,4 +972,5 @@ __all__ = [
     "assemble_context_forecast_stability_runner",
     "build_context_forecast_stability_assignment",
     "evaluate_context_forecast_stability",
+    "preregister_context_forecast_stability",
 ]

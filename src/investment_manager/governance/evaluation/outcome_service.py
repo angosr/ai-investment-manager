@@ -80,7 +80,7 @@ class OutcomeEvaluationSupervisor:
     target_forecast_settler: ForecastOutcomeSettler
     product_payoff_settler: ProductPayoffOutcomeSettler | None = None
     world_model_ablation_runner: WorldModelAblationRunner | None = None
-    forecast_stability_runner: ContextForecastStabilityRunner | None = None
+    forecast_stability_runners: tuple[ContextForecastStabilityRunner, ...] = ()
     quant_posterior_runner: QuantContextPosteriorRunner | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     health: OutcomeEvaluationSupervisorHealth = field(
@@ -91,7 +91,7 @@ class OutcomeEvaluationSupervisor:
         workers = [self._run_settlement_loop(stop)]
         if self.world_model_ablation_runner is not None:
             workers.append(self._run_world_model_ablation_loop(stop))
-        if self.forecast_stability_runner is not None:
+        if self.forecast_stability_runners:
             workers.append(self._run_forecast_stability_loop(stop))
         if self.quant_posterior_runner is not None:
             workers.append(self._run_quant_posterior_loop(stop))
@@ -171,28 +171,34 @@ class OutcomeEvaluationSupervisor:
 
     async def _run_forecast_stability_loop(self, stop: asyncio.Event) -> None:
         policy = self.config.outcome_evaluation
-        runner = self.forecast_stability_runner
-        assert runner is not None
+        runners = self.forecast_stability_runners
+        assert runners
         while not stop.is_set():
             now = require_utc(self.clock())
-            try:
-                report = await asyncio.to_thread(
-                    runner.reconcile,
-                    as_of=now,
-                )
-                self.health.forecast_stability_assignments = report.assignment_count
-                self.health.forecast_stability_complete_samples = (
-                    report.complete_sample_count
-                )
-                self.health.forecast_stability_failed_replicas = (
-                    report.failed_replica_count
-                )
+            outcomes = await asyncio.gather(
+                *(asyncio.to_thread(runner.reconcile, as_of=now) for runner in runners),
+                return_exceptions=True,
+            )
+            reports = tuple(item for item in outcomes if not isinstance(item, BaseException))
+            errors = tuple(item for item in outcomes if isinstance(item, BaseException))
+            self.health.forecast_stability_assignments = sum(
+                item.assignment_count for item in reports
+            )
+            self.health.forecast_stability_complete_samples = sum(
+                item.complete_sample_count for item in reports
+            )
+            self.health.forecast_stability_failed_replicas = sum(
+                item.failed_replica_count for item in reports
+            )
+            if not errors:
                 self.health.last_forecast_stability_error_class = None
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
+            else:
+                exc = errors[0]
                 if self.health.last_forecast_stability_error_class != type(exc).__name__:
-                    logger.exception("context forecast stability evaluation failed")
+                    logger.error(
+                        "forecast stability evaluation failed",
+                        exc_info=(type(exc), exc, exc.__traceback__),
+                    )
                 self.health.last_forecast_stability_error_class = type(exc).__name__
             await _wait_for_next_poll(
                 stop,
@@ -256,14 +262,30 @@ def assemble_outcome_evaluation(
         engine=engine,
         release=release,
     )
-    stability_runner = assemble_context_forecast_stability_runner(
-        config,
-        engine=engine,
-    )
     posterior_runner = _assemble_quant_context_posterior(
         config=config,
         engine=engine,
         release=release,
+    )
+    stability_behaviors = [
+        config.capital.context_forecast.producer_behavior_id
+        if config.capital.context_forecast is not None
+        else None
+    ]
+    if posterior_runner is not None:
+        stability_behaviors.append(posterior_runner.producer_behavior_id)
+    stability_runners = tuple(
+        runner
+        for behavior_id in stability_behaviors
+        if behavior_id is not None
+        and (
+            runner := assemble_context_forecast_stability_runner(
+                config,
+                engine=engine,
+                producer_behavior_id=behavior_id,
+            )
+        )
+        is not None
     )
     # Outcome owns already-recorded obligations across Release changes.  Whether the
     # current Capital policy can create new projections must not orphan old ones.
@@ -289,7 +311,7 @@ def assemble_outcome_evaluation(
         ),
         product_payoff_settler=product_payoff_settler,
         world_model_ablation_runner=ablation_runner,
-        forecast_stability_runner=stability_runner,
+        forecast_stability_runners=stability_runners,
         quant_posterior_runner=posterior_runner,
     )
 

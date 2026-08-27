@@ -15,6 +15,9 @@ from investment_manager.forecast.context.posterior import (
     quant_context_posterior_behavior_id,
 )
 from investment_manager.forecast.context.producer import context_forecast_contract
+from investment_manager.forecast.context.stability import (
+    SqlContextForecastStabilityRepository,
+)
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastDecisionSlot,
@@ -391,9 +394,30 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
             source="test",
         )
     )
-    analyst = _PosteriorAnalyst(completed_at)
     posterior_policy = config.outcome_evaluation.quant_context_posterior
-    assert posterior_policy is not None
+    stability_policy = config.outcome_evaluation.context_forecast_stability
+    assert posterior_policy is not None and stability_policy is not None
+    stability_repository = SqlContextForecastStabilityRepository(engine)
+
+    class PreregisteredAnalyst(_PosteriorAnalyst):
+        def estimate(self, frozen_assignment):
+            preregistered = stability_repository.assignments(
+                policy_version=stability_policy.version,
+                formal_producer_behavior_id=frozen_assignment.producer_behavior_id,
+            )
+            assert len(preregistered) == 1
+            assert (
+                preregistered[0].formal_analysis_input_json
+                == frozen_assignment.analysis_input_json
+            )
+            assert preregistered[0].formal_prompt == frozen_assignment.prompt
+            assert (
+                preregistered[0].formal_output_schema_json
+                == frozen_assignment.output_schema_json
+            )
+            return super().estimate(frozen_assignment)
+
+    analyst = PreregisteredAnalyst(completed_at)
     runner = QuantContextPosteriorRunner(
         policy=posterior_policy,
         producer_behavior_id=assignment.producer_behavior_id,
@@ -403,6 +427,8 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
         market=SqlMarketDataStore(engine),
         analyst=analyst,
         maximum_quote_age_seconds=300,
+        stability_policy=stability_policy,
+        stability_repository=stability_repository,
     )
 
     report = runner.reconcile(as_of=NOW + timedelta(seconds=3))
@@ -412,6 +438,12 @@ def test_quant_context_posterior_uses_common_forecast_and_outcome_ledger() -> No
     assert report.no_estimate_count == replay.no_estimate_count == 0
     assert report.pending_count == replay.pending_count == 0
     assert analyst.calls == 1
+    assert len(
+        stability_repository.assignments(
+            policy_version=stability_policy.version,
+            formal_producer_behavior_id=assignment.producer_behavior_id,
+        )
+    ) == 1
     forecast = SqlForecastStore(engine).result_for_behavior(
         decision_slot_id=assignment.targets[0].slot.slot_id,
         producer_behavior_id=assignment.producer_behavior_id,
