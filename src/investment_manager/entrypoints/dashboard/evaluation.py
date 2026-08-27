@@ -9,6 +9,8 @@ from datetime import datetime
 from sqlalchemy import and_, select
 from sqlalchemy.engine import Engine
 
+from investment_manager.execution.group.models import ExecutionGroup
+from investment_manager.execution.tables import execution_groups
 from investment_manager.forecast.context.evaluation import (
     ForecastEvidence,
     ForecastScoringCase,
@@ -53,13 +55,17 @@ from investment_manager.kernel.time import require_utc
 from investment_manager.portfolio.evaluation import (
     CapitalChoiceCase,
     CapitalChoiceEvidence,
+    ExecutionFillCase,
+    TradingCostEvidence,
     evaluate_capital_choice,
+    evaluate_trading_cost,
     is_full_forecast_capital_choice,
 )
 from investment_manager.portfolio.models import (
     CapitalCycleRecord,
     PortfolioTarget,
 )
+from investment_manager.portfolio.repository import SqlPortfolioStore
 from investment_manager.portfolio.stability import (
     PortfolioForecastStabilityEvaluator,
     PortfolioForecastStabilityReport,
@@ -254,6 +260,54 @@ class EvaluationDashboardReader:
                     capital_behavior_id=self._config.capital.version,
                 )
         return None
+
+    def trading_cost_evidence(self) -> TradingCostEvidence:
+        """Reconstruct fee drag from immutable terminal execution fills."""
+
+        with self._engine.connect() as connection:
+            groups = tuple(
+                ExecutionGroup.model_validate(item)
+                for item in connection.execute(
+                    select(execution_groups.c.payload)
+                    .where(execution_groups.c.terminal.is_(True))
+                    .order_by(
+                        execution_groups.c.started_at,
+                        execution_groups.c.group_id,
+                    )
+                ).scalars()
+            )
+        fills = []
+        for group in groups:
+            for leg in (*group.target_legs, *group.compensation_legs):
+                if leg.filled_quantity <= 0:
+                    continue
+                if leg.average_fill_price is None or leg.observed_at is None:
+                    raise ValueError("终态 Execution fill 缺少成交价格或观察时间")
+                fills.append(
+                    ExecutionFillCase(
+                        fill_id=leg.execution_leg_id,
+                        cycle_id=group.cycle_id,
+                        sleeve_id=group.sleeve_id,
+                        instrument_key=leg.instrument.key,
+                        side=leg.side,
+                        group_started_at=group.started_at,
+                        filled_at=leg.observed_at,
+                        quantity=leg.filled_quantity,
+                        price=leg.average_fill_price,
+                        contract_multiplier=leg.instrument.contract_multiplier,
+                        fee=leg.fee,
+                    )
+                )
+        account = SqlPortfolioStore(self._engine).head_account(
+            portfolio_id=self._config.capital.decision.portfolio_id
+        )
+        accounting = None if account is None else account.accounting
+        can_reconcile = account is not None and accounting is not None and not account.positions
+        return evaluate_trading_cost(
+            tuple(fills),
+            expected_price_pnl=(accounting.price_pnl if can_reconcile else None),
+            expected_fee_cost=(accounting.fee_cost if can_reconcile else None),
+        )
 
     def _forecast_evidence(self, connection, *, now: datetime) -> ForecastEvidence | None:
         policy = self._config.capital.context_forecast
@@ -524,6 +578,55 @@ def serialize_capital_choice_evidence(
             ],
         }
     }
+
+
+def serialize_trading_cost_evidence(evidence: TradingCostEvidence) -> dict:
+    optional_decimals = (
+        "closed_fee_to_realized_gross_pnl",
+        "closed_fee_to_positive_gross_pnl",
+        "minimum_holding_seconds",
+        "median_holding_seconds",
+        "maximum_holding_seconds",
+    )
+    payload = {
+        "evaluation_version": evidence.evaluation_version,
+        "fill_count": evidence.fill_count,
+        "round_trip_count": evidence.round_trip_count,
+        "open_lot_count": evidence.open_lot_count,
+        "gross_turnover": str(evidence.gross_turnover),
+        "realized_gross_pnl": str(evidence.realized_gross_pnl),
+        "closed_fee_cost": str(evidence.closed_fee_cost),
+        "open_fee_cost": str(evidence.open_fee_cost),
+        "realized_net_pnl": str(evidence.realized_net_pnl),
+        "positive_gross_pnl": str(evidence.positive_gross_pnl),
+        "cost_reversal_round_trip_count": evidence.cost_reversal_round_trip_count,
+        "accounting_reconciled": evidence.accounting_reconciled,
+        "round_trips": [
+            {
+                "round_trip_id": item.round_trip_id,
+                "sleeve_id": item.sleeve_id,
+                "instrument_key": item.instrument_key,
+                "direction": item.direction.value,
+                "entry_fill_id": item.entry_fill_id,
+                "exit_fill_id": item.exit_fill_id,
+                "entry_cycle_id": item.entry_cycle_id,
+                "exit_cycle_id": item.exit_cycle_id,
+                "opened_at": _iso(item.opened_at),
+                "closed_at": _iso(item.closed_at),
+                "holding_seconds": str(item.holding_seconds),
+                "quantity": str(item.quantity),
+                "gross_turnover": str(item.gross_turnover),
+                "realized_gross_pnl": str(item.realized_gross_pnl),
+                "fee_cost": str(item.fee_cost),
+                "realized_net_pnl": str(item.realized_net_pnl),
+            }
+            for item in evidence.round_trips
+        ],
+    }
+    for field_name in optional_decimals:
+        value = getattr(evidence, field_name)
+        payload[field_name] = None if value is None else str(value)
+    return {"trading_cost_evidence": payload}
 
 
 def serialize_world_model_ablation_evidence(

@@ -1334,6 +1334,7 @@ def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
         "forecast_stability_evidence",
         "product_payoff_evidence",
         "capital_choice_evidence",
+        "trading_cost_evidence",
         "world_model_ablation_evidence",
     }
     assert methods(dashboard_root / "capital.py", "CapitalDashboardReader").isdisjoint(

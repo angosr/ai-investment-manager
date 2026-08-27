@@ -18,6 +18,7 @@ from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
+    serialize_trading_cost_evidence,
     serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -35,6 +36,7 @@ from investment_manager.portfolio.evaluation import (
     CapitalChoiceCandidateOutcome,
     CapitalChoiceEvidence,
     CapitalChoiceExposureOutcome,
+    evaluate_trading_cost,
 )
 
 
@@ -133,6 +135,33 @@ def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
                     "selected_unprofitable_exposure": False,
                 }
             ],
+        }
+    }
+
+
+def test_empty_trading_cost_evidence_is_explicit_and_non_judgmental() -> None:
+    evidence = evaluate_trading_cost(())
+
+    assert serialize_trading_cost_evidence(evidence) == {
+        "trading_cost_evidence": {
+            "evaluation_version": "trading-cost-evidence-v1",
+            "fill_count": 0,
+            "round_trip_count": 0,
+            "open_lot_count": 0,
+            "gross_turnover": "0",
+            "realized_gross_pnl": "0",
+            "closed_fee_cost": "0",
+            "open_fee_cost": "0",
+            "realized_net_pnl": "0",
+            "positive_gross_pnl": "0",
+            "cost_reversal_round_trip_count": 0,
+            "accounting_reconciled": None,
+            "round_trips": [],
+            "closed_fee_to_realized_gross_pnl": None,
+            "closed_fee_to_positive_gross_pnl": None,
+            "minimum_holding_seconds": None,
+            "median_holding_seconds": None,
+            "maximum_holding_seconds": None,
         }
     }
 
@@ -315,15 +344,11 @@ def test_health_exposes_structural_output_failure_without_reclassifying_history(
         capital_overview=overview,
         assessment_quality=rejected,
     )
-    check = next(
-        item for item in result["checks"] if item["key"] == "ai_output_quality"
-    )
+    check = next(item for item in result["checks"] if item["key"] == "ai_output_quality")
 
     assert check["state"] == "warn"
     assert check["name"] == "世界认知 AI"
-    assert check["detail"] == (
-        "最近一次模型调用未产生可持久化结果：AI 输出格式不符合契约"
-    )
+    assert check["detail"] == ("最近一次模型调用未产生可持久化结果：AI 输出格式不符合契约")
 
     clean = replace(
         rejected,

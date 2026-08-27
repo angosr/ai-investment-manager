@@ -3,16 +3,45 @@ from decimal import Decimal
 
 import pytest
 
+from investment_manager.execution.models import Side
 from investment_manager.forecast.models import ExposureDirection
 from investment_manager.portfolio.evaluation import (
     CAPITAL_CHOICE_EVALUATION_VERSION,
+    TRADING_COST_EVALUATION_VERSION,
     CapitalChoiceCase,
+    ExecutionFillCase,
     evaluate_capital_choice,
+    evaluate_trading_cost,
     is_full_forecast_capital_choice,
 )
 from investment_manager.portfolio.models import CapitalCycleOutcome, CapitalCycleRecord
 
 NOW = datetime(2026, 8, 26, 19, tzinfo=UTC)
+
+
+def _fill(
+    fill_id: str,
+    cycle_id: str,
+    symbol: str,
+    side: Side,
+    at: datetime,
+    quantity: str,
+    price: str,
+    fee: str,
+) -> ExecutionFillCase:
+    return ExecutionFillCase(
+        fill_id=fill_id,
+        cycle_id=cycle_id,
+        sleeve_id=f"sleeve-{symbol}",
+        instrument_key=f"BINANCE:USD_M_PERPETUAL:{symbol}",
+        side=side,
+        group_started_at=at,
+        filled_at=at,
+        quantity=Decimal(quantity),
+        price=Decimal(price),
+        contract_multiplier=Decimal("1"),
+        fee=Decimal(fee),
+    )
 
 
 def _case(
@@ -31,9 +60,7 @@ def _case(
     predicted_value = Decimal(predicted)
     cost_value = Decimal(cost)
     decision_gross_value = (
-        Decimal(decision_gross)
-        if decision_gross is not None
-        else predicted_value + cost_value
+        Decimal(decision_gross) if decision_gross is not None else predicted_value + cost_value
     )
     return CapitalChoiceCase(
         decision_id="target-1",
@@ -47,13 +74,151 @@ def _case(
         predicted_net_bps=predicted_value,
         decision_gross_bps=decision_gross_value,
         projection_gross_bps=(
-            Decimal(projection_gross)
-            if projection_gross is not None
-            else decision_gross_value
+            Decimal(projection_gross) if projection_gross is not None else decision_gross_value
         ),
         decision_cost_bps=cost_value,
         realized_product_gross_bps=Decimal(realized),
     )
+
+
+def test_trading_cost_evidence_isolates_recent_added_risk_with_lifo_matching() -> None:
+    opened = datetime(2026, 8, 27, 10, 56, 36, 93696, tzinfo=UTC)
+    closed = datetime(2026, 8, 27, 11, 0, 58, 476036, tzinfo=UTC)
+    evidence = evaluate_trading_cost(
+        (
+            _fill(
+                "btc-old",
+                "material-forecast",
+                "BTCUSDT",
+                Side.BUY,
+                opened - timedelta(minutes=26),
+                "0.006",
+                "79543.40",
+                "0.2386302",
+            ),
+            _fill(
+                "btc-release-rebound",
+                "stale-cadence-rebound",
+                "BTCUSDT",
+                Side.BUY,
+                opened,
+                "0.056",
+                "79527.40",
+                "2.2267672",
+            ),
+            _fill(
+                "paxg-release-rebound",
+                "stale-cadence-rebound",
+                "PAXGUSDT",
+                Side.SELL,
+                opened,
+                "0.638",
+                "4581.5400",
+                "1.46151126",
+            ),
+            _fill(
+                "btc-fresh-cash",
+                "fresh-cadence-cash",
+                "BTCUSDT",
+                Side.SELL,
+                closed,
+                "0.062",
+                "79545.60",
+                "2.4659136",
+            ),
+            _fill(
+                "paxg-fresh-cash",
+                "fresh-cadence-cash",
+                "PAXGUSDT",
+                Side.BUY,
+                closed,
+                "0.638",
+                "4580.9500",
+                "1.46132305",
+            ),
+        )
+    )
+
+    assert evidence.evaluation_version == TRADING_COST_EVALUATION_VERSION
+    assert evidence.fill_count == 5
+    assert evidence.round_trip_count == 3
+    assert evidence.open_lot_count == 0
+    recent_btc = next(
+        item for item in evidence.round_trips if item.entry_fill_id == "btc-release-rebound"
+    )
+    assert recent_btc.entry_cycle_id == "stale-cadence-rebound"
+    assert recent_btc.exit_cycle_id == "fresh-cadence-cash"
+    assert recent_btc.quantity == Decimal("0.056")
+    assert recent_btc.holding_seconds == Decimal("262.38234")
+    assert recent_btc.realized_gross_pnl == Decimal("1.01920")
+    assert recent_btc.realized_net_pnl < 0
+    paxg = next(
+        item for item in evidence.round_trips if item.entry_fill_id == "paxg-release-rebound"
+    )
+    assert paxg.direction == ExposureDirection.SHORT
+    assert paxg.realized_gross_pnl == Decimal("0.3764200")
+    assert paxg.realized_net_pnl < 0
+    assert evidence.cost_reversal_round_trip_count == 3
+    assert evidence.realized_gross_pnl > 0
+    assert evidence.realized_net_pnl < 0
+    assert evidence.closed_fee_to_realized_gross_pnl == (
+        evidence.closed_fee_cost / evidence.realized_gross_pnl
+    )
+    assert evidence.closed_fee_cost == sum(
+        (item.fee_cost for item in evidence.round_trips), Decimal("0")
+    )
+    reconciled = evaluate_trading_cost(
+        (
+            _fill(
+                "one-entry",
+                "entry",
+                "BTCUSDT",
+                Side.BUY,
+                opened,
+                "0.01",
+                "80000",
+                "0.4",
+            ),
+            _fill(
+                "one-exit",
+                "exit",
+                "BTCUSDT",
+                Side.SELL,
+                closed,
+                "0.01",
+                "80100",
+                "0.4005",
+            ),
+        ),
+        expected_price_pnl=Decimal("1"),
+        expected_fee_cost=Decimal("0.8005"),
+    )
+    assert reconciled.accounting_reconciled
+
+
+def test_trading_cost_evidence_keeps_unclosed_fees_out_of_closed_result() -> None:
+    evidence = evaluate_trading_cost(
+        (
+            _fill(
+                "still-open",
+                "new-forecast",
+                "BTCUSDT",
+                Side.BUY,
+                NOW,
+                "0.01",
+                "80000",
+                "0.4",
+            ),
+        )
+    )
+
+    assert evidence.round_trip_count == 0
+    assert evidence.open_lot_count == 1
+    assert evidence.closed_fee_cost == 0
+    assert evidence.open_fee_cost == Decimal("0.4")
+    assert evidence.closed_fee_to_realized_gross_pnl is None
+    assert evidence.closed_fee_to_positive_gross_pnl is None
+    assert evidence.accounting_reconciled is None
 
 
 def test_capital_choice_identifies_missed_exposure_after_decision_time_costs() -> None:
