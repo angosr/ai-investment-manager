@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from investment_manager.forecast.context.evaluation import multiclass_brier_score
@@ -31,6 +31,8 @@ _CANDIDATE_MODELS = (
 )
 _HORIZON_BARS = 48
 _FEATURE_BARS = 49
+_OUTCOME_HORIZON = timedelta(hours=4)
+_NON_OVERLAPPING_PHASES = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +70,14 @@ def train_quant_forecast_artifact(
         raise ValueError("Quant baseline 至少需要 1,000 个逐小时可结算样本")
     development_end = len(samples) * 3 // 5
     validation_end = len(samples) * 4 // 5
-    development = samples[:development_end]
-    validation = samples[development_end:validation_end]
+    development = _purge_before(
+        samples[:development_end],
+        next_period_start=samples[development_end].features.observed_at,
+    )
+    validation = _purge_before(
+        samples[development_end:validation_end],
+        next_period_start=samples[validation_end].features.observed_at,
+    )
     blind = samples[validation_end:]
     if min(len(development), len(validation), len(blind)) < 100:
         raise ValueError("Quant chronological split 样本不足")
@@ -86,13 +94,19 @@ def train_quant_forecast_artifact(
         )
         for model_name in _CANDIDATE_MODELS
     )
-    validation_unconditional_brier = _score_distribution(
-        validation,
+    validation_phases = _non_overlapping_phases(validation)
+    blind_phases = _non_overlapping_phases(blind)
+    validation_unconditional_phase_briers = _phase_scores_for_distribution(
+        validation_phases,
         _global_distribution(development, contract=contract).probabilities,
     )
+    validation_unconditional_brier = _mean(validation_unconditional_phase_briers)
     selected = min(
         candidate_evaluations,
-        key=lambda item: (item.validation_brier, _CANDIDATE_MODELS.index(item.model_name)),
+        key=lambda item: (
+            item.validation_worst_phase_brier,
+            _CANDIDATE_MODELS.index(item.model_name),
+        ),
     )
     development_and_validation = (*development, *validation)
     selected_training_distributions = _fit_distributions(
@@ -102,19 +116,21 @@ def train_quant_forecast_artifact(
         contract=contract,
         smoothing_strength=smoothing_strength,
     )
-    selected_blind_brier = _score(
-        blind,
+    selected_blind_phase_briers = _phase_scores(
+        blind_phases,
         model_name=selected.model_name,
         thresholds=thresholds,
         distributions=selected_training_distributions,
     )
-    blind_unconditional_brier = _score_distribution(
-        blind,
+    selected_blind_brier = _mean(selected_blind_phase_briers)
+    blind_unconditional_phase_briers = _phase_scores_for_distribution(
+        blind_phases,
         _global_distribution(
             development_and_validation,
             contract=contract,
         ).probabilities,
     )
+    blind_unconditional_brier = _mean(blind_unconditional_phase_briers)
     candidates = []
     for candidate in candidate_evaluations:
         distributions = _fit_distributions(
@@ -148,9 +164,14 @@ def train_quant_forecast_artifact(
         "development_sample_count": len(development),
         "validation_sample_count": len(validation),
         "blind_sample_count": len(blind),
+        "validation_phase_sample_counts": tuple(len(item) for item in validation_phases),
+        "blind_phase_sample_counts": tuple(len(item) for item in blind_phases),
         "validation_unconditional_brier": validation_unconditional_brier,
+        "validation_unconditional_phase_briers": validation_unconditional_phase_briers,
         "selected_blind_brier": selected_blind_brier,
+        "selected_blind_phase_briers": selected_blind_phase_briers,
         "blind_unconditional_brier": blind_unconditional_brier,
+        "blind_unconditional_phase_briers": blind_unconditional_phase_briers,
     }
     provisional = QuantForecastArtifact.model_construct(artifact_id="pending", **values)
     artifact_id = stable_id(
@@ -226,17 +247,83 @@ def _candidate_evaluation(
         contract=contract,
         smoothing_strength=smoothing_strength,
     )
+    phase_briers = _phase_scores(
+        _non_overlapping_phases(evaluation),
+        model_name=model_name,
+        thresholds=thresholds,
+        distributions=distributions,
+    )
     return QuantCandidateEvaluation(
         model_name=model_name,
         cell_count=len(distributions) - 1,
-        validation_brier=_score(
-            evaluation,
+        validation_brier=_mean(phase_briers),
+        validation_worst_phase_brier=max(phase_briers),
+        validation_phase_briers=phase_briers,
+        cells=tuple(distributions[key] for key in sorted(distributions) if key != "GLOBAL"),
+    )
+
+
+def _purge_before(
+    samples: tuple[_TrainingSample, ...],
+    *,
+    next_period_start: datetime,
+) -> tuple[_TrainingSample, ...]:
+    """Exclude labels whose economic horizon reaches into the next split."""
+
+    return tuple(
+        item
+        for item in samples
+        if item.features.observed_at + _OUTCOME_HORIZON <= next_period_start
+    )
+
+
+def _non_overlapping_phases(
+    samples: tuple[_TrainingSample, ...],
+) -> tuple[tuple[_TrainingSample, ...], ...]:
+    phases = tuple(
+        tuple(
+            item
+            for item in samples
+            if int(item.features.observed_at.timestamp() // 3600)
+            % _NON_OVERLAPPING_PHASES
+            == phase
+        )
+        for phase in range(_NON_OVERLAPPING_PHASES)
+    )
+    if any(not phase for phase in phases):
+        raise ValueError("Quant 非重叠相位样本不足")
+    return phases
+
+
+def _phase_scores(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    *,
+    model_name: str,
+    thresholds: QuantFeatureThresholds,
+    distributions: dict[str, QuantCellDistribution],
+) -> tuple[Decimal, ...]:
+    values = tuple(
+        _score(
+            phase,
             model_name=model_name,
             thresholds=thresholds,
             distributions=distributions,
-        ),
-        cells=tuple(distributions[key] for key in sorted(distributions) if key != "GLOBAL"),
+        )
+        for phase in phases
     )
+    return values
+
+
+def _phase_scores_for_distribution(
+    phases: tuple[tuple[_TrainingSample, ...], ...],
+    probabilities: tuple[ForecastBucketProbability, ...],
+) -> tuple[Decimal, ...]:
+    values = tuple(_score_distribution(phase, probabilities) for phase in phases)
+    return values
+
+
+def _mean(values: tuple[Decimal, ...]) -> Decimal:
+    return sum(values, Decimal("0")) / Decimal(len(values))
 
 
 def _fit_distributions(

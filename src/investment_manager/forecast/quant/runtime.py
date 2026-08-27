@@ -88,16 +88,30 @@ class QuantCandidateEvaluation(FrozenModel):
     model_name: str = Field(min_length=1)
     cell_count: int = Field(gt=0)
     validation_brier: Decimal = Field(ge=0)
+    validation_worst_phase_brier: Decimal = Field(ge=0)
+    validation_phase_briers: tuple[Decimal, ...]
     cells: tuple[QuantCellDistribution, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validation_summary_matches_phases(self):
+        if len(self.validation_phase_briers) != 4:
+            raise ValueError("Quant validation 必须保存四个非重叠相位")
+        if self.validation_brier != sum(
+            self.validation_phase_briers, Decimal("0")
+        ) / Decimal(len(self.validation_phase_briers)):
+            raise ValueError("Quant validation Brier 必须等于非重叠相位均值")
+        if self.validation_worst_phase_brier != max(self.validation_phase_briers):
+            raise ValueError("Quant validation 最差相位 Brier 与相位明细不一致")
+        return self
 
 
 class QuantForecastArtifact(FrozenModel):
     """Content-addressed training result; runtime inference performs no fitting."""
 
-    schema_version: Literal["quant-forecast-artifact-v2"] = "quant-forecast-artifact-v2"
+    schema_version: Literal["quant-forecast-artifact-v3"] = "quant-forecast-artifact-v3"
     artifact_id: str = Field(min_length=1)
-    training_method_version: Literal["chronological-cell-panel-selection-v2"] = (
-        "chronological-cell-panel-selection-v2"
+    training_method_version: Literal["purged-non-overlap-cell-panel-selection-v3"] = (
+        "purged-non-overlap-cell-panel-selection-v3"
     )
     inference_version: Literal["conditional-empirical-dirichlet-v1"] = QUANT_INFERENCE_VERSION
     contract_id: str = Field(min_length=1)
@@ -116,9 +130,14 @@ class QuantForecastArtifact(FrozenModel):
     development_sample_count: int = Field(gt=0)
     validation_sample_count: int = Field(gt=0)
     blind_sample_count: int = Field(gt=0)
+    validation_phase_sample_counts: tuple[int, ...]
+    blind_phase_sample_counts: tuple[int, ...]
     validation_unconditional_brier: Decimal = Field(ge=0)
+    validation_unconditional_phase_briers: tuple[Decimal, ...]
     selected_blind_brier: Decimal = Field(ge=0)
+    selected_blind_phase_briers: tuple[Decimal, ...]
     blind_unconditional_brier: Decimal = Field(ge=0)
+    blind_unconditional_phase_briers: tuple[Decimal, ...]
 
     _utc_training_cutoff_at = field_validator("training_cutoff_at")(require_utc)
     _utc_dataset_last_close_at = field_validator("dataset_last_close_at")(require_utc)
@@ -130,6 +149,15 @@ class QuantForecastArtifact(FrozenModel):
         names = tuple(item.model_name for item in self.candidate_evaluations)
         if len(set(names)) != len(names) or self.selected_model not in names:
             raise ValueError("Quant candidate/selected model 身份非法")
+        selected = min(
+            enumerate(self.candidate_evaluations),
+            key=lambda indexed: (
+                indexed[1].validation_worst_phase_brier,
+                indexed[0],
+            ),
+        )[1]
+        if selected.model_name != self.selected_model:
+            raise ValueError("Quant selected model 未按最差非重叠相位与复杂度排序")
         expected_ids = tuple(item.bucket_id for item in self.global_distribution.probabilities)
         for candidate in self.candidate_evaluations:
             cell_keys = tuple(item.cell_key for item in candidate.cells)
@@ -142,6 +170,24 @@ class QuantForecastArtifact(FrozenModel):
                 for cell in candidate.cells
             ):
                 raise ValueError("Quant candidate bucket 必须与全局分布同序")
+        for name in ("validation_phase_sample_counts", "blind_phase_sample_counts"):
+            values = getattr(self, name)
+            if len(values) != 4 or any(value <= 0 for value in values):
+                raise ValueError(f"Quant {name} 必须全部为正数")
+        if sum(self.validation_phase_sample_counts) != self.validation_sample_count:
+            raise ValueError("Quant validation 相位样本数与总数不一致")
+        if sum(self.blind_phase_sample_counts) != self.blind_sample_count:
+            raise ValueError("Quant blind 相位样本数与总数不一致")
+        for summary_name, phase_name in (
+            ("validation_unconditional_brier", "validation_unconditional_phase_briers"),
+            ("selected_blind_brier", "selected_blind_phase_briers"),
+            ("blind_unconditional_brier", "blind_unconditional_phase_briers"),
+        ):
+            phases = getattr(self, phase_name)
+            if len(phases) != 4:
+                raise ValueError(f"Quant {phase_name} 必须保存四个非重叠相位")
+            if getattr(self, summary_name) != sum(phases, Decimal("0")) / Decimal(len(phases)):
+                raise ValueError(f"Quant {summary_name} 必须等于非重叠相位均值")
         expected = stable_id(
             "quant_forecast_artifact",
             self.model_dump(mode="json", exclude={"artifact_id"}),

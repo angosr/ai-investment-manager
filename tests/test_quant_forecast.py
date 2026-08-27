@@ -18,7 +18,7 @@ from investment_manager.market.models import MarketBar
 
 
 def _artifact_path(
-    artifact_id: str = "quant_forecast_artifact_b41990aeb6a3135ae636",
+    artifact_id: str = "quant_forecast_artifact_f54ca8ba93572cffb9a7",
 ) -> Path:
     return (
         Path(__file__).resolve().parents[1]
@@ -50,22 +50,25 @@ def _bars(*, gap_at: int | None = None) -> tuple[MarketBar, ...]:
 
 
 @pytest.mark.parametrize(
-    ("artifact_id", "validation_brier", "blind_brier"),
+    ("artifact_id", "selected_model", "validation_brier", "blind_brier"),
     (
         (
-            "quant_forecast_artifact_b41990aeb6a3135ae636",
-            Decimal("0.7476522693719300786087806745"),
-            Decimal("0.6956653227435457636872250097"),
+            "quant_forecast_artifact_f54ca8ba93572cffb9a7",
+            "momentum_volatility",
+            Decimal("0.7481319435395957882535566185"),
+            Decimal("0.6967686389832213831948912625"),
         ),
         (
-            "quant_forecast_artifact_04e9f39e611268fa4193",
-            Decimal("0.7562357258327711529472157850"),
-            Decimal("0.7217160262658755722436418124"),
+            "quant_forecast_artifact_6d7056cb69ff71e482a9",
+            "momentum_reversal_volatility",
+            Decimal("0.7560608068182079093004624352"),
+            Decimal("0.7217308508029654243724052422"),
         ),
     ),
 )
 def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
     artifact_id: str,
+    selected_model: str,
     validation_brier: Decimal,
     blind_brier: Decimal,
 ) -> None:
@@ -83,9 +86,30 @@ def test_frozen_quant_artifact_has_chronological_out_of_sample_increment(
     assert artifact.selected_blind_brier < artifact.blind_unconditional_brier
     assert selected.validation_brier == validation_brier
     assert artifact.selected_blind_brier == blind_brier
-    assert artifact.development_sample_count == 10_507
-    assert artifact.validation_sample_count == 3_502
+    assert artifact.selected_model == selected_model
+    assert selected.validation_worst_phase_brier == max(selected.validation_phase_briers)
+    assert selected.validation_worst_phase_brier == min(
+        item.validation_worst_phase_brier for item in artifact.candidate_evaluations
+    )
+    assert artifact.development_sample_count == 10_504
+    assert artifact.validation_sample_count == 3_499
     assert artifact.blind_sample_count == 3_503
+    assert sum(artifact.validation_phase_sample_counts) == 3_499
+    assert sum(artifact.blind_phase_sample_counts) == 3_503
+    assert max(artifact.validation_phase_sample_counts) - min(
+        artifact.validation_phase_sample_counts
+    ) <= 1
+    assert max(artifact.blind_phase_sample_counts) - min(
+        artifact.blind_phase_sample_counts
+    ) <= 1
+    assert all(
+        selected_score < baseline_score
+        for selected_score, baseline_score in zip(
+            artifact.selected_blind_phase_briers,
+            artifact.blind_unconditional_phase_briers,
+            strict=True,
+        )
+    )
     assert tuple(item.model_name for item in artifact.candidate_evaluations) == (
         "momentum",
         "momentum_volatility",

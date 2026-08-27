@@ -399,10 +399,19 @@ def train_quant_baseline_command(
                         if item.model_name == artifact.selected_model
                     )
                 ),
+                "selected_validation_worst_phase_brier": str(
+                    next(
+                        item.validation_worst_phase_brier
+                        for item in artifact.candidate_evaluations
+                        if item.model_name == artifact.selected_model
+                    )
+                ),
+                "validation_phase_sample_counts": artifact.validation_phase_sample_counts,
                 "validation_unconditional_brier": str(
                     artifact.validation_unconditional_brier
                 ),
                 "selected_blind_brier": str(artifact.selected_blind_brier),
+                "blind_phase_sample_counts": artifact.blind_phase_sample_counts,
                 "blind_unconditional_brier": str(artifact.blind_unconditional_brier),
                 "path": str(target),
             },
