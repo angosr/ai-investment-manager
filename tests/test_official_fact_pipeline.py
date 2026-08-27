@@ -384,7 +384,9 @@ def test_new_official_fact_revision_reaches_durable_trigger_outbox(app_config) -
         delta_policy=app_config.decision_state.delta_policy,
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
+        required_freshness_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         analysis_owner_symbol=app_config.assessment.review_trigger_symbol,
     )
 

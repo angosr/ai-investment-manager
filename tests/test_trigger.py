@@ -137,7 +137,9 @@ def test_canonical_fact_trigger_publisher_is_idempotent_and_portfolio_wide(
         delta_policy=app_config.decision_state.delta_policy,
         pipeline_id=app_config.pipeline.version,
         trigger_expiry_seconds=app_config.trigger.trigger_expiry_seconds,
-        required_freshness_seconds=app_config.risk.maximum_market_age_seconds,
+        required_freshness_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         analysis_owner_symbol="BTCUSDT",
     )
 

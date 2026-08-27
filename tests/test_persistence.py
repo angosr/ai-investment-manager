@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, select
 
 from investment_manager.forecast.codex.capacity import (
     CapacityBucket,
@@ -19,92 +19,12 @@ from investment_manager.forecast.codex.repository import (
 )
 from investment_manager.forecast.codex.router import AttemptAudit
 from investment_manager.forecast.tables import codex_account_capacity, codex_runs
-from investment_manager.legacy.cycle import AnalysisCycle
-from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.repository import (
-    SqlFactLedger,
-)
-from investment_manager.legacy.tables import (
-    analysis_cycles,
-    fills,
-    metric_observations,
-    orders,
-)
-from investment_manager.risk.budget import (
-    SqlRiskBudgetStore,
-    portfolio_risk_budgets,
-    risk_reservations,
-)
-from investment_manager.schema import create_offline_schema
-
-
-@pytest.fixture
-def sql_cycle(app_config):
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_offline_schema(engine)
-    ledger = SqlFactLedger(engine)
-    cycle = AnalysisCycle.with_adapters(
-        app_config,
-        ledger=ledger,
-        exchange=MockExchange(app_config.execution),
-        risk_budget=SqlRiskBudgetStore(engine),
-    )
-    return engine, cycle
-
-
-def test_sql_ledger_persists_and_reconstructs_complete_cycle(sql_cycle, replay_input) -> None:
-    engine, cycle = sql_cycle
-
-    first = cycle.run(replay_input)
-    reconstructed = cycle.run(replay_input)
-
-    assert reconstructed == first
-    with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(analysis_cycles)) == 1
-        assert connection.scalar(select(func.count()).select_from(risk_reservations)) == 1
-        assert connection.scalar(select(func.count()).select_from(orders)) == 1
-        assert connection.scalar(select(func.count()).select_from(fills)) == 1
-        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 12
-        budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
-        assert budget["reserved_amount"] == 0
-        assert budget["exposure_risk_amount"] > 0
-
-
-def test_sql_ledger_records_actual_cycle_commit_time(app_config, replay_input) -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_offline_schema(engine)
-    committed_at = replay_input.market.as_of + timedelta(seconds=7)
-    ledger = SqlFactLedger(engine, clock=lambda: committed_at)
-    cycle = AnalysisCycle.with_adapters(
-        app_config,
-        ledger=ledger,
-        exchange=MockExchange(app_config.execution),
-        risk_budget=SqlRiskBudgetStore(engine),
-    )
-
-    cycle.run(replay_input)
-
-    with engine.connect() as connection:
-        row = connection.execute(
-            select(analysis_cycles.c.as_of, analysis_cycles.c.created_at)
-        ).one()
-    assert row.as_of == replay_input.market.as_of.replace(tzinfo=None)
-    assert row.created_at == committed_at.replace(tzinfo=None)
-
-
-def test_same_cycle_id_with_different_snapshot_is_rejected(sql_cycle, replay_input) -> None:
-    _, cycle = sql_cycle
-    cycle.run(replay_input)
-    changed_account = replay_input.account.model_copy(update={"quote_balance": Decimal("9999")})
-    changed_input = replay_input.model_copy(update={"account": changed_account})
-
-    with pytest.raises(ValueError, match="冻结输入或面板哈希不同"):
-        cycle.run(changed_input)
+from investment_manager.schema import create_schema
 
 
 def test_sql_codex_lease_is_exclusive_and_reusable_after_release() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_offline_schema(engine)
+    create_schema(engine)
     store = SqlAccountLeaseStore(engine)
     now = datetime.now(tz=UTC)
 
@@ -124,7 +44,7 @@ def test_sql_codex_lease_is_exclusive_and_reusable_after_release() -> None:
 
 def test_sql_codex_audit_keeps_only_anonymous_capacity_and_run_metadata() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_offline_schema(engine)
+    create_schema(engine)
     store = SqlCodexAuditStore(engine)
     now = datetime.now(tz=UTC)
     snapshot = CapacitySnapshot(

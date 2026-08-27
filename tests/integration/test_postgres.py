@@ -13,8 +13,6 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import func, select, text
 
-from investment_manager.execution.lifecycle.manager import PositionLifecycleManager
-from investment_manager.execution.reconciliation.engine import MockReconciler
 from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.information.official.records import (
@@ -31,30 +29,9 @@ from investment_manager.information.tables import (
     market_calendar_event_revisions,
     source_observations,
 )
-from investment_manager.legacy.candidate_evaluation import (
-    CandidateOutcomeSettler,
-    SqlCandidateOutcomeStore,
-)
-from investment_manager.legacy.cycle import AnalysisCycle
-from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.repository import (
-    SqlFactLedger,
-    SqlLifecycleLedger,
-    SqlOpenLifecycleRepository,
-)
-from investment_manager.legacy.tables import (
-    account_snapshots,
-    candidate_outcomes,
-    decision_outcomes,
-    metric_observations,
-    orders,
-)
-from investment_manager.market.models import MarketSnapshot, MarketTrade
-from investment_manager.market.repository import SqlMarketDataStore
 from investment_manager.platform.database import build_engine
 from investment_manager.portfolio.models import PortfolioAccountSnapshot
 from investment_manager.portfolio.repository import SqlPortfolioStore
-from investment_manager.risk.budget import SqlRiskBudgetStore, portfolio_risk_budgets
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     TriggerNow,
@@ -68,7 +45,7 @@ from investment_manager.scheduling.repository import (
     PostgresTriggerLeadership,
     SqlTriggerRepository,
 )
-from investment_manager.schema import compose_offline_metadata
+from investment_manager.schema import compose_metadata
 from investment_manager.state.facts import (
     FOMC_MEETING_FACT_TYPE,
     FactDeltaRule,
@@ -78,10 +55,7 @@ from investment_manager.state.facts import (
     build_state_snapshot,
     project_fomc_calendar_fact,
 )
-from investment_manager.state.models import (
-    CanonicalFactRevision,
-    Materiality,
-)
+from investment_manager.state.models import CanonicalFactRevision, Materiality
 from investment_manager.state.repository import SqlFactStateStore
 from investment_manager.state.tables import canonical_fact_revisions
 
@@ -89,7 +63,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
-def test_postgres_cycle_transaction_and_risk_budget(
+def test_postgres_current_fact_and_trigger_concurrency(
     app_config,
     replay_input,
     request: pytest.FixtureRequest,
@@ -104,7 +78,7 @@ def test_postgres_cycle_transaction_and_risk_budget(
     request.addfinalizer(engine.dispose)
     if engine.dialect.name != "postgresql":
         raise RuntimeError("该契约测试必须使用 PostgreSQL")
-    compose_offline_metadata().drop_all(engine)
+    compose_metadata().drop_all(engine)
     with engine.begin() as connection:
         connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     migration_config = Config(str(ROOT / "alembic.ini"))
@@ -503,106 +477,3 @@ def test_postgres_cycle_transaction_and_risk_budget(
         )
     assert sum(item.admitted for item in admissions) == 1
     assert sum(item.retry_at is not None for item in admissions) == 1
-    cycle = AnalysisCycle.with_adapters(
-        app_config,
-        ledger=SqlFactLedger(engine),
-        exchange=MockExchange(app_config.execution),
-        risk_budget=SqlRiskBudgetStore(engine),
-    )
-
-    first = cycle.run(replay_input)
-    replayed = cycle.run(replay_input)
-
-    assert replayed == first
-    assert first.order is not None
-    assert len(cycle.exchange.orders) == 1
-
-    assert first.position_lifecycle is not None
-    assert first.account_after is not None
-    candidate = first.candidates[0]
-    candidate_evaluation_at = candidate.signal_observed_at + timedelta(
-        minutes=candidate.horizon_minutes
-    )
-    candidate_entry_at = candidate.signal_observed_at + timedelta(seconds=1)
-    SqlMarketDataStore(engine).put_trade(
-        MarketTrade(
-            trade_id="postgres-candidate-entry",
-            symbol=candidate.symbol,
-            aggregate_trade_id=9_000_000_001,
-            event_time=candidate_entry_at,
-            observed_at=candidate_entry_at,
-            price=candidate.reference_price,
-            quantity=Decimal("1"),
-            buyer_is_maker=False,
-            source="postgres-contract",
-        )
-    )
-    SqlMarketDataStore(engine).put_trade(
-        MarketTrade(
-            trade_id="postgres-candidate-exit",
-            symbol=candidate.symbol,
-            aggregate_trade_id=9_000_000_002,
-            event_time=candidate_evaluation_at,
-            observed_at=candidate_evaluation_at,
-            price=candidate.reference_price * Decimal("1.01"),
-            quantity=Decimal("1"),
-            buyer_is_maker=False,
-            source="postgres-contract",
-        )
-    )
-    candidate_settlement = CandidateOutcomeSettler(
-        store=SqlCandidateOutcomeStore(engine),
-        evaluation_version=app_config.outcome_evaluation.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
-        settlement_grace_minutes=app_config.outcome_evaluation.settlement_grace_minutes,
-    ).settle(as_of=candidate_evaluation_at)
-    assert candidate_settlement.settled == 1
-    open_repository = SqlOpenLifecycleRepository(engine)
-    assert [item.lifecycle.position_id for item in open_repository.list_open()] == [
-        first.position_lifecycle.position_id
-    ]
-    exit_time = first.position_lifecycle.max_exit_at + timedelta(minutes=1)
-    exit_market = MarketSnapshot.model_validate(
-        {
-            **replay_input.market.model_dump(mode="json"),
-            "cycle_id": "cycle-postgres-exit-001",
-            "as_of": exit_time,
-            "observed_at": exit_time,
-            "bid": first.position_lifecycle.entry_price + Decimal("0.99"),
-            "ask": first.position_lifecycle.entry_price + Decimal("1.01"),
-            "last": first.position_lifecycle.entry_price + Decimal("1"),
-        }
-    )
-    lifecycle_ledger = SqlLifecycleLedger(engine)
-    manager = PositionLifecycleManager(
-        exchange=cycle.exchange,
-        reconciler=MockReconciler(),
-        risk_budget=cycle.risk_budget,
-        lifecycle_ledger=lifecycle_ledger,
-    )
-
-    closed = manager.evaluate(
-        lifecycle=first.position_lifecycle,
-        market=exit_market,
-        account=first.account_after,
-        pipeline_version=app_config.pipeline.version,
-    )
-    replayed_close = manager.evaluate(
-        lifecycle=first.position_lifecycle,
-        market=exit_market,
-        account=first.account_after,
-        pipeline_version=app_config.pipeline.version,
-    )
-
-    assert closed == replayed_close
-    assert closed.outcome is not None
-    assert open_repository.list_open() == ()
-    with engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(orders)) == 2
-        assert connection.scalar(select(func.count()).select_from(account_snapshots)) == 3
-        assert connection.scalar(select(func.count()).select_from(decision_outcomes)) == 1
-        assert connection.scalar(select(func.count()).select_from(candidate_outcomes)) == 1
-        assert connection.scalar(select(func.count()).select_from(metric_observations)) == 17
-        budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
-        assert budget["reserved_amount"] == 0
-        assert budget["exposure_risk_amount"] == 0

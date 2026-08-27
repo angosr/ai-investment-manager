@@ -259,7 +259,7 @@ capital:
     enabled: false
     producer_id: codex-world-model-forecast
     # 由完整共享 Forecast 行为计算；配置构造完成后冻结为真实 hash。
-    producer_behavior_id: "4a66c746ba8465d7135d0b8647d97cf18bb2eb7f29c0ba5ff5c07974fdc54731"
+    producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
     # 世界认知保留 high；这里只把已冻结的联合解释映射为三份概率分布。
     reasoning_effort: medium
     horizon_minutes: 240
@@ -496,7 +496,6 @@ shadow:
   version: shadow-simulation-v2
   initial_quote_balance: "10000"
   analysis_deadline_seconds: 900
-  lifecycle_poll_seconds: 10
 
 information:
   version: information-intake-v41
@@ -602,12 +601,12 @@ pipeline:
 # 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
 # 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v9
+  version: codex-runtime-v10
   enabled: false
   isolation_verified: false
   binary: /usr/lib/node_modules/@openai/codex/bin/codex.js
   bundle_root: /home/aiuser/work/ttt/market-intel/.runtime/codex-runs
-  expected_cli_version: codex-cli 0.149.1
+  expected_cli_version: codex-cli 0.150.1
   expected_binary_sha256: 134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
   model: gpt-5.6-sol
   reasoning_effort: high

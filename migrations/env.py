@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from investment_manager.schema import compose_offline_metadata
+from investment_manager.schema import compose_metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -20,9 +20,21 @@ database_url = config.attributes.get("database_url") or os.environ.get(
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
-# Physical migrations retain immutable facts from retired chains.  Managed runtime assembly uses
-# ``compose_metadata`` instead and therefore cannot create or depend on these offline tables.
-target_metadata = compose_offline_metadata()
+# 物理迁移永久保留历史事实；当前 Metadata 仅定义现役运行所有者。
+# 迁移执行不依赖已退役的 Python Table/Repository 实现。
+target_metadata = compose_metadata()
+
+
+def include_managed_objects(
+    _object,
+    _name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to,
+) -> bool:
+    """Do not reinterpret unmanaged historical tables as pending destructive work."""
+
+    return not (type_ == "table" and reflected and compare_to is None)
 
 
 def run_migrations_offline() -> None:
@@ -32,6 +44,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_managed_objects,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -44,7 +57,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            include_object=include_managed_objects,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

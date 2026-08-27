@@ -1,24 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
-
-from sqlalchemy import create_engine
 
 from investment_manager.decision_cycle.capital import CapitalTriggerConsumer
 from investment_manager.decision_cycle.trigger import TriggerDispatchBuilder
-from investment_manager.legacy.cycle import AnalysisCycle
-from investment_manager.legacy.exchange import MockExchange
-from investment_manager.legacy.repository import SqlFactLedger
-from investment_manager.legacy.shadow import SqlShadowStateReader
-from investment_manager.risk.budget import SqlRiskBudgetStore
 from investment_manager.scheduling.models import (
     AnalysisTriggerType,
     build_initial_trigger_plan,
     build_trigger_batch,
     build_trigger_event,
 )
-from investment_manager.schema import create_offline_schema
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.application import (
     DecisionPacketPreparationResult,
@@ -593,37 +584,3 @@ def test_trigger_builder_preserves_agent_review_reason(app_config) -> None:
     assert review.reason == trigger.review_reason
     assert review.requested_at == trigger.occurred_at
     assert review.evidence_ids == trigger.evidence_ids
-
-
-def test_sql_shadow_account_is_projected_from_latest_business_fact(
-    app_config, replay_input
-) -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    create_offline_schema(engine)
-    cycle = AnalysisCycle.with_adapters(
-        app_config,
-        ledger=SqlFactLedger(engine),
-        exchange=MockExchange(app_config.execution),
-        risk_budget=SqlRiskBudgetStore(engine),
-    )
-    result = cycle.run(replay_input)
-    assert result.account_after is not None
-    reader = SqlShadowStateReader(engine)
-    next_as_of = replay_input.market.as_of + timedelta(minutes=1)
-    account = reader.account_for_cycle(
-        cycle_id="next-cycle",
-        as_of=next_as_of,
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
-    )
-    assert account.cycle_id == "next-cycle"
-    assert account.quote_balance == result.account_after.quote_balance
-    assert reader.entry_orders_today(as_of=next_as_of) == 1
-    assert reader.last_cycle_at(symbol="BTCUSDT", as_of=next_as_of) == replay_input.market.as_of
-
-    next_day = reader.account_for_cycle(
-        cycle_id="next-day-cycle",
-        as_of=replay_input.market.as_of + timedelta(days=1),
-        initial_quote_balance=app_config.shadow.initial_quote_balance,
-    )
-    assert next_day.daily_pnl == Decimal("0")
-    assert isinstance(next_day.daily_pnl, Decimal)

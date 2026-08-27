@@ -25,6 +25,7 @@ from investment_manager.forecast.models import (
     ContextMechanismObservation,
 )
 from investment_manager.governance.policy import DeploymentStage
+from investment_manager.information.text import sanitize_external_text
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -57,7 +58,6 @@ from investment_manager.state.decision.packet import (
     PacketReviewRequest,
     replace_packet_previous_context,
 )
-from investment_manager.state.panel import sanitize_external_text
 
 
 class TriggerBatchRecorder(Protocol):

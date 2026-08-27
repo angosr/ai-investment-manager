@@ -7,17 +7,17 @@ capital:
   candidate_capital_authorizations:
     - version: btc-context-candidate-v32
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "4a66c746ba8465d7135d0b8647d97cf18bb2eb7f29c0ba5ff5c07974fdc54731"
+      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
       outcome_family_id: btc-price-directional-4h
       hypothesis_fingerprint: "88e784ff0bf1e3f87b7e1f9a0c3609baeb4b34707f2e369b7fdbb85bde11168b"
     - version: paxg-context-candidate-v10
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "4a66c746ba8465d7135d0b8647d97cf18bb2eb7f29c0ba5ff5c07974fdc54731"
+      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
       outcome_family_id: paxg-price-directional-4h
       hypothesis_fingerprint: "a7872af9f99c48f186a00a3bfee34cf3234958a03c68c389b5699096b546b5d0"
     - version: spy-context-candidate-v10
       producer_id: codex-world-model-forecast
-      producer_behavior_id: "4a66c746ba8465d7135d0b8647d97cf18bb2eb7f29c0ba5ff5c07974fdc54731"
+      producer_behavior_id: "61a2ee0b9e5b0c71b5ed079a5746985ea5cdbb5a56873840f7d6d3f8729fc53e"
       outcome_family_id: spy-price-directional-4h
       hypothesis_fingerprint: "bd6c2656efb3108ff2a42aa48dd3fc3ba169893d853cc49d92130e4dd3be06e5"
 

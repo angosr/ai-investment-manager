@@ -102,7 +102,7 @@ def test_constitution_and_fixed_regression_suite_are_typed_and_frozen() -> None:
     assert {item.id for item in suite.cases} >= {
         "prompt_injection_is_data",
         "codex_schema_failure",
-        "concurrent_risk_reservation",
+        "concurrent_portfolio_decision",
     }
 
 

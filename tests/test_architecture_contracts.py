@@ -362,9 +362,6 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
             "tables.py",
         },
         "execution": {
-            "account_repository.py",
-            "contracts.py",
-            "ledger.py",
             "models.py",
             "policy.py",
             "tables.py",
@@ -382,7 +379,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
         "governance": {"models.py", "policy.py", "repository.py", "tables.py"},
     }
     capabilities = {
-        "execution": {"group", "lifecycle", "planning", "reconciliation", "venue"},
+        "execution": {"group", "planning", "venue"},
         "forecast": {"codex", "context", "product"},
         "governance": {"audit", "evaluation", "release"},
         "information": {"official"},
@@ -427,7 +424,7 @@ def test_dense_domains_group_independent_capabilities_without_reexports() -> Non
     }
     assert not (codex_package / "runtime.py").exists()
 
-    assert (PACKAGE_ROOT / "legacy" / "exchange.py").exists()
+    assert not (PACKAGE_ROOT / "legacy").exists()
     assert not (PACKAGE_ROOT / "execution" / "legacy_exchange.py").exists()
 
 
@@ -456,7 +453,6 @@ def test_decision_cycle_is_the_minimal_one_way_cross_domain_layer() -> None:
         "forecast",
         "governance",
         "information",
-        "legacy",
         "market",
         "portfolio",
         "risk",
@@ -550,7 +546,6 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "StrictConfig": "kernel/configuration.py",
         "FeaturePolicy": "market/policy.py",
         "MarketDataPolicy": "market/policy.py",
-        "PanelPolicy": "state/policy.py",
         "DecisionPacketPolicy": "state/policy.py",
         "DecisionStatePolicy": "state/policy.py",
         "StrategyPolicy": "forecast/policy.py",
@@ -562,11 +557,6 @@ def test_domain_policies_have_one_owner_and_settings_only_composes() -> None:
         "CodexAccountRegistry": "forecast/policy.py",
         "CodexRuntimePolicy": "forecast/policy.py",
         "ContextAssessmentPolicy": "forecast/policy.py",
-        "CompositionPolicy": "portfolio/policy.py",
-        "FrequencyPolicy": "portfolio/policy.py",
-        "RiskPolicy": "risk/policy.py",
-        "ExecutionPolicy": "execution/policy.py",
-        "ReconciliationPolicy": "execution/policy.py",
         "ShadowSimulationPolicy": "execution/policy.py",
         "BinanceTestnetPolicy": "execution/policy.py",
         "OutcomeEvaluationPolicy": "governance/policy.py",
@@ -624,14 +614,11 @@ def test_evidence_and_scheduling_domains_do_not_depend_on_forecast() -> None:
             }, module
 
 
-def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
+def test_shared_models_are_owned_and_retired_modules_are_absent() -> None:
     owners = {
         "DirectionalView": "forecast/models.py",
         "EdgeCalibration": "forecast/models.py",
         "ForecastResultKind": "forecast/results.py",
-        "PanelEvidence": "state/panel.py",
-        "PanelSnapshot": "state/panel.py",
-        "MetricObservation": "governance/evaluation/metrics.py",
     }
     definitions: dict[str, list[str]] = {name: [] for name in owners}
 
@@ -666,8 +653,8 @@ def test_shared_models_are_owned_and_legacy_dependency_is_one_way() -> None:
                     for alias in node.names
                 ), path
 
+    assert not (PACKAGE_ROOT / "legacy").exists()
     assert not (PACKAGE_ROOT / "risk" / "legacy.py").exists()
-    assert (PACKAGE_ROOT / "legacy" / "risk.py").exists()
     for filename in (
         "analyst.py",
         "calibration.py",
@@ -775,10 +762,7 @@ def test_market_tables_have_one_domain_owner_and_no_repository_reexports() -> No
 
 def test_information_facts_are_imported_from_their_domain_owner() -> None:
     moved_models = {"IntelligenceEvent", "SourceObservation", "SourceTier"}
-    old_modules = {
-        "investment_manager.legacy.models",
-        "investment_manager.portfolio.models",
-    }
+    old_modules = {"investment_manager.portfolio.models"}
 
     for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
@@ -1067,24 +1051,6 @@ def test_portfolio_target_chain_has_one_domain_owner() -> None:
 
 
 def test_risk_models_and_modules_have_one_domain_owner() -> None:
-    moved_models = {
-        "GuardState",
-        "RiskDecision",
-        "RiskOutcome",
-        "RiskReservation",
-        "RuleResult",
-    }
-
-    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if (
-                isinstance(node, ast.ImportFrom)
-                and node.module == "investment_manager.legacy.models"
-            ):
-                assert not moved_models.intersection(
-                    alias.name for alias in node.names
-                ), path
-
     for filename in (
         "portfolio_protection.py",
         "portfolio_risk.py",
@@ -1109,53 +1075,18 @@ def test_risk_models_and_modules_have_one_domain_owner() -> None:
     assert owners == [PACKAGE_ROOT / "risk" / "tables.py"]
 
 
-def test_active_and_retired_execution_tables_have_distinct_single_owners() -> None:
-    moved_models = {
-        "AccountSnapshot",
-        "ExitReason",
-        "Fill",
-        "Order",
-        "OrderStatus",
-        "OrderType",
-        "Position",
-        "PositionLifecycle",
-        "PositionLifecycleStatus",
-        "ProgramExitCondition",
-        "SUPPORTED_OPEN_SIDES",
-        "Side",
-    }
+def test_active_execution_tables_have_one_owner() -> None:
     active_tables = {
         "execution_groups",
         "mock_product_orders",
         "product_order_observations",
         "trade_plans",
     }
-    retired_tables = {
-        "account_snapshots",
-        "execution_requests",
-        "fills",
-        "mock_exchange_orders",
-        "mock_exchange_protections",
-        "orders",
-        "position_lifecycles",
-        "reconciliation_reports",
-    }
-    owned_tables = active_tables | retired_tables
+    owned_tables = active_tables
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 
-    for path in (*PACKAGE_ROOT.rglob("*.py"), *(ROOT / "tests").rglob("*.py")):
+    for path in PACKAGE_ROOT.rglob("*.py"):
         tree = ast.parse(path.read_text())
-        if path != PACKAGE_ROOT / "domain.py":
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.ImportFrom)
-                    and node.module == "investment_manager.legacy.models"
-                ):
-                    assert not moved_models.intersection(
-                        alias.name for alias in node.names
-                    ), path
-        if not path.is_relative_to(PACKAGE_ROOT):
-            continue
         for node in tree.body:
             if not isinstance(node, ast.Assign) or len(node.targets) != 1:
                 continue
@@ -1170,11 +1101,7 @@ def test_active_and_retired_execution_tables_have_distinct_single_owners() -> No
                 owners[target.id].append(path)
 
     active_owner = PACKAGE_ROOT / "execution" / "tables.py"
-    retired_owner = PACKAGE_ROOT / "legacy" / "tables.py"
-    assert owners == {
-        **{name: [active_owner] for name in active_tables},
-        **{name: [retired_owner] for name in retired_tables},
-    }
+    assert owners == {name: [active_owner] for name in active_tables}
     for filename in (
         "binance_testnet.py",
         "execution.py",
@@ -1203,18 +1130,7 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
         "world_model_ablation_assignments",
         "world_model_ablation_results",
     }
-    retired_tables = {
-        "architecture_decisions",
-        "change_proposals",
-        "evaluation_results",
-        "governance_decisions",
-        "governance_snapshots",
-        "outcome_window_reports",
-        "release_approval_requests",
-        "replay_evaluation_reports",
-        "system_constitutions",
-    }
-    owned_tables = active_tables | retired_tables
+    owned_tables = active_tables
     owners: dict[str, list[Path]] = {name: [] for name in owned_tables}
 
     for path in PACKAGE_ROOT.rglob("*.py"):
@@ -1232,11 +1148,7 @@ def test_governance_tables_and_entry_modules_have_one_owner() -> None:
                 owners[target.id].append(path)
 
     active_owner = PACKAGE_ROOT / "governance" / "tables.py"
-    retired_owner = PACKAGE_ROOT / "legacy" / "tables.py"
-    assert owners == {
-        **{name: [active_owner] for name in active_tables},
-        **{name: [retired_owner] for name in retired_tables},
-    }
+    assert owners == {name: [active_owner] for name in active_tables}
     assert not (PACKAGE_ROOT / "persistence.py").exists()
     governance_classes = {
         node.name
@@ -1422,7 +1334,6 @@ def test_top_level_packages_are_explicit_architectural_boundaries() -> None:
         "governance",
         "information",
         "kernel",
-        "legacy",
         "market",
         "platform",
         "portfolio",

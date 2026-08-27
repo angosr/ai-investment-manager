@@ -38,6 +38,7 @@ from investment_manager.governance.models import (
 from investment_manager.governance.tables import release_manifests
 from investment_manager.information.models import IntelligenceEvent
 from investment_manager.information.tables import normalized_events
+from investment_manager.information.text import sanitize_external_text
 from investment_manager.market.tables import (
     market_quotes,
     market_trades,
@@ -53,7 +54,6 @@ from investment_manager.scheduling.tables import (
 )
 from investment_manager.settings import AppConfig
 from investment_manager.state.decision.packet import DecisionPacket
-from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.tables import decision_packets
 
 # 世界事件→AI 输入反向关联的 Packet 扫描上界：linkage 只是尽力而为的标注，

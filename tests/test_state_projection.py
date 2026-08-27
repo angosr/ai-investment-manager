@@ -353,7 +353,9 @@ def test_packet_preparation_runs_only_for_material_canonical_fact_change(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: OBSERVED_AT + timedelta(minutes=2),
     )
     mandate = AnalysisMandate(
@@ -539,7 +541,9 @@ def test_packet_preparation_freezes_derivative_context_for_ai(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         # MarketDataPolicy 的规范顺序按完整产品身份排列；DecisionPacket 只按
         # mandate symbol 取值，不得另设一套互相冲突的 symbol 排序合同。
         perpetual_instruments=(observation_only, instrument),
@@ -624,7 +628,9 @@ def test_packet_preparation_exact_retry_recovers_persisted_delta(
         "market_interval": app_config.market_data.interval,
         "market_bar_window": app_config.market_data.bar_window,
         "market_source": app_config.market_data.version,
-        "maximum_market_age_seconds": app_config.risk.maximum_market_age_seconds,
+        "maximum_market_age_seconds": (
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         "clock": lambda: OBSERVED_AT + timedelta(minutes=2),
     }
     mandate = AnalysisMandate(
@@ -727,7 +733,9 @@ def test_packet_preparation_includes_bounded_context_and_prioritizes_triggered_e
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: OBSERVED_AT + timedelta(minutes=2),
     )
     mandate = AnalysisMandate(
@@ -850,7 +858,9 @@ def test_explicit_review_receives_recent_background_intelligence(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: event_at,
     )
     mandate = AnalysisMandate(
@@ -939,7 +949,9 @@ def test_explicit_review_keeps_weak_aggregator_event_out_of_model_attention(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: event_at,
     )
     mandate = AnalysisMandate(
@@ -1018,7 +1030,9 @@ def test_direct_high_impact_aggregator_lead_is_visible_but_not_directional(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: event_at,
     )
     mandate = AnalysisMandate(
@@ -1088,7 +1102,9 @@ def test_packet_preparation_promotes_only_explicit_market_shock(
         market_interval=app_config.market_data.interval,
         market_bar_window=app_config.market_data.bar_window,
         market_source=app_config.market_data.version,
-        maximum_market_age_seconds=app_config.risk.maximum_market_age_seconds,
+        maximum_market_age_seconds=(
+            app_config.decision_state.packet_policy.maximum_market_age_seconds
+        ),
         clock=lambda: OBSERVED_AT + timedelta(minutes=3),
     )
     mandate = AnalysisMandate(

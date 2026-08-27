@@ -16,6 +16,7 @@ from investment_manager.information.models import (
     SourceTier,
 )
 from investment_manager.information.official.metrics import TREASURY_AUCTION_FACT_TYPE
+from investment_manager.information.text import sanitize_external_text
 from investment_manager.kernel.identity import (
     SHA256_PATTERN,
     canonical_json,
@@ -52,7 +53,6 @@ from investment_manager.state.models import (
     Materiality,
     StateSnapshot,
 )
-from investment_manager.state.panel import sanitize_external_text
 from investment_manager.state.policy import DecisionPacketPolicy
 
 _CALENDAR_CONTEXT_FACT_TYPES = {

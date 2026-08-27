@@ -8,15 +8,11 @@ from alembic.config import Config
 from sqlalchemy import create_engine, insert, inspect, select, text
 
 from investment_manager.forecast.tables import forecast_contracts, forecast_decision_slots
-from investment_manager.legacy.tables import analysis_cycles
-from investment_manager.market.tables import market_quotes
 from investment_manager.platform.database import require_current_schema
-from investment_manager.risk.budget import portfolio_risk_budgets, risk_reservations
-from investment_manager.risk.protection import portfolio_protection_states
-from investment_manager.schema import compose_metadata, compose_offline_metadata
+from investment_manager.schema import compose_metadata
 
 
-def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
+def test_alembic_initial_migration_matches_managed_metadata(
     tmp_path, monkeypatch
 ) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'migration.db'}"
@@ -37,11 +33,6 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
     assert set(compose_metadata().tables) <= tables
     assert "alembic_version" in tables
     assert "analysis_workflow_runs" not in tables
-    with engine.connect() as connection:
-        budget = connection.execute(select(portfolio_risk_budgets)).mappings().one()
-    assert budget["portfolio_id"] == "primary"
-    assert budget["reserved_amount"] == 0
-
     command.check(config)
     assert not wrong_database.exists()
 
@@ -50,26 +41,6 @@ def test_alembic_initial_migration_matches_metadata_and_seeds_risk_budget(
         connection.execute(text("UPDATE alembic_version SET version_num = 'stale-version'"))
     with pytest.raises(RuntimeError, match="数据库 Schema 版本不匹配"):
         require_current_schema(engine)
-
-
-def test_managed_schema_excludes_retired_tables_but_offline_schema_can_read_them() -> None:
-    managed = compose_metadata()
-    offline = compose_offline_metadata()
-
-    assert set(managed.tables) < set(offline.tables)
-    assert market_quotes.name in managed.tables
-    assert {
-        analysis_cycles.name,
-        portfolio_protection_states.name,
-        portfolio_risk_budgets.name,
-        risk_reservations.name,
-    } <= set(offline.tables)
-    assert {
-        analysis_cycles.name,
-        portfolio_protection_states.name,
-        portfolio_risk_budgets.name,
-        risk_reservations.name,
-    }.isdisjoint(managed.tables)
 
 
 def test_unified_store_migration_archives_retired_role_facts(tmp_path) -> None:

@@ -41,7 +41,9 @@ def test_public_data_research_symbol_is_independent_of_production_allowlist(
     app_config,
 ) -> None:
     assert "BNBUSDT" not in app_config.market_data.symbols
-    assert "BNBUSDT" not in app_config.risk.symbol_allowlist
+    assert "BNBUSDT" not in {
+        item.instrument.symbol for item in app_config.capital.execution_specs
+    }
     assert parse_research_symbol("bnbusdt") == "BNBUSDT"
 
     with pytest.raises(typer.BadParameter, match="字母和数字"):

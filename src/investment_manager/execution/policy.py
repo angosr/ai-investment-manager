@@ -5,26 +5,10 @@ from pydantic import Field, model_validator
 from investment_manager.kernel.configuration import StrictConfig
 
 
-class ExecutionPolicy(StrictConfig):
-    version: str
-    fee_bps: Decimal = Field(default=Decimal("10"), ge=0)
-    market_slippage_bps: Decimal = Field(default=Decimal("2"), ge=0)
-    default_fill_fraction: Decimal = Field(default=Decimal("1"), gt=0, le=1)
-
-
-class ReconciliationPolicy(StrictConfig):
-    version: str
-    poll_seconds: int = Field(default=60, ge=5, le=3600)
-    maximum_report_age_seconds: int = Field(default=180, ge=10, le=3600)
-    balance_tolerance: Decimal = Field(default=Decimal("0.00000001"), ge=0)
-    position_quantity_tolerance: Decimal = Field(default=Decimal("0.00000001"), ge=0)
-
-
 class ShadowSimulationPolicy(StrictConfig):
     version: str
     initial_quote_balance: Decimal = Field(default=Decimal("10000"), gt=0)
     analysis_deadline_seconds: int = Field(default=300, ge=30, le=900)
-    lifecycle_poll_seconds: int = Field(default=10, ge=2, le=60)
 
 
 class BinanceTestnetPolicy(StrictConfig):

@@ -1,6 +1,6 @@
 # Investment Manager
 
-这是一个以长期费用后资本增值为目标的 AI Investment Manager。AI、规则与优化器都可以承担经证据支持的投资职责，但必须共享同一条可追溯、可评价、受风险约束的资本链。目标账户是在 Binance 可交易工具约束下管理 10,000 USDT 总资产；当前只有显式 Shadow profile 会启用隔离的 BTC Spot 前瞻实验，它不等于总组合已经运行或已经证明盈利。
+这是一个以长期费用后资本增值为目标的 AI Investment Manager。AI、规则与优化器都可以承担经证据支持的投资职责，但必须共享同一条可追溯、可评价、受风险约束的资本链。目标账户以 10,000 USDT 为记账本位，在已登记的市场、经济暴露和产品约束下管理总资产；当前显式 Shadow profile 启用 BTC、PAXG 与 SPY 的联合前瞻实验及唯一模拟资本链，它不等于策略已经证明盈利或具备正式资金权限。
 
 ## 权威资料
 
@@ -35,7 +35,7 @@ Evidence → State → WorldModel → Forecast → PortfolioTarget
 
 ```text
 src/investment_manager/
-  kernel/ market/ information/ state/ cognition/ forecast/
+  kernel/ market/ information/ state/ forecast/
   portfolio/ risk/ execution/ governance/ scheduling/
   decision_cycle/ entrypoints/ research/ platform/
 config/       # 类型化配置与冻结治理输入

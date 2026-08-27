@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from investment_manager.execution.policy import ExecutionPolicy
 from investment_manager.forecast.context.analyst import configured_assess_behavior_hash
 from investment_manager.forecast.context.contract import ASSESS_INSTRUCTIONS
 from investment_manager.forecast.context.estimate import (
@@ -19,12 +18,11 @@ from investment_manager.market.policy import MarketDataPolicy
 from investment_manager.platform.database import build_engine
 from investment_manager.portfolio.policy import (
     EconomicExposure,
-    FrequencyPolicy,
     MandateStatus,
 )
 from investment_manager.settings import AppConfig, load_config
 from investment_manager.state.decision.service import assemble_decision_packet_preparation
-from investment_manager.state.policy import DecisionStatePolicy, PanelPolicy
+from investment_manager.state.policy import DecisionStatePolicy
 
 
 def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> None:
@@ -58,7 +56,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.temporal.activity_start_to_close_seconds == 890
     assert config.temporal.activity_schedule_to_close_seconds == 900
     assert config.shadow.analysis_deadline_seconds == 900
-    assert config.codex_runtime.version == "codex-runtime-v9"
+    assert config.codex_runtime.version == "codex-runtime-v10"
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled
@@ -679,29 +677,7 @@ def test_config_inheritance_rejects_cycles(tmp_path) -> None:
         load_config(first)
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
-        ("minimum_net_edge_bps", Decimal("-1")),
-        ("latency_bps", Decimal("-1")),
-        ("adverse_selection_bps", Decimal("-1")),
-        ("uncertainty_buffer_bps", Decimal("-1")),
-    ),
-)
-def test_frequency_policy_rejects_negative_gate_or_risk_buffers(field, value) -> None:
-    with pytest.raises(ValidationError):
-        FrequencyPolicy(version="invalid-frequency", **{field: value})
-
-
-@pytest.mark.parametrize("field", ("fee_bps", "market_slippage_bps"))
-def test_execution_policy_rejects_negative_trade_costs(field) -> None:
-    with pytest.raises(ValidationError):
-        ExecutionPolicy(version="invalid-execution", **{field: Decimal("-1")})
-
-
 def test_ai_input_budgets_cannot_regress_to_unbounded_raw_context() -> None:
-    with pytest.raises(ValidationError):
-        PanelPolicy(version="oversized-panel", max_characters=12_001)
     with pytest.raises(ValidationError):
         CodexRuntimePolicy(
             version="oversized-prompt",

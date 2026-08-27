@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from investment_manager.execution.models import (
-    OrderType,
-    Side,
+from investment_manager.forecast.codex.bundle import (
+    RunBundle,
+    verify_bundle,
+    write_run_bundle,
 )
-from investment_manager.forecast.codex.bundle import RunBundle, verify_bundle
 from investment_manager.forecast.codex.capacity import (
     AppServerCapacityProbe,
     CapacityBucket,
@@ -37,30 +37,23 @@ from investment_manager.forecast.codex.protocol import (
 )
 from investment_manager.forecast.codex.router import (
     AccountState,
-    AnalystResult,
     AttemptAudit,
     CodexAccountRouter,
     InMemoryAccountLeaseStore,
     LatestAccountAttempt,
     assemble_codex_router,
 )
-from investment_manager.forecast.models import DirectionalView
 from investment_manager.forecast.policy import CodexAccount, CodexAccountRegistry
-from investment_manager.legacy.analyst import (
-    ANALYST_INPUT_VERSION,
-    AnalystStructuredOutput,
-    ProposalNormalizer,
-    RunBundleBuilder,
-    analysis_behavior_hash,
-)
-from investment_manager.legacy.models import (
-    Action,
-    AnalysisProposal,
-    DirectionalForecast,
-    PriceCondition,
-)
-from investment_manager.research.configuration import ResearchConfig
-from investment_manager.scheduling.models import TriggerDecision, TriggerReason
+from investment_manager.kernel.types import FrozenModel
+
+
+class _TestOutput(FrozenModel):
+    decision: str
+    score: Decimal | None = None
+
+
+def _output() -> _TestOutput:
+    return _TestOutput(decision="NO_ACTION", score=None)
 
 
 def _account_registry(tmp_path: Path) -> CodexAccountRegistry:
@@ -94,7 +87,7 @@ def _runtime(app_config):
 def _proposal_executor(app_config) -> SubprocessCodexExecutor:
     return SubprocessCodexExecutor(
         _runtime(app_config),
-        output_adapter=TypeAdapter(AnalystStructuredOutput),
+        output_adapter=TypeAdapter(_TestOutput),
     )
 
 
@@ -130,95 +123,6 @@ class SharedAuditStore:
 
     def record_attempt(self, attempt: AttemptAudit) -> None:
         self.attempts.append(attempt)
-
-
-def test_analysis_behavior_identity_ignores_runtime_generation_and_downstream_calibration(
-    app_config, base_app_config, monkeypatch
-) -> None:
-    baseline = analysis_behavior_hash(base_app_config)
-    redeployed = app_config.model_copy(
-        update={
-            "pipeline": app_config.pipeline.model_copy(
-                update={"version": "another-runtime-generation"}
-            ),
-            "calibration": app_config.calibration.model_copy(
-                update={"version": "published-calibration-v2"}
-            ),
-        }
-    )
-    changed_behavior = app_config.model_copy(
-        update={
-            "proposal": app_config.proposal.model_copy(
-                update={"minimum_confidence": Decimal("0.91")}
-            )
-        }
-    )
-
-    assert app_config.calibration.artifacts
-    assert analysis_behavior_hash(redeployed) == baseline
-    assert analysis_behavior_hash(changed_behavior) != baseline
-    monkeypatch.setattr(
-        "investment_manager.legacy.analyst._ANALYST_PROMPT_INSTRUCTIONS",
-        "different semantic prompt contract",
-    )
-    assert analysis_behavior_hash(app_config) != baseline
-
-
-def _proposal(replay_input, *, action: Action = Action.OPEN) -> AnalysisProposal:
-    forecasts = (
-        DirectionalForecast(
-            horizon_minutes=60,
-            directional_view=(
-                DirectionalView.UNCERTAIN
-                if action == Action.NO_ACTION
-                else DirectionalView.UP
-            ),
-            confidence=Decimal("0.60"),
-        ),
-        DirectionalForecast(
-            horizon_minutes=240,
-            directional_view=DirectionalView.UNCERTAIN,
-            confidence=Decimal("0.55"),
-        ),
-    )
-    if action == Action.NO_ACTION:
-        return AnalysisProposal(
-            proposal_id="proposal_no_action",
-            suggested_action=action,
-            symbol=replay_input.market.symbol,
-            thesis="当前没有足够优势",
-            confidence=Decimal("0.60"),
-            forecasts=forecasts,
-        )
-    return AnalysisProposal(
-        proposal_id="proposal_open",
-        suggested_action=action,
-        symbol=replay_input.market.symbol,
-        side=Side.BUY,
-        horizon_minutes=60,
-        thesis="趋势与信息方向一致，跌破失效位即证伪",
-        evidence_ids=(),
-        entry_condition=PriceCondition(order_type=OrderType.MARKET),
-        invalidation_price=Decimal("99"),
-        valid_until=replay_input.market.as_of + timedelta(minutes=10),
-        confidence=Decimal("0.63"),
-        forecasts=forecasts,
-    )
-
-
-def test_propose_worker_concurrency_cannot_exceed_enabled_accounts(base_app_config) -> None:
-    raw = base_app_config.model_dump(mode="python")
-    raw["pipeline"] = {**raw["pipeline"], "ai_mode": "PROPOSE"}
-    raw["temporal"] = {**raw["temporal"], "worker_threads": 2}
-    accounts = list(raw["codex_accounts"]["accounts"])
-    accounts[1] = {**accounts[1], "enabled": True}
-    raw["codex_accounts"] = {**raw["codex_accounts"], "accounts": accounts}
-
-    with pytest.raises(ValueError, match="分析并发不得超过"):
-        ResearchConfig.model_validate(raw)
-
-    raw["temporal"] = {**raw["temporal"], "worker_threads": 1}
-    assert ResearchConfig.model_validate(raw).temporal.worker_threads == 1
 
 
 def test_account_identity_matches_directory_and_registry_is_extensible(tmp_path) -> None:
@@ -287,151 +191,29 @@ class FakeExecutor:
         self.calls.append((account.account_id, bundle.bundle_hash, bundle.path))
         return self.results[account.account_id].pop(0)
 
-
-def test_analysis_proposal_is_strict_and_cannot_smuggle_position_fields(replay_input) -> None:
-    payload = _proposal(replay_input).model_dump(mode="json")
-    payload["quantity"] = "10"
-
-    with pytest.raises(ValidationError):
-        AnalysisProposal.model_validate(payload)
-
-
-def test_run_bundle_is_hashed_read_only_and_detects_tampering(
-    app_config, replay_input, tmp_path
-) -> None:
-    from investment_manager.market.features import FeatureEngine
-    from investment_manager.state.panel import PanelBuilder
-
-    duplicate_body = replay_input.events[0].model_copy(
-        update={"body": replay_input.events[0].title}
-    )
-    panel = PanelBuilder(app_config.panel).build(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=FeatureEngine(app_config.feature).compute(replay_input.market),
-        events=(duplicate_body, *replay_input.events[1:]),
-    )
+def test_run_bundle_is_hashed_read_only_and_detects_tampering(tmp_path) -> None:
     target = tmp_path / "bundle"
-    trigger = TriggerDecision(
-        should_run=True,
-        reason=TriggerReason.EVENT_BATCH,
-        evidence_ids=(panel.evidence[0].evidence_id, "evidence-not-selected"),
+    bundle = write_run_bundle(
+        cycle_id="cycle-test",
+        target=target,
+        prompt="只输出结构化结果",
+        files={"input.json": "{}\n", "output.schema.json": "{}\n"},
+        manifest={"analysis_behavior_hash": "b" * 64},
     )
-    bundle = RunBundleBuilder(
-        _runtime(app_config),
-        app_config.proposal,
-        code_version="release-commit-v1",
-        configuration_hash="a" * 64,
-        analysis_behavior_hash="b" * 64,
-    ).build(panel, target, trigger=trigger)
 
     assert verify_bundle(bundle)
-    assert {item.name for item in target.iterdir()} == {
-        "panel.json",
-        "analyst_prompt.md",
-        "output.schema.json",
-        "manifest.json",
-    }
-    assert target.stat().st_mode & 0o222 == 0
-    assert json.loads((target / "manifest.json").read_text())["code_version"] == (
-        "release-commit-v1"
-    )
-    assert json.loads((target / "manifest.json").read_text())[
-        "configuration_hash"
-    ] == "a" * 64
     assert bundle.analysis_behavior_hash == "b" * 64
-    assert json.loads((target / "manifest.json").read_text())[
-        "analysis_behavior_hash"
-    ] == "b" * 64
-    assert '"cycle_id":"cycle-replay-001"' in bundle.prompt
-    assert "禁止调用任何工具" in bundle.prompt
-    assert "必须遵守 panel_view_json.rules_digest" in bundle.prompt
-    assert "OPEN 的 side 只能为 BUY" in bundle.prompt
-    assert "可交易方向只约束 suggested_action 和 side" in bundle.prompt
-    assert "当前不能做空，预期价格下跌时也必须输出 DOWN" in bundle.prompt
-    assert f'"analyst_input_version":"{ANALYST_INPUT_VERSION}"' in bundle.prompt
-    prompt_view = bundle.prompt.split("<panel_view_json>\n", 1)[1].split("\n</panel_view_json>", 1)[
-        0
-    ]
-    prompt_payload = json.loads(prompt_view)
-    assert "bars" not in prompt_payload["market"]
-    assert "cycle_id" not in prompt_payload["market"]
-    assert "as_of" not in prompt_payload["market"]
-    assert "cycle_id" not in prompt_payload["account"]
-    assert "as_of" not in prompt_payload["account"]
-    assert prompt_payload["market"]["last"] == str(panel.market.last)
-    expected_features = panel.features.model_dump(mode="json")
-    expected_features.pop("cycle_id")
-    expected_features.pop("as_of")
-    assert prompt_payload["features"] == expected_features
-    expected_evidence = [item.model_dump(mode="json") for item in panel.evidence]
-    for item in expected_evidence:
-        if item["excerpt"] == item["title"]:
-            item.pop("excerpt")
-    assert prompt_payload["evidence"] == expected_evidence
-    assert "excerpt" not in prompt_payload["evidence"][0]
-    assert json.loads((target / "panel.json").read_text())["evidence"] == [
-        item.model_dump(mode="json") for item in panel.evidence
-    ]
-    assert prompt_payload["trigger"] == {
-        "reason": "EVENT_BATCH",
-        "evidence_ids": [panel.evidence[0].evidence_id, "evidence-not-selected"],
-        "missing_evidence_ids": ["evidence-not-selected"],
-    }
-    assert json.loads((target / "panel.json").read_text(encoding="utf-8"))["market"]["bars"]
-    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["analyst_input_version"] == ANALYST_INPUT_VERSION
-    (target / "analyst_prompt.md").chmod(0o644)
-    (target / "analyst_prompt.md").write_text("tampered", encoding="utf-8")
+    assert target.stat().st_mode & 0o222 == 0
+    (target / "input.json").chmod(0o644)
+    (target / "input.json").write_text("tampered", encoding="utf-8")
     assert not verify_bundle(bundle)
 
 
-def test_analyst_bundle_rejects_prompt_above_explicit_limit(
-    app_config, replay_input, tmp_path
-) -> None:
-    from investment_manager.market.features import FeatureEngine
-    from investment_manager.state.panel import PanelBuilder
-
-    panel = PanelBuilder(app_config.panel).build(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=FeatureEngine(app_config.feature).compute(replay_input.market),
-        events=replay_input.events,
-    )
-    evidence = panel.evidence[0].model_copy(update={"excerpt": "x" * 10_000})
-    oversized = panel.model_copy(update={"evidence": (evidence,)})
-    runtime = _runtime(app_config).model_copy(update={"maximum_prompt_characters": 8_000})
-
-    with pytest.raises(ValueError, match="Analyst 内嵌信息面板超过"):
-        RunBundleBuilder(runtime, app_config.proposal).build(oversized, tmp_path / "oversized")
-
-
-def test_codex_output_schema_requires_every_property_and_uses_null_for_optional() -> None:
-    schema = strict_output_schema(AnalystStructuredOutput.model_json_schema())
+def test_codex_output_schema_requires_every_property() -> None:
+    schema = strict_output_schema(_TestOutput.model_json_schema())
 
     assert schema["required"] == list(schema["properties"])
-    proposal_branches = schema["properties"]["proposal"]["anyOf"]
-    assert len(proposal_branches) == 2
-    open_ref = next(
-        item["$ref"] for item in proposal_branches if "OpenProposalOutput" in item["$ref"]
-    )
-    no_action_ref = next(
-        item["$ref"] for item in proposal_branches if "NoActionProposalOutput" in item["$ref"]
-    )
-    open_proposal = schema["$defs"][open_ref.rsplit("/", 1)[-1]]
-    no_action_proposal = schema["$defs"][no_action_ref.rsplit("/", 1)[-1]]
-    price_condition = schema["$defs"]["PriceCondition"]
-    assert open_proposal["required"] == list(open_proposal["properties"])
-    assert no_action_proposal["required"] == list(no_action_proposal["properties"])
-    assert "side" in open_proposal["properties"]
-    assert "side" not in no_action_proposal["properties"]
-    for proposal_schema in (open_proposal, no_action_proposal):
-        assert "forecasts" in proposal_schema["properties"]
-        assert "directional_view" not in proposal_schema["properties"]
-        assert "view_horizon_minutes" not in proposal_schema["properties"]
-    assert price_condition["required"] == list(price_condition["properties"])
-    assert "pattern" not in price_condition["properties"]["price"]["anyOf"][1]
-
+    assert schema["additionalProperties"] is False
 
 def test_capacity_uses_most_constrained_window_and_bucket() -> None:
     now = datetime(2026, 8, 18, tzinfo=UTC)
@@ -592,12 +374,12 @@ def test_app_server_probe_uses_official_handshake_and_persists_no_identity_field
 
 
 def test_router_chooses_most_headroom_without_discovering_fourth_directory(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     (tmp_path / "codex_unapproved_fourth").mkdir()
     now = datetime(2026, 8, 18, tzinfo=UTC)
-    proposal = _proposal(replay_input)
+    proposal = _output()
     executor = FakeExecutor(
         {item.account_id: [InvocationResult(True, output=proposal)] for item in registry.accounts}
     )
@@ -624,7 +406,7 @@ def test_router_chooses_most_headroom_without_discovering_fourth_directory(
 
 
 def test_router_uses_next_highest_headroom_when_best_account_is_leased(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
@@ -638,7 +420,7 @@ def test_router_uses_next_highest_headroom_when_best_account_is_leased(
     assert held is not None
     executor = FakeExecutor(
         {
-            item.account_id: [InvocationResult(True, output=_proposal(replay_input))]
+            item.account_id: [InvocationResult(True, output=_output())]
             for item in registry.accounts
         }
     )
@@ -663,7 +445,7 @@ def test_router_uses_next_highest_headroom_when_best_account_is_leased(
     assert [item[0] for item in executor.calls] == ["codex_b"]
 
 
-def test_router_reuses_capacity_snapshot_within_ttl(app_config, replay_input, tmp_path) -> None:
+def test_router_reuses_capacity_snapshot_within_ttl(app_config, tmp_path) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
     probe = FakeProbe(
@@ -672,8 +454,8 @@ def test_router_reuses_capacity_snapshot_within_ttl(app_config, replay_input, tm
     executor = FakeExecutor(
         {
             item.account_id: [
-                InvocationResult(True, output=_proposal(replay_input)),
-                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_output()),
+                InvocationResult(True, output=_output()),
             ]
             for item in registry.accounts
         }
@@ -712,7 +494,7 @@ def test_production_router_allows_healthy_subset_of_fixed_three_slot_registry(
         config,
         leases=InMemoryAccountLeaseStore(),
         audit=None,
-        output_adapter=TypeAdapter(AnalystStructuredOutput),
+        output_adapter=TypeAdapter(_TestOutput),
     )
 
     assert len(router.account_states) == 3
@@ -720,15 +502,15 @@ def test_production_router_allows_healthy_subset_of_fixed_three_slot_registry(
 
 
 def test_rate_limit_failover_restarts_same_immutable_bundle(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.RATE_LIMIT)],
-            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_output())],
+            "codex_c": [InvocationResult(True, output=_output())],
         }
     )
     router = CodexAccountRouter(
@@ -756,15 +538,15 @@ def test_rate_limit_failover_restarts_same_immutable_bundle(
 
 
 def test_auth_failure_disables_account_for_current_router_and_fails_over(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.AUTH)],
-            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_output())],
+            "codex_c": [InvocationResult(True, output=_output())],
         }
     )
     router = CodexAccountRouter(
@@ -814,7 +596,7 @@ def test_schema_failure_never_burns_other_accounts(app_config, tmp_path) -> None
 
 
 def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_batch(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
@@ -822,10 +604,10 @@ def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_bat
         {
             "codex_a": [
                 InvocationResult(False, failure=FailureClass.TIMEOUT),
-                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_output()),
             ],
-            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_output())],
+            "codex_c": [InvocationResult(True, output=_output())],
         }
     )
     probe = FakeProbe(
@@ -877,7 +659,7 @@ def test_timeout_never_rotates_within_batch_but_quarantines_account_for_next_bat
 
 
 def test_transient_cooldown_survives_router_reconstruction_and_starts_at_completion(
-    app_config, replay_input, tmp_path, monkeypatch
+    app_config, tmp_path, monkeypatch
 ) -> None:
     registry = _account_registry(tmp_path)
     runtime = _runtime(app_config)
@@ -886,8 +668,8 @@ def test_transient_cooldown_survives_router_reconstruction_and_starts_at_complet
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.TIMEOUT)],
-            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_output())],
+            "codex_c": [InvocationResult(True, output=_output())],
         }
     )
     snapshots = {
@@ -937,15 +719,15 @@ def test_transient_cooldown_survives_router_reconstruction_and_starts_at_complet
 
 
 def test_repeated_bundle_analysis_gets_a_distinct_invocation_identity(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
     executor = FakeExecutor(
         {
             account.account_id: [
-                InvocationResult(True, output=_proposal(replay_input)),
-                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_output()),
+                InvocationResult(True, output=_output()),
             ]
             for account in registry.accounts
         }
@@ -971,7 +753,7 @@ def test_repeated_bundle_analysis_gets_a_distinct_invocation_identity(
 
 
 def test_expired_cooldown_requires_successful_capacity_reprobe(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
@@ -985,8 +767,8 @@ def test_expired_cooldown_requires_successful_capacity_reprobe(
     executor = FakeExecutor(
         {
             "codex_a": [InvocationResult(False, failure=FailureClass.TIMEOUT)],
-            "codex_b": [InvocationResult(True, output=_proposal(replay_input))],
-            "codex_c": [InvocationResult(True, output=_proposal(replay_input))],
+            "codex_b": [InvocationResult(True, output=_output())],
+            "codex_c": [InvocationResult(True, output=_output())],
         }
     )
     runtime = _runtime(app_config)
@@ -1005,7 +787,7 @@ def test_expired_cooldown_requires_successful_capacity_reprobe(
 
 
 def test_probe_outage_uses_only_previously_healthy_accounts_in_conservative_round_robin(
-    app_config, replay_input, tmp_path
+    app_config, tmp_path
 ) -> None:
     registry = _account_registry(tmp_path)
     now = datetime(2026, 8, 18, tzinfo=UTC)
@@ -1016,8 +798,8 @@ def test_probe_outage_uses_only_previously_healthy_accounts_in_conservative_roun
     executor = FakeExecutor(
         {
             item.account_id: [
-                InvocationResult(True, output=_proposal(replay_input)),
-                InvocationResult(True, output=_proposal(replay_input)),
+                InvocationResult(True, output=_output()),
+                InvocationResult(True, output=_output()),
             ]
             for item in registry.accounts
         }
@@ -1054,26 +836,26 @@ def test_initial_probe_outage_fails_closed_without_guessing_account_health(
 
 
 def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
-    app_config, replay_input, tmp_path, monkeypatch
+    app_config, tmp_path, monkeypatch
 ) -> None:
-    from investment_manager.market.features import FeatureEngine
-    from investment_manager.state.panel import PanelBuilder
-
     registry = _account_registry(tmp_path)
-    panel = PanelBuilder(app_config.panel).build(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=FeatureEngine(app_config.feature).compute(replay_input.market),
-        events=replay_input.events,
+    bundle = write_run_bundle(
+        cycle_id="subprocess-contract",
+        target=tmp_path / "bundle",
+        prompt="只输出结构化结果",
+        files={
+            "input.json": "{}\n",
+            "output.schema.json": json.dumps(
+                strict_output_schema(TypeAdapter(_TestOutput).json_schema())
+            ),
+        },
+        manifest={"analysis_behavior_hash": "d" * 64},
     )
-    bundle = RunBundleBuilder(_runtime(app_config), app_config.proposal).build(
-        panel, tmp_path / "bundle"
-    )
-    proposal = _proposal(replay_input)
+    output = _output()
     captured = {}
 
     def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, "codex-cli 0.149.1\n", "")
+        return subprocess.CompletedProcess(command, 0, "codex-cli 0.150.1\n", "")
 
     class FakeStream:
         def __init__(self, lines=()):
@@ -1117,7 +899,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
                                     "id": "message",
                                     "type": "agentMessage",
                                     "text": json.dumps(
-                                        {"proposal": proposal.model_dump(mode="json")}
+                                        output.model_dump(mode="json")
                                     ),
                                 }
                             },
@@ -1218,7 +1000,7 @@ def test_subprocess_contract_uses_selected_home_and_clears_credential_overrides(
     assert thread["params"]["sandbox"] == "read-only"
     assert "environments" not in thread["params"]
     assert result.usage == {"input_tokens": 10}
-    assert result.diagnostics["codex_cli_version"] == "codex-cli 0.149.1"
+    assert result.diagnostics["codex_cli_version"] == "codex-cli 0.150.1"
     assert result.diagnostics["codex_binary_sha256"] == "0" * 64
     drifted = executor.execute(registry.accounts[1], bundle)
     assert not drifted.success
@@ -1230,7 +1012,7 @@ def test_codex_runtime_integrity_rejects_binary_drift(
 ) -> None:
     from investment_manager.forecast.codex.protocol import codex_runtime_integrity_matches
 
-    binary = tmp_path / "codex-0.149.1"
+    binary = tmp_path / "codex-0.150.1"
     binary.write_bytes(b"frozen-codex-binary")
     binary.chmod(0o500)
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -1241,7 +1023,7 @@ def test_codex_runtime_integrity_rejects_binary_drift(
         subprocess,
         "run",
         lambda command, **kwargs: subprocess.CompletedProcess(
-                command, 0, "codex-cli 0.149.1\n", ""
+                command, 0, "codex-cli 0.150.1\n", ""
         ),
     )
 
@@ -1346,9 +1128,9 @@ def test_subprocess_diagnostics_expose_only_bounded_protocol_state(app_config) -
 
 
 def test_subprocess_recovers_only_authoritative_completed_idle_turn(
-    app_config, replay_input, monkeypatch
+    app_config, monkeypatch
 ) -> None:
-    message_text = json.dumps({"proposal": _proposal(replay_input).model_dump(mode="json")})
+    message_text = json.dumps(_output().model_dump(mode="json"))
     events = [
         {
             "method": "item/completed",
@@ -1417,9 +1199,9 @@ def test_subprocess_recovers_only_authoritative_completed_idle_turn(
 
 
 def test_subprocess_ignores_only_failed_optional_read_after_normal_completion(
-    app_config, replay_input
+    app_config
 ) -> None:
-    message_text = json.dumps({"proposal": _proposal(replay_input).model_dump(mode="json")})
+    message_text = json.dumps(_output().model_dump(mode="json"))
     events = [
         {
             "method": "item/completed",
@@ -1490,7 +1272,7 @@ def test_subprocess_contract_classifies_payload_validation_without_persisting_co
     assert result.diagnostics["schema_failure_stage"] == "PAYLOAD_VALIDATION"
     assert result.diagnostics["schema_error_count"] == 2
     assert result.diagnostics["schema_error_types"] == "extra_forbidden,missing"
-    assert result.diagnostics["schema_error_locations"] == "*,proposal"
+    assert result.diagnostics["schema_error_locations"] == "*,decision"
     assert "secret" not in json.dumps(result.diagnostics)
 
 
@@ -1595,84 +1377,3 @@ def test_isolation_audit_does_not_invoke_codex_when_capacity_probe_fails(
     assert not check.ready
     assert check.reason_code == "CAPACITY_PROBE_FAILED"
     assert not executor.calls
-
-
-def test_proposal_normalizer_validates_evidence_and_never_sizes_position(
-    app_config, replay_input
-) -> None:
-    from investment_manager.market.features import FeatureEngine
-    from investment_manager.state.panel import PanelBuilder
-
-    panel = PanelBuilder(app_config.panel).build(
-        market=replay_input.market,
-        account=replay_input.account,
-        features=FeatureEngine(app_config.feature).compute(replay_input.market),
-        events=replay_input.events,
-    )
-    normalizer = ProposalNormalizer(app_config.proposal)
-    behavior_hash = analysis_behavior_hash(app_config)
-
-    candidates = normalizer.normalize(
-        _proposal(replay_input),
-        panel,
-        analysis_behavior_hash=behavior_hash,
-    )
-
-    assert len(candidates) == 1
-    assert candidates[0].producer_id == "codex-analyst"
-    assert candidates[0].calibration_ref == (
-        f"uncalibrated:{app_config.proposal.version}@{behavior_hash}"
-    )
-    assert not hasattr(candidates[0], "quantity")
-
-    disclosed = _proposal(replay_input).model_copy(update={"unknowns": ("缺少资金费率与持仓量",)})
-    disclosed_candidates = normalizer.normalize(
-        disclosed,
-        panel,
-        analysis_behavior_hash=behavior_hash,
-    )
-    assert disclosed.unknowns == ("缺少资金费率与持仓量",)
-    assert disclosed_candidates[0].unknowns == ("EDGE_CALIBRATION_MISSING",)
-
-    bad = _proposal(replay_input).model_copy(update={"evidence_ids": ("missing",)})
-    with pytest.raises(ValueError, match="evidence_id"):
-        normalizer.normalize(bad, panel, analysis_behavior_hash=behavior_hash)
-
-    mismatched = _proposal(replay_input).model_copy(
-        update={
-            "forecasts": (
-                DirectionalForecast(
-                    horizon_minutes=60,
-                    directional_view=DirectionalView.DOWN,
-                    confidence=Decimal("0.60"),
-                ),
-                *_proposal(replay_input).forecasts[1:],
-            )
-        }
-    )
-    with pytest.raises(ValueError, match="方向预测不一致"):
-        normalizer.normalize(mismatched, panel, analysis_behavior_hash=behavior_hash)
-
-    unsupported_horizon = _proposal(replay_input).model_copy(
-        update={
-            "forecasts": (
-                DirectionalForecast(
-                    horizon_minutes=90,
-                    directional_view=DirectionalView.UP,
-                    confidence=Decimal("0.60"),
-                ),
-            )
-        }
-    )
-    with pytest.raises(ValueError, match="冻结允许集合"):
-        normalizer.normalize(
-            unsupported_horizon,
-            panel,
-            analysis_behavior_hash=behavior_hash,
-        )
-
-
-@dataclass
-class AlwaysFailAnalyst:
-    def analyze(self, panel, *, trigger=None) -> AnalystResult:
-        return AnalystResult(False, None, "CODEX_SCHEMA_INVALID")
