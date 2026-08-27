@@ -1,0 +1,60 @@
+schema_version: quant-candidate-plan-v1
+plan_id: quant-order-flow-4h-v1
+evaluation_family_id: directional-4h-quant-prior
+
+hypothesis: >-
+  在相同的四小时价格收益合同下，最近四小时的主动买卖失衡能够在趋势、
+  一小时收益和实现波动率之外改善条件概率；若不能改善，则订单流不进入 Quant panel。
+
+targets:
+  - outcome_family_id: btc-price-directional-4h
+    symbol: BTCUSDT
+    baseline_artifact_id: quant_forecast_artifact_b41990aeb6a3135ae636
+  - outcome_family_id: paxg-price-directional-4h
+    symbol: PAXGUSDT
+    baseline_artifact_id: quant_forecast_artifact_04e9f39e611268fa4193
+
+dataset:
+  source: binance-rest-historical
+  market: spot
+  interval: 5m
+  requested_start: 2024-08-19T00:00:00Z
+  requested_end: 2026-08-19T00:00:00Z
+  required_schema: historical-bars-v2
+  availability: kline-close
+
+comparison:
+  unchanged_features:
+    - return_240m_bps
+    - return_60m_bps
+    - volatility_240m_bps
+  added_feature:
+    name: taker_imbalance_240m
+    formula: 2 * sum(taker_buy_base_volume) / sum(volume) - 1
+    discretization: development-tertiles
+  baseline_model: momentum_reversal_volatility
+  candidate_model: momentum_reversal_volatility_order_flow
+
+evaluation:
+  sample_cadence: 1h
+  horizon_minutes: 240
+  chronological_split:
+    development_fraction: 0.6
+    validation_fraction: 0.2
+    blind_fraction: 0.2
+  selection_metric: multiclass_brier
+  selection_rule: >-
+    只在 validation 上比较 baseline 与 candidate；相同分数选择 baseline。
+    选定后才计算 blind，不再修改特征、分箱、平滑或候选集合。
+  rejection_rule: >-
+    任一目标分别裁决；candidate 未在 validation 被选中，或其 blind Brier
+    不同时低于同数据上的 baseline 和无条件分布，即拒绝该目标的订单流候选。
+  capital_rule: >-
+    历史通过只允许建立新的研究 Producer；不授予资本权限。
+    后续仍以同槽前瞻 proper score、完整成本后的独立逻辑账户和换手稳定性裁决。
+
+search_scope:
+  new_candidate_count: 1
+  prohibited_follow_ups: >-
+    本计划结果揭示后，不得在同一 blind 区间继续搜索其他订单流窗口、阈值或组合；
+    后续假设只能使用新的未来样本。
