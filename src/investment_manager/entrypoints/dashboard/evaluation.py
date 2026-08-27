@@ -839,30 +839,57 @@ class EvaluationDashboardReader:
             if forecast.program_input_json is None:
                 return None
             try:
-                cell_key = json.loads(forecast.program_input_json)["cell_key"]
-            except (json.JSONDecodeError, KeyError, TypeError):
+                return _quant_panel_cell_key(json.loads(forecast.program_input_json))
+            except (json.JSONDecodeError, TypeError):
                 return None
-            return cell_key if isinstance(cell_key, str) and cell_key else None
         try:
             payload = json.loads(forecast.analysis_input_json)
             target_states = payload.get("forecast_targets")
             if target_states is not None:
-                matching = next(
+                matching_target = next(
                     (
-                        item["target_state"]
+                        item
                         for item in target_states
                         if item.get("decision_slot", {}).get("decision_slot_id")
                         == forecast.decision_slot_id
                     ),
                     None,
                 )
-                assets = () if matching is None else matching.get("asset_states", ())
+                if matching_target is None:
+                    return None
+                quant_cell = _quant_panel_cell_key(matching_target.get("quant_panel"))
+                if quant_cell is not None:
+                    return quant_cell
+                assets = matching_target.get("target_state", {}).get("asset_states", ())
             else:
                 assets = payload["target_state"]["asset_states"]
             regime = assets[0]["regime"]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
             return None
         return regime if isinstance(regime, str) and regime else None
+
+
+def _quant_panel_cell_key(raw: object) -> str | None:
+    """Resolve the selected model's frozen cell from the real Quant panel schema."""
+
+    if not isinstance(raw, dict):
+        return None
+    prior = raw.get("quant_prior")
+    candidates = raw.get("candidate_predictions")
+    if not isinstance(prior, dict) or not isinstance(candidates, list):
+        return None
+    selected_model = prior.get("model_name")
+    if not isinstance(selected_model, str) or not selected_model:
+        return None
+    matches = tuple(
+        item.get("cell_key")
+        for item in candidates
+        if isinstance(item, dict) and item.get("model_name") == selected_model
+    )
+    if len(matches) != 1:
+        return None
+    cell_key = matches[0]
+    return cell_key if isinstance(cell_key, str) and cell_key else None
 
 
 def serialize_forecast_evidence(evidence: ForecastEvidence | None) -> dict:

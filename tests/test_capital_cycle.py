@@ -1173,12 +1173,71 @@ def test_forecast_evidence_reads_quant_state_from_program_snapshot() -> None:
     forecast = SimpleNamespace(
         analysis_input_json=None,
         program_input_json=canonical_json(
-            {"cell_key": "momentum=HIGH|reversal=LOW|volatility=HIGH"}
+            {
+                "quant_prior": {
+                    "model_name": "momentum_reversal_volatility",
+                    "outcome_probabilities": [],
+                },
+                "candidate_predictions": [
+                    {
+                        "model_name": "momentum",
+                        "cell_key": "momentum=HIGH",
+                    },
+                    {
+                        "model_name": "momentum_reversal_volatility",
+                        "cell_key": "momentum=HIGH|short_return=LOW|volatility=HIGH",
+                    },
+                ],
+            }
         ),
     )
 
     assert reader._forecast_market_state_key(forecast) == (
-        "momentum=HIGH|reversal=LOW|volatility=HIGH"
+        "momentum=HIGH|short_return=LOW|volatility=HIGH"
+    )
+
+
+def test_forecast_evidence_reads_quant_state_from_posterior_snapshot() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    create_schema(engine)
+    reader = EvaluationDashboardReader(
+        engine,
+        load_config("config/investment-manager.shadow.yaml"),
+    )
+    slot_id = "forecast_decision_slot_quant_posterior"
+    forecast = SimpleNamespace(
+        decision_slot_id=slot_id,
+        program_input_json=None,
+        analysis_input_json=canonical_json(
+            {
+                "forecast_targets": [
+                    {
+                        "decision_slot": {"decision_slot_id": slot_id},
+                        "target_state": {
+                            "asset_states": [{"regime": "TRENDING_UP"}],
+                        },
+                        "quant_panel": {
+                            "quant_prior": {
+                                "model_name": "momentum_reversal_volatility",
+                                "outcome_probabilities": [],
+                            },
+                            "candidate_predictions": [
+                                {
+                                    "model_name": "momentum_reversal_volatility",
+                                    "cell_key": (
+                                        "momentum=LOW|short_return=MID|volatility=LOW"
+                                    ),
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert reader._forecast_market_state_key(forecast) == (
+        "momentum=LOW|short_return=MID|volatility=LOW"
     )
 
 
