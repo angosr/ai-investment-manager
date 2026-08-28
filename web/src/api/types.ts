@@ -214,14 +214,23 @@ export interface ForecastEvaluationEvidence {
     vs_context: ForecastPairEvidenceSummary | null;
   } | null;
   forecast_stability_evidence: {
-    assignment_count: number;
-    successful_replica_count: number;
-    replayable_case_count: number;
-    missing_capital_target_count: number;
-    cash_flip_count: number;
-    expression_flip_count: number;
-    target_change_count: number;
-    maximum_allocation_fraction_delta: string | null;
+    sources: {
+      label: "CONTEXT_AI" | "AI_QUANT";
+      role: "CAPITAL_CANDIDATE" | "RESEARCH";
+      assignment_count: number;
+      successful_replica_count: number;
+      complete_sample_count: number;
+      mean_expected_gross_difference_bps: string | null;
+      maximum_expected_gross_difference_bps: string | null;
+      direction_flip_count: number;
+      capital: {
+        replayable_case_count: number;
+        cash_flip_count: number;
+        expression_flip_count: number;
+        target_change_count: number;
+        maximum_allocation_fraction_delta: string | null;
+      } | null;
+    }[];
   } | null;
   product_payoff_evidence: {
     evaluation_version: string;

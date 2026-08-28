@@ -178,27 +178,74 @@ def test_empty_trading_cost_evidence_is_explicit_and_non_judgmental() -> None:
 
 def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() -> None:
     evidence = SimpleNamespace(
-        assignment_count=4,
-        successful_replica_count=3,
-        replayable_case_count=3,
-        missing_capital_target_count=0,
-        cash_flip_count=0,
-        expression_flip_count=0,
-        target_change_count=1,
-        maximum_allocation_fraction_delta=Decimal("0.04"),
-        cases=(object(), object(), object()),
+        sources=(
+            SimpleNamespace(
+                label="CONTEXT_AI",
+                role="CAPITAL_CANDIDATE",
+                forecast=SimpleNamespace(
+                    assignment_count=4,
+                    successful_replica_count=3,
+                    complete_sample_count=3,
+                    mean_max_expected_gross_difference_bps=Decimal("4.25"),
+                    maximum_expected_gross_difference_bps=Decimal("7.80"),
+                    canonical_direction_flip_count=0,
+                ),
+                capital=SimpleNamespace(
+                    replayable_case_count=3,
+                    cash_flip_count=0,
+                    expression_flip_count=0,
+                    target_change_count=1,
+                    maximum_allocation_fraction_delta=Decimal("0.04"),
+                ),
+            ),
+            SimpleNamespace(
+                label="AI_QUANT",
+                role="RESEARCH",
+                forecast=SimpleNamespace(
+                    assignment_count=2,
+                    successful_replica_count=2,
+                    complete_sample_count=2,
+                    mean_max_expected_gross_difference_bps=Decimal("1.50"),
+                    maximum_expected_gross_difference_bps=Decimal("2.75"),
+                    canonical_direction_flip_count=1,
+                ),
+                capital=None,
+            ),
+        ),
     )
 
     assert serialize_forecast_stability_evidence(evidence) == {
         "forecast_stability_evidence": {
-            "assignment_count": 4,
-            "successful_replica_count": 3,
-            "replayable_case_count": 3,
-            "missing_capital_target_count": 0,
-            "cash_flip_count": 0,
-            "expression_flip_count": 0,
-            "target_change_count": 1,
-            "maximum_allocation_fraction_delta": "0.04",
+            "sources": [
+                {
+                    "label": "CONTEXT_AI",
+                    "role": "CAPITAL_CANDIDATE",
+                    "assignment_count": 4,
+                    "successful_replica_count": 3,
+                    "complete_sample_count": 3,
+                    "mean_expected_gross_difference_bps": "4.25",
+                    "maximum_expected_gross_difference_bps": "7.80",
+                    "direction_flip_count": 0,
+                    "capital": {
+                        "replayable_case_count": 3,
+                        "cash_flip_count": 0,
+                        "expression_flip_count": 0,
+                        "target_change_count": 1,
+                        "maximum_allocation_fraction_delta": "0.04",
+                    },
+                },
+                {
+                    "label": "AI_QUANT",
+                    "role": "RESEARCH",
+                    "assignment_count": 2,
+                    "successful_replica_count": 2,
+                    "complete_sample_count": 2,
+                    "mean_expected_gross_difference_bps": "1.50",
+                    "maximum_expected_gross_difference_bps": "2.75",
+                    "direction_flip_count": 1,
+                    "capital": None,
+                },
+            ]
         }
     }
 

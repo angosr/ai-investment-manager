@@ -198,47 +198,46 @@ function ForecastStabilityLine({
 }: {
   evidence: NonNullable<ForecastEvaluationEvidence["forecast_stability_evidence"]>;
 }) {
-  if (evidence.replayable_case_count === 0) return null;
-  const decisionFlipObserved = evidence.cash_flip_count > 0
-    || evidence.expression_flip_count > 0;
-  const allocationDeltaValue = evidence.maximum_allocation_fraction_delta === null
-    ? null
-    : Number(evidence.maximum_allocation_fraction_delta);
-  const allocationDelta = allocationDeltaValue !== null && allocationDeltaValue > 0
-    ? `${(allocationDeltaValue * 100).toFixed(1)}%`
-    : null;
-  const headline = decisionFlipObserved
-    ? "同一信息重复分析会改变交易动作"
-    : evidence.target_change_count > 0
-      ? "同一信息重复分析方向一致，但仓位强度不同"
-      : "同一信息重复分析的资本动作一致";
-  const changes = [
-    evidence.cash_flip_count > 0
-      ? `${evidence.cash_flip_count} 次改变是否持有仓位`
-      : null,
-    evidence.expression_flip_count > 0
-      ? `${evidence.expression_flip_count} 次改变产品或方向`
-      : null,
-    evidence.target_change_count > 0 && !decisionFlipObserved
-      ? `${evidence.target_change_count} 次只改变目标金额`
-      : decisionFlipObserved
-        ? `共 ${evidence.target_change_count} 次资本目标不同`
-      : null,
-  ].filter((item): item is string => item !== null);
-  const detail = changes.length > 0
-    ? changes.join("；")
-    : "没有改变现金、产品、方向或目标金额";
+  const sources = evidence.sources.filter((item) => item.complete_sample_count > 0);
+  if (sources.length === 0) return null;
+  const unstable = sources.some((item) => (
+    item.direction_flip_count > 0
+    || (item.capital?.cash_flip_count ?? 0) > 0
+    || (item.capital?.expression_flip_count ?? 0) > 0
+  ));
   return (
     <div className={styles.forecastEvidence}>
-      <b>{headline}</b>
-      <span>
-        已完成 {evidence.replayable_case_count} 次同输入复算；{detail}
-        {allocationDelta ? `；目标配置最大相差账户权益 ${allocationDelta}` : ""}。
-        {evidence.missing_capital_target_count > 0
-          ? ` 另有 ${evidence.missing_capital_target_count} 次因缺少当时的资本目标而无法比较。`
-          : ""}
-        这只衡量 AI 生成稳定性，不代表预测方向正确。
-      </span>
+      <b>{unstable ? "同一输入仍可能产生不同判断" : "同一输入复算暂时一致"}</b>
+      {sources.map((item) => {
+        const name = item.label === "CONTEXT_AI" ? "当前资本 AI" : "AI + 量化";
+        const maximumDifference = item.maximum_expected_gross_difference_bps === null
+          ? null
+          : Number(item.maximum_expected_gross_difference_bps).toFixed(2);
+        const capital = item.capital;
+        const allocationDelta = capital?.maximum_allocation_fraction_delta === null
+          || capital?.maximum_allocation_fraction_delta === undefined
+          ? null
+          : `${(Number(capital.maximum_allocation_fraction_delta) * 100).toFixed(1)}%`;
+        const capitalChanges = capital === null
+          ? "仅作研究对照，不影响当前持仓"
+          : capital.cash_flip_count > 0 || capital.expression_flip_count > 0
+            ? `${capital.replayable_case_count} 次资本复算中，${Math.max(
+                capital.cash_flip_count,
+                capital.expression_flip_count,
+              )} 次改变是否持仓、产品或方向`
+            : capital.target_change_count > 0
+              ? `${capital.replayable_case_count} 次资本复算中，${capital.target_change_count} 次改变仓位金额`
+              : `${capital.replayable_case_count} 次资本复算的交易动作一致`;
+        return (
+          <span key={item.label}>
+            {name}：{item.complete_sample_count} 组同输入复算
+            {maximumDifference === null ? "" : `，预测的 4 小时收益最大相差 ${maximumDifference} bp`}
+            {item.direction_flip_count > 0 ? `，${item.direction_flip_count} 组方向跨过零点` : ""}
+            ；{capitalChanges}{allocationDelta ? `，仓位最大相差账户权益 ${allocationDelta}` : ""}。
+          </span>
+        );
+      })}
+      <span>这里只衡量生成稳定性，不代表预测正确或能够盈利。</span>
     </div>
   );
 }

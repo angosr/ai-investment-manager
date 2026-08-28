@@ -187,7 +187,10 @@ def create_app(
             ),
             run_in_threadpool(evaluation_reader.quant_context_pair_evidence),
             run_in_threadpool(producer_capital_reader.evidence, now=now),
-            run_in_threadpool(evaluation_reader.forecast_stability_evidence),
+            run_in_threadpool(
+                evaluation_reader.forecast_stability_evidence,
+                now=now,
+            ),
             run_in_threadpool(evaluation_reader.product_payoff_evidence),
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(evaluation_reader.trading_cost_evidence),

@@ -29,7 +29,9 @@ from investment_manager.forecast.context.posterior import (
     quant_context_posterior_behavior_id,
 )
 from investment_manager.forecast.context.stability import (
+    ContextForecastStabilityReport,
     SqlContextForecastStabilityRepository,
+    evaluate_context_forecast_stability,
 )
 from investment_manager.forecast.contracts import (
     ForecastContract,
@@ -97,6 +99,19 @@ from investment_manager.settings import AppConfig
 class QuantContextPairEvidence:
     vs_quant: ForecastPairEvidence | None
     vs_context: ForecastPairEvidence | None
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastStabilitySourceEvidence:
+    label: str
+    role: str
+    forecast: ContextForecastStabilityReport
+    capital: PortfolioForecastStabilityReport | None
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastStabilityEvidence:
+    sources: tuple[ForecastStabilitySourceEvidence, ...]
 
 
 class EvaluationDashboardReader:
@@ -252,7 +267,10 @@ class EvaluationDashboardReader:
 
     def forecast_stability_evidence(
         self,
-    ) -> PortfolioForecastStabilityReport | None:
+        *,
+        now: datetime,
+    ) -> ForecastStabilityEvidence | None:
+        now = require_utc(now)
         policy = self._config.outcome_evaluation.context_forecast_stability
         context = self._config.capital.context_forecast
         if (
@@ -264,17 +282,71 @@ class EvaluationDashboardReader:
         ):
             return None
         repository = SqlContextForecastStabilityRepository(self._engine)
-        assignments = repository.assignments(
-            policy_version=policy.version,
-            formal_producer_behavior_id=context.producer_behavior_id,
-        )
-        return PortfolioForecastStabilityEvaluator(
+        sources = [("CONTEXT_AI", context.producer_behavior_id)]
+        posterior = self._config.outcome_evaluation.quant_context_posterior
+        quant = self._config.outcome_evaluation.quant_baseline
+        if posterior is not None and posterior.enabled and quant is not None and quant.enabled:
+            with self._engine.connect() as connection:
+                contracts = self._active_forecast_contracts(connection)
+            if contracts:
+                sources.append(
+                    (
+                        "AI_QUANT",
+                        quant_context_posterior_behavior_id(
+                            config=self._config,
+                            contracts=tuple(
+                                sorted(
+                                    contracts,
+                                    key=lambda item: item.outcome_family_id,
+                                )
+                            ),
+                            quant_producer_behavior_id=self._quant_behavior_id(contracts),
+                        ),
+                    )
+                )
+        capital_behaviors = {
+            item.producer_behavior_id
+            for item in self._config.capital.candidate_capital_authorizations
+        }
+        evaluator = PortfolioForecastStabilityEvaluator(
             engine=self._engine,
             capital_policy=self._config.capital,
-        ).evaluate(
-            assignments=assignments,
-            results=repository.results(tuple(item.assignment_id for item in assignments)),
         )
+        evidence = []
+        for label, behavior_id in sources:
+            assignments = repository.assignments(
+                policy_version=policy.version,
+                formal_producer_behavior_id=behavior_id,
+            )
+            results = repository.results(tuple(item.assignment_id for item in assignments))
+            forecast_ids = tuple(
+                target.formal_forecast_id
+                for assignment in assignments
+                for target in assignment.targets
+            )
+            evidence.append(
+                ForecastStabilitySourceEvidence(
+                    label=label,
+                    role=("CAPITAL_CANDIDATE" if behavior_id in capital_behaviors else "RESEARCH"),
+                    forecast=evaluate_context_forecast_stability(
+                        policy=policy,
+                        formal_producer_behavior_id=behavior_id,
+                        assignments=assignments,
+                        results=results,
+                        formal_forecasts=repository.formal_forecasts(forecast_ids),
+                        as_of=now,
+                    ),
+                    capital=(
+                        evaluator.evaluate(
+                            assignments=assignments,
+                            results=results,
+                        )
+                        if behavior_id in capital_behaviors
+                        else None
+                    ),
+                )
+            )
+        return ForecastStabilityEvidence(sources=tuple(evidence))
 
     def world_model_ablation_evidence(self, *, now: datetime) -> WorldModelAblationReport | None:
         """Read the active prospective comparison without registering or mutating it."""
@@ -961,26 +1033,50 @@ def serialize_quant_context_pair_evidence(
 
 
 def serialize_forecast_stability_evidence(
-    evidence: PortfolioForecastStabilityReport | None,
+    evidence: ForecastStabilityEvidence | None,
 ) -> dict:
+    def source_payload(item: ForecastStabilitySourceEvidence) -> dict:
+        forecast = item.forecast
+        capital = item.capital
+        return {
+            "label": item.label,
+            "role": item.role,
+            "assignment_count": forecast.assignment_count,
+            "successful_replica_count": forecast.successful_replica_count,
+            "complete_sample_count": forecast.complete_sample_count,
+            "mean_expected_gross_difference_bps": (
+                None
+                if forecast.mean_max_expected_gross_difference_bps is None
+                else str(forecast.mean_max_expected_gross_difference_bps)
+            ),
+            "maximum_expected_gross_difference_bps": (
+                None
+                if forecast.maximum_expected_gross_difference_bps is None
+                else str(forecast.maximum_expected_gross_difference_bps)
+            ),
+            "direction_flip_count": forecast.canonical_direction_flip_count,
+            "capital": (
+                None
+                if capital is None
+                else {
+                    "replayable_case_count": capital.replayable_case_count,
+                    "cash_flip_count": capital.cash_flip_count,
+                    "expression_flip_count": capital.expression_flip_count,
+                    "target_change_count": capital.target_change_count,
+                    "maximum_allocation_fraction_delta": (
+                        None
+                        if capital.maximum_allocation_fraction_delta is None
+                        else str(capital.maximum_allocation_fraction_delta)
+                    ),
+                }
+            ),
+        }
+
     return {
         "forecast_stability_evidence": (
             None
             if evidence is None
-            else {
-                "assignment_count": evidence.assignment_count,
-                "successful_replica_count": evidence.successful_replica_count,
-                "replayable_case_count": evidence.replayable_case_count,
-                "missing_capital_target_count": evidence.missing_capital_target_count,
-                "cash_flip_count": evidence.cash_flip_count,
-                "expression_flip_count": evidence.expression_flip_count,
-                "target_change_count": evidence.target_change_count,
-                "maximum_allocation_fraction_delta": (
-                    None
-                    if evidence.maximum_allocation_fraction_delta is None
-                    else str(evidence.maximum_allocation_fraction_delta)
-                ),
-            }
+            else {"sources": [source_payload(item) for item in evidence.sources]}
         )
     }
 
