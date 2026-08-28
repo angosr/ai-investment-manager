@@ -1,0 +1,28 @@
+{
+  "experiment_id": "ai-quant-posterior-forward-v14",
+  "decision": "REJECT",
+  "decision_at": "2026-08-28T18:16:00Z",
+  "candidate_producer_behavior_id": "2ec9693d7826af58e447edde0dc292512ab1c25bea116992034be8456833d3c6",
+  "comparator_producer_behavior_id": "quant_forecast_behavior_263a19498370d4e96b0f",
+  "information_cutoff_range": {
+    "first": "2026-08-28T14:00:00Z",
+    "last": "2026-08-28T18:00:00Z"
+  },
+  "panels": {
+    "cadence": 5,
+    "material_state": 5,
+    "total": 10,
+    "targets_per_panel": 2,
+    "total_targets": 20
+  },
+  "observed_result": {
+    "probability_vectors_exactly_equal": 20,
+    "expected_gross_bps_exactly_equal": 20,
+    "candidate_changed_target_count": 0,
+    "minimum_completion_latency_seconds": "40.6",
+    "maximum_completion_latency_seconds": "100.7"
+  },
+  "inference": "候选与对照逐目标输出完全相同，因此任何未来 Outcome 下两者的 proper score 都严格相同；额外生成延迟不能产生预测信息增量。",
+  "runtime_action": "停止新增 posterior 与同输入稳定性调用；不可变 assignment、Forecast、Codex 运行和后续 Outcome 继续永久保存。",
+  "scope": "该结果只否定当前 v14 posterior 假设，不否定 WorldModel、透明 Quant 或未来具有独立可证伪假设的 AI 实验。"
+}

@@ -9,11 +9,13 @@ capital:
 
 outcome_evaluation:
   context_forecast_stability:
-    enabled: true
+    # v14 在 5 个定时槽与 5 个材料事件槽的 20 个目标上逐位复制 Quant，
+    # 没有可复算的预测增量；退役运行调用，历史事实继续由统一账本保存。
+    enabled: false
   quant_baseline:
     enabled: true
   quant_context_posterior:
-    enabled: true
+    enabled: false
 
 codex_runtime:
   enabled: true

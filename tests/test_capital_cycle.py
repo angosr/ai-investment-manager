@@ -23,9 +23,6 @@ from investment_manager.entrypoints.dashboard.evaluation import EvaluationDashbo
 from investment_manager.entrypoints.dashboard.pagination import PageCursor
 from investment_manager.execution.tables import mock_product_orders, trade_plans
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
-from investment_manager.forecast.context.posterior import (
-    QuantContextPosteriorAssignmentProducer,
-)
 from investment_manager.forecast.contract_repository import SqlForecastContractStore
 from investment_manager.forecast.contracts import (
     ForecastBenchmarkProbability,
@@ -1441,7 +1438,7 @@ def test_pending_group_requires_quotes_without_a_prior_account_position() -> Non
     assert tuple(item.symbol for item in execution) == ("PAXGUSDT",)
 
 
-def test_research_chain_contains_only_quant_then_ai_quant_assignment() -> None:
+def test_shadow_research_chain_contains_only_active_quant_producer() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -1458,14 +1455,10 @@ def test_research_chain_contains_only_quant_then_ai_quant_assignment() -> None:
     }
     assert service._forecast_sources == ()
     assert service._source_by_family == {}
-    assert len(service._research_forecast_producers) == 2
+    assert len(service._research_forecast_producers) == 1
     assert isinstance(
         service._research_forecast_producers[0],
         PortfolioQuantForecastProducer,
-    )
-    assert isinstance(
-        service._research_forecast_producers[1],
-        QuantContextPosteriorAssignmentProducer,
     )
 
 
