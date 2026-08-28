@@ -51,7 +51,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.temporal.activity_start_to_close_seconds == 890
     assert config.temporal.activity_schedule_to_close_seconds == 900
     assert config.shadow.analysis_deadline_seconds == 900
-    assert config.codex_runtime.version == "codex-runtime-v10"
+    assert config.codex_runtime.version == "codex-runtime-v11"
     assert config.codex_runtime.timeout_seconds == 420
     assert config.codex_runtime.lease_ttl_seconds == 450
     assert config.capital.enabled

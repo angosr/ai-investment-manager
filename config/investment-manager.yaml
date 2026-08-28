@@ -642,7 +642,7 @@ pipeline:
 # 部署时显式登记 1–16 个目录同名账号；系统不会扫描或自动纳入其他目录。
 # 真实调用保持关闭，直到至少一个启用账号完整通过登录、额度与隔离检查。
 codex_runtime:
-  version: codex-runtime-v10
+  version: codex-runtime-v11
   enabled: false
   isolation_verified: false
   binary: /usr/lib/node_modules/@openai/codex/bin/codex.js

@@ -383,19 +383,24 @@ class SubprocessCodexExecutor:
         )
         messages: list[str] = []
         usage: dict[str, int] = {}
-        if stderr.strip():
-            return InvocationResult(
-                False,
-                failure=_classify_process_failure(stderr),
-                diagnostics=diagnostics,
-            )
-        completed = recovered_completion
         notified_completion = any(
             event.get("method") == "turn/completed"
             and event.get("params", {}).get("turn", {}).get("status") == "completed"
             and event.get("params", {}).get("turn", {}).get("error") is None
             for event in events
         )
+        if stderr.strip() and not (recovered_completion or notified_completion):
+            return InvocationResult(
+                False,
+                failure=_classify_process_failure(stderr),
+                diagnostics=diagnostics,
+            )
+        if stderr.strip():
+            # JSON-RPC owns the terminal contract.  A valid completed turn may
+            # still emit a shutdown warning on stderr; retain only its presence
+            # as a bounded diagnostic and continue with message/schema checks.
+            diagnostics["stderr_present"] = True
+        completed = recovered_completion
         for event in events:
             if event.get("method") == "error" or event.get("error") is not None:
                 if event.get("id") == _TERMINAL_READ_REQUEST_ID and notified_completion:

@@ -1224,6 +1224,30 @@ def test_subprocess_ignores_only_failed_optional_read_after_normal_completion(
     assert result.diagnostics["completion_source"] == "TURN_NOTIFICATION"
 
 
+def test_subprocess_completed_turn_remains_authoritative_with_shutdown_stderr(
+    app_config,
+) -> None:
+    message_text = json.dumps(_output().model_dump(mode="json"))
+    events = [
+        {
+            "method": "item/completed",
+            "params": {"item": {"type": "agentMessage", "text": message_text}},
+        },
+        {
+            "method": "turn/completed",
+            "params": {"turn": {"status": "completed", "error": None}},
+        },
+    ]
+
+    result = _proposal_executor(app_config)._parse_app_server_events(
+        events,
+        "non-fatal app-server shutdown warning",
+    )
+
+    assert result.success
+    assert result.diagnostics["stderr_present"] is True
+
+
 def test_subprocess_contract_requires_exactly_one_final_message(app_config) -> None:
     message = {
         "method": "item/completed",
