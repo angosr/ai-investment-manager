@@ -68,6 +68,8 @@ WorldModel 不能直接输出仓位或订单。中性先验是长期风险溢价
 
 官方日历主动创建可修改的未来唤醒；广域事件流发现日历外冲击。系统不等用户提醒 CFTC、FOMC、财政融资或重要立法日程。Provider 只是可替换采集器：接入前必须说明它填补哪项观察盲区、区分哪个竞争机制或改善哪个 Forecast；长期没有消费者或增量即删除。
 
+突发线索的一手回溯仍由 Information 的同一证据链负责，不另建“新闻核验 Agent”、临时搜索记忆或第二事件库。一个官方站点只有在机器可读入口实际覆盖相关行动、发布延迟低于所服务的决策时域，并能永久保存首次响应、发布时间和修订时，才可声明对应能力；存在官网、RSS 或列表页本身不能证明实时覆盖。若紧急口径只通过官方社交账号或受限 API 发布，必须取得可授权、可回放的正式接入合同；在此之前聚合快讯只保留为待核验线索，Coverage 保持缺失，不能由 Codex 临时联网搜索后把不可重放的结果写成一手事实。这样新增来源只替换采集器，不改变 Evidence、State、WorldModel 或触发的所有权。
+
 名义国债收益率与 TIPS 实际收益率是两个不可互相代替的定价通道。系统分别从美国财政部的 [Daily Treasury Par Yield Curve](https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve) 和 [Daily Treasury Par Real Yield Curve](https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_real_yield_curve) 保存最新点时曲线：前者表达名义贴现与久期约束，后者表达扣除通胀后的无风险持有成本，尤其用于验证贵金属及长久期资产传导。两者日期不同时不计算即时盈亏平衡通胀；实际收益率也不冒充 GOLD 现货覆盖，只作为可独立结算的外生驱动。
 
 经济发布日历只有一条生产路径：完整保存 [BLS 官方日历](https://www.bls.gov/schedule/news_release/bls.ics)与 [BEA 官方日历](https://www.bea.gov/news/schedule)的首次可见原文及修订，但 Canonical State 只投影就业、CPI、PCE、GDP 各自下一次发布，并由同一 Scheduling 所有者维护未来义务。初次同步、普通改期和日历重放不单独消耗 AI 调用；下一次例行复核会看到变更。每个发布时点只创建一项以日历事件为身份的数据获取义务：发布前保持 `PENDING`，到时由 Information 所有者按官方发布合同有界重试，取得实际值后形成 `AVAILABLE`，超过冻结截止仍不可得则形成 `UNAVAILABLE`。日历事实本身就是耐久的待办依据，轮询事实保存每次尝试，因此不再建立第二套日程或可变任务账本。`PENDING` 不唤醒 AI；只有 `AVAILABLE` 或 `UNAVAILABLE` 终态形成一项 Canonical Fact/Delta 后才唤醒一次 WorldModel。同窗多个指标保存在同一发布事实中，不能逐字段复制 AI 调用，也不能靠固定延迟猜测数据已经发布；通用新闻/RSS 不再为同一已结构化发布建立第二条 AI 触发路径。
