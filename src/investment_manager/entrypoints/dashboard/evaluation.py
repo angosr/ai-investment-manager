@@ -89,7 +89,6 @@ from investment_manager.settings import AppConfig
 @dataclass(frozen=True, slots=True)
 class QuantContextPairEvidence:
     vs_quant: ForecastPairEvidence | None
-    vs_context: ForecastPairEvidence | None
 
 
 class EvaluationDashboardReader:
@@ -175,14 +174,11 @@ class EvaluationDashboardReader:
 
         posterior = self._config.outcome_evaluation.quant_context_posterior
         quant = self._config.outcome_evaluation.quant_baseline
-        context = self._config.capital.context_forecast
         if (
             posterior is None
             or not posterior.enabled
             or quant is None
             or not quant.enabled
-            or context is None
-            or not context.enabled
         ):
             return None
         with self._engine.connect() as connection:
@@ -203,14 +199,6 @@ class EvaluationDashboardReader:
                     candidate_behavior_id=posterior_behavior_id,
                     comparator_producer_id=quant.producer_id,
                     comparator_behavior_id=quant_behavior_id,
-                ),
-                vs_context=self._forecast_pair_evidence(
-                    connection,
-                    contracts=contracts,
-                    candidate_producer_id=posterior.producer_id,
-                    candidate_behavior_id=posterior_behavior_id,
-                    comparator_producer_id=context.producer_id,
-                    comparator_behavior_id=context.producer_behavior_id,
                 ),
             )
 
@@ -921,7 +909,6 @@ def serialize_quant_context_pair_evidence(
             if evidence is None
             else {
                 "vs_quant": serialize_pair(evidence.vs_quant),
-                "vs_context": serialize_pair(evidence.vs_context),
             }
         )
     }

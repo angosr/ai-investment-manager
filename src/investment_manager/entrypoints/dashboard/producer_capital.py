@@ -114,7 +114,6 @@ class ProducerCapitalDashboardReader:
         )
         self._behavior_ids = {
             "QUANT": quant_behavior_id,
-            "CONTEXT_AI": context.producer_behavior_id,
             "AI_QUANT": quant_context_posterior_behavior_id(
                 config=self._config,
                 contracts=tuple(sorted(contracts, key=lambda item: item.outcome_family_id)),
@@ -206,7 +205,7 @@ class ProducerCapitalDashboardReader:
             sleeve_risk=self._config.capital.sleeve_risk,
         )
         sources = []
-        for label in ("CONTEXT_AI", "AI_QUANT"):
+        for label in ("AI_QUANT",):
             behavior_id = self._behavior_ids[label]
             assignments = repository.assignments(
                 policy_version=policy.version,

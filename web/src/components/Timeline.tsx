@@ -79,8 +79,8 @@ function CapitalTimeline({
           {forecastEvaluation?.forecast_stability_evidence ? (
             <ForecastStabilityLine evidence={forecastEvaluation.forecast_stability_evidence} />
           ) : null}
-          {forecastEvaluation?.forecast_evidence ? (
-            <ForecastEvidenceLine evidence={forecastEvaluation.forecast_evidence} />
+          {forecastEvaluation?.quant_context_posterior_evidence ? (
+            <ForecastEvidenceLine evidence={forecastEvaluation.quant_context_posterior_evidence} />
           ) : null}
           {assessmentStatus?.quality ? (
             <AssessmentQualityLine quality={assessmentStatus.quality} />
@@ -168,7 +168,7 @@ function signedBps(value: string): string {
 function ForecastEvidenceLine({
   evidence,
 }: {
-  evidence: NonNullable<ForecastEvaluationEvidence["forecast_evidence"]>;
+  evidence: NonNullable<ForecastEvaluationEvidence["quant_context_posterior_evidence"]>;
 }) {
   if (evidence.non_overlapping_sample_count === 0) return null;
   const verdict = {
@@ -183,7 +183,7 @@ function ForecastEvidenceLine({
     : `${(Number(evidence.result_coverage) * 100).toFixed(0)}%`;
   return (
     <div className={styles.forecastEvidence}>
-      <b>预测验证</b>
+      <b>AI + 量化前瞻验证</b>
       <span>
         已结算 {evidence.non_overlapping_sample_count} 个互不重复的预测结果
         {coverage ? ` · 按时输出 ${coverage}` : ""}

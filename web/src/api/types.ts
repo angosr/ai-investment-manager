@@ -211,7 +211,6 @@ export interface ForecastEvaluationEvidence {
   quant_context_posterior_evidence: ForecastEvidenceSummary | null;
   quant_context_pair_evidence: {
     vs_quant: ForecastPairEvidenceSummary | null;
-    vs_context: ForecastPairEvidenceSummary | null;
   } | null;
   forecast_stability_evidence: {
     sources: {
