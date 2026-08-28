@@ -218,6 +218,7 @@ export interface ForecastEvaluationEvidence {
       assignment_count: number;
       successful_replica_count: number;
       failed_replica_count: number;
+      not_required_replica_count: number;
       complete_sample_count: number;
       mean_expected_gross_difference_bps: string | null;
       maximum_expected_gross_difference_bps: string | null;

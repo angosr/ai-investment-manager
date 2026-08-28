@@ -100,6 +100,32 @@ def _assignment():
     )
 
 
+def _posterior_assignment():
+    config = load_config("config/investment-manager.shadow.yaml")
+    policy = config.outcome_evaluation.context_forecast_stability
+    assert policy is not None
+    slot = _slot()
+    analysis_input = _input(slot)
+    analysis_input["purpose"] = "QUANT_CONTEXT_POSTERIOR"
+    analysis_input["forecast_targets"][0]["quant_panel"] = {
+        "quant_prior": {
+            "outcome_probabilities": [
+                {"bucket_id": "LOSS", "probability": "0.20"},
+                {"bucket_id": "FLAT", "probability": "0.50"},
+                {"bucket_id": "GAIN", "probability": "0.30"},
+            ]
+        }
+    }
+    return policy, build_context_forecast_stability_assignment(
+        policy=policy,
+        slot=slot,
+        formal_producer_behavior_id=BEHAVIOR,
+        formal_analysis_input=analysis_input,
+        formal_output_schema=_schema(slot),
+        assigned_at=CUTOFF + timedelta(minutes=1),
+    )
+
+
 def _output(probabilities: tuple[str, str, str]) -> ContextForecastStructuredOutput:
     return ContextForecastStructuredOutput(
         forecasts=(
@@ -304,3 +330,50 @@ def test_runner_records_one_replica_and_replay_does_not_call_codex_again() -> No
     assert first.successful_replica_count == second.successful_replica_count == 1
     assert analyst.calls == 1
     assert len(repository.results((assignment.assignment_id,))) == 1
+
+
+def test_runner_does_not_repeat_ai_when_posterior_copies_quant_prior() -> None:
+    class Repository:
+        def __init__(self, assignment, formal) -> None:
+            self.assignment = assignment
+            self.formal = formal
+            self.recorded = []
+
+        def assignments(self, **_kwargs):
+            return (self.assignment,)
+
+        def results(self, _assignment_ids):
+            return tuple(self.recorded)
+
+        def formal_forecasts(self, _forecast_ids):
+            return {self.formal.forecast_id: self.formal}
+
+        def record_result(self, result):
+            self.recorded.append(result)
+            return True
+
+    class Analyst:
+        calls = 0
+
+        def estimate(self, _assignment, _replica_index):
+            self.calls += 1
+            raise AssertionError("原样复制 Quant prior 时不应调用 Codex")
+
+    policy, assignment = _posterior_assignment()
+    repository = Repository(assignment, _formal(assignment))
+    analyst = Analyst()
+    runner = ContextForecastStabilityRunner(
+        policy=policy,
+        formal_producer_behavior_id=BEHAVIOR,
+        repository=repository,
+        analyst=analyst,
+    )
+
+    report = runner.reconcile(as_of=CUTOFF + timedelta(minutes=3))
+
+    assert analyst.calls == 0
+    assert report.not_required_replica_count == 1
+    assert report.successful_replica_count == 0
+    assert report.failed_replica_count == 0
+    assert report.complete_sample_count == 0
+    assert repository.recorded[0].status == ContextForecastStabilityStatus.NOT_REQUIRED

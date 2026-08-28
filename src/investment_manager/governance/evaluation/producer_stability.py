@@ -151,6 +151,8 @@ class PortfolioForecastStabilityEvaluator:
                 panel = panels_by_assignment[assignment.assignment_id]
                 if result is None:
                     continue
+                if result.status == ContextForecastStabilityStatus.NOT_REQUIRED:
+                    continue
                 if panel is None:
                     unreplayable += 1
                     continue

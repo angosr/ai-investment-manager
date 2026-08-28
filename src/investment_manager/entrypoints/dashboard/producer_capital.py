@@ -401,6 +401,7 @@ def serialize_forecast_stability_evidence(
             "assignment_count": forecast.assignment_count,
             "successful_replica_count": forecast.successful_replica_count,
             "failed_replica_count": forecast.failed_replica_count,
+            "not_required_replica_count": forecast.not_required_replica_count,
             "complete_sample_count": forecast.complete_sample_count,
             "mean_expected_gross_difference_bps": (
                 None

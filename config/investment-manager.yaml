@@ -381,11 +381,12 @@ outcome_evaluation:
   poll_seconds: 300
   research_poll_seconds: 5
   context_forecast_stability:
-    version: context-forecast-stability-forward-v1
+    version: context-forecast-stability-forward-v2
     enabled: false
-    # 每个联合 Forecast 一个精确输入副本；副本不形成 Forecast、Outcome 或资本投票。
+    # 先冻结义务；只有正式 posterior 改变量化基准时才运行精确输入副本。
     activated_at: 2026-08-27T12:00:00Z
     replicas_per_input: 1
+    decision_relevant_only: true
   quant_baseline:
     version: transparent-ordinal-quant-v8
     enabled: false

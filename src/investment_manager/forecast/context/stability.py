@@ -65,6 +65,7 @@ def parse_context_forecast_output_json(
 class ContextForecastStabilityStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    NOT_REQUIRED = "NOT_REQUIRED"
 
 
 class ContextForecastStabilityTarget(FrozenModel):
@@ -195,6 +196,7 @@ class ContextForecastStabilityReport(FrozenModel):
     pending_replica_count: int = Field(ge=0)
     successful_replica_count: int = Field(ge=0)
     failed_replica_count: int = Field(ge=0)
+    not_required_replica_count: int = Field(default=0, ge=0)
     complete_sample_count: int = Field(ge=0)
     mean_max_total_variation: Decimal | None = None
     maximum_total_variation: Decimal | None = None
@@ -562,13 +564,30 @@ class ContextForecastStabilityRunner:
                 tuple(item.assignment_id for item in assignments)
             )
         }
+        formal_forecasts = self.repository.formal_forecasts(
+            tuple(
+                target.formal_forecast_id
+                for assignment in assignments
+                for target in assignment.targets
+            )
+        )
         for assignment in assignments:
             for replica_index in range(1, assignment.replicas_per_input + 1):
                 key = (assignment.assignment_id, replica_index)
                 if key in result_by_key:
                     continue
                 result = (
-                    _failed_result(
+                    _not_required_result(
+                        assignment,
+                        replica_index=replica_index,
+                        completed_at=now,
+                    )
+                    if self.policy.decision_relevant_only
+                    and _formal_copies_quant_prior(
+                        assignment,
+                        formal_forecasts=formal_forecasts,
+                    )
+                    else _failed_result(
                         assignment,
                         replica_index=replica_index,
                         completed_at=now,
@@ -589,13 +608,7 @@ class ContextForecastStabilityRunner:
             formal_producer_behavior_id=self.formal_producer_behavior_id,
             assignments=assignments,
             results=tuple(result_by_key.values()),
-            formal_forecasts=self.repository.formal_forecasts(
-                tuple(
-                    target.formal_forecast_id
-                    for assignment in assignments
-                    for target in assignment.targets
-                )
-            ),
+            formal_forecasts=formal_forecasts,
             as_of=now,
         )
 
@@ -610,7 +623,7 @@ def evaluate_context_forecast_stability(
     as_of: datetime,
 ) -> ContextForecastStabilityReport:
     result_by_key = {(item.assignment_id, item.replica_index): item for item in results}
-    pending = failed = succeeded = 0
+    pending = failed = succeeded = not_required = 0
     total_variations: list[Decimal] = []
     expected_differences: list[Decimal] = []
     direction_flips = 0
@@ -625,6 +638,10 @@ def evaluate_context_forecast_stability(
             if result is None:
                 pending += 1
                 terminal = successful = False
+                continue
+            if result.status == ContextForecastStabilityStatus.NOT_REQUIRED:
+                not_required += 1
+                successful = False
                 continue
             if result.status != ContextForecastStabilityStatus.SUCCEEDED:
                 failed += 1
@@ -704,6 +721,7 @@ def evaluate_context_forecast_stability(
         pending_replica_count=pending,
         successful_replica_count=succeeded,
         failed_replica_count=failed,
+        not_required_replica_count=not_required,
         complete_sample_count=len(total_variations),
         mean_max_total_variation=_mean(total_variations),
         maximum_total_variation=max(total_variations, default=None),
@@ -840,6 +858,87 @@ def _failed_result(
         completed_at=require_utc(completed_at),
         reason_code=reason_code,
     )
+
+
+def _not_required_result(
+    assignment: ContextForecastStabilityAssignment,
+    *,
+    replica_index: int,
+    completed_at: datetime,
+) -> ContextForecastStabilityResult:
+    return ContextForecastStabilityResult(
+        result_id=stable_id(
+            "context_forecast_stability_result",
+            assignment.assignment_id,
+            replica_index,
+        ),
+        assignment_id=assignment.assignment_id,
+        replica_index=replica_index,
+        status=ContextForecastStabilityStatus.NOT_REQUIRED,
+        completed_at=require_utc(completed_at),
+        reason_code="FORMAL_POSTERIOR_COPIED_QUANT_PRIOR",
+    )
+
+
+def _formal_copies_quant_prior(
+    assignment: ContextForecastStabilityAssignment,
+    *,
+    formal_forecasts: dict[str, BaseForecast],
+) -> bool:
+    """Identify panels where the formal AI result exercised no incremental authority.
+
+    The assignment is still frozen before the formal call.  Skipped panels are
+    explicitly excluded from stability samples: this saves a call, but makes no claim
+    about how a hypothetical second generation might have differed.
+    """
+
+    analysis_input = _canonical_object(
+        assignment.formal_analysis_input_json,
+        "stability analysis input",
+    )
+    if analysis_input.get("purpose") != "QUANT_CONTEXT_POSTERIOR":
+        return False
+    raw_targets = analysis_input.get("forecast_targets")
+    if not isinstance(raw_targets, list):
+        return False
+    raw_by_slot = {}
+    for item in raw_targets:
+        if not isinstance(item, dict):
+            return False
+        slot = item.get("decision_slot")
+        panel = item.get("quant_panel")
+        prior = panel.get("quant_prior") if isinstance(panel, dict) else None
+        probabilities = (
+            prior.get("outcome_probabilities") if isinstance(prior, dict) else None
+        )
+        if not isinstance(slot, dict) or not isinstance(probabilities, list):
+            return False
+        slot_id = slot.get("decision_slot_id")
+        if not isinstance(slot_id, str) or slot_id in raw_by_slot:
+            return False
+        try:
+            raw_by_slot[slot_id] = tuple(
+                (str(value["bucket_id"]), Decimal(str(value["probability"])))
+                for value in probabilities
+                if isinstance(value, dict)
+            )
+        except (KeyError, ValueError):
+            return False
+        if len(raw_by_slot[slot_id]) != len(probabilities):
+            return False
+    if set(raw_by_slot) != {item.decision_slot_id for item in assignment.targets}:
+        return False
+    for target in assignment.targets:
+        formal = formal_forecasts.get(target.formal_forecast_id)
+        if formal is None:
+            return False
+        observed = tuple(
+            (item.bucket_id, item.probability)
+            for item in formal.outcome_probabilities
+        )
+        if observed != raw_by_slot[target.decision_slot_id]:
+            return False
+    return True
 
 
 def _canonical_object(raw: str, name: str) -> dict[str, object]:

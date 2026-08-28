@@ -256,6 +256,7 @@ function ForecastStabilityLine({
             {feeDelta === null ? "" : `，手续费最大相差 ${feeDelta} USDT`}
             {equityDelta === null ? "" : `，最终权益最大相差 ${equityDelta} USDT`}
             {turnoverDelta === null ? "" : `，累计买卖金额最大相差 ${turnoverDelta} USDT`}
+            {item.not_required_replica_count > 0 ? `；${item.not_required_replica_count} 组正式预测未改变量化基准，未重复调用 AI` : ""}
             {item.failed_replica_count > 0 ? `；${item.failed_replica_count} 次复算未形成预测，已按空仓计算` : ""}
             {capital.unreplayable_case_count > 0 ? `；${capital.unreplayable_case_count} 次因缺少当时可成交行情无法复算` : ""}。
           </span>

@@ -15,6 +15,7 @@ class ContextForecastStabilityPolicy(StrictConfig):
     enabled: bool = False
     activated_at: datetime
     replicas_per_input: int = Field(default=1, ge=1, le=3)
+    decision_relevant_only: bool = False
 
     _utc_activated_at = field_validator("activated_at")(require_utc)
 
