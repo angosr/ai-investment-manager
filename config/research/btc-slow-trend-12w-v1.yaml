@@ -1,0 +1,65 @@
+schema_version: slow-trend-candidate-plan-v1
+plan_id: btc-slow-trend-12w-v1
+evaluation_family_id: slow-directional-trend-research
+
+hypothesis: >-
+  BTC USD-M 永续过去 84 个完整 UTC 日的方向，对随后持仓周的含资金费率收益具有
+  可重复的同向信息；周频且仅在方向翻转时交易，应比短周期预测更有机会保留成本后边际。
+
+research_prior:
+  - https://w4.stern.nyu.edu/facdir/lpederse/papers/TimeSeriesMomentum.pdf
+  - https://doi.org/10.1057/s41283-026-00234-7
+
+data:
+  carry_dataset_id: historical_carry_dataset_ff50dce10205dfc0f265
+  source_window: [2020-01-01T00:00:00Z, 2026-08-01T00:00:00Z]
+  market: BINANCE_USDM
+  instrument: BTCUSDT
+  price_series: contract_ohlc
+  funding_series: verified_settlements
+
+rule:
+  formation_days: 84
+  signal: sign_of_contract_close_return
+  signal_bar: completed_sunday_utc_bar
+  execution: following_monday_contract_open
+  rebalance: only_when_signal_changes
+  exposure: one_unit_long_or_short
+  neutral_rule: exact_zero_return_only
+  parameter_search: prohibited
+
+cost:
+  fee_bps_per_executed_notional: "5"
+  spread_and_impact_allowance_bps_per_executed_notional: "2.5"
+  total_bps_per_executed_notional: "7.5"
+  funding: each_verified_settlement_strictly_after_entry_and_through_exit
+  note: >-
+    历史没有逐笔可执行盘口，因此 2.5 bp 是预注册保守摩擦，不冒充真实盘口回放；
+    通过历史筛选仍不能授权资本，只能进入带真实报价的前向模拟。
+
+evaluation:
+  permission: REJECTION_OR_FORWARD_RESEARCH_ONLY
+  history_semantics: retrospective_falsification_not_blind
+  strategy_metrics:
+    - net_compounded_return
+    - annualized_net_return
+    - annualized_sharpe
+    - maximum_drawdown
+    - turnover
+    - funding_contribution
+  comparisons:
+    - cash
+    - always_long_same_instrument_cost_and_funding
+  fixed_regimes:
+    - [2020-03-30T00:00:00Z, 2022-01-03T00:00:00Z]
+    - [2022-01-03T00:00:00Z, 2023-01-02T00:00:00Z]
+    - [2023-01-02T00:00:00Z, 2025-01-06T00:00:00Z]
+    - [2025-01-06T00:00:00Z, 2026-08-01T00:00:00Z]
+  rejection_rule: >-
+    任一条件失败即拒绝：全窗口成本后复合收益为正；年化 Sharpe 为正；最大回撤小于
+    同口径永续恒定做多；四个固定市场阶段至少三个成本后为正；所有阶段合计的正收益
+    周金额大于负收益周金额。不得根据结果修改日期、84 日窗口、周锚点、方向或成本。
+
+next_step: >-
+  拒绝则删除专用评估运行代码，只保留本计划与不可变结果；通过也只建立新身份的
+  前向研究 Producer，由实时可执行报价结算，不能直接修改资本决策或下单。
