@@ -406,7 +406,6 @@ def _preflight_release(
                 assemble_outcome_evaluation(
                     config,
                     assembly_url,
-                    release=manifest,
                 )
                 create_app(
                     config,
@@ -440,9 +439,6 @@ def _required_release_artifacts(config: AppConfig) -> tuple[str, ...]:
     required = {"web-dist"}
     if reference is not None:
         required.add(reference.selection_artifact_id)
-    quant = config.outcome_evaluation.quant_baseline
-    if quant is not None and quant.enabled:
-        required.update(item.artifact_id for item in quant.artifacts)
     return tuple(sorted(required))
 
 

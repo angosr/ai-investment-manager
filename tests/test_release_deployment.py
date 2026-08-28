@@ -89,7 +89,7 @@ def test_release_children_import_candidate_before_existing_pythonpath(tmp_path: 
     assert environment["SAFE"] == "yes"
 
 
-def test_release_requires_the_bound_reference_selection_artifact() -> None:
+def test_release_requires_only_enabled_runtime_artifacts() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     assert _required_release_artifacts(config) == ("web-dist",)
 

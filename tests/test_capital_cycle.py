@@ -1,8 +1,6 @@
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, delete, func, insert, select, update
@@ -47,7 +45,7 @@ from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.forecast.tables import forecast_decision_slots, forecasts
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
-from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
+from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.market.models import (
     InstrumentId,
     InstrumentProduct,
@@ -101,11 +99,6 @@ _TEST_FORECAST_FAMILY = "test-delta-neutral-candidate"
 
 def _assemble_capital_cycle(config, engine, **kwargs):
     execution = assemble_product_execution_runtime(config, engine)
-    quant = config.outcome_evaluation.quant_baseline
-    if quant is not None and quant.enabled and "quant_artifact_paths" not in kwargs:
-        kwargs["quant_artifact_paths"] = {
-            item.artifact_id: Path(item.relative_path) for item in quant.artifacts
-        }
     return assemble_capital_cycle(
         config,
         engine,
@@ -1134,84 +1127,6 @@ def test_capital_cycle_observes_cash_without_an_active_candidate() -> None:
     assert dto["instruments"][1]["price"] is None
 
 
-def test_forecast_evidence_reads_quant_state_from_program_snapshot() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    reader = EvaluationDashboardReader(
-        engine,
-        load_config("config/investment-manager.shadow.yaml"),
-    )
-    forecast = SimpleNamespace(
-        analysis_input_json=None,
-        program_input_json=canonical_json(
-            {
-                "quant_prior": {
-                    "model_name": "momentum_reversal_volatility",
-                    "outcome_probabilities": [],
-                },
-                "candidate_predictions": [
-                    {
-                        "model_name": "momentum",
-                        "cell_key": "momentum=HIGH",
-                    },
-                    {
-                        "model_name": "momentum_reversal_volatility",
-                        "cell_key": "momentum=HIGH|short_return=LOW|volatility=HIGH",
-                    },
-                ],
-            }
-        ),
-    )
-
-    assert reader._forecast_market_state_key(forecast) == (
-        "momentum=HIGH|short_return=LOW|volatility=HIGH"
-    )
-
-
-def test_forecast_evidence_reads_quant_state_from_posterior_snapshot() -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    create_schema(engine)
-    reader = EvaluationDashboardReader(
-        engine,
-        load_config("config/investment-manager.shadow.yaml"),
-    )
-    slot_id = "forecast_decision_slot_quant_posterior"
-    forecast = SimpleNamespace(
-        decision_slot_id=slot_id,
-        program_input_json=None,
-        analysis_input_json=canonical_json(
-            {
-                "forecast_targets": [
-                    {
-                        "decision_slot": {"decision_slot_id": slot_id},
-                        "target_state": {
-                            "asset_states": [{"regime": "TRENDING_UP"}],
-                        },
-                        "quant_panel": {
-                            "quant_prior": {
-                                "model_name": "momentum_reversal_volatility",
-                                "outcome_probabilities": [],
-                            },
-                            "candidate_predictions": [
-                                {
-                                    "model_name": "momentum_reversal_volatility",
-                                    "cell_key": (
-                                        "momentum=LOW|short_return=MID|volatility=LOW"
-                                    ),
-                                }
-                            ],
-                        },
-                    }
-                ]
-            }
-        ),
-    )
-
-    assert reader._forecast_market_state_key(forecast) == (
-        "momentum=LOW|short_return=MID|volatility=LOW"
-    )
-
-
 def test_trading_cost_evidence_reuses_unchanged_execution_ledger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1445,7 +1360,6 @@ def test_shadow_has_no_forecast_producer_without_cost_qualified_hypothesis() -> 
     service = _assemble_capital_cycle(
         config,
         engine,
-        producer_activation_at=NOW,
     )
 
     assert {item.instrument.product for item in config.capital.execution_specs} == {
@@ -1454,7 +1368,6 @@ def test_shadow_has_no_forecast_producer_without_cost_qualified_hypothesis() -> 
     }
     assert service._forecast_sources == ()
     assert service._source_by_family == {}
-    assert service._research_forecast_producers == ()
 
 
 def test_dashboard_hides_retired_no_opportunity_receipts() -> None:

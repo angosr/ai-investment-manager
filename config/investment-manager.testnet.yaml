@@ -18,10 +18,6 @@ codex_runtime:
 assessment:
   enabled: false
 
-outcome_evaluation:
-  quant_baseline:
-    enabled: false
-
 market_data:
   version: binance-public-testnet-v3
   symbols: [BTCUSDT, ETHUSDT]

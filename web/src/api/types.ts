@@ -206,42 +206,6 @@ export interface AssessmentFeed {
 }
 
 export interface ForecastEvaluationEvidence {
-  quant_forecast_evidence: ForecastEvidenceSummary | null;
-  product_payoff_evidence: {
-    evaluation_version: string;
-    mapping_cohort: {
-      economic_exposure_id: string;
-      projection_version: string;
-      instrument_keys: string[];
-      maximum_rule_age_seconds: number;
-    }[];
-    status: "NO_SETTLED_SAMPLES" | "OBSERVED";
-    terminal_product_count: number;
-    settled_product_count: number;
-    unavailable_product_count: number;
-    source_forecast_count: number;
-    non_overlapping_panel_count: number;
-    mean_absolute_mapping_error_bps: string | null;
-    mapping_conservative_coverage: string | null;
-    mapping_residual_sign_accuracy: string | null;
-  } | null;
-  quant_capital_path_evidence: {
-    evaluation_version: string;
-    producer_behavior_id: string;
-    as_of: string;
-    first_decision_at: string;
-    initial_cash: string;
-    final_equity: string;
-    net_pnl: string;
-    price_pnl: string | null;
-    funding_pnl: string | null;
-    fee_cost: string | null;
-    gross_turnover: string;
-    decision_count: number;
-    execution_group_count: number;
-    open_position_count: number;
-    maximum_drawdown_fraction: string;
-  } | null;
   capital_choice_evidence: {
     evaluation_version: string;
     capital_behavior_id: string;
@@ -268,29 +232,6 @@ export interface CapitalChoiceCandidateOutcome {
   direction: "LONG" | "SHORT";
   predicted_net_bps: string;
   realized_net_bps: string;
-}
-
-export interface ForecastEvidenceSummary {
-  status:
-    | "NO_SETTLED_SAMPLES"
-    | "INSUFFICIENT_EVIDENCE"
-    | "ABOVE_BENCHMARK"
-    | "BELOW_BENCHMARK"
-    | "INCONCLUSIVE";
-  due_slot_count: number;
-  forecast_count: number;
-  no_estimate_count: number;
-  settled_forecast_count: number;
-  non_overlapping_panel_count: number;
-  result_coverage: string | null;
-  mean_ranked_probability_score: string | null;
-  mean_brier_score: string | null;
-  mean_absolute_return_error_bps: string | null;
-  expected_realized_return_correlation: string | null;
-  source_evidence?: {
-    stratum: "CADENCE_ONLY" | "MATERIAL_STATE_ONLY";
-    evidence: ForecastEvidenceSummary;
-  }[];
 }
 
 export interface Page<T> {

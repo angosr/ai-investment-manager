@@ -2,8 +2,6 @@ extends: investment-manager.yaml
 
 capital:
   enabled: true
-  context_forecast:
-    enabled: true
   # 当前没有通过成本下界的 Forecast producer；Capital 仅维护账户与风险事实。
   candidate_capital_authorizations: []
 
@@ -30,7 +28,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-capital-shadow-v79
+  version: world-capital-shadow-v80
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

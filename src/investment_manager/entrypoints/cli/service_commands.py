@@ -377,14 +377,13 @@ def outcome_evaluation_service(
 ) -> None:
     """结算当前 Release 启用的 Forecast、产品映射和配对认知结果。"""
 
-    loaded, manifest = load_runtime_release(config, release_manifest)
+    loaded, _manifest = load_runtime_release(config, release_manifest)
     require_runtime_database(database_url)
 
     async def run() -> None:
         supervisor = assemble_outcome_evaluation(
             loaded,
             database_url,
-            release=manifest,
         )
         await supervisor.run(asyncio.Event())
 

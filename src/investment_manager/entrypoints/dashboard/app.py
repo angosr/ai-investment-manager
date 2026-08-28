@@ -30,9 +30,6 @@ from investment_manager.entrypoints.dashboard.capital import (
 from investment_manager.entrypoints.dashboard.evaluation import (
     EvaluationDashboardReader,
     serialize_capital_choice_evidence,
-    serialize_product_payoff_evidence,
-    serialize_quant_capital_path_evidence,
-    serialize_quant_forecast_evidence,
     serialize_trading_cost_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
@@ -157,25 +154,12 @@ def create_app(
         return _json(serialize_capital_overview(overview))
 
     async def forecast_evidence(_request: Request) -> JSONResponse:
-        now = datetime.now(UTC)
-        (
-            quant_evidence,
-            product_payoff,
-            quant_capital_path,
-            capital_choice,
-            trading_cost,
-        ) = await asyncio.gather(
-            run_in_threadpool(evaluation_reader.quant_forecast_evidence, now=now),
-            run_in_threadpool(evaluation_reader.product_payoff_evidence),
-            run_in_threadpool(evaluation_reader.quant_capital_path_evidence, now=now),
+        capital_choice, trading_cost = await asyncio.gather(
             run_in_threadpool(evaluation_reader.capital_choice_evidence),
             run_in_threadpool(evaluation_reader.trading_cost_evidence),
         )
         return _json(
             {
-                **serialize_quant_forecast_evidence(quant_evidence),
-                **serialize_product_payoff_evidence(product_payoff),
-                **serialize_quant_capital_path_evidence(quant_capital_path),
                 **serialize_capital_choice_evidence(capital_choice),
                 **serialize_trading_cost_evidence(trading_cost),
             }

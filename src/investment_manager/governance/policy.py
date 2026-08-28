@@ -1,44 +1,8 @@
 from enum import StrEnum
-from pathlib import PurePosixPath
 
 from pydantic import Field, model_validator
 
 from investment_manager.kernel.configuration import StrictConfig
-
-
-class QuantBaselineArtifactPolicy(StrictConfig):
-    """One immutable program Forecast artifact bound to an economic family."""
-
-    outcome_family_id: str = Field(min_length=1)
-    artifact_id: str = Field(min_length=1)
-    relative_path: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def path_is_repository_relative(self):
-        path = PurePosixPath(self.relative_path)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("Quant baseline 制品必须使用仓库内相对路径")
-        return self
-
-
-class QuantBaselinePolicy(StrictConfig):
-    """Research-only deterministic Forecast producer; never a capital source."""
-
-    version: str = Field(min_length=1)
-    enabled: bool = False
-    producer_id: str = Field(min_length=1)
-    artifacts: tuple[QuantBaselineArtifactPolicy, ...] = ()
-
-    @model_validator(mode="after")
-    def artifacts_are_unique_and_sorted(self):
-        families = tuple(item.outcome_family_id for item in self.artifacts)
-        if families != tuple(sorted(set(families))):
-            raise ValueError("Quant baseline 制品必须按唯一 outcome family 排序")
-        ids = tuple(item.artifact_id for item in self.artifacts)
-        paths = tuple(item.relative_path for item in self.artifacts)
-        if len(set(ids)) != len(ids) or len(set(paths)) != len(paths):
-            raise ValueError("Quant baseline 制品 ID 与路径不得重复")
-        return self
 
 
 class OutcomeEvaluationPolicy(StrictConfig):
@@ -50,8 +14,6 @@ class OutcomeEvaluationPolicy(StrictConfig):
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
-    research_poll_seconds: int = Field(default=5, ge=1, le=60)
-    quant_baseline: QuantBaselinePolicy | None = None
 
 
 class GovernancePolicy(StrictConfig):

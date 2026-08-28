@@ -371,7 +371,7 @@ capital:
           - {bucket_id: EXTREME_GAIN, probability: "0.05"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v55
+  version: typed-outcome-settlement-v56
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1
@@ -379,18 +379,6 @@ outcome_evaluation:
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
-  research_poll_seconds: 5
-  quant_baseline:
-    version: transparent-ordinal-quant-v8
-    enabled: false
-    producer_id: program-quant-baseline
-    artifacts:
-      - outcome_family_id: btc-price-directional-4h
-        artifact_id: quant_forecast_artifact_70430e567349f038e5b4
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_70430e567349f038e5b4.json
-      - outcome_family_id: paxg-price-directional-4h
-        artifact_id: quant_forecast_artifact_c730529eb5cd931235d8
-        relative_path: evidence/quant-forecasts/quant_forecast_artifact_c730529eb5cd931235d8.json
 
 governance:
   version: governance-cycle-v2

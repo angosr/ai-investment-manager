@@ -439,9 +439,6 @@ def test_dashboard_reads_capital_and_assessment_history_from_one_fact_store(
     assert "forecast_evidence" not in capital_overview.json()
     assert forecast_evidence.status_code == 200
     assert forecast_evidence.json() == {
-        "quant_forecast_evidence": None,
-        "product_payoff_evidence": None,
-        "quant_capital_path_evidence": None,
         "capital_choice_evidence": None,
         "trading_cost_evidence": {
             "evaluation_version": "trading-cost-evidence-v1",
@@ -767,7 +764,6 @@ def test_assessment_health_reads_the_current_context_chain(base_app_config) -> N
 
     assert status.recent_attempts == 1
     assert status.recent_successes == 1
-    assert status.overdue_forecast_count == 0
     assert {scope.latest_success_at for scope in status.scopes} == {completed_at}
 
 

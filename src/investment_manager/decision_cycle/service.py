@@ -18,7 +18,7 @@ from investment_manager.decision_cycle.trigger import (
 )
 from investment_manager.execution.venue.runtime import assemble_product_execution_runtime
 from investment_manager.forecast.context.repository import SqlContextAssessmentStore
-from investment_manager.governance.models import ReleaseManifest, resolve_manifest_artifact
+from investment_manager.governance.models import ReleaseManifest
 from investment_manager.governance.repository import SqlGovernanceRepository
 from investment_manager.platform.database import build_engine, require_current_schema
 from investment_manager.scheduling.application import ensure_trigger_plans
@@ -57,7 +57,7 @@ def assemble_trigger_service(
 
     repository = repository or SqlTriggerRepository(engine, config.trigger)
     capital_consumer = (
-        _assemble_capital_consumer(config=config, engine=engine, manifest=manifest)
+        _assemble_capital_consumer(config=config, engine=engine)
         if config.capital.enabled
         else None
     )
@@ -198,24 +198,11 @@ def _assemble_capital_consumer(
     *,
     config: AppConfig,
     engine,
-    manifest: ReleaseManifest,
 ) -> CapitalCycleService:
     execution = assemble_product_execution_runtime(config, engine)
-    quant_policy = config.outcome_evaluation.quant_baseline
-    quant_artifact_paths = (
-        {
-            item.artifact_id: resolve_manifest_artifact(manifest, item.artifact_id)
-            for item in quant_policy.artifacts
-        }
-        if quant_policy is not None and quant_policy.enabled
-        else None
-    )
-
     return assemble_capital_cycle(
         config,
         engine,
         venue=execution.venue,
         initial_cash=execution.initial_cash,
-        producer_activation_at=manifest.created_at,
-        quant_artifact_paths=quant_artifact_paths,
     )

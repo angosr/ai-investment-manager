@@ -26,10 +26,6 @@ from investment_manager.forecast.tables import (
     codex_account_leases,
     codex_runs,
     context_assessments,
-    forecast_decision_slots,
-    forecast_no_estimates,
-    forecast_slot_obligations,
-    forecasts,
 )
 from investment_manager.governance.models import (
     ReleaseManifest,
@@ -158,8 +154,6 @@ class AnalysisRuntimeStatus:
     pending_outbox_count: int
     oldest_pending_outbox_at: datetime | None
     release_aligned: bool | None
-    overdue_forecast_count: int
-    oldest_overdue_analysis_at: datetime | None
     scopes: tuple[AnalysisScopeRuntimeStatus, ...]
 
 
@@ -772,54 +766,6 @@ class DashboardReader:
             ).scalar_one_or_none()
             if latest_assessment_completed is not None:
                 latest_assessment_completed = database_utc(latest_assessment_completed)
-            quant = self._config.outcome_evaluation.quant_baseline
-            forecast_producer_id = (
-                quant.producer_id
-                if quant is not None and quant.enabled
-                else "DISABLED"
-            )
-            overdue_analyses = (
-                select(
-                    forecast_slot_obligations.c.obligation_id.label("proposal_id"),
-                    forecast_decision_slots.c.completion_deadline_at.label("analysis_at"),
-                )
-                .join(
-                    forecast_decision_slots,
-                    forecast_decision_slots.c.slot_id
-                    == forecast_slot_obligations.c.slot_id,
-                )
-                .outerjoin(
-                    forecasts,
-                    (forecasts.c.decision_slot_id == forecast_slot_obligations.c.slot_id)
-                    & (
-                        forecasts.c.producer_behavior_id
-                        == forecast_slot_obligations.c.producer_behavior_id
-                    ),
-                )
-                .outerjoin(
-                    forecast_no_estimates,
-                    (forecast_no_estimates.c.slot_id == forecast_slot_obligations.c.slot_id)
-                    & (
-                        forecast_no_estimates.c.producer_behavior_id
-                        == forecast_slot_obligations.c.producer_behavior_id
-                    ),
-                )
-                .where(
-                    forecast_slot_obligations.c.producer_id
-                    == forecast_producer_id,
-                    forecast_decision_slots.c.completion_deadline_at <= now,
-                    forecasts.c.forecast_id.is_(None),
-                    forecast_no_estimates.c.result_id.is_(None),
-                )
-                .subquery()
-            )
-            overdue_count, oldest_overdue = connection.execute(
-                select(
-                    func.count(),
-                    func.min(overdue_analyses.c.analysis_at),
-                ).select_from(overdue_analyses)
-            ).one()
-
             plan_by_symbol = {symbol: payload for symbol, _, payload in plan_rows}
             scope_statuses: list[AnalysisScopeRuntimeStatus] = []
             for symbol in self._config.analysis_symbols:
@@ -869,10 +815,6 @@ class DashboardReader:
                 database_utc(oldest_pending) if oldest_pending is not None else None
             ),
             release_aligned=release_aligned,
-            overdue_forecast_count=int(overdue_count),
-            oldest_overdue_analysis_at=(
-                database_utc(oldest_overdue) if oldest_overdue is not None else None
-            ),
             scopes=tuple(scope_statuses),
         )
 

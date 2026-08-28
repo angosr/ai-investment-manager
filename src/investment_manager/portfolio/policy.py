@@ -303,7 +303,7 @@ class CapitalPolicy(StrictConfig):
         if len(set(identities)) != len(identities):
             raise ValueError("Capital candidate authorization 不得重复")
         context = self.context_forecast
-        if context is not None and context.enabled:
+        if context is not None:
             target_reference_keys = {item.reference_instrument_key for item in context.targets}
             expected_read_only_references = target_reference_keys - set(spec_keys)
             if set(reference_keys) != expected_read_only_references:

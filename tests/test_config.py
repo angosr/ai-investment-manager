@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-capital-shadow-v79"
+    assert config.pipeline.version == "world-capital-shadow-v80"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -126,10 +126,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v55"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v55"
-    assert config.outcome_evaluation.quant_baseline is not None
-    assert not config.outcome_evaluation.quant_baseline.enabled
-    assert config.outcome_evaluation.research_poll_seconds == 5
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v56"
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v33"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v14"
@@ -295,6 +292,7 @@ def test_perpetual_quote_cadence_must_satisfy_cross_market_skew() -> None:
 def test_perpetual_state_cadence_preserves_capital_freshness_recovery() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
+    payload["capital"]["context_forecast"]["enabled"] = True
     payload["market_data"]["perpetual_poll_seconds"] = (
         min(
             config.capital.context_forecast.maximum_quote_age_seconds,
@@ -363,12 +361,12 @@ def test_historical_state_policy_does_not_require_future_source_rules() -> None:
     )
 
 
-def test_shadow_has_one_shared_multi_asset_context_research_program() -> None:
+def test_shadow_keeps_one_dormant_multi_asset_forecast_contract() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     context = config.capital.context_forecast
     assert config.capital.enabled
     assert config.assessment.enabled
-    assert context is not None and context.enabled
+    assert context is not None and not context.enabled
     assert config.codex_runtime.reasoning_effort == "high"
     assert context.reasoning_effort == "medium"
     assert context.horizon_minutes == 240
@@ -478,6 +476,7 @@ def test_forecast_reference_products_are_not_capital_products() -> None:
 def test_forecast_comparison_product_remains_observation_only() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
+    payload["capital"]["context_forecast"]["enabled"] = True
     paxg = next(
         item
         for item in payload["capital"]["context_forecast"]["targets"]
@@ -530,6 +529,7 @@ def test_investable_universe_cannot_exceed_the_owner_mandate() -> None:
 def test_context_forecast_evidence_instrument_is_read_only_and_target_aligned() -> None:
     config = load_config("config/investment-manager.shadow.yaml")
     payload = config.model_dump(mode="python")
+    payload["capital"]["context_forecast"]["enabled"] = True
     payload["capital"]["context_forecast"]["targets"][0]["derivative_evidence_instrument_key"] = (
         "BINANCE:USD_M_PERPETUAL:ETHUSDT"
     )

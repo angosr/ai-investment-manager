@@ -129,8 +129,6 @@ def _analysis_status(now: datetime, **updates) -> AnalysisRuntimeStatus:
         "pending_outbox_count": 0,
         "oldest_pending_outbox_at": None,
         "release_aligned": True,
-        "overdue_forecast_count": 0,
-        "oldest_overdue_analysis_at": None,
         "scopes": (
             AnalysisScopeRuntimeStatus(
                 symbol="BTCUSDT",
@@ -454,8 +452,6 @@ def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
             pending_outbox_count=3,
             oldest_pending_outbox_at=now - timedelta(seconds=10),
             release_aligned=False,
-            overdue_forecast_count=2,
-            oldest_overdue_analysis_at=now - timedelta(hours=5),
         ),
     )
 
@@ -463,7 +459,6 @@ def test_health_surfaces_control_plane_backlog_and_release_drift() -> None:
 
     checks = {item["key"]: item for item in result["checks"]}
     assert checks["trigger_delivery"]["state"] == "bad"
-    assert checks["forecast_settlement"]["state"] == "bad"
     assert checks["release_alignment"]["state"] == "bad"
     assert result["overall"] == "bad"
 
