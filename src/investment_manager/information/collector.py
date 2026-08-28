@@ -28,9 +28,13 @@ from investment_manager.information.models import (
     SourcePollRecord,
     SourcePollStatus,
 )
-from investment_manager.information.official.document import parse_official_html_document
+from investment_manager.information.official.document import (
+    MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS,
+    OfficialHtmlDocument,
+    build_official_decision_excerpt,
+    parse_official_html_document,
+)
 from investment_manager.information.policy import OfficialEventFeed
-from investment_manager.information.text import sanitize_external_text
 from investment_manager.kernel.identity import content_hash, stable_id
 from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
@@ -56,7 +60,11 @@ class RawIntelligenceItem(FrozenModel):
     event_time: datetime
     observed_at: datetime
     title: str = Field(min_length=1, max_length=1_000)
-    body: str = Field(default="", max_length=20_000)
+    body: str = Field(
+        default="",
+        max_length=MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS,
+    )
+    decision_excerpt: str = Field(default="", max_length=2_000)
     url: str | None = Field(default=None, max_length=2_000)
     source_reliability: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
     rank: int | None = Field(default=None, ge=0)
@@ -315,7 +323,7 @@ class OfficialRssSource:
         self._entry_pattern = (
             re.compile(feed.entry_path_pattern) if feed.entry_path_pattern else None
         )
-        self._entry_bodies: dict[str, str] = {}
+        self._entry_documents: dict[str, OfficialHtmlDocument] = {}
 
     def read(self, *, observed_at: datetime) -> tuple[RawIntelligenceItem, ...]:
         observed_at = require_utc(observed_at)
@@ -382,21 +390,25 @@ class OfficialRssSource:
             if observed_at - event_time > self._maximum_age:
                 continue
             guid = _xml_child_text(entry, ("guid", "id")) or url
-            feed_body = (
-                _xml_child_text(entry, ("description", "summary", "content")) or title
+            feed_summary = _xml_child_text(
+                entry,
+                ("description", "summary", "content"),
             )
+            feed_body = feed_summary or title
             body = feed_body
+            decision_excerpt = ""
             acquisition_route = "official-rss-v1"
             entry_url = self._bounded_entry_url(url)
             if entry_url is not None:
                 retained_entry_urls.add(entry_url)
                 try:
-                    body = _merge_official_entry_body(
-                        title=title,
-                        feed_body=feed_body,
-                        entry_body=self._entry_body(client, entry_url),
+                    document = self._entry_document(client, entry_url)
+                    body = document.body
+                    decision_excerpt = build_official_decision_excerpt(
+                        document,
+                        source_summary=feed_summary,
                     )
-                    acquisition_route = "official-rss-entry-v2"
+                    acquisition_route = "official-rss-entry-v3"
                     url = entry_url
                 except (httpx.HTTPError, ValueError) as exc:
                     logger.warning(
@@ -418,16 +430,23 @@ class OfficialRssSource:
                     event_time=event_time,
                     observed_at=observed_at,
                     title=_bounded_external_text(title, maximum_length=1_000),
-                    body=_bounded_external_text(body, maximum_length=20_000),
+                    body=_bounded_external_text(
+                        body,
+                        maximum_length=MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS,
+                    ),
+                    decision_excerpt=_bounded_external_text(
+                        decision_excerpt,
+                        maximum_length=2_000,
+                    ),
                     url=url,
                     source_reliability=Decimal("1"),
                     rank=0,
                     directional_support_eligible=True,
                 )
             )
-        self._entry_bodies = {
-            url: body
-            for url, body in self._entry_bodies.items()
+        self._entry_documents = {
+            url: document
+            for url, document in self._entry_documents.items()
             if url in retained_entry_urls
         }
         return tuple(items)
@@ -450,8 +469,8 @@ class OfficialRssSource:
             return None
         return parsed._replace(path=path).geturl()
 
-    def _entry_body(self, client: httpx.Client, url: str) -> str:
-        if cached := self._entry_bodies.get(url):
+    def _entry_document(self, client: httpx.Client, url: str) -> OfficialHtmlDocument:
+        if cached := self._entry_documents.get(url):
             return cached
         response = client.get(
             url,
@@ -466,23 +485,14 @@ class OfficialRssSource:
         if not response.content or len(response.content) > self._maximum_bytes:
             raise ValueError("official RSS entry 响应为空或超过大小上限")
         document = parse_official_html_document(response.text)
-        body = document.body.strip()[:20_000]
-        if not document.title.strip() or not body:
+        if not document.title.strip() or not document.body.strip():
             raise ValueError("official RSS entry 缺少标题或正文")
-        self._entry_bodies[url] = body
-        return body
+        self._entry_documents[url] = document
+        return document
 
 
 def _xml_local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
-
-
-def _merge_official_entry_body(*, title: str, feed_body: str, entry_body: str) -> str:
-    summary, _ = sanitize_external_text(feed_body, maximum_length=1_000)
-    normalized_title, _ = sanitize_external_text(title, maximum_length=1_000)
-    if not summary or summary == normalized_title or entry_body.startswith(summary):
-        return entry_body
-    return f"{summary}\n{entry_body}"[:20_000]
 
 
 def _xml_child_text(element: ElementTree.Element, names: tuple[str, ...]) -> str:
@@ -673,7 +683,13 @@ class EventNormalizer:
             self._version,
             item.source,
             item.source_item_id,
-            content_hash({"title": item.title, "body": item.body}),
+            content_hash(
+                {
+                    "title": item.title,
+                    "body": item.body,
+                    "decision_excerpt": item.decision_excerpt,
+                }
+            ),
         )
         return IntelligenceEvent(
             evidence_id=evidence_id,
@@ -684,6 +700,7 @@ class EventNormalizer:
             source=item.source,
             title=item.title,
             body=item.body,
+            decision_excerpt=item.decision_excerpt,
             url=item.url,
             symbols=symbols,
             relevance=relevance,
@@ -798,8 +815,7 @@ class InMemoryEventStore:
             missing = tuple(
                 evidence_id
                 for evidence_id in evidence_ids
-                if evidence_id not in self._events
-                or self._events[evidence_id].observed_at > as_of
+                if evidence_id not in self._events or self._events[evidence_id].observed_at > as_of
             )
             if missing:
                 raise ValueError("缺少截至 as_of 可见的事件: " + ", ".join(missing))
@@ -876,9 +892,7 @@ class InformationCollector:
                 self._record_source_poll(
                     source_id=source.source_id,
                     status=(
-                        SourcePollStatus.CHANGED
-                        if source_inserted
-                        else SourcePollStatus.UNCHANGED
+                        SourcePollStatus.CHANGED if source_inserted else SourcePollStatus.UNCHANGED
                     ),
                     started_at=started_at,
                     latest_publication_at=latest_publication_at,

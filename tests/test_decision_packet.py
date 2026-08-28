@@ -683,6 +683,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
         source="official-source",
         title="官方突发事件",
         body="新的官方信息需要立即结合宏观基线重新评估。" * 12,
+        decision_excerpt="官方政策已经生效，模型应优先看到这条确定性结论。",
         symbols=("BTCUSDT",),
         relevance=Decimal("1"),
         impact=Decimal("1"),
@@ -745,6 +746,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
     constrained = build(full_size - 1)
 
     assert constrained.intelligence_events[0].evidence_ref == event_ref
+    assert constrained.intelligence_events[0].body == event.decision_excerpt
     assert constrained.intelligence_events[0].directly_triggered
     assert constrained.facts[0].revision_id == direct.fact.revision_id
     assert constrained.facts[0].directly_triggered
@@ -787,7 +789,7 @@ def test_packet_keeps_direct_event_and_causal_coverage_when_state_is_redundant(
         DecisionPacketCapacityError,
         match="direct intelligence events exceed intelligence capacity",
     ):
-        build(16_000, maximum_intelligence_characters=100)
+        build(16_000, maximum_intelligence_characters=10)
 
 
 def test_packet_omits_temporally_distant_background_facts_but_keeps_direct_fact(
@@ -1763,9 +1765,9 @@ def test_replacing_verified_context_drops_event_stale_for_one_day(
     )
 
     assert refrozen.previous_context is not None
-    assert tuple(
-        item.evidence_id for item in refrozen.previous_context.event_references
-    ) == ("a" * 64,)
+    assert tuple(item.evidence_id for item in refrozen.previous_context.event_references) == (
+        "a" * 64,
+    )
 
 
 def test_assess_schema_has_one_world_model_and_no_trade_or_legacy_fields(

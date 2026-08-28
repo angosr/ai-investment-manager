@@ -26,6 +26,10 @@ from investment_manager.information.models import (
     SourcePollRecord,
     SourcePollStatus,
 )
+from investment_manager.information.official.document import (
+    build_official_decision_excerpt,
+    parse_official_html_document,
+)
 from investment_manager.information.official.publications import OfficialPublicationSource
 from investment_manager.information.policy import (
     OfficialEventFeed,
@@ -299,6 +303,29 @@ def test_official_rss_source_emits_only_fresh_first_party_items() -> None:
     assert event.trigger_priority == 0
 
 
+def test_official_document_projection_surfaces_material_claim_beyond_opening() -> None:
+    document = parse_official_html_document(
+        """
+        <html><head>
+          <meta property="og:title" content="Remarks at annual conference">
+          <meta name="description" content="Thank you for joining our annual conference today.">
+        </head><body><main><article>
+          <h1>Remarks at annual conference</h1>
+          <p>Thank you for joining our annual conference and for the work represented here.</p>
+          <p>The institution has supported orderly markets throughout its long history.</p>
+          <p>Congress will enact the legislation and establish binding implementation
+             requirements for the new market structure.</p>
+        </article></main></body></html>
+        """
+    )
+
+    excerpt = build_official_decision_excerpt(document)
+
+    assert document.body.startswith("Thank you")
+    assert excerpt.startswith("Congress will enact the legislation")
+    assert "Thank you" not in excerpt
+
+
 def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
     observed_at = datetime(2026, 8, 21, 18, tzinfo=UTC)
     feed_url = "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"
@@ -322,9 +349,9 @@ def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
                 '<html><head><meta property="og:title" '
                 'content="CFTC announces digital asset action"></head>'
                 '<body><div role="main"><nav>Site navigation</nav><article>'
-                '<h1>CFTC announces digital asset action</h1>'
-                '<p>The Commission approved a final digital asset market action.</p>'
-                '</article></div></body></html>'
+                "<h1>CFTC announces digital asset action</h1>"
+                "<p>The Commission approved a final digital asset market action.</p>"
+                "</article></div></body></html>"
             ),
             request=request,
         )
@@ -344,8 +371,9 @@ def test_official_rss_source_hydrates_bounded_first_party_entry_once() -> None:
 
     assert len(first) == len(second) == 1
     assert first[0].event_time == datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
-    assert first[0].acquisition_route == "official-rss-entry-v2"
+    assert first[0].acquisition_route == "official-rss-entry-v3"
     assert "approved a final digital asset market action" in first[0].body
+    assert "approved a final digital asset market action" in first[0].decision_excerpt
     assert "Site navigation" not in first[0].body
     assert requests == [feed_url, entry_url, feed_url]
 
@@ -390,10 +418,10 @@ def test_official_rss_source_preserves_summary_before_sec_body_container() -> No
             200,
             text=(
                 '<meta property="og:title" content="SEC announces market action">'
-                '<main><nav>Newsroom navigation</nav>'
+                "<main><nav>Newsroom navigation</nav>"
                 '<div class="clearfix field field--name-body field__item">'
-                '<p>Full first-party action details and legal status.</p>'
-                '</div></main>'
+                "<p>Full first-party action details and legal status.</p>"
+                "</div></main>"
             ),
             request=request,
         )
@@ -410,8 +438,8 @@ def test_official_rss_source_preserves_summary_before_sec_body_container() -> No
 
     item = source.read(observed_at=observed_at)[0]
 
-    assert item.acquisition_route == "official-rss-entry-v2"
-    assert item.body.startswith("High-density official summary.\n")
+    assert item.acquisition_route == "official-rss-entry-v3"
+    assert item.decision_excerpt.startswith("Full first-party action details")
     assert "Full first-party action details" in item.body
     assert "Newsroom navigation" not in item.body
 
@@ -543,9 +571,10 @@ def test_official_publication_source_follows_only_bounded_same_host_entries() ->
     assert requests == [index_url, entry_url, index_url]
     assert first[0].event_time == datetime(2026, 8, 24, 17, 30, tzinfo=UTC)
     assert first[0].source == "official:treasury-press-releases"
-    assert first[0].acquisition_route == "official-publication-v2"
+    assert first[0].acquisition_route == "official-publication-v3"
     assert first[0].source_reliability == Decimal("1")
     assert "Nearly 60 designations" in first[0].body
+    assert "Nearly 60 designations" in first[0].decision_excerpt
     assert event is not None
     assert event.directional_support_eligible
     assert event.trigger_priority == 0
@@ -649,6 +678,38 @@ def test_sql_event_store_deduplicates_and_respects_observed_at_visibility() -> N
     assert store.visible(symbol="BTCUSDT", as_of=observed_at) == (event,)
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(normalized_events)) == 1
+
+
+def test_sql_event_store_versions_decision_projection_as_evidence_content() -> None:
+    observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    base = RawIntelligenceItem(
+        source_item_id="official-action",
+        source="official:test",
+        event_time=observed_at,
+        observed_at=observed_at,
+        title="Official digital asset market action",
+        body="The full official digital asset document remains unchanged.",
+        decision_excerpt="The agency will implement the first action.",
+        url="https://example.gov/action",
+    )
+    first = EventNormalizer(version="normalizer-v1").normalize(base)
+    second = EventNormalizer(version="normalizer-v2").normalize(
+        base.model_copy(
+            update={
+                "observed_at": observed_at + timedelta(minutes=1),
+                "decision_excerpt": "The agency will implement the revised action.",
+            }
+        )
+    )
+    assert first is not None and second is not None
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    store = SqlEventStore(engine)
+
+    assert store.put(first)
+    assert store.put(second)
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(normalized_events)) == 2
 
 
 def test_sql_event_store_keeps_world_facts_visible_across_pipeline_releases() -> None:

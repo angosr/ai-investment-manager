@@ -42,7 +42,13 @@ class SqlEventStore:
 
     def put(self, event: IntelligenceEvent) -> bool:
         payload = event.model_dump(mode="json")
-        digest = content_hash({"title": event.title, "body": event.body})
+        digest = content_hash(
+            {
+                "title": event.title,
+                "body": event.body,
+                "decision_excerpt": event.decision_excerpt,
+            }
+        )
         try:
             with self._engine.begin() as connection:
                 connection.execute(
@@ -93,6 +99,7 @@ class SqlEventStore:
                     existing.get("source") == payload["source"]
                     and existing.get("title") == payload["title"]
                     and existing.get("body") == payload["body"]
+                    and existing.get("decision_excerpt", "") == payload["decision_excerpt"]
                 )
                 if not same_content:
                     raise ValueError("事件唯一键冲突且事实不一致") from None

@@ -511,6 +511,7 @@ def test_quant_context_posterior_records_missing_prior_without_calling_ai() -> N
     config, contract, formal_binding, posterior_binding, _, assignment = _fixture()
     posterior_policy = config.outcome_evaluation.quant_context_posterior
     assert posterior_policy is not None
+    posterior_policy = posterior_policy.model_copy(update={"activated_at": NOW})
     quant_no_estimate_id = stable_id(
         "forecast_no_estimate",
         assignment.targets[0].slot.slot_id,
@@ -598,6 +599,7 @@ def test_quant_context_posterior_records_formal_target_absence_on_shared_slot() 
     ) = _fixture()
     posterior_policy = config.outcome_evaluation.quant_context_posterior
     assert posterior_policy is not None
+    posterior_policy = posterior_policy.model_copy(update={"activated_at": NOW})
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     contracts = SqlForecastContractStore(engine)

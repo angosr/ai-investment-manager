@@ -181,6 +181,7 @@ class IntelligenceEvent(FrozenModel):
     source: str
     title: str
     body: str
+    decision_excerpt: str = Field(default="", max_length=2_000)
     url: str | None = None
     symbols: tuple[str, ...]
     relevance: UnitInterval

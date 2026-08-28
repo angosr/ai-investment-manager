@@ -11,7 +11,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from investment_manager.information.collector import RawIntelligenceItem
-from investment_manager.information.official.document import parse_official_html_document
+from investment_manager.information.official.document import (
+    MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS,
+    build_official_decision_excerpt,
+    parse_official_html_document,
+)
 from investment_manager.information.policy import OfficialPublicationFeed
 from investment_manager.kernel.identity import stable_id
 from investment_manager.kernel.time import require_utc
@@ -177,11 +181,12 @@ class OfficialPublicationSource:
                 event_time.isoformat(),
             ),
             source=f"official:{self._feed.stream_id}",
-            acquisition_route="official-publication-v2",
+            acquisition_route="official-publication-v3",
             event_time=event_time,
             observed_at=observed_at,
             title=title[:1_000],
-            body=body[:20_000],
+            body=body[:MAXIMUM_OFFICIAL_DOCUMENT_CHARACTERS],
+            decision_excerpt=build_official_decision_excerpt(document),
             url=url,
             source_reliability=Decimal("1"),
             rank=0,

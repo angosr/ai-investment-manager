@@ -1679,7 +1679,7 @@ class DecisionPacketBuilder:
                 ),
             )
             body, _ = sanitize_external_text(
-                event.body,
+                event.decision_excerpt or event.body,
                 maximum_length=self._policy.maximum_characters_per_intelligence_event,
             )
             character_cost = len(title) + len(body)
