@@ -1,0 +1,50 @@
+{
+  "schema_version": "cash-yield-runtime-admission-result-v1",
+  "evaluated_at": "2026-08-28T22:46:11Z",
+  "candidate": {
+    "venue": "BINANCE",
+    "product_id": "USDT001",
+    "asset": "USDT"
+  },
+  "bound_evidence": {
+    "historical_rate_tracking": {
+      "path": "evidence/reference-selections/usdt-flexible-rate-tracking-v1.json",
+      "sha256": "b192f7bc062a8948bbf077f72ba38b9f1f6b3195d740f313da82c3eec3e75465"
+    },
+    "same_account_feasibility": {
+      "path": "evidence/reference-selections/binance-cash-yield-feasibility-2026-08-28.json",
+      "sha256": "07b7c52ea0c572817682bbe3f68a861ec1748834aafd431c215434cae2abf71a"
+    },
+    "first_forward_observation": {
+      "observation_id": "cash_yield_product_observation_55adefa40c5c319f1c2f",
+      "available_at": "2026-08-28T22:37:55.613874Z",
+      "annual_rate": "0.02796612",
+      "can_purchase": true,
+      "can_redeem": true,
+      "sold_out": false
+    }
+  },
+  "official_contract": {
+    "product_faq": "https://www.binance.info/en/support/faq/detail/3bd1a6eba20a445da1e94bf6cfa52e80",
+    "api_general_info": "https://developers.binance.com/docs/simple_earn/general-info",
+    "product_position": "https://developers.binance.com/docs/simple_earn/flexible-locked/account/Get-Flexible-Product-Position",
+    "redemption_command": "https://developers.binance.com/docs/simple_earn/flexible-locked/earn/Redeem-Flexible-Product",
+    "redemption_record": "https://developers.binance.com/docs/simple_earn/flexible-locked/history/Get-Flexible-Redemption-Record",
+    "facts": [
+      "Normal redemption is described as immediate, but product liquidity shortages and delayed processing are explicitly possible.",
+      "canRedeem only reports current operability; the redemption command returns request acceptance, while PAID is the terminal history status.",
+      "The API is asynchronous and does not publish a worst-case redemption completion bound.",
+      "Flexible assets can be auto-redeemed for Spot and Convert, but that does not prove availability as margin for the current perpetual product set."
+    ]
+  },
+  "decision": "DEFER_RUNTIME_ADMISSION",
+  "capital_authorization": "NONE",
+  "reason_codes": [
+    "STRESSED_REDEMPTION_COMPLETION_BOUND_UNPROVEN",
+    "CURRENT_PERPETUAL_MARGIN_EQUIVALENCE_UNPROVEN",
+    "OPPORTUNITY_COST_UNMEASURABLE_WITHOUT_QUALIFIED_ALPHA",
+    "PRODUCT_TRAILS_ECONOMIC_CASH_PROXY"
+  ],
+  "retained_scope": "Hourly read-only APR, quota and operability observations only; no subscription, redemption, account projection, Reference mapping or capital action.",
+  "reconsideration_condition": "Re-evaluate only when a qualified Alpha creates measurable cash demand or independent venue evidence closes stressed redemption and margin availability semantics."
+}
