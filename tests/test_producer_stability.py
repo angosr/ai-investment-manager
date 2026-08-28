@@ -8,6 +8,8 @@ from investment_manager.forecast.context.estimate import (
     ContextForecastDraft,
     ContextForecastProbabilityDraft,
     ContextForecastStructuredOutput,
+    QuantContextPosteriorDraft,
+    QuantContextPosteriorStructuredOutput,
     context_forecast_output_schema_for_ids,
 )
 from investment_manager.forecast.context.stability import (
@@ -414,6 +416,86 @@ def test_research_replica_replays_independent_cost_after_capital_paths() -> None
     assert report.maximum_allocation_fraction_delta is not None
     assert report.maximum_allocation_fraction_delta > 0
     assert report.maximum_absolute_turnover_delta is not None
+
+
+def test_posterior_noop_with_empty_evidence_replays_capital_path() -> None:
+    assignment, ledger, evaluator = _fixture()
+    formal = ledger.complete_panels[0].forecasts[0]
+    analysis_input = _analysis_input(
+        ledger.complete_panels[0].slots[0], _contract(formal.target.legs[0].instrument)
+    )
+    analysis_input["purpose"] = "QUANT_CONTEXT_POSTERIOR"
+    analysis_input["forecast_targets"][0]["quant_panel"] = {
+        "quant_prior": {
+            "outcome_probabilities": [
+                {
+                    "bucket_id": item.bucket_id,
+                    "probability": str(item.probability),
+                }
+                for item in formal.outcome_probabilities
+            ]
+        }
+    }
+    analysis_input["world_model"]["mechanisms"] = [
+        {
+            "mechanism_id": MECHANISM_ID,
+            "evidence_ids": [EVIDENCE_ID],
+            "conflicting_evidence_ids": [],
+            "structural_evidence_ids": [EVIDENCE_ID],
+        }
+    ]
+    assignment = assignment.model_copy(
+        update={
+            "formal_analysis_input_json": canonical_json(analysis_input),
+            "formal_analysis_input_hash": content_hash(analysis_input),
+        }
+    )
+    output = QuantContextPosteriorStructuredOutput(
+        forecasts=(
+            QuantContextPosteriorDraft(
+                decision_slot_id=formal.decision_slot_id,
+                outcome_probabilities=tuple(
+                    ContextForecastProbabilityDraft(
+                        bucket_id=item.bucket_id,
+                        probability=str(item.probability),
+                    )
+                    for item in formal.outcome_probabilities
+                ),
+                mechanism_contributions=(
+                    ContextForecastContributionDraft(
+                        mechanism_id=MECHANISM_ID,
+                        effect="NO_MATERIAL_EFFECT",
+                        rationale="结构事实不足以改变 Quant prior。",
+                    ),
+                ),
+                evidence_refs=(),
+                invalidation_conditions=("结构传导得到确认",),
+            ),
+        )
+    )
+    result = ContextForecastStabilityResult(
+        result_id=stable_id(
+            "context_forecast_stability_result",
+            assignment.assignment_id,
+            1,
+        ),
+        assignment_id=assignment.assignment_id,
+        replica_index=1,
+        status=ContextForecastStabilityStatus.SUCCEEDED,
+        completed_at=CUTOFF + timedelta(minutes=2),
+        reason_code="STABILITY_REPLICA_SUCCEEDED",
+        output_json=canonical_json(output.model_dump(mode="json")),
+        output_hash=content_hash(output.model_dump(mode="json")),
+    )
+
+    report = evaluator.evaluate(
+        formal_ledger=ledger,
+        assignments=(assignment,),
+        results=(result,),
+    )
+
+    assert report.replayable_case_count == 1
+    assert report.unreplayable_case_count == 0
 
 
 def test_failed_replica_is_a_no_estimate_capital_path_instead_of_disappearing() -> None:

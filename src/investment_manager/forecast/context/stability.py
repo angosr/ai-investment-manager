@@ -54,6 +54,14 @@ _FORECAST_OUTPUT_ADAPTER = TypeAdapter(
 STABILITY_EVALUATION_VERSION = "context-forecast-exact-input-stability-v1"
 
 
+def parse_context_forecast_output_json(
+    output_json: str,
+) -> ContextForecastStructuredOutput | QuantContextPosteriorStructuredOutput:
+    """Parse every stability consumer through the same output contract."""
+
+    return _FORECAST_OUTPUT_ADAPTER.validate_json(output_json)
+
+
 class ContextForecastStabilityStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
@@ -624,9 +632,7 @@ def evaluate_context_forecast_stability(
                 continue
             succeeded += 1
             assert result.output_json is not None
-            replicas.append(
-                _FORECAST_OUTPUT_ADAPTER.validate_json(result.output_json)
-            )
+            replicas.append(parse_context_forecast_output_json(result.output_json))
         if not terminal or not successful:
             continue
         formal_by_slot = {
@@ -925,5 +931,6 @@ __all__ = [
     "assemble_context_forecast_stability_runner",
     "build_context_forecast_stability_assignment",
     "evaluate_context_forecast_stability",
+    "parse_context_forecast_output_json",
     "preregister_context_forecast_stability",
 ]

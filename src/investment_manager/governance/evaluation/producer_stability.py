@@ -10,7 +10,6 @@ from decimal import Decimal
 
 from investment_manager.forecast.context.estimate import (
     ContextForecastDraft,
-    ContextForecastStructuredOutput,
 )
 from investment_manager.forecast.context.posterior import (
     audit_quant_context_posterior_draft,
@@ -19,6 +18,7 @@ from investment_manager.forecast.context.stability import (
     ContextForecastStabilityAssignment,
     ContextForecastStabilityResult,
     ContextForecastStabilityStatus,
+    parse_context_forecast_output_json,
 )
 from investment_manager.forecast.contracts import (
     ForecastNoEstimate,
@@ -272,7 +272,7 @@ class PortfolioForecastStabilityEvaluator:
             )
         if result.output_json is None:
             raise ValueError("成功稳定性副本缺少输出")
-        output = ContextForecastStructuredOutput.model_validate_json(result.output_json)
+        output = parse_context_forecast_output_json(result.output_json)
         drafts = {item.decision_slot_id: item for item in output.forecasts}
         expected = {item.decision_slot_id for item in assignment.targets}
         if len(drafts) != len(output.forecasts) or set(drafts) != expected:
