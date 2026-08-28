@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 
@@ -20,6 +21,7 @@ from investment_manager.forecast.context.stability import (
     evaluate_context_forecast_stability,
 )
 from investment_manager.forecast.context.targets import assemble_context_capital_targets
+from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.forecast.product.repository import SqlProductPayoffProjectionStore
 from investment_manager.forecast.quant.runtime import (
     load_quant_forecast_artifact,
@@ -59,6 +61,14 @@ class ForecastStabilityEvidence:
     sources: tuple[ForecastStabilitySourceEvidence, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ProducerCapitalEvidence:
+    """One evaluator viewed as producer and trigger-policy comparisons."""
+
+    all_slots: ProducerCapitalComparisonEvidence
+    cadence_only: ProducerCapitalComparisonEvidence | None
+
+
 class ProducerCapitalDashboardReader:
     """Cache one immutable replay until a producer panel ledger changes."""
 
@@ -66,7 +76,7 @@ class ProducerCapitalDashboardReader:
         self._engine = engine
         self._config = config
         self._cache_key: ProducerCapitalCacheKey | None = None
-        self._cache: ProducerCapitalComparisonEvidence | None = None
+        self._cache: ProducerCapitalEvidence | None = None
         self._stability_cache: dict[
             str,
             tuple[tuple[object, ...], PortfolioForecastStabilityReport],
@@ -130,7 +140,7 @@ class ProducerCapitalDashboardReader:
             if item.product_payoffs is not None
         }
 
-    def evidence(self, *, now: datetime) -> ProducerCapitalComparisonEvidence | None:
+    def evidence(self, *, now: datetime) -> ProducerCapitalEvidence | None:
         now = require_utc(now)
         if self._behavior_ids is None or self._market is None:
             return None
@@ -151,24 +161,38 @@ class ProducerCapitalDashboardReader:
         with self._lock:
             if cache_key == self._cache_key:
                 return self._cache
-        sources = {
-            label: (
-                ledgers[label],
-                ProducerCapitalReplay(
-                    producer_behavior_id=behavior_id,
-                    capital_policy=self._config.capital,
-                    initial_cash=self._config.shadow.initial_quote_balance,
-                    market=self._market,
-                    product_payoffs_by_family=self._projectors,
-                    sleeve_risk=self._config.capital.sleeve_risk,
-                ),
-            )
-            for label, behavior_id in self._behavior_ids.items()
-        }
-        result = compare_producer_capital_paths(
+        def replay_sources():
+            return {
+                label: (
+                    ledgers[label],
+                    ProducerCapitalReplay(
+                        producer_behavior_id=behavior_id,
+                        capital_policy=self._config.capital,
+                        initial_cash=self._config.shadow.initial_quote_balance,
+                        market=self._market,
+                        product_payoffs_by_family=self._projectors,
+                        sleeve_risk=self._config.capital.sleeve_risk,
+                    ),
+                )
+                for label, behavior_id in self._behavior_ids.items()
+            }
+
+        all_slots = compare_producer_capital_paths(
             initial_cash=self._config.shadow.initial_quote_balance,
-            sources=sources,
+            sources=replay_sources(),
         )
+        result = None
+        if all_slots is not None:
+            cadence_only = compare_producer_capital_paths(
+                initial_cash=self._config.shadow.initial_quote_balance,
+                sources=replay_sources(),
+                allowed_strata=(ForecastSlotStratum.CADENCE_ONLY,),
+                mark_at=all_slots.as_of,
+            )
+            result = ProducerCapitalEvidence(
+                all_slots=all_slots,
+                cadence_only=cadence_only,
+            )
         with self._lock:
             if cache_key == self._cache_key:
                 return self._cache
@@ -286,12 +310,13 @@ class ProducerCapitalDashboardReader:
 
 
 def serialize_producer_capital_evidence(
-    evidence: ProducerCapitalComparisonEvidence | None,
+    evidence: ProducerCapitalEvidence | None,
 ) -> dict:
     if evidence is None:
         return {"producer_capital_evidence": None}
+    comparison = evidence.all_slots
     paths = []
-    for item in evidence.paths:
+    for item in comparison.paths:
         account = item.path.account
         accounting = account.accounting
         paths.append(
@@ -314,14 +339,52 @@ def serialize_producer_capital_evidence(
                 "position_count": len(account.positions),
             }
         )
+    cadence = evidence.cadence_only
+    trigger_policy = None
+    if cadence is not None:
+        cadence_paths = {item.label: item for item in cadence.paths}
+        deltas = []
+        for item in comparison.paths:
+            baseline = cadence_paths[item.label]
+            accounting = item.path.account.accounting
+            baseline_accounting = baseline.path.account.accounting
+            deltas.append(
+                {
+                    "label": item.label,
+                    "final_equity_delta": str(
+                        item.path.account.equity - baseline.path.account.equity
+                    ),
+                    "fee_cost_delta": str(
+                        (Decimal("0") if accounting is None else accounting.fee_cost)
+                        - (
+                            Decimal("0")
+                            if baseline_accounting is None
+                            else baseline_accounting.fee_cost
+                        )
+                    ),
+                    "gross_turnover_delta": str(
+                        item.path.gross_turnover - baseline.path.gross_turnover
+                    ),
+                    "decision_count_delta": len(item.steps) - len(baseline.steps),
+                }
+            )
+        trigger_policy = {
+            "cadence_panel_count": len(cadence.shared_decision_slot_sets),
+            "material_panel_count": (
+                len(comparison.shared_decision_slot_sets)
+                - len(cadence.shared_decision_slot_sets)
+            ),
+            "paths": deltas,
+        }
     return {
         "producer_capital_evidence": {
-            "comparison_id": evidence.comparison_id,
-            "evaluation_version": evidence.evaluation_version,
-            "as_of": evidence.as_of.isoformat(),
-            "initial_cash": str(evidence.initial_cash),
-            "shared_panel_count": len(evidence.shared_decision_slot_sets),
+            "comparison_id": comparison.comparison_id,
+            "evaluation_version": comparison.evaluation_version,
+            "as_of": comparison.as_of.isoformat(),
+            "initial_cash": str(comparison.initial_cash),
+            "shared_panel_count": len(comparison.shared_decision_slot_sets),
             "paths": paths,
+            "trigger_policy": trigger_policy,
         }
     }
 

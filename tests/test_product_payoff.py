@@ -21,7 +21,9 @@ from investment_manager.forecast.contracts import (
     ForecastPriceAnchor,
     ForecastProducerBinding,
     ForecastProducerKind,
+    ForecastSlotCause,
     ForecastSlotObligation,
+    ForecastSlotStratum,
 )
 from investment_manager.forecast.models import (
     ExposureDirection,
@@ -452,6 +454,7 @@ def _decision_projection_inputs(forecast: BaseForecast | None = None):
                 entry=entry,
                 uncertainty=uncertainty,
                 margin=margin,
+                available_at=forecast.available_at,
             ),
             economic_exposure_id="CRYPTO_NETWORK:BTC:USDT",
             projection_version="linear-product-payoff-v1",
@@ -1594,14 +1597,15 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
     )
     obligation = ForecastSlotObligation.create(slot=slot, binding=binding)
     source = _forecast(contract, decision_slot_id=slot.slot_id)
-    forecast, projections, _, _, _ = _decision_projection_inputs(source)
-    perpetual_projections = tuple(
-        item for item in projections if item.target.legs[0].instrument == PERPETUAL
-    )
+    forecast, _, _, _, _ = _decision_projection_inputs(source)
     market = InMemoryMarketDataStore()
     _put_context_market(market, at=forecast.available_at, update_id=7)
     projector = SimpleNamespace(
-        build=lambda _forecast, *, as_of: perpetual_projections,
+        build=lambda source_forecast, *, as_of: tuple(
+            item
+            for item in _decision_projection_inputs(source_forecast)[1]
+            if item.target.legs[0].instrument == PERPETUAL
+        ),
     )
     risk = SleeveRiskTemplate(
         version="logical-panel-risk-v1",
@@ -1667,8 +1671,99 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
 
     assert comparison is not None
     assert comparison.shared_decision_slot_sets == ((slot.slot_id,),)
+    assert comparison.included_strata == (
+        ForecastSlotStratum.CADENCE_ONLY,
+        ForecastSlotStratum.MATERIAL_STATE_ONLY,
+    )
     assert len(comparison.paths) == 2
     assert comparison.paths[0].path.account.equity == comparison.paths[1].path.account.equity
+
+    event_at = NOW + timedelta(minutes=5)
+    event_cause = ForecastSlotCause.material_state(
+        policy_version="test-material-v1",
+        trigger_refs=("event-1",),
+    )
+    event_slot = ForecastDecisionSlot.create(
+        contract,
+        slot_as_of=event_at,
+        cutoff_prices=(
+            _anchor(SPOT, "100", "event-cutoff").model_copy(
+                update={"observed_at": event_at, "available_at": event_at}
+            ),
+        ),
+        cause=event_cause,
+    )
+    event_obligation = ForecastSlotObligation.create(slot=event_slot, binding=binding)
+    event_available_at = event_at + timedelta(minutes=1)
+    event_forecast = forecast.model_copy(
+        update={
+            "forecast_id": stable_id(
+                "base_forecast", event_slot.slot_id, forecast.producer_behavior_id
+            ),
+            "decision_slot_id": event_slot.slot_id,
+            "information_cutoff_at": event_at,
+            "input_observed_at": event_at,
+            "available_at": event_available_at,
+            "valid_until": event_at + timedelta(minutes=30),
+            "cutoff_prices": (
+                forecast.cutoff_prices[0].model_copy(
+                    update={"observed_at": event_at, "available_at": event_at}
+                ),
+            ),
+            "entry_prices": (
+                forecast.entry_prices[0].model_copy(
+                    update={
+                        "observed_at": event_available_at,
+                        "available_at": event_available_at,
+                    }
+                ),
+            ),
+        }
+    )
+    event_panel = ProducerDecisionPanel(
+        panel_id="event-panel",
+        producer_id=event_forecast.producer_id,
+        producer_behavior_id=event_forecast.producer_behavior_id,
+        slot_as_of=event_at,
+        information_cutoff_at=event_at,
+        available_at=event_available_at,
+        obligations=(event_obligation,),
+        slots=(event_slot,),
+        forecasts=(event_forecast,),
+        no_estimates=(),
+    )
+    _put_context_market(market, at=event_available_at, update_id=8)
+    event_ledger = ledger.model_copy(
+        update={
+            "as_of": event_available_at,
+            "obligated_panel_count": 2,
+            "complete_panels": (panel, event_panel),
+        }
+    )
+    all_slots = compare_producer_capital_paths(
+        initial_cash=Decimal("10000"),
+        sources={
+            "QUANT": (event_ledger, independent_replay()),
+            "AI_QUANT": (event_ledger, independent_replay()),
+        },
+    )
+    assert all_slots is not None
+    cadence_only = compare_producer_capital_paths(
+        initial_cash=Decimal("10000"),
+        sources={
+            "QUANT": (event_ledger, independent_replay()),
+            "AI_QUANT": (event_ledger, independent_replay()),
+        },
+        allowed_strata=(ForecastSlotStratum.CADENCE_ONLY,),
+        mark_at=all_slots.as_of,
+    )
+
+    assert cadence_only is not None
+    assert len(all_slots.shared_decision_slot_sets) == 2
+    assert cadence_only.shared_decision_slot_sets == ((slot.slot_id,),)
+    assert cadence_only.included_strata == (ForecastSlotStratum.CADENCE_ONLY,)
+    assert cadence_only.as_of == all_slots.as_of == event_available_at
+    assert all(len(item.steps) == 1 for item in cadence_only.paths)
 
 
 def test_producer_logical_account_reuses_cost_after_capital_and_paper_execution(

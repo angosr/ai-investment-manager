@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.forecast.product.models import ProductPayoffProjection
 from investment_manager.forecast.results import BaseForecast
 from investment_manager.governance.evaluation.logical_account import (
@@ -19,6 +20,7 @@ from investment_manager.governance.evaluation.logical_account import (
 )
 from investment_manager.kernel.errors import PointInTimeInputUnavailable
 from investment_manager.kernel.identity import content_hash, stable_id
+from investment_manager.kernel.time import require_utc
 from investment_manager.kernel.types import FrozenModel
 from investment_manager.market.features import point_in_time_quote_views
 from investment_manager.market.models import ExecutableQuote, InstrumentId, InstrumentProduct
@@ -53,6 +55,7 @@ class ProducerCapitalComparisonEvidence(FrozenModel):
     evaluation_version: str
     as_of: datetime
     initial_cash: Decimal
+    included_strata: tuple[ForecastSlotStratum, ...]
     shared_decision_slot_sets: tuple[tuple[str, ...], ...]
     paths: tuple[ProducerCapitalPathEvidence, ...]
 
@@ -317,17 +320,32 @@ def compare_producer_capital_paths(
     *,
     initial_cash: Decimal,
     sources: Mapping[str, tuple[ProducerPanelLedger, ProducerCapitalReplay]],
+    allowed_strata: Collection[ForecastSlotStratum] | None = None,
+    mark_at: datetime | None = None,
 ) -> ProducerCapitalComparisonEvidence | None:
     """Replay exact shared panels while preserving each producer's own latency and state."""
 
     if initial_cash <= 0 or len(sources) < 2:
         raise ValueError("Producer capital 对照需要至少两个来源和有效初始资金")
+    included_strata = tuple(
+        sorted(
+            set(ForecastSlotStratum) if allowed_strata is None else set(allowed_strata),
+            key=lambda item: item.value,
+        )
+    )
+    if not included_strata:
+        raise ValueError("Producer capital 对照至少需要一个样本分层")
     panels_by_source: dict[str, dict[tuple[str, ...], ProducerDecisionPanel]] = {}
     for label, (ledger, replay) in sources.items():
         if not label or ledger.producer_behavior_id != replay.producer_behavior_id:
             raise ValueError("Producer capital 来源标签或行为身份不一致")
         keyed: dict[tuple[str, ...], ProducerDecisionPanel] = {}
         for panel in ledger.complete_panels:
+            panel_strata = {item.stratum for item in panel.slots}
+            if len(panel_strata) != 1:
+                raise ValueError("Producer capital panel 不能混合不同样本分层")
+            if panel_strata.isdisjoint(included_strata):
+                continue
             key = tuple(sorted(item.slot_id for item in panel.slots))
             if not key or key in keyed:
                 raise ValueError("Producer capital panel 的 DecisionSlot 集必须唯一且非空")
@@ -337,12 +355,17 @@ def compare_producer_capital_paths(
     if not shared:
         return None
     shared_slot_sets = tuple(sorted(shared))
-    as_of = max(
+    latest_panel_at = max(
         panel.available_at
         for panels in panels_by_source.values()
         for key, panel in panels.items()
         if key in shared
     )
+    if mark_at is not None:
+        mark_at = require_utc(mark_at)
+        if mark_at < latest_panel_at:
+            raise ValueError("Producer capital 共同估值时点不能早于最后一个 panel")
+    as_of = mark_at or latest_panel_at
     path_evidence: list[ProducerCapitalPathEvidence] = []
     for label, (ledger, replay) in sources.items():
         selected = tuple(
@@ -369,6 +392,7 @@ def compare_producer_capital_paths(
         "evaluation_version": LOGICAL_ACCOUNT_EVALUATION_VERSION,
         "as_of": as_of,
         "initial_cash": initial_cash,
+        "included_strata": included_strata,
         "shared_decision_slot_sets": shared_slot_sets,
         "paths": tuple(sorted(path_evidence, key=lambda item: item.label)),
     }

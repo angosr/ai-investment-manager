@@ -21,7 +21,9 @@ from investment_manager.entrypoints.dashboard.evaluation import (
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
 from investment_manager.entrypoints.dashboard.producer_capital import (
+    ProducerCapitalEvidence,
     serialize_forecast_stability_evidence,
+    serialize_producer_capital_evidence,
 )
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
@@ -38,6 +40,67 @@ from investment_manager.portfolio.evaluation import (
     CapitalChoiceExposureOutcome,
     evaluate_trading_cost,
 )
+
+
+def test_producer_capital_separates_material_trigger_cost_from_producer_paths() -> None:
+    at = datetime(2026, 8, 28, 14, 30, tzinfo=UTC)
+
+    def path(label: str, *, equity: str, fee: str, turnover: str, decisions: int):
+        accounting = SimpleNamespace(
+            net_pnl=Decimal(equity) - Decimal("10000"),
+            price_pnl=Decimal(equity) - Decimal("10000") + Decimal(fee),
+            funding_pnl=Decimal("0"),
+            fee_cost=Decimal(fee),
+        )
+        account = SimpleNamespace(
+            equity=Decimal(equity),
+            accounting=accounting,
+            drawdown_fraction=Decimal("0"),
+            positions=(),
+        )
+        return SimpleNamespace(
+            label=label,
+            producer_id=label.lower(),
+            producer_behavior_id=f"{label.lower()}-behavior",
+            panel_ids=tuple(f"panel-{index}" for index in range(decisions)),
+            steps=tuple(SimpleNamespace(execution_groups=()) for _ in range(decisions)),
+            path=SimpleNamespace(
+                account=account,
+                gross_turnover=Decimal(turnover),
+            ),
+        )
+
+    cadence = SimpleNamespace(
+        shared_decision_slot_sets=(("cadence",),),
+        paths=(path("AI_QUANT", equity="10005", fee="1", turnover="2000", decisions=1),),
+    )
+    all_slots = SimpleNamespace(
+        comparison_id="comparison",
+        evaluation_version="v1",
+        as_of=at,
+        initial_cash=Decimal("10000"),
+        shared_decision_slot_sets=(("cadence",), ("material",)),
+        paths=(path("AI_QUANT", equity="10003", fee="2.5", turnover="5000", decisions=2),),
+    )
+
+    payload = serialize_producer_capital_evidence(
+        ProducerCapitalEvidence(all_slots=all_slots, cadence_only=cadence)  # type: ignore[arg-type]
+    )["producer_capital_evidence"]
+
+    assert payload["shared_panel_count"] == 2
+    assert payload["trigger_policy"] == {
+        "cadence_panel_count": 1,
+        "material_panel_count": 1,
+        "paths": [
+            {
+                "label": "AI_QUANT",
+                "final_equity_delta": "-2",
+                "fee_cost_delta": "1.5",
+                "gross_turnover_delta": "3000",
+                "decision_count_delta": 1,
+            }
+        ],
+    }
 
 
 def test_capital_choice_evidence_has_a_plain_cost_after_projection() -> None:
