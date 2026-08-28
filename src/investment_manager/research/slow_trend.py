@@ -54,6 +54,7 @@ class _Simulation:
     execution_cost: Decimal
     funding_pnl: Decimal
     trade_count: int
+    liquidated: bool
 
 
 def load_slow_trend_plan(path: Path) -> SlowTrendPlan:
@@ -318,7 +319,20 @@ def _simulate(
         last_price = bar.contract_close
         daily_equity.append(equity)
         if equity <= 0:
-            raise ValueError("慢趋势模拟权益归零，候选不具备无杠杆可执行性")
+            daily_equity[-1] = Decimal(0)
+            period_pnl.append(-period_equity)
+            return _Simulation(
+                started_at=start,
+                ended_at=bar.close_time,
+                ending_equity=Decimal(0),
+                daily_equity=tuple(daily_equity),
+                period_pnl=tuple(period_pnl),
+                turnover_notional=turnover,
+                execution_cost=execution_cost,
+                funding_pnl=funding_pnl,
+                trade_count=trade_count,
+                liquidated=True,
+            )
 
     exit_price = next(
         (item.contract_open for item in bars if item.open_time == end),
@@ -341,10 +355,12 @@ def _simulate(
     turnover += exit_notional
     execution_cost += exit_cost
     trade_count += int(quantity != 0)
-    period_pnl.append(equity - period_equity)
-    daily_equity.append(equity)
     if equity <= 0:
-        raise ValueError("慢趋势模拟最终权益归零")
+        equity = Decimal(0)
+        period_pnl.append(-period_equity)
+    else:
+        period_pnl.append(equity - period_equity)
+    daily_equity.append(equity)
     return _Simulation(
         started_at=start,
         ended_at=end,
@@ -355,6 +371,7 @@ def _simulate(
         execution_cost=execution_cost,
         funding_pnl=funding_pnl,
         trade_count=trade_count,
+        liquidated=equity == 0,
     )
 
 
@@ -389,8 +406,10 @@ def _metrics(simulation: _Simulation) -> dict[str, Any]:
     years = Decimal(str((simulation.ended_at - simulation.started_at).total_seconds())) / Decimal(
         str(365.25 * 24 * 60 * 60)
     )
-    annualized_return = Decimal(
-        str(float(simulation.ending_equity) ** (1 / float(years)) - 1)
+    annualized_return = (
+        Decimal("-1")
+        if simulation.ending_equity == 0
+        else Decimal(str(float(simulation.ending_equity) ** (1 / float(years)) - 1))
     )
     sharpe = Decimal(0)
     if len(period_returns) > 1 and stdev(period_returns) > 0:
@@ -412,6 +431,7 @@ def _metrics(simulation: _Simulation) -> dict[str, Any]:
         "execution_cost_per_initial_equity": str(simulation.execution_cost),
         "funding_pnl_per_initial_equity": str(simulation.funding_pnl),
         "trade_count": simulation.trade_count,
+        "liquidated": simulation.liquidated,
     }
 
 

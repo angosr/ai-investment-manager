@@ -73,6 +73,33 @@ def test_funding_is_charged_to_position_held_at_settlement() -> None:
     assert simulation.ending_equity == Decimal("0.99")
 
 
+def test_liquidation_is_a_terminal_result_not_an_evaluator_error() -> None:
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    bar = _bar(start, Decimal("100"), Decimal("100"))
+    settlement = CarryFundingSettlement(
+        symbol="BTCUSDT",
+        funding_time=start + timedelta(hours=8),
+        available_at=start + timedelta(hours=8, minutes=1),
+        funding_interval_hours=8,
+        funding_rate=Decimal("2"),
+        mark_price=Decimal("100"),
+    )
+
+    simulation = _simulate(
+        bars=(bar,),
+        settlements=(settlement,),
+        signals=(_Signal(at=start, direction=1, formation_return=Decimal("0.1")),),
+        start=start,
+        end=start + timedelta(days=1),
+        cost_bps=Decimal(0),
+        always_long=False,
+    )
+
+    assert simulation.liquidated is True
+    assert simulation.ending_equity == 0
+    assert simulation.period_pnl == (Decimal("-1"),)
+
+
 def test_result_store_refuses_rewriting_history(tmp_path: Path) -> None:
     target = tmp_path / "result.json"
     store_slow_trend_result({"status": "REJECTED"}, target)
