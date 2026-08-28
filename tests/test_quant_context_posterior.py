@@ -478,6 +478,49 @@ def test_posterior_substantive_adjustment_requires_mechanism_evidence() -> None:
         raise AssertionError("未绑定机制证据的 posterior 调整必须被拒绝")
 
 
+def test_posterior_market_only_mechanism_cannot_change_quant_prior() -> None:
+    *_, quant_forecast, assignment = _fixture()
+    model_input = json.loads(assignment.analysis_input_json)
+    model_input["world_model"]["mechanisms"][0]["structural_evidence_ids"] = []
+    draft = _PosteriorAnalyst(NOW).estimate(assignment).output.forecasts[0]
+
+    try:
+        audit_quant_context_posterior_draft(
+            draft=draft,
+            quant_prior=quant_forecast,
+            analysis_input=model_input,
+        )
+    except ValueError as exc:
+        assert "缺少非市场结构证据" in str(exc)
+    else:
+        raise AssertionError("纯市场状态机制不得成为 AI 技术信号")
+
+
+def test_posterior_adjustment_must_cite_structural_part_of_mechanism() -> None:
+    *_, quant_forecast, assignment = _fixture()
+    model_input = json.loads(assignment.analysis_input_json)
+    mechanism = model_input["world_model"]["mechanisms"][0]
+    mechanism["evidence_ids"] = ["evidence-1", "market-evidence-1"]
+    mechanism["structural_evidence_ids"] = ["evidence-1"]
+    draft = (
+        _PosteriorAnalyst(NOW)
+        .estimate(assignment)
+        .output.forecasts[0]
+        .model_copy(update={"evidence_refs": ("market-evidence-1",)})
+    )
+
+    try:
+        audit_quant_context_posterior_draft(
+            draft=draft,
+            quant_prior=quant_forecast,
+            analysis_input=model_input,
+        )
+    except ValueError as exc:
+        assert "结构证据" in str(exc)
+    else:
+        raise AssertionError("AI 必须引用 mechanism 中的非市场结构证据")
+
+
 def test_posterior_substantive_claim_must_change_quant_prior() -> None:
     *_, quant_forecast, assignment = _fixture()
     model_input = json.loads(assignment.analysis_input_json)

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from investment_manager.kernel.identity import canonical_json
 
-POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v5"
+POSTERIOR_INPUT_VERSION = "quant-context-posterior-input-v6"
 POSTERIOR_INSTRUCTIONS = (
     "你是组合概率预测员。输入逐目标提供同槽确定性市场状态、预登记 ForecastContract、"
     "经过样本外验证的 Quant prior 与共享 WorldModel。",
-    "Quant prior 是默认分布。只有输入中可引用的世界事件、政策传导、跨资产机制或"
-    "确定性状态表明历史 Quant 条件不再充分时，才调整概率；posterior 与 prior 完全相同是合法结论。",
+    "Quant prior 是默认分布。只有 WorldModel mechanism 的 structural_evidence_ids 非空，且这些"
+    "外部事实或事件与当前目标存在可证伪传导时，才可调整概率；posterior 与 prior "
+    "完全相同是合法结论。",
+    "target_state 只用于确认上述结构机制是否已传导、是否失效及输入是否新鲜。不得把收益、波动、"
+    "主动流、OI、funding、仓位、basis 或跨资产价格临场组合成 Quant prior 之外的第二套技术信号；"
+    "structural_evidence_ids 为空的机制只能标记 NO_MATERIAL_EFFECT。",
     "不得选择、启停或重新加权 Quant 模型，不得读取训练数据，不得重新计算输入特征，"
     "也不得为了体现 AI 作用而制造概率变化。",
     "Quant reliability 只描述历史样本外表现；结合当前 cell 样本量、最弱阶段有序分布增量、"

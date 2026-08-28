@@ -120,7 +120,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v55"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v53"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v54"
     assert config.outcome_evaluation.context_forecast_stability is not None
     assert config.outcome_evaluation.context_forecast_stability.enabled
     assert config.outcome_evaluation.context_forecast_stability.replicas_per_input == 1

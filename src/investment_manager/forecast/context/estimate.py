@@ -352,7 +352,10 @@ def context_forecast_input_projection(
                 }
                 for item in targets
             ),
-            "world_model": context_forecast_world_model_projection(assessment),
+            "world_model": context_forecast_world_model_projection(
+                assessment,
+                packet=packet,
+            ),
         },
         source_refs_by_slot={},
     )
@@ -360,8 +363,12 @@ def context_forecast_input_projection(
 
 def context_forecast_world_model_projection(
     assessment: ContextAssessment,
+    *,
+    packet: DecisionPacket,
 ) -> dict[str, object]:
     """Keep causal decision content; exclude WorldModel maintenance metadata."""
+
+    structural_evidence_ids = _posterior_structural_evidence_ids(packet)
 
     return {
         "assessment_id": assessment.assessment_id,
@@ -396,10 +403,46 @@ def context_forecast_world_model_projection(
                     )
                 ),
                 "conflicting_evidence_ids": item.conflicting_evidence_ids,
+                "structural_evidence_ids": tuple(
+                    sorted(
+                        {
+                            evidence_id
+                            for node in item.causal_chain
+                            for evidence_id in node.evidence_ids
+                            if evidence_id in structural_evidence_ids
+                        }
+                    )
+                ),
             }
             for item in assessment.mechanisms
         ),
     }
+
+
+def _posterior_structural_evidence_ids(packet: DecisionPacket) -> frozenset[str]:
+    """Separate external causal evidence from repeatable market-state observations."""
+
+    eligible_events = {
+        item.evidence_ref
+        for item in packet.intelligence_events
+        if item.directional_support_eligible
+    }
+    evidence = {
+        *(item.revision_id for item in packet.facts),
+        *eligible_events,
+    }
+    evidence.update(
+        item.delta_id
+        for item in packet.deltas
+        if item.fact_revision_ids or bool(set(item.intelligence_event_refs) & eligible_events)
+    )
+    if packet.previous_context is not None:
+        evidence.update(
+            item.evidence_id
+            for item in packet.previous_context.event_references
+            if item.impact_state == "ACTIVE"
+        )
+    return frozenset(evidence)
 
 
 def _compact_asset_state(state: PacketAssetState) -> dict[str, object]:

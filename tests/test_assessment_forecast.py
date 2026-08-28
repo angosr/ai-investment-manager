@@ -17,6 +17,9 @@ from investment_manager.forecast.context.application import (
 from investment_manager.forecast.context.contract import (
     WorldModelStructuredOutput,
 )
+from investment_manager.forecast.context.estimate import (
+    context_forecast_world_model_projection,
+)
 from investment_manager.forecast.context.executor import (
     AssessmentExecutionStatus,
     ContextAssessmentExecutor,
@@ -173,6 +176,50 @@ def _assessment() -> ContextAssessment:
             ),
         ),
     )
+
+
+def test_posterior_projection_marks_only_externally_grounded_mechanisms() -> None:
+    packet = _packet()
+    projection = context_forecast_world_model_projection(_assessment(), packet=packet)
+
+    assert projection["mechanisms"][0]["structural_evidence_ids"] == ("delta-1",)
+
+    market_only_delta = packet.deltas[0].model_copy(
+        update={
+            "fact_revision_ids": (),
+            "feature_snapshot_refs": ("market-feature-1",),
+        }
+    )
+    market_only_packet = packet.model_copy(update={"deltas": (market_only_delta,)})
+    market_only = context_forecast_world_model_projection(
+        _assessment(),
+        packet=market_only_packet,
+    )
+
+    assert market_only["mechanisms"][0]["structural_evidence_ids"] == ()
+
+    original_mechanism = _assessment().mechanisms[0]
+    conflicting_only = _assessment().model_copy(
+        update={
+            "mechanisms": (
+                original_mechanism.model_copy(
+                    update={
+                        "causal_chain": tuple(
+                            node.model_copy(update={"evidence_ids": ("market-feature-1",)})
+                            for node in original_mechanism.causal_chain
+                        ),
+                        "conflicting_evidence_ids": ("delta-1",),
+                    }
+                ),
+            )
+        }
+    )
+    conflicting_only_projection = context_forecast_world_model_projection(
+        conflicting_only,
+        packet=packet,
+    )
+
+    assert conflicting_only_projection["mechanisms"][0]["structural_evidence_ids"] == ()
 
 
 def _world_output_payload(claim: str) -> dict:

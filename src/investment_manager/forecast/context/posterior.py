@@ -382,6 +382,7 @@ def audit_quant_context_posterior_draft(
     if not isinstance(mechanisms, (list, tuple)):
         raise ValueError("Quant posterior 输入缺少 WorldModel mechanisms")
     evidence_by_mechanism: dict[str, set[str]] = {}
+    structural_evidence_by_mechanism: dict[str, set[str]] = {}
     for mechanism in mechanisms:
         if not isinstance(mechanism, dict):
             raise ValueError("Quant posterior WorldModel mechanism 结构非法")
@@ -397,6 +398,19 @@ def audit_quant_context_posterior_draft(
                 raise ValueError("Quant posterior WorldModel evidence 结构非法")
             evidence_ids.update(values)
         evidence_by_mechanism[mechanism_id] = evidence_ids
+        structural_values = mechanism.get("structural_evidence_ids")
+        if structural_values is None:
+            # Historical assignments predate the explicit responsibility boundary.
+            structural_evidence_by_mechanism[mechanism_id] = evidence_ids
+        else:
+            if not isinstance(structural_values, (list, tuple)) or not all(
+                isinstance(item, str) for item in structural_values
+            ):
+                raise ValueError("Quant posterior structural evidence 结构非法")
+            structural_evidence = set(structural_values)
+            if not structural_evidence.issubset(evidence_ids):
+                raise ValueError("Quant posterior structural evidence 不属于 mechanism")
+            structural_evidence_by_mechanism[mechanism_id] = structural_evidence
 
     substantive = tuple(
         item
@@ -408,8 +422,11 @@ def audit_quant_context_posterior_draft(
         mechanism_evidence = evidence_by_mechanism.get(contribution.mechanism_id)
         if mechanism_evidence is None:
             raise ValueError("Quant posterior 引用了未知 WorldModel mechanism")
-        if not cited.intersection(mechanism_evidence):
-            raise ValueError("Quant posterior 实质调整未引用对应 mechanism 的 evidence")
+        structural_evidence = structural_evidence_by_mechanism[contribution.mechanism_id]
+        if not structural_evidence:
+            raise ValueError("Quant posterior 实质调整缺少非市场结构证据")
+        if not cited.intersection(structural_evidence):
+            raise ValueError("Quant posterior 实质调整未引用对应 mechanism 的结构证据")
 
     posterior_probabilities = tuple(
         Decimal(item.probability) for item in draft.outcome_probabilities
