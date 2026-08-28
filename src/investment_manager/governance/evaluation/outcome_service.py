@@ -168,7 +168,7 @@ class OutcomeEvaluationSupervisor:
             await _wait_for_next_poll(
                 stop,
                 now=require_utc(self.clock()),
-                poll_seconds=policy.poll_seconds,
+                poll_seconds=policy.research_poll_seconds,
             )
 
     async def _run_forecast_stability_loop(self, stop: asyncio.Event) -> None:
@@ -209,7 +209,7 @@ class OutcomeEvaluationSupervisor:
             await _wait_for_next_poll(
                 stop,
                 now=require_utc(self.clock()),
-                poll_seconds=policy.poll_seconds,
+                poll_seconds=policy.research_poll_seconds,
             )
 
     async def _run_quant_posterior_loop(self, stop: asyncio.Event) -> None:
@@ -233,7 +233,7 @@ class OutcomeEvaluationSupervisor:
             await _wait_for_next_poll(
                 stop,
                 now=require_utc(self.clock()),
-                poll_seconds=runner.policy.assignment_poll_seconds,
+                poll_seconds=self.config.outcome_evaluation.research_poll_seconds,
             )
 
     async def _reconcile_research(self, runner, *, as_of: datetime):

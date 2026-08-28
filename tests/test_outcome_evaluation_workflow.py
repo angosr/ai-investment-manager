@@ -145,9 +145,6 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
 
     class PosteriorRunner:
         def __init__(self, stop: asyncio.Event) -> None:
-            configured = app_config.outcome_evaluation.quant_context_posterior
-            assert configured is not None
-            self.policy = configured.model_copy(update={"assignment_poll_seconds": 1})
             self.stop = stop
             self.calls = 0
 
@@ -165,8 +162,15 @@ def test_quant_posterior_assignments_do_not_wait_for_settlement_poll(app_config)
     async def scenario() -> None:
         stop = asyncio.Event()
         runner = PosteriorRunner(stop)
+        config = app_config.model_copy(
+            update={
+                "outcome_evaluation": app_config.outcome_evaluation.model_copy(
+                    update={"research_poll_seconds": 1}
+                )
+            }
+        )
         supervisor = OutcomeEvaluationSupervisor(
-            config=app_config,
+            config=config,
             target_forecast_settler=Settler(),
             quant_posterior_runner=runner,
             clock=lambda: datetime.now(UTC),
@@ -282,11 +286,6 @@ def test_all_research_ai_evaluations_share_one_serial_lane(app_config) -> None:
                 )
 
         class PosteriorRunner:
-            def __init__(self) -> None:
-                configured = app_config.outcome_evaluation.quant_context_posterior
-                assert configured is not None
-                self.policy = configured.model_copy(update={"assignment_poll_seconds": 300})
-
             def reconcile(self, *, as_of):
                 return measured(
                     SimpleNamespace(

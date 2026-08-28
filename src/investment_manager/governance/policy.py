@@ -73,7 +73,6 @@ class QuantContextPosteriorPolicy(StrictConfig):
     enabled: bool = False
     producer_id: str = Field(min_length=1)
     activated_at: datetime
-    assignment_poll_seconds: int = Field(default=5, ge=1, le=60)
 
     _utc_activated_at = field_validator("activated_at")(require_utc)
 
@@ -87,6 +86,7 @@ class OutcomeEvaluationPolicy(StrictConfig):
     window_hours: int = Field(default=24, ge=1, le=168)
     settlement_grace_minutes: int = Field(default=120, ge=0, le=1440)
     poll_seconds: int = Field(default=300, ge=10, le=3600)
+    research_poll_seconds: int = Field(default=5, ge=1, le=60)
     world_model_ablation: WorldModelAblationPolicy | None = None
     context_forecast_stability: ContextForecastStabilityPolicy | None = None
     quant_baseline: QuantBaselinePolicy | None = None

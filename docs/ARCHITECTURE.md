@@ -94,7 +94,9 @@ ForecastContract 可以跨行为共享，但每个决策槽在到期前必须不
 
 研究 Forecast 复用同一 Contract、DecisionSlot、ProducerBinding、Forecast/`NO_ESTIMATE` 和 Outcome 账本。需要异步 Codex 的候选只持久化一份冻结 assignment 作为工作义务，成功或失败直接终结公共 Forecast 槽；禁止再复制一套候选结果表、结算器或资本流水。assignment 必须在任何候选调用前保存完整模型输入、Prompt、Schema、来源行为、截止和研究权限，worker 不得在执行时重新读取“最新”市场、世界认知或 Quant 状态来改写输入。研究 assignment 的缺失或持久化故障必须记录并降低该候选覆盖率，但不能阻断、延迟或改写唯一资本 Forecast。
 
-全部异步研究性 Codex 评价共用一条串行执行通道；它们可以在截止内排队，但不能并发占满账号而使 WorldModel 或正式 Forecast 无法启动。该约束只隔离研究流量，不限制正式调用次数，也不是 AI 用量预算。
+全部异步研究性 Codex 评价共用一条串行执行通道和一个短周期 assignment 发现间隔；它们可以在截止内排队，但不能并发占满账号而使 WorldModel 或正式 Forecast 无法启动。assignment 间隔只负责发现已经冻结的工作义务，不能变成各候选重复配置的调度政策，也不能复用较慢的 Outcome 结算周期给每项研究平白增加等待。该约束只隔离研究流量，不限制正式调用次数，也不是 AI 用量预算。
+
+程序化 Forecast 候选的历史筛选必须同时回答概率分布是否更准确、其连续收益排序是否可能跨过现实成本。前者使用距离敏感 proper score，后者在验证带上检查预期收益排序、信号持续性、换手及按计划事前冻结的保守成本包络；任一关键时间相位不稳定就先淘汰，不为弱概率改善消耗 Codex 和前瞻样本。缺少历史可成交深度、时变规则或真实 funding 时，保守成本包络只能作为否决性筛选，不能冒充精确资本回放、不能授予权限；幸存候选仍进入现有 Forecast 账本和独立前瞻逻辑账户，以真实点时产品事实、完整成本和同一 Portfolio/Risk/Execution 语义裁决。这里不建立第二套策略、账户或评价链。
 
 任何校准、收缩、来源选择或权限计算只能读取严格早于本次 information cutoff 且已经结算的 Forecast—Outcome；本次及更晚 Outcome 只能影响未来决策。输入样本身份和政策版本必须随 Forecast 保存，不能用事后更新的“最新校准”重写当时资本判断。
 

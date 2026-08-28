@@ -374,7 +374,7 @@ capital:
           - {bucket_id: EXTREME_GAIN, probability: "0.05"}
 
 outcome_evaluation:
-  version: typed-outcome-settlement-v51
+  version: typed-outcome-settlement-v52
   forecast_version: analysis-forecast-v3
   target_forecast_version: forecast-target-outcome-v1
   product_payoff_version: product-payoff-outcome-v1
@@ -382,6 +382,7 @@ outcome_evaluation:
   window_hours: 24
   settlement_grace_minutes: 120
   poll_seconds: 300
+  research_poll_seconds: 5
   world_model_ablation:
     version: world-model-ablation-forward-v44
     enabled: false
@@ -411,7 +412,6 @@ outcome_evaluation:
     enabled: false
     producer_id: codex-quant-context-posterior
     activated_at: 2026-08-28T10:00:00Z
-    assignment_poll_seconds: 5
 
 governance:
   version: governance-cycle-v2

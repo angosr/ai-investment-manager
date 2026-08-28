@@ -125,7 +125,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v55"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v51"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v52"
     assert config.outcome_evaluation.world_model_ablation is not None
     assert (
         config.outcome_evaluation.world_model_ablation.version == "world-model-ablation-forward-v44"
@@ -142,7 +142,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
     assert config.outcome_evaluation.quant_context_posterior.version == (
         "quant-context-posterior-forward-v13"
     )
-    assert config.outcome_evaluation.quant_context_posterior.assignment_poll_seconds == 5
+    assert config.outcome_evaluation.research_poll_seconds == 5
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v32"
     assert config.assessment.mandate.version == "primary-portfolio-mandate-v14"
