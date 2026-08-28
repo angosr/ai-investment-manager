@@ -52,6 +52,8 @@
     "us_equity_signal": "此前 12 个完整月的累计总收益符号",
     "zero_signal": "累计收益严格等于零时该暴露权重为零并转入现金",
     "outcome": "从本月第一份可见价格到下月第一份可见价格的经济暴露收益；美国股票和现金使用月内总收益",
+    "monthly_price_return": "BTC 与 PAXG 使用相邻两个完整 UTC 月各自最后一根日线收盘价的收益；目标月只能使用此前月末形成的信号",
+    "short_return": "经济层 SHORT 月收益固定为对应 LONG 月收益的相反数；借券、funding、basis、保证金和强平只允许在后续产品层否决，不得在本层选择性估计",
     "availability_limit": "CRSP 与 CPI 为采集时当前历史视图，不证明历史发布日期；本实验只能否决，不能授权资本。"
   },
   "candidate": {
@@ -60,6 +62,7 @@
     "cash_weight": "0.50，加上零信号释放的权重",
     "directions": "每个风险暴露按冻结信号独立取 LONG、SHORT 或 CASH",
     "rebalance": "每月只把当前目标与上月目标之差计入换手；固定权重不做月内波动再平衡",
+    "turnover": "三个风险暴露目标有符号权重绝对变化之和；初始目标从零权重开始计入，现金权重变化不重复计费",
     "one_way_friction_bps": "10",
     "stress_one_way_friction_bps": "20",
     "initial_equity_usdt": "10000"
@@ -77,6 +80,15 @@
       "年化换手",
       "CPI 调整后复合收益"
     ],
+    "metric_definitions": {
+      "monthly_net_return": "现金权重乘现金月收益，加三个风险暴露有符号目标权重乘各自月收益，再减单边摩擦率乘当月换手",
+      "compound_return": "所有月度净收益的几何复合减一",
+      "annualized_excess_sharpe": "月度净收益减同期现金月收益的算术均值，除以该超额收益的样本标准差，再乘 sqrt(12)；标准差为零时记为 null 并视为不通过",
+      "maximum_drawdown": "从成本后月末权益高水位计算的最大跌幅",
+      "annualized_turnover": "风险暴露目标有符号权重变化总和除以月数再乘 12",
+      "real_compound_return": "成本后终值除以同窗口 CPI 水平增长倍数再减一",
+      "regime_return": "仅复合冻结阶段内的月度净收益；与同阶段现金复合收益比较"
+    },
     "regimes": [
       ["2021-10-01", "2022-12-01"],
       ["2022-12-01", "2024-02-01"],
