@@ -1335,19 +1335,26 @@ def test_dashboard_has_one_current_capital_and_world_model_read_path() -> None:
             if isinstance(item, ast.FunctionDef)
         }
 
-    evidence_methods = {
+    evaluation_methods = {
         "forecast_evidence",
-        "forecast_stability_evidence",
         "product_payoff_evidence",
         "capital_choice_evidence",
         "trading_cost_evidence",
         "world_model_ablation_evidence",
     }
     assert methods(dashboard_root / "capital.py", "CapitalDashboardReader").isdisjoint(
-        evidence_methods
+        {*evaluation_methods, "forecast_stability_evidence"}
     )
-    assert evidence_methods.issubset(
+    assert evaluation_methods.issubset(
         methods(dashboard_root / "evaluation.py", "EvaluationDashboardReader")
+    )
+    producer_methods = methods(
+        dashboard_root / "producer_capital.py",
+        "ProducerCapitalDashboardReader",
+    )
+    assert {"evidence", "forecast_stability_evidence"}.issubset(producer_methods)
+    assert "forecast_stability_evidence" not in methods(
+        dashboard_root / "evaluation.py", "EvaluationDashboardReader"
     )
 
 

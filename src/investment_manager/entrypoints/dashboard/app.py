@@ -31,7 +31,6 @@ from investment_manager.entrypoints.dashboard.evaluation import (
     EvaluationDashboardReader,
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
-    serialize_forecast_stability_evidence,
     serialize_product_payoff_evidence,
     serialize_quant_context_pair_evidence,
     serialize_quant_context_posterior_evidence,
@@ -48,6 +47,7 @@ from investment_manager.entrypoints.dashboard.pagination import (
 )
 from investment_manager.entrypoints.dashboard.producer_capital import (
     ProducerCapitalDashboardReader,
+    serialize_forecast_stability_evidence,
     serialize_producer_capital_evidence,
 )
 from investment_manager.entrypoints.dashboard.read_models import DashboardReader
@@ -188,7 +188,7 @@ def create_app(
             run_in_threadpool(evaluation_reader.quant_context_pair_evidence),
             run_in_threadpool(producer_capital_reader.evidence, now=now),
             run_in_threadpool(
-                evaluation_reader.forecast_stability_evidence,
+                producer_capital_reader.forecast_stability_evidence,
                 now=now,
             ),
             run_in_threadpool(evaluation_reader.product_payoff_evidence),

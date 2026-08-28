@@ -18,11 +18,13 @@ from investment_manager.entrypoints.dashboard.capital import CapitalOverview
 from investment_manager.entrypoints.dashboard.evaluation import (
     serialize_capital_choice_evidence,
     serialize_forecast_evidence,
-    serialize_forecast_stability_evidence,
     serialize_trading_cost_evidence,
     serialize_world_model_ablation_evidence,
 )
 from investment_manager.entrypoints.dashboard.health import assemble_health
+from investment_manager.entrypoints.dashboard.producer_capital import (
+    serialize_forecast_stability_evidence,
+)
 from investment_manager.entrypoints.dashboard.read_models import (
     AccountStatus,
     AnalysisRuntimeStatus,
@@ -185,6 +187,7 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                 forecast=SimpleNamespace(
                     assignment_count=4,
                     successful_replica_count=3,
+                    failed_replica_count=0,
                     complete_sample_count=3,
                     mean_max_expected_gross_difference_bps=Decimal("4.25"),
                     maximum_expected_gross_difference_bps=Decimal("7.80"),
@@ -192,10 +195,14 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                 ),
                 capital=SimpleNamespace(
                     replayable_case_count=3,
+                    unreplayable_case_count=0,
                     cash_flip_count=0,
                     expression_flip_count=0,
                     target_change_count=1,
                     maximum_allocation_fraction_delta=Decimal("0.04"),
+                    maximum_absolute_final_equity_delta=Decimal("1.20"),
+                    maximum_absolute_fee_cost_delta=Decimal("0.40"),
+                    maximum_absolute_turnover_delta=Decimal("800"),
                 ),
             ),
             SimpleNamespace(
@@ -204,12 +211,23 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                 forecast=SimpleNamespace(
                     assignment_count=2,
                     successful_replica_count=2,
+                    failed_replica_count=0,
                     complete_sample_count=2,
                     mean_max_expected_gross_difference_bps=Decimal("1.50"),
                     maximum_expected_gross_difference_bps=Decimal("2.75"),
                     canonical_direction_flip_count=1,
                 ),
-                capital=None,
+                capital=SimpleNamespace(
+                    replayable_case_count=2,
+                    unreplayable_case_count=0,
+                    cash_flip_count=0,
+                    expression_flip_count=0,
+                    target_change_count=0,
+                    maximum_allocation_fraction_delta=Decimal("0"),
+                    maximum_absolute_final_equity_delta=Decimal("0"),
+                    maximum_absolute_fee_cost_delta=Decimal("0"),
+                    maximum_absolute_turnover_delta=Decimal("0"),
+                ),
             ),
         ),
     )
@@ -222,16 +240,21 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                     "role": "CAPITAL_CANDIDATE",
                     "assignment_count": 4,
                     "successful_replica_count": 3,
+                    "failed_replica_count": 0,
                     "complete_sample_count": 3,
                     "mean_expected_gross_difference_bps": "4.25",
                     "maximum_expected_gross_difference_bps": "7.80",
                     "direction_flip_count": 0,
                     "capital": {
                         "replayable_case_count": 3,
+                        "unreplayable_case_count": 0,
                         "cash_flip_count": 0,
                         "expression_flip_count": 0,
                         "target_change_count": 1,
                         "maximum_allocation_fraction_delta": "0.04",
+                        "maximum_absolute_final_equity_delta": "1.20",
+                        "maximum_absolute_fee_cost_delta": "0.40",
+                        "maximum_absolute_turnover_delta": "800",
                     },
                 },
                 {
@@ -239,11 +262,22 @@ def test_forecast_stability_projection_is_bounded_to_decision_relevant_totals() 
                     "role": "RESEARCH",
                     "assignment_count": 2,
                     "successful_replica_count": 2,
+                    "failed_replica_count": 0,
                     "complete_sample_count": 2,
                     "mean_expected_gross_difference_bps": "1.50",
                     "maximum_expected_gross_difference_bps": "2.75",
                     "direction_flip_count": 1,
-                    "capital": None,
+                    "capital": {
+                        "replayable_case_count": 2,
+                        "unreplayable_case_count": 0,
+                        "cash_flip_count": 0,
+                        "expression_flip_count": 0,
+                        "target_change_count": 0,
+                        "maximum_allocation_fraction_delta": "0",
+                        "maximum_absolute_final_equity_delta": "0",
+                        "maximum_absolute_fee_cost_delta": "0",
+                        "maximum_absolute_turnover_delta": "0",
+                    },
                 },
             ]
         }

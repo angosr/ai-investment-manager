@@ -219,17 +219,22 @@ export interface ForecastEvaluationEvidence {
       role: "CAPITAL_CANDIDATE" | "RESEARCH";
       assignment_count: number;
       successful_replica_count: number;
+      failed_replica_count: number;
       complete_sample_count: number;
       mean_expected_gross_difference_bps: string | null;
       maximum_expected_gross_difference_bps: string | null;
       direction_flip_count: number;
       capital: {
         replayable_case_count: number;
+        unreplayable_case_count: number;
         cash_flip_count: number;
         expression_flip_count: number;
         target_change_count: number;
         maximum_allocation_fraction_delta: string | null;
-      } | null;
+        maximum_absolute_final_equity_delta: string | null;
+        maximum_absolute_fee_cost_delta: string | null;
+        maximum_absolute_turnover_delta: string | null;
+      };
     }[];
   } | null;
   product_payoff_evidence: {
