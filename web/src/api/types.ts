@@ -314,7 +314,7 @@ export interface ForecastEvidenceSummary {
   forecast_count: number;
   no_estimate_count: number;
   settled_forecast_count: number;
-  non_overlapping_sample_count: number;
+  non_overlapping_panel_count: number;
   result_coverage: string | null;
   mean_ranked_probability_score: string | null;
   mean_brier_score: string | null;

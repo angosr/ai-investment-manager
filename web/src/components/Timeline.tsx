@@ -167,7 +167,7 @@ function ForecastEvidenceLine({
 }: {
   evidence: NonNullable<ForecastEvaluationEvidence["quant_context_posterior_evidence"]>;
 }) {
-  if (evidence.non_overlapping_sample_count === 0) return null;
+  if (evidence.non_overlapping_panel_count === 0) return null;
   const verdict = {
     NO_SETTLED_SAMPLES: "尚无可评价结果",
     INSUFFICIENT_EVIDENCE: "结果仍少，暂时无法判断预测能力",
@@ -182,7 +182,7 @@ function ForecastEvidenceLine({
     <div className={styles.forecastEvidence}>
       <b>AI + 量化前瞻验证</b>
       <span>
-        已结算 {evidence.non_overlapping_sample_count} 个互不重复的预测结果
+        已结算 {evidence.non_overlapping_panel_count} 个互不重叠的预测时点
         {coverage ? ` · 按时输出 ${coverage}` : ""}
         {` · ${verdict}`}
       </span>

@@ -41,12 +41,14 @@ def _case(
     realized: str,
     probabilities,
     *,
+    cohort_key: str = "default",
     market_state_key: str | None = None,
     outcome_available_at: datetime | None = None,
     source_stratum: ForecastSlotStratum = ForecastSlotStratum.CADENCE_ONLY,
 ) -> ForecastScoringCase:
     return ForecastScoringCase(
         forecast_id=name,
+        cohort_key=cohort_key,
         information_cutoff_at=start,
         evaluation_at=start + timedelta(hours=4),
         probabilities=tuple((key, Decimal(value)) for key, value in probabilities),
@@ -218,13 +220,43 @@ def test_forecast_evidence_scores_only_non_overlapping_cases() -> None:
 
     assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
     assert evidence.settled_forecast_count == 3
-    assert evidence.non_overlapping_sample_count == 2
+    assert evidence.non_overlapping_panel_count == 2
     assert evidence.mean_brier_score == Decimal("0.13")
     assert evidence.benchmark_mean_brier_score == Decimal("0.5")
     assert evidence.brier_skill == Decimal("0.37")
     assert evidence.rolling_benchmark_mean_brier_score is None
     assert evidence.market_benchmark_mean_brier_score is None
     assert evidence.result_coverage == Decimal("1")
+
+
+def test_forecast_evidence_aggregates_joint_targets_into_one_time_panel() -> None:
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    evidence = evaluate_forecast_evidence(
+        (
+            _case(
+                "btc",
+                start,
+                "UP",
+                (("DOWN", "0.2"), ("UP", "0.8")),
+                cohort_key="btc-4h",
+            ),
+            _case(
+                "paxg",
+                start,
+                "DOWN",
+                (("DOWN", "0.6"), ("UP", "0.4")),
+                cohort_key="paxg-4h",
+            ),
+        ),
+        due_slot_count=1,
+        forecast_count=1,
+        no_estimate_count=0,
+    )
+
+    assert evidence.settled_forecast_count == 2
+    assert evidence.non_overlapping_panel_count == 1
+    assert evidence.mean_brier_score == Decimal("0.20")
+    assert evidence.expected_realized_return_correlation is None
 
 
 def test_forecast_evidence_never_claims_skill_without_dynamic_comparisons() -> None:
@@ -271,6 +303,7 @@ def test_forecast_evidence_uses_only_prior_settled_history_for_dynamic_baseline(
 
     assert evidence.rolling_baseline_ready_count == 1
     assert evidence.market_baseline_ready_count == 1
+    assert evidence.status == ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
     assert evidence.rolling_benchmark_mean_brier_score is not None
     assert evidence.market_benchmark_mean_brier_score is not None
     assert evidence.rolling_benchmark_mean_brier_score > evidence.benchmark_mean_brier_score

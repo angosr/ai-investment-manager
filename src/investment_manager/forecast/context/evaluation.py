@@ -11,11 +11,12 @@ from enum import StrEnum
 from investment_manager.forecast.contracts import ForecastSlotStratum
 from investment_manager.kernel.time import require_utc
 
-FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v7"
+FORECAST_EVIDENCE_EVALUATION_VERSION = "context-forecast-evidence-v8"
 FORECAST_PAIR_EVALUATION_VERSION = "context-forecast-pair-evidence-v2"
 DYNAMIC_BASELINE_MINIMUM_HISTORY = 5
 DYNAMIC_BASELINE_PRIOR_STRENGTH = Decimal("3")
 PAIRED_SKILL_INTERVAL_Z = Decimal("1.96")
+RETURN_CORRELATION_MINIMUM_PANELS = 3
 
 
 class ForecastEvidenceStatus(StrEnum):
@@ -70,7 +71,7 @@ class ForecastEvidence:
     forecast_count: int
     no_estimate_count: int
     settled_forecast_count: int
-    non_overlapping_sample_count: int
+    non_overlapping_panel_count: int
     mean_ranked_probability_score: Decimal | None
     benchmark_mean_ranked_probability_score: Decimal | None
     ranked_probability_skill: Decimal | None
@@ -112,6 +113,31 @@ class ForecastEvidence:
 class ForecastSourceEvidence:
     stratum: ForecastSlotStratum
     evidence: ForecastEvidence
+
+
+@dataclass(frozen=True, slots=True)
+class _ForecastScoringPanel:
+    """Joint target forecasts sharing one information and outcome interval."""
+
+    panel_id: str
+    information_cutoff_at: datetime
+    evaluation_at: datetime
+    source_stratum: ForecastSlotStratum
+    cases: tuple[ForecastScoringCase, ...]
+
+    def __post_init__(self) -> None:
+        if not self.panel_id or not self.cases:
+            raise ValueError("Forecast 评分面板必须包含预测")
+        cohort_keys = tuple(item.cohort_key for item in self.cases)
+        if len(set(cohort_keys)) != len(cohort_keys):
+            raise ValueError("同一 Forecast 来源层不能重复记录同一评价区间目标")
+        if any(
+            item.information_cutoff_at != self.information_cutoff_at
+            or item.evaluation_at != self.evaluation_at
+            or item.source_stratum != self.source_stratum
+            for item in self.cases
+        ):
+            raise ValueError("Forecast 评分面板内的时间区间和来源必须一致")
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,8 +288,8 @@ def evaluate_forecast_evidence(
     if terminal > due_slot_count:
         raise ValueError("Forecast 终态结果数不能超过到期槽数")
 
-    independent = _non_overlapping(cases)
-    if not independent:
+    independent_panels = _non_overlapping_panels(cases)
+    if not independent_panels:
         return ForecastEvidence(
             evaluation_version=FORECAST_EVIDENCE_EVALUATION_VERSION,
             status=ForecastEvidenceStatus.NO_SETTLED_SAMPLES,
@@ -272,7 +298,7 @@ def evaluate_forecast_evidence(
             forecast_count=forecast_count,
             no_estimate_count=no_estimate_count,
             settled_forecast_count=len(cases),
-            non_overlapping_sample_count=0,
+            non_overlapping_panel_count=0,
             mean_ranked_probability_score=None,
             benchmark_mean_ranked_probability_score=None,
             ranked_probability_skill=None,
@@ -303,101 +329,66 @@ def evaluate_forecast_evidence(
             expected_realized_return_correlation=None,
         )
 
-    model_ranked = _mean(
-        tuple(
-            ordinal_ranked_probability_score(
-                item.probabilities,
-                item.realized_bucket_id,
-            )
-            for item in independent
-        )
+    independent = tuple(item for panel in independent_panels for item in panel.cases)
+    model_ranked_scores = _panel_scores(
+        independent_panels,
+        lambda item: ordinal_ranked_probability_score(
+            item.probabilities,
+            item.realized_bucket_id,
+        ),
     )
-    benchmark_ranked = _mean(
-        tuple(
-            ordinal_ranked_probability_score(
-                item.benchmark_probabilities,
-                item.realized_bucket_id,
-            )
-            for item in independent
-        )
+    benchmark_ranked_scores = _panel_scores(
+        independent_panels,
+        lambda item: ordinal_ranked_probability_score(
+            item.benchmark_probabilities,
+            item.realized_bucket_id,
+        ),
     )
-    model_brier = _mean(
-        tuple(
-            multiclass_brier_score(item.probabilities, item.realized_bucket_id)
-            for item in independent
-        )
+    model_scores = _panel_scores(
+        independent_panels,
+        lambda item: multiclass_brier_score(
+            item.probabilities,
+            item.realized_bucket_id,
+        ),
     )
-    benchmark_brier = _mean(
-        tuple(
-            multiclass_brier_score(
-                item.benchmark_probabilities,
-                item.realized_bucket_id,
-            )
-            for item in independent
-        )
+    benchmark_scores = _panel_scores(
+        independent_panels,
+        lambda item: multiclass_brier_score(
+            item.benchmark_probabilities,
+            item.realized_bucket_id,
+        ),
     )
+    model_ranked = _mean(model_ranked_scores)
+    benchmark_ranked = _mean(benchmark_ranked_scores)
+    model_brier = _mean(model_scores)
+    benchmark_brier = _mean(benchmark_scores)
     assert (
         model_ranked is not None
         and benchmark_ranked is not None
         and model_brier is not None
         and benchmark_brier is not None
     )
-    model_ranked_scores = tuple(
-        ordinal_ranked_probability_score(item.probabilities, item.realized_bucket_id)
-        for item in independent
-    )
-    model_scores = tuple(
-        multiclass_brier_score(item.probabilities, item.realized_bucket_id) for item in independent
-    )
     rolling_cases = _dynamic_benchmarks(cases, independent, condition_on_market=False)
     market_cases = _dynamic_benchmarks(cases, independent, condition_on_market=True)
-    rolling_ranked_scores = tuple(
-        (
-            ordinal_ranked_probability_score(probabilities, item.realized_bucket_id),
-            model_score,
-        )
-        for (item, probabilities, ready), model_score in zip(
-            rolling_cases,
-            model_ranked_scores,
-            strict=True,
-        )
-        if ready
+    rolling_ranked_scores = _dynamic_panel_scores(
+        independent_panels,
+        rolling_cases,
+        ordinal_ranked_probability_score,
     )
-    market_ranked_scores = tuple(
-        (
-            ordinal_ranked_probability_score(probabilities, item.realized_bucket_id),
-            model_score,
-        )
-        for (item, probabilities, ready), model_score in zip(
-            market_cases,
-            model_ranked_scores,
-            strict=True,
-        )
-        if ready
+    market_ranked_scores = _dynamic_panel_scores(
+        independent_panels,
+        market_cases,
+        ordinal_ranked_probability_score,
     )
-    rolling_scores = tuple(
-        (
-            multiclass_brier_score(probabilities, item.realized_bucket_id),
-            model_score,
-        )
-        for (item, probabilities, ready), model_score in zip(
-            rolling_cases,
-            model_scores,
-            strict=True,
-        )
-        if ready
+    rolling_scores = _dynamic_panel_scores(
+        independent_panels,
+        rolling_cases,
+        multiclass_brier_score,
     )
-    market_scores = tuple(
-        (
-            multiclass_brier_score(probabilities, item.realized_bucket_id),
-            model_score,
-        )
-        for (item, probabilities, ready), model_score in zip(
-            market_cases,
-            model_scores,
-            strict=True,
-        )
-        if ready
+    market_scores = _dynamic_panel_scores(
+        independent_panels,
+        market_cases,
+        multiclass_brier_score,
     )
     rolling_ranked = _mean(
         tuple(baseline for baseline, _model in rolling_ranked_scores)
@@ -441,8 +432,8 @@ def evaluate_forecast_evidence(
     rolling_upper = None if rolling_interval is None else rolling_interval[1]
     market_lower = None if market_interval is None else market_interval[0]
     market_upper = None if market_interval is None else market_interval[1]
-    rolling_ready_count = sum(ready for _item, _probabilities, ready in rolling_cases)
-    market_ready_count = sum(ready for _item, _probabilities, ready in market_cases)
+    rolling_ready_count = len(rolling_scores)
+    market_ready_count = len(market_scores)
     status = (
         ForecastEvidenceStatus.INSUFFICIENT_EVIDENCE
         if rolling_ranked_interval is None or market_ranked_interval is None
@@ -468,7 +459,7 @@ def evaluate_forecast_evidence(
         forecast_count=forecast_count,
         no_estimate_count=no_estimate_count,
         settled_forecast_count=len(cases),
-        non_overlapping_sample_count=len(independent),
+        non_overlapping_panel_count=len(independent_panels),
         mean_ranked_probability_score=model_ranked,
         benchmark_mean_ranked_probability_score=benchmark_ranked,
         ranked_probability_skill=benchmark_ranked - model_ranked,
@@ -493,44 +484,102 @@ def evaluate_forecast_evidence(
         market_brier_skill_lower_bound=market_lower,
         market_brier_skill_upper_bound=market_upper,
         market_baseline_ready_count=market_ready_count,
-        mean_expected_gross_bps=_mean(tuple(item.expected_gross_bps for item in independent)),
-        mean_realized_gross_bps=_mean(tuple(item.realized_gross_bps for item in independent)),
+        mean_expected_gross_bps=_mean(
+            _panel_scores(independent_panels, lambda item: item.expected_gross_bps)
+        ),
+        mean_realized_gross_bps=_mean(
+            _panel_scores(independent_panels, lambda item: item.realized_gross_bps)
+        ),
         mean_absolute_return_error_bps=_mean(
-            tuple(
-                abs(item.expected_gross_bps - item.realized_gross_bps)
-                for item in independent
+            _panel_scores(
+                independent_panels,
+                lambda item: abs(item.expected_gross_bps - item.realized_gross_bps),
             )
         ),
-        expected_realized_return_correlation=_return_correlation(independent),
+        expected_realized_return_correlation=_return_correlation(independent_panels),
     )
+
+
+def _panel_scores(
+    panels: tuple[_ForecastScoringPanel, ...],
+    score: Callable[[ForecastScoringCase], Decimal],
+) -> tuple[Decimal, ...]:
+    values = []
+    for panel in panels:
+        mean = _mean(tuple(score(item) for item in panel.cases))
+        assert mean is not None
+        values.append(mean)
+    return tuple(values)
+
+
+def _dynamic_panel_scores(
+    panels: tuple[_ForecastScoringPanel, ...],
+    dynamic_cases: tuple[
+        tuple[
+            ForecastScoringCase,
+            tuple[tuple[str, Decimal], ...],
+            bool,
+        ],
+        ...,
+    ],
+    score: Callable[[tuple[tuple[str, Decimal], ...], str], Decimal],
+) -> tuple[tuple[Decimal, Decimal], ...]:
+    """Aggregate ready target baselines before treating a time interval as evidence."""
+
+    by_forecast_id = {
+        item.forecast_id: (item, probabilities, ready)
+        for item, probabilities, ready in dynamic_cases
+    }
+    results = []
+    for panel in panels:
+        ready_cases = tuple(
+            by_forecast_id[item.forecast_id]
+            for item in panel.cases
+            if by_forecast_id[item.forecast_id][2]
+        )
+        if not ready_cases:
+            continue
+        baseline = _mean(
+            tuple(
+                score(probabilities, item.realized_bucket_id)
+                for item, probabilities, _ready in ready_cases
+            )
+        )
+        model = _mean(
+            tuple(
+                score(item.probabilities, item.realized_bucket_id)
+                for item, _probabilities, _ready in ready_cases
+            )
+        )
+        assert baseline is not None and model is not None
+        results.append((baseline, model))
+    return tuple(results)
 
 
 def _return_correlation(
-    cases: tuple[ForecastScoringCase, ...],
+    panels: tuple[_ForecastScoringPanel, ...],
 ) -> Decimal | None:
-    if len(cases) < 2:
+    # Two observations always produce a misleading perfect +/-1 correlation.
+    if len(panels) < RETURN_CORRELATION_MINIMUM_PANELS:
         return None
-    expected_mean = sum(
-        (item.expected_gross_bps for item in cases), Decimal("0")
-    ) / Decimal(len(cases))
-    realized_mean = sum(
-        (item.realized_gross_bps for item in cases), Decimal("0")
-    ) / Decimal(len(cases))
+    expected = _panel_scores(panels, lambda item: item.expected_gross_bps)
+    realized = _panel_scores(panels, lambda item: item.realized_gross_bps)
+    expected_mean = sum(expected, Decimal("0")) / Decimal(len(expected))
+    realized_mean = sum(realized, Decimal("0")) / Decimal(len(realized))
     expected_variance = sum(
-        ((item.expected_gross_bps - expected_mean) ** 2 for item in cases),
+        ((item - expected_mean) ** 2 for item in expected),
         Decimal("0"),
     )
     realized_variance = sum(
-        ((item.realized_gross_bps - realized_mean) ** 2 for item in cases),
+        ((item - realized_mean) ** 2 for item in realized),
         Decimal("0"),
     )
     if expected_variance == 0 or realized_variance == 0:
         return None
     covariance = sum(
         (
-            (item.expected_gross_bps - expected_mean)
-            * (item.realized_gross_bps - realized_mean)
-            for item in cases
+            (expected_item - expected_mean) * (realized_item - realized_mean)
+            for expected_item, realized_item in zip(expected, realized, strict=True)
         ),
         Decimal("0"),
     )
@@ -538,18 +587,34 @@ def _return_correlation(
     return max(Decimal("-1"), min(Decimal("1"), correlation))
 
 
-def _non_overlapping(cases: tuple[ForecastScoringCase, ...]) -> tuple[ForecastScoringCase, ...]:
-    cohorts = tuple(sorted({item.cohort_key for item in cases}))
-    return tuple(
-        item
-        for cohort in cohorts
-        for item in select_non_overlapping_intervals(
-            tuple(value for value in cases if value.cohort_key == cohort),
-            identity=lambda value: value.forecast_id,
-            information_cutoff_at=lambda value: value.information_cutoff_at,
-            evaluation_at=lambda value: value.evaluation_at,
-            stratum=lambda value: value.source_stratum.value,
+def _non_overlapping_panels(
+    cases: tuple[ForecastScoringCase, ...],
+) -> tuple[_ForecastScoringPanel, ...]:
+    grouped: dict[
+        tuple[datetime, datetime, ForecastSlotStratum],
+        list[ForecastScoringCase],
+    ] = {}
+    for item in cases:
+        grouped.setdefault(
+            (item.information_cutoff_at, item.evaluation_at, item.source_stratum),
+            [],
+        ).append(item)
+    panels = tuple(
+        _ForecastScoringPanel(
+            panel_id="|".join(sorted(item.forecast_id for item in values)),
+            information_cutoff_at=information_cutoff_at,
+            evaluation_at=evaluation_at,
+            source_stratum=source_stratum,
+            cases=tuple(sorted(values, key=lambda item: (item.cohort_key, item.forecast_id))),
         )
+        for (information_cutoff_at, evaluation_at, source_stratum), values in grouped.items()
+    )
+    return select_non_overlapping_intervals(
+        panels,
+        identity=lambda value: value.panel_id,
+        information_cutoff_at=lambda value: value.information_cutoff_at,
+        evaluation_at=lambda value: value.evaluation_at,
+        stratum=lambda value: value.source_stratum.value,
     )
 
 
@@ -706,7 +771,7 @@ def _mean_confidence_interval(
 def _optional_mean_confidence_interval(
     values: tuple[Decimal, ...],
 ) -> tuple[Decimal, Decimal] | None:
-    if not values:
+    if len(values) < 2:
         return None
     return _mean_confidence_interval(values)
 
