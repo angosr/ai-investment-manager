@@ -35,6 +35,7 @@ function CapitalTimeline({
   const actions = usePagedLive(
     (cursor) => api.capitalActivity(cursor),
     "cycles",
+    tab === "actions",
   );
   const assessmentRecords = usePagedLive(
     async (cursor) => {
@@ -42,12 +43,24 @@ function CapitalTimeline({
       return { items: result.assessments, nextCursor: result.next_cursor };
     },
     "cycles",
+    tab === "analysis",
   );
-  const assessmentStatus = useLive(() => api.latestAssessment(), "cycles");
-  const forecastEvaluation = useLive(() => api.forecastEvaluation(), "cycles");
+  const assessmentStatus = useLive(
+    () => api.latestAssessment(),
+    "cycles",
+    [],
+    tab === "analysis",
+  );
+  const forecastEvaluation = useLive(
+    () => api.forecastEvaluation(),
+    "cycles",
+    [],
+    tab === "analysis",
+  );
   const events = usePagedLive(
     (cursor) => api.events(cursor),
     "events",
+    tab === "world",
   );
   const capitalActions = actions.items;
   return (

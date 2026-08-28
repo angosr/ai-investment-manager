@@ -13,6 +13,7 @@ export function useLive<T>(
   fetcher: () => Promise<T>,
   topic: RefreshTopic,
   deps: unknown[] = [],
+  enabled = true,
 ): T | null {
   const [data, setData] = useState<T | null>(null);
   const fetcherRef = useRef(fetcher);
@@ -20,6 +21,7 @@ export function useLive<T>(
   fetcherRef.current = fetcher;
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let disposed = false;
     let loading = false;
     let rerun = false;
@@ -51,7 +53,7 @@ export function useLive<T>(
       unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, ...deps]);
+  }, [topic, enabled, ...deps]);
 
   return data;
 }
@@ -73,6 +75,7 @@ export interface PagedLive<T> {
 export function usePagedLive<T>(
   fetchPage: (cursor?: string) => Promise<Page<T>>,
   topic: RefreshTopic,
+  enabled = true,
 ): PagedLive<T> {
   const [pages, setPages] = useState<T[][]>([]);
   const [nextCursors, setNextCursors] = useState<(string | null)[]>([]);
@@ -88,6 +91,7 @@ export function usePagedLive<T>(
   pageRef.current = page;
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let disposed = false;
     let running = false;
     let rerun = false;
@@ -121,7 +125,7 @@ export function usePagedLive<T>(
       disposed = true;
       unsubscribe();
     };
-  }, [topic]);
+  }, [topic, enabled]);
 
   const previous = useCallback(() => setPage((current) => Math.max(0, current - 1)), []);
   const next = useCallback(() => {
