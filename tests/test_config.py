@@ -45,7 +45,7 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         config.decision_state.packet_policy.maximum_packet_characters + assess_prompt_overhead
         <= config.codex_runtime.maximum_prompt_characters
     )
-    assert config.pipeline.version == "world-forecast-product-capital-shadow-v78"
+    assert config.pipeline.version == "world-capital-shadow-v79"
     assert config.temporal.namespace == "shadow-world-forecast-capital-v1"
     assert config.temporal.version == "temporal-analysis-v5"
     assert config.temporal.activity_start_to_close_seconds == 890
@@ -126,7 +126,9 @@ def test_shadow_config_inherits_single_baseline_without_enabling_orders() -> Non
         "ETHUSDT",
     )
     assert config.assessment.version == "context-assessment-v55"
-    assert config.outcome_evaluation.version == "typed-outcome-settlement-v54"
+    assert config.outcome_evaluation.version == "typed-outcome-settlement-v55"
+    assert config.outcome_evaluation.quant_baseline is not None
+    assert not config.outcome_evaluation.quant_baseline.enabled
     assert config.outcome_evaluation.research_poll_seconds == 5
     assert config.assessment.review_trigger_symbol == "BTCUSDT"
     assert config.trigger.version == "analysis-trigger-v33"

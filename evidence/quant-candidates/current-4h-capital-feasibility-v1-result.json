@@ -1,0 +1,31 @@
+{
+  "schema_version": "quant-capital-feasibility-result-v1",
+  "evaluation_id": "current-4h-capital-feasibility-v1",
+  "evaluated_at": "2026-08-28T20:03:31Z",
+  "status": "REJECTED_FEE_FLOOR",
+  "method": "frozen-runtime-cell-expected-gross-versus-deterministic-round-trip-fee-floor",
+  "round_trip_fee_floor_bps": "10",
+  "spread_slippage_and_funding_included": false,
+  "targets": [
+    {
+      "outcome_family_id": "btc-price-directional-4h",
+      "artifact_id": "quant_forecast_artifact_70430e567349f038e5b4",
+      "selected_model": "momentum_volatility",
+      "minimum_cell_expected_gross_bps": "-2.672573733803960095712331149",
+      "maximum_cell_expected_gross_bps": "6.50360911264240076699605318"
+    },
+    {
+      "outcome_family_id": "paxg-price-directional-4h",
+      "artifact_id": "quant_forecast_artifact_c730529eb5cd931235d8",
+      "selected_model": "momentum_volatility",
+      "minimum_cell_expected_gross_bps": "0.509265128167203381598520529",
+      "maximum_cell_expected_gross_bps": "2.647358547963149125747312493"
+    }
+  ],
+  "reason_codes": [
+    "NO_RUNTIME_STATE_COVERS_DETERMINISTIC_ROUND_TRIP_FEE_FLOOR",
+    "SPREAD_SLIPPAGE_AND_FUNDING_CAN_ONLY_WORSEN_THE_ENTRY_PRECONDITION"
+  ],
+  "runtime_change": "RETIRE_CURRENT_QUANT_PRODUCER",
+  "capital_change": "NONE"
+}

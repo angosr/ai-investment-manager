@@ -43,7 +43,6 @@ from investment_manager.forecast.models import (
     ForecastLeg,
     ForecastTarget,
 )
-from investment_manager.forecast.quant.runtime import PortfolioQuantForecastProducer
 from investment_manager.forecast.repository import SqlForecastStore
 from investment_manager.forecast.results import BaseForecast, ForecastBucketProbability
 from investment_manager.forecast.tables import forecast_decision_slots, forecasts
@@ -1438,7 +1437,7 @@ def test_pending_group_requires_quotes_without_a_prior_account_position() -> Non
     assert tuple(item.symbol for item in execution) == ("PAXGUSDT",)
 
 
-def test_shadow_research_chain_contains_only_active_quant_producer() -> None:
+def test_shadow_has_no_forecast_producer_without_cost_qualified_hypothesis() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     create_schema(engine)
     config = load_config("config/investment-manager.shadow.yaml")
@@ -1455,11 +1454,7 @@ def test_shadow_research_chain_contains_only_active_quant_producer() -> None:
     }
     assert service._forecast_sources == ()
     assert service._source_by_family == {}
-    assert len(service._research_forecast_producers) == 1
-    assert isinstance(
-        service._research_forecast_producers[0],
-        PortfolioQuantForecastProducer,
-    )
+    assert service._research_forecast_producers == ()
 
 
 def test_dashboard_hides_retired_no_opportunity_receipts() -> None:

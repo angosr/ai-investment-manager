@@ -4,12 +4,8 @@ capital:
   enabled: true
   context_forecast:
     enabled: true
-  # 当前仅运行透明 Quant 研究；没有任何 Forecast producer 获得资本权限。
+  # 当前没有通过成本下界的 Forecast producer；Capital 仅维护账户与风险事实。
   candidate_capital_authorizations: []
-
-outcome_evaluation:
-  quant_baseline:
-    enabled: true
 
 codex_runtime:
   enabled: true
@@ -34,7 +30,7 @@ codex_accounts:
       capacity_weight: "1"
 
 pipeline:
-  version: world-forecast-product-capital-shadow-v78
+  version: world-capital-shadow-v79
 
 temporal:
   # WorldModel、Forecast 与 Capital 在同一运行事实库协作。

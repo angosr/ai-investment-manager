@@ -8,7 +8,7 @@
 
 - `market-stream`：公开市场事实；
 - `information-collector`：新闻、官方文件、日历和连续指标；
-- `outcome-evaluation-service`：以互不阻塞的独立循环完成到期 Forecast/Product 结算与透明 Quant 的产品收益投影；
+- `outcome-evaluation-service`：以互不阻塞的独立循环完成已经登记且到期的 Forecast/Product 结算；
 - `trigger-service`：Outbox 投递、TriggerCoordinator 和资本消费者；
 - `assessment-worker`：WorldModel 的 Codex Activity；
 - `dashboard-service`：只读 API 和冻结前端制品。
@@ -63,7 +63,7 @@ INVESTMENT_MANAGER_DATABASE_URL='<受控 Secret>' \
 
 每个 symbol/pipeline 只有一个当前 TriggerPlan。主 Agent 可通过正式命令立即触发、增删未来唤醒、修改事件规则、暂停或调整 heartbeat。当前有效值来自数据库计划，而非静态配置；页面应显示 revision 和来源。
 
-Quant 由 TriggerCoordinator 直接唤醒。当前没有第二个 Forecast producer，也没有后台 posterior 或稳定性任务。槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽；每个槽都保存单一来源、政策和触发引用。两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
+当前没有在线 Forecast producer，也没有后台 posterior、Quant 产品投影或稳定性任务。未来合格 producer 仍由 TriggerCoordinator 直接唤醒；槽来源包括 ForecastContract cadence 的定时槽，以及启用材料事件政策后由非空 `State/Delta` 产生的事件槽。每个槽都保存单一来源、政策和触发引用，两类义务始终独立：材料事件不能消费、提前履行或改写固定 cadence 槽，即使二者时间接近。运行恢复必须按 cause 身份重建同一结果，不能因重试、heartbeat 或 Release 切换制造第二个样本：
 
 - 到期前成功则保存 Forecast；
 - 输入、模型或运行失败则保存精确 `NO_ESTIMATE`；
@@ -94,7 +94,7 @@ AI 只读取冻结的高密度 DecisionPacket，不读取 raw time series、全�
 
 ## 7. 资本、风控与执行恢复
 
-基础配置失败关闭资本和 Quant；Shadow profile 当前只显式启用透明 Quant 研究。已退役 AI+Quant 的历史 Forecast 与 Outcome 保留在公共账本中，但不存在配置、运行器、API 或前端分支，也不会新增调用。现役研究覆盖 BTC、PAXG 和 SPY 三个经济暴露；BTC/PAXG Spot 仅作为 Forecast 结算参考和只读市场状态，可执行映射分别为 BTC/PAXG USD-M Perpetual 与 SPY TradFi Perpetual 的合法多空。当前 Quant 无业务资本授权，不产生新订单。TradFi 产品另外读取官方交易日历，并把普通和特殊 funding 纳入成本结果；SPY 的经济暴露是美国权益，不冒充全球权益。
+基础配置和 Shadow profile 都不启用 Forecast producer。已退役 Context、AI+Quant 与 4h Quant 的历史 Forecast、Outcome 和冻结制品保留在公共账本中，但不会新增调用、产品投影或订单；4h Quant 的最高状态预期毛收益仍低于确定性的往返手续费下界，继续在线积累样本没有资本价值。可投资域仍保存 BTC、PAXG 和 SPY 三个候选经济暴露及其合法多空产品合同，供通过历史成本下界与前瞻证据的新 producer 复用；没有合格 producer 时 Capital 只维护账户、对账和程序化风险。BTC/PAXG Spot 仍是只读市场与未来 Forecast 结算参考；TradFi 产品继续读取官方交易日历，SPY 的经济暴露是美国权益，不冒充全球权益。
 
 候选资本授权只登记“该前瞻合同可以参加本轮模拟比较”，不包含逐品种固定仓位、额外入场 bp、历史样本数或方向限制。Portfolio 比较每个合法多空产品投影与现金的完整费用后边际，Risk 只按账户生存边界缩减；模拟环境本身不得改变方向、目标仓位或制造试探小单。所有未被选择的合法产品投影仍在共同终点结算，因而零订单也必须产生可诊断的反事实反馈。
 
