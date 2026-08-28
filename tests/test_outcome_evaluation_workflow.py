@@ -215,7 +215,7 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
             with lock:
                 active -= 1
                 completed += 1
-                if completed == 2:
+                if completed == 3:
                     loop.call_soon_threadsafe(stop.set)
             return result
 
@@ -242,17 +242,30 @@ def test_all_remaining_research_ai_evaluations_share_one_serial_lane(app_config)
                     )
                 )
 
+        class ProductProjectionRecorder:
+            def reconcile(self, *, as_of):
+                return measured(
+                    "product-projection",
+                    SimpleNamespace(
+                        projection_count=4,
+                        unavailable_forecast_count=1,
+                    ),
+                )
+
         supervisor = OutcomeEvaluationSupervisor(
             config=app_config,
             target_forecast_settler=Settler(),
             forecast_stability_runners=(StabilityRunner(),),
             quant_posterior_runner=PosteriorRunner(),
+            research_product_projection_recorder=ProductProjectionRecorder(),
             clock=lambda: datetime.now(UTC),
         )
 
         await asyncio.wait_for(supervisor.run(stop), timeout=2)
-        assert completed == 2
+        assert completed == 3
         assert maximum_active == 1
-        assert call_order == ["posterior", "stability"]
+        assert call_order == ["posterior", "product-projection", "stability"]
+        assert supervisor.health.research_product_projection_count == 4
+        assert supervisor.health.research_product_projection_unavailable == 1
 
     asyncio.run(scenario())

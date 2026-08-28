@@ -60,6 +60,7 @@ from investment_manager.governance.evaluation.logical_account import (
 )
 from investment_manager.governance.evaluation.producer_capital import (
     ProducerCapitalReplay,
+    ProducerProductProjectionRecorder,
     compare_producer_capital_paths,
 )
 from investment_manager.kernel.identity import canonical_json, content_hash, stable_id
@@ -1650,6 +1651,30 @@ def test_complete_producer_panel_advances_its_own_cost_aware_account(app_config)
         complete_panels=(panel,),
         pending_panel_count=0,
     )
+    projection_calls = []
+    recorded_projection = _decision_projection_inputs(forecast)[1][0]
+    recorder = ProducerProductProjectionRecorder(
+        producer_behavior_ids=(forecast.producer_behavior_id,),
+        panels=SimpleNamespace(read=lambda **_kwargs: ledger),
+        product_payoffs_by_family={
+            forecast.outcome_family_id: SimpleNamespace(
+                project=lambda value, *, as_of: (
+                    projection_calls.append((value.forecast_id, as_of))
+                    or recorded_projection,
+                )
+            )
+        },
+    )
+
+    first_recording = recorder.reconcile(as_of=forecast.available_at)
+    second_recording = recorder.reconcile(as_of=forecast.available_at)
+
+    assert first_recording.processed_panel_count == 1
+    assert first_recording.projected_forecast_count == 1
+    assert first_recording.projection_count == 1
+    assert first_recording.unavailable_forecast_count == 0
+    assert second_recording.processed_panel_count == 0
+    assert projection_calls == [(forecast.forecast_id, panel.available_at)]
 
     def independent_replay() -> ProducerCapitalReplay:
         return ProducerCapitalReplay(
